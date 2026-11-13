@@ -40,7 +40,9 @@ recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed a
 tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
 which did not execute it: its approve, naming the tip, is the verdict the default land goes by on
 such a task and on no other ([the default landing](TASKS.md#the-default-landing)). A fast fix its
-orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is.
+orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is, and so
+is a red's fast fix that changes a test or a check (`[land] check_paths`): the land refuses its
+orchestrator's approve on that, since a loosened test or check is how a red turns green unfixed.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
@@ -200,8 +202,12 @@ headless browser acceptance and the board's `perf` and `child_guard` targets
 `just nightly` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
 folder (`../symphony-wt/nightly`), then conciliates the projects this machine serves with that
 commit. A green night tags a release; a red one files each red check as a task in the
-`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), naming the commits since the last
-green run (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
+`tests/nightly-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
+fix whose orchestrator lands only a fix changing no test or check (RULES.md
+`workflow/nightly-reds-first`), one task for each red step of verify, naming the commands that
+rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
+time), the load when it ended and the commits since the last green run
+(`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
 stops short of deciding is the red `tests/nightly-red-run`. It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
 often than nightly, and its schedule is the owner's to install. It also runs every 20 landings:
@@ -216,9 +222,11 @@ budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the one
 and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 `build/verify/STEP.log` (a folder of the run's when the nightly runs it), which `steps.tsv` beside
-it lists with each step's exit status, seconds and command. Its own output says each step as it
+it lists with each step's exit status, seconds and command and the load average it ended under
+(over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
-red ones. `just verify STEP...` runs those steps alone, in that order. The tests serve the client
+red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
+it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
 the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;

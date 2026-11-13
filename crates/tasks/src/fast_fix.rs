@@ -7,13 +7,38 @@
 //! Such a fix is judged on its posted evidence by its orchestrator, which did not execute it: on a
 //! task carrying the mark, and only there, the orchestrator's verdict is the task's verdict
 //! ([`crate::Store::verdict`]), and its `approve` is what the default landing lands
-//! ([`crate::land`]). Every other task is approved by a fresh reviewer.
+//! ([`crate::land`]). Every other task is approved by a fresh reviewer. On a red ([`crate::red`])
+//! carrying the mark the land bounds that approve by what the fix changes
+//! ([`crate::land::Scope::ChecksUnchanged`]): the board cannot read the repository, the land can.
 
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The board field marking a fast fix: why its fix needs no reviewer, as its filer recorded it.
 pub const MARK: &str = "fast_fix";
+
+/// The risk a red's filer records for its fix when it files the red ([`crate::red`]) as a fast
+/// fix, a red being fixed the way a bug fix is. A tool files a red before any fix exists, so what
+/// it records is the bound the land holds the red's orchestrator's approve to
+/// ([`crate::land::check_paths`]), said where the orchestrator reads it. It opens with
+/// [`RED_OPENING`], by which the land knows it ([`bounds`]); the rest may be reworded.
+pub const RED: &str = "a red is fixed as a bug fix is (RULES.md `workflow/fast-bugfixes`): the \
+code is fixed, never a test or check loosened. Its orchestrator's approve lands a fix that changes \
+none of the project's tests and checks (`[land] check_paths`), on the posted evidence of the \
+failing tests, unchanged, rerun alone and green at its tip; the land refuses it on a fix that \
+changes a test, a check, a budget or a run step, which a fresh reviewer approves";
+
+/// How every red's recorded risk ([`RED`]) opens, in each wording it has had or will have: the
+/// land knows a red's fast fix by it ([`bounds`]), and no session clears the risk, so a red whose
+/// mark its filer lifted is held to the bound still. Reds already filed carry it: changed, a red
+/// filed before, its mark lifted, would be a fast fix its orchestrator lands whatever it changes.
+pub const RED_OPENING: &str = "a red is fixed as a bug fix is";
+
+/// Whether a fast fix's recorded `risk` is a red's ([`RED_OPENING`]), which the land holds its
+/// orchestrator's approve to a fix that changes no check ([`crate::land::independent`]).
+pub fn bounds(risk: &str) -> bool {
+    risk.trim_start().starts_with(RED_OPENING)
+}
 
 /// What a task's `fields` record of its fast fix, when they mark one.
 pub fn marked(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<&str> {
@@ -56,6 +81,47 @@ mod tests {
             ),
         ] {
             assert_eq!(marked(&fields), None, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_reds_recorded_risk_marks_it_a_fast_fix_and_bounds_it() {
+        assert_eq!(marked(&fields("_board", MARK, json!(RED))), Some(RED));
+        for said in [
+            "RULES.md `workflow/fast-bugfixes`",
+            "never a test or check loosened",
+            "changes none of the project's tests and checks (`[land] check_paths`)",
+            "unchanged, rerun alone and green at its tip",
+            "changes a test, a check, a budget or a run step, which a fresh reviewer approves",
+        ] {
+            assert!(RED.contains(said), "{said:?} in {RED}");
+        }
+    }
+
+    #[test]
+    fn a_reds_risk_is_known_by_an_opening_that_never_changes() {
+        // Pinned: reds already filed carry this opening, and the land bounds them by it. Changed,
+        // a red filed with the old one whose mark is lifted lands on its orchestrator's approve
+        // whatever its fix changes. Reword what follows it instead.
+        assert_eq!(RED_OPENING, "a red is fixed as a bug fix is");
+        assert!(RED.starts_with(RED_OPENING), "{RED}");
+        assert!(bounds(RED));
+        for (risk, case) in [
+            (
+                "a red is fixed as a bug fix is: an older wording",
+                "reworded after it",
+            ),
+            ("  a red is fixed as a bug fix is", "after blanks"),
+        ] {
+            assert!(bounds(risk), "{case}");
+        }
+        for (risk, case) in [
+            ("a one-line regex fix", "a bug fix's own reason"),
+            ("is fixed as a bug fix is", "not its opening"),
+            ("A red is fixed as a bug fix is", "another case"),
+            ("", "nothing"),
+        ] {
+            assert!(!bounds(risk), "{case}");
         }
     }
 }

@@ -1,7 +1,8 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
-//! Escape closing the editor, a link's excerpt opens beside the link's own button, and callouts
-//! are as wide as cards, a comment's colour its own.
+//! Escape closing the editor, a link's excerpt opens beside the link's own button, callouts are
+//! as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
+//! picture in its history.
 use super::components::key;
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
 use serde_json::{Value, json};
@@ -510,4 +511,197 @@ fn document_callout_title_stops_short_of_its_sections_comment_button() {
             look["label"]
         );
     }
+}
+
+/// The folded card's document: the register's resolved card, its picture a block of its first
+/// history entry between two paragraphs, its src landing as the entries draw and the card's slots
+/// take `content-visibility: auto` (`DocumentPicture`). The outline carries no block, as the
+/// server's does, and a folded card's section is read only once it is opened: the site, and the
+/// answer the card's section is read with, set by the test before it opens the card.
+const FOLDED: &str = "docs/FOLDED.md";
+const FOLDED_PICTURE: &str = "/docs/analysis/split.svg";
+
+fn folded_card_site() -> (Site, Value) {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let question = "Where do the pictures a card shows live? A: the ignored folder. F: committed beside the card. Recommended: F.";
+    let code = |words: &str| json!({"type":"code","text":words});
+    let list = |items: Vec<Vec<Value>>| {
+        let items: Vec<Vec<Value>> = items
+            .into_iter()
+            .map(|spans| vec![paragraph(spans)])
+            .collect();
+        json!({"type":"list","ordered":false,"start":1,"items":items})
+    };
+    let entry = |who: &str, at: &str, verdict: Option<&str>, blocks: Vec<Value>| json!({"type":"thread","entries":[{"who":who,"timestamp":at,"verdict":verdict,"blocks":blocks}]});
+    let threads = json!({"folded-picture":{"blocks":[
+        entry("agent", "2026-11-12 16:36", None, vec![
+            paragraph(vec![text("Posted for a board task. F, drawn:")]),
+            json!({"type":"image","image":{"src":format!("{FOLDED_PICTURE}?v=67795c11090a"),"alt":"F: what a card shows is committed","presentation":{}}}),
+            paragraph(vec![strong("What F means for you:")]),
+            list(vec![
+                vec![strong("It commits the pictures,"), text(" so every clone shows them.")],
+                vec![strong("Every checkout carries all of them.")],
+                vec![strong("Evidence posted only on a thread is in no clone.")],
+            ]),
+            paragraph(vec![text("Approve and say A or F in the note.")]),
+        ]),
+        entry("owner", "2026-11-12 17:40", Some("approved"), vec![paragraph(vec![text("agreed with F")])]),
+        entry("agent", "2026-11-12 17:59", None, vec![
+            paragraph(vec![text("F is taken. These tasks are filed:")]),
+            list(vec![
+                vec![code("tools/doc-pictures-committed"), text(": the docs audit refuses an untracked card picture.")],
+                vec![code("tools/attach-evidence"), text(": evidence goes to the store.")],
+            ]),
+            paragraph(vec![text("Nothing was changed elsewhere.")]),
+        ]),
+        entry("agent", "2026-11-12 17:59", Some("resolved"), vec![]),
+    ]}});
+    let summary = json!([code("folded-picture"), text(" "),
+        {"type":"styled","tag":"span","presentation":{"class":"settled-state"},"spans":[text("resolved")]}, text(&format!(" {question}"))]);
+    let card = json!({"type":"card","slug":"folded-picture","mark":"resolved","title":question,"body":[paragraph(vec![text(question)])],
+        "verdict":{"group":"resolved","open":false,"posted":"2026-11-12 16:36","decided":"2026-11-12 17:40"},
+        "thread":[],"line":null,"line_offset":0,"comparison":[]});
+    let section = |start: usize, end: usize, key: &str, blocks: Vec<Value>| json!({"start":start,"end":end,"key":key,"hash":key,"part":0,"blocks":blocks});
+    let heading = |level: u8, anchor: &str, words: &str| json!({"type":"heading","level":level,"anchor":anchor,"spans":[text(words)]});
+    let sections = [
+        section(
+            1,
+            1,
+            "section:register:0",
+            vec![heading(1, "decision-register", "Decision register")],
+        ),
+        section(
+            3,
+            4,
+            "section:register:1",
+            vec![heading(2, "resolved", "Resolved")],
+        ),
+        section(
+            6,
+            25,
+            "card:folded-picture",
+            vec![json!({"type":"settled-card","summary":summary,"open":false,"blocks":[card]})],
+        ),
+    ];
+    let outline: Vec<Value> = sections
+        .iter()
+        .map(|section| {
+            let mut outline = section.clone();
+            outline["blocks"] = json!([]);
+            outline
+        })
+        .collect();
+    let folded = json!({"slug":"folded-picture","state":"resolved","text":question,"group":"resolved","open":false});
+    site.set_json("/api/document", &json!({"document":{"version":2,"path":FOLDED,"title":"Decision register","waiting":[],"crumbs":[],
+        "headings":[],"sections":outline,"cards":[folded],"threads":{},"tasks":[]},
+        "anchors":{"card:folded-picture":["folded-picture"],"section:register:0":["decision-register"],"section:register:1":["resolved"]}}));
+    // The server answers a read with the sections it names alone, and the page names a folded
+    // card's only once it is opened: until then a read is the headings'.
+    let [register, resolved, card_section] = sections;
+    site.set_json(
+        "/api/section",
+        &json!({"version":2,"change":{"path":FOLDED,"sections":[register, resolved]}}),
+    );
+    site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
+    site.set_file(
+        FOLDED_PICTURE,
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="teal"/></svg>"#.to_vec(),
+        "image/svg+xml",
+    );
+    let opened = json!({"version":2,"change":{"path":FOLDED,"sections":[card_section],"threads":threads,
+        "cards":[{"key":"folded-picture","value":folded}]}});
+    (site, opened)
+}
+
+/// The folded card's picture: how many boxes it has, its drawn size and its loaded width; with
+/// none, whether the card is open and how many history entries it draws.
+const FOLDED_IMAGE: &str = r#"(() => {
+    const card = document.getElementById('folded-picture'), image = card?.querySelector('.history img');
+    if (!image) return {open: card?.open, entries: card?.querySelectorAll('.history .entry').length};
+    const box = image.getBoundingClientRect();
+    return {boxes: image.getClientRects().length, width: Math.round(box.width), height: Math.round(box.height), natural: image.naturalWidth};
+})()"#;
+
+/// True once the folded card's summary has held its place for two polls in a row, with nothing
+/// still waiting for its read but what the folded card keeps for its opening: a click aimed at
+/// it then lands on it.
+const SUMMARY_HOLDS_STILL: &str = r#"(() => {
+    const box = document.querySelector('details#folded-picture > summary').getBoundingClientRect();
+    const at = `${box.left},${box.top},${box.width},${box.height}`, was = window.summaryAt;
+    window.summaryAt = at;
+    const waiting = [...document.querySelectorAll('.doc-body [data-pending=true]')]
+        .filter(region => !region.closest('details:not([open])'));
+    return waiting.length === 0 && was === at;
+})()"#;
+
+#[test]
+fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
+    let (site, opened) = folded_card_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
+    page.open(&site.url(&format!("/{FOLDED}")));
+    let summary = "details#folded-picture > summary";
+    assert!(
+        page.wait_for(&crate::visible(summary), SHOWN),
+        "the folded card is drawn"
+    );
+    assert_eq!(
+        page.eval("(() => { const card = document.getElementById('folded-picture'); return [card.open, card.querySelector('.history') !== null]; })()"),
+        json!([false, false]),
+        "the card starts folded, its history not drawn"
+    );
+    // A real click on its summary, as a reader opens it, once the page around it is drawn; the
+    // card's section is read only then, as the page draws its history.
+    assert!(
+        page.wait_for(SUMMARY_HOLDS_STILL, SHOWN),
+        "the folded card's summary holds still"
+    );
+    let card_read = |site: &Site| {
+        site.targets()
+            .iter()
+            .any(|target| target.starts_with("/api/section") && target.contains("folded-picture"))
+    };
+    assert!(
+        !card_read(&site),
+        "a folded card's section is read only once it is opened: {:?}",
+        site.targets()
+    );
+    site.set_json("/api/section", &opened);
+    let point = page.eval(&format!(
+        "(() => {{ const box = document.querySelector({}).getBoundingClientRect(); return {{x: box.left + 40, y: box.top + box.height / 2}}; }})()",
+        json!(summary)
+    ));
+    for kind in ["mousePressed", "mouseReleased"] {
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
+        );
+    }
+    assert!(
+        page.wait_for("document.getElementById('folded-picture').open", SHOWN),
+        "the click at {point} opens the card"
+    );
+    // Waited for by what needs no layout: a page's layout read in the frames the picture's src
+    // lands in gives the picture back its box, and would hide its loss.
+    let image = "document.querySelector('details#folded-picture .history img[src*=\"split.svg\"]')";
+    assert!(
+        page.wait_for(&format!("{image} !== null"), SHOWN),
+        "the opened card reads its section, draws its history and gives its picture its src: {}; {:?}",
+        page.eval(FOLDED_IMAGE),
+        site.targets()
+    );
+    assert!(card_read(&site));
+    // Lost, the picture has no box at all and is never requested, however long it is waited for.
+    assert!(
+        page.wait_for(&format!("{image}?.naturalWidth === 600"), SHOWN),
+        "a folded card opened by a click loads its picture: {}",
+        page.eval(FOLDED_IMAGE)
+    );
+    let seen = page.eval(FOLDED_IMAGE);
+    assert!(
+        seen["boxes"].as_u64() > Some(0)
+            && seen["width"].as_u64() > Some(0)
+            && seen["height"].as_u64() > Some(0),
+        "and draws it: {seen}"
+    );
 }

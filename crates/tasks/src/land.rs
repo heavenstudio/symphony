@@ -9,7 +9,9 @@
 //!    reviewer: never a session that ever executed the task or one of its work subtasks (an
 //!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
 //!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
-//!    orchestrator's approve it goes by ([`independent`]). The approval covers the branch's tip:
+//!    orchestrator's approve it goes by ([`independent`]), on a red filed as one only where the
+//!    fix changes none of the project's tests and checks ([`check_paths`],
+//!    [`unchanged_checks`]). The approval covers the branch's tip:
 //!    the commit the verdict names, else, when it names none of the branch's, every commit of the
 //!    branch made before it and before the task last went to review (the board records no tip, so
 //!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
@@ -85,6 +87,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod check_paths;
 mod moving;
 use moving::Move;
 pub use moving::Moving;
@@ -231,6 +234,10 @@ pub struct Settings {
     /// `[land] timeout_seconds`: how long each generator and the check may run; a fetch or a push
     /// has [`NETWORK`] at most. A land waits for another with no timeout ([`hold`]).
     pub timeout: Duration,
+    /// `[land] check_paths`: what holds the project's tests and checks, which a red's fix its
+    /// orchestrator approves changes none of ([`check_paths`]); [`check_paths::DEFAULT`] unless
+    /// the project names its own.
+    pub check_paths: Vec<check_paths::Entry>,
 }
 
 /// How long a generator or a land's check takes at most, unless the project names another `[land]
@@ -250,6 +257,7 @@ impl Default for Settings {
             keys: BTreeMap::new(),
             push: true,
             timeout: TIMEOUT,
+            check_paths: check_paths::defaults(),
         }
     }
 }
@@ -258,7 +266,8 @@ impl Settings {
     /// `text` as a project file: only the keys a land reads, the rest left to the Symphony's own
     /// reading, but the whole of `[land]`, which is the land's alone: a key it does not know there
     /// (a typo of `push`, say) is refused by its name, as is a generator with a key it does not
-    /// know, no command or no outputs, and a timeout of no time.
+    /// know, no command or no outputs, a timeout of no time and a `check_paths` entry naming
+    /// nothing inside the project ([`check_paths::Entry::parse`]).
     pub fn parse(text: &str) -> Result<Settings, String> {
         #[derive(Default, Deserialize)]
         #[serde(default)]
@@ -291,6 +300,7 @@ impl Settings {
             push: bool,
             timeout_seconds: u64,
             check: bool,
+            check_paths: Option<Vec<String>>,
         }
         impl Default for Land {
             fn default() -> Land {
@@ -300,6 +310,7 @@ impl Settings {
                     push: true,
                     timeout_seconds: TIMEOUT.as_secs(),
                     check: true,
+                    check_paths: None,
                 }
             }
         }
@@ -336,6 +347,12 @@ impl Settings {
         } else {
             (Vec::new(), file.verdicts.check)
         };
+        let check_paths = match &file.land.check_paths {
+            Some(written) => {
+                check_paths::parse(written).map_err(|why| format!("{MANIFEST}: {why}"))?
+            }
+            None => check_paths::defaults(),
+        };
         Ok(Settings {
             default_branch,
             check,
@@ -345,6 +362,7 @@ impl Settings {
             keys,
             push: file.land.push,
             timeout: Duration::from_secs(file.land.timeout_seconds),
+            check_paths,
         })
     }
 
@@ -441,20 +459,43 @@ pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     }
 }
 
+/// How far an approve the land goes by ([`independent`]) stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// On whatever the branch changes: a fresh reviewer's, or a fast fix's orchestrator's.
+    Whole,
+    /// On a branch that changes none of the project's tests and checks ([`check_paths`]) alone:
+    /// the approve of a red's orchestrator or filer (which of the two it is), on a red filed as a
+    /// fast fix ([`crate::fast_fix::RED`]), since a loosened test or check is how a red turns green
+    /// unfixed and needs a reader that did not ask for the fix.
+    ChecksUnchanged(Unfresh),
+}
+
 /// Whether `approval` is one the land goes by on `task`, whose roles `held` says who ever held
 /// ([`Store::ever_held`]), by the rule the board's verdict holds a reviewer to ([`Held::unfresh`]):
 /// never the approve of a session that executed it or a work subtask under it, though the reviewer
 /// that claimed its review instruction may give it (RULES.md `workflow/reviewers-not-the-owner`),
 /// and never of one that orchestrated it, now or before, or filed it, but on a fast fix
 /// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
-/// execute it. The board refuses those verdicts itself, so such an approve is one an older board
-/// took. Otherwise the one line saying whose approve it is and whose it must be.
-pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), String> {
+/// execute it, and, on a red ([`crate::red`]) filed as one, only for a fix that changes none of the
+/// project's checks ([`Scope::ChecksUnchanged`], which the land reads from the branch:
+/// [`unchanged_checks`]). A fast fix whose risk is a red's, by the opening every wording of it keeps
+/// ([`crate::fast_fix::bounds`]), is held to that bound with its red mark or without it: a filer
+/// lifts the mark (`Store::unmark_red`), and no session clears the risk. The board refuses those
+/// verdicts itself, so such an approve is one an older board took. Otherwise the one line saying
+/// whose approve it is and whose it must be.
+pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scope, String> {
     let (slug, by) = (&task.slug, &approval.by);
     let orchestrates = task.holders("orchestrator").contains(&by.as_str());
     let fast = task.fast_fix().is_some();
+    let bound = fast && (task.red() || task.fast_fix().is_some_and(crate::fast_fix::bounds));
     let whose = match held.unfresh(by, &task.created_by, orchestrates, fast) {
-        None => return Ok(()),
+        None if bound => {
+            return Ok(held
+                .requested(by, &task.created_by, orchestrates, false)
+                .map_or(Scope::Whole, Scope::ChecksUnchanged));
+        }
+        None => return Ok(Scope::Whole),
         Some(Unfresh::Executed) => {
             return Err(format!(
                 "{slug}'s approve is {by}'s, which executed it or work under it: a fresh \
@@ -467,6 +508,49 @@ pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), 
     Err(format!(
         "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
          only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+    ))
+}
+
+/// How many of what a red's fix changes of the checks a refusal names.
+const TOUCHED_NAMED: usize = 8;
+
+/// Whether `approval`, standing on the red `task` only where its fix changes none of the project's
+/// checks ([`Scope::ChecksUnchanged`], `why` it is no fresh reviewer's), stands on the tip `tip`,
+/// which `touched` ([`check_paths::touched`]) says changes those named, or why it cannot say:
+/// otherwise the one line naming them and whose approve that needs.
+pub fn unchanged_checks(
+    task: &Task,
+    approval: &Approval,
+    why: Unfresh,
+    tip: &str,
+    touched: Result<Vec<String>, String>,
+) -> Result<(), String> {
+    let (slug, by) = (&task.slug, &approval.by);
+    let whose = match why {
+        Unfresh::Executed => "which executed it or work under it",
+        Unfresh::Orchestrated => "which orchestrated it",
+        Unfresh::Filed => "which filed it",
+    };
+    let changes = match touched {
+        Ok(touched) if touched.is_empty() => return Ok(()),
+        Ok(touched) => {
+            let mut named = touched
+                .iter()
+                .take(TOUCHED_NAMED)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if touched.len() > TOUCHED_NAMED {
+                named.push_str(&format!(" and {} more", touched.len() - TOUCHED_NAMED));
+            }
+            format!("{} changes {named}", short(tip))
+        }
+        Err(cannot) => format!("what {} changes cannot be read ({cannot})", short(tip)),
+    };
+    Err(format!(
+        "{slug}'s approve is {by}'s, {whose}, which lands a red filed as a fast fix only when the \
+         fix changes none of the project's tests and checks (`[land] check_paths`), and {changes}: \
+         a fresh reviewer approves a fix that changes a test or a check"
     ))
 }
 
@@ -1569,13 +1653,15 @@ impl Landing<'_> {
         let approval =
             approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
         let held = self.store.ever_held(slug)?;
-        independent(&task, &approval, &held).map_err(|line| {
-            self.refuse(Refusal::reopening(
+        let staff = |line: String| {
+            Refusal::reopening(
                 line,
                 "@orchestrator",
                 "Staff a fresh reviewer, which approves naming the tip it read".into(),
-            ))
-        })?;
+            )
+        };
+        let scope =
+            independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
         let tip = rev(&self.main, &format!("refs/heads/{slug}"))
             .ok_or_else(|| self.refuse(Refusal::thread(format!("no branch {slug} to land"))))?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
@@ -1594,6 +1680,11 @@ impl Landing<'_> {
                 ),
             ))
         })?;
+        if let Scope::ChecksUnchanged(why) = scope {
+            let touched = check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
+            unchanged_checks(&task, &approval, why, &tip, touched)
+                .map_err(|line| self.refuse(staff(line)))?;
+        }
         self.say(&format!(
             "land {slug}: approved by {} at {}, {}",
             approval.by,
