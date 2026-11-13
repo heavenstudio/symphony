@@ -213,6 +213,27 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
 }
 
 #[test]
+fn a_roll_up_git_cannot_read_still_writes_the_board_s_figures_and_leaves_git_s_out() {
+    let tree = Tree::new();
+    let root = tree.path("plain");
+    std::fs::create_dir_all(&root).unwrap();
+    let folder = tree.path("reports");
+    let fixture = report_board();
+    let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
+    let hub = shared(&root, &folder, &clock);
+
+    hub.reports_tick(Some(&fixture.store));
+    let today = day(&folder, midnight());
+    assert_eq!(today.git, None, "a folder with no repository has no history to read");
+    assert!(today.hours.iter().all(|hour| hour.git.is_none()));
+    assert_eq!(
+        today.hours.iter().map(|hour| hour.landed).sum::<u32>(),
+        1,
+        "the board's figures are written all the same"
+    );
+}
+
+#[test]
 fn a_private_server_keeps_no_day_files_and_the_shared_one_keeps_them_in_the_common_dir() {
     let tree = Tree::new();
     let root = repository(&tree);

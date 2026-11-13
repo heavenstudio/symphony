@@ -479,15 +479,22 @@ fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
     assert_eq!(read(&folder, &written.day), Ok(None));
     write(&folder, &written).unwrap();
     assert_eq!(read(&folder, &written.day), Ok(Some(written.clone())));
-    let names: Vec<String> = std::fs::read_dir(&folder)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(
-        names,
-        [format!("{}.json", written.day)],
-        "no partial file is left"
-    );
+    let names = || -> Vec<String> {
+        std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    };
+    let name = format!("{}.json", written.day);
+    assert_eq!(names(), [name.clone()], "no partial file is left");
+    // A folder in the file's place: the written file cannot take it, and goes.
+    let path = folder.join(&name);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir_all(path.join("held")).unwrap();
+    let refused = write(&folder, &written).unwrap_err();
+    assert!(refused.contains(&name), "{refused}");
+    assert_eq!(names(), [name.clone()], "no partial file is left");
+    std::fs::remove_dir_all(&path).unwrap();
     std::fs::write(folder.join("1999-01-01.json"), "{").unwrap();
     assert!(
         read(&folder, "1999-01-01")

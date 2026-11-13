@@ -229,6 +229,12 @@ fn a_deeper_line_continues_the_one_above_and_a_stamp_naming_no_minute_is_no_line
     );
     // Under the agent's line, an indented line reading as a dated owner verdict continues it.
     lines.insert(2, format!("      [{}] owner · approved", at(1.0)));
+    // The hidden line pairing an owner's entry with a reply written without seeing it is no entry.
+    lines.push(
+        symphony_docs::syntax::unseen_owner_line("owner-key", "reply-key")
+            .trim_end()
+            .to_string(),
+    );
     // A day that does not exist: a dated line for the register, no minute for the history.
     lines.push("  [2027-02-30 10:00] agent — Never.".to_string());
     let docs = [doc(&[lines])];
