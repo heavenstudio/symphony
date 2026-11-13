@@ -7,8 +7,11 @@
 //! `sf-tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept), and a
 //! line naming that file, or why nothing started, to `sf-tasks/on-land.log` (set aside as
 //! `on-land.log.1` past [`LOG_MOST`] bytes). The Symphony's own project names there the build of
-//! `symphony` its main checkout links, `nightly --due`: the release cadence counted in landings,
-//! which builds nothing unless a night is due (docs/RELEASES.md). A board `TASKS_SERVER` names (a
+//! `symphony` its main checkout links, as `nightly --due`: the release cadence counted in
+//! landings, which builds nothing unless a run is due. It is the command's name before the rename
+//! to `symphony release`, which a build older than the rename knows and a newer one runs as
+//! `release --due`, so a land run while the main checkout links either still counts
+//! (docs/RELEASES.md, the rename). A board `TASKS_SERVER` names (a
 //! test's) starts none unless `TASKS_ON_LAND=on`; `TASKS_ON_LAND=off` starts none anywhere.
 
 use crate::cli::Env;

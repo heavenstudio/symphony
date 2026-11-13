@@ -202,12 +202,12 @@ impl Cadence {
     pub(crate) fn starts(&self) -> String {
         match self.since {
             Since::Start => format!(
-                "nightly: due: the first count, {} landings from {}'s start with no release and no \
-                 run on record: a night on its tip starts now\n",
+                "release: due: the first count, {} landings from {}'s start with no release and no \
+                 run on record: a run on its tip starts now\n",
                 self.landings.len(),
                 self.line
             ),
-            _ => format!("nightly: due: a night on {}'s tip starts\n", self.line),
+            _ => format!("release: due: a run on {}'s tip starts\n", self.line),
         }
     }
 
@@ -227,7 +227,8 @@ impl Cadence {
         let every = usize::try_from(self.every).unwrap_or(usize::MAX);
         let next = match &self.running {
             _ if self.every == 0 => {
-                "off ([releases] every_landings = 0): only the night's run or `just nightly`".into()
+                "off ([releases] every_landings = 0): only the scheduled run or `just release`"
+                    .into()
             }
             Some(running) => format!(
                 "in progress: the run {} (process {}, since {}); the count waits for it",
@@ -236,13 +237,13 @@ impl Cadence {
                 local(running.started_at)
             ),
             None if count >= every => format!(
-                "due: {count} of {} landed; the next landing starts it, or `just nightly --due`",
+                "due: {count} of {} landed; the next landing starts it, or `just release --due`",
                 self.every
             ),
             None => {
                 let more = every - count;
                 format!(
-                    "after {more} more {} ({count} of {}), or the night's run",
+                    "after {more} more {} ({count} of {}), or the scheduled run",
                     if more == 1 { "landing" } else { "landings" },
                     self.every
                 )
@@ -265,7 +266,7 @@ pub(crate) fn line_of(root: &Path, remote: &str, branch: &str) -> Result<(String
         .map_err(|e| format!("neither {tracking} nor {branch} names a commit here: {e}"))
 }
 
-/// The cadence of the repository at `root`, whose nightly records are in `folder`, with `releases`
+/// The cadence of the repository at `root`, whose release run records are in `folder`, with `releases`
 /// here newest first, counting every `every` landings on `remote`'s `branch`.
 pub(crate) fn of(
     root: &Path,
@@ -293,7 +294,7 @@ pub(crate) fn of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nightly::record::Board;
+    use crate::release::record::Board;
     use crate::test_tree::Tree;
     use std::path::PathBuf;
 
@@ -411,9 +412,9 @@ mod tests {
 
     fn run_on(id: &str, commit: &str, result: &str, checked: bool) -> Run {
         Run {
-            version: 1,
+            version: record::VERSION,
             id: id.into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             commit: commit.into(),
             tip: commit.into(),
             started_at: 0.0,
@@ -550,8 +551,9 @@ mod tests {
         assert!(cadence(20, 25, None).due(), "past the count, still due");
         assert!(!cadence(0, 25, None).due(), "off");
         let running = Running {
+            version: record::VERSION,
             id: "r1".into(),
-            kind: "nightly".into(),
+            kind: "release".into(),
             pid: 7,
             started_at: 1_800_000_000.0,
             until: 1_800_003_600.0,
@@ -574,7 +576,7 @@ mod tests {
             cadence(20, 7, None).lines(),
             "landings: 7 on origin/main since release-2026-11-12 (aaaaaaaaaaaa); the last \
              tools/task-0 (000000000000)\n\
-             next run: after 13 more landings (7 of 20), or the night's run\n"
+             next run: after 13 more landings (7 of 20), or the scheduled run\n"
         );
         assert!(
             cadence(20, 19, None)
@@ -582,7 +584,7 @@ mod tests {
                 .contains("next run: after 1 more landing (19 of 20)")
         );
         assert!(cadence(20, 20, None).lines().contains(
-            "next run: due: 20 of 20 landed; the next landing starts it, or `just nightly --due`"
+            "next run: due: 20 of 20 landed; the next landing starts it, or `just release --due`"
         ));
         assert!(
             cadence(0, 3, None)
@@ -608,17 +610,17 @@ mod tests {
     }
 
     #[test]
-    fn the_first_count_says_it_starts_a_night_from_the_lines_whole_history() {
+    fn the_first_count_says_it_starts_a_run_from_the_lines_whole_history() {
         let mut first = cadence(20, 86, None);
         first.since = Since::Start;
         assert_eq!(
             first.starts(),
-            "nightly: due: the first count, 86 landings from origin/main's start with no release \
-             and no run on record: a night on its tip starts now\n"
+            "release: due: the first count, 86 landings from origin/main's start with no release \
+             and no run on record: a run on its tip starts now\n"
         );
         assert_eq!(
             cadence(20, 20, None).starts(),
-            "nightly: due: a night on origin/main's tip starts\n"
+            "release: due: a run on origin/main's tip starts\n"
         );
     }
 

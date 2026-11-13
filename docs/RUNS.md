@@ -26,14 +26,14 @@ pipeline (`SYMPHONY_RUN_PIPELINE`); it removes the pipeline for any other, so a
 | `size` | the `size-check` recipe ([CHECKS](CHECKS.md#size-budgets)) |
 | `build` | a Cargo `build`, `check`, `doc` or `rustc` no recipe runs |
 | `review-callback` | the command `[board] on_review` names, as a task moves to review |
-| `landing`, `nightly` | a project's landing and nightly, when they name it |
+| `landing`, `release` | a project's landing and release run, when they name it |
 
 A project names its own pipelines and steps through `tools/record.sh`
 (`--pipeline NAME`, `--step NAME`) or `tasks run`: 1 to 64 ASCII letters, digits,
 `-`, `_` or `.`.
 
 **Trigger.** What started a run: `SYMPHONY_RUN_TRIGGER` when it names one (`on_review`
-for the review command, which the board sets; `nightly` and `land` for what a project
+for the review command, which the board sets; `release` and `land` for what a project
 starts so), else the session the record names, else `owner`. A step's comes from the
 same environment, so it says what started its run.
 

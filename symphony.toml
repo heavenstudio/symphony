@@ -12,13 +12,13 @@ worktrees = "../symphony-wt"
 launch = { default = "claude", model = "opus" }
 
 # What a generated branch passes before it lands with no reviewer: the check closest to the
-# documents it changes. `just verify` is the nightly's (docs/CHECKS.md).
+# documents it changes. `just verify` is the release run's (docs/CHECKS.md).
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
 # A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
 # no check (`check = false`; the docs audit is evidence at the tip, run on main's tip by the
-# regenerator after each round, and part of the nightly's `just verify`) and no generator. What
+# regenerator after each round, and part of the release run's `just verify`) and no generator. What
 # the regenerator a land starts makes of main's newest tip
 # (`just tasks regenerate`): the client distribution the server embeds, rebuilt and committed only
 # when `just client-check` finds it differs from a fresh build, then checked again, and landed as
@@ -38,11 +38,14 @@ keys = { "the client distribution" = ["tools/client-key.sh"] }
 orchestrator_slots = 8
 guide = "docs/TASKS.md"
 # What a land starts once the task is closed, with its slug and merge appended: the release
-# cadence, a night once `[releases] every_landings` tasks have landed (docs/RELEASES.md). The count
-# runs the build this checkout links and builds nothing; a due night builds in its own checkout.
+# cadence, a release run once `[releases] every_landings` tasks have landed (docs/RELEASES.md). The
+# count runs the build this checkout links and builds nothing; a due run builds in its own checkout.
+# It names the command by its name before the rename to `symphony release`, which that build knows
+# whether it is older than the rename or not (`nightly --due` runs `release --due`); it names
+# `release` once that build is newer.
 on_land = [".target/bin/symphony", "nightly", "--due"]
 
-# A night every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
+# A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
 [releases]
 every_landings = 20
 refresh = true

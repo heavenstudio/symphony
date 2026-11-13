@@ -172,7 +172,7 @@ which hands a consumer's own code a bare client to open its store on (`Store::op
 live board), reads it as `cli::open_unchecked` does before it returns the client; it is kept, with
 its signature, for consumers' code, and new code opens by `writable_board` and `Reached::opening`.
 The board's public names consumers call are held by `tests/consumer_api.rs` (the other packages'
-by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to the nightly's
+by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to the release run's
 conciliation): a release's refresh moves a consumer's pin and no code, so one changes only with a
 consumer release plan. `Home::reclaim`
 reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
@@ -682,7 +682,7 @@ Those helpers take a `sys::Command`, std's builder by its method names plus
 child, though this process ignores it, which a test that ends its child by a
 signal sets, since a background job inherits SIGINT and SIGQUIT ignored) and
 `default_signals` (`default_signal` for every signal a process may catch, and none
-blocked: the nightly's checks), and so does every spawn in a session of its own
+blocked: the release run's checks), and so does every spawn in a session of its own
 (`sys::new_session` is gone). std takes its fork path for a `pre_exec`, a
 session or a changed environment with a bare name, and that path's exec-status
 pipe has the same gap, so a racing spawn held `spawn()` itself; on macOS a
@@ -713,9 +713,9 @@ workspace's settings whole and then `disallowed-methods`, refuses std's and
 and `occupied`, by the path they resolve to, however they are spelled, imported
 or gated; the two helpers carry `#[expect(clippy::disallowed_methods)]`. The
 library's test build and each integration test target allow it at their root.
-`sys`'s tests hold the file to the workspace's settings, and the nightly-only
-target `tests/child_guard` (a nested build, so never in the fast plan) runs the
-toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
+`sys`'s tests hold the file to the workspace's settings, and the target
+`tests/child_guard`, which only the release run runs (a nested build, so never in the fast plan),
+runs the toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
 `apps/symphony-ui`'s browser test's own. The Symphony's
 `children` re-exports the list, `command` and `sessionless`.
 
@@ -777,12 +777,12 @@ post or a `docs/` file on main naming a path under it, looked up once a measure 
 says what it holds. `sweep/holder.rs` reads a
 lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
 so a live one lets the tree go only once the board shows its agent finished
-(`Index::agent_finished`); a land's goes once the process it names (and its start) is gone; the nightly's
-(`NIGHTLY_LOCK`, which `crates/symphony`'s nightly tests compare with its own) and any other
-keep it. Foreground `--task` visits only that task's finished worktrees (its closed
-launches', its executors' and reviewers' sessions' once none is live or stale, and those on
-its branch) and asks for a detached full pass. A removed tree's merged branch is deleted with
-it, unless a land's record of its merge names it, under its name or the dashed one an earlier
+(`Index::agent_finished`); a land's goes once the process it names (and its start) is gone;
+the release run's (`RELEASE_LOCK`, which `crates/symphony`'s release tests compare with its own,
+or `LEGACY_LOCK`, its reason before the rename) and any other keep it. Foreground `--task`
+visits only that task's finished worktrees (its closed launches', its executors' and
+reviewers' sessions' once none is live or stale, and those on its branch) and asks for a
+detached full pass. A removed tree's merged branch is deleted with it, unless a land's record of its merge names it, under its name or the dashed one an earlier
 land kept it by (`just land SLUG` run again finishes from the record and the branch, in a
 worktree of its own), or its task is done by an approve no landing
 closed (the guard against moving it back to review reads the branch's tip): the sweep says
@@ -791,7 +791,7 @@ which keeps it.
 `symphony/build/`, the worktree staying, from a worktree the sweep keeps once its work is past
 its executor (its rules in its module doc): every tied task in review, done or cancelled,
 merged or not, an in-process agent's tree tied to its task by its session; the worktree a land
-that ended left, or the nightly's after a week; a tree tied to no task keeps it. Nothing ran
+that ended left, or the release run's after a week; a tree tied to no task keeps it. Nothing ran
 there within the hour: no beat or tool call by an agent bound there, no build or test the
 recorder recorded there, no touch of its git files; no process inside; a holder that lets it
 (a live land and an unknown lock keep it).
@@ -826,12 +826,12 @@ says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
 `on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
 main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
-closed, last, after the sweep and the regenerator are started (so a night it starts finds the
+closed, last, after the sweep and the regenerator are started (so a release run it starts finds the
 regenerator started), detached from the main checkout with the task's slug and the landed
 merge appended, with none of git's repository variables, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
 showing what it said by then; its output goes to `sf-tasks/on-land/STAMP-SLUG.log` (the newest
 `KEPT_STARTS` kept), named by a line in `sf-tasks/on-land.log` (set aside past `LOG_MOST`); this
-repository names the nightly's release cadence there, which builds nothing short of due. A board
+repository names the release cadence there, which builds nothing short of due. A board
 `TASKS_SERVER` names starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
 (`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
@@ -958,7 +958,7 @@ no more than is known) and a pass closes it, a signal ends the regenerator with 
 and `regenerate-check.json` (`Checked`, with its pid while it checks) keeps what it came to,
 which `--status` adds to its line, its exit the outputs' alone.
 `regenerate::status` is `--status`, nonzero but when current;
-`regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
+`regenerate::settled` is `--wait`, which a pin runs, and the release run waits likewise. Its
 tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
 of their own: through a land that starts it detached, three lands during one build, a
 builder killed and replaced, two starts at once, and the check on landed, red, dropped,
@@ -990,7 +990,7 @@ a refusal names it apart, PULL lists a red nobody executes 10 minutes after fili
 first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
 (`Store::next_for`) offers a red before other work of its priority (`tests/store/next.rs`).
 A red a tool files may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
-nightly's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
+release run's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
 approve to that bound, since the board cannot read the repository: `land::independent` gives it
 `Scope::ChecksUnchanged`, keyed on that recorded risk, which no session clears, by the opening
 every wording of it keeps (`fast_fix::RED_OPENING`, pinned by a test, `fast_fix::bounds`), as well
@@ -1000,7 +1000,7 @@ read or more than one merge base (`land/check_paths.rs`, `tests/sweep/land_appro
 Only a session of
 kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
 checks are read in its write's transaction), only a series' own task
-(`red::filed`, never one named under it: the nightly's board and land's standing reds
+(`red::filed`, never one named under it: the release run's board and land's standing reds
 judge by the same `red::filed_in`), and `set_field` refuses the board's own `_board`
 fields. A red's close is never refused: in its write, on a store capping starts or
 not, it holds the slot counters of the owners whose counts it raises
@@ -1130,7 +1130,7 @@ its `surreal export` to a file (written aside, then renamed), both only while th
 database runs as its record says: a board that is not running is refused, never started.
 An export has `EXPORT_LIMIT` (5 minutes): past it the `surreal export` client it started is
 stopped and nothing is written, the database never signalled (`src/server/export.rs`,
-`tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+`tests/server/export.rs`). The Symphony release run's refresh snapshots a
 project's store with them before its schema moves. The `tasks-cutover` binary moves the
 old SQLite board into it once, one way, reading SQLite through `rusqlite`.
 On the in-memory
@@ -1171,7 +1171,8 @@ printed none fails, as a look delivers what it built however long that took.
 word (its other one the board's first) and every message at once with the last
 words named, as a schema 12 copy does, each within a bound of the server's CPU
 stated there.
-Its tier is nightly, so the fast plan leaves it out:
+Only the release run runs it here, and a consuming project's planner tiers it nightly, out of its
+fast plan:
 run it by hand (`tools/cargo.sh test -p symphony-board --test perf`) for a change to the board's
 queries or the api. `SF_PERF_TASKS=PATH` times another `tasks` build on the
 same board. A run leaves its folder in the temporary directory; the next run

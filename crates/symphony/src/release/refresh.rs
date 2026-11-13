@@ -5,7 +5,7 @@
 //!
 //! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, one the release
 //!   descends from, the move to the release ([`pin`]) is made in a worktree of the project's own
-//!   beside the nightly's checkout (`NIGHTLY-refresh/ID`, detached at that branch and locked), and
+//!   beside the release run's checkout (`RELEASE-refresh/ID`, detached at that branch and locked), and
 //!   committed there through the project's own hooks, its commit gate, never past them, on the
 //!   branch `symphony/RELEASE`. A pin moves only forward: one neither ahead of the release nor
 //!   behind it ([`Stands::Beside`]) is left as it is, its files and its board with it, and named
@@ -57,7 +57,7 @@ use crate::children::command;
 use crate::machine::Registry;
 
 /// Why a refresh's worktree of a project is locked, as `git worktree list` says it.
-pub(crate) const REASON: &str = "the Symphony nightly's refresh";
+pub(crate) const REASON: &str = "the Symphony release run's refresh";
 /// The prefix of the branch a project's pin moves on, before the release's name.
 pub(crate) const BRANCH: &str = "symphony/";
 /// What a refresh step's name starts with, before the project's id: no check takes it.
@@ -68,7 +68,7 @@ const KEPT_SNAPSHOTS: usize = 5;
 /// server process to answer: its reload's release build at the machine's load.
 const RELOAD: Duration = Duration::from_secs(20 * 60);
 /// The tests' wait in place of [`RELOAD`], in seconds; no flag sets it.
-const RELOAD_SECONDS: &str = "SYMPHONY_NIGHTLY_RELOAD_SECONDS";
+const RELOAD_SECONDS: &str = "SYMPHONY_RELEASE_RELOAD_SECONDS";
 /// How often that wait asks the server what it is.
 const RELOAD_LOOK: Duration = Duration::from_millis(500);
 /// The variables no command run in a project keeps: a repository git was pointed at (each command
@@ -114,7 +114,7 @@ pub(crate) fn release(against: &Against<'_>, out: &mut dyn Write) -> Refresh {
         said: Vec::new(),
     };
     let mut say = |refresh: &mut Refresh, line: String| {
-        let _ = writeln!(out, "nightly: refresh: {line}");
+        let _ = writeln!(out, "release: refresh: {line}");
         refresh.said.push(line);
     };
     let never = |refresh: &mut Refresh, name: &str, why: String| {
@@ -210,7 +210,7 @@ fn told(refresh: Refresh, out: &mut dyn Write) -> Refresh {
         let why = (ran.error.as_ref()).map_or_else(String::new, |why| format!(": {why}"));
         let _ = writeln!(
             out,
-            "nightly: {} {verdict} ({:.0} s){why}; log {}",
+            "release: {} {verdict} ({:.0} s){why}; log {}",
             ran.name,
             ran.seconds,
             ran.log.display()
@@ -477,7 +477,7 @@ fn vet(
     let commit = format!("the commit {} on {pin}", short(made));
     let left = format!(
         "so its {main} was not moved to it: the branch is left as it is, for its own landing, or for \
-         `git -C {} branch -D {pin}` and an orchestrator's `just nightly --refresh` to make it again",
+         `git -C {} branch -D {pin}` and an orchestrator's `just release --refresh` to make it again",
         root.display()
     );
     let parents = git(root, &["rev-list", "--parents", "-n", "1", made])?;
@@ -559,11 +559,11 @@ fn advance(
     let pin = format!("{BRANCH}{}", against.tag);
     let then = format!(
         "the branch {pin} is left for it, and once that is put right an orchestrator's `just \
-         nightly --refresh` fast-forwards it and moves its board"
+         release --refresh` fast-forwards it and moves its board"
     );
     let landing = format!(
         "the branch {pin} is left for its own landing, and once that lands it an orchestrator's \
-         `just nightly --refresh` moves its board"
+         `just release --refresh` moves its board"
     );
     let head = git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_default();
     if head != *main {
@@ -592,7 +592,7 @@ fn advance(
     if now != tip {
         return Err(format!(
             "its {main} moved on to {} while the move was made, so {} is no longer one commit on \
-             it and nothing was moved: an orchestrator's `just nightly --refresh` makes the move \
+             it and nothing was moved: an orchestrator's `just release --refresh` makes the move \
              again on its tip",
             short(&now),
             short(made)
@@ -856,7 +856,7 @@ fn prepare(
             return Err(format!(
                 "its branch {branch} ({}) is behind its {} and holds more than the refresh's own \
                  commit, so it is left as it is: `git -C {} branch -D {branch}`, then an \
-                 orchestrator's `just nightly --refresh`, makes it again",
+                 orchestrator's `just release --refresh`, makes it again",
                 short(made),
                 consumer.branch,
                 consumer.root.display()
@@ -1015,7 +1015,7 @@ fn message(against: &Against<'_>, from: &[&str], others: &[String]) -> String {
         "Take Symphony {tag}\n\n\
          Its manifests name the tag {tag} for the Symphony's git source, and Cargo.lock moves \
          the Symphony's packages from {from} to it ({commit}), {also}.\n\
-         Made by the Symphony nightly's refresh of that release (docs/RELEASES.md in the \
+         Made by the Symphony release run's refresh of that release (docs/RELEASES.md in the \
          Symphony), for this project's own landing.\n",
         tag = against.tag,
         from = from.join(", "),
@@ -1023,7 +1023,7 @@ fn message(against: &Against<'_>, from: &[&str], others: &[String]) -> String {
     )
 }
 
-/// Make the place `tree` ready for a worktree of `project`: the nightly's own worktree there, from
+/// Make the place `tree` ready for a worktree of `project`: the release run's own worktree there, from
 /// an earlier run, removed; any other folder in the way refused and left as it is.
 fn clear(project: &Path, tree: &Path, log: &mut Log) -> Result<(), String> {
     let listed = git(project, &["worktree", "list", "--porcelain"])?;
@@ -1052,7 +1052,7 @@ fn clear(project: &Path, tree: &Path, log: &mut Log) -> Result<(), String> {
     }
     if fs::symlink_metadata(tree).is_ok() {
         return Err(format!(
-            "{} is in the way and is not the nightly's worktree of {}: it is left as it is; move \
+            "{} is in the way and is not the release run's worktree of {}: it is left as it is; move \
              it away and retry",
             tree.display(),
             project.display()
@@ -1061,7 +1061,7 @@ fn clear(project: &Path, tree: &Path, log: &mut Log) -> Result<(), String> {
     Ok(())
 }
 
-/// The nightly's worktree of a project, removed with it, whatever it holds.
+/// The release run's worktree of a project, removed with it, whatever it holds.
 struct Worktree {
     project: PathBuf,
     path: PathBuf,
@@ -1111,7 +1111,7 @@ fn board_move(
         Err(ServerError::NotUp(why)) => {
             return Err(format!(
                 "{why}: its schema was not read, snapshotted or moved; once it runs (any `just \
-                 tasks` in {root} starts it), an orchestrator's `just nightly --refresh` moves it"
+                 tasks` in {root} starts it), an orchestrator's `just release --refresh` moves it"
             ));
         }
         Err(error) => return Err(error.to_string()),
@@ -1513,7 +1513,7 @@ mod tests {
             "Take Symphony release-2026-11-12\n\nIts manifests name the tag release-2026-11-12 \
              for the Symphony's git source, and Cargo.lock moves the Symphony's packages from \
              aaaaaaaaaaaa to it (0123456789ab), and nothing else.\nMade by the Symphony \
-             nightly's refresh of that release (docs/RELEASES.md in the Symphony), for this \
+             release run's refresh of that release (docs/RELEASES.md in the Symphony), for this \
              project's own landing.\n"
         );
         assert!(
@@ -1676,9 +1676,9 @@ mod tests {
         let tree = Tree::new();
         let root = tree.path("project");
         fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(tree.path("wt/nightly-refresh")).unwrap();
+        fs::create_dir_all(tree.path("wt/release-refresh")).unwrap();
         let root = root.canonicalize().unwrap();
-        let place = (tree.path("wt/nightly-refresh").canonicalize().unwrap()).join("project");
+        let place = (tree.path("wt/release-refresh").canonicalize().unwrap()).join("project");
         let at = place.to_string_lossy().into_owned();
         let run = |args: &[&str]| {
             git(
@@ -1726,7 +1726,7 @@ mod tests {
         assert_eq!(
             refused,
             format!(
-                "{at} is in the way and is not the nightly's worktree of {}: it is left as it is; \
+                "{at} is in the way and is not the release run's worktree of {}: it is left as it is; \
                  move it away and retry",
                 root.display()
             )

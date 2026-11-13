@@ -1,6 +1,6 @@
-//! A night's checks on Symphony's own board: one task per red step of a check that lists its steps
+//! A run's checks on Symphony's own board: one task per red step of a check that lists its steps
 //! ([`super::steps`]: `verify`'s lint, client check, size budgets, docs audit and tests), and per
-//! red check that lists none or is red beyond its steps, `tests/nightly-red-KEY` (KEY the check's
+//! red check that lists none or is red beyond its steps, `tests/release-red-KEY` (KEY the check's
 //! name, a step's under its check's: `verify-size-check`), filed at p0, marked red
 //! ([`symphony_board::red`]: red work takes no orchestrator slot, `next` offers it before other
 //! work of its priority, and PULL names it first while nobody is on it 10 minutes after it was
@@ -16,7 +16,7 @@
 //! open). A run that stopped short of deciding (it could not fetch, check out, finish in time or
 //! push) is the red [`RUN`], which the next run that gets through closes. A closed task's key is
 //! filed again under the next generation (`-2`, `-3`). The run acts as a session of kind filer, the
-//! one kind the board takes a red mark from, which it registers for the night and leaves; a night
+//! one kind the board takes a red mark from, which it registers for the run and leaves; a run
 //! with nothing to file, update or close writes nothing.
 
 use serde_json::{Value, json};
@@ -26,14 +26,17 @@ use super::git::short;
 use super::record::Board;
 use crate::taskcli::CliBoard;
 
-/// The series a night's reds are filed in: [`symphony_board::red::SERIES`]'s nightly one.
-pub(crate) const SERIES: &str = "tests/nightly-red-";
+/// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
+pub(crate) const SERIES: &str = "tests/release-red-";
+/// The series a build older than the rename filed them in ([`symphony_board::red::SERIES`]'s last),
+/// read while a red of it is open ([`generation`]).
+pub(crate) const LEGACY_SERIES: &str = "tests/nightly-red-";
 /// The key of a run that stopped short of deciding, which no check takes.
 pub(crate) const RUN: &str = "run";
 /// The key of a conciliation that could not read the machine's registry, which no check takes.
 pub(crate) const CONCILIATE: &str = "conciliate";
-/// What a nightly red's mark says is red.
-const MARK: &str = "nightly";
+/// What a release run red's mark says is red.
+const MARK: &str = "release";
 /// The document a red task implements.
 const LINK: &str = "docs/RELEASES.md";
 /// The generations of a key looked at before the board is taken to be wrong.
@@ -44,7 +47,7 @@ const TAIL_BYTES: u64 = 6000;
 /// The commits since the last green run a red task lists at most.
 const SINCE_LISTED: usize = 50;
 
-/// The board, as far as a night's reds need it.
+/// The board, as far as a run's reds need it.
 pub(crate) trait Reds {
     /// A session of kind filer: its handle.
     fn register(&self) -> Result<String, String>;
@@ -70,7 +73,7 @@ impl Reds for CliBoard {
         let session = self
             .call(
                 "register",
-                &json!({"kind": symphony_board::red::FILER, "model": "nightly"}),
+                &json!({"kind": symphony_board::red::FILER, "model": "release"}),
             )
             .map_err(|e| e.0)?;
         session["handle"]
@@ -139,7 +142,7 @@ impl Reds for CliBoard {
     }
 }
 
-/// The night the reds are of.
+/// The run the reds are of.
 pub(crate) struct Night<'a> {
     /// The run's id and when it started, as this machine's local minute.
     pub(crate) id: &'a str,
@@ -157,10 +160,10 @@ pub(crate) struct Night<'a> {
     pub(crate) for_owner: bool,
     /// The keys this run found green beyond its checks: [`CONCILIATE`] once the registry read.
     pub(crate) cleared: &'a [&'a str],
-    /// Whether a green this night closes the open red of a key: the candidate holds what it was
+    /// Whether a green this run closes the open red of a key: the candidate holds what it was
     /// red on.
     pub(crate) closes: &'a dyn Fn(&str) -> bool,
-    /// Whether the run checked a candidate (a night or a release), so its getting through closes the
+    /// Whether the run checked a candidate (a run or a release), so its getting through closes the
     /// red [`RUN`]; a `--refresh` checks none, and answers for its refresh steps alone.
     pub(crate) whole: bool,
 }
@@ -188,10 +191,21 @@ fn closed(status: &str) -> bool {
     matches!(status, "done" | "cancelled")
 }
 
-/// The task `key`'s reds go in now: the first of its generations that is open (true) or not on the
-/// board (false); a closed one is passed over.
+/// The task `key`'s reds go in now: an open red a build older than the rename filed for it in
+/// [`LEGACY_SERIES`], so it is updated and closed as it would have been, never left open beside a
+/// new one; else the first of its generations in [`SERIES`] that is open (true) or not on the board
+/// (false), a closed one passed over.
 fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
-    let base = format!("{SERIES}{key}");
+    let (old, open) = first(board, LEGACY_SERIES, key)?;
+    if open {
+        return Ok((old, true));
+    }
+    first(board, SERIES, key)
+}
+
+/// The first of `key`'s generations in `series` that is open (true) or not on the board (false).
+fn first(board: &dyn Reds, series: &str, key: &str) -> Result<(String, bool), String> {
+    let base = format!("{series}{key}");
     for n in 1..=GENERATIONS {
         let slug = if n == 1 {
             base.clone()
@@ -407,8 +421,8 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
 /// is approved, the open red `beside` it ([`beside`]) and what closes it.
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
-        "The Symphony nightly is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
-         Command: `{command}`, in the nightly's clean checkout of that commit: {ended}.\n\
+        "The Symphony release run is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
+         Command: `{command}`, in the release run's clean checkout of that commit: {ended}.\n\
          Log: {log}\n\
          {load}\n\n\
          {tail}\n\n\
@@ -416,8 +430,8 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {since}\n\n\
          Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
          {beside}\
-         The next run of `just nightly` closes this task once `{name}` is green; a fix released \
-         out of cycle (`just nightly --release COMMIT`) closes it too.\n\n\
+         The next run of `just release` closes this task once `{name}` is green; a fix released \
+         out of cycle (`just release --commit COMMIT`) closes it too.\n\n\
          key: {key}\ncheck: {name}",
         beside = beside.unwrap_or_default(),
         name = ran.name,
@@ -435,7 +449,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     )
 }
 
-/// The line a red task that is still open gets on a later red night.
+/// The line a red task that is still open gets on a later red run.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     format!(
         "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
@@ -466,7 +480,7 @@ fn refresh_why(ran: &Ran) -> String {
 /// it was, who fixes it and what closes it.
 fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
     format!(
-        "The Symphony nightly's {command} is red (run {id}, {when}, the release of {commit}): \
+        "The Symphony release run's {command} is red (run {id}, {when}, the release of {commit}): \
          {why}\n\n\
          Log: {log}\n\n\
          {tail}\n\n\
@@ -479,7 +493,7 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
          Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
          that project's, a task on its own board; a main checkout to put right is its owner's; \
          one of the Symphony's is fixed here. {APPROVED} Then an orchestrator reruns the refresh, \
-         `just nightly --refresh` in the Symphony's main checkout, which finishes what this step \
+         `just release --refresh` in the Symphony's main checkout, which finishes what this step \
          did not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
@@ -519,7 +533,7 @@ fn on(night: &Night<'_>) -> String {
 /// Who clears a stop for a process in the run's folders: the process is named in why the run
 /// stopped, with the way out.
 const OWNERS: &str = "Who fixes: the owner, or an orchestrator on the owner's word; not an \
-executor. A process stopped the run by being in the nightly's checkout or its copies' folder, and \
+executor. A process stopped the run by being in the release run's checkout or its copies' folder, and \
 it may be anyone's: a shell, a terminal tab, an editor or a Finder window there counts. An \
 executor ends only a process it started (RULES `delete-by-name`). End it, or move it out of that \
 folder, and the next run goes.";
@@ -527,7 +541,7 @@ folder, and the next run goes.";
 const EXECUTORS: &str = "Who fixes: any free executor takes this from the board.";
 
 /// What the red [`RUN`] says of the reds its checks found before it stopped, `held`, each filed or
-/// heard on a task of its own this night: nothing when there are none.
+/// heard on a task of its own this run: nothing when there are none.
 fn reds_beside(held: &[String]) -> String {
     if held.is_empty() {
         return String::new();
@@ -543,11 +557,11 @@ fn reds_beside(held: &[String]) -> String {
 fn stopped_body(why: &str, night: &Night<'_>, held: &[String]) -> String {
     let beside = reds_beside(held);
     format!(
-        "The Symphony nightly stopped {on} (run {id}, {when}) short of a release: {why}\n\n\
+        "The Symphony release run stopped {on} (run {id}, {when}) short of a release: {why}\n\n\
          {beside}{gap}\
          Until a run gets through, main goes unverified and unreleased. The run's record is \
-         `symphony/nightly/runs/{id}.json` in the git common dir, and `just nightly --status` \
-         says the last night.\n\n\
+         `symphony/release/runs/{id}.json` in the git common dir, and `just release --status` \
+         says the last run.\n\n\
          {who} The next run that gets through closes this task.\n\n\
          key: {RUN}\ncheck: {RUN}",
         on = on(night),
@@ -562,7 +576,7 @@ fn stopped_body(why: &str, night: &Night<'_>, held: &[String]) -> String {
     )
 }
 
-/// What a key that is red files: the task's title and body, the line a later red night adds, and
+/// What a key that is red files: the task's title and body, the line a later red run adds, and
 /// whether it is filed as a fast fix ([`symphony_board::fast_fix::RED`]): every red but a stop the
 /// owner clears, for which nothing lands.
 struct Red {
@@ -572,7 +586,7 @@ struct Red {
     fast_fix: bool,
 }
 
-/// What a night does to one key's task.
+/// What a run does to one key's task.
 enum Act {
     /// File the red `slug`; its later line goes on it instead in case another run filed it.
     File { slug: String, red: Red },
@@ -598,7 +612,7 @@ fn act(
         (None, true) => Some(Act::Close {
             slug,
             why: format!(
-                "Green {} in run {} ({}): {passed}. Closed by the nightly.",
+                "Green {} in run {} ({}): {passed}. Closed by the release run.",
                 on(night),
                 night.id,
                 night.when,
@@ -619,14 +633,14 @@ fn red_of(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> Option<Red> {
     (!ran.green()).then(|| {
         if is_refresh(&ran.name) {
             Red {
-                title: format!("Nightly red: {}", ran.command),
+                title: format!("Release red: {}", ran.command),
                 body: refresh_body(ran, night),
                 again: refresh_again(ran, night),
                 fast_fix: true,
             }
         } else {
             Red {
-                title: format!("Nightly red: {} on {}", ran.name, short(night.commit)),
+                title: format!("Release red: {} on {}", ran.name, short(night.commit)),
                 body: body(ran, night, beside),
                 again: again(ran, night),
                 fast_fix: true,
@@ -646,7 +660,7 @@ fn beside(slug: &str, check: &str) -> String {
     )
 }
 
-/// The line the open red of a check gets on a night it is red in its steps alone, each a task of
+/// The line the open red of a check gets on a run it is red in its steps alone, each a task of
 /// its own ([`super::steps`]): `held`, each red step with its task.
 fn in_steps(ran: &Ran, night: &Night<'_>, held: &[String]) -> String {
     format!(
@@ -661,7 +675,7 @@ fn in_steps(ran: &Ran, night: &Night<'_>, held: &[String]) -> String {
     )
 }
 
-/// What the night does to the tasks of the check `ran` and of each step it listed, in that order
+/// What the run does to the tasks of the check `ran` and of each step it listed, in that order
 /// but the check's last, with what the board refused. A check red in its steps alone files nothing
 /// of its own: its open red, if it has one, hears each red step's task, and a red step filed now
 /// names it on its own ([`beside`]), so two tasks for one red are linked both ways.
@@ -705,10 +719,10 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
 
 /// File or update the red task of each red check of `checks` and of the run when it stopped, and
 /// close the open one of each green check, of the run when it got through and of each key the
-/// night cleared: what it did on the board, with every refusal it met. Each step a check listed is
+/// run cleared: what it did on the board, with every refusal it met. Each step a check listed is
 /// a check here; a check red in its steps alone files nothing of its own, and its open red, if it
 /// has one, hears which ([`super::steps::beyond`]). The red run names the reds filed or heard beside
-/// it ([`reds_beside`]), so a stop never hides one. A night with nothing to write registers no
+/// it ([`reds_beside`]), so a stop never hides one. A run with nothing to write registers no
 /// session.
 pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Board {
     let mut done = Board::default();
@@ -728,7 +742,7 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             let beside = reds_beside(&held);
             let gap = if beside.is_empty() { "" } else { " " };
             Red {
-                title: format!("Nightly red: the run stopped {}", on(night)),
+                title: format!("Release red: the run stopped {}", on(night)),
                 body: stopped_body(why, night, &held),
                 again: format!(
                     "Stopped again (run {}, {}): {why}{gap}{beside}",
@@ -952,13 +966,13 @@ mod tests {
         let board = Fake::default();
         let mut stopped = night(&[]);
         stopped.stopped = Some(
-            "/wt/nightly is in use by process 10 (zsh), working there: nothing is checked while \
+            "/wt/release is in use by process 10 (zsh), working there: nothing is checked while \
              a process is in the run's folders; end it, or move it out of that folder (a shell, \
              a terminal tab, an editor or a Finder window there counts), and the next run goes",
         );
         stopped.for_owner = true;
         report(&board, &stopped, &[]);
-        let filed = board.thread("tests/nightly-red-run").join("\n");
+        let filed = board.thread("tests/release-red-run").join("\n");
         assert!(
             filed.contains(
                 "process 10 (zsh), working there: nothing is checked while a process is in the \
@@ -986,7 +1000,7 @@ mod tests {
         stopped.stopped = Some("git fetch origin failed");
         stopped.for_owner = false;
         report(&board, &stopped, &[]);
-        let filed = board.thread("tests/nightly-red-run").join("\n");
+        let filed = board.thread("tests/release-red-run").join("\n");
         assert!(
             filed.contains(&format!(
                 "\n\n{EXECUTORS} {FIRST} {APPROVED} The next run that gets through closes this \
@@ -995,7 +1009,7 @@ mod tests {
             "{filed}"
         );
         assert!(!filed.contains("the owner"), "{filed}");
-        assert_eq!(*board.fast_fixes.borrow(), ["tests/nightly-red-run"]);
+        assert_eq!(*board.fast_fixes.borrow(), ["tests/release-red-run"]);
     }
 
     #[test]
@@ -1005,10 +1019,10 @@ mod tests {
         stopped.commit = "";
         stopped.stopped = Some("git fetch origin failed");
         let done = report(&board, &stopped, &[]);
-        assert_eq!(done.filed, ["tests/nightly-red-run"], "{done:?}");
-        let filed = board.thread("tests/nightly-red-run").join("\n");
+        assert_eq!(done.filed, ["tests/release-red-run"], "{done:?}");
+        let filed = board.thread("tests/release-red-run").join("\n");
         assert!(
-            filed.starts_with("Nightly red: the run stopped before it had a candidate\n"),
+            filed.starts_with("Release red: the run stopped before it had a candidate\n"),
             "{filed}"
         );
         assert!(
@@ -1023,24 +1037,24 @@ mod tests {
         stopped.commit = "cafe0123456789abcdef";
         stopped.stopped = Some("a timeout");
         let done = report(&board, &stopped, &[]);
-        assert_eq!(done.updated, ["tests/nightly-red-run"]);
+        assert_eq!(done.updated, ["tests/release-red-run"]);
         assert_eq!(
-            board.thread("tests/nightly-red-run")[1],
+            board.thread("tests/release-red-run")[1],
             "Stopped again (run 2026-11-12T0300-1, 2026-11-12 03:00): a timeout"
         );
 
         let done = report(&board, &night(&[]), &[ran("verify", 0)]);
-        assert_eq!(done.closed, ["tests/nightly-red-run"]);
+        assert_eq!(done.closed, ["tests/release-red-run"]);
         assert_eq!(
-            board.thread("tests/nightly-red-run")[2],
+            board.thread("tests/release-red-run")[2],
             "Green on cafe01234567 in run 2026-11-12T0300-1 (2026-11-12 03:00): the run got \
-             through. Closed by the nightly."
+             through. Closed by the release run."
         );
     }
 
     #[test]
     fn a_night_with_nothing_to_write_registers_no_session() {
-        let board = Fake::with(&[("tests/nightly-red-verify", "cancelled")]);
+        let board = Fake::with(&[("tests/release-red-verify", "cancelled")]);
         let done = report(&board, &night(&[]), &[ran("verify", 0), ran("lint", 0)]);
         assert_eq!(done, Board::default());
         assert!(board.sessions.borrow().is_empty(), "no session for nothing");
@@ -1049,32 +1063,32 @@ mod tests {
     #[test]
     fn a_green_that_does_not_hold_the_reds_commit_leaves_it_open() {
         let board = Fake::with(&[
-            ("tests/nightly-red-verify", "ready"),
-            ("tests/nightly-red-lint", "ready"),
+            ("tests/release-red-verify", "ready"),
+            ("tests/release-red-lint", "ready"),
         ]);
         let older = Night {
             closes: &|key| key != "verify",
             ..night(&[])
         };
         let done = report(&board, &older, &[ran("verify", 0), ran("lint", 0)]);
-        assert_eq!(done.closed, ["tests/nightly-red-lint"]);
-        assert_eq!(board.status_of("tests/nightly-red-verify"), "ready");
-        assert!(board.thread("tests/nightly-red-verify").is_empty());
+        assert_eq!(done.closed, ["tests/release-red-lint"]);
+        assert_eq!(board.status_of("tests/release-red-verify"), "ready");
+        assert!(board.thread("tests/release-red-verify").is_empty());
     }
 
     #[test]
     fn a_key_the_night_cleared_closes_its_open_red() {
-        let board = Fake::with(&[("tests/nightly-red-conciliate", "ready")]);
+        let board = Fake::with(&[("tests/release-red-conciliate", "ready")]);
         let read = Night {
             cleared: &[CONCILIATE],
             ..night(&[])
         };
         let done = report(&board, &read, &[]);
-        assert_eq!(done.closed, ["tests/nightly-red-conciliate"]);
+        assert_eq!(done.closed, ["tests/release-red-conciliate"]);
         assert!(
-            board.thread("tests/nightly-red-conciliate")[0].contains("`conciliate` passed"),
+            board.thread("tests/release-red-conciliate")[0].contains("`conciliate` passed"),
             "{:?}",
-            board.thread("tests/nightly-red-conciliate")
+            board.thread("tests/release-red-conciliate")
         );
     }
 
@@ -1106,10 +1120,10 @@ mod tests {
 
     #[test]
     fn a_stop_after_a_red_check_files_each_red_step_beside_the_run_which_names_them() {
-        let board = Fake::with(&[("tests/nightly-red-verify-lint", "ready")]);
+        let board = Fake::with(&[("tests/release-red-verify-lint", "ready")]);
         let mut stopped = night(&[]);
         stopped.stopped = Some(
-            "after `verify` ended red (exit 1), /wt/nightly is in use by process 10 \
+            "after `verify` ended red (exit 1), /wt/release is in use by process 10 \
              (chrome_crashpad_handler), working in apps/symphony-ui",
         );
         stopped.for_owner = true;
@@ -1118,25 +1132,25 @@ mod tests {
         let done = report(&board, &stopped, std::slice::from_ref(&red));
         assert_eq!(
             done.filed,
-            ["tests/nightly-red-verify-tests", "tests/nightly-red-run"]
+            ["tests/release-red-verify-tests", "tests/release-red-run"]
         );
         assert!(
             done.closed.is_empty(),
             "a step it found green closes nothing: {done:?}"
         );
-        assert_eq!(board.status_of("tests/nightly-red-verify-lint"), "ready");
-        let run = board.thread("tests/nightly-red-run").join("\n");
+        assert_eq!(board.status_of("tests/release-red-verify-lint"), "ready");
+        let run = board.thread("tests/release-red-run").join("\n");
         assert!(
             run.contains(
                 "working in apps/symphony-ui\n\nThe reds its checks found before it stopped are \
-                 tasks of their own, not this one's: tests/nightly-red-verify-tests.\n\nUntil a run \
+                 tasks of their own, not this one's: tests/release-red-verify-tests.\n\nUntil a run \
                  gets through"
             ),
             "{run}"
         );
         assert_eq!(
             *board.fast_fixes.borrow(),
-            ["tests/nightly-red-verify-tests"],
+            ["tests/release-red-verify-tests"],
             "the step's red takes the express path, the owner's stop none"
         );
 
@@ -1144,15 +1158,15 @@ mod tests {
         let done = report(&board, &stopped, &[red]);
         assert_eq!(
             done.updated,
-            ["tests/nightly-red-verify-tests", "tests/nightly-red-run"]
+            ["tests/release-red-verify-tests", "tests/release-red-run"]
         );
         assert!(
-            board.thread("tests/nightly-red-run")[1].ends_with(
+            board.thread("tests/release-red-run")[1].ends_with(
                 "working in apps/symphony-ui The reds its checks found before it stopped are \
-                 tasks of their own, not this one's: tests/nightly-red-verify-tests."
+                 tasks of their own, not this one's: tests/release-red-verify-tests."
             ),
             "{:?}",
-            board.thread("tests/nightly-red-run")
+            board.thread("tests/release-red-run")
         );
     }
 
@@ -1164,8 +1178,8 @@ mod tests {
         assert_eq!(
             done.filed,
             [
-                "tests/nightly-red-verify-size-check",
-                "tests/nightly-red-verify-tests"
+                "tests/release-red-verify-size-check",
+                "tests/release-red-verify-tests"
             ]
         );
         assert!(
@@ -1173,12 +1187,12 @@ mod tests {
             "{done:?}"
         );
         let filed = board
-            .thread("tests/nightly-red-verify-size-check")
+            .thread("tests/release-red-verify-size-check")
             .join("\n");
         for said in [
-            "Nightly red: verify/size-check on cafe01234567\n",
-            "The Symphony nightly is red in `verify/size-check` on main at cafe01234567",
-            "Command: `just size-check`, in the nightly's clean checkout of that commit: exit 1.",
+            "Release red: verify/size-check on cafe01234567\n",
+            "The Symphony release run is red in `verify/size-check` on main at cafe01234567",
+            "Command: `just size-check`, in the release run's clean checkout of that commit: exit 1.",
             "Log: /logs/verify/size-check.log\nLoad average when it ended: 1.50, 2.00, 2.50 (over \
              1, 5 and 15 minutes) on 8 processors.\n",
             "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
@@ -1195,8 +1209,8 @@ mod tests {
         assert_eq!(
             *board.fast_fixes.borrow(),
             [
-                "tests/nightly-red-verify-size-check",
-                "tests/nightly-red-verify-tests"
+                "tests/release-red-verify-size-check",
+                "tests/release-red-verify-tests"
             ]
         );
 
@@ -1206,14 +1220,14 @@ mod tests {
             &night(&[]),
             &[verify(&[("lint", 0), ("size-check", 0), ("tests", 101)])],
         );
-        assert_eq!(done.closed, ["tests/nightly-red-verify-size-check"]);
-        assert_eq!(done.updated, ["tests/nightly-red-verify-tests"]);
+        assert_eq!(done.closed, ["tests/release-red-verify-size-check"]);
+        assert_eq!(done.updated, ["tests/release-red-verify-tests"]);
         assert!(done.filed.is_empty(), "{done:?}");
         assert!(
-            board.thread("tests/nightly-red-verify-size-check")[1]
-                .contains("`verify/size-check` passed. Closed by the nightly.")
+            board.thread("tests/release-red-verify-size-check")[1]
+                .contains("`verify/size-check` passed. Closed by the release run.")
         );
-        assert!(board.thread("tests/nightly-red-verify-tests")[1].starts_with("Still red on "));
+        assert!(board.thread("tests/release-red-verify-tests")[1].starts_with("Still red on "));
 
         // All green: the last one closed, and nothing for the check that had none.
         let done = report(
@@ -1221,12 +1235,12 @@ mod tests {
             &night(&[]),
             &[verify(&[("lint", 0), ("size-check", 0), ("tests", 0)])],
         );
-        assert_eq!(done.closed, ["tests/nightly-red-verify-tests"]);
+        assert_eq!(done.closed, ["tests/release-red-verify-tests"]);
         assert!(
             !board
                 .tasks
                 .borrow()
-                .contains_key("tests/nightly-red-verify")
+                .contains_key("tests/release-red-verify")
         );
     }
 
@@ -1234,39 +1248,39 @@ mod tests {
     fn an_open_red_of_the_check_and_each_red_step_name_each_other_and_it_closes_once_it_is_green() {
         // A whole-verify red filed before verify listed its steps, and a step's red already open.
         let board = Fake::with(&[
-            ("tests/nightly-red-verify", "in_progress"),
-            ("tests/nightly-red-verify-tests", "ready"),
+            ("tests/release-red-verify", "in_progress"),
+            ("tests/release-red-verify-tests", "ready"),
         ]);
         let done = report(
             &board,
             &night(&[]),
             &[verify(&[("lint", 2), ("size-check", 0), ("tests", 101)])],
         );
-        assert_eq!(done.filed, ["tests/nightly-red-verify-lint"]);
+        assert_eq!(done.filed, ["tests/release-red-verify-lint"]);
         assert_eq!(
             done.updated,
-            ["tests/nightly-red-verify-tests", "tests/nightly-red-verify"]
+            ["tests/release-red-verify-tests", "tests/release-red-verify"]
         );
         assert_eq!(
-            board.thread("tests/nightly-red-verify"),
+            board.thread("tests/release-red-verify"),
             [
                 "Red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00) in its steps alone, \
-                 each a task of its own: `verify/lint` (exit 2) in tests/nightly-red-verify-lint, \
-                 `verify/tests` (exit 101) in tests/nightly-red-verify-tests. Whoever holds this \
+                 each a task of its own: `verify/lint` (exit 2) in tests/release-red-verify-lint, \
+                 `verify/tests` (exit 101) in tests/release-red-verify-tests. Whoever holds this \
                  task reads those first, as one can be this same failure. This task closes once \
                  `verify` is green."
             ]
         );
-        assert_eq!(board.status_of("tests/nightly-red-verify"), "in_progress");
+        assert_eq!(board.status_of("tests/release-red-verify"), "in_progress");
         // The step filed now names the check's open red; the one already open heard of it above.
-        let lint = board.thread("tests/nightly-red-verify-lint").join("\n");
+        let lint = board.thread("tests/release-red-verify-lint").join("\n");
         assert!(
             lint.contains(
-                "\n\nThe open red of `verify` itself, tests/nightly-red-verify, was filed before \
+                "\n\nThe open red of `verify` itself, tests/release-red-verify, was filed before \
                  this one: one filed before `verify` listed its steps, or for a red beyond them, \
                  can be this same failure, so whoever takes this reads its thread first, and the \
                  two are fixed as one where they are. That task hears of this one, and closes once \
-                 `verify` is green.\n\nThe next run of `just nightly` closes this task once \
+                 `verify` is green.\n\nThe next run of `just release` closes this task once \
                  `verify/lint` is green;"
             ),
             "{lint}"
@@ -1276,9 +1290,9 @@ mod tests {
         assert_eq!(
             done.closed,
             [
-                "tests/nightly-red-verify-lint",
-                "tests/nightly-red-verify-tests",
-                "tests/nightly-red-verify"
+                "tests/release-red-verify-lint",
+                "tests/release-red-verify-tests",
+                "tests/release-red-verify"
             ]
         );
     }
@@ -1293,9 +1307,9 @@ mod tests {
         let done = report(&board, &night(&[]), &[stopped]);
         assert_eq!(
             done.filed,
-            ["tests/nightly-red-verify-lint", "tests/nightly-red-verify"]
+            ["tests/release-red-verify-lint", "tests/release-red-verify"]
         );
-        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        let filed = board.thread("tests/release-red-verify").join("\n");
         assert!(filed.contains("timed out: stopped after 1 s"), "{filed}");
         // Its log is its own lines and its steps' tails: its steps are named by the commands they
         // recorded, never verify.
@@ -1312,7 +1326,7 @@ mod tests {
         );
         assert_eq!(
             *board.fast_fixes.borrow(),
-            ["tests/nightly-red-verify-lint", "tests/nightly-red-verify"]
+            ["tests/release-red-verify-lint", "tests/release-red-verify"]
         );
 
         // Red with every step it listed green: the check, and no step.
@@ -1322,7 +1336,7 @@ mod tests {
             ..verify(&[("lint", 0)])
         };
         let done = report(&board, &night(&[]), &[unexplained]);
-        assert_eq!(done.filed, ["tests/nightly-red-verify"]);
+        assert_eq!(done.filed, ["tests/release-red-verify"]);
     }
 
     fn refresh_red(project: &str, why: &str) -> Ran {
@@ -1339,11 +1353,11 @@ mod tests {
         let board = Fake::default();
         let gate = "its commit gate refused the move to release-2026-11-12 (`git commit` exited 1)";
         let done = report(&board, &night(&[]), &[refresh_red("alpha", gate)]);
-        assert_eq!(done.filed, ["tests/nightly-red-refresh-alpha"]);
-        let filed = board.thread("tests/nightly-red-refresh-alpha").join("\n");
+        assert_eq!(done.filed, ["tests/release-red-refresh-alpha"]);
+        let filed = board.thread("tests/release-red-refresh-alpha").join("\n");
         assert!(
             filed.starts_with(
-                "Nightly red: the refresh of alpha to release-2026-11-12\nThe Symphony nightly's \
+                "Release red: the refresh of alpha to release-2026-11-12\nThe Symphony release run's \
                  the refresh of alpha to release-2026-11-12 is red (run 2026-11-12T0300-1, \
                  2026-11-12 03:00, the release of cafe01234567): its commit gate refused"
             ),
@@ -1352,7 +1366,7 @@ mod tests {
         // An orchestrator's rerun finishes it, not any executor's.
         assert!(
             filed.contains(
-                "Then an orchestrator reruns the refresh, `just nightly --refresh` in the \
+                "Then an orchestrator reruns the refresh, `just release --refresh` in the \
                  Symphony's main checkout, which finishes what this step did not"
             ),
             "{filed}"
@@ -1363,7 +1377,7 @@ mod tests {
             "{filed}"
         );
         assert!(
-            !filed.contains("in the nightly's clean checkout"),
+            !filed.contains("in the release run's clean checkout"),
             "{filed}"
         );
 
@@ -1373,7 +1387,7 @@ mod tests {
             &night(&[]),
             &[refresh_red("alpha", "still refused")],
         );
-        let thread = board.thread("tests/nightly-red-refresh-alpha");
+        let thread = board.thread("tests/release-red-refresh-alpha");
         assert!(
             thread[1].starts_with("Still red, refreshing to the release of cafe01234567 (run ")
                 && thread[1].contains(": still refused. Log: /no/log"),
@@ -1385,25 +1399,25 @@ mod tests {
             ..refresh_red("alpha", "")
         };
         let done = report(&board, &night(&[]), &[green]);
-        assert_eq!(done.closed, ["tests/nightly-red-refresh-alpha"]);
+        assert_eq!(done.closed, ["tests/release-red-refresh-alpha"]);
         assert!(is_refresh("refresh") && is_refresh("refresh-x") && !is_refresh("refreshing"));
     }
 
     #[test]
     fn a_refresh_alone_never_closes_the_runs_red() {
-        let board = Fake::with(&[("tests/nightly-red-run", "ready")]);
+        let board = Fake::with(&[("tests/release-red-run", "ready")]);
         let refresh_only = Night {
             whole: false,
             ..night(&[])
         };
         let done = report(&board, &refresh_only, &[]);
         assert_eq!(done, Board::default());
-        assert_eq!(board.status_of("tests/nightly-red-run"), "ready");
+        assert_eq!(board.status_of("tests/release-red-run"), "ready");
         let done = report(&board, &night(&[]), &[]);
         assert_eq!(
             done.closed,
-            ["tests/nightly-red-run"],
-            "a night that got through does"
+            ["tests/release-red-run"],
+            "a run that got through does"
         );
     }
 
@@ -1423,6 +1437,11 @@ mod tests {
             key("a/b c")
         )));
         assert_eq!(SERIES, symphony_board::red::SERIES[1]);
+        assert_eq!(LEGACY_SERIES, symphony_board::red::SERIES[2]);
+        assert!(symphony_board::red::filed(&format!(
+            "{LEGACY_SERIES}{}",
+            key("a/b c")
+        )));
     }
 
     #[test]
@@ -1430,17 +1449,17 @@ mod tests {
         let board = Fake::default();
         let checks = [ran("verify", 101), ran("lint", 0)];
         let done = report(&board, &night(&[]), &checks);
-        assert_eq!(done.filed, ["tests/nightly-red-verify"]);
+        assert_eq!(done.filed, ["tests/release-red-verify"]);
         assert!(done.updated.is_empty() && done.closed.is_empty() && done.error.is_none());
         assert_eq!(board.tasks.borrow().len(), 1, "a green check files nothing");
-        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        let filed = board.thread("tests/release-red-verify").join("\n");
         assert!(
-            filed.starts_with("Nightly red: verify on cafe01234567\n"),
+            filed.starts_with("Release red: verify on cafe01234567\n"),
             "{filed}"
         );
         assert!(
             filed.contains(
-                "`just verify`, in the nightly's clean checkout of that commit: exit 101."
+                "`just verify`, in the release run's clean checkout of that commit: exit 101."
             ),
             "{filed}"
         );
@@ -1453,10 +1472,10 @@ mod tests {
         );
 
         let done = report(&board, &night(&[]), &checks);
-        assert_eq!(done.updated, ["tests/nightly-red-verify"]);
+        assert_eq!(done.updated, ["tests/release-red-verify"]);
         assert!(done.filed.is_empty());
         assert_eq!(board.tasks.borrow().len(), 1);
-        let thread = board.thread("tests/nightly-red-verify");
+        let thread = board.thread("tests/release-red-verify");
         assert_eq!(thread.len(), 2);
         assert!(
             thread[1].starts_with(
@@ -1468,21 +1487,21 @@ mod tests {
 
     #[test]
     fn a_green_check_closes_its_open_red_and_a_later_red_files_the_next_generation() {
-        let board = Fake::with(&[("tests/nightly-red-verify", "in_progress")]);
+        let board = Fake::with(&[("tests/release-red-verify", "in_progress")]);
         let done = report(&board, &night(&[]), &[ran("verify", 0)]);
-        assert_eq!(done.closed, ["tests/nightly-red-verify"]);
-        assert_eq!(board.status_of("tests/nightly-red-verify"), "cancelled");
+        assert_eq!(done.closed, ["tests/release-red-verify"]);
+        assert_eq!(board.status_of("tests/release-red-verify"), "cancelled");
         assert!(
-            board.thread("tests/nightly-red-verify")[0].starts_with("Green on cafe01234567 in run")
+            board.thread("tests/release-red-verify")[0].starts_with("Green on cafe01234567 in run")
         );
 
         let done = report(&board, &night(&[]), &[ran("verify", 0)]);
         assert!(done.closed.is_empty(), "nothing open to close: {done:?}");
 
         let done = report(&board, &night(&[]), &[ran("verify", 2)]);
-        assert_eq!(done.filed, ["tests/nightly-red-verify-2"]);
+        assert_eq!(done.filed, ["tests/release-red-verify-2"]);
         assert_eq!(
-            board.status_of("tests/nightly-red-verify"),
+            board.status_of("tests/release-red-verify"),
             "cancelled",
             "a closed red stays closed"
         );
@@ -1491,24 +1510,62 @@ mod tests {
     #[test]
     fn the_open_generation_is_the_one_a_night_writes_to() {
         let board = Fake::with(&[
-            ("tests/nightly-red-verify", "cancelled"),
-            ("tests/nightly-red-verify-2", "done"),
-            ("tests/nightly-red-verify-3", "review"),
+            ("tests/release-red-verify", "cancelled"),
+            ("tests/release-red-verify-2", "done"),
+            ("tests/release-red-verify-3", "review"),
         ]);
         let done = report(&board, &night(&[]), &[ran("verify", 1)]);
-        assert_eq!(done.updated, ["tests/nightly-red-verify-3"]);
+        assert_eq!(done.updated, ["tests/release-red-verify-3"]);
         let done = report(&board, &night(&[]), &[ran("verify", 0)]);
-        assert_eq!(done.closed, ["tests/nightly-red-verify-3"]);
+        assert_eq!(done.closed, ["tests/release-red-verify-3"]);
+    }
+
+    #[test]
+    fn an_open_red_a_build_older_than_the_rename_filed_is_updated_and_closed_never_orphaned() {
+        let board = Fake::with(&[
+            ("tests/nightly-red-verify", "cancelled"),
+            ("tests/nightly-red-verify-2", "in_progress"),
+            ("tests/nightly-red-lint", "review"),
+            ("tests/nightly-red-run", "ready"),
+            ("tests/nightly-red-docs", "done"),
+        ]);
+        // Red again: its old task hears of it, and nothing is filed beside it.
+        let done = report(&board, &night(&[]), &[ran("verify", 1), ran("lint", 0)]);
+        assert_eq!(done.updated, ["tests/nightly-red-verify-2"]);
+        assert_eq!(
+            done.closed,
+            ["tests/nightly-red-lint", "tests/nightly-red-run"]
+        );
+        assert!(done.filed.is_empty() && done.error.is_none(), "{done:?}");
+        assert!(
+            board.thread("tests/nightly-red-verify-2")[0].starts_with(
+                "Still red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00): exit 1."
+            ),
+            "{:?}",
+            board.thread("tests/nightly-red-verify-2")
+        );
+        assert_eq!(board.status_of("tests/nightly-red-lint"), "cancelled");
+        assert!(board.thread("tests/nightly-red-lint")[0].starts_with("Green on cafe01234567"));
+        assert_eq!(board.status_of("tests/nightly-red-run"), "cancelled");
+        // Green: it closes. Red once more: the new series' first, the old one being all closed.
+        let done = report(&board, &night(&[]), &[ran("verify", 0)]);
+        assert_eq!(done.closed, ["tests/nightly-red-verify-2"]);
+        let done = report(&board, &night(&[]), &[ran("verify", 1), ran("docs", 1)]);
+        assert_eq!(
+            done.filed,
+            ["tests/release-red-verify", "tests/release-red-docs"]
+        );
+        assert_eq!(board.status_of("tests/nightly-red-docs"), "done");
     }
 
     #[test]
     fn a_red_another_run_filed_first_is_updated_never_filed_twice() {
         let board = Fake {
-            raced: Some("tests/nightly-red-verify"),
+            raced: Some("tests/release-red-verify"),
             ..Fake::default()
         };
         let done = report(&board, &night(&[]), &[ran("verify", 1)]);
-        assert_eq!(done.updated, ["tests/nightly-red-verify"]);
+        assert_eq!(done.updated, ["tests/release-red-verify"]);
         assert!(done.filed.is_empty() && done.error.is_none(), "{done:?}");
     }
 
@@ -1516,13 +1573,13 @@ mod tests {
     fn what_the_board_refuses_is_said_and_the_other_checks_still_go() {
         let board = Fake {
             refuse: vec!["create"],
-            ..Fake::with(&[("tests/nightly-red-lint", "ready")])
+            ..Fake::with(&[("tests/release-red-lint", "ready")])
         };
         let done = report(&board, &night(&[]), &[ran("verify", 1), ran("lint", 0)]);
-        assert_eq!(done.closed, ["tests/nightly-red-lint"]);
+        assert_eq!(done.closed, ["tests/release-red-lint"]);
         assert_eq!(
             done.error.as_deref(),
-            Some("tests/nightly-red-verify: create refused")
+            Some("tests/release-red-verify: create refused")
         );
         assert!(
             !board.sessions.borrow()[0].1,
@@ -1573,7 +1630,7 @@ mod tests {
             ..Fake::default()
         };
         let done = report(&unleaving, &night(&[]), &[ran("verify", 1)]);
-        assert_eq!(done.filed, ["tests/nightly-red-verify"]);
+        assert_eq!(done.filed, ["tests/release-red-verify"]);
         assert_eq!(
             done.error.as_deref(),
             Some("cannot leave the board session filer-1: leave refused")
@@ -1593,7 +1650,7 @@ mod tests {
         let done = report(&board, &night(&[]), &[ran("verify", 1)]);
         assert_eq!(
             done.error.as_deref(),
-            Some("tests/nightly-red-verify: 1000 generations, all closed")
+            Some("tests/release-red-verify: 1000 generations, all closed")
         );
         assert!(done.filed.is_empty());
         assert_eq!(board.tasks.borrow().len(), spent.len());
@@ -1606,7 +1663,7 @@ mod tests {
             .collect();
         let board = Fake::default();
         report(&board, &night(&listed), &[ran("verify", 1)]);
-        let body = board.thread("tests/nightly-red-verify").join("\n");
+        let body = board.thread("tests/release-red-verify").join("\n");
         assert!(
             body.contains(&format!(
                 "Commits since the last green run, `git log --oneline beef01234567..cafe01234567` ({}):\n- c0 change 0\n",
@@ -1652,7 +1709,7 @@ mod tests {
         };
         let board = Fake::default();
         report(&board, &night(&[]), std::slice::from_ref(&red));
-        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        let filed = board.thread("tests/release-red-verify").join("\n");
         for said in [
             format!(
                 "Log: {}\nLoad average when it ended: 31.92, 70.68, 171.07 (over 1, 5 and 15 \
@@ -1669,16 +1726,16 @@ mod tests {
         ] {
             assert!(filed.contains(&said), "{said:?} in:\n{filed}");
         }
-        assert_eq!(*board.fast_fixes.borrow(), ["tests/nightly-red-verify"]);
+        assert_eq!(*board.fast_fixes.borrow(), ["tests/release-red-verify"]);
 
-        // Red again: the line says the load and the reruns of this night.
+        // Red again: the line says the load and the reruns of this run.
         let later = Ran {
             log: cargo_log(&tree, 1),
             load: None,
             ..red
         };
         report(&board, &night(&[]), &[later]);
-        let again = &board.thread("tests/nightly-red-verify")[1];
+        let again = &board.thread("tests/release-red-verify")[1];
         assert!(
             again.contains("\nLoad average when it ended: not recorded.\n\nRerun alone"),
             "{again}"

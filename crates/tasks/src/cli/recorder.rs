@@ -4,7 +4,7 @@
 //! runs: queued, running once it started, said again every [`BEAT`] while it runs, then kept in the
 //! history and finished with how it ended. A build or test it records puts the task it ran for in
 //! the board's Build or Test column (docs/MACHINE_WORK.md). A build wrapper runs it by the board's
-//! binary (`tools/record.sh`, a review callback, the nightly): the `tasks` recipe `symphony init`
+//! binary (`tools/record.sh`, a review callback, the release run): the `tasks` recipe `symphony init`
 //! installs refuses it, as an agent runs `just tasks` unasked and this runs any command.
 //!
 //! On macOS the `tasks` process becomes COMMAND (`execvp`): the process its caller started, waits

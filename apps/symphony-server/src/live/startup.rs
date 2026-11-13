@@ -41,7 +41,9 @@ impl Hub {
                 "· Symphony data worker panicked while stopping"
             ));
         }
-        // The hour so far, once no tick records more.
+        drop(worker);
+        // The worker has ended, so no tick records after the hour so far is written.
+        self.stop_agents();
         self.health.stop_hours(self.now());
     }
 
@@ -83,6 +85,16 @@ impl Hub {
                 Err(why) => {
                     crate::front::tell(format_args!("→ board health: no hours kept ({why})"))
                 }
+            }
+            // So are the agents' day files, which a private server's ticks would say twice.
+            match super::agent_activity::folder(&env) {
+                Ok(folder) => {
+                    *hub.agent_activity
+                        .get_mut()
+                        .unwrap_or_else(|e| e.into_inner()) =
+                        Some(super::agent_activity::Recorder::new(folder));
+                }
+                Err(why) => eprintln!("→ agent activity: not recorded ({why})"),
             }
         } else {
             eprintln!("→ chat journal: left untouched by this private server");

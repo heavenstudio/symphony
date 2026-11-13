@@ -1,12 +1,12 @@
-//! `symphony nightly` (`just nightly`): Symphony's releases (docs/RELEASES.md). A run takes main's
+//! `symphony release` (`just release`): Symphony's releases (docs/RELEASES.md). A run takes main's
 //! tip as fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]), runs the full verification there and conciliates
 //! the projects the machine serves against it ([`conciliate`]). Every red check, and a run that
 //! stopped short of deciding, is a task on the board ([`board`]); when every check is green it tags
 //! the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`])
-//! and pushes that one tag. `--release COMMIT` does the same out of cycle for a commit already on
+//! and pushes that one tag. `--commit COMMIT` does the same out of cycle for a commit already on
 //! the remote's main and past the newest release. Each run is recorded in the git common dir
-//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each night
+//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each day
 //! ([`schedule`]), which the owner installs.
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
@@ -40,7 +40,7 @@ mod schedule;
 mod steps;
 mod tags;
 
-use std::fs::{self, OpenOptions, TryLockError};
+use std::fs::{self, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,13 +57,13 @@ use tags::Release;
 use crate::cli::{Flag, parse, refuse};
 use crate::project::Project;
 
-const USAGE: &str = "usage: symphony nightly [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
-[--worktree PATH] [--check NAME=COMMAND] [--release COMMIT] [--no-push] [--timeout SECONDS] \
+const USAGE: &str = "usage: symphony release [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
+[--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] [--timeout SECONDS] \
 [--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder and conciliated with the projects this machine serves; \
-each red check filed on the board as tests/nightly-red-NAME, and a green commit tagged \
+each red check filed on the board as tests/release-red-NAME, and a green commit tagged \
 release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
 branch through its own commit gate, its main fast-forwarded to it in its main checkout when that \
 is on its main and clean, and its board moved to the schema of the pin its main locks \
@@ -74,32 +74,32 @@ options:
   --root ROOT           a checkout of the repository to release (default: the current folder)
   --remote NAME         the remote whose main is released and that takes the tag (default: origin)
   --branch NAME         its main line (default: the project's default branch)
-  --worktree PATH       the run's own checkout, outside the repository's folder (default: nightly
+  --worktree PATH       the run's own checkout, outside the repository's folder (default: release
                         in the project's agent worktrees folder)
   --check NAME=COMMAND  a check, run in that checkout with sh -c; repeat for each, in order
                         (default: verify=just verify). One that lists its steps in the folder
                         SYMPHONY_CHECK_STEPS names is told by them, a red each
-  --release COMMIT      out of cycle: the same checks on COMMIT, which must be on the remote's main
+  --commit COMMIT       out of cycle: the same checks on COMMIT, which must be on the remote's main
                         and past the newest release
   --no-push             tag the release here, push nothing
   --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
                         check not yet started are red (default: 36000, ten hours; at most
                         86400)
-  --status              print the newest release, the last night and its age, the landings since
+  --status              print the newest release, the last run and its age, the landings since
                         the last release and what the next run waits for, and the last refresh;
                         run nothing
-  --schedule            print the schedule entry that runs `just nightly` each day; install nothing
+  --schedule            print the schedule entry that runs `just release` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)
-  --due [SLUG COMMIT]   run a night only when [releases] every_landings tasks have landed since the
-                        last release or the last run that checked something, and no run is in
-                        progress; else say what it waits for and run nothing, counting with git
-                        and building nothing. A due night runs from a build of the tip made in
-                        the run's own checkout. A landing's on_land command runs it, naming the
-                        task and its merge
+  --due [SLUG COMMIT]   start a run only when [releases] every_landings tasks have landed since
+                        the last release or the last run that checked something, and no run is
+                        in progress; else say what it waits for and run nothing, counting with
+                        git and building nothing. A due run goes on from a build of the tip made
+                        in the run's own checkout. A landing's on_land command runs it, naming
+                        the task and its merge
   --refresh             refresh the machine to the newest release here again, checking nothing:
                         an orchestrator's retry of a red or interrupted refresh";
 
-/// The checks a night runs unless told others: the full verification.
+/// The checks a run runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
 /// The run's time unless `--timeout` says otherwise.
 const RUN_SECONDS: u64 = 10 * 3600;
@@ -120,7 +120,7 @@ const REFRESH: Duration = Duration::from_secs(2 * 3600);
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
 /// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
 /// ([`far_push`]), so a release named for another day than the machine's never leaves it.
-const CLOCK: &str = "SYMPHONY_NIGHTLY_NOW";
+const CLOCK: &str = "SYMPHONY_RELEASE_NOW";
 /// How long a run that finds the lock held and no run saying so waits for the run that has just
 /// taken it to say so.
 const SAYS_HELD: Duration = Duration::from_secs(2);
@@ -134,18 +134,18 @@ const REGENERATING: Duration = Duration::from_secs(2);
 /// long a move of the main checkout's branch has to reach the remote.
 const REGENERATOR: Duration = Duration::from_secs(60);
 /// The tests' wait in place of [`REGENERATOR`], in seconds; no flag sets it.
-const REGENERATOR_SECONDS: &str = "SYMPHONY_NIGHTLY_REGENERATOR_SECONDS";
+const REGENERATOR_SECONDS: &str = "SYMPHONY_RELEASE_REGENERATOR_SECONDS";
 
 /// What a run is asked to do.
 struct Options {
     remote: String,
     branch: String,
     worktree: PathBuf,
-    /// Whether `--worktree` named it: a checkout named by hand that is not the nightly's is a
+    /// Whether `--worktree` named it: a checkout named by hand that is not the release run's is a
     /// refusal, the default one an error the board hears of.
     named: bool,
     checks: Vec<Step>,
-    release: Option<String>,
+    out_of_cycle: Option<String>,
     push: bool,
     now: f64,
     timeout: Duration,
@@ -179,7 +179,7 @@ fn clock() -> Result<f64, String> {
     }
 }
 
-/// `symphony nightly ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or a
+/// `symphony release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or a
 /// run that could not finish, 2 a command line refused.
 pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flag = |name, value| Flag { name, value };
@@ -189,7 +189,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--branch", true),
         flag("--worktree", true),
         flag("--check", true),
-        flag("--release", true),
+        flag("--commit", true),
         flag("--no-push", false),
         flag("--timeout", true),
         flag("--status", false),
@@ -198,6 +198,10 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--due", false),
         flag("--refresh", false),
     ];
+    if names_legacy_commit(args, &flags) {
+        let _ = writeln!(err, "`{LEGACY_COMMIT} COMMIT` is now `--commit COMMIT`");
+        return 2;
+    }
     let parsed = match parse(args, &flags) {
         Ok(parsed) if parsed.help => {
             let _ = writeln!(out, "{USAGE}\n\n{HELP}");
@@ -210,16 +214,16 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return refuse(
                 err,
                 USAGE,
-                "nightly",
+                "release",
                 &format!("unrecognized arguments: {extra}"),
             );
         }
         Ok(parsed) => parsed,
-        Err(problem) => return refuse(err, USAGE, "nightly", &problem),
+        Err(problem) => return refuse(err, USAGE, "release", &problem),
     };
     let now = match clock() {
         Ok(now) => now,
-        Err(problem) => return refuse(err, USAGE, "nightly", &problem),
+        Err(problem) => return refuse(err, USAGE, "release", &problem),
     };
     let timeout = match parsed.value("--timeout") {
         None => Duration::from_secs(RUN_SECONDS),
@@ -228,7 +232,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 return refuse(
                     err,
                     USAGE,
-                    "nightly",
+                    "release",
                     &format!(
                         "--timeout {seconds} is longer than a run may take: at most \
                          {MOST_SECONDS} seconds (24 hours)"
@@ -240,13 +244,13 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 return refuse(
                     err,
                     USAGE,
-                    "nightly",
+                    "release",
                     &format!("--timeout {seconds:?} is not a number of seconds"),
                 );
             }
         },
     };
-    let modes = ["--status", "--schedule", "--release", "--due", "--refresh"]
+    let modes = ["--status", "--schedule", "--commit", "--due", "--refresh"]
         .into_iter()
         .filter(|mode| parsed.flag(mode))
         .count();
@@ -254,14 +258,14 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         return refuse(
             err,
             USAGE,
-            "nightly",
-            "--status, --schedule, --release, --due and --refresh are one each",
+            "release",
+            "--status, --schedule, --commit, --due and --refresh are one each",
         );
     }
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
         Ok(repo) => repo,
         Err(problem) => {
-            let _ = writeln!(err, "symphony nightly: {problem}");
+            let _ = writeln!(err, "symphony release: {problem}");
             return 1;
         }
     };
@@ -275,7 +279,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if parsed.flag("--schedule") {
         let at = parsed.value("--at").unwrap_or("03:00");
         let Some(time) = schedule::time(at) else {
-            return refuse(err, USAGE, "nightly", &format!("--at {at:?} is not HH:MM"));
+            return refuse(err, USAGE, "release", &format!("--at {at:?} is not HH:MM"));
         };
         let _ = write!(
             out,
@@ -293,7 +297,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     }
     let checks = match checks_of(parsed.values("--check")) {
         Ok(checks) => checks,
-        Err(problem) => return refuse(err, USAGE, "nightly", &problem),
+        Err(problem) => return refuse(err, USAGE, "release", &problem),
     };
     let worktree = match parsed.value("--worktree") {
         Some(path) => normal(&std::env::current_dir().unwrap_or_default().join(path)),
@@ -302,14 +306,14 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let mut cause = None;
     if parsed.flag("--due") {
         if let [slug, landed] = &parsed.positionals[..] {
-            let _ = writeln!(out, "nightly: {slug} landed ({})", short(landed));
+            let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
         }
         let cadence = match cadence_of(&repo, &remote, &branch) {
             Ok(cadence) => cadence,
             Err(problem) => {
                 let _ = writeln!(
                     err,
-                    "symphony nightly: the landings cannot be counted: {problem}"
+                    "symphony release: the landings cannot be counted: {problem}"
                 );
                 return 1;
             }
@@ -327,7 +331,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         worktree,
         named: parsed.value("--worktree").is_some(),
         checks,
-        release: parsed.value("--release").map(str::to_string),
+        out_of_cycle: parsed.value("--commit").map(str::to_string),
         push: !parsed.flag("--no-push"),
         now,
         timeout,
@@ -341,7 +345,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         return refuse(
             err,
             USAGE,
-            "nightly",
+            "release",
             &format!(
                 "{CLOCK} is the tests' clock: a run on it pushes only to a remote that is a folder \
                  on this machine, and {} pushes to {url}; add --no-push",
@@ -357,48 +361,93 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     run(&repo, &options, out, err)
 }
 
-/// What a run a due count handed its night to is told ([`hand_off`]): the build it is.
-const DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
-/// The time the checkout and the build a due count's night runs from have.
+/// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
+const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
+/// What a build older than the rename tells the build it hands a due count's run to, which may be
+/// this one ([`legacy`]): the same as [`DRIVER`].
+const LEGACY_DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
+/// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
-/// A due count's night, handed to a build of the tip it verifies. The count ran on the build the
-/// main checkout links, building nothing; now, the lock held, the nightly's own checkout is brought
+/// The command's name before the rename to `symphony release`, which a build older than it runs
+/// ([`legacy`]).
+pub const LEGACY: &str = "nightly";
+/// `--commit` as it was named before the rename, which older briefs and reds say.
+const LEGACY_COMMIT: &str = "--release";
+
+/// Whether `args` give [`LEGACY_COMMIT`], by its name or by a start of it that no flag of `flags`
+/// begins with, as the parser then took it (with its value after `=` or not), before a `--`. A
+/// flag's value never starts with `--`, which the parser refuses, so any such word is one.
+fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
+    (args.iter())
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| {
+            let name = arg.split_once('=').map_or(arg.as_str(), |(name, _)| name);
+            name.len() > 2
+                && LEGACY_COMMIT.starts_with(name)
+                && !flags.iter().any(|flag| flag.name.starts_with(name))
+        })
+}
+
+/// `symphony nightly ARGS`, the command's name before the rename: its exit code. A landing's
+/// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
+/// handing a due count's run to a build of the tip (which may be this one), run it as `release
+/// --due` would; anything else is refused, saying the new name, exit 2.
+pub fn legacy(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.iter().any(|arg| arg == "--due") {
+        return main(args, out, err);
+    }
+    let _ = writeln!(err, "`symphony {LEGACY}` is now `symphony release`");
+    2
+}
+
+/// Whether this process is the build a due count handed its run to, by this build or by one older
+/// than the rename.
+fn driven() -> bool {
+    [DRIVER, LEGACY_DRIVER]
+        .into_iter()
+        .any(|name| std::env::var_os(name).is_some())
+}
+
+/// Say each line of `noted` on `out`, as a run says what it did on the way.
+fn note(out: &mut dyn Write, noted: &[String]) {
+    for line in noted {
+        let _ = writeln!(out, "release: {line}");
+    }
+}
+
+/// A due count's run, handed to a build of the tip it verifies. The count ran on the build the
+/// main checkout links, building nothing; now, the lock held, the release run's own checkout is brought
 /// to the line's tip, `tools/rs-bin.sh --build symphony` builds there, in that checkout's own build
 /// folder and never the main checkout's (where a landing's `just tasks` would wait on its lock), and
-/// this process becomes that build, with `args` as given. None when the night runs here: this is
+/// this process becomes that build, with `args` as given. None when the run goes on here: this is
 /// that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or the build failed,
-/// which is said and which the night then meets as it would. An exit code when a run holds the lock:
+/// which is said and which the run then meets as it would. An exit code when a run holds the lock:
 /// the count waits for it and nothing more runs.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     use std::os::unix::process::CommandExt as _;
-    if std::env::var_os(DRIVER).is_some() {
+    if driven() {
         return None;
     }
-    let folder = record::folder(&repo.common);
-    fs::create_dir_all(&folder).ok()?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(folder.join("run.lock"))
-        .ok()?;
-    match lock.try_lock() {
+    let lock = record::lock(&repo.common).ok()?;
+    match lock.taken {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
             let _ = writeln!(
                 out,
-                "nightly: a run holds the lock: the count waits for it, and nothing more runs"
+                "release: a run holds the lock: the count waits for it, and nothing more runs"
             );
             return Some(0);
         }
         Err(TryLockError::Error(_)) => return None,
     }
-    // Said while it builds, so a count or a night started meanwhile hears who holds the lock.
+    note(out, lock.moved.as_slice());
+    let folder = lock.folder.clone();
+    // Said while it builds, so a count or a run started meanwhile hears who holds the lock.
     let building = Running {
+        version: record::VERSION,
         id: format!("build-{}", std::process::id()),
-        kind: "nightly".into(),
+        kind: "release".into(),
         pid: std::process::id(),
         started_at: options.now,
         until: options.now + DRIVER_BUILD.as_secs_f64(),
@@ -407,40 +456,47 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
     let _ = record::hold(&folder, &building);
     let built = driver(repo, options, out);
     record::release(&folder, &building.id);
-    let _ = lock.unlock();
+    let _ = lock.file.unlock();
     drop(lock);
     let driver = match built {
         Ok(Some(driver)) => driver,
         Ok(None) => return None,
         Err(why) => {
-            let _ = writeln!(out, "nightly: the night runs from this build: {why}");
+            let _ = writeln!(out, "release: the run goes on from this build: {why}");
             return None;
         }
     };
     let _ = writeln!(
         out,
-        "nightly: the night runs from {}, built in its own checkout",
+        "release: the run goes on from {}, built in its own checkout",
         driver.display()
     );
     let _ = out.flush();
     let error = std::process::Command::new(&driver)
-        .arg("nightly")
+        .arg("release")
         .args(args)
         .env(DRIVER, &driver)
         .exec();
     let _ = writeln!(
         out,
-        "nightly: {} cannot run ({error}): the night runs from this build",
+        "release: {} cannot run ({error}): the run goes on from this build",
         driver.display()
     );
     None
 }
 
-/// The build of `symphony` a due count's night runs from: the nightly's checkout brought to the
-/// line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
+/// The build of `symphony` a due count's run starts from: the release run's checkout brought to
+/// the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
 /// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
+    // A process in what a build older than the rename left keeps it where it is: the run goes on
+    // from this build, which stops as that look does.
+    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree)?;
+    unused_in(&legacy.trees(), until).map_err(|stop| match stop {
+        Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why) => why,
+    })?;
+    note(out, &legacy.moved(&repo.root, &repo.common, until)?);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
     let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
     let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
@@ -458,7 +514,8 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         .args(["--build", "symphony"])
         .current_dir(&place.checkout)
         .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER);
+        .env_remove(DRIVER)
+        .env_remove(LEGACY_DRIVER);
     let done = group::output_until(&mut build, until).map_err(|failed| match failed {
         group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
         group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
@@ -503,7 +560,7 @@ fn far_push(root: &Path, remote: &str) -> Option<String> {
 }
 
 /// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does. A name keyed as
-/// one of the nightly's own reds ([`board::RUN`], conciliation's) is not a check's.
+/// one of the release run's own reds ([`board::RUN`], conciliation's) is not a check's.
 fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, String> {
     let mut checks: Vec<Step> = Vec::new();
     for check in given {
@@ -520,7 +577,7 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
             || board::is_refresh(name)
         {
             return Err(format!(
-                "--check {name:?} takes a name the nightly keeps for its own reds"
+                "--check {name:?} takes a name the release run keeps for its own reds"
             ));
         }
         if checks.iter().any(|known| board::key(&known.name) == key) {
@@ -555,7 +612,7 @@ fn repo(at: &Path) -> Result<Repo, String> {
     })
 }
 
-/// The run's own checkout: `nightly` in the project's agent worktrees folder, else in a folder
+/// The run's own checkout: `release` in the project's agent worktrees folder, else in a folder
 /// beside the main checkout named for it with `-wt`.
 fn default_worktree(repo: &Repo) -> PathBuf {
     let folder = match &repo.project.agents.worktrees {
@@ -568,10 +625,10 @@ fn default_worktree(repo: &Repo) -> PathBuf {
             repo.main.join("..").join(format!("{name}-wt"))
         }
     };
-    normal(&folder.join("nightly"))
+    normal(&folder.join("release"))
 }
 
-/// `--status`: the newest release, the last night and the last green run, the landings on
+/// `--status`: the newest release, the last run and the last green run, the landings on
 /// `remote`'s `branch` since the last release and what the next run waits for, and the last
 /// refresh, read from the record, the local tags and the refs as last fetched; nothing is written
 /// or fetched.
@@ -586,14 +643,14 @@ fn status(
     let ordered = match ordered_releases(&repo.root) {
         Ok(ordered) => ordered,
         Err(problem) => {
-            let _ = writeln!(err, "symphony nightly: {problem}");
+            let _ = writeln!(err, "symphony release: {problem}");
             return 1;
         }
     };
-    let folder = record::folder(&repo.common);
+    let folder = record::kept(&repo.common);
     let runs = record::read(&folder);
     let _ = write!(out, "{}", record::status(&runs, &ordered, now));
-    // What a night waits for before it checks main ([`regenerated`]), in a project that has any.
+    // What a run waits for before it checks main ([`regenerated`]), in a project that has any.
     let generates = symphony_board::land::Settings::of(&repo.main)
         .is_ok_and(|settings| !settings.generators.is_empty());
     if generates && let Ok(standing) = symphony_board::land::regenerate::status(&at_main(repo)) {
@@ -630,7 +687,7 @@ fn cadence_of(repo: &Repo, remote: &str, branch: &str) -> Result<cadence::Cadenc
     let ordered = ordered_releases(&repo.root)?;
     cadence::of(
         &repo.root,
-        &record::folder(&repo.common),
+        &record::kept(&repo.common),
         &ordered,
         repo.project.releases.every_landings,
         remote,
@@ -671,50 +728,32 @@ enum Stop {
     InUse(String),
 }
 
-/// A night, or an out-of-cycle release: its exit code.
+/// A release run, an out-of-cycle release or a refresh: its exit code.
 fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let folder = record::folder(&repo.common);
-    if let Err(e) = fs::create_dir_all(&folder) {
-        let _ = writeln!(
-            err,
-            "symphony nightly: {}",
-            crate::text::os_error(&e, &folder)
-        );
-        return 1;
-    }
-    let lock_path = folder.join("run.lock");
-    let opened = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path);
-    let lock = match opened {
+    let lock = match record::lock(&repo.common) {
         Ok(lock) => lock,
-        Err(e) => {
-            let _ = writeln!(
-                err,
-                "symphony nightly: {}",
-                crate::text::os_error(&e, &lock_path)
-            );
+        Err(problem) => {
+            let _ = writeln!(err, "symphony release: {problem}");
             return 1;
         }
     };
+    let folder = lock.folder.clone();
+    let lock_path = lock.path.clone();
     let started = Instant::now();
     let when = local(options.now);
     let mut record = Run {
-        version: 1,
+        version: record::VERSION,
         id: format!(
             "{}-{}",
             when.replace(' ', "T").replace(':', ""),
             std::process::id()
         ),
-        kind: if options.release.is_some() {
-            "release"
+        kind: if options.out_of_cycle.is_some() {
+            "out-of-cycle"
         } else if options.refresh {
             "refresh"
         } else {
-            "nightly"
+            "release"
         }
         .into(),
         commit: String::new(),
@@ -738,18 +777,19 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     // the lock; a signal this process was started ignoring stays ignored.
     let interrupts = Interrupts::listen().ok();
     let heard = || interrupts.as_ref().is_some_and(Interrupts::received);
-    match lock.try_lock() {
+    match &lock.taken {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return held(repo, options, &folder, record, out, err),
         Err(TryLockError::Error(e)) => {
             let _ = writeln!(
                 err,
-                "symphony nightly: {}",
-                crate::text::os_error(&e, &lock_path)
+                "symphony release: {}",
+                crate::text::os_error(e, &lock_path)
             );
             return 1;
         }
     }
+    note(out, lock.moved.as_slice());
     // A run killed while its check ran left that said; while that check's group lives, it runs on.
     let earlier = record::holder(&folder).filter(|earlier| earlier.id != record.id);
     if let Some(earlier) = &earlier
@@ -759,6 +799,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         return outlived(repo, options, &folder, record, earlier, check, out, err);
     }
     let running = Running {
+        version: record::VERSION,
         id: record.id.clone(),
         kind: record.kind.clone(),
         pid: std::process::id(),
@@ -772,7 +813,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     for found in record::recover(&folder, earlier.as_ref(), &record.id, options.now) {
         let _ = writeln!(
             out,
-            "nightly: recorded the run {} (started {}) as interrupted: it {}",
+            "release: recorded the run {} (started {}) as interrupted: it {}",
             found.id,
             local(found.started_at),
             found.error.as_deref().unwrap_or_default()
@@ -808,11 +849,11 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         && let Some(tag) = record.tag.clone()
     {
         if !repo.project.releases.refresh {
-            let _ = writeln!(out, "nightly: refresh: off ([releases] refresh = false)");
+            let _ = writeln!(out, "release: refresh: off ([releases] refresh = false)");
         } else if !record.pushed {
             let _ = writeln!(
                 out,
-                "nightly: refresh: {tag} is not pushed, so no project can take it: nothing is \
+                "release: refresh: {tag} is not pushed, so no project can take it: nothing is \
                  refreshed"
             );
         } else {
@@ -824,7 +865,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     let mut for_owner = false;
     let cleared = match ran {
         Err(Stop::Refused(why)) => {
-            let _ = writeln!(err, "symphony nightly: {why}");
+            let _ = writeln!(err, "symphony release: {why}");
             record::release(&folder, &record.id);
             return 1;
         }
@@ -846,7 +887,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         code = 1;
     }
     if let Some(error) = &record.error {
-        let _ = writeln!(err, "symphony nightly: {error}");
+        let _ = writeln!(err, "symphony release: {error}");
         code = 1;
     }
     if record
@@ -859,7 +900,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     record.board = tell(repo, options, &folder, &record, &cleared, for_owner);
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
-        let _ = writeln!(err, "symphony nightly: cannot record the run: {problem}");
+        let _ = writeln!(err, "symphony release: cannot record the run: {problem}");
         code = 1;
     }
     record::prune(&folder, record::KEPT_RUNS, record::KEPT_LOGS);
@@ -893,7 +934,7 @@ impl Refreshing<'_> {
             },
         );
         let name = (self.options.worktree.file_name())
-            .map_or_else(|| "nightly".into(), |name| name.to_string_lossy());
+            .map_or_else(|| "release".into(), |name| name.to_string_lossy());
         let trees = place::real(
             &self
                 .options
@@ -935,7 +976,7 @@ fn refresh_only(
     let tag = release.name();
     record.commit.clone_from(commit);
     record.tip.clone_from(commit);
-    let _ = writeln!(out, "nightly: refresh to {tag} ({})", short(commit));
+    let _ = writeln!(out, "release: refresh to {tag} ({})", short(commit));
     let refreshed = refreshing.to(&record.id, &tag, commit, out);
     record.result = if refreshed.green() { "green" } else { "red" }.into();
     record.refreshed = Some(refreshed);
@@ -950,12 +991,12 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
         ("closed", &board.closed),
     ] {
         if !slugs.is_empty() {
-            let _ = writeln!(out, "nightly: {what} {}", slugs.join(", "));
+            let _ = writeln!(out, "release: {what} {}", slugs.join(", "));
         }
     }
     match &board.error {
         Some(error) => {
-            let _ = writeln!(err, "symphony nightly: the board: {error}");
+            let _ = writeln!(err, "symphony release: the board: {error}");
             1
         }
         None => 0,
@@ -988,7 +1029,7 @@ fn held(
         && let Some(check) = &earlier.check
         && group::lives(check.group, check.start.as_ref())
     {
-        let _ = writeln!(err, "symphony nightly: {}", runs_on(&earlier, check));
+        let _ = writeln!(err, "symphony release: {}", runs_on(&earlier, check));
         return 1;
     }
     let lock = folder.join("run.lock");
@@ -996,7 +1037,7 @@ fn held(
         Some(holder) if options.now <= holder.until + LATE_SECONDS => {
             let _ = writeln!(
                 err,
-                "symphony nightly: another nightly or release of this repository is running \
+                "symphony release: another release run of this repository is running \
                  (run {}, process {}, since {})",
                 holder.id,
                 holder.pid,
@@ -1021,7 +1062,7 @@ fn held(
             held_by(&lock),
         ),
     };
-    let _ = writeln!(err, "symphony nightly: {why}");
+    let _ = writeln!(err, "symphony release: {why}");
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, &[], false);
     said(&record.board, out, err);
@@ -1048,7 +1089,7 @@ fn held_by(file: &Path) -> String {
 /// Why a run is refused while the check `check` of the run `earlier`, killed while it ran, runs on.
 fn runs_on(earlier: &Running, check: &Checking) -> String {
     format!(
-        "another nightly or release of this repository is running (run {}, process {}, since {}): \
+        "another release run of this repository is running (run {}, process {}, since {}): \
          it ended, but its check `{}` runs on in process group {}",
         earlier.id,
         earlier.pid,
@@ -1076,7 +1117,7 @@ fn outlived(
     err: &mut dyn Write,
 ) -> i32 {
     if options.now <= earlier.until + LATE_SECONDS {
-        let _ = writeln!(err, "symphony nightly: {}", runs_on(earlier, check));
+        let _ = writeln!(err, "symphony release: {}", runs_on(earlier, check));
         return 1;
     }
     let why = format!(
@@ -1089,7 +1130,7 @@ fn outlived(
         local(earlier.until),
         check.group
     );
-    let _ = writeln!(err, "symphony nightly: {why}");
+    let _ = writeln!(err, "symphony release: {why}");
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, &[], false);
     said(&record.board, out, err);
@@ -1110,10 +1151,10 @@ fn red_in(run: &Run, key: &str) -> bool {
 
 /// Whether this run (`record`), green in `key`, closes that key's open red: its candidate holds the
 /// commit the newest of the `earlier` runs red in it was on. With no such run recorded, only a
-/// night closes it, never an out-of-cycle release.
+/// run of main's tip closes it, never an out-of-cycle release.
 fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
     match earlier.iter().rev().find(|run| red_in(run, key)) {
-        None => record.kind == "nightly",
+        None => record.kind == "release",
         Some(red) if red.commit.is_empty() => true,
         Some(red) => {
             !record.commit.is_empty()
@@ -1216,14 +1257,23 @@ fn night(
     within: Within<'_>,
 ) -> Result<Vec<&'static str>, Stop> {
     let until = within.bound;
+    let placed = |why: String| {
+        if options.named {
+            Stop::Refused(why)
+        } else {
+            Stop::Error(why)
+        }
+    };
+    // What a build older than the rename left moves once nothing works in it, as the checkout is
+    // checked out once nothing does.
+    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree).map_err(placed)?;
+    unused_in(&legacy.trees(), until)?;
+    note(
+        out,
+        &(legacy.moved(&repo.root, &repo.common, until)).map_err(placed)?,
+    );
     let mut place =
-        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(|why| {
-            if options.named {
-                Stop::Refused(why)
-            } else {
-                Stop::Error(why)
-            }
-        })?;
+        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();
     let tracking = format!("refs/remotes/{remote}/{}", options.branch);
     git_until(
@@ -1240,7 +1290,7 @@ fn night(
     .map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
     let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
-    let mut candidate = match &options.release {
+    let mut candidate = match &options.out_of_cycle {
         None => tip.clone(),
         Some(rev) => {
             let named = commit(&repo.root, rev).map_err(Stop::Refused)?;
@@ -1267,7 +1317,7 @@ fn night(
         .collect();
     record.unpushed = Some(unpushed.clone());
     if let Some(released) = releases.iter().find(|known| known.commit == candidate) {
-        if options.release.is_some() {
+        if options.out_of_cycle.is_some() {
             return Err(Stop::Refused(format!(
                 "{} is {} already",
                 short(&candidate),
@@ -1286,7 +1336,7 @@ fn night(
         }
         let _ = writeln!(
             out,
-            "nightly: {main_line} is {} already ({}): nothing new to check",
+            "release: {main_line} is {} already ({}): nothing new to check",
             released.name,
             short(&candidate)
         );
@@ -1303,7 +1353,7 @@ fn night(
     if let Some(newest) = newest
         && !is_ancestor(&repo.root, &newest.commit, &candidate).map_err(Stop::Error)?
     {
-        let named = options.release.as_deref().unwrap_or(&main_line);
+        let named = options.out_of_cycle.as_deref().unwrap_or(&main_line);
         let why = format!(
             "{named} ({}) is not a descendant of the newest release {} ({}): a release only \
              moves forward",
@@ -1311,7 +1361,7 @@ fn night(
             newest.name,
             short(&newest.commit)
         );
-        return Err(if options.release.is_some() {
+        return Err(if options.out_of_cycle.is_some() {
             Stop::Refused(why)
         } else {
             Stop::Error(why)
@@ -1323,12 +1373,12 @@ fn night(
         commit: newest.commit.clone(),
     });
     record.previous = previous.as_ref().map(|p| p.tag.clone());
-    if options.release.is_none() {
+    if options.out_of_cycle.is_none() {
         regenerated(repo, options, &mut candidate, record, until, out)?;
     }
     let _ = writeln!(
         out,
-        "nightly: {} of {} ({main_line} at {}) in {}",
+        "release: {} of {} ({main_line} at {}) in {}",
         record.kind,
         short(&candidate),
         short(&record.tip),
@@ -1339,7 +1389,7 @@ fn night(
         .checkout(&repo.root, &repo.common, &candidate, until, options.now)
         .map_err(Stop::Error)?;
     for noted in noted {
-        let _ = writeln!(out, "nightly: {noted}");
+        let _ = writeln!(out, "release: {noted}");
     }
     let logs = record::logs(folder, &record.id);
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
@@ -1365,7 +1415,7 @@ fn night(
     }
     let cleared = conciliation(repo, options, &place, &logs, record, out, within)?;
     for skipped in &record.skipped {
-        let _ = writeln!(out, "nightly: left out: {skipped}");
+        let _ = writeln!(out, "release: left out: {skipped}");
     }
     let green = record.checks.iter().all(Ran::green) && !record.checks.is_empty();
     record.result = if green { "green" } else { "red" }.into();
@@ -1374,7 +1424,7 @@ fn night(
             .flat_map(steps::reds)
             .map(|ran| ran.name.as_str())
             .collect();
-        let _ = writeln!(out, "nightly: red: {}; no release", red.join(", "));
+        let _ = writeln!(out, "release: red: {}; no release", red.join(", "));
         return Ok(cleared);
     }
     let name = tags::next(&when_day(options.now), names());
@@ -1459,7 +1509,7 @@ fn night(
     } else {
         ", not pushed".into()
     };
-    let _ = writeln!(out, "nightly: green; tagged {name}{pushed}");
+    let _ = writeln!(out, "release: green; tagged {name}{pushed}");
     Ok(cleared)
 }
 
@@ -1473,23 +1523,23 @@ fn at_main(repo: &Repo) -> symphony_board::cli::Env {
 }
 
 /// Main's generated outputs, the client distribution among them, as the regenerator a land starts
-/// makes them after it (`just tasks regenerate --status`), when the night's `candidate` is the
+/// makes them after it (`just tasks regenerate --status`), when the run's `candidate` is the
 /// main checkout's branch: the run waits, within its time, while a regenerator makes them, and
 /// releases nothing of a main whose committed outputs are behind its sources (its `just
 /// client-check` would be red), filing nothing, since the regenerator's own red is the task then.
 /// A repository with no generators, or none the regenerator reads, has nothing to wait for.
 ///
-/// What the regenerator last wrote refuses the night at once only when it is of the candidate
+/// What the regenerator last wrote refuses the run at once only when it is of the candidate
 /// (red or stopped on it, or ended there without a word). A land starts the regenerator just
-/// before the `[board] on_land` that starts a night of the cadence, so one may not have written
+/// before the `[board] on_land` that starts a run of the cadence, so one may not have written
 /// anything yet, its state of an earlier tip or none at all: while nothing makes them and nothing
-/// was written of the candidate, the night gives it [`REGENERATOR`] (the tests'
+/// was written of the candidate, the run gives it [`REGENERATOR`] (the tests'
 /// [`REGENERATOR_SECONDS`]) to take the candidate before it refuses.
 ///
-/// Main moving on in the main checkout while the night waits (the regenerator landed what it made,
+/// Main moving on in the main checkout while the run waits (the regenerator landed what it made,
 /// or a land came in) is followed: `remote`'s branch fetched again, what it moved to, a descendant
-/// of the candidate, is the night's `candidate` from then on, in its `record` too, and waited for
-/// in its turn. A move that does not reach the remote within [`REGENERATOR`] refuses the night as
+/// of the candidate, is the run's `candidate` from then on, in its `record` too, and waited for
+/// in its turn. A move that does not reach the remote within [`REGENERATOR`] refuses the run as
 /// a candidate seen behind does, filing nothing: the regenerator was last seen not to have made
 /// the candidate's files.
 fn regenerated(
@@ -1512,7 +1562,7 @@ fn regenerated(
         std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
     };
     // Whether the main checkout's branch was the candidate at a look: from then on its moves are
-    // the night's to follow.
+    // the run's to follow.
     let mut followed = false;
     let mut said = false;
     // Since when nothing has made them while nothing was written of the candidate.
@@ -1523,14 +1573,14 @@ fn regenerated(
         let local = commit(&repo.main, &format!("refs/heads/{branch}")).ok();
         if local.as_deref() != Some(candidate.as_str()) {
             if !followed {
-                // Its standing is of another commit than the one the night checks, whose own
+                // Its standing is of another commit than the one the run checks, whose own
                 // `just client-check` says.
                 return Ok(());
             }
             if let Some(tip) = moved_on(repo, remote, branch, candidate, until)? {
                 let _ = writeln!(
                     out,
-                    "nightly: {remote}/{branch} moved on to {} while the night waited for the \
+                    "release: {remote}/{branch} moved on to {} while the run waited for the \
                      regenerator: that is what it checks",
                     short(&tip)
                 );
@@ -1563,14 +1613,14 @@ fn regenerated(
             Err(why) => {
                 let _ = writeln!(
                     out,
-                    "nightly: the regenerator's status: {why}; not waited for"
+                    "release: the regenerator's status: {why}; not waited for"
                 );
                 return Ok(());
             }
         };
         if standing.current {
             if said {
-                let _ = writeln!(out, "nightly: {}", standing.line);
+                let _ = writeln!(out, "release: {}", standing.line);
             }
             return Ok(());
         }
@@ -1602,7 +1652,7 @@ fn regenerated(
             } else {
                 "waiting for the regenerator a land starts to take it"
             };
-            let _ = writeln!(out, "nightly: {waiting}: {}", standing.line);
+            let _ = writeln!(out, "release: {waiting}: {}", standing.line);
             said = true;
         }
         told_to_stop(until, "while it waited for the regenerator")?;
@@ -1702,8 +1752,12 @@ fn package_at(tree: &Path, folder: &str) -> Option<String> {
 /// conciliation copies' folder or holds a file inside one open, within `until`: those folders
 /// would change under its checks.
 fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
-    let trees: Vec<&Path> = [place.checkout.as_path(), place.copies.as_path()]
-        .into_iter()
+    unused_in(&[place.checkout.as_path(), place.copies.as_path()], until)
+}
+
+/// [`unused`] of the folders `trees`, those of them that are there.
+fn unused_in(trees: &[&Path], until: Bound<'_>) -> Result<(), Stop> {
+    let trees: Vec<&Path> = (trees.iter().copied())
         .filter(|tree| fs::symlink_metadata(tree).is_ok())
         .collect();
     if trees.is_empty() {
@@ -1851,7 +1905,7 @@ fn tell_check(ran: &Ran, out: &mut dyn Write) {
         };
         let _ = writeln!(
             out,
-            "nightly: {indent}{} {verdict} ({}, {:.0} s); log {}",
+            "release: {indent}{} {verdict} ({}, {:.0} s); log {}",
             ran.name,
             ran.ended(),
             ran.seconds,
@@ -1902,7 +1956,7 @@ fn conciliation(
     }
     let ids: Vec<String> = registry.projects.iter().map(|p| p.id.clone()).collect();
     for removed in place::prune_copies(&place.copies, &ids) {
-        let _ = writeln!(out, "nightly: {removed}");
+        let _ = writeln!(out, "release: {removed}");
     }
     let (consumers, skipped) = conciliate::consumers(&registry, &repo.common);
     record.skipped.extend(skipped);
@@ -1937,11 +1991,11 @@ fn conciliation(
             now: options.now,
         };
         // The copy is looked at with the checkout once it holds the project's commit; one that
-        // could not be made ready may not be the nightly's, and is left as it is.
+        // could not be made ready may not be the release run's, and is left as it is.
         let (ran, copy_at) = match conciliate::step(&consumer, &against) {
             Ok(prepared) => {
                 for noted in prepared.noted {
-                    let _ = writeln!(out, "nightly: {noted}");
+                    let _ = writeln!(out, "release: {noted}");
                 }
                 match prepared.step {
                     Ok(step) => (
@@ -2023,19 +2077,75 @@ mod tests {
             (&["=true"][..], "names no check or no command"),
             (&["a= "][..], "names no check or no command"),
             (&["a=true", "A=false"][..], "is named twice"),
-            (&["Run=true"][..], "the nightly keeps for its own reds"),
+            (&["Run=true"][..], "the release run keeps for its own reds"),
             (
                 &["conciliate=true"][..],
-                "the nightly keeps for its own reds",
+                "the release run keeps for its own reds",
             ),
             (
                 &["conciliate star=true"][..],
-                "the nightly keeps for its own reds",
+                "the release run keeps for its own reds",
             ),
         ] {
             let said = checks_of(bad.iter().copied()).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
         }
+    }
+
+    #[test]
+    fn the_out_of_cycle_flag_by_its_old_name_is_refused_in_one_line_and_runs_nothing() {
+        let args = |words: &[&str]| -> Vec<String> {
+            words.iter().map(|word| (*word).to_string()).collect()
+        };
+        let said = |words: &[&str]| {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = main(&args(words), &mut out, &mut err);
+            let (out, err) = (String::from_utf8(out), String::from_utf8(err));
+            (code, out.unwrap(), err.unwrap())
+        };
+        let refused = (
+            2,
+            String::new(),
+            "`--release COMMIT` is now `--commit COMMIT`\n".into(),
+        );
+        // Refused before the root is looked for, so nothing here is a repository's.
+        for words in [
+            &["--release", "HEAD"][..],
+            &["--release=HEAD"][..],
+            &["--rel", "HEAD"][..],
+            &["--releas=HEAD", "--status"][..],
+            &["--check", "verify=true", "--release", "HEAD", "--help"][..],
+            &["--root", "/no/such/root", "--release", "HEAD"][..],
+            &["--release"][..],
+        ] {
+            assert_eq!(said(words), refused, "{words:?}");
+        }
+        let flags = [
+            Flag {
+                name: "--remote",
+                value: true,
+            },
+            Flag {
+                name: "--refresh",
+                value: false,
+            },
+            Flag {
+                name: "--commit",
+                value: true,
+            },
+        ];
+        let named = |words: &[&str]| names_legacy_commit(&args(words), &flags);
+        assert!(named(&["--release", "x"]));
+        assert!(named(&["--relea"]), "a start of it no flag begins with");
+        assert!(!named(&["--re"]), "the start of flags of today: theirs");
+        assert!(!named(&["--r"]) && !named(&["--"]) && !named(&["-r"]));
+        assert!(!named(&["--releases"]), "not a start of it");
+        assert!(!named(&["--", "--release"]), "a positional after `--`");
+        assert!(!named(&["--commit", "HEAD", "release"]));
+        assert!(
+            !named(&["--check", "verify=cargo build --release"]),
+            "inside a value"
+        );
     }
 
     #[test]
@@ -2050,7 +2160,7 @@ mod tests {
         tree.write("plain/README.md", "no project file\n");
         assert_eq!(
             default_worktree(&repo(&tree.path("plain"))),
-            tree.path("plain-wt/nightly")
+            tree.path("plain-wt/release")
         );
         tree.write(
             "named/symphony.toml",
@@ -2058,7 +2168,7 @@ mod tests {
         );
         assert_eq!(
             default_worktree(&repo(&tree.path("named"))),
-            tree.path("elsewhere/nightly")
+            tree.path("elsewhere/release")
         );
     }
 
@@ -2076,8 +2186,8 @@ mod tests {
             what: what.into(),
         };
         let trees = [
-            Path::new("/wt/nightly"),
-            Path::new("/wt/nightly-conciliate"),
+            Path::new("/wt/release"),
+            Path::new("/wt/release-conciliate"),
         ];
         assert_eq!(in_use(&trees, &[vec![], vec![]]), None);
         let counts = " (a shell, a terminal tab, an editor or a Finder window there counts), and the \
@@ -2085,7 +2195,7 @@ mod tests {
         assert_eq!(
             in_use(&trees, &[vec![inside(10, "zsh", "working there")], vec![]]),
             Some((
-                "/wt/nightly is in use by process 10 (zsh), working there".into(),
+                "/wt/release is in use by process 10 (zsh), working there".into(),
                 format!("end it, or move it out of that folder{counts}")
             ))
         );
@@ -2101,7 +2211,7 @@ mod tests {
                 ]
             ),
             Some((
-                "/wt/nightly is in use by process 10 (zsh), working there; process 11 (Finder), \
+                "/wt/release is in use by process 10 (zsh), working there; process 11 (Finder), \
                  holding a.txt open"
                     .into(),
                 format!("end them, or move them out of that folder{counts}")
@@ -2116,8 +2226,8 @@ mod tests {
                 ]
             ),
             Some((
-                "/wt/nightly is in use by process 10 (zsh), working there; \
-                 /wt/nightly-conciliate is in use by process 12 (cargo), working in consumer"
+                "/wt/release is in use by process 10 (zsh), working there; \
+                 /wt/release-conciliate is in use by process 12 (cargo), working in consumer"
                     .into(),
                 format!("end them, or move them out of those folders{counts}")
             ))
@@ -2177,7 +2287,7 @@ mod tests {
         };
         let stopped = || Err(Stop::InUse("in use".into()));
 
-        let mut record = run_of("a", "nightly", "abc");
+        let mut record = run_of("a", "release", "abc");
         let kept = keep(&mut record, &logs, verify.clone(), stopped());
         assert!(matches!(kept, Err(Stop::InUse(why)) if why == "in use"));
         assert_eq!(
@@ -2191,7 +2301,7 @@ mod tests {
         assert!(red_in(&record, "verify-tests"));
         assert!(!red_in(&record, "verify-lint"));
 
-        let mut record = run_of("b", "nightly", "abc");
+        let mut record = run_of("b", "release", "abc");
         let green = Ran {
             exit_code: Some(0),
             ..red("verify")
@@ -2212,7 +2322,7 @@ mod tests {
         assert_eq!(record.checks, [red("verify")]);
         assert!(steps::beyond(&record.checks[0]));
 
-        let mut record = run_of("c", "nightly", "abc");
+        let mut record = run_of("c", "release", "abc");
         assert!(keep(&mut record, &logs, verify.clone(), Ok(())).is_ok());
         assert!(keep(&mut record, &logs, green.clone(), Ok(())).is_ok());
         assert_eq!(
@@ -2230,7 +2340,7 @@ mod tests {
 
     fn run_of(id: &str, kind: &str, commit: &str) -> Run {
         Run {
-            version: 1,
+            version: record::VERSION,
             id: id.into(),
             kind: kind.into(),
             commit: commit.into(),
@@ -2362,13 +2472,13 @@ mod tests {
         let older = commit_here("older");
         let reddened = commit_here("red");
         let fixed = commit_here("fixed");
-        let mut red_night = run_of("a", "nightly", &reddened);
+        let mut red_night = run_of("a", "release", &reddened);
         red_night.checks = vec![red("verify")];
-        let mut stopped = run_of("b", "nightly", "");
+        let mut stopped = run_of("b", "release", "");
         stopped.error = Some("cannot fetch".into());
         let earlier = [red_night, stopped];
 
-        let release_of = |commit: &str| run_of("c", "release", commit);
+        let release_of = |commit: &str| run_of("c", "out-of-cycle", commit);
         assert!(!closes(&root, &earlier, &release_of(&older), "verify"));
         assert!(closes(&root, &earlier, &release_of(&reddened), "verify"));
         assert!(closes(&root, &earlier, &release_of(&fixed), "verify"));
@@ -2377,8 +2487,8 @@ mod tests {
             "a stop before any candidate is cleared by any run that gets through"
         );
         assert!(
-            closes(&root, &earlier, &run_of("d", "nightly", &older), "lint"),
-            "a red no run recorded: a night closes it"
+            closes(&root, &earlier, &run_of("d", "release", &older), "lint"),
+            "a red no run recorded: a run of main's tip closes it"
         );
         assert!(
             !closes(&root, &earlier, &release_of(&fixed), "lint"),
@@ -2393,7 +2503,7 @@ mod tests {
             exit_code: Some(code),
             ..red("x")
         };
-        let mut night = run_of("a", "nightly", "abc");
+        let mut night = run_of("a", "release", "abc");
         night.checks = vec![Ran {
             steps: vec![step("lint", 0), step("tests", 101)],
             ..red("verify")
