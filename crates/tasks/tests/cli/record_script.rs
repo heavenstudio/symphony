@@ -183,12 +183,12 @@ const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
 /// The probe's wait in every case here but the one of it: the backstop of a test's wait, so a
 /// loaded machine never leaves Cargo to run unrecorded for a probe it answered late.
 const PROBE_WAIT: &str = "120";
-/// The probe's own wait, the script's when [`PROBE_WAIT_VAR`] names none (`tools/record.sh`, which
-/// a test cannot read): a recorder that answers no later than this records the builds it is asked
-/// to.
+/// The probe's own wait, the script's when [`PROBE_WAIT_VAR`] names none: the default
+/// `tools/record.sh` writes, which the probe's case holds it to. A recorder that answers no later
+/// than this records the builds it is asked to.
 const SCRIPT_PROBE_WAIT: Duration = Duration::from_secs(2);
-/// What a probe of the real recorder must answer within, from its start to the end of its answer,
-/// once at least, for the recorder to count as prompt: half of [`SCRIPT_PROBE_WAIT`]. Every other
+/// What a probe of the real recorder must answer within, from its start to its end (the end of its
+/// answer, which the script reads to), once at least, for the recorder to count as prompt: half of [`SCRIPT_PROBE_WAIT`]. Every other
 /// case lengthens the script's wait ([`PROBE_WAIT`]), so this is what turns a recorder grown slow
 /// to answer red. Spans measured: 12 ms to 193 ms at loads of 19 to 48 on 16 cores.
 const PROMPT_PROBE: Duration = Duration::from_secs(1);
@@ -410,9 +410,16 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
 
 /// The real recorder answers a probe well within the script's own wait ([`PROMPT_PROBE`]): probed
 /// until one answer comes that soon, so a loaded machine's slow probes, however many, never fail
-/// it, and a recorder slow on every probe stalls the wait. A failure says each probe's span.
+/// it, and a recorder slow on every probe stalls the wait. A failure says each probe's span. The
+/// script's wait is [`SCRIPT_PROBE_WAIT`] where none is named, as the script says it.
 #[test]
 fn the_recorder_answers_its_probe_well_within_the_scripts_own_wait() {
+    let default = format!("${{{PROBE_WAIT_VAR}:-{}}}", SCRIPT_PROBE_WAIT.as_secs());
+    let script = fs::read_to_string(tool("record.sh")).unwrap();
+    assert!(
+        script.contains(&format!("read -r -t \"{default}\"")),
+        "tools/record.sh waits for its probe other than {default}"
+    );
     warmed();
     let mut spans = Vec::new();
     let prompt = test_time::until(

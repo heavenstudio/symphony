@@ -138,20 +138,22 @@ moment, so what it does next comes after the stamp whatever a loaded machine run
 made only where no file is, and a run that names none makes none.
 
 What each test that waits on a record takes: the board's recorder tests
-(`crates/tasks/tests/cli/recorder.rs`) take the scale 20 on boards of their own, but one that
-bounds its time by the wait it rules out, and the script's (`record_script.rs`) take it on one
-that refuses, with a probe's wait of 120 s but in the case of that deadline. The server's test
-of what its machine panel reads takes the scale on its board's scratch database
+(`crates/tasks/tests/cli/recorder.rs`) take the scale 20 on boards of their own, and 60, the
+largest, in the three that ask a board that never answers (`ASKED`) and the one of a held lock
+(`LOCK_SCALE`); the script's (`record_script.rs`) take 20 on one that refuses, with a probe's
+wait of 120 s but in the case of that deadline. The server's test of what its machine panel
+reads takes the scale 20 on its board's scratch database
 (`apps/symphony-server/src/live/machine_work/tests`). The release run's test
 (`crates/symphony/tests/release/recorder.rs`) and the browser test of the board's Build and
 Test columns (`apps/symphony-ui/tests/browser/run_records.rs`) take both, the scale and the
 probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
 browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
-the long probe would hide, a recorder grown slow, two tests turn red at half the real bound:
+the long probe would hide, a recorder grown slow, two checks turn red at half the real bound:
 the quickest of several runs of a recorder test started within 0.5 s of being asked for
-(`one_started_promptly`), and a probe of the real recorder answers within 1 s, probed until
-one does (`record_script::the_recorder_answers_its_probe_well_within_the_scripts_own_wait`).
+(`one_started_promptly`, which two recorder tests check), and a probe of the real recorder
+answers within 1 s, probed until one does
+(`record_script::the_recorder_answers_its_probe_well_within_the_scripts_own_wait`).
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is
