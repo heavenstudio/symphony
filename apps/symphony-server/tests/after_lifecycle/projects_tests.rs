@@ -1,10 +1,15 @@
 //! Two projects on the one server, started in either order: the fixture's main checkout, a plain
 //! project with a theme of its own in its file, from the plain build; and a project naming the
-//! shelf plugin and its theme package, from the build holding it (`symphony-shelf`).
+//! shelf plugin and its theme package, from the build holding it (`symphony-shelf`). Each has its
+//! own board, its server in the project's own common dir as every project's is, holding a task of
+//! its own: whichever build serves them reads each project's tasks from its own board.
 
 use super::fixture::{APP, PATIENCE, Process};
 use super::*;
+use std::ffi::OsString;
 use std::path::PathBuf;
+use symphony_board::NewTask;
+use symphony_board::server::Home as Board;
 
 /// The build holding the shelf fixture plugin.
 const SHELF: &str = env!("CARGO_BIN_EXE_symphony-shelf");
@@ -16,6 +21,9 @@ const ALPHA: &str = "[project]\nname = \"Alpha\"\nid = \"alpha\"\n\
 const SHELF_PROJECT: &str = "[project]\nname = \"Shelf\"\nid = \"pantry\"\n\
                              [plugins]\ncrates = [\"fixture-shelf\"]\n\
                              [theme]\npackage = \"fixture-shelf\"\n";
+/// The task each project's own board holds.
+const ALPHA_TASK: &str = "alpha/own";
+const PANTRY_TASK: &str = "pantry/own";
 
 /// The fixture's main checkout as the project `alpha`, and a second repository as `pantry`, each
 /// install folder holding [`SHELL`]: the shelf project's root.
@@ -31,6 +39,64 @@ fn projects(repo: &Repo) -> PathBuf {
     shelf
 }
 
+/// Each project's own board, made by its first writer here, as a project's first `just tasks`
+/// makes it, and holding one task of its own. The one server reads each but never ends one, so it
+/// ends first, then each board, before the case's scratch goes.
+struct Boards<'a> {
+    repo: &'a Repo,
+    boards: Vec<Board>,
+}
+
+impl<'a> Boards<'a> {
+    /// The boards of `alpha`, the fixture's main checkout, and of `pantry` at `shelf`.
+    fn made(repo: &'a Repo, shelf: &Path) -> Self {
+        let surreal = super::surreal();
+        let boards = [(repo.main.as_path(), ALPHA_TASK), (shelf, PANTRY_TASK)]
+            .into_iter()
+            .map(|(root, task)| {
+                let env = symphony_board::cli::Env {
+                    vars: [
+                        (symphony_env::SURREAL.name, surreal.display().to_string()),
+                        (symphony::machine::DIR_ENV, repo.home.display().to_string()),
+                    ]
+                    .map(|(name, value)| (name.to_string(), value))
+                    .into(),
+                    cwd: root.to_path_buf(),
+                };
+                symphony_board::cli::connect(&env)
+                    .unwrap_or_else(|why| panic!("{}'s board: {why}", root.display()))
+                    .create(&NewTask::new(task, "Its own project's task", "owner"))
+                    .unwrap();
+                Board::in_common(&root.join(".git"), Some(&surreal))
+            })
+            .collect();
+        Boards { repo, boards }
+    }
+}
+
+impl Drop for Boards<'_> {
+    fn drop(&mut self) {
+        self.repo.cleanup();
+        for board in &self.boards {
+            if let Err(why) = board.stop() {
+                eprintln!("{}: {why}", board.dir().display());
+            }
+        }
+    }
+}
+
+/// The fixture's `PATH` and `/usr/sbin`, where macOS keeps `lsof`: a server takes a project's
+/// board as running only once `lsof` shows its recorded server listening at its address.
+fn path(repo: &Repo) -> OsString {
+    let (_, mut path) = repo
+        .environment()
+        .into_iter()
+        .find(|(name, _)| *name == "PATH")
+        .expect("the fixture's PATH");
+    path.push(":/usr/sbin:/sbin");
+    path
+}
+
 /// A start of the one server from `dir` by `program`, in the fixture's environment.
 fn start_with(repo: &Repo, program: &str, dir: &Path) -> Process {
     let mut command = Command::new(program);
@@ -38,8 +104,34 @@ fn start_with(repo: &Repo, program: &str, dir: &Path) -> Process {
         .current_dir(dir)
         .env_clear()
         .envs(repo.environment())
+        .env("PATH", path(repo))
         .stdin(Stdio::null());
     repo.run(command)
+}
+
+/// The slugs of the tasks the server on `port` lists for project `id`, once it has read the
+/// project's board: until its first read it answers that it has none yet.
+fn board_tasks(port: u16, id: &str) -> Vec<String> {
+    let route = format!("/{id}/api/tasks");
+    let mut last = None;
+    let read = test_time::until(
+        format!("{route} to list its board's tasks"),
+        test_time::backstop(PATIENCE),
+        || {
+            let answer = get(port, &route);
+            let read = match &answer {
+                Some((200, body)) => serde_json::from_str::<symphony_api::Tasks>(body).ok(),
+                _ => None,
+            };
+            last = answer;
+            read
+        },
+    );
+    read.unwrap_or_else(|stall| panic!("{stall}; its last answer: {last:?}"))
+        .tasks
+        .into_iter()
+        .map(|task| task.slug)
+        .collect()
 }
 
 /// The status, headers and body of a browser's navigation to `path`.
@@ -78,6 +170,10 @@ fn both_served(repo: &Repo, starter: &str) {
         registry.contains("\"alpha\"") && registry.contains("\"pantry\""),
         "{registry}"
     );
+    // Each project's tasks are its own board's, and neither lists the other's.
+    for (id, task) in [("alpha", ALPHA_TASK), ("pantry", PANTRY_TASK)] {
+        assert_eq!(board_tasks(port, id), [task], "{id}'s board");
+    }
     let (status, alpha) = get(port, "/alpha/").unwrap();
     assert_eq!(status, 200, "{alpha}");
     assert!(alpha.contains("<title>Alpha</title>"), "{alpha}");
@@ -135,9 +231,12 @@ fn both_served(repo: &Repo, starter: &str) {
 fn a_plain_host_waits_for_the_plugins_project_whose_build_then_takes_over_by_hand_off() {
     let repo = Repo::new("projects plain first");
     let shelf = projects(&repo);
-    repo.start(&repo.main, false);
+    let _boards = Boards::made(&repo, &shelf);
+    start_with(&repo, APP, &repo.main).success();
+    repo.remember();
     let plain = repo.check_server();
     assert!(plain.plugins.is_empty(), "{:?}", plain.plugins);
+    assert_eq!(board_tasks(plain.port, "alpha"), [ALPHA_TASK]);
     // The plain build cannot serve the shelf: it registers the project and says whose build can.
     let mut waits = start_with(&repo, APP, &shelf);
     let said = waits.wait();
@@ -169,10 +268,12 @@ fn a_plain_host_waits_for_the_plugins_project_whose_build_then_takes_over_by_han
 fn a_host_holding_the_plugin_serves_a_plain_project_started_after_it() {
     let repo = Repo::new("projects shelf first");
     let shelf = projects(&repo);
+    let _boards = Boards::made(&repo, &shelf);
     let mut first = start_with(&repo, SHELF, &shelf);
     first.success();
     repo.adopt();
     let host = front(repo.port()).expect("native status");
+    assert_eq!(board_tasks(host.port, "pantry"), [PANTRY_TASK]);
     // The plain build serves no plugin the host lacks: it registers and is served as it is.
     let mut second = start_with(&repo, APP, &repo.main);
     second.success();
