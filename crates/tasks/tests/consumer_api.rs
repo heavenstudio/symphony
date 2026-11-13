@@ -1,26 +1,28 @@
 //! The board's public names that consuming projects' code calls, each in the shape it calls it: a
-//! signature pinned by coercing the function to its pointer type, a struct its code builds by its
-//! fields built by them all, an enum whose variants it builds, compares or matches built by those
-//! and matched by every variant with no `_` arm, a trait it implements implemented with the methods
-//! it writes, a struct it builds by the fields it names and fills from `Default` or a constructor
-//! built by those.
-//! Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy over every
-//! target), so a change that would break a consumer fails a task's gate rather than a run later. A
-//! field it reads or a method it calls on a value that is not named here the release run's
-//! conciliation (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine
-//! serves on the candidate) alone catches; the other packages' guards are named in
+//! signature pinned by coercing the function to its pointer type (a few functions are named alone,
+//! their signatures left to the conciliation below), a struct its code builds by its fields built
+//! by them all, a variant it builds, compares or matches built, compared or matched as it does, a
+//! trait it implements implemented with the methods it writes, a struct it builds by the fields it
+//! names and fills from `Default` or a constructor built by those. Nothing here runs; it is
+//! compiled by the test build and by `just lint-rs` (clippy over every target), so a change that
+//! would break a consumer fails a task's gate rather than a run later. A field it reads or a method
+//! it calls on a value that is not named here the release run's conciliation
+//! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on
+//! the candidate) alone catches; the other packages' guards are named in
 //! `crates/symphony/tests/consumer_api.rs`.
 //!
-//! A variant added to an enum held here fails this file, so whoever adds it reads what a consumer
-//! does with that enum: a consumer that matches it whole breaks, and the variant waits for a
-//! consumer release plan; one that only builds, compares or names some of its variants does not,
-//! and the match here takes the new one.
+//! Each enum held here is also matched by every variant, with no `_` arm. That match is this
+//! repository's own choice, wider than a consumer's use unless it matches the enum whole: a
+//! tripwire, so a variant added fails this file and whoever adds it reads what the consumers do
+//! with that enum. One that matches it whole breaks, and the variant waits for a consumer release
+//! plan; otherwise the match takes the new variant. A variant that only the match names may be
+//! renamed or removed along with it; one built, compared or matched beside it is a consumer's.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
 //! only with a consumer release plan (the consumer's code moved first, against a release that still
 //! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
-//! one. A lint that asks for a signature held here to change is answered by an `#[expect]` on the
+//! one. A lint that asks for a signature pinned here to change is answered by an `#[expect]` on the
 //! item, never by the change (`clippy.toml`). Names were read from the consuming projects' code on
 //! 2026-11-12 (every `symphony_board::` path and import); add one when a consumer starts calling it.
 #![expect(
@@ -117,9 +119,9 @@ fn the_names_consumers_call_keep_their_shapes() {
         Error::Refused(why) | Error::Db(why) => why,
     };
     let _: fn(String) -> Error = Error::Db;
-    // A raw query's error, built by each of its variants and matched by them as a consumer's
-    // fixture does (it retries a conflict and takes the other two as final), and cloned and
-    // compared there.
+    // A raw query's error. A consumer's fixture builds each of its three variants, clones them and
+    // `assert_eq!`s them, and matches `Conflict` alone, taking the rest through a catch-all; the
+    // match of every variant below is the header's tripwire.
     let _: fn(
         &Client,
         &str,
@@ -132,15 +134,11 @@ fn the_names_consumers_call_keep_their_shapes() {
             DbError::Failed(why),
         ]
     };
-    let _ = |e: &DbError| match e {
-        DbError::Conflict => None,
-        DbError::Thrown(why) | DbError::Failed(why) => Some(why.clone()),
-    };
     let _ = |e: &DbError| e.clone();
-    // What a consumer's tests compare with `assert_eq!`.
-    fn compared<T: PartialEq + std::fmt::Debug>() {}
-    compared::<DbError>();
-    compared::<Health>();
+    asserted::<DbError>();
+    let _ = |e: &DbError| match e {
+        DbError::Conflict | DbError::Thrown(_) | DbError::Failed(_) => {}
+    };
     let _: Option<&AssessmentReceipt> = None;
 
     // What consumers build by its fields: every field named, so one added here breaks them, or
@@ -265,6 +263,9 @@ fn the_names_consumers_call_keep_their_shapes() {
     }
     let _ = waits;
     let _: (f64, f64) = (health::LIVE_SECONDS, health::STALE_SECONDS);
+    // `Left` compared in `assert_eq!` with a session's health.
+    let _ = Health::Left;
+    asserted::<Health>();
     let _ = |health: Health| match health {
         Health::Live | Health::Stale | Health::Unknown | Health::Lost | Health::Left => {}
     };
@@ -297,9 +298,9 @@ fn the_names_consumers_call_keep_their_shapes() {
         })
         .map_err(|_: port::NotStarted<String>| ())
     };
+    // A start's two variants built just above, as a consumer's fixture builds them; matched whole.
     let _ = |start: port::Start<u16>| match start {
-        port::Start::Up(port) => Some(port),
-        port::Start::Ended(_) => None,
+        port::Start::Up(_) | port::Start::Ended(_) => {}
     };
     let _ = |command: &mut Command| {
         command.stdin(Stdio::null()).stdout(Stdio::piped());
@@ -350,3 +351,6 @@ fn the_names_consumers_call_keep_their_shapes() {
         (swept.is_ok(), reap::lock_path(&sweep.state))
     };
 }
+
+/// A type a consumer compares in `assert_eq!`, which prints both sides when they differ.
+fn asserted<T: PartialEq + std::fmt::Debug>() {}
