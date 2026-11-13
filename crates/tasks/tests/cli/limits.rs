@@ -63,7 +63,7 @@ fn a_store_kept_open_follows_an_edit_to_the_file_with_no_restart() {
     assert!(store.claim("work/2", &worker).is_err());
     fs::write(
         root.join("symphony.toml"),
-        "[limits]\norchestrator_slots = 10\nlow_volume = 1\nmachine_agents = 6\n",
+        "[limits]\norchestrator_slots = 10\nlow_volume = 1\nmachine_agents = 6\n\n[board]\nreview_alarm_ratio = 3\n",
     )
     .unwrap();
     let limits = store.limits();
@@ -75,6 +75,7 @@ fn a_store_kept_open_follows_an_edit_to_the_file_with_no_restart() {
         ),
         (Some(10), 1, Some(6))
     );
+    assert_eq!(store.alarm().ratio, 3);
     store.claim("work/2", &worker).unwrap();
     // The table taken out again: every default, no cap.
     fs::write(root.join("symphony.toml"), "[project]\nname = \"slots\"\n").unwrap();
@@ -164,6 +165,33 @@ fn limits_says_a_value_it_cannot_read_and_shows_the_default_in_force() {
             .contains("\nlow_volume               4       default\n"),
         "{}",
         ran.out
+    );
+}
+
+#[test]
+fn limits_says_a_launch_table_it_cannot_read_and_still_prints_the_limits() {
+    let (c, root) = in_project(
+        "limits-launch-broken",
+        "[agents.launch]\ndefault = \"gemini\"\n\n[limits]\nlow_volume = 2\n",
+    );
+    let orch = c.register("orchestrator");
+    let ran = c.run_as(&orch, &["limits"], "");
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert_eq!(
+        ran.err,
+        format!(
+            "⚠ {}: [agents] launch default \"gemini\" is not one of codex, claude\n",
+            file(&root).display()
+        )
+    );
+    let lines: Vec<&str> = ran.out.lines().collect();
+    assert_eq!(
+        lines[2],
+        "low_volume               2       [limits] low_volume, line 5"
+    );
+    assert_eq!(
+        lines.last(),
+        Some(&"MODELS: the project file cannot be read for them")
     );
 }
 

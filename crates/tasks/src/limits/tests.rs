@@ -14,6 +14,19 @@ fn written(at: &str, line: usize) -> Written {
 }
 
 #[test]
+fn a_setting_is_named_with_its_line_and_without_one_it_cannot_find() {
+    let found = written("[limits] low_volume", 3);
+    assert_eq!(found.said(), "[limits] low_volume, line 3");
+    assert_eq!(found.named(), "[limits] low_volume (line 3)");
+    let lost = Written {
+        at: "[limits] low_volume".into(),
+        line: None,
+    };
+    assert_eq!(lost.said(), "[limits] low_volume");
+    assert_eq!(lost.named(), "[limits] low_volume");
+}
+
+#[test]
 fn a_file_naming_no_limit_is_every_default_as_today() {
     for text in [
         "",
@@ -166,6 +179,22 @@ fn a_bad_value_is_said_with_its_line_and_takes_its_default_alone() {
             format!(
                 "{PATH}: [limits] machine_agents (line 2) is \"many\"; not a whole number; no \
                  limit on the agents this machine runs applies"
+            ),
+            Limits::default(),
+        ),
+        (
+            "[limits]\nmachine_agents = true\n",
+            format!(
+                "{PATH}: [limits] machine_agents (line 2) is true; not a whole number; no limit \
+                 on the agents this machine runs applies"
+            ),
+            Limits::default(),
+        ),
+        (
+            "[limits]\nlow_volume = [4]\n",
+            format!(
+                "{PATH}: [limits] low_volume (line 2) is array; not a whole number; it takes its \
+                 default, 4"
             ),
             Limits::default(),
         ),
@@ -357,6 +386,21 @@ fn a_watched_file_is_read_again_once_it_changes_and_not_before() {
     let held = Held::Watched(watched.clone());
     assert_eq!(held.now().machine_agents, Some(7));
     assert_eq!(Held::default().now(), Limits::default());
+    // A version it cannot read is said (on stderr, once) and its value takes the default.
+    std::fs::write(&path, "[limits]\nmachine_agents = 0\nlow_volume = 1\n").unwrap();
+    let read = watched.read();
+    assert_eq!(
+        read.problems,
+        [format!(
+            "{}: [limits] machine_agents (line 2) is 0; a machine runs at least one agent; no \
+             limit on the agents this machine runs applies",
+            path.display()
+        )]
+    );
+    assert_eq!(
+        (read.limits.machine_agents, read.limits.low_volume),
+        (None, 1)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
