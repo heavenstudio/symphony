@@ -40,8 +40,9 @@ options:
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
-  --click CSS          scroll the first element CSS matches into view and click its middle,
-                       once its box holds still with nothing else on top there
+  --click CSS          scroll the first element CSS matches into view and click its middle (a
+                       wrapped inline's first line), once its box holds still with it, what it
+                       holds, or its own label for a control, on top there
   --type CSS=TEXT      scroll that element into view, focus it and type TEXT (CSS ends at the
                        first = outside brackets); no pointer, so no aim
   --key NAME           press a key: Tab, Enter, Escape, Space, Backspace, Delete, ArrowDown,
@@ -53,17 +54,23 @@ steps, run in order before the final capture, each as often as needed:
   --pause MS           wait MS milliseconds
   --shot FILE.png      capture now, mid-sequence (a menu open, then closed, in one run)
 
-A step on an element waits for it. A click or a hover aims only once the page has settled after
-the scroll, as a capture waits, and two reads in a row, each in an animation frame, find the
-element's box in one place with its middle in view and the element, or something inside it, on
-top at that middle. Content the scroll brings near mounts and moves it first, and can push it out
-of its scrolling container's view or under a sticky header: should it leave the view or be
-covered, it is scrolled to the middle again (its containers and the page, clear of a header
-shorter than half the view) and the page settled again. An element that never holds still, or
-stays covered, fails the step (naming what covers it), and nothing is pressed. Typing focuses its
-element by script and types with no pointer, so what covers the element takes none of it. A
-click, typing, a key or a hover then waits for the page to settle again, as a capture does,
-bringing the page back in front if the step left it hidden (an Escape the page does not take).
+A step on an element waits for it. A click or a hover aims at the middle of the element's box,
+its first line box in view (a link wrapped over two lines at its first line), only once the page
+has settled after the scroll, as a capture waits, and two reads in a row, each in an animation
+frame, find that box in one place with its middle in view and on top at that middle the element,
+something inside it, or the label of the control it is (a checkbox hidden in its label or under
+the label's styled track), pressed anywhere in the label but on a link or another control inside
+it, as the label's activation clicks its control. Content the scroll brings near mounts and moves
+it first, and can push it out of its scrolling container's view or under a sticky header: should
+it leave the view or be covered, it is scrolled to the middle again (its containers and the page,
+clear of a header shorter than half the view) and the page settled again. An element that never
+holds still, or stays covered, fails the step (naming what covers it), and nothing is pressed. So
+does one that takes no pointer at its middle, its own ancestor on top there (pointer-events: none,
+or nothing of it painted there, as in an SVG ring): a press would reach the ancestor, which may
+not be what was meant, so the failure names it, to target instead. Typing focuses its element by
+script and types with no pointer, so what covers the element takes none of it. A click, typing, a
+key or a hover then waits for the page to settle again, as a capture does, bringing the page back
+in front if the step left it hidden (an Escape the page does not take).
 Chrome is SF_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -658,29 +665,56 @@ enum Look {
     NextFrame,
 }
 
-/// What a [`probe`] says is on top at the element's middle, where the pointer would land: `true`
-/// for the element or something inside it, `null` for nothing (a point outside the page), else
-/// the element there, named as a selector names it: its tag, id and first three classes, after its
-/// parent's when it has neither id nor class (`main > div`).
-const HIT: &str = "const name = e => e.localName + (e.id ? '#' + CSS.escape(e.id) : '') + [...e.classList].slice(0, 3).map(c => '.' + CSS.escape(c)).join(''); \
+/// What a [`probe`] aims at, `box`, and what is on top at its middle, where the pointer would
+/// land, `hit`.
+///
+/// `box` is the first of the element's line boxes (its client rects) with an area whose middle is
+/// in the viewport, else its first with an area, else its bounding box: a link wrapped over two
+/// lines is aimed at its first line, not at the middle of its bounding box, which may hold none of
+/// it, and one wrapped over more lines than the view holds at its first line in view.
+///
+/// `hit` is `true` for the element or something inside it, and for a label whose control the
+/// element is (`label.control`, by `for` or by holding it) pressed on itself or on what it holds
+/// that is not interactive ([`INTERACTIVE`]): the label's activation clicks its control, so a
+/// checkbox hidden in its label or under the label's styled track takes the press. `{holder,
+/// none}` is the element's own ancestor: the element takes no pointer at its middle, the ancestor
+/// taking the press there (`none` when the element has `pointer-events: none`, else nothing of it
+/// is painted there, as in an SVG ring). `null` is nothing (a point outside the page). Any other
+/// element is a cover. An element is named as a selector names it: its tag, id and first three
+/// classes, after its parent's when it has neither id nor class (`main > div`).
+const AIM: &str = "const name = e => e.localName + (e.id ? '#' + CSS.escape(e.id) : '') + [...e.classList].slice(0, 3).map(c => '.' + CSS.escape(c)).join(''); \
+const named = e => (!e.id && !e.classList.length && e.parentElement ? name(e.parentElement) + ' > ' : '') + name(e); \
+const rects = [...element.getClientRects()].filter(r => r.width > 0 && r.height > 0); \
+const seen = r => { const x = r.x + r.width / 2, y = r.y + r.height / 2; return x >= 0 && x < innerWidth && y >= 0 && y < innerHeight; }; \
+const box = rects.find(seen) ?? rects[0] ?? element.getBoundingClientRect(); \
 const at = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2); \
-const hit = !at ? null : element.contains(at) ? true : (!at.id && !at.classList.length && at.parentElement ? name(at.parentElement) + ' > ' : '') + name(at);";
+const label = at && at.closest('label'); \
+const hit = !at ? null \
+ : element.contains(at) || (label && label.control === element && at.closest(INTERACTIVE) === label) ? true \
+ : at.contains(element) ? {holder: named(at), none: getComputedStyle(element).pointerEvents === 'none'} \
+ : named(at);";
 
-/// A script reading the box of the first element `css` matches, the viewport's size and what is on
-/// top at its middle ([`HIT`]), as `look` says: `null` while nothing matches, `{invalid}` for what
-/// is no selector.
+/// What, pressed inside a label, takes the press itself rather than activating the label (HTML's
+/// interactive content): a press on a link or another control inside a label never reaches the
+/// label's control.
+const INTERACTIVE: &str = "a[href], audio[controls], button, details, embed, iframe, img[usemap], input, label, select, textarea, video[controls]";
+
+/// A script reading the box a click or a hover aims at in the first element `css` matches, the
+/// viewport's size and what is on top at the box's middle ([`AIM`]), as `look` says: `null` while
+/// nothing matches, `{invalid}` for what is no selector.
 fn probe(css: &str, look: Look) -> String {
     let read = format!(
         "(() => {{ let element; try {{ element = document.querySelector({}); }} catch (error) {{ return {{invalid: String(error.message)}}; }} \
          if (!element) return null; {} \
-         const box = element.getBoundingClientRect(); {HIT} \
+         const INTERACTIVE = {}; {AIM} \
          return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [innerWidth, innerHeight], hit}}; }})()",
         json!(css),
         if look == Look::Scrolled {
             "element.scrollIntoView({block: 'center', inline: 'center'});"
         } else {
             ""
-        }
+        },
+        json!(INTERACTIVE)
     );
     if look == Look::NextFrame {
         format!("new Promise(resolve => requestAnimationFrame(() => resolve({read})))")
@@ -689,19 +723,28 @@ fn probe(css: &str, look: Look) -> String {
     }
 }
 
-/// What is on top at an element's middle, where the pointer would land, as a [`probe`] found it.
+/// What is on top at the middle of an element's box, where the pointer would land, as a [`probe`]
+/// found it.
 #[derive(Clone, Debug, PartialEq)]
 enum Hit {
-    /// The element itself, or something inside it.
+    /// The element itself, something inside it, or a label whose activation clicks it ([`AIM`]).
     Target,
-    /// Another element, by its name ([`HIT`]).
+    /// Another element, by its name ([`AIM`]).
     Covered(String),
+    /// The element's own ancestor, by its name: the element takes no pointer at its middle, which
+    /// a press there reaches instead, for its `pointer-events: none` when `pointer_events_none`,
+    /// else for nothing of it painted there (an SVG ring's empty middle).
+    Holder {
+        name: String,
+        pointer_events_none: bool,
+    },
     /// No element: the point is outside the page (under a scrollbar, past an edge).
     Nothing,
 }
 
-/// An element's box and the viewport's size, in CSS pixels, and what is on top at its middle, as
-/// a [`probe`] read them.
+/// The box a click or a hover aims at in an element (its first line box in view, [`AIM`]) and
+/// the viewport's size, in CSS pixels, and what is on top at the box's middle, as a [`probe`] read
+/// them.
 #[derive(Clone, Debug, PartialEq)]
 struct Place {
     x: f64,
@@ -729,7 +772,13 @@ impl Place {
                 hit: match &found["hit"] {
                     Value::Bool(true) => Hit::Target,
                     Value::String(cover) => Hit::Covered(cover.clone()),
-                    _ => Hit::Nothing,
+                    other => match other["holder"].as_str() {
+                        Some(holder) => Hit::Holder {
+                            name: holder.to_string(),
+                            pointer_events_none: other["none"] == true,
+                        },
+                        None => Hit::Nothing,
+                    },
                 },
             })
         };
@@ -760,8 +809,13 @@ enum Latest {
     Gone,
     Boxless,
     OutOfView,
-    /// In view, but another element on top at its middle, by its name ([`HIT`]).
+    /// In view, but another element on top at its middle, by its name ([`AIM`]).
     Covered(String),
+    /// In view, but taking no pointer at its middle: its own ancestor on top there ([`Hit::Holder`]).
+    Holder {
+        name: String,
+        pointer_events_none: bool,
+    },
     /// In view, but no element at its middle (under a scrollbar).
     Unreached,
     /// Drawn in view and on top, but not where the read before found it, or with no read before
@@ -815,6 +869,18 @@ impl Aim {
                 self.latest = Latest::Covered(cover.clone());
                 return Next::Scroll;
             }
+            // Its ancestor on top at its middle is also what a target clipped out of its scrolling
+            // container's view finds there, which a scroll brings back.
+            Hit::Holder {
+                name,
+                pointer_events_none,
+            } => {
+                self.latest = Latest::Holder {
+                    name: name.clone(),
+                    pointer_events_none: *pointer_events_none,
+                };
+                return Next::Scroll;
+            }
             Hit::Nothing => {
                 self.latest = Latest::Unreached;
                 return Next::Scroll;
@@ -831,6 +897,7 @@ impl Aim {
 
     /// Why the aim at `css` was not taken within `wait`, by what the latest read found.
     fn late(&self, css: &str, wait: Wait) -> String {
+        let mut instead = String::new();
         let why = match &self.latest {
             Latest::Unread => "was never read in an animation frame".to_string(),
             Latest::Gone => "left the page".to_string(),
@@ -842,6 +909,22 @@ impl Aim {
             Latest::Covered(cover) => {
                 format!("stayed covered: {cover} was on top at its middle after every scroll")
             }
+            // Never "covered": what is there holds the element. It is named, to target instead.
+            Latest::Holder {
+                name,
+                pointer_events_none,
+            } => {
+                instead = format!("; target {name} instead");
+                let none = if *pointer_events_none {
+                    " (pointer-events: none)"
+                } else {
+                    ""
+                };
+                format!(
+                    "takes no pointer at its middle{none}: {name}, which holds it, was on top there \
+                     after every scroll"
+                )
+            }
             Latest::Unreached => {
                 "stayed out of reach: nothing in the page was at its middle after every scroll"
                     .to_string()
@@ -850,7 +933,7 @@ impl Aim {
                                found its box in one place"
                 .to_string(),
         };
-        format!("{css} {why} within {}", wait.said())
+        format!("{css} {why} within {}{instead}", wait.said())
     }
 }
 
@@ -881,14 +964,16 @@ fn locate(chrome: &mut Chrome, css: &str, wait: Wait, drawn: bool) -> Result<(),
 }
 
 /// Where a click or a hover (`flag`) aims at the first element `css` matches, once one does and
-/// has a box: its middle, scrolled into view, once the page has settled after the scroll as a
-/// capture waits and then two reads in a row, each in an animation frame, have found its box in
-/// one place with its middle in view and the element on top there. What the scroll brings near the
+/// has a box: the middle of the box it aims at (its first line box in view, [`AIM`]), scrolled
+/// into view, once the page has settled after the scroll as a capture waits and then two reads in
+/// a row, each in an animation frame, have found that box in one place with its middle in view and
+/// the element on top there (or a label whose activation clicks it). What the scroll brings near the
 /// view mounts on the frames after it (a `NearViewport`'s placeholder filled, rows above the
 /// element) and moves the element meanwhile, out of the view, out of a scrolling container's (onto
 /// what is below the container) or under a sticky header; one that leaves the view or is covered
-/// is scrolled to the middle again, its containers and the page, and the page settled again. Or
-/// why not within the wait, the step named, and after a re-scroll the element's latest read.
+/// is scrolled to the middle again, its containers and the page, and the page settled again, as is
+/// one whose own ancestor is on top at its middle ([`Hit::Holder`]). Or why not within the wait,
+/// the step named, and after a re-scroll the element's latest read.
 fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f64), String> {
     locate(chrome, css, wait, true).map_err(|why| format!("{flag} {why}"))?;
     let step = format!("{flag} {css}");

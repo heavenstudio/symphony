@@ -228,6 +228,31 @@ fn a_refusal_prints_the_usage_and_exits_two_and_help_exits_zero() {
 }
 
 #[test]
+fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(main(&args(&["-h"]), &mut out, &mut err), 0);
+    // The help's lines are wrapped: read its words.
+    let words = String::from_utf8(out)
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for said in [
+        "click its middle (a wrapped inline's first line)",
+        "its own label for a control, on top there",
+        "its first line box in view (a link wrapped over two lines at its first line)",
+        "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
+        "but on a link or another control inside it",
+        "stays covered, fails the step (naming what covers it)",
+        "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, or \
+         nothing of it painted there, as in an SVG ring)",
+        "the failure names it, to target instead",
+    ] {
+        assert!(words.contains(said), "{said:?} not in the help: {words}");
+    }
+}
+
+#[test]
 fn typing_splits_at_the_first_equals_outside_brackets_parentheses_and_quotes() {
     for (value, split) in [
         ("#q=hello", Some(("#q", "hello"))),
@@ -423,19 +448,81 @@ fn a_probe_reads_the_element_where_it_is_after_scrolling_it_or_in_the_next_frame
 fn a_probe_tests_what_is_on_top_at_the_middle_of_the_box_it_read() {
     for look in [Look::Now, Look::Scrolled, Look::NextFrame] {
         let probe = probe("#a", look);
-        let (read, hit, answer) = (
-            probe.find("getBoundingClientRect").unwrap(),
+        let (lines, whole, hit, answer) = (
+            probe.find("element.getClientRects()").unwrap(),
+            probe.find("element.getBoundingClientRect()").unwrap(),
             probe
                 .find("document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)")
                 .unwrap_or_else(|| panic!("no hit test at the box's middle: {probe}")),
             probe.find("return {x: box.x").unwrap(),
         );
-        assert!(read < hit && hit < answer, "{look:?}: {probe}");
-        // The element, or something inside it, is the target; anything else is named.
-        assert!(probe.contains("element.contains(at) ? true"), "{probe}");
+        assert!(
+            lines < whole && whole < hit && hit < answer,
+            "{look:?}: {probe}"
+        );
         assert!(
             probe.contains("view: [innerWidth, innerHeight], hit}"),
             "{probe}"
+        );
+    }
+}
+
+#[test]
+fn a_probe_aims_at_the_first_line_box_in_view_then_the_first_then_the_whole_box() {
+    let probe = probe("#a", Look::Now);
+    // Only line boxes with an area count: a wrapped inline's empty fragment at a line's end does not.
+    assert!(
+        probe.contains("[...element.getClientRects()].filter(r => r.width > 0 && r.height > 0)"),
+        "{probe}"
+    );
+    // In view as the aim reads it: the middle within the viewport, its far edges excluded.
+    assert!(
+        probe.contains("return x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;"),
+        "{probe}"
+    );
+    assert!(
+        probe.contains(
+            "const box = rects.find(seen) ?? rects[0] ?? element.getBoundingClientRect();"
+        ),
+        "{probe}"
+    );
+}
+
+#[test]
+fn a_probe_takes_the_targets_own_label_and_names_an_ancestor_apart_from_a_cover() {
+    let probe = probe("#a", Look::Now);
+    let at = |text: &str| {
+        probe
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {probe}"))
+    };
+    // The element or something inside it, then its own label pressed on itself or on what it
+    // holds that is not interactive, are the target; tested before the ancestor, as a label that
+    // holds its control is also the control's ancestor.
+    let (inside, label, ancestor, cover) = (
+        at(
+            "element.contains(at) || (label && label.control === element && at.closest(INTERACTIVE) === label) ? true",
+        ),
+        at("const label = at && at.closest('label');"),
+        at(
+            "at.contains(element) ? {holder: named(at), none: getComputedStyle(element).pointerEvents === 'none'}",
+        ),
+        at(": named(at);"),
+    );
+    assert!(
+        label < inside && inside < ancestor && ancestor < cover,
+        "{probe}"
+    );
+    // HTML's interactive content goes in as a JSON string: a press on it inside a label never
+    // reaches the label's control.
+    assert!(
+        probe.contains(&format!("const INTERACTIVE = {};", json!(INTERACTIVE))),
+        "{probe}"
+    );
+    for interactive in ["a[href]", "button", "input", "label", "select", "textarea"] {
+        assert!(
+            INTERACTIVE.split(", ").any(|one| one == interactive),
+            "{interactive}"
         );
     }
 }
@@ -477,7 +564,20 @@ fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
         Place::read("#a", &on_top).unwrap().unwrap().hit,
         Hit::Covered("header#top.sticky".into())
     );
-    for nothing in [json!(null), json!(false)] {
+    // Its own ancestor, by its name, and whether it has pointer-events: none.
+    for (none, pointer_events_none) in [(json!(true), true), (json!(false), false)] {
+        let mut held = found.clone();
+        held["hit"] = json!({"holder": "button#go", "none": none});
+        assert_eq!(
+            Place::read("#a", &held).unwrap().unwrap().hit,
+            Hit::Holder {
+                name: "button#go".into(),
+                pointer_events_none
+            }
+        );
+    }
+    // Anything else is nothing at its middle, an ancestor without its name too.
+    for nothing in [json!(null), json!(false), json!({"none": true}), json!(3)] {
         let mut missed = found.clone();
         missed["hit"] = nothing;
         assert_eq!(
@@ -586,6 +686,54 @@ fn a_covered_read_between_two_agreeing_ones_starts_the_reads_over() {
     assert_eq!(aim.read(Some(target)), Next::At((200.0, 460.0)));
 }
 
+/// [`place`], with its own ancestor `name` on top at its middle.
+fn held(place: &Place, name: &str, pointer_events_none: bool) -> Place {
+    Place {
+        hit: Hit::Holder {
+            name: name.into(),
+            pointer_events_none,
+        },
+        ..place.clone()
+    }
+}
+
+#[test]
+fn a_target_whose_ancestor_takes_the_pointer_at_its_middle_is_scrolled_again_never_aimed_at() {
+    // An icon with pointer-events: none in its button, or an SVG ring around an empty middle: held
+    // still in view, but a press at its middle would reach what holds it.
+    let icon = place(100.0, 449.0, 24.0, 24.0);
+    for (holder, none) in [("button#go", true), ("svg#rings", false)] {
+        let mut aim = Aim::default();
+        for read in 0..3 {
+            assert_eq!(
+                aim.read(Some(held(&icon, holder, none))),
+                Next::Scroll,
+                "{holder} {read}"
+            );
+            assert_eq!(
+                aim.latest,
+                Latest::Holder {
+                    name: holder.into(),
+                    pointer_events_none: none
+                }
+            );
+        }
+        // A target clipped out of its scrolling container's view finds the container's ancestor
+        // there too: scrolled back, it is on top and aimed at.
+        assert_eq!(aim.read(Some(icon.clone())), Next::Again, "{holder}");
+        assert_eq!(aim.read(Some(icon.clone())), Next::At((112.0, 461.0)));
+    }
+    // Between two agreeing reads, an ancestor's read starts them over, as a cover's does.
+    let mut aim = Aim::default();
+    assert_eq!(aim.read(Some(icon.clone())), Next::Again);
+    assert_eq!(aim.read(Some(held(&icon, "button#go", true))), Next::Scroll);
+    assert_eq!(aim.read(Some(icon.clone())), Next::Again);
+    // And out of view wins over it.
+    let below = held(&place(100.0, 1200.0, 24.0, 24.0), "button#go", true);
+    assert_eq!(aim.read(Some(below)), Next::Scroll);
+    assert_eq!(aim.latest, Latest::OutOfView);
+}
+
 #[test]
 fn a_middle_on_nothing_in_the_page_is_scrolled_again_and_out_of_view_wins_over_the_hit() {
     let target = place(1420.0, 449.0, 30.0, 22.0);
@@ -666,6 +814,23 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
         (
             Latest::Covered("main > div".into()),
             "#x stayed covered: main > div was on top at its middle after every scroll within 5s",
+        ),
+        // Never "covered" for what holds it: why it takes no pointer, and what to target instead.
+        (
+            Latest::Holder {
+                name: "button#go.icon".into(),
+                pointer_events_none: true,
+            },
+            "#x takes no pointer at its middle (pointer-events: none): button#go.icon, which holds \
+             it, was on top there after every scroll within 5s; target button#go.icon instead",
+        ),
+        (
+            Latest::Holder {
+                name: "section > svg".into(),
+                pointer_events_none: false,
+            },
+            "#x takes no pointer at its middle: section > svg, which holds it, was on top there \
+             after every scroll within 5s; target section > svg instead",
         ),
         (
             Latest::Unreached,
