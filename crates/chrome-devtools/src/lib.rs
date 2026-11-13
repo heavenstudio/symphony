@@ -358,8 +358,10 @@ pub struct Request {
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
     /// The page itself gave it up (an abort, or the page going away), rather than the network.
-    /// A request of a followed frame ([`Chrome::follow_frames`]) still open when that frame went
-    /// away counts as given up too.
+    /// A request still open when its frame was removed from the page counts as given up too, and
+    /// so does one a followed frame's document ([`Chrome::follow_frames`]) made, still open when
+    /// the frame left that document's process; never a frame's own document, which a frame moving
+    /// between processes goes on loading.
     pub canceled: bool,
     /// The frame it was made for, when that is not the page's own: the address of the document it
     /// was made for, a frame's own document request naming its own address (`about:srcdoc` for a
@@ -1226,16 +1228,19 @@ impl Chrome {
     }
 
     /// A target the page started, attached and held (`attached`, as `Target.attachedToTarget`
-    /// says it): a frame's network events turned on and the frames within it followed, then it is
-    /// let run, in that order, as its session takes commands in turn. Their replies are not waited
-    /// for: a frame gone meanwhile refuses them, and nothing is left to follow. Anything but a
-    /// frame (a worker) is only let run.
+    /// says it): a frame's network and page events turned on (the frames its document holds
+    /// attached and removed) and the frames within it followed, then it is let run, in that order,
+    /// as its session takes commands in turn. Their replies are not waited for: a frame gone
+    /// meanwhile refuses them, and nothing is left to follow. Anything but a frame (a worker) is
+    /// only let run.
     fn follow(&mut self, attached: &Value) -> Result<()> {
         let Some(session) = attached["sessionId"].as_str().map(str::to_owned) else {
             return Ok(());
         };
         if attached["targetInfo"]["type"] == "iframe" {
-            self.send("Network.enable", json!({}), Some(session.clone()))?;
+            for method in ["Network.enable", "Page.enable"] {
+                self.send(method, json!({}), Some(session.clone()))?;
+            }
             self.send("Target.setAutoAttach", auto_attach(), Some(session.clone()))?;
         }
         if attached["waitingForDebugger"] == true {
@@ -1307,8 +1312,14 @@ impl Chrome {
     }
 }
 
-/// Why a followed frame's request that was still open when the frame's session ended never ends.
-const FRAME_GONE: &str = "its frame went away";
+/// Why a request still open when the frame it was made for was removed from the page (or a frame
+/// around it was) never ends.
+const FRAME_REMOVED: &str = "its frame was removed";
+
+/// Why a request a followed frame's document made, still open when the frame's session ended,
+/// never ends: the document went with the process the frame left (its removal, or its navigation
+/// to another site's process or back into the page's own).
+const DOCUMENT_GONE: &str = "its document went with the process its frame left";
 
 /// The auto-attach that follows a page's, or a followed frame's, frames in processes of their own
 /// ([`Chrome::follow_frames`]): each held as it starts, on a session of its own beside the page's.
@@ -1316,31 +1327,84 @@ fn auto_attach() -> Value {
     json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true})
 }
 
+/// Whether `frame` was removed from the page, it or a frame around it (by `parents`, each frame's
+/// parent), among the frames `removed`: a frame removed takes the frames within it along, whether
+/// or not each was told of.
+fn removed_with<'a>(
+    mut frame: &'a str,
+    parents: &'a HashMap<String, String>,
+    removed: &[String],
+) -> bool {
+    // Each step goes up one frame; more steps than frames would be a loop.
+    for _ in 0..=parents.len() {
+        if removed.iter().any(|gone| gone == frame) {
+            return true;
+        }
+        match parents.get(frame) {
+            Some(parent) => frame = parent,
+            None => return false,
+        }
+    }
+    false
+}
+
 /// The requests `events` tell of, in the order each was first seen, by Chrome's request id, the
-/// page's own frame being `frame`. One request may be told of on two sessions: a followed frame's
-/// document starts on the page's and is answered on the frame's own. One still open on a session
-/// that then ended, its frame gone, counts as given up ([`FRAME_GONE`]), as the page's own requests
-/// do when it goes away.
+/// page's own frame being `frame`.
+///
+/// A frame is followed by its id, whichever session tells of it: one request may be told of on
+/// two, as a followed frame's document starts on the page's session and is answered on the
+/// frame's own, and a frame navigating into the page's own process, or out of it, has its
+/// document answered on the session of the process it goes to.
+///
+/// A request still open counts as given up, as the page's own requests do when it goes away, once
+/// the frame it was made for, or a frame around it, is removed from the page (`Page.frameDetached`
+/// says `remove`, not a `swap` between processes: [`FRAME_REMOVED`]). So does one a followed
+/// frame's document made, still open on the frame's session when that session ends
+/// ([`DOCUMENT_GONE`]), but never a frame's own document: a frame whose session ends as it
+/// navigates into another process is still loading that document there, and its request ends
+/// where it is answered.
 fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut requests: HashMap<String, Request> = HashMap::new();
-    // The sessions each request was told of on.
+    // The sessions each request was told of on, and the frame each was made for.
     let mut told: HashMap<String, Vec<String>> = HashMap::new();
+    let mut made_for: HashMap<String, String> = HashMap::new();
+    // Each frame's parent, and the frames removed from the page.
+    let mut parents: HashMap<String, String> = HashMap::new();
+    let mut removed: Vec<String> = Vec::new();
     let mut order = Vec::new();
     for event in events {
         let params = &event["params"];
-        if event["method"] == "Target.detachedFromTarget" {
-            let gone = params["sessionId"].as_str();
-            for (id, request) in &mut requests {
-                let on = told.get(id).into_iter().flatten();
-                if !request.finished
-                    && request.failed.is_none()
-                    && on.map(String::as_str).any(|on| Some(on) == gone)
-                {
-                    request.failed = Some(FRAME_GONE.to_string());
-                    request.canceled = true;
+        match event["method"].as_str().unwrap_or("") {
+            "Target.detachedFromTarget" => {
+                let gone = params["sessionId"].as_str();
+                for (id, request) in &mut requests {
+                    let mut on = told.get(id).into_iter().flatten().map(String::as_str);
+                    if !request.finished
+                        && request.failed.is_none()
+                        && request.kind != "Document"
+                        && on.any(|on| Some(on) == gone)
+                    {
+                        request.failed = Some(DOCUMENT_GONE.to_string());
+                        request.canceled = true;
+                    }
                 }
+                continue;
             }
-            continue;
+            "Page.frameAttached" => {
+                if let (Some(child), Some(parent)) =
+                    (params["frameId"].as_str(), params["parentFrameId"].as_str())
+                {
+                    parents.insert(child.to_string(), parent.to_string());
+                }
+                continue;
+            }
+            "Page.frameDetached" if params["reason"] == "remove" => {
+                if let Some(gone) = params["frameId"].as_str() {
+                    removed.push(gone.to_string());
+                }
+                continue;
+            }
+            _ => {}
         }
         let Some(id) = params["requestId"].as_str() else {
             continue;
@@ -1361,6 +1425,9 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                 request.kind = params["type"].as_str().unwrap_or("").to_string();
                 request.prefetch |= prefetch(&params["request"]["headers"]);
+                if let Some(frame) = params["frameId"].as_str() {
+                    made_for.insert(id.to_string(), frame.to_string());
+                }
                 request.frame = match (params["frameId"].as_str(), frame) {
                     (Some(made_for), Some(own)) if made_for != own => Some(
                         params["documentURL"]
@@ -1421,6 +1488,17 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
                 request.canceled = params["canceled"].as_bool() == Some(true);
             }
             _ => {}
+        }
+    }
+    for (id, request) in &mut requests {
+        if !request.finished
+            && request.failed.is_none()
+            && made_for
+                .get(id)
+                .is_some_and(|frame| removed_with(frame, &parents, &removed))
+        {
+            request.failed = Some(FRAME_REMOVED.to_string());
+            request.canceled = true;
         }
     }
     order
@@ -1514,17 +1592,22 @@ impl Chrome {
         }
     }
 
+    /// Wait for the page's own `method` event: one a followed frame's session sends (its own
+    /// document's `Page.domContentEventFired`) is not the page's.
     fn wait_event(&mut self, method: &str, cpu: Duration) -> Result<()> {
-        if self
-            .events
-            .iter()
-            .any(|event| event["method"] == json!(method))
-        {
+        let page = self.session.clone();
+        let own = move |event: &Value| {
+            event["method"] == json!(method)
+                && event
+                    .get("sessionId")
+                    .is_none_or(|session| session.as_str() == page.as_deref())
+        };
+        if self.events.iter().any(&own) {
             return Ok(());
         }
         let mut budget = self.page_budget(cpu)?;
         let found = self.watch(&mut budget, |_, value| {
-            Ok((value.get("id").is_none() && value["method"] == json!(method)).then_some(()))
+            Ok((value.get("id").is_none() && own(value)).then_some(()))
         })?;
         found.ok_or_else(|| {
             budget.ended(

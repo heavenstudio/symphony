@@ -2,6 +2,7 @@
 //! CLI, run as an agent runs it, with this machine's Chrome. Its pictures are read back here: what
 //! they show, their size, and what a failure leaves behind (no picture, no browser, no profile).
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -2019,12 +2020,48 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
+/// What a shot of `url` that failed, its page not drawn within [`PATIENT`] seconds, said it still
+/// waited for, each part once: they come in the order each began, which a page's frames leave to
+/// the machine.
+fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
+    assert_eq!(output.status.code(), Some(1), "{}", said(output));
+    let prefix = format!(
+        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let parts = stderr
+        .trim_end()
+        .strip_prefix(&prefix)
+        .unwrap_or_else(|| panic!("no {prefix:?}: {}", said(output)));
+    parts.split("; ").map(str::to_owned).collect()
+}
+
+/// A document whose first half, all the stand-in sends of it while it stalls its body, posts
+/// `name` to its parent: the script comes first, then text gzip cannot shrink much, so the half
+/// sent holds the script whole.
+fn telling_its_parent(name: &str) -> Vec<u8> {
+    let mut state = 0x2545_f491_u32;
+    let noise: String = (0..32 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            char::from(b'a' + (state % 26) as u8)
+        })
+        .collect();
+    format!(
+        r#"<!doctype html><meta charset="utf-8"><script>parent.postMessage('{name}', '*')</script><p>{noise}</p>"#
+    )
+    .into_bytes()
+}
+
 #[test]
 fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame() {
     // A sandboxed frame whose document the stand-in never answers, and a frame of another site
-    // whose stylesheet it never answers: the page's own document waits for its frame, and the
-    // shot fails within its five seconds naming the frame that never loaded, by its address, and
-    // what it still waits for in it. No picture is left.
+    // whose stylesheet it never answers: the page's own document waits for its frames, and the
+    // shot fails at its timeout naming each frame that never loaded, by its address, and what it
+    // still waits for in it. The timeout is the patient one, which only a stall reaches, so by then
+    // the page has gone as far as it ever will, however loaded the machine. No picture is left.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2035,51 +2072,216 @@ fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame()
     other.hold_route("/hung.css", true);
     site.hold_route("/hung.html", true);
     let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
-    let hung = site.url("/hung.html");
-    for (name, attributes, waiting) in [
-        (
-            "hung-document",
-            r#"sandbox="allow-scripts" src="/hung.html""#.to_string(),
-            format!("the frame {hung} to load (its document is in flight)"),
-        ),
-        (
-            "hung-style",
-            format!(r#"src="{stalled}""#),
+    site.set_file(
+        "/hung-frames.html",
+        format!(
+            r#"<!doctype html><iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("hung-frames");
+    let out = scratch.join("hung.png");
+    let url = site.url("/hung-frames.html");
+    let output = shot(&chrome, &[&url, "--out", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        still_waiting(&output, &url),
+        BTreeSet::from([
+            "the document to load (it is interactive)".to_string(),
+            format!(
+                "the frame {} to load (its document is in flight)",
+                site.url("/hung.html")
+            ),
             format!(
                 "1 request(s) in flight in the frame {stalled}: http://localhost:{}/hung.css",
                 other.addr.port()
             ),
-        ),
+        ]),
+        "{}",
+        said(&output)
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
+#[test]
+fn a_frame_sent_to_the_pages_own_site_mid_load_is_still_waited_for() {
+    // Two frames of another site, which Chrome runs in a process of their own, each sent to a
+    // document of the page's own site, which it loads in the page's process: one frame navigates
+    // itself there, the page sends the other. The stand-in stalls each document after its first
+    // half, which tells the page, and the page then marks its own part drawn. Each frame still
+    // loads its document, so the shot waits for both, fails at its patient timeout naming them,
+    // and leaves no picture.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    let back = site.url("/back-in.html");
+    let sent = site.url("/by-parent.html");
+    for (path, name) in [
+        ("/back-in.html", "back-in"),
+        ("/by-parent.html", "by-parent"),
     ] {
-        let path = format!("/{name}.html");
-        site.set_file(&path, holding_a_frame(&attributes), "text/html");
-        let scratch = Scratch::new(name);
-        let out = scratch.join("hung.png");
-        let output = shot(
-            &chrome,
-            &[
-                &site.url(&path),
-                "--out",
-                out.to_str().unwrap(),
-                "--timeout",
-                "5",
-            ],
+        site.set_file(path, telling_its_parent(name), "text/html");
+        site.stall_body(path, true);
+    }
+    other.set_file(
+        "/leaving.html",
+        format!(
+            r#"<!doctype html><p>leaving</p><script>addEventListener('message', () => {{ location = '{back}'; }});</script>"#
         )
+        .into_bytes(),
+        "text/html",
+    );
+    other.set_file(
+        "/staying.html",
+        b"<!doctype html><p>staying</p>".to_vec(),
+        "text/html",
+    );
+    let away = format!("http://localhost:{}", other.addr.port());
+    site.set_file(
+        "/moving.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+<p id="loading" data-ready="loading">frames on their way</p>
+<iframe id="leaving" src="{away}/leaving.html"></iframe>
+<iframe id="sent" src="{away}/staying.html"></iframe>
+<script>
+  const told = new Set();
+  addEventListener('message', event => {{
+    told.add(event.data);
+    if (told.has('back-in') && told.has('by-parent')) document.getElementById('loading').remove();
+  }});
+  addEventListener('load', () => {{
+    document.getElementById('leaving').contentWindow.postMessage('go', '*');
+    document.getElementById('sent').src = '/by-parent.html';
+  }});
+</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("moving-frames");
+    let out = scratch.join("moving.png");
+    let url = site.url("/moving.html");
+    let output = shot(&chrome, &[&url, "--out", out.to_str().unwrap()])
         .output()
         .unwrap();
-        assert_eq!(output.status.code(), Some(1), "{name}: {}", said(&output));
-        assert_eq!(
-            String::from_utf8_lossy(&output.stderr).trim_end(),
-            format!(
-                "symphony shot: {}: the page was not drawn within 5s: still waiting for the \
-                 document to load (it is interactive); {waiting}",
-                site.url(&path)
-            ),
-            "{name}: {}",
-            said(&output)
-        );
-        assert!(!out.exists(), "{name}: a failed shot left a picture");
-    }
+    assert_eq!(
+        still_waiting(&output, &url),
+        BTreeSet::from([
+            format!("the frame {back} to load (its document is in flight)"),
+            format!("the frame {sent} to load (its document is in flight)"),
+        ]),
+        "{}",
+        said(&output)
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
+#[test]
+fn a_frame_removed_while_its_document_still_arrives_is_not_waited_for() {
+    // A frame of another site whose document the stand-in stalls after its first half, which tells
+    // the page; the page then removes the frame and marks its own part drawn. Nothing the page
+    // holds still loads, so the shot is taken.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    other.set_file("/going.html", telling_its_parent("going"), "text/html");
+    other.stall_body("/going.html", true);
+    site.set_file(
+        "/removing.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+<p id="loading" data-ready="loading">a frame on its way out</p>
+<iframe id="going" src="http://localhost:{}/going.html"></iframe>
+<script>
+  addEventListener('message', () => {{
+    document.getElementById('going').remove();
+    document.getElementById('loading').remove();
+  }});
+</script>"#,
+            other.addr.port()
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("removing-frame");
+    let out = scratch.join("removing.png");
+    let output = shot(
+        &chrome,
+        &[&site.url("/removing.html"), "--out", out.to_str().unwrap()],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(
+        other.requests().iter().any(|path| path == "/going.html"),
+        "the frame's document was not asked for: {:?}",
+        other.requests()
+    );
+    assert!(Picture::read(&out).width > 0);
+}
+
+#[test]
+fn the_report_has_a_frames_failed_requests_and_not_its_console_errors_when_chrome_runs_it_apart() {
+    // A frame of another site, which Chrome runs in a process of its own, whose picture is
+    // missing and which logs an error, on a page that logs one too: the report names the frame's
+    // missing picture and the page's error alone.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    other.set_file(
+        "/erring.html",
+        b"<!doctype html><img src=\"/missing.png\"><script>console.error('in the frame')</script>"
+            .to_vec(),
+        "text/html",
+    );
+    let away = format!("http://localhost:{}", other.addr.port());
+    site.set_file(
+        "/reporting.html",
+        format!(
+            r#"<!doctype html><iframe src="{away}/erring.html"></iframe><script>console.error('on the page')</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("reporting-frame");
+    let out = scratch.join("reporting.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/reporting.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--report",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let [report] = printed(&output).try_into().unwrap();
+    assert_eq!(
+        report["console_errors"],
+        json!([{"source": "console", "text": "on the page"}]),
+        "{report}"
+    );
+    assert_eq!(
+        report["failed_requests"],
+        json!([{"url": format!("{away}/missing.png"), "status": 404}]),
+        "{report}"
+    );
 }
 
 /// A page that replaces the window's `addEventListener` with one that throws, after its own

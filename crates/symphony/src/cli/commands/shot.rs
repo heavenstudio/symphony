@@ -38,7 +38,9 @@ options:
   --full-page          capture the whole page rather than the viewport
   --scheme light|dark  the colour scheme the page is told the system prefers
   --report             print, as JSON, the console errors and failed requests seen, and the
-                       document's scroll width against the viewport's (horizontal overflow)
+                       document's scroll width against the viewport's (horizontal overflow); a
+                       frame Chrome runs in a process of its own (a cross-site or sandboxed one)
+                       has its failed requests there, not its console errors
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
