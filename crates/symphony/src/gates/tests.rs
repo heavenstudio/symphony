@@ -465,6 +465,9 @@ fn runs_are_the_historys_and_the_operations_still_in_the_folder_each_once() {
     lease.lock().unwrap();
     let found = runs(&folder);
     assert_eq!(found, [again.clone(), going.clone()]);
+    // Let go as a recorder lets go: unlocked, then closed. Its close alone would leave the lock
+    // with a child another test's thread forked meanwhile, until that child's exec.
+    lease.unlock().unwrap();
     drop(lease);
     assert_eq!(
         runs(&folder),
@@ -804,6 +807,15 @@ fn running(kept: &Kept, plugin: &str) -> usize {
         .map_or(0, |ledger| ledger.running.load(Ordering::SeqCst))
 }
 
+/// How many hold the answer the fake of `plugin` gives `tools/x` in `kept`: the ledger, the call
+/// under way and each read waiting on it.
+fn holding(kept: &Kept, plugin: &str) -> usize {
+    lock(&kept.ledgers)
+        .get(&Who::new(Path::new("/project"), plugin, "fake"))
+        .and_then(|ledger| ledger.slots.get("tools/x"))
+        .map_or(0, Arc::strong_count)
+}
+
 fn asked(tip: &str) -> Asked {
     Asked {
         slug: "tools/x".into(),
@@ -1013,15 +1025,72 @@ fn a_slow_answer_reads_unknown_while_it_goes_on_and_is_kept_once_it_comes() {
     .unwrap_or_else(|stall| panic!("{stall}"));
     assert!(kept.ask(root, "plugin", fake, &asked(TIP)).is_ok());
     assert_eq!(fake.calls(), 1, "the answer that came late is the one kept");
-    // A read that waits for a call under way gets its answer once it comes.
+    // A read that waits for a call under way gets its answer once it comes: the fake held, the
+    // second read starts while the first read's call is under way, and waits on it.
     let patient = Kept::new(limits(PATIENT, Duration::from_secs(30)));
+    fake.hold();
     std::thread::scope(|scope| {
         let first = scope.spawn(|| patient.ask(root, "plugin", fake, &asked(OLD)));
+        test_time::until_true("the first read's call under way", test_time::FLOOR, || {
+            running(&patient, "plugin") == 1
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
+        let alone = holding(&patient, "plugin");
         let second = scope.spawn(|| patient.ask(root, "plugin", fake, &asked(OLD)));
+        test_time::until_true("the second read began", test_time::FLOOR, || {
+            holding(&patient, "plugin") > alone || running(&patient, "plugin") > 1
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
+        assert_eq!(running(&patient, "plugin"), 1, "it started no call");
+        assert_eq!(
+            holding(&patient, "plugin"),
+            alone + 1,
+            "it waits on the first"
+        );
+        fake.release();
         assert!(first.join().unwrap().is_ok());
         assert!(second.join().unwrap().is_ok());
     });
     assert_eq!(fake.calls(), 2, "two reads at once start one call");
+}
+
+#[test]
+fn a_read_while_a_call_goes_on_waits_only_what_is_left_of_the_calls_wait() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    fake.hold();
+    // A wait no test outlasts, and a call still under way that was asked that long ago, its slot
+    // in the ledger as the read that started it left it: what is left of its wait is nothing.
+    let wait = Duration::from_secs(3600);
+    let kept: &'static Kept = Box::leak(Box::new(Kept::new(Limits {
+        wait,
+        ceiling: 2 * wait,
+        ..Limits::default()
+    })));
+    let asked_long_ago = Arc::new(Slot {
+        asked: asked(TIP),
+        kept_while: told(fake, root, &asked(TIP)).unwrap(),
+        at: Instant::now()
+            .checked_sub(wait)
+            .expect("a machine up an hour"),
+        done: Mutex::new(None),
+        ready: Condvar::new(),
+    });
+    lock(&kept.ledgers)
+        .entry(Who::new(root, "plugin", "fake"))
+        .or_default()
+        .slots
+        .insert("tools/x".into(), asked_long_ago);
+    // On a thread of its own, so a read that waited its whole wait again fails at the backstop.
+    let read = std::thread::spawn(move || kept.ask(root, "plugin", fake, &asked(TIP)));
+    test_time::until_true("the read ended", test_time::FLOOR, || read.is_finished())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    assert_eq!(
+        read.join().unwrap(),
+        Err("fake gave no answer within 3600 s".into())
+    );
+    assert_eq!(fake.calls(), 0, "it started no call");
+    fake.release();
 }
 
 #[test]

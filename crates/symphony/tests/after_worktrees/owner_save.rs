@@ -1,6 +1,8 @@
 //! The owner's quick-task save at its board boundary: a confirmed save is recovered by a new
-//! worker, a save refused before it reaches the board stays refused and writes nothing, and saves
-//! made at once by separate workers make each task once.
+//! worker, also from its receipt's fingerprint alone; a save whose write it cannot confirm stays
+//! pending until a check finds its task, or is confirmed at once when its check does; a save
+//! refused before it reaches the board stays refused and writes nothing; and saves made at once by
+//! separate workers make each task once.
 
 #[path = "../../../tasks/tests/store/common.rs"]
 #[expect(
@@ -10,6 +12,8 @@
 mod board;
 
 use serde_json::{Value, json};
+use std::io::{BufRead, BufReader, Read};
+use std::net::TcpStream;
 use std::time::Duration;
 use symphony_board::sys::Command;
 
@@ -17,6 +21,38 @@ const CHILD: &str = "SYMPHONY_OWNER_SAVE_PROBE";
 const CASE: &str = "owner_save::reports_each_private_database_failure_phase";
 /// How long a save may stay uncertain before the wait for it is a stall: the backstop of 30 s.
 const LIMIT: Duration = test_time::backstop(Duration::from_secs(30));
+
+fn packet(stream: &mut BufReader<TcpStream>) -> std::io::Result<Option<(String, Vec<u8>)>> {
+    let mut headers = String::new();
+    let mut size = 0;
+    loop {
+        let mut line = String::new();
+        if stream.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        headers.push_str(&line);
+        if let Some((key, value)) = line.split_once(':')
+            && key.eq_ignore_ascii_case("content-length")
+        {
+            size = value.trim().parse().unwrap();
+        }
+        if line == "\r\n" {
+            break;
+        }
+    }
+    let mut bytes = vec![0; size];
+    stream.read_exact(&mut bytes)?;
+    Ok(Some((headers, bytes)))
+}
+
+#[path = "owner_save/proxy.rs"]
+mod proxy;
+use proxy::Holding;
+
+/// The phases whose save is confirmed: plain, or after a write it could not confirm.
+fn confirmed_phase(phase: &str) -> bool {
+    matches!(phase, "saved" | "create" | "reply")
+}
 
 fn payload() -> Value {
     json!({"request":"11111111111111111111111111111111", "title":"Owner delay probe",
@@ -70,7 +106,7 @@ fn child(root: &str) {
         Ok(value) => json!({"saved":value}),
         Err(error) => json!({"status":error.status,"error":error.error}),
     };
-    if phase == "saved" {
+    if confirmed_phase(&phase) {
         let mut result = Some(result);
         let saved = test_time::until("the save confirmed", LIMIT, || {
             let now = result
@@ -133,6 +169,22 @@ fn replay(root: &std::path::Path, payload: &Value, slug: &Value) {
     assert_eq!(
         repeated["slug"], *slug,
         "a new Saves must recover the same receipt"
+    );
+    // A receipt left with its fingerprint alone, its outcome gone, is checked on the board.
+    let receipt =
+        root.join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(receipt)
+        .unwrap()
+        .set_len(64)
+        .unwrap();
+    let checked = reopened
+        .post("", "/api/quick-task", payload)
+        .unwrap_or_else(|error| panic!("{}", error.error));
+    assert_eq!(
+        checked["slug"], *slug,
+        "a header without its outcome checks the board fingerprint"
     );
     refusals(&reopened, payload, slug);
     reopened.close();
@@ -241,13 +293,20 @@ fn phase(phase: &'static str) {
         client.database(),
     ))
     .unwrap();
+    // The phases whose write is made uncertain go through the proxy that holds it.
+    let holding =
+        matches!(phase, "create" | "reply").then(|| Holding::start(client.addr().into(), phase));
+    let server = holding.as_ref().map_or_else(
+        || client.addr().to_string(),
+        |held| held.address.to_string(),
+    );
     let mut command = child_command(phase);
     let done = symphony_board::sys::output(
         command
             .args(["--exact", CASE, "--nocapture"])
             .env(CHILD, &root)
             .env("SYMPHONY_OWNER_SAVE_PHASE", phase)
-            .env("TASKS_SERVER", client.addr())
+            .env("TASKS_SERVER", &server)
             .env("TASKS_DATABASE", client.database())
             .env("TASKS_SWEEP", "off")
             .env_remove("TASKS_SESSION")
@@ -271,6 +330,19 @@ fn phase(phase: &'static str) {
     )
     .unwrap();
     check_phase(&store, phase, &record);
+    if let Some(held) = holding {
+        assert_eq!(
+            *held.ran.lock().unwrap(),
+            1,
+            "{phase}: the held CREATE ran once"
+        );
+        // The first answer says what the save could tell: nothing yet, or its task once checked.
+        let first = &record["first"]["saved"];
+        match phase {
+            "create" => assert_eq!(first["pending"], true, "{record}"),
+            _ => assert_eq!(first["slug"], "inbox/owner-delay-probe", "{record}"),
+        }
+    }
 }
 
 fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
@@ -288,7 +360,7 @@ fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
         .sum();
     let count = match phase {
         "concurrent" => 3,
-        "saved" => 1,
+        phase if confirmed_phase(phase) => 1,
         _ => 0,
     };
     assert_eq!(tasks.len(), count, "{phase}: {record}");
@@ -321,6 +393,8 @@ fn reports_each_private_database_failure_phase() {
     }
     for name in [
         "saved",
+        "create",
+        "reply",
         "receipt-write",
         "journal-write",
         "interrupted",
