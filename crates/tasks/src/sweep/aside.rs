@@ -522,7 +522,8 @@ mod tests {
 
     #[test]
     fn a_name_taken_gets_the_next_number() {
-        let main = std::env::temp_dir().join(format!("sf-sweep-aside-{}", std::process::id()));
+        let main =
+            std::env::temp_dir().join(format!("symphony-sweep-aside-{}", std::process::id()));
         let _ = fs::remove_dir_all(&main);
         let tree = Path::new("/wt/agent-a5a6");
         assert_eq!(
@@ -577,8 +578,10 @@ mod tests {
     }
 
     fn scratch(name: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let base =
-            std::env::temp_dir().join(format!("sf-sweep-aside-{name}-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "symphony-sweep-aside-{name}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&base);
         (base.clone(), base.join("main"), base.join("tree"))
     }

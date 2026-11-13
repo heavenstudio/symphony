@@ -37,6 +37,11 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         false,
     );
     crate::testing::assert_primed(&build);
+    // The project names that command as its Cargo: the server rebuilds through it.
+    tree.write(
+        "main/symphony.toml",
+        "[project]\ncargo = [\"tools/rs-bin.sh\"]\n",
+    );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "Reload sources"]);
     // The installed client is current, so only the server build runs.
@@ -518,6 +523,37 @@ fn a_transfer_names_the_handover_pipes_or_an_older_generations_socket() {
     })
     .unwrap();
     assert!(sent.get("control").is_none(), "{sent}");
+}
+
+#[test]
+fn a_handover_is_taken_by_its_one_name_and_only_from_this_process_parent() {
+    use super::inherited;
+    use std::collections::BTreeMap;
+    use std::env::VarError;
+    let from = |parent: i64| {
+        format!(
+            r#"{{"parent":{parent},"listeners":[3],"lease":4,"ready":5,"commit":6,"fingerprint":"f{parent}"}}"#
+        )
+    };
+    let taken = |vars: &[(&str, String)], parent: i64| {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        inherited(
+            |name| vars.get(name).cloned().ok_or(VarError::NotPresent),
+            parent,
+        )
+        .map(|transfer| transfer.map(|transfer| transfer.fingerprint))
+    };
+    let name = "SYMPHONY_HANDOVER";
+    assert_eq!(taken(&[(name, from(7))], 7), Ok(Some("f7".into())));
+    // Not from this process's parent: a descendant, which takes nothing.
+    assert_eq!(taken(&[(name, from(5))], 7), Ok(None));
+    assert_eq!(taken(&[], 7), Ok(None));
+    assert!(taken(&[(name, "not a transfer".into())], 7).is_err());
+    // No other name hands one over.
+    assert_eq!(taken(&[("HANDOVER", from(7))], 7), Ok(None));
 }
 
 #[test]

@@ -30,11 +30,11 @@ pub(super) fn isolated_with(
     test: &str,
     setup: impl FnOnce(&Path, &mut Command),
 ) -> bool {
-    if std::env::var_os("SF_CLEAN_PROOF_CHILD").is_some() {
+    if std::env::var_os("SYMPHONY_CLEAN_PROOF_CHILD").is_some() {
         return false;
     }
     let path = std::env::temp_dir().join(format!(
-        "sf-clean-proof-{}-{module}-{test}",
+        "symphony-clean-proof-{}-{module}-{test}",
         std::process::id()
     ));
     fs::create_dir_all(&path).unwrap();
@@ -50,8 +50,8 @@ pub(super) fn isolated_with(
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", &scratch.0)
-        .env("SF_SURREAL", crate::common::surreal())
-        .env("SF_CLEAN_PROOF_CHILD", "1")
+        .env("SYMPHONY_SURREAL", crate::common::surreal())
+        .env("SYMPHONY_CLEAN_PROOF_CHILD", "1")
         .env("GIT_TRACE2_EVENT", scratch.0.join("trace.jsonl"));
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
         child.env("LLVM_PROFILE_FILE", profile);
@@ -120,9 +120,10 @@ fn admin(r: &Repo, tree: &Path) -> PathBuf {
 }
 
 fn empty_cache(r: &Repo, tree: &Path) -> serde_json::Value {
-    let value: serde_json::Value =
-        serde_json::from_slice(&fs::read(admin(r, tree).join("sf-sweep-verdict.json")).unwrap())
-            .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(admin(r, tree).join("symphony-sweep-verdict.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(value["verdict"]["left"], serde_json::json!([]));
     assert!(
         value["inventory"]["entries"]
@@ -263,8 +264,12 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
     held.try_lock().unwrap();
     for tree in &trees {
         fs::remove_file(admin(&r, tree).join("HEAD.lock")).unwrap();
-        fs::remove_file(admin(&r, tree).join("sf-sweep-remove.lock")).unwrap();
-        fs::hard_link(&held_path, admin(&r, tree).join("sf-sweep-remove.lock")).unwrap();
+        fs::remove_file(admin(&r, tree).join("symphony-sweep-remove.lock")).unwrap();
+        fs::hard_link(
+            &held_path,
+            admin(&r, tree).join("symphony-sweep-remove.lock"),
+        )
+        .unwrap();
     }
     for pass in 0..2 {
         let began = Instant::now();
@@ -334,7 +339,7 @@ fn lock_disappearance_rechecks_nested_source_and_clean_cache_keeps_both_final_st
         fs::read_to_string(tree.join("sim/new.gd")).unwrap(),
         "source must survive\n"
     );
-    let removal = admin(&r, &tree).join("sf-sweep-remove.lock");
+    let removal = admin(&r, &tree).join("symphony-sweep-remove.lock");
     fs::write(&removal, "held removal bytes\n").unwrap();
     let held = File::options().write(true).open(&removal).unwrap();
     held.try_lock().unwrap();
@@ -422,7 +427,7 @@ fn oversized_empty_directory_proof_rescans_without_saving_an_empty_cache() {
     for number in 0..8193 {
         fs::create_dir(tree.join(format!("empty-{number}"))).unwrap();
     }
-    let cache = admin(&r, &tree).join("sf-sweep-verdict.json");
+    let cache = admin(&r, &tree).join("symphony-sweep-verdict.json");
     assert!(
         !cache.exists(),
         "unexpected preexisting proof {}",

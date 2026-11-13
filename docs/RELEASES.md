@@ -427,7 +427,8 @@ also starts once enough tasks have landed, whatever the hour
 ## The refresh
 
 Asked whether a green release should refresh the machine, the owner, 2026-11-12: "yes, a green
-release should refresh". The clients are the projects the machine serves, Star Foundry among them.
+release should refresh". The clients are the projects the machine serves, the consuming project
+among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project the conciliation covers (step 4 above: registered, its `symphony.toml` naming plugins, this
 repository aside) whose packages take one of the Symphony's from git
@@ -479,7 +480,7 @@ repository aside) whose packages take one of the Symphony's from git
   live board is moved to the schema of the pin its main locks then: the release once its main took
   it, or an older pin whose schema it is still behind, so a refresh finishes what an earlier one
   left, whatever release is newest. The store is snapshotted first, as it runs
-  (`sf-tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
+  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
   5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
   one command that moves a project's board, and the schema is read again. A board whose database
   is not running is refused, since nothing here starts, signals or stops a database. So is one
@@ -510,8 +511,8 @@ task.
 
 What stays by hand, said under a red refresh in `--status` too:
 
-- a project whose own gate or hooks refuse the move (Star Foundry's guard lets only its own
-  landing move its main): it lands `symphony/RELEASE` through its own landing;
+- a project whose own gate or hooks refuse the move (the consuming project's guard lets only its
+  own landing move its main): it lands `symphony/RELEASE` through its own landing;
 - a main checkout off its default branch or with tracked edits: its owner puts it right;
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself. It runs the refresh again for the newest release here, as a run of its own under
@@ -561,7 +562,7 @@ next run: after 13 more landings (7 of 20), or the scheduled run
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
-  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/sf-tasks/snapshots/before-schema-17-release-2026-11-12.surql
+  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/symphony/tasks/snapshots/before-schema-17-release-2026-11-12.surql
   the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
 ```
 

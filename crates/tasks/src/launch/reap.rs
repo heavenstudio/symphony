@@ -10,21 +10,22 @@
 //! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just tasks clean`
 //! runs cleanup and one sweep at once.
 //!
-//! Every sweep holds `reap.json.lock` (`flock`, not waited on), so two sweeps never overlap: a second
-//! app's timer, or `just tasks reap`, that comes while one runs sweeps nothing. Sweeps that follow
-//! each other closely (two apps, one per worktree, or a hand run after the timer) cannot shorten the
-//! wait below: `reap.json` keeps when each terminal was first seen idle, by the board's clock. Both
-//! are in `sf-tasks/` of the git common dir, beside the board's server ([`state_path`]). Nothing is
-//! printed into an agent's monitor; each close is one line on a task thread.
+//! Every sweep holds `reap.json.lock` (`flock`, not waited on), so two sweeps never overlap: a
+//! second app's timer, or `just tasks reap`, that comes while one runs sweeps nothing. Sweeps that
+//! follow each other closely (two apps, one per worktree, or a hand run after the timer) cannot
+//! shorten the wait below: `reap.json` keeps when each terminal was first seen idle, by the board's
+//! clock. Both are in `symphony/tasks/` of the git common dir, beside the board's server
+//! ([`state_path`]). Nothing is printed into an agent's monitor; each close is one line on a task
+//! thread.
 //!
-//! Only this board's terminals (`sf.board`) are swept. A live one is closed (killed, then removed)
-//! when every one of these holds at two sweeps in a row, the first at least its idle wait before
-//! the second (so an agent just launched, or between two steps, is never closed):
+//! Only this board's terminals (`symphony.board`) are swept. A live one is closed (killed, then
+//! removed) when every one of these holds at two sweeps in a row, the first at least its idle wait
+//! before the second (so an agent just launched, or between two steps, is never closed):
 //!
 //! - hc calls its agent `idle` or `done`, or `blocked` on the folder-trust prompt (a launch that
 //!   never started);
-//! - it is named (`claude -n HANDLE`, else its `sf.handle` label, else its terminal name) for a
-//!   board session that is not an orchestrator or a chat;
+//! - it is named (`claude -n HANDLE`, else its `symphony.handle` label, else its terminal name) for
+//!   a board session that is not an orchestrator or a chat;
 //! - it is not the calling terminal (`HC_TERMINAL_ID`) or the caller's handle;
 //! - neither it nor any session under it (`parent`, at any depth, including through a session that
 //!   left) has an unanswered addressed post;
@@ -457,7 +458,8 @@ pub const CHANGED: &str = "it changed while this sweep looked: its idle wait sta
 pub const TOOL_CALL: &str =
     "its agent made a tool call while this sweep looked: its idle wait starts again";
 
-/// Its handle: claude's `-n` (or `--name`), else its `sf.handle` label, else its terminal's name.
+/// Its handle: claude's `-n` (or `--name`), else its `symphony.handle` label, else its terminal's
+/// name.
 fn name(terminal: &Object) -> Option<String> {
     let argv = hc::argv(terminal);
     let run = hc::program(&argv);

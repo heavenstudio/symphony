@@ -1568,7 +1568,7 @@ mod tests {
     #[test]
     fn a_checks_key_is_its_name_in_lower_case_words() {
         assert_eq!(key("verify"), "verify");
-        assert_eq!(key("Conciliate star_foundry!"), "conciliate-star-foundry");
+        assert_eq!(key("Conciliate lamp_shop!"), "conciliate-lamp-shop");
         assert_eq!(key("--a--b--"), "a-b");
         assert_eq!(
             key("tests/perf"),
@@ -2052,7 +2052,7 @@ mod tests {
         // A test run whose log names no failed target (it did not build): a target at a time,
         // never the whole suite again.
         let unbuilt = Ran {
-            command: "SF_SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh \
+            command: "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh \
                       test --workspace --locked --no-fail-fast"
                 .into(),
             log: tree.write("unbuilt.log", "error[E0425]: cannot find value `x`\n"),
@@ -2142,7 +2142,7 @@ mod tests {
             command: "cargo --config 'patch…' test --no-fail-fast -p game (in /copies/sf at 1a2b)"
                 .into(),
             log: cargo_log(&tree, 1),
-            ..ran("conciliate-star-foundry", 101)
+            ..ran("conciliate-consumer", 101)
         };
         let said = alone(&conciliation, &night(&[]));
         assert!(

@@ -25,7 +25,7 @@ struct Fixture {
 impl Fixture {
     fn new(test: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
-            "sf-upload-route-{}-{test}-{}",
+            "symphony-upload-route-{}-{test}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

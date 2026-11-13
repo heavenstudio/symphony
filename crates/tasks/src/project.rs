@@ -27,7 +27,7 @@ pub struct Place {
     pub root: PathBuf,
     /// Its file, if it has one.
     pub file: Option<PathBuf>,
-    /// The repository's common dir, which holds its board (`sf-tasks/`).
+    /// The repository's common dir, which holds its board (`symphony/tasks/`).
     pub common: PathBuf,
 }
 
@@ -133,6 +133,27 @@ impl Project {
             })
             .unwrap_or_else(|| GUIDE.to_string())
     }
+}
+
+/// Where the path `[board] KEY` names in the project file of the main checkout of the repository
+/// whose common dir is `common` is: one under `.git/` in the common dir, any other under the main
+/// checkout. None when there is no main checkout, no file, it does not read, or it names no path
+/// there: the project has none of that kind, and the board reads none (`[board] slot_locks`,
+/// `[board] assessments`; the Symphony's `project::Board` checks them). Only that key is read; the
+/// rest of the file is the Symphony's.
+pub fn board_path(common: &Path, key: &str) -> Option<PathBuf> {
+    let root = main_checkout(common)?;
+    let text = std::fs::read_to_string(root.join(FILE)).ok()?;
+    let file = text.parse::<toml::Table>().ok()?;
+    let path = file
+        .get("board")?
+        .get(key)?
+        .as_str()
+        .filter(|path| !path.is_empty())?;
+    Some(match path.strip_prefix(".git/") {
+        Some(rest) => common.join(rest),
+        None => root.join(path),
+    })
 }
 
 /// The project's artifacts folder, project-relative, as the project file at `root` names it
@@ -289,7 +310,7 @@ mod tests {
     #[test]
     fn the_artifacts_folder_is_the_files_else_artifacts_and_none_outside_the_project() {
         let root =
-            std::env::temp_dir().join(format!("sf-project-artifacts-{}", std::process::id()));
+            std::env::temp_dir().join(format!("symphony-project-artifacts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         assert_eq!(artifacts(&root).as_deref(), Some("artifacts"), "no file");

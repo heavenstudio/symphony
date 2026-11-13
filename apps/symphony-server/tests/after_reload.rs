@@ -133,7 +133,7 @@ use std::{env, fs, io::{BufRead, BufReader, Write}, os::unix::net::UnixStream, p
 use std::os::unix::process::CommandExt;
 const DIRTY_MAIN: &str = __DIRTY_MAIN__;
 fn event(kind: &str) -> String {
-    let mut s = UnixStream::connect(env::var_os("SF_AFTER_RELOAD_GATE").unwrap()).unwrap();
+    let mut s = UnixStream::connect(env::var_os("SYMPHONY_AFTER_RELOAD_GATE").unwrap()).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(45))).unwrap();
     writeln!(s, "{kind} {}", std::process::id()).unwrap();
     let mut answer = String::new();
@@ -154,8 +154,8 @@ fn main() {
             if action == "empty" { fs::remove_file(public.join("index.html")).unwrap(); return; }
             assert_eq!(action, "bundle");
         }
-        Some("sf-slots") => {
-            assert_eq!(&args[..3], ["sf-slots", "cargo", "install"]);
+        Some("slots") => {
+            assert_eq!(&args[..3], ["slots", "cargo", "install"]);
             let action = event("build");
             if action == "fail" { eprintln!("fixture compiler refused source"); std::process::exit(23); }
             assert_eq!(action, "install");
@@ -169,7 +169,7 @@ fn main() {
         }
         Some("serve") => {
             if event("startup") == "exit" { std::process::exit(24); }
-            panic!("exec failed: {}", Command::new(env::var_os("SF_AFTER_RELOAD_SERVER").unwrap()).args(args).exec());
+            panic!("exec failed: {}", Command::new(env::var_os("SYMPHONY_AFTER_RELOAD_SERVER").unwrap()).args(args).exec());
         }
         Some("content") => {
             if fs::read_to_string("docs/TOPIC.md").unwrap().contains("[x] **one**") {
@@ -194,7 +194,7 @@ fn main() {
             let tip = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
             assert!(tip.status.success());
             use std::fs::OpenOptions;
-            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "verify\t{}\t{actor}\t{}", cwd.display(), String::from_utf8(tip.stdout).unwrap().trim()).unwrap();
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SYMPHONY_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "verify\t{}\t{actor}\t{}", cwd.display(), String::from_utf8(tip.stdout).unwrap().trim()).unwrap();
             assert_eq!(event("outputs"), "publish");
         }
         Some("land") => {
@@ -209,9 +209,9 @@ fn main() {
             };
             let tip = git(&["rev-parse", "HEAD"]);
             use std::fs::OpenOptions;
-            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SF_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "land\t{}\t{actor}\t{}", cwd.display(), tip.trim()).unwrap();
+            writeln!(OpenOptions::new().create(true).append(true).open(env::var_os("SYMPHONY_AFTER_RELOAD_COMMANDS").unwrap()).unwrap(), "land\t{}\t{actor}\t{}", cwd.display(), tip.trim()).unwrap();
             assert_eq!(git(&["symbolic-ref", "--short", "HEAD"]).trim(), args[1]);
-            let main = env::var("SF_AFTER_RELOAD_ROOT").unwrap();
+            let main = env::var("SYMPHONY_AFTER_RELOAD_ROOT").unwrap();
             let clean = || {
                 if !git(&["-C", &main, "status", "--porcelain", "--untracked-files=no"]).is_empty() {
                     eprintln!("main checkout {main} {DIRTY_MAIN}");
@@ -221,7 +221,7 @@ fn main() {
             clean();
             git(&["rebase", "main"]);
             let writes = fs::OpenOptions::new().read(true).write(true)
-                .open(PathBuf::from(&main).join(".git/sf-symphony/verdict-writes.lock")).unwrap();
+                .open(PathBuf::from(&main).join(".git/symphony/server/verdict-writes.lock")).unwrap();
             writes.lock().unwrap();
             clean();
             git(&["-C", &main, "merge", "--ff-only", "-q", &args[1]]);
@@ -268,14 +268,16 @@ impl Fixture {
         repository(&root, &["config", "core.hooksPath", "/dev/null"]);
         write(&root.join("docs/TOPIC.md"), DOC);
         write(&root.join(".gitignore"), "artifacts/\n");
-        // The project's verdict commands, which the fixture's `just` stands in for.
+        // The project's verdict commands, which the fixture's `just` stands in for, and the command
+        // the server's rebuild runs Cargo by, which the driver stands in for.
         write(
             &root.join("symphony.toml"),
-            "[verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
+            "[project]\ncargo = [\"tools/rs-bin.sh\", \"slots\", \"cargo\"]\n\
+             [verdicts]\ncheck = [\"just\", \"verify\"]\nland = [\"just\", \"land\"]\ngenerators = [\n  \
              { name = \"content\", outputs = \"content/\", command = [\"just\", \"content\"] },\n  \
              { name = \"content-ids\", outputs = \"sim/content_ids.gd\", command = [\"just\", \"content-ids\"], when_changed = true },\n  \
              { name = \"lamp-atlas\", outputs = \"view/lamp_atlas\", command = [\"just\", \"lamp-atlas\", \"build\"], when_changed = true },\n]\n\
-             record = \".git/sf-land/verdicts\"\n",
+             record = \".git/land/verdicts\"\n",
         );
         write(
             &root.join("Cargo.toml"),
@@ -461,7 +463,7 @@ impl Fixture {
         });
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
-            if name.starts_with("SF_")
+            if name.starts_with("SYMPHONY_")
                 || name.starts_with("TASKS_")
                 || name.starts_with("GIT_")
                 || name.starts_with("HC_")
@@ -484,14 +486,20 @@ impl Fixture {
             .arg(&self.root)
             .args(["--port", "0", "--host", "127.0.0.1"])
             .env("PATH", path)
-            .env("SF_AFTER_RELOAD_GATE", self.gate.path())
-            .env("SF_AFTER_RELOAD_COMMANDS", self.dir.join("commands.log"))
-            .env("SF_AFTER_RELOAD_ROOT", &self.root)
-            .env("SF_AFTER_RELOAD_SERVER", first_run::server_image())
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_AFTER_RELOAD_GATE", self.gate.path())
+            .env(
+                "SYMPHONY_AFTER_RELOAD_COMMANDS",
+                self.dir.join("commands.log"),
+            )
+            .env("SYMPHONY_AFTER_RELOAD_ROOT", &self.root)
+            .env("SYMPHONY_AFTER_RELOAD_SERVER", first_run::server_image())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .env("TASKS_SERVER", &self.board_address)
             .env("TASKS_DATABASE", "after_reload")
-            .env("SF_TASKS_CLI", format!("'{}'", tasks_binary().display()))
+            .env(
+                "SYMPHONY_TASKS_CLI",
+                format!("'{}'", tasks_binary().display()),
+            )
             .env("HC_BIN", "/usr/bin/false")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -706,12 +714,12 @@ fn await_front(address: SocketAddr, pid: i64) {
 }
 
 /// The board CLI the generations run: this process's link of the one the workspace's test run built
-/// (`SF_TEST_TASKS_BINARY`, from `sf-rust-tests`), else of one built here, run once in setup
-/// (`first_run::board_cli`).
+/// (`SYMPHONY_TEST_TASKS_BINARY`, from a runner that built it first), else of one built here, run
+/// once in setup (`first_run::board_cli`).
 fn tasks_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
-        let built = std::env::var_os("SF_TEST_TASKS_BINARY")
+        let built = std::env::var_os("SYMPHONY_TEST_TASKS_BINARY")
             .filter(|b| !b.is_empty())
             .map_or_else(
                 || {
@@ -774,7 +782,8 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
         first_run::server_image().parent(),
         "the board CLI is this process's link too"
     );
-    if let Some(runners) = std::env::var_os("SF_TEST_TASKS_BINARY").filter(|b| !b.is_empty()) {
+    if let Some(runners) = std::env::var_os("SYMPHONY_TEST_TASKS_BINARY").filter(|b| !b.is_empty())
+    {
         assert_ne!(resolved(tasks_binary()), resolved(Path::new(&runners)));
     }
     let driver = resolved(&f.root.join("tools/rs-bin.sh"));
@@ -791,9 +800,9 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
     let mut install = OwnedChild(
         sys::spawn_output(
             Command::new(f.root.join("tools/rs-bin.sh"))
-                .args(["sf-slots", "cargo", "install", "--root"])
+                .args(["slots", "cargo", "install", "--root"])
                 .arg(&f.home)
-                .env("SF_AFTER_RELOAD_GATE", f.gate.path()),
+                .env("SYMPHONY_AFTER_RELOAD_GATE", f.gate.path()),
         )
         .unwrap(),
     );
@@ -804,7 +813,7 @@ fn installations_and_stand_ins_link_the_files_setup_ran() {
 }
 
 /// Names, in a rerun of the test below, the file the rerun writes its database's pid to.
-const LEASH_HELPER: &str = "SF_AFTER_RELOAD_LEASH_HELPER";
+const LEASH_HELPER: &str = "SYMPHONY_AFTER_RELOAD_LEASH_HELPER";
 const LEASH_TEST: &str = "a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed";
 
 /// The private database this binary's fixture and the host-origin one start ends with the test
@@ -844,7 +853,7 @@ fn a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed() {
             std::thread::park();
         }
     }
-    let dir = std::env::temp_dir().join(format!("sf-leash-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-leash-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     let said = dir.join("database-pid");
     let mut starter = OwnedChild(

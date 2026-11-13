@@ -5,7 +5,7 @@ fn args(text: &str) -> Vec<String> {
 }
 
 /// Set in this test binary's own child, run by the case below: the server a scratch run starts.
-const SCRATCH_SERVER: &str = "SF_SCRATCH_RUN_SERVER";
+const SCRATCH_SERVER: &str = "SYMPHONY_SCRATCH_RUN_SERVER";
 
 /// Only in that child: a scratch run on the streams and folder the case gave it, ending with its code.
 #[test]

@@ -103,7 +103,10 @@ fn a_typed_render_keeps_the_renderers_name_on_its_blocks() {
     let tree = Tree::new();
     let sections = render(&tree).typed_sections("[Deck](/a.card)\n", "docs/A.md");
     let html: String = sections.iter().map(|s| s.html.clone()).collect();
-    assert!(html.contains("<sf-component data-kind=\"card\">"), "{html}");
+    assert!(
+        html.contains("<symphony-component data-kind=\"card\">"),
+        "{html}"
+    );
 }
 
 #[test]

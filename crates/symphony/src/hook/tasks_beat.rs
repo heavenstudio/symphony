@@ -1,27 +1,24 @@
 //! `PreToolUse` (Bash) and `PostToolUse` hook: a subagent's tool calls are its heartbeat on the task board.
 //!
-//! It runs around every tool call of every session in this project, so it is built to cost nothing where
-//! it has nothing to do: an event with neither `agent_id` nor `session_id` returns before anything is
-//! read, and so does a full session's call (no `agent_id`: an orchestrator's, the owner's) whose key is
-//! not bound and that is not a board command, which may bind it: bound is a file in the bound keys'
-//! folder ([`bound`]), a look at one path. Any other event goes whole to the `tasks` binary's `beat`
-//! (`symphony/crates/tasks/src/cli/beat.rs`), which beats only for a handle bound to that key: a subagent by its
-//! agent id, a full session with no monitor (one started in an hc terminal) by its session id; a session
-//! with a monitor beats through it and is never bound. The beat is one call to the board's server, which
-//! it never starts, and waits on it at most two seconds.
+//! It runs around every tool call of every session in this project, so it is built to cost nothing
+//! where it has nothing to do: an event with neither `agent_id` nor `session_id` returns before
+//! anything is read, and so does a full session's call (no `agent_id`: an orchestrator's, the
+//! owner's) whose key is not bound and that is not a board command, which may bind it: bound is a
+//! file in the bound keys' folder ([`bound`]), a look at one path. Any other event goes whole to
+//! the `tasks` binary's `beat` (`crates/tasks/src/cli/beat.rs`), which beats only for a handle
+//! bound to that key: a subagent by its agent id, a full session with no monitor (one started in an
+//! hc terminal) by its session id; a session with a monitor beats through it and is never bound.
+//! The beat is one call to the board's server, which it never starts, and waits on it at most two
+//! seconds.
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
-//! (`SYMPHONY_HOOK_ROOT`, the compatibility launcher's `SF_HOOKS_ROOT`, else `CLAUDE_PROJECT_DIR`).
+//! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
 //! With none, the board's filesystem-only project lookup finds it from the event's cwd.
-//! A live `just tasks` through
-//! `tools/tasks.sh` links it to committed main's build, in the checkout whose justfile ran; scratch
-//! calls preserve that link. A checkout with no link (a worktree whose sessions run main's justfile,
-//! `just --justfile MAIN/justfile tasks …`) beats on the live build `tools/tasks.sh` recorded in the
-//! common dir ([`live_build`]) and links it there, so its next beat
-//! looks no further. With neither, it beats on the build the recipes run: from a linked worktree
-//! the main checkout's `.target/bin/tasks`, else `tasks` on `PATH` ([`crate::builds`]).
-//! The hook hashes no sources and builds nothing, since a build would hold up the
-//! tool call for minutes. It beats on that approved build until the next live `just tasks` refreshes it.
+//! A checkout with no link of its own (a worktree whose sessions run main's justfile,
+//! `just --justfile MAIN/justfile tasks …`, or a project below its checkout's top) beats on the
+//! build the recipes run: its main checkout's link, else `tasks` on `PATH` ([`crate::builds`]), and
+//! makes no link. The hook hashes no sources and builds nothing, since a build would hold up the
+//! tool call for minutes: the project's build setup makes the links.
 //! The hook prints nothing and always exits 0: a heartbeat must never cost an agent its tool call. It
 //! stops a beat that has held the call for [`LIMIT`] ([`Limit`]).
 
@@ -37,9 +34,8 @@ use symphony_board::git::checkout_common_dir;
 
 /// The bound keys' folder in the git common dir: one empty file per key a full session is bound by. The
 /// binary's beat writes it when it binds one and removes it when it finds nobody bound
-/// (`symphony/crates/tasks/src/cli/beat.rs`); the move to SurrealDB wrote one for every key the SQLite board had
-/// bound (`symphony/crates/tasks/src/cutover.rs`).
-const KEYS: [&str; 2] = ["sf-tasks", "keys"];
+/// (`crates/tasks/src/cli/beat.rs`).
+const KEYS: [&str; 2] = [symphony_board::folders::TASKS, "keys"];
 
 fn set<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     env.get(name)
@@ -57,8 +53,8 @@ fn safe(key: &str) -> bool {
 }
 
 /// The bound keys' folder of the board `env` reaches from `cwd`: `TASKS_KEYS`; for a board
-/// `TASKS_SERVER` names (a test's) without it, none; else `sf-tasks/keys/` in the git common dir, beside
-/// the board's server.
+/// `TASKS_SERVER` names (a test's) without it, none; else `symphony/tasks/keys/` in the git common
+/// dir, beside the board's server.
 fn keys_folder(env: &HashMap<String, String>, cwd: &str) -> Option<PathBuf> {
     if let Some(keys) = set(env, "TASKS_KEYS") {
         return Some(PathBuf::from(keys));
@@ -118,9 +114,8 @@ fn wanted(raw: &[u8], env: &HashMap<String, String>) -> bool {
 }
 
 /// The board's binary: `TASKS_BIN`, else the project's `.target/bin/tasks` while it names a build, else
-/// the live build of main ([`live_build`]), linked there for the next beat, else the build the
-/// recipes run ([`crate::builds::find`]: the main checkout's link from a linked worktree, else
-/// `tasks` on `PATH`).
+/// its main checkout's ([`main_link`]), else the build the recipes run ([`crate::builds::find`]: the
+/// main checkout's link from a linked worktree, else `tasks` on `PATH`).
 fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if let Some(named) = set(env, "TASKS_BIN") {
         return Some(PathBuf::from(named));
@@ -135,8 +130,7 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             .or_else(|| std::env::current_dir().ok())?;
         symphony_board::project::locate_quick(&cwd)
     };
-    let explicit = set(env, "SYMPHONY_HOOK_ROOT")
-        .or_else(|| set(env, "SF_HOOKS_ROOT"))
+    let explicit = set(env, symphony_env::HOOK_ROOT.name)
         .or_else(|| set(env, "CLAUDE_PROJECT_DIR"))
         .map(PathBuf::from);
     // An explicit root is a checkout boundary. A located manifest may be below that boundary;
@@ -155,72 +149,28 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
             (place.root, Some(place.common))
         }
     };
-    let link = root.join(".target/bin/tasks");
+    let link = root.join(crate::builds::LINKS).join(TASKS);
     if link.exists() {
         return Some(link);
     }
-    if let Some(live) = common.as_deref().and_then(live_build) {
-        link_to(&link, &live);
-        return Some(live);
-    }
-    // As the recipes find it: the main checkout's link, else the search path's.
-    crate::builds::find(&root, "tasks", set(env, "PATH").map(std::ffi::OsStr::new))
+    common.as_deref().and_then(main_link).or_else(|| {
+        // As the recipes find it: the main checkout's link, else the search path's.
+        crate::builds::find(&root, TASKS, set(env, "PATH").map(std::ffi::OsStr::new))
+    })
 }
 
-/// Where `tools/tasks.sh` records the live board's build in the git common dir: one file per tree of
-/// committed main it built, `TREE`, whose first line is that build's path. It writes a record under a
-/// dot name and renames it into place. It keeps the built and current main tree pointers, plus a
-/// `current` record whose first line names the last promoted build. Failure reports and build output
-/// share the folder; only a record whose first line names an executable is a build for this hook.
-const LIVE: [&str; 2] = ["sf-cargo", "tasks-main"];
+/// The board's binary.
+const TASKS: &str = "tasks";
 
-/// The newest executable build recorded under the located repository's common directory.
-/// The caller resolves that directory within the project's checkout boundary.
-pub(crate) fn live_build(common: &Path) -> Option<PathBuf> {
-    let mut folder = common.to_path_buf();
-    folder.extend(LIVE);
-    std::fs::read_dir(folder)
-        .ok()?
-        .flatten()
-        .filter(|record| !record.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|record| {
-            let written = record
-                .metadata()
-                .ok()
-                .filter(|meta| meta.is_file())?
-                .modified()
-                .ok()?;
-            let text = std::fs::read_to_string(record.path()).ok()?;
-            let build = PathBuf::from(text.lines().next()?);
-            (build.is_absolute() && runnable(&build)).then(|| (written, record.file_name(), build))
-        })
-        .max()
-        .map(|(_, _, build)| build)
-}
-
-/// Whether `path` is a file with an execute bit set: what `tools/tasks.sh` asks of a build before it
-/// records or runs it (`[ -f ] && [ -x ]`).
-fn runnable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path)
-        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
-/// Points `link` at `build` by a rename over whatever is there, as `tools/tasks.sh` links it. A link
-/// that cannot be made costs nothing but the next beat's look in the common dir.
-fn link_to(link: &Path, build: &Path) {
-    let Some(folder) = link.parent() else {
-        return;
-    };
-    let staged = folder.join(format!(".tasks-beat.{}", std::process::id()));
-    if std::fs::create_dir_all(folder).is_err() {
-        return;
-    }
-    let _ = std::fs::remove_file(&staged);
-    if std::os::unix::fs::symlink(build, &staged).is_ok() && std::fs::rename(&staged, link).is_err()
-    {
-        let _ = std::fs::remove_file(&staged);
-    }
+/// The main checkout's link to its build of the board's binary, when the repository whose common dir
+/// is `common` has a main checkout (`common` is its `.git` folder) and that link runs. The caller
+/// resolves `common` within the project's checkout boundary.
+fn main_link(common: &Path) -> Option<PathBuf> {
+    let main = common
+        .parent()
+        .filter(|_| common.file_name().is_some_and(|name| name == ".git"))?;
+    let link = main.join(crate::builds::LINKS).join(TASKS);
+    crate::builds::runnable(&link).then_some(link)
 }
 
 /// Hands the event to the binary's `beat` and waits for it, until its [`Limit`] has passed; whatever
@@ -248,15 +198,15 @@ const LIMIT: Duration = Duration::from_secs(10);
 enum Limit<'a> {
     /// Once it has run for [`LIMIT`] by this machine's clock.
     Machine,
-    /// Once the file `SF_HOOKS_BEAT_CLOCK` names is there: a test's clock, which moves only when the
-    /// test writes that file, so a test's beat ends when its binary does, or on the test's word, never
-    /// on how fast a loaded machine starts the binary.
+    /// Once the file `SYMPHONY_HOOK_BEAT_CLOCK` names is there: a test's clock, which moves only
+    /// when the test writes that file, so a test's beat ends when its binary does, or on the test's
+    /// word, never on how fast a loaded machine starts the binary.
     Marked(&'a Path),
 }
 
 impl Limit<'_> {
     fn of(env: &HashMap<String, String>) -> Limit<'_> {
-        set(env, "SF_HOOKS_BEAT_CLOCK")
+        set(env, symphony_env::HOOK_BEAT_CLOCK.name)
             .map_or(Limit::Machine, |mark| Limit::Marked(Path::new(mark)))
     }
 
@@ -416,20 +366,31 @@ mod tests {
     fn the_limit_passes_by_this_machines_clock_unless_a_test_names_its_own() {
         let tmp = Tmp::new();
         let mark = tmp.path("clock");
-        let env =
-            |value: &str| HashMap::from([("SF_HOOKS_BEAT_CLOCK".to_string(), value.to_string())]);
-        for machine in [HashMap::new(), env("")] {
+        let clock = symphony_env::HOOK_BEAT_CLOCK;
+        let env = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                .collect()
+        };
+        let mark = mark.to_str().unwrap();
+        for machine in [
+            env(&[]),
+            env(&[(clock.name, "")]),
+            env(&[("HOOK_BEAT_CLOCK", mark)]),
+        ] {
             let limit = Limit::of(&machine);
             assert!(!limit.passed(LIMIT - Duration::from_millis(1)));
             assert!(limit.passed(LIMIT));
         }
-        let named = env(mark.to_str().unwrap());
-        let limit = Limit::of(&named);
+        let _ = std::fs::remove_file(mark);
+        let set = env(&[(clock.name, mark)]);
+        let named = Limit::of(&set);
         assert!(
-            !limit.passed(LIMIT * 100),
+            !named.passed(LIMIT * 100),
             "the machine's time moved a test's clock"
         );
-        File::create(&mark).unwrap();
-        assert!(limit.passed(Duration::ZERO));
+        File::create(mark).unwrap();
+        assert!(named.passed(Duration::ZERO));
     }
 }

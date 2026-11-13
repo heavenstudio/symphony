@@ -30,7 +30,7 @@ use symphony::{branches, docview, render::Render, versions};
 use symphony_api::{Document, DocumentChange};
 
 const DOC: &str = "docs/DECISIONS.md";
-const CHILD: &str = "SF_AFTER_WORKTREES_CHILD";
+const CHILD: &str = "SYMPHONY_AFTER_WORKTREES_CHILD";
 
 fn command(root: &Path, args: &[&str], day: u8) -> String {
     let date = format!("2026-09-{day:02}T10:00:00+0000");
@@ -186,7 +186,7 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
             .args(["--exact", name, "--nocapture"])
             .env(CHILD, name)
             .env("TASKS_SERVER", "127.0.0.1:1")
-            .env("SF_TASKS_CLI", "/usr/bin/false")
+            .env("SYMPHONY_TASKS_CLI", "/usr/bin/false")
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_DATABASE")
             .env_remove("TASKS_NOW")
@@ -1167,7 +1167,7 @@ fn scan_225_worktrees_has_bounded_commands_and_parallel_waits() {
     // Re-enter with a process-local PATH, so interception stays at the real subprocess boundary.
     // The scan is given its finished branches, so the child never reads a board.
     if std::env::var(CHILD).as_deref() == Ok("scan") {
-        let root = std::env::var("SF_SCAN_ROOT").unwrap();
+        let root = std::env::var("SYMPHONY_SCAN_ROOT").unwrap();
         let found = branches::scan(Path::new(&root), &Default::default());
         assert_eq!(found.len(), 10);
         assert_eq!(
@@ -1253,12 +1253,12 @@ esac
 printf '%s\n' "$operation" >> "$PWD/scan-runs"
 printf '50\n' >> "$PWD/scan-costs"
 if [ "${operation%% *}" = worktree ]; then
-    exec /bin/cat "$SF_SCAN_ROOT/listing"
+    exec /bin/cat "$SYMPHONY_SCAN_ROOT/listing"
 fi
 if [ "${operation%% *}" = merge-base ] && [ ! -f "$PWD/scan-started" ]; then
     : > "$PWD/scan-started"
-    printf '%s\n' "$PWD" > "$SF_SCAN_ROOT/arrived"
-    read -r ready < "$SF_SCAN_ROOT/release"
+    printf '%s\n' "$PWD" > "$SYMPHONY_SCAN_ROOT/arrived"
+    read -r ready < "$SYMPHONY_SCAN_ROOT/release"
 fi
 if [ "${operation%% *}" = cat-file ]; then
     /bin/cat > "$PWD/scan-blobs"
@@ -1283,7 +1283,7 @@ exec /usr/bin/git "$@"
                 "--nocapture",
             ])
             .env(CHILD, "scan")
-            .env("SF_SCAN_ROOT", &tree.root)
+            .env("SYMPHONY_SCAN_ROOT", &tree.root)
             .env("PATH", path),
     )
     .unwrap();

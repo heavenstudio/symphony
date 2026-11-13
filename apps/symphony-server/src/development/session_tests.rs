@@ -4,10 +4,10 @@
 use super::*;
 
 const TEST: &str = "development::session_tests::a_development_child_and_its_listen_probe_run_without_the_starters_session";
-const DIR: &str = "SF_DEV_SESSION_DIR";
+const DIR: &str = "SYMPHONY_DEV_SESSION_DIR";
 
 /// A line naming what a process holds of the starter's session, appended to
-/// `$SF_DEV_SESSION_DIR/NAME.held`.
+/// `$SYMPHONY_DEV_SESSION_DIR/NAME.held`.
 fn held(name: &str) -> String {
     format!(
         "printf '%s|%s|%s|%s|%s\\n' \"${{TASKS_SESSION-unset}}\" \"${{HC_TERMINAL_ID-unset}}\" \
@@ -42,7 +42,7 @@ fn a_development_child_and_its_listen_probe_run_without_the_starters_session() {
         return;
     }
     let scratch =
-        Scratch(std::env::temp_dir().join(format!("sf-dev-session-{}", std::process::id())));
+        Scratch(std::env::temp_dir().join(format!("symphony-dev-session-{}", std::process::id())));
     std::fs::create_dir_all(&scratch.0).unwrap();
     // The `lsof` first on the PATH: it says the child listens once the child has said what it
     // holds, and what it holds itself each time it is asked. It is the machine's copy of the

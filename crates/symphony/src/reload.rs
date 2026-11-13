@@ -461,18 +461,28 @@ fn client_build(stage: &Path) -> Command {
     command
 }
 
-/// The server binary, installed under `home` by main's cargo wrapper.
+/// The server binary, installed under `home` by the command main's `[project] cargo` names, else by
+/// the Symphony's own workspace's `tools/cargo.sh`, else by plain `cargo`.
 fn server_build(root: &Path, home: &Path) -> Command {
+    server_build_by(root, home, &crate::project::Project::of(root).cargo)
+}
+
+/// [`server_build`] by `cargo`, the words of the command that runs Cargo (empty: the default). A
+/// program named with a folder is the checkout's own; a bare name is found on `PATH`.
+fn server_build_by(root: &Path, home: &Path, cargo: &[String]) -> Command {
     let standalone = root.join("apps/symphony-server/Cargo.toml").is_file();
-    let mut command = Command::new(root.join(if standalone {
-        "tools/cargo.sh"
+    let (program, words) = match cargo {
+        [program, words @ ..] => (program.as_str(), words),
+        [] if standalone => ("tools/cargo.sh", &[][..]),
+        [] => ("cargo", &[][..]),
+    };
+    let mut command = Command::new(if Path::new(program).components().count() > 1 {
+        root.join(program)
     } else {
-        "tools/rs-bin.sh"
-    }));
-    if !standalone {
-        command.args(["sf-slots", "cargo"]);
-    }
+        PathBuf::from(program)
+    });
     command
+        .args(words)
         .args([
             "install",
             "--quiet",
@@ -511,7 +521,6 @@ fn run_build(
         symphony_board::sys::pipe().map_err(|e| format!("could not build {product}: {e}"))?;
     let child = crate::children::sessionless(&mut command)
         .current_dir(root)
-        .env_remove("SF_CONTENT_DIR")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(writer)

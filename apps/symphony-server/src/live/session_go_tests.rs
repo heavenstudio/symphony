@@ -858,7 +858,7 @@ fn rerun(test: &str, rerun: &str, hc: &Path, app: &Path) {
 /// names a stand-in, so the tick's hc is the one production starts from its environment.
 #[test]
 fn the_ticks_own_view_gives_each_agent_its_way_in_as_the_project_addresses_panes() {
-    const RERUN: &str = "SF_SESSION_GO_TICK";
+    const RERUN: &str = "SYMPHONY_SESSION_GO_TICK";
     if std::env::var_os(RERUN).is_some() {
         ticked_ways_in();
         return;
@@ -951,7 +951,7 @@ const SLACK: Duration = Duration::from_secs(20);
 /// never answers anything else, and whose `HERDR_APP_BIN` never answers at all.
 #[test]
 fn the_servers_own_hc_answers_a_hung_focus_and_screen_read_within_the_deadline() {
-    const RERUN: &str = "SF_SESSION_GO_HUNG";
+    const RERUN: &str = "SYMPHONY_SESSION_GO_HUNG";
     if std::env::var_os(RERUN).is_some() {
         hung_ways_in_answer_within_the_deadline();
         return;

@@ -180,8 +180,7 @@ fn recorded_work_and_a_project_readers_work_are_one_machines_and_either_malforme
     let tree = Tree::new();
     let root = repository(&tree);
     let common = root.join(".git");
-    let reader = root.join(".target/bin/sf-slots");
-    std::fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    let reader = super::prepared_reader(&root);
     crate::fixture_script::write(&reader, "#!/bin/sh\n/bin/cat \"$3/native.json\"\n", true);
     std::fs::write(common.join("native.json"), input("running")).unwrap();
     let folder = work::in_common(&common);

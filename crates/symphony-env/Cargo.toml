@@ -1,0 +1,14 @@
+[package]
+name = "symphony-env"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Symphony's environment variables, each by its one SYMPHONY_ name. Std only: the board, the
+# server, the Chrome driver and the read audit all read through it.
+
+[lints]
+workspace = true

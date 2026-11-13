@@ -123,8 +123,8 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
             "left_replay::helper_starts_the_board",
             "--test-threads=1",
         ])
-        .env("SF_LEFT_DIR", &s.dir)
-        .env("SF_LEFT_SURREAL", &surreal)
+        .env("SYMPHONY_LEFT_DIR", &s.dir)
+        .env("SYMPHONY_LEFT_SURREAL", &surreal)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -541,8 +541,8 @@ fn a_replay_whose_server_ends_at_once_leaves_no_record() {
 #[test]
 #[ignore = "owned helper process: the starter a case kills in the middle of its replay"]
 fn helper_starts_the_board() {
-    let dir = std::env::var_os("SF_LEFT_DIR").expect("the board's folder");
-    let surreal = std::env::var_os("SF_LEFT_SURREAL").expect("its surreal");
+    let dir = std::env::var_os("SYMPHONY_LEFT_DIR").expect("the board's folder");
+    let surreal = std::env::var_os("SYMPHONY_LEFT_SURREAL").expect("its surreal");
     // Killed in the middle of its replay; otherwise through once the board's server answers.
     let _ = Home::new(Path::new(&dir), Path::new(&surreal))
         .storage(SMALL)

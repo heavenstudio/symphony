@@ -47,7 +47,7 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
         .status()
         .unwrap();
     assert!(done.success());
-    assert!(copy.join(".git/sf-tasks/server.json").is_file());
+    assert!(copy.join(".git/symphony/tasks/server.json").is_file());
     std::fs::write(copy.join(SOURCE), OWN).unwrap();
     git(&copy, &["commit", "-qam", "this build's source"]);
     refused(&from(&copy, TASKS, &["list"], ""), &why);

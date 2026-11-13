@@ -29,7 +29,7 @@ impl Alpha {
 
     fn env(&self) -> Env {
         let vars: BTreeMap<String, String> = [
-            ("SF_SURREAL", surreal().display().to_string()),
+            ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("SYMPHONY_MACHINE_DIR", self.machine.display().to_string()),
             ("TASKS_NOW", NOW.to_string()),
             ("TASKS_SWEEP", "off".to_string()),
@@ -65,7 +65,7 @@ impl Drop for Alpha {
 }
 
 fn data(root: &Path) -> String {
-    root.join(".git/sf-tasks/data").display().to_string()
+    root.join(".git/symphony/tasks/data").display().to_string()
 }
 
 /// A board whose server is not running is said so, and held and released without one ever
@@ -259,7 +259,7 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
         .recorded()
         .expect("the first command started the board");
     // As a replay whose starter ended leaves it: named by the replay's record, by no address file.
-    let dir = alpha.root.join(".git/sf-tasks");
+    let dir = alpha.root.join(".git/symphony/tasks");
     std::fs::write(
         dir.join("replay.json"),
         serde_json::json!({
@@ -330,8 +330,8 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
             0,
             format!(
                 "the board's database at {data} is not held. Its server is pid {} at {}, which \
-                 the private replay's record (sf-tasks/replay.json) does not name: while that \
-                 record stands every server on the data is taken for the replay's, never the \
+                 the private replay's record (symphony/tasks/replay.json) does not name: while \
+                 that record stands every server on the data is taken for the replay's, never the \
                  board's, so the board's next command stops it cleanly once it answers (never \
                  before), then starts the board's own\n",
                 running.pid, running.addr
@@ -360,7 +360,7 @@ fn a_replays_server_its_starter_left_running_is_said_as_such_and_the_next_comman
 fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_command() {
     let alpha = Alpha::new("database-untold");
     let home = alpha.home();
-    let dir = alpha.root.join(".git/sf-tasks");
+    let dir = alpha.root.join(".git/symphony/tasks");
     std::fs::create_dir_all(&dir).unwrap();
     // This test's own process: it runs, and serves no data.
     let pid = std::process::id();
@@ -420,7 +420,7 @@ fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_com
 #[test]
 fn the_snapshots_that_hold_a_log_are_listed_for_the_owner() {
     let alpha = Alpha::new("database-kept");
-    let dir = alpha.root.join(".git/sf-tasks");
+    let dir = alpha.root.join(".git/symphony/tasks");
     let snapshots = dir.join("snapshots");
     let kept = snapshots.join("2026-11-12T07-45-00Z");
     std::fs::create_dir_all(kept.join("wal")).unwrap();
@@ -465,7 +465,7 @@ fn the_snapshots_that_hold_a_log_are_listed_for_the_owner() {
 #[test]
 fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
     let alpha = Alpha::new("database-read-wait");
-    let dir = alpha.root.join(".git/sf-tasks");
+    let dir = alpha.root.join(".git/symphony/tasks");
     std::fs::create_dir_all(&dir).unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -536,11 +536,11 @@ fn another_handle_releases_a_hold_only_by_naming_its_holder() {
     );
     assert!(
         err.starts_with("· vivid-swift released the hold dunlin-probe set at ")
-            && err.ends_with(" (a swap), as sf-tasks/hold.log records\n"),
+            && err.ends_with(" (a swap), as symphony/tasks/hold.log records\n"),
         "{err}"
     );
     assert_eq!(home.held(), None);
-    let history = std::fs::read_to_string(alpha.root.join(".git/sf-tasks/hold.log")).unwrap();
+    let history = std::fs::read_to_string(alpha.root.join(".git/symphony/tasks/hold.log")).unwrap();
     let lines: Vec<serde_json::Value> = history
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())

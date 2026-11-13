@@ -145,7 +145,7 @@ when the result belongs on a task, post it on that task's thread instead.
 One dispatch combines role and status changes for the same task and handle:
 `ROLE SLUG HANDLE ROLE[, ROLE], STATUS`; `none` means the handle released all roles.
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
-can enable active-turn `turn/steer` with `git config sf.codexSteer true`;
+can enable active-turn `turn/steer` with `git config symphony.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
 idle threads still use the queue. Native delivery never types into a terminal.
 Only a legacy upgrade baselines its observation at the current board;

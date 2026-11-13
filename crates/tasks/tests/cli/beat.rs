@@ -1,4 +1,4 @@
-//! Bound-key folder contracts for tasks beat and sf-hooks tasks-beat.
+//! Bound-key folder contracts for tasks beat and the heartbeat hook's tasks-beat.
 //! The hook checks this file before handing a full session's ordinary calls
 //! to the binary; without it only board commands reach the beat path.
 //! The beats cases pin binding behaviour and session-liveness duration.
@@ -515,6 +515,6 @@ mod beats {
         event["cwd"] = json!(repo.to_str().unwrap());
         let ran = run(&env, &["beat"], &event.to_string());
         assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
-        assert!(!repo.join(".git").join("sf-tasks").exists());
+        assert!(!repo.join(".git").join("symphony/tasks").exists());
     }
 }

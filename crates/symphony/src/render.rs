@@ -153,7 +153,7 @@ impl Ctx<'_> {
     }
 
     /// The component `name` as the fragment holds it: its blocks written as HTML, in a typed render
-    /// inside the `<sf-component>` the parser reads back as [`symphony_api::Block::Component`].
+    /// inside the `<symphony-component>` the parser reads back as [`symphony_api::Block::Component`].
     fn component_html(&self, name: &str, argument: &str, option: Option<&str>) -> String {
         let blocks = self.plugins.render(&self.page, name, argument, option);
         media::blocks_html(self, name, blocks)

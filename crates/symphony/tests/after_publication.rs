@@ -64,7 +64,7 @@ fn a_slow_land_candidate_does_not_hold_back_an_unrelated_plain_save() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publish}",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publish}",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -116,7 +116,7 @@ fn concurrent_generators_keep_private_checkouts_and_drain_same_page_edits() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n  SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi",
+                    "if mkdir {} 2>/dev/null; then\n  SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi",
                     quote(&f.home.join("generation-once")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -170,7 +170,7 @@ fn a_failed_publish_restores_main_and_index_and_the_next_verdict_lands() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'fixture publisher refuses' >&2\nexit 23",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'fixture publisher refuses' >&2\nexit 23",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -267,7 +267,7 @@ fn a_land_retry_is_picked_up_by_the_next_save_without_reverification() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n echo 'main moved again; retry just land with reusable candidate records retained'\n exit 1\nfi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then\n SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n echo 'main moved again; retry just land with reusable candidate records retained'\n exit 1\nfi\n{publish}",
                     quote(&f.home.join("first-land")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -324,7 +324,7 @@ fn a_land_retry_is_picked_up_by_the_next_save_without_reverification() {
             assert!(!Path::new(&checkout).exists());
             f.clean_publication_state();
             assert_eq!(
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .count(),
                 0
@@ -356,7 +356,7 @@ fn a_queued_land_survives_committer_restart_with_its_verified_checkout() {
             first.0.close();
             assert_eq!(git(&root, &["rev-parse", "main"]), base);
             let records: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -438,7 +438,7 @@ fn a_later_generation_retries_a_publication_released_after_its_startup() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'retry just land: main moved again'; exit 1",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\necho 'retry just land: main moved again'; exit 1",
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -496,7 +496,7 @@ fn a_completed_publication_is_not_repeated_after_restart() {
             first.0.submit(f.edit("docs/a.md", DOC, &approved)).unwrap();
             first.0.close();
             let records: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -583,7 +583,7 @@ fn a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure() {
             assert_eq!(commands.len(), 1, "a red verify never calls land");
             assert_eq!(commands[0][0], "verify");
             let archives: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .filter(|path| path.extension().is_some_and(|ext| ext == "failed"))
@@ -609,7 +609,7 @@ fn a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure() {
                 "{listing}"
             );
             assert_eq!(
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-backlog"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-backlog"))
                     .unwrap()
                     .count(),
                 1
@@ -630,7 +630,7 @@ fn a_plain_save_preparing_across_land_keeps_its_page_and_a_clean_checkout() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if grep -qF 'plain save in flight' docs/b.md && mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{generator}",
+                    "if grep -qF 'plain save in flight' docs/b.md && mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{generator}",
                     quote(&f.home.join("plain-prepared-once")),
                     preparing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -643,7 +643,7 @@ fn a_plain_save_preparing_across_land_keeps_its_page_and_a_clean_checkout() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publisher}",
+                    "SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\n{publisher}",
                     landing.address(),
                     quote(&std::env::current_exe().unwrap())
                 ),
@@ -765,7 +765,7 @@ fn repeated_dirty_publications_report_once_across_worker_restarts() {
                     .contains(commands[1][1].split_whitespace().nth(1).unwrap())
             );
             let journals: Vec<_> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
@@ -830,7 +830,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
             script(
                 &f.home.join("generate.sh"),
                 &format!(
-                    "if grep -qF -- '- [x] **two**' docs/b.md && mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi\nif grep -qF -- '- [x] **two**' docs/b.md; then printf 'approved\\n' > content/two; fi",
+                    "if grep -qF -- '- [x] **two**' docs/b.md && mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\nmkdir -p content\nif grep -qF -- '- [x] **one**' docs/a.md; then printf 'approved\\n' > content/one; fi\nif grep -qF -- '- [x] **two**' docs/b.md; then printf 'approved\\n' > content/two; fi",
                     quote(&f.home.join("prepared-second-once")),
                     preparing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -841,7 +841,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture; fi\n{publish}",
                     quote(&f.home.join("land-held-once")),
                     landing.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -870,7 +870,7 @@ fn queued_generated_pages_land_with_a_tracked_clean_checkout() {
                 "the second generated page is dirty while the first verifies"
             );
             let drafts: Vec<Value> =
-                std::fs::read_dir(root.join(".git/sf-symphony/verdict-publications"))
+                std::fs::read_dir(root.join(".git/symphony/server/verdict-publications"))
                     .unwrap()
                     .filter_map(|entry| {
                         let path = entry.unwrap().path();
@@ -929,7 +929,7 @@ fn a_tap_during_land_keeps_the_verified_branch_for_the_next_pass() {
             script(
                 &f.home.join("publish.sh"),
                 &format!(
-                    "if mkdir {} 2>/dev/null; then\n SF_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\n{publish}",
+                    "if mkdir {} 2>/dev/null; then\n SYMPHONY_AFTER_COMMIT_GATE={} {} --exact publication_gate --nocapture\nfi\n{publish}",
                     quote(&f.home.join("land-held-once")),
                     gate.address(),
                     quote(&std::env::current_exe().unwrap())
@@ -991,7 +991,7 @@ fn draft_recovery_restores_generated_and_plain_saves_from_a_released_checkout() 
             let root = f.repo();
             f.generate();
             let draft =
-                root.join(".git/sf-symphony/verdict-publications/00000000000000000000.json");
+                root.join(".git/symphony/server/verdict-publications/00000000000000000000.json");
             let approved = DOC.replace("[ ]", "[x]");
             write(
                 &draft,
@@ -1078,7 +1078,8 @@ fn a_bad_journal_does_not_block_good_publications_or_file_repeated_failures() {
             let approved = DOC.replace("[ ]", "[x]");
             first.0.submit(f.edit("docs/a.md", DOC, &approved)).unwrap();
             first.0.close();
-            let bad = root.join(".git/sf-symphony/verdict-publications/00000000000000000000.json");
+            let bad =
+                root.join(".git/symphony/server/verdict-publications/00000000000000000000.json");
             assert!(!bad.exists());
             write(&bad, "");
             script(&f.home.join("publish.sh"), &publish);

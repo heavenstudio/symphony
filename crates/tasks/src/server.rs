@@ -1,12 +1,12 @@
 //! The board's own SurrealDB server (slice 3 of `tools/docs-app-rust-port`; the owner, card
 //! tasks-store-engine: "server should start the db").
 //!
-//! It keeps its data on disk in `sf-tasks/` in the git common dir, so every worktree reaches the one
-//! board, and it is found by the address it wrote there. Whatever needs the board starts it when it is
-//! not running ([`Home::ensure`]), under a lock so callers at once start one, detached so it outlives
-//! the caller. That is also the restart: a server that was killed is started again on the same data. A
-//! recorded server older than the pinned SurrealDB is replaced; a newer one, a tree ahead of this one,
-//! is used as it is.
+//! It keeps its data on disk in `symphony/tasks/` in the git common dir, so every worktree reaches
+//! the one board, and it is found by the address it wrote there. Whatever needs the board starts it
+//! when it is not running ([`Home::ensure`]), under a lock so callers at once start one, detached
+//! so it outlives the caller. That is also the restart: a server that was killed is started again
+//! on the same data. A recorded server older than the pinned SurrealDB is replaced; a newer one, a
+//! tree ahead of this one, is used as it is.
 //!
 //! Every server it starts keeps the board's values in its sstables ([`Storage`]), where compaction
 //! reclaims what a rewrite leaves, and [`Home::reclaim`] rebuilds a store that grew before it did.
@@ -139,11 +139,9 @@ fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String
         surreal = quote(surreal),
     ))
 }
+
 /// The board's folder in the git common dir.
-pub const FOLDER: &str = "sf-tasks";
-/// Where the pinned `surreal` is kept, in the git common dir: where `tools/surreal.sh` fetches it,
-/// and [`surreal_fetch`] says how to.
-const PINNED: &str = "sf-surreal";
+pub const FOLDER: &str = crate::folders::TASKS;
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
 const ADDRESS: &str = "server.json";
@@ -240,8 +238,8 @@ pub enum ServerError {
     /// with no board on this machine.
     NoSurreal(PathBuf),
     /// The board's store is there and the `surreal` that serves it is not: a board that is unwell,
-    /// as after a SurrealDB version bump before the new binary is fetched, or with `SF_SURREAL`
-    /// naming a file that is not there.
+    /// as after a SurrealDB version bump before the new binary is fetched, or with
+    /// `SYMPHONY_SURREAL` naming a file that is not there.
     Unserved { surreal: PathBuf, data: PathBuf },
     /// It was started and did not come up, or it runs and does not answer: the reason and its log.
     NotUp(String),
@@ -303,27 +301,36 @@ pub(crate) fn no_surreal() -> String {
 }
 
 /// How to have the `surreal` that is not at `path`: the command that fetches the pinned one there,
-/// or the `SF_SURREAL` that named it.
+/// or the `SYMPHONY_SURREAL` that named it.
 fn how_to_have(f: &mut fmt::Formatter<'_>, path: &Path) -> fmt::Result {
     if pinned_in(path).is_none() {
-        return f.write_str(", where `SF_SURREAL` names it");
+        return f.write_str(", where `SYMPHONY_SURREAL` names it");
     }
     match surreal_fetch(path, std::env::consts::OS, std::env::consts::ARCH) {
         Some(fetch) => write!(f, ": fetch it there (`{fetch}`)")?,
         None => f.write_str(": put its release binary for this machine there")?,
     }
-    f.write_str(", or name another with `SF_SURREAL`")
+    f.write_str(", or name another with `SYMPHONY_SURREAL`")
 }
 
-/// The common dir `surreal` is the pinned binary of ([`Home::in_common`]): `<common>/sf-surreal/
-/// <SURREAL_VERSION>/surreal`; none for a binary anywhere else, one `SF_SURREAL` names.
+/// The common dir `surreal` is the pinned binary of ([`Home::in_common`]):
+/// `<common>/symphony/surreal/<SURREAL_VERSION>/surreal`; none for a binary anywhere else, one
+/// `SYMPHONY_SURREAL` names.
 fn pinned_in(surreal: &Path) -> Option<&Path> {
-    let version = surreal.parent()?;
-    let folder = version.parent()?;
-    (surreal.file_name()? == "surreal"
-        && version.file_name()? == SURREAL_VERSION
-        && folder.file_name()? == PINNED)
-        .then_some(folder.parent()?)
+    let tail = pinned(Path::new(""));
+    if !surreal.ends_with(&tail) {
+        return None;
+    }
+    surreal.ancestors().nth(tail.components().count())
+}
+
+/// Where the pinned `surreal` is kept in the git common dir `common`: where `tools/surreal.sh`
+/// fetches it, and [`surreal_fetch`] says how to.
+fn pinned(common: &Path) -> PathBuf {
+    common
+        .join(crate::folders::SURREAL)
+        .join(SURREAL_VERSION)
+        .join("surreal")
 }
 
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
@@ -352,6 +359,9 @@ pub struct Home {
     storage: Storage,
     /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
     supervised: Option<bool>,
+    /// The git common dir whose board this is ([`Home::in_common`]): none starts, stops or holds
+    /// while an older build's board is still in its old folder there ([`crate::unmoved`]).
+    common: Option<PathBuf>,
     /// Whether a snapshot of its store is taken before each start ([`snapshot`]); by its place
     /// unless a test says.
     snapshotting: Option<bool>,
@@ -373,6 +383,7 @@ impl Home {
             closing: CLOSING,
             storage: Storage::BOARD,
             supervised: None,
+            common: None,
             snapshotting: None,
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
@@ -400,14 +411,16 @@ impl Home {
         }
     }
 
-    /// The board of the repository whose common dir is `common`: `sf-tasks/` there, served by the
-    /// pinned `surreal` beside it ([`surreal_fetch`]), or by `SF_SURREAL`'s.
-    pub fn in_common(common: &Path, sf_surreal: Option<&Path>) -> Home {
-        let pinned = || common.join(PINNED).join(SURREAL_VERSION).join("surreal");
-        Home::new(
-            &common.join(FOLDER),
-            &sf_surreal.map_or_else(pinned, Path::to_path_buf),
-        )
+    /// The board of the repository whose common dir is `common`: `symphony/tasks/` there, served by
+    /// the pinned `surreal` beside it ([`surreal_fetch`]), or by `named` (`SYMPHONY_SURREAL`'s).
+    pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
+        Home {
+            common: Some(common.to_path_buf()),
+            ..Home::new(
+                &common.join(FOLDER),
+                &named.map_or_else(|| pinned(common), Path::to_path_buf),
+            )
+        }
     }
 
     /// How long a server that is starting, or that runs and does not answer, is waited for.
@@ -698,8 +711,9 @@ impl Home {
     /// microsecond on macOS, in clock ticks after this boot on Linux, so any reading of one process
     /// says the same, which its later programs keep. Another process given that pid later says
     /// another, so a pid recorded with it ([`left`], [`ending`]) is told from one since reused. An
-    /// error when the process has ended or its start cannot be read.
-    pub(crate) fn process_start(pid: i64) -> std::io::Result<String> {
+    /// error when the process has ended or its start cannot be read. Public as the form those
+    /// records write it in, which a record an older build wrote holds too.
+    pub fn process_start(pid: i64) -> std::io::Result<String> {
         #[cfg(test)]
         if ps_fails() {
             return Err(std::io::Error::other("ps failed, as a test made it"));
@@ -1119,25 +1133,39 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
 
 /// The common dir of the repository whose board `command` serves, a command line as `ps` prints it:
 /// a server started as [`START`] starts one, `… start [OPTIONS] --bind ADDR surrealkv://DIR`, its
-/// data `DIR` the board's own (`COMMON/sf-tasks/data`) in a git common dir (one holding `HEAD`).
-/// None for any other command line: a server on other data or in memory, any other program, and a
-/// scratch board's supervisor shell, whose last argument is its log.
+/// data `DIR` the board's own (`COMMON/symphony/tasks/data`) in a git common dir (one holding
+/// `HEAD`), or an older build's in the board's old folder while that is still a folder, before the
+/// move ([`crate::unmoved`]). None for any other command line: a server on other data or in memory,
+/// any other program, and a scratch board's supervisor shell, whose last argument is its log.
 pub fn board_served(command: &str) -> Option<PathBuf> {
     let at = command.rfind(" surrealkv://")?;
     let data = &command[at + 1..];
     let path = Path::new(data.strip_prefix("surrealkv://")?);
-    let folder = path.parent()?;
-    if path.file_name()? != DATA || folder.file_name()? != FOLDER {
+    if path.file_name()? != DATA {
         return None;
     }
+    let common = common_of(path.parent()?)?;
     let (rest, addr) = command[..at].rsplit_once(' ')?;
     addr.parse::<SocketAddr>().ok()?;
     let rest = rest.strip_suffix(" --bind")?;
     if !(rest.contains(" start ") || rest.ends_with(" start")) {
         return None;
     }
-    let common = folder.parent()?;
     common.join("HEAD").is_file().then(|| common.to_path_buf())
+}
+
+/// The folder `folder` is the board's folder of, as [`board_served`] reads it: [`FOLDER`] in it, or
+/// the board's old folder ([`crate::unmoved::OLD`]) while that is still a folder.
+fn common_of(folder: &Path) -> Option<&Path> {
+    let named = if folder.ends_with(FOLDER) {
+        FOLDER
+    } else {
+        let (_, old) = crate::unmoved::OLD.iter().find(|(new, _)| *new == FOLDER)?;
+        (folder.ends_with(old) && folder.is_dir()).then_some(*old)?
+    };
+    folder
+        .ancestors()
+        .nth(Path::new(named).components().count())
 }
 
 /// Whether `command`, a command line as `ps` prints it, ends with the argument `last`.

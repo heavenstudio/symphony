@@ -59,6 +59,10 @@ pub struct Project {
     /// Served files and the Symphony's private files.
     pub artifacts: String,
     pub default_branch: String,
+    /// The command that runs Cargo when the server rebuilds itself from this checkout, a program
+    /// named with a folder the checkout's own; empty is the Symphony's default: its own workspace's
+    /// `tools/cargo.sh`, else plain `cargo`.
+    pub cargo: Vec<String>,
     /// The plugins the project uses, by crate name.
     pub plugins: Vec<String>,
     /// The ones of them that answer from a process of their own (`[plugins.process]`), by name; the
@@ -477,6 +481,13 @@ impl Project {
         if default_branch.trim().is_empty() {
             return Err("[project] default_branch is empty".into());
         }
+        let cargo = p.cargo;
+        if cargo
+            .first()
+            .is_some_and(|program| program.trim().is_empty())
+        {
+            return Err("[project] cargo names no program".into());
+        }
         let theme = Theme::from_file(file.theme)?;
         let a = file.agents;
         let transports = a
@@ -541,6 +552,7 @@ impl Project {
             register,
             artifacts,
             default_branch,
+            cargo,
             plugin_processes,
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {

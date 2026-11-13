@@ -251,7 +251,7 @@ fn work_under_the_agent_keeps_its_terminal_as_the_idle_sweep_reads_it() {
     let world = World::new();
     let session = world.waiting_reviewer();
     let pid = world.pid_of(&session.pane);
-    let wrapped = "tools/rs-bin.sh sf-slots cargo test --manifest-path symphony/Cargo.toml -p \
+    let wrapped = "tools/rs-bin.sh slots cargo test --manifest-path symphony/Cargo.toml -p \
                    symphony-board --test launch";
     for (command, why) in [
         ("just verify", "a verify (just verify)".to_string()),
@@ -413,7 +413,7 @@ fn a_terminal_of_another_board_or_another_handle_is_refused() {
         (json!(null), "no board"),
     ] {
         world.edit_terminal(&session.pane, |terminal| {
-            terminal["labels"]["sf.board"] = labelled.clone();
+            terminal["labels"]["symphony.board"] = labelled.clone();
         });
         assert_eq!(
             refused(world.close(&session.handle)),
@@ -424,8 +424,8 @@ fn a_terminal_of_another_board_or_another_handle_is_refused() {
         );
     }
     world.edit_terminal(&session.pane, |terminal| {
-        terminal["labels"]["sf.board"] = json!(board);
-        terminal["labels"]["sf.handle"] = json!("other-owl");
+        terminal["labels"]["symphony.board"] = json!(board);
+        terminal["labels"]["symphony.handle"] = json!("other-owl");
     });
     assert_eq!(
         refused(world.close(&session.handle)),

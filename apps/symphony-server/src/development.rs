@@ -569,7 +569,7 @@ mod tests {
     // listener ownership contract on an OS-assigned port and returns immediately.
     #[test]
     fn fake_listener() {
-        let child_addr = std::env::var("SF_DEV_FAKE_LISTENER").ok();
+        let child_addr = std::env::var("SYMPHONY_DEV_FAKE_LISTENER").ok();
         let listener =
             std::net::TcpListener::bind(child_addr.as_deref().unwrap_or("127.0.0.1:0")).unwrap();
         assert!(
@@ -611,7 +611,7 @@ mod tests {
                             "development::tests::fake_listener",
                             "--nocapture",
                         ])
-                        .env("SF_DEV_FAKE_LISTENER", addr.to_string());
+                        .env("SYMPHONY_DEV_FAKE_LISTENER", addr.to_string());
                     command
                 }
             },

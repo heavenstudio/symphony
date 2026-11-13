@@ -27,15 +27,26 @@ pub(super) fn start(
                 continue;
             }
             last = Some(clock());
+            // The project's build of the board, linked by its build setup: the main checkout's
+            // keeps branch code off the live board. A private preview never starts this worker.
+            let Some(tasks) = symphony::builds::linked(&shared.root, "tasks") else {
+                eprintln!(
+                    "· task embedding catch-up skipped: no build of tasks linked at {}",
+                    shared
+                        .root
+                        .join(symphony::builds::LINKS)
+                        .join("tasks")
+                        .display()
+                );
+                continue;
+            };
             let started = Instant::now();
             eprintln!("· task embedding catch-up started");
             let result = crate::live::measured("task embedding catch-up", || {
-                // The committed-main launcher keeps branch code and a caller's session off the
-                // live board. A private preview never starts this worker.
                 let mut command = symphony_board::sys::Command::new("nice");
                 command
-                    .args(["-n", "10", "bash"])
-                    .arg(shared.root.join("tools/tasks.sh"))
+                    .args(["-n", "10"])
+                    .arg(&tasks)
                     .args(["embed", "--maintenance", "--threads", "1"])
                     .current_dir(&shared.root)
                     .env_remove("TASKS_DATABASE")

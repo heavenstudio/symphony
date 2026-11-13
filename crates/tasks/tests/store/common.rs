@@ -2,8 +2,9 @@
 //! per test, a settable clock and process table (`tasks_store_test.py`'s `Clock` and `alive`), and a
 //! board seeded through the one-way copy ([`Seed`], `seed.rs`).
 //!
-//! The server is the pinned `surreal` (`SF_SURREAL`, else `tools/surreal.sh` fetches it), in memory on a
-//! free local port. It runs under a shell that stops it when this process's pipe to the shell closes,
+//! The server is the pinned `surreal` (`SYMPHONY_SURREAL`, else `tools/surreal.sh` fetches it),
+//! in memory on a free local port. It runs under a shell that stops it when this process's pipe to
+//! the shell closes,
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
 //! (`symphony_board::port`), every start within one backstop only a stall reaches
@@ -144,9 +145,10 @@ extern "C" fn stop_server() {
     }
 }
 
-/// The pinned `surreal`: `SF_SURREAL`, else the one `tools/surreal.sh` fetches (once per machine).
+/// The pinned `surreal`: `SYMPHONY_SURREAL`, else the one `tools/surreal.sh` fetches (once per
+/// machine).
 pub fn surreal() -> PathBuf {
-    if let Some(named) = std::env::var_os("SF_SURREAL") {
+    if let Some(named) = symphony_env::SURREAL.os() {
         return named.into();
     }
     let script = project_root().join("tools/surreal.sh");

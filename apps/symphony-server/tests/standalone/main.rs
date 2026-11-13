@@ -101,7 +101,7 @@ fn binary_launcher_refuses_missing_own_sources_and_never_executes_a_parent() {
     for args in [
         vec!["--where", "symphony"],
         vec!["--build", "symphony"],
-        vec!["sf-slots", "cargo"],
+        vec!["slots", "cargo"],
         vec![],
     ] {
         let diagnostic = if args.first().is_some_and(|arg| arg.starts_with("--")) {
@@ -187,25 +187,16 @@ fn independent_path(tree: &Tree) -> std::ffi::OsString {
         .into_iter()
         .filter(|directory| directory.is_dir())
         .collect();
-    let mut names: std::collections::BTreeSet<String> = [
-        "sf-slots",
-        "sf-rust-tests",
-        "sf-land",
-        "sf-verify",
-        "sf-nightly",
-        "sf-hooks",
-    ]
-    .map(String::from)
-    .into();
-    for directory in &directories {
-        for entry in fs::read_dir(directory).unwrap() {
-            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            if name.starts_with("sf-") {
-                names.insert(name);
-            }
-        }
-    }
-    for name in names {
+    // A consuming project's own tools, as a project's checkout puts them first on PATH: its slots,
+    // gates, landing, nightly and hooks, none of which the workspace's recipes may run.
+    for name in [
+        "project-slots",
+        "project-rust-tests",
+        "project-land",
+        "project-verify",
+        "project-nightly",
+        "project-hooks",
+    ] {
         executable(
             &forbidden.join(name),
             "#!/bin/sh\nprintf '%s\\n' \"$0\" >> \"$SYMPHONY_FORBIDDEN_LOG\"\nexit 91\n",
@@ -326,7 +317,7 @@ fn actual_standalone_workspace_compiles_its_server_without_a_containing_project(
                 .env_remove("CARGO_ENCODED_RUSTFLAGS")
                 .env_remove("RUSTC_WRAPPER")
                 .env_remove("RUSTC_WORKSPACE_WRAPPER")
-                .env_remove("SF_GIT_COMMON_DIR"),
+                .env_remove("SYMPHONY_GIT_COMMON_DIR"),
         )
         .unwrap();
         eprintln!(

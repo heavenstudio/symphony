@@ -8,12 +8,12 @@ use symphony_board::sys::Spawning as _;
 
 /// Each case owns a child environment; parallel tests never mutate the runner's HOME or XDG.
 fn isolated(test: &str) -> bool {
-    if std::env::var_os("SF_CLEAN_PROOF_CHILD").is_some() {
+    if std::env::var_os("SYMPHONY_CLEAN_PROOF_CHILD").is_some() {
         return false;
     }
     for case in ["missing", "empty", "nonempty"] {
         clean_cache::isolated_with("policy_cache", test, |home, child| {
-            child.env("SF_IGNORE_HOME_CASE", case);
+            child.env("SYMPHONY_IGNORE_HOME_CASE", case);
             match case {
                 "empty" => child.env("XDG_CONFIG_HOME", ""),
                 // Spaces are literal native path bytes, not a value to trim or normalize.
@@ -27,7 +27,7 @@ fn isolated(test: &str) -> bool {
 
 fn rules() -> PathBuf {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-    match std::env::var("SF_IGNORE_HOME_CASE").unwrap().as_str() {
+    match std::env::var("SYMPHONY_IGNORE_HOME_CASE").unwrap().as_str() {
         "nonempty" => home.join(" xdg /git/ignore"),
         "missing" | "empty" => home.join(".config/git/ignore"),
         other => panic!("unexpected fixture case: {other}"),

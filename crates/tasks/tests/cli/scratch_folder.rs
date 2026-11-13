@@ -10,7 +10,7 @@ use std::path::Path;
 use symphony_board::sys::{Command, Stdio};
 
 /// Set on a run of this binary that plays [`a_run_of_this_binary`]: `made`, or `held`.
-const ROLE: &str = "SF_TASKS_CLI_SCRATCH_ROLE";
+const ROLE: &str = "SYMPHONY_TASKS_CLI_SCRATCH_ROLE";
 /// What a held run prints once its scratch is made.
 const MADE: &str = "scratch made";
 

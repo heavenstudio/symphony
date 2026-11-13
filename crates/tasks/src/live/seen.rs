@@ -1,6 +1,6 @@
 //! The highest schema a project's live board has been seen at, kept in the board's folder beside its
-//! data (`sf-tasks/schema-seen.log` in the git common dir), never in the database, so a store that
-//! loses its writes cannot take the record with it.
+//! data (`symphony/tasks/schema-seen.log` in the git common dir), never in the database, so a store
+//! that loses its writes cannot take the record with it.
 //!
 //! Every store that opens a live board reads its schema once ([`crate::Store::opening`]); before it
 //! decides anything by it, it reads this record. A board that reads below the record went back
@@ -261,7 +261,12 @@ pub fn accept(live: &Live, version: i64, found: Option<i64>, now: f64) -> Result
 /// in one write: a line two openers write at once is each whole. A record whose last line has no
 /// newline (cut short, or edited by hand) gets one first, in the same write, so the new line is a
 /// line of its own and never the tail of that one: "1" and "17 … seen" glued would read as 117.
+/// Refused while an older build keeps the board in its old folder ([`crate::unmoved`]), its record
+/// there with it: a record begun in the new folder would be a second one, which the move refuses.
 fn append(common: &Path, version: i64, now: f64, word: &str) -> std::io::Result<()> {
+    if let Some(why) = crate::unmoved::refusal(common, server::FOLDER) {
+        return Err(std::io::Error::other(why));
+    }
     let file = path(common);
     if let Some(folder) = file.parent() {
         std::fs::create_dir_all(folder)?;
@@ -497,6 +502,31 @@ mod tests {
     }
 
     #[test]
+    fn no_record_is_begun_beside_the_one_an_older_build_keeps_in_its_old_folder() {
+        let common = Common::new("unmoved");
+        let live = common.live();
+        let (new, old) = crate::unmoved::OLD[0];
+        let kept = common.0.join(old).join(FILE);
+        fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        fs::write(&kept, "16 1800000000 seen x\n").unwrap();
+        record(&live, 17, T0);
+        assert!(
+            !common.0.join(new).exists(),
+            "nothing made in the new folder"
+        );
+        assert_eq!(fs::read_to_string(&kept).unwrap(), "16 1800000000 seen x\n");
+        let refused = append(&common.0, 17, T0, SEEN).unwrap_err().to_string();
+        assert_eq!(refused, crate::unmoved::refusal(&common.0, new).unwrap());
+        // Once moved, the record it carried is the one read and appended to.
+        fs::create_dir_all(common.0.join(new).parent().unwrap()).unwrap();
+        fs::rename(common.0.join(old), common.0.join(new)).unwrap();
+        fs::write(common.0.join(old), "moved\n").unwrap();
+        assert_eq!(read(&common.0).map(|seen| seen.version), Some(16));
+        record(&live, 17, T0);
+        assert_eq!(read(&common.0).map(|seen| seen.version), Some(17));
+    }
+
+    #[test]
     fn a_line_appended_to_a_record_cut_short_is_a_line_of_its_own_and_the_cut_one_counts_for_nothing()
      {
         let common = Common::new("torn");
@@ -596,18 +626,19 @@ mod tests {
             from: 16,
             since: T0,
             to: Some(13),
-            record: PathBuf::from("/repo/.git/sf-tasks/schema-seen.log"),
+            record: PathBuf::from("/repo/.git/symphony/tasks/schema-seen.log"),
         };
         let refusal = back.refusal();
         assert_eq!(
             refusal,
             format!(
                 "the alpha board went back from schema 16 to 13: it was seen at schema 16 on {} \
-                 (/repo/.git/sf-tasks/schema-seen.log), and its store now holds schema 13, so what \
-                 was written since is lost; this is a rollback, not a board awaiting a migrate: \
-                 nothing was read or written. Do not run `just tasks migrate`: it would write on \
-                 top of the older state. How to recover the store, and how the owner accepts an \
-                 older board they meant, is in the Symphony's docs/TASKS.md#a-board-that-went-back",
+                 (/repo/.git/symphony/tasks/schema-seen.log), and its store now holds schema 13, \
+                 so what was written since is lost; this is a rollback, not a board awaiting a \
+                 migrate: nothing was read or written. Do not run `just tasks migrate`: it would \
+                 write on top of the older state. How to recover the store, and how the owner \
+                 accepts an older board they meant, is in the Symphony's \
+                 docs/TASKS.md#a-board-that-went-back",
                 crate::sys::local_minute(T0)
             )
         );

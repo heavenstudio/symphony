@@ -1,7 +1,7 @@
 //! The one Symphony server of the machine, and the folder it is found by: the machine folder
 //! (`symphony::machine::dir`), which every project and every worktree shares (the shape of the
-//! board's server, `Home` in `symphony/crates/tasks/src/server.rs`). The server's build and client
-//! stay in the project's `sf-symphony/` in its git common dir, its install folder, and a record a
+//! board's server, `Home` in `crates/tasks/src/server.rs`). The server's build and client stay in
+//! the project's `symphony/server/` in its git common dir, its install folder, and a record a
 //! server before the machine folder left there is read once, to find that server.
 //!
 //! It holds the server's record (its port and pid), the lock its starters take, and its log. A start
@@ -27,7 +27,7 @@ mod discovery;
 
 /// The project's install folder in its git common dir: the server's build and its client, and
 /// the record of a server started before the machine folder.
-pub const FOLDER: &str = "sf-symphony";
+pub const FOLDER: &str = symphony_board::folders::SERVER;
 /// The app's port: the owner's bookmarks, and the phone's.
 pub const DEFAULT_PORT: u16 = 8765;
 /// In the folder: where the server answers, the lock its starters take, its log.
@@ -51,7 +51,7 @@ const KEPT: [&str; 6] = [
     "PATH",
     "USER",
     "LANG",
-    crate::front::TEST_PID,
+    crate::front::TEST_PID.name,
     symphony::machine::DIR_ENV,
 ];
 

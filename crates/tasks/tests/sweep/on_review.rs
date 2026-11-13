@@ -1,8 +1,8 @@
 //! A task moving to review starts the command `[board] on_review` names in the main checkout's
-//! symphony.toml (src/on_review.rs): detached, from the main checkout, with the slug, the branch and
-//! its tip appended, its output in `sf-tasks/on-review.log`. A test's board starts none unless told
-//! (`TASKS_ON_REVIEW=on`). The command here is a script that records where it ran and what it was
-//! given; the test waits for its record, never for the move, which returns at once.
+//! symphony.toml (src/on_review.rs): detached, from the main checkout, with the slug, the branch
+//! and its tip appended, its output in `symphony/tasks/on-review.log`. A test's board starts none
+//! unless told (`TASKS_ON_REVIEW=on`). The command here is a script that records where it ran and
+//! what it was given; the test waits for its record, never for the move, which returns at once.
 
 use crate::common::Seed;
 use crate::{Repo, git, write};

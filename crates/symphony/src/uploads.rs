@@ -552,7 +552,7 @@ mod tests {
 
     fn scratch(test: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "sf-uploads-{}-{test}-{}",
+            "symphony-uploads-{}-{test}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

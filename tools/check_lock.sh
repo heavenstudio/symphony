@@ -22,9 +22,6 @@ check_lock() {
 	fi
 	mkdir -p "$folder" || return 1
 	exec 9>>"$folder/lock" || return 1
-	if [[ -n "${SF_TOOL_TEST_WAIT_HELPER:-}" ]]; then
-		wait_command=("$SF_TOOL_TEST_WAIT_HELPER" --wait "lock $folder/lock, initial holder pid $(cat "$folder/lock" 2>/dev/null)" "${wait_command[@]}")
-	fi
 	while ! "${lock_command[@]}" "${try_flags[@]}" 9; do
 		if [[ -z "$waiting" ]]; then
 			printf '%s: waiting for the %s build folder %s, held by %s\n' \

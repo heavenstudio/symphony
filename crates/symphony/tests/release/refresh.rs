@@ -230,7 +230,8 @@ fn cargo_home(fixture: &Fixture) -> String {
 /// seen at, never one put back from a newer schema. Its home and the server that runs it.
 fn board_at(consumer: &Path, schema: i64) -> (Home, Running) {
     let common = consumer.join(".git");
-    let board = Home::new(&common.join("sf-tasks"), &super::board::surreal()).supervised(true);
+    let board =
+        Home::new(&common.join("symphony/tasks"), &super::board::surreal()).supervised(true);
     let running = board.ensure().unwrap();
     older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
         .create(&NewTask::new(
@@ -278,7 +279,8 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
             &made[..12]
         ),
         format!(
-            "consumer: it keeps no board ({shown}/.git/sf-tasks is not there): nothing to move\n"
+            "consumer: it keeps no board ({shown}/.git/symphony/tasks is not there): nothing to \
+             move\n"
         ),
         format!(
             "the shared server (port {port}) is built from {shown}, whose main this refresh moved \
@@ -436,7 +438,8 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
              own commit gate and not pushed\n  \
              consumer: its main is fast-forwarded to {BRANCH} ({made}) in its main checkout \
              {shown}, through its own hooks and not pushed: its own next push carries it\n  \
-             consumer: it keeps no board ({shown}/.git/sf-tasks is not there): nothing to move\n  \
+             consumer: it keeps no board ({shown}/.git/symphony/tasks is not there): nothing to \
+             move\n  \
              the shared server (process 4242, port {port}) is built from {shown}, whose main this \
              refresh moved to {RELEASE}: no other process answered within 1 s, so it has not \
              taken it yet; its own reload (apps/symphony-server/src/reload.rs) builds and \
@@ -571,11 +574,11 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     let surreal = super::board::surreal().to_string_lossy().into_owned();
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SF_SURREAL", surreal.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
     ];
     let shown = consumer.display();
     let snapshot = consumer.join(format!(
-        ".git/sf-tasks/snapshots/before-schema-16-{RELEASE}.surql"
+        ".git/symphony/tasks/snapshots/before-schema-16-{RELEASE}.surql"
     ));
 
     // Off its default branch: the branch is made, its main stays, and its board is moved to the
@@ -997,9 +1000,9 @@ fn stand_in_tasks(fixture: &Fixture, consumer: &Path) {
     let script = format!(
         "#!/bin/sh\n\
          echo \"tasks $* in $PWD\" >> '{log}'\n\
-         ls .git/sf-tasks/snapshots >> '{log}' 2>&1\n\
+         ls .git/symphony/tasks/snapshots >> '{log}' 2>&1\n\
          if [ -e '{red}' ]; then echo 'the migrate is red' >&2; exit 1; fi\n\
-         addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/sf-tasks/server.json)\n\
+         addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/symphony/tasks/server.json)\n\
          curl -sf -X POST \"http://$addr/sql\" -H 'Accept: application/json' \
          --data 'USE NS sf; USE DB tasks; UPSERT meta:schema SET version = 16;' >/dev/null\n",
         log = log.display(),
@@ -1030,12 +1033,12 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SF_SURREAL", surreal.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
     ];
 
     // Its board's database is not running: nothing starts it, and nothing is moved.
     let common = consumer.join(".git");
-    fs::create_dir_all(common.join("sf-tasks")).unwrap();
+    fs::create_dir_all(common.join("symphony/tasks")).unwrap();
     let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
@@ -1051,7 +1054,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
              or exported, and nothing is started: its schema was not read, snapshotted or moved; \
              once it runs (any `just tasks` in {} starts it), an orchestrator's `just release \
              --refresh` moves it",
-            common.join("sf-tasks").display(),
+            common.join("symphony/tasks").display(),
             consumer.display()
         )),
         "{out}"
@@ -1061,18 +1064,18 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
         "no migrate ran"
     );
     assert!(
-        !common.join("sf-tasks/server.json").exists(),
+        !common.join("symphony/tasks/server.json").exists(),
         "nothing started it"
     );
 
     // Running, at schema 5 with a task on it.
     let (board, running) = board_at(&consumer, 5);
     let snapshot = common.join(format!(
-        "sf-tasks/snapshots/before-schema-16-{RELEASE}.surql"
+        "symphony/tasks/snapshots/before-schema-16-{RELEASE}.surql"
     ));
 
     // A record whose version cannot be read fails closed: the move might replace that database.
-    let record = common.join("sf-tasks/server.json");
+    let record = common.join("symphony/tasks/server.json");
     let recorded = fs::read_to_string(&record).unwrap();
     let mut blank: serde_json::Value = serde_json::from_str(&recorded).unwrap();
     blank["version"] = serde_json::json!("");
@@ -1084,7 +1087,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
             "the SurrealDB its board's database runs cannot be read (its record in {} names no \
              version), so the move might replace that database and the refresh stops none: \
              nothing was moved; `cd {} && just tasks migrate` moves it when its owner says",
-            common.join("sf-tasks").display(),
+            common.join("symphony/tasks").display(),
             consumer.display()
         )),
         "{out}"
@@ -1204,6 +1207,42 @@ fn a_project_pinned_past_the_release_takes_it_already_and_nothing_is_made() {
 }
 
 #[test]
+fn a_project_whose_state_an_older_build_keeps_takes_no_pin_until_it_is_moved() {
+    let (fixture, _) = refreshing();
+    let consumer = locked_consumer(&fixture);
+    register(&fixture, &[]);
+    fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
+    fixture.night(NOW, 0);
+    register(&fixture, &[("consumer", &consumer)]);
+    // Its board as an older build keeps it, in the old folder the move renames.
+    let common = consumer.join(".git");
+    let (new, old) = symphony_board::unmoved::OLD[0];
+    fs::create_dir_all(common.join(old).join("data")).unwrap();
+    let head = git(&consumer, &["rev-parse", "HEAD"]);
+    let before = checkout(&consumer);
+    let gates = gated(&fixture).len();
+    let home = cargo_home(&fixture);
+
+    let (code, out, err) =
+        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+    assert_eq!(code, 1, "{out}{err}");
+    let refusal = symphony_board::unmoved::refusal(&common, new).unwrap();
+    assert!(
+        out.contains("release: refresh-consumer red (")
+            && out.contains(&format!("{refusal}: nothing of consumer was moved")),
+        "{out}"
+    );
+    // Nothing of it moved: no branch, no commit through its gate, its main, its files and its old
+    // folder as they were, and nothing made in the new one.
+    assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
+    assert_eq!(gated(&fixture).len(), gates);
+    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    assert_eq!(checkout(&consumer), before);
+    assert!(common.join(old).join("data").is_dir());
+    assert!(!common.join(new).exists());
+}
+
+#[test]
 fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_descends_from_it() {
     let (fixture, _) = refreshing();
     // A red's fix branched from main's tip, and a landing on main meanwhile.
@@ -1237,7 +1276,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     let surreal = super::board::surreal().to_string_lossy().into_owned();
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SF_SURREAL", surreal.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
         ("SYMPHONY_RELEASE_RELOAD_SECONDS", "1"),
     ];
     let shown = consumer.display();
@@ -1280,7 +1319,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     assert_eq!(checkout(&consumer), before);
     // Its board: neither snapshotted nor migrated, though its pin's schema is past it.
     assert_eq!(board.schema("tasks").unwrap(), Some(5));
-    assert!(!consumer.join(".git/sf-tasks/snapshots").exists());
+    assert!(!consumer.join(".git/symphony/tasks/snapshots").exists());
     assert!(
         !fixture.root.join("migrated.log").exists(),
         "no migrate ran"
@@ -1326,7 +1365,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     assert!(
         consumer
             .join(format!(
-                ".git/sf-tasks/snapshots/before-schema-16-{next}.surql"
+                ".git/symphony/tasks/snapshots/before-schema-16-{next}.surql"
             ))
             .is_file()
     );
@@ -1352,7 +1391,7 @@ fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SF_SURREAL", surreal.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
     ];
     let (board, running) = board_at(&consumer, 5);
     let by_hand = format!(
@@ -1404,7 +1443,7 @@ fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
         "no migrate ran"
     );
     assert!(
-        !consumer.join(".git/sf-tasks/snapshots").exists(),
+        !consumer.join(".git/symphony/tasks/snapshots").exists(),
         "nothing was snapshotted"
     );
     assert_eq!(board.schema("tasks").unwrap(), Some(5));

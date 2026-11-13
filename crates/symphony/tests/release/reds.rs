@@ -259,7 +259,7 @@ fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
     let (code, out, err) = fixture.release_with(
         NOW,
         &["--check", "verify=false"],
-        &[("SF_TASKS_CLI", "/no/such/tasks")],
+        &[("SYMPHONY_TASKS_CLI", "/no/such/tasks")],
     );
     assert_eq!(code, 1, "{out}{err}");
     assert!(

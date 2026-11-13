@@ -4,9 +4,8 @@
 //! landed; claim, reserve, verdict and done, `next`, threads, inboxes and their acknowledgement, and
 //! the record of launched sessions ([`NewLaunch`]) ([`Store`]), over a local SurrealDB server
 //! ([`rpc`]); the board read in one round trip; and the copy of a whole board into it ([`Store::copy`],
-//! the `tasks-copy` binary), which the one-way move of the SQLite board makes ([`cutover`]). The
-//! board's own server keeps its data in the git common dir ([`git`]) and is started by whatever needs
-//! it ([`server`]), on a loopback port reserved for it ([`port`]). It takes that board once `tasks-cutover` has moved the SQLite one into it.
+//! the `tasks-copy` binary). The board's own server keeps its data in the git common dir ([`git`])
+//! and is started by whatever needs it ([`server`]), on a loopback port reserved for it ([`port`]).
 //!
 //! A rule reads what it decides on, decides here (a session's health needs this machine's process
 //! table), and writes in one transaction that first checks the task's `version` is still the one it
@@ -51,9 +50,9 @@ pub mod cli;
 mod codex_queue;
 pub mod confine;
 pub mod covering;
-pub mod cutover;
 pub mod embedding;
 pub mod fast_fix;
+pub mod folders;
 pub mod git;
 pub mod health;
 pub mod land;
@@ -80,6 +79,7 @@ pub mod stages;
 mod store;
 pub mod sweep;
 pub mod sys;
+pub mod unmoved;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;
@@ -88,8 +88,8 @@ pub use schema::{Access, Schema};
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
     Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
-    Landed, Message, Moved, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE,
-    Pick, Presence, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES, SearchHit, Session,
+    Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
+    Presence, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES, SearchHit, Session,
     StageRecord, Store, Task, Unfresh, VectorHit, VectorSearchProfile, approved, can_transition,
     covered_by, covered_line, landing,
 };
@@ -135,8 +135,8 @@ environment, with --board:
 const COPY_SCRATCH: &str = "`TASKS_DATABASE=NAME` with `--board`, or `tasks-copy ADDR NAME`";
 
 /// `tasks-copy ADDR [DATABASE] < dump.json`, or `tasks-copy --board` for the board this run reaches
-/// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down,
-/// whether or not the board has moved there), or `tasks-copy --board --out`, which writes that
+/// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down),
+/// or `tasks-copy --board --out`, which writes that
 /// board's dump on one line, in the shape the copy reads, and changes nothing: how a test seeds a
 /// board too big to build call by call, and reads it back. `args` without the program name; what it
 /// says goes to `out`, a refusal to `err`; the exit code is returned.
@@ -233,8 +233,8 @@ const RECLAIM_USAGE: &str =
 /// `tasks-reclaim`: the store of the board in the git common dir of `env`'s working directory rebuilt
 /// from an export of itself ([`server::Home::reclaim`]), the board's server down meanwhile; or, with
 /// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
-/// way served by the pinned `surreal` beside that common dir, or `SF_SURREAL`'s. What it did goes to
-/// `out`, a refusal to `err`; the exit code is returned.
+/// way served by the pinned `surreal` beside that common dir, or `SYMPHONY_SURREAL`'s. What it did
+/// goes to `out`, a refusal to `err`; the exit code is returned.
 pub fn reclaim_main(
     args: &[String],
     env: &cli::Env,
@@ -248,8 +248,10 @@ pub fn reclaim_main(
     };
     let reclaimed = folder.and_then(|folder| {
         let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-        let home =
-            server::Home::in_common(&common, env.var("SF_SURREAL").map(std::path::Path::new));
+        let home = server::Home::in_common(
+            &common,
+            env.read(symphony_env::SURREAL).map(std::path::Path::new),
+        );
         let home = match folder {
             Some(folder) => server::Home::new(&folder, home.surreal()),
             None => home,

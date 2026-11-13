@@ -9,7 +9,7 @@ use std::io::Write;
 use std::time::Duration;
 
 /// The one Symphony server's folder in the git common dir, and its record there.
-const FOLDER: &str = "sf-symphony";
+const FOLDER: &str = crate::folders::SERVER;
 const RECORD: &str = "server.json";
 /// The one server's port when nothing names another.
 const DEFAULT_PORT: u16 = 8765;
@@ -51,14 +51,14 @@ fn write(parsed: &Parsed, env: &Env) -> Result<String, (i32, String)> {
     answered(status, &answer, slug, name)
 }
 
-/// The port of the Symphony server holding the board `env` reaches: `SF_SYMPHONY_PORT`, else the
+/// The port of the Symphony server holding the board `env` reaches: `SYMPHONY_PORT`, else the
 /// one server's record in the git common dir, else its default. A scratch board (another
 /// `TASKS_DATABASE`, or a `TASKS_SERVER`) is never written through the one server.
 fn port(env: &Env) -> Result<u16, String> {
-    if let Some(port) = env.var("SF_SYMPHONY_PORT") {
+    if let Some(port) = env.read(symphony_env::PORT) {
         return port
             .parse()
-            .map_err(|_| format!("SF_SYMPHONY_PORT={port} is not a port"));
+            .map_err(|_| format!("SYMPHONY_PORT={port} is not a port"));
     }
     let scratch = env.var("TASKS_SERVER").is_some()
         || env
@@ -66,7 +66,7 @@ fn port(env: &Env) -> Result<u16, String> {
             .is_some_and(|database| database != crate::DATABASE);
     if scratch {
         return Err(
-            "a scratch board's field is written through its own Symphony server: set SF_SYMPHONY_PORT"
+            "a scratch board's field is written through its own Symphony server: set SYMPHONY_PORT"
                 .into(),
         );
     }
@@ -175,7 +175,7 @@ mod tests {
     fn run_on(port: u16, args: &[&str], session: &str) -> (i32, String, String) {
         let port = port.to_string();
         let env = env(
-            &[("SF_SYMPHONY_PORT", &port), ("TASKS_SESSION", session)],
+            &[("SYMPHONY_PORT", &port), ("TASKS_SESSION", session)],
             std::env::temp_dir(),
         );
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn the_port_is_the_environments_else_the_record_else_the_default() {
-        let dir = std::env::temp_dir().join(format!("sf-field-port-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-field-port-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = dir.as_path();
@@ -290,12 +290,12 @@ mod tests {
         std::fs::write(&record, r#"{"port": 9123, "pid": 1, "root": "/r"}"#).unwrap();
         assert_eq!(port(&env(&[], repo.into())), Ok(9123));
         assert_eq!(
-            port(&env(&[("SF_SYMPHONY_PORT", "9200")], repo.into())),
+            port(&env(&[("SYMPHONY_PORT", "9200")], repo.into())),
             Ok(9200)
         );
         assert_eq!(
-            port(&env(&[("SF_SYMPHONY_PORT", "x")], repo.into())),
-            Err("SF_SYMPHONY_PORT=x is not a port".into())
+            port(&env(&[("SYMPHONY_PORT", "x")], repo.into())),
+            Err("SYMPHONY_PORT=x is not a port".into())
         );
         assert_eq!(
             port(&env(&[], std::env::temp_dir().join("no-repo-here"))),
@@ -312,7 +312,7 @@ mod tests {
             [("TASKS_SERVER", "127.0.0.1:1")],
         ] {
             let refused = port(&env(&scratch, cwd.clone())).unwrap_err();
-            assert!(refused.contains("set SF_SYMPHONY_PORT"), "{refused}");
+            assert!(refused.contains("set SYMPHONY_PORT"), "{refused}");
         }
         assert_eq!(
             port(&env(
@@ -323,7 +323,7 @@ mod tests {
         );
         assert_eq!(
             port(&env(
-                &[("TASKS_DATABASE", "scratch"), ("SF_SYMPHONY_PORT", "9300")],
+                &[("TASKS_DATABASE", "scratch"), ("SYMPHONY_PORT", "9300")],
                 cwd
             )),
             Ok(9300)

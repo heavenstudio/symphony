@@ -12,7 +12,7 @@ use symphony_board::sys::{Command, Spawning as _};
 #[path = "approval_freshness.rs"]
 mod freshness;
 
-const IN_CHILD: &str = "SF_BLOCKED_PANES_CHILD";
+const IN_CHILD: &str = "SYMPHONY_BLOCKED_PANES_CHILD";
 const EMPTY_PULL: &str = "PULL executing=0 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 const BUSY_PULL: &str = "PULL executing=1 ready_unstaffed=0 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0";
 
@@ -34,7 +34,7 @@ fn in_child_with_hc(name: &str) -> bool {
         return true;
     }
     let dir = std::env::temp_dir().join(format!(
-        "sf-blocked-panes-{}-{}",
+        "symphony-blocked-panes-{}-{}",
         std::process::id(),
         name.replace(':', "-")
     ));

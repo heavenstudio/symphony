@@ -260,7 +260,7 @@ fn a_branch_ask_on_a_card_main_holds_is_gone_once_its_worktree_is_removed_unmerg
     );
 }
 
-const CHILD: &str = "SF_ASKS_SAVE_TO_ANSWER";
+const CHILD: &str = "SYMPHONY_ASKS_SAVE_TO_ANSWER";
 const SAVE_TO_ANSWER: &str =
     "live::owner_asks_tests::a_verdict_and_a_chat_go_from_the_owners_save_to_their_answer";
 

@@ -40,7 +40,7 @@ struct PublicationStage {
 impl PublicationStage {
     fn start(name: std::fmt::Arguments<'_>) -> Option<Self> {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*ENABLED.get_or_init(|| std::env::var_os("SF_SYMPHONY_PUBLICATION_TRACE").is_some()) {
+        if !*ENABLED.get_or_init(|| symphony_env::PUBLICATION_TRACE.os().is_some()) {
             return None;
         }
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -133,67 +133,48 @@ mod metadata_tests {
     }
 
     #[test]
-    fn existing_verdict_metadata_keeps_its_counter_journals_and_shared_write_lock() {
-        use std::os::unix::fs::MetadataExt;
-        let tree = crate::test_tree::Tree::new();
-        git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
-        let common = common_dir(&tree.root).unwrap();
-        let canonical = common.join("sf-symphony");
-        let legacy = common.join("sf-docs");
-        std::fs::create_dir_all(legacy.join("verdict-backlog")).unwrap();
-        std::fs::create_dir_all(legacy.join("verdict-publications")).unwrap();
-        std::fs::write(legacy.join("verdict-backlog/next"), "41").unwrap();
-        let journal = legacy.join("verdict-publications/00000000000000000041.json");
-        std::fs::write(&journal, "immutable pending verdict").unwrap();
-        std::fs::create_dir_all(&canonical).unwrap();
-        std::fs::write(canonical.join("server.json"), "new serving generation").unwrap();
-        assert_eq!(home(&tree.root).unwrap(), legacy);
-        let writes = write_lock(&tree.root).unwrap().unwrap();
-        let old_writes = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(legacy.join("verdict-writes.lock"))
-            .unwrap();
-        let a = writes.metadata().unwrap();
-        let b = old_writes.metadata().unwrap();
-        assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()));
-        assert!(matches!(
-            old_writes.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
-        ));
-        writes.unlock().unwrap();
-        let backlog = Backlog::new(&tree.root).unwrap();
-        assert_eq!(backlog.sequence, 42);
-        assert!(backlog.path.starts_with(&legacy));
-        assert_eq!(
-            std::fs::read_to_string(journal).unwrap(),
-            "immutable pending verdict"
-        );
-        assert!(!canonical.join("verdict-backlog").exists());
-        assert!(!canonical.join("verdict-publications").exists());
-    }
-
-    #[test]
     fn fresh_verdict_metadata_uses_the_symphony_home() {
         let tree = crate::test_tree::Tree::new();
         git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
         let common = common_dir(&tree.root).unwrap();
-        assert_eq!(home(&tree.root).unwrap(), common.join("sf-symphony"));
+        assert_eq!(home(&tree.root).unwrap(), common.join("symphony/server"));
         let backlog = Backlog::new(&tree.root).unwrap();
         assert_eq!(backlog.sequence, 1);
-        assert!(backlog.path.starts_with(common.join("sf-symphony")));
-        assert!(!common.join("sf-docs").exists());
+        assert!(backlog.path.starts_with(common.join("symphony/server")));
+    }
+
+    #[test]
+    fn an_unmoved_repository_keeps_no_verdict_journal_or_lock_until_the_move() {
+        let tree = crate::test_tree::Tree::new();
+        git(&tree.root, &["init", "-q", "-b", "main"]).unwrap();
+        let common = common_dir(&tree.root).unwrap();
+        let (new, old) = symphony_board::unmoved::OLD
+            .into_iter()
+            .find(|(new, _)| *new == symphony_board::folders::SERVER)
+            .expect("the server's folder moves");
+        std::fs::create_dir_all(common.join(old).join("bin")).unwrap();
+        let refusal = symphony_board::unmoved::refusal(&common, new).expect("unmoved");
+        assert_eq!(home(&tree.root).unwrap_err(), refusal);
+        assert_eq!(
+            shared_lock(&tree.root, "verdict-writes.lock").unwrap_err(),
+            refusal
+        );
+        assert!(Backlog::new(&tree.root).is_err());
+        assert!(
+            !common.join("symphony").exists(),
+            "a folder beside the old one"
+        );
     }
 
     #[test]
     fn repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides() {
-        const CHILD_ROOT: &str = "SF_SYMPHONY_METADATA_ROOT";
+        const CHILD_ROOT: &str = "SYMPHONY_METADATA_ROOT";
         const CASE: &str = "commit::metadata_tests::repository_metadata_handles_worktrees_without_spawning_git_and_honors_overrides";
         if let Some(root) = std::env::var_os(CHILD_ROOT) {
             let root = PathBuf::from(root);
             let main = root.join("main");
             let expected = main.join(".git").canonicalize().unwrap();
-            let mode = std::env::var("SF_SYMPHONY_METADATA_MODE").unwrap();
+            let mode = std::env::var("SYMPHONY_METADATA_MODE").unwrap();
             if mode == "override" {
                 // Local discovery succeeds here, but the override selects main's
                 // common directory and worktree lock instead of the bare repo's.
@@ -217,7 +198,7 @@ mod metadata_tests {
             }
             for path in [&main, &root.join("linked"), &main.join("docs")] {
                 assert_eq!(common_dir(path).unwrap(), expected);
-                assert_eq!(home(path).unwrap(), expected.join("sf-symphony"));
+                assert_eq!(home(path).unwrap(), expected.join("symphony/server"));
                 assert!(write_lock(path).unwrap().is_some());
             }
             assert!(on_main(&main));
@@ -229,14 +210,14 @@ mod metadata_tests {
             // A project naming no record keeps none; one naming a `.git/` folder keeps it in the
             // common directory, from whichever checkout records it.
             record(&root.join("linked"), "unrecorded").unwrap();
-            assert!(!expected.join("sf-land/verdicts/unrecorded").exists());
+            assert!(!expected.join("land/verdicts/unrecorded").exists());
             std::fs::write(
                 root.join("linked").join(crate::project::FILE),
-                "[verdicts]\nrecord = \".git/sf-land/verdicts\"\n",
+                "[verdicts]\nrecord = \".git/land/verdicts\"\n",
             )
             .unwrap();
             record(&root.join("linked"), "fixture").unwrap();
-            assert!(expected.join("sf-land/verdicts/fixture").is_file());
+            assert!(expected.join("land/verdicts/fixture").is_file());
             // Each call reads HEAD again; there is no path-keyed metadata cache.
             std::fs::write(expected.join("HEAD"), "ref: refs/heads/proposal\n").unwrap();
             assert!(!on_main(&main));
@@ -307,7 +288,7 @@ mod metadata_tests {
             child
                 .args(["--exact", CASE, "--nocapture"])
                 .env(CHILD_ROOT, &tree.root)
-                .env("SF_SYMPHONY_METADATA_MODE", mode)
+                .env("SYMPHONY_METADATA_MODE", mode)
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_CONFIG_NOSYSTEM", "1");
             if mode == "override" {
@@ -330,18 +311,16 @@ mod metadata_tests {
 /// The folder of queued verdict publications, in the [`home`] of the checkout's common dir.
 const JOURNAL: &str = "verdict-publications";
 
+/// The server's folder in the common dir of `root`'s checkout, where the verdicts' journals and
+/// locks are kept; refused while an older build's server folder there still holds its state, so
+/// none is made beside it ([`symphony_board::unmoved`]).
 fn home(root: &Path) -> Result<PathBuf, String> {
     let common = common_dir(root)?;
-    // Serving generations share the existing journals, counters and lock inodes independently
-    // of the current server record. Only a fresh metadata store selects the canonical home.
-    let legacy = common.join("sf-docs");
-    match std::fs::symlink_metadata(&legacy) {
-        Ok(_) => Ok(legacy),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(common.join("sf-symphony"))
-        }
-        Err(error) => Err(format!("{}: {error}", legacy.display())),
+    let folder = symphony_board::folders::SERVER;
+    if let Some(why) = symphony_board::unmoved::refusal(&common, folder) {
+        return Err(why);
     }
+    Ok(common.join(folder))
 }
 
 /// Separate locks keep HTTP read/edit/write sections short while commit preparation may build

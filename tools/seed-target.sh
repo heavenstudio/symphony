@@ -18,14 +18,15 @@
 # outright, or a sweep's `TARGET.clear.PID`, goes on a later run once its process is gone.
 #
 # Nothing is ever copied byte for byte: across filesystems, on one that cannot clone, without a
-# lock tool, or when the main checkout's build holds its lock past SF_SEED_WAIT seconds (120), it
-# does nothing and Cargo builds from nothing. It never fails the build it runs before.
-# SF_SEED_TARGET=off turns it off. `du` counts each clone in full: `df` says what the disk holds.
+# lock tool, or when the main checkout's build holds its lock past SYMPHONY_SEED_WAIT seconds (120),
+# it does nothing and Cargo builds from nothing. It never fails the build it runs before.
+# SYMPHONY_SEED_TARGET=off turns it off. `du` counts each clone in full: `df` says what the disk
+# holds.
 set -uo pipefail
 target="${1:-}"
 say() { printf 'symphony seed: %s\n' "$*" >&2; }
 [ -n "$target" ] || exit 0
-[ "${SF_SEED_TARGET:-on}" != off ] || exit 0
+[ "${SYMPHONY_SEED_TARGET:-on}" != off ] || exit 0
 
 # What a seed or a clear left beside TARGET, once its process is gone; nothing when `ps` cannot say.
 if ps -p $$ >/dev/null 2>&1; then
@@ -93,7 +94,7 @@ while IFS= read -r id; do
 done < <(printf '%s\n' "$members" | grep -o '"[^"]*"' | tr -d '"' | grep -v '^workspace_members$')
 [ "${#names[@]}" -gt 0 ] || exit 0
 
-wait="${SF_SEED_WAIT:-120}"
+wait="${SYMPHONY_SEED_WAIT:-120}"
 case "$wait" in '' | *[!0-9]*) wait=120 ;; esac
 
 # Whatever ends this run ends the clone it started and removes what it staged. On a signal the run

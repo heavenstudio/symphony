@@ -36,6 +36,7 @@ impl Fixture {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for name in [
             "apps/symphony-ui/bundle.sh",
+            "apps/symphony-ui/tools.sh",
             "apps/symphony-ui/wasm-fresh.sh",
             "apps/symphony-ui/package.sh",
             "apps/symphony-ui/assets-copy.sh",
@@ -59,17 +60,17 @@ impl Fixture {
         .unwrap();
         executable(&base.join("cargo"), "#!/bin/bash\nexit 0\n");
         executable(
-            &base.join("common/sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
+            &base.join("common/symphony/tools/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
             "#!/bin/bash\nexit 0\n",
         );
         // The shell's minifier passes the script through as it is.
         executable(
-            &base.join("common/sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+            &base.join("common/symphony/tools/dx-home/tools/esbuild-fixture/esbuild"),
             "#!/bin/bash\ncat\n",
         );
         release_protocol(&base);
         executable(
-            &base.join("common/sf-cargo/dx-0.7.10/bin/dx"),
+            &base.join("common/symphony/tools/dx-0.7.10/bin/dx"),
             r#"#!/bin/bash
 set -euo pipefail
 while [ "$#" -gt 0 ]; do
@@ -111,13 +112,12 @@ cp -R "$work/public" "$out/"
             .arg(self.0.join(id))
             .current_dir(&self.0)
             .env("HOME", home)
-            .env("SF_GIT_COMMON_DIR", self.0.join("common"))
+            .env("SYMPHONY_GIT_COMMON_DIR", self.0.join("common"))
             .env("CARGO_TARGET_DIR", self.0.join("target"))
             .env("CARGO", self.0.join("cargo"))
             .env("BUNDLE_ID", id)
             .env("BUNDLE_ROOT", &self.0)
             .env("FIRST_EXIT", first_exit.to_string())
-            .env_remove("SF_TOOL_TEST_WAIT_HELPER")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -335,4 +335,78 @@ fn concurrent_bundles_in_one_tree_publish_complete_outputs_and_release_after_fai
         }
         fixture.assert_complete("second");
     }
+}
+
+/// The lines of the client's script `name` that find the git common dir: from the comment that
+/// opens them to the `common=` line.
+fn common_dir_lines(name: &str) -> String {
+    let script = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name)).unwrap();
+    let from = script
+        .find("# The common dir: SYMPHONY_GIT_COMMON_DIR")
+        .unwrap_or_else(|| panic!("{name} finds no common dir"));
+    let rest = script.get(from..).unwrap();
+    let end = rest.find("\ncommon=").unwrap();
+    let line_end = rest.get(end + 1..).unwrap().find('\n').unwrap();
+    rest.get(..end + 1 + line_end + 1).unwrap().to_string()
+}
+
+#[test]
+fn the_client_scripts_read_the_common_dir_by_its_name_else_gits() {
+    let scripts = ["bundle.sh", "dev.sh", "tools.sh", "probes/size.sh"];
+    let lines = common_dir_lines(scripts[0]);
+    for name in &scripts[1..] {
+        assert_eq!(
+            common_dir_lines(name),
+            lines,
+            "{name} reads the common dir otherwise"
+        );
+    }
+    let here = std::env::temp_dir().join(format!("symphony-ui-common-dir-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&here);
+    fs::create_dir_all(&here).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&here)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let found = |vars: &[(&str, &str)]| {
+        let mut bash = Command::new("bash");
+        bash.args([
+            "-c",
+            &format!("set -euo pipefail\n{lines}printf '%s|%s\\n' \"$common\" \"${{SYMPHONY_GIT_COMMON_DIR:-}}\""),
+        ])
+        .env("here", &here);
+        for name in ["SYMPHONY_GIT_COMMON_DIR", "GIT_DIR", "GIT_COMMON_DIR"] {
+            bash.env_remove(name);
+        }
+        for (name, value) in vars {
+            bash.env(name, value);
+        }
+        let done = bash.output().unwrap();
+        assert!(done.status.success(), "{done:?}");
+        (
+            String::from_utf8(done.stdout).unwrap(),
+            String::from_utf8(done.stderr).unwrap(),
+        )
+    };
+    // By its name, nothing said; else git's.
+    assert_eq!(
+        found(&[("SYMPHONY_GIT_COMMON_DIR", "/new")]),
+        ("/new|/new\n".into(), String::new())
+    );
+    let git = here.join(".git").canonicalize().unwrap();
+    let (out, said) = found(&[]);
+    assert_eq!(
+        (
+            Path::new(out.trim_end().trim_end_matches('|'))
+                .canonicalize()
+                .unwrap(),
+            said
+        ),
+        (git, String::new())
+    );
+    fs::remove_dir_all(&here).unwrap();
 }

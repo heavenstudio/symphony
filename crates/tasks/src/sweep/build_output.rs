@@ -23,8 +23,8 @@
 //!   the Claude Code agent whose worktree it is) beat or made a tool call, whatever its health;
 //!   nothing touched it (its git admin files, its top folder); and the board's recorder recorded no
 //!   build or test in it that ran or ended within the hour, or runs now (`tasks run`, its
-//!   operations in `sf-tasks/work/` of the common dir), so a reviewer building in an executor's
-//!   worktree keeps its build;
+//!   operations in `symphony/tasks/work/` of the common dir), so a reviewer building in an
+//!   executor's worktree keeps its build;
 //! * no process is working inside it (`lsof`; when that cannot be read, nothing goes).
 //!
 //! Right before removing, it reads the worktree listing, the board and the recorder's operations
