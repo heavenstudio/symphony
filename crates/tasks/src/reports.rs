@@ -59,12 +59,7 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
         });
     }
     // What happened once, each to the hour it happened in.
-    let events = Events::of(&replayed);
-    for at in events.landed {
-        if let Some(hour) = hour_at(&mut hours, until, at) {
-            hour.landed += 1;
-        }
-    }
+    let rounds = happened(&replayed, &mut hours, start, until);
     for red in replayed.iter().filter(|r| r.series.is_some()) {
         if let Some(hour) = hour_at(&mut hours, until, red.task.created) {
             hour.reds_filed += 1;
@@ -74,41 +69,6 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
                 && let Some(hour) = hour_at(&mut hours, until, segment.from)
             {
                 hour.reds_closed += 1;
-            }
-        }
-    }
-    let waits: [(Vec<(f64, Wait)>, fn(&mut Waits) -> &mut Vec<Wait>); 4] = [
-        (events.approved_to_landed, |w| &mut w.approved_to_landed),
-        (events.review_to_reviewer, |w| &mut w.review_to_reviewer),
-        (events.changes_to_resumed, |w| &mut w.changes_to_resumed),
-        (events.changes_to_review, |w| &mut w.changes_to_review),
-    ];
-    for (all, kind) in waits {
-        for (at, wait) in all {
-            if let Some(hour) = hour_at(&mut hours, until, at) {
-                kind(&mut hour.waits).push(wait);
-            }
-        }
-    }
-    // By their number, kept in order as found.
-    let mut rounds: Vec<Round> = Vec::new();
-    for (at, changes, round) in &events.verdicts {
-        if start <= *at && *at < until {
-            let index = rounds.partition_point(|r| r.number < *round);
-            if rounds.get(index).is_none_or(|r| r.number != *round) {
-                rounds.insert(
-                    index,
-                    Round {
-                        number: *round,
-                        ..Round::default()
-                    },
-                );
-            }
-            let entry = &mut rounds[index];
-            if *changes {
-                entry.changes += 1;
-            } else {
-                entry.approved += 1;
             }
         }
     }
@@ -218,115 +178,129 @@ fn is_claim(line: &Line) -> bool {
     line.kind == "system" && line.text.contains(CLAIMED) && !line.text.contains(RELEASED)
 }
 
-/// What happened once on the board, each at its time, read from every task once.
-#[derive(Default)]
-struct Events {
-    /// When each landing was written.
-    landed: Vec<f64>,
-    /// Each `changes` (true) or `approve` (false) verdict, by its time and the review round it ended.
-    verdicts: Vec<(f64, bool, u32)>,
-    /// Each wait, by its end.
-    approved_to_landed: Vec<(f64, Wait)>,
-    review_to_reviewer: Vec<(f64, Wait)>,
-    changes_to_resumed: Vec<(f64, Wait)>,
-    changes_to_review: Vec<(f64, Wait)>,
-}
-
-impl Events {
-    /// Read from `replayed`, each task's review subtasks found among them by a scan: a few hundred
-    /// tasks an hour, where a map would cost the server's binary its own (docs/CHECKS.md, size
-    /// budgets).
-    fn of(replayed: &[Replayed]) -> Events {
-        let mut events = Events::default();
-        for task in replayed {
-            let slug = &task.task.slug;
-            let wait = |from: f64, to: f64| Wait {
-                slug: slug.clone(),
-                seconds: (to - from).max(0.0),
-            };
-            let mut approved: Option<f64> = None;
-            let lines = &task.task.lines;
-            for (index, line) in lines.iter().enumerate() {
-                if line.kind != "verdict" {
-                    continue;
+/// What happened once on the board, read from every task of `replayed` once, each into the hour of
+/// `hours` (the day's from `start`, up to `until`) it happened in: the landings and the waits, each
+/// wait by its end. The review rounds the day's `changes` and `approve` verdicts ended are the
+/// answer, by their number, kept in order as found. Each task's review subtasks are found among
+/// `replayed` by a scan: a few hundred tasks an hour, where a map would cost the server's binary
+/// its own (docs/CHECKS.md, size budgets).
+fn happened(replayed: &[Replayed], hours: &mut [ReportHour], start: f64, until: f64) -> Vec<Round> {
+    let mut rounds: Vec<Round> = Vec::new();
+    for task in replayed {
+        let slug = &task.task.slug;
+        // The wait from `from` to `to`, into its kind's list (`kind`) of the hour `to` falls in.
+        let wait = |hours: &mut [ReportHour],
+                    kind: fn(&mut Waits) -> &mut Vec<Wait>,
+                    from: f64,
+                    to: f64| {
+            if let Some(hour) = hour_at(hours, until, to) {
+                kind(&mut hour.waits).push(Wait {
+                    slug: slug.clone(),
+                    seconds: (to - from).max(0.0),
+                });
+            }
+        };
+        let mut approved: Option<f64> = None;
+        let lines = &task.task.lines;
+        for (index, line) in lines.iter().enumerate() {
+            if line.kind != "verdict" {
+                continue;
+            }
+            let at = task.at(line);
+            let changes = verdict_is(&line.text, "changes");
+            if (changes || verdict_is(&line.text, "approve")) && start <= at && at < until {
+                let number = count(task.review_segments().filter(|s| s.from <= at)).max(1);
+                let place = rounds.partition_point(|r| r.number < number);
+                if rounds.get(place).is_none_or(|r| r.number != number) {
+                    rounds.insert(
+                        place,
+                        Round {
+                            number,
+                            ..Round::default()
+                        },
+                    );
                 }
-                let at = task.at(line);
-                let changes = verdict_is(&line.text, "changes");
-                if changes || verdict_is(&line.text, "approve") {
-                    let round = count(task.review_segments().filter(|s| s.from <= at)).max(1);
-                    events.verdicts.push((at, changes, round));
-                }
-                if verdict_is(&line.text, "approve") {
-                    approved = Some(at);
-                } else if line.text.starts_with(LANDED) {
-                    events.landed.push(at);
-                    if let Some(from) = approved.take() {
-                        events.approved_to_landed.push((at, wait(from, at)));
-                    }
-                } else if changes {
-                    // The next time in review after the one the verdict ended, by the stretches'
-                    // order, so a move and a verdict in one second are read as written.
-                    let segments = &task.stages.segments;
-                    let ended = segments
-                        .iter()
-                        .rposition(|s| s.status == "review" && s.from <= at);
-                    let next = segments[ended.map_or(0, |i| i + 1)..]
-                        .iter()
-                        .find(|s| s.status == "review" && s.from >= at);
-                    if let Some(review) = next {
-                        events
-                            .changes_to_review
-                            .push((review.from, wait(at, review.from)));
-                    }
-                    let resumed = lines[index + 1..].iter().find(|later| {
-                        is_claim(later)
-                            || (!later.sender.is_empty()
-                                && !(later.kind == "system" && later.text.contains(RELEASED))
-                                && task.held_by(&later.sender, "executor", task.at(later).max(at)))
-                    });
-                    if let Some(later) = resumed {
-                        let to = task.at(later).max(at);
-                        events.changes_to_resumed.push((to, wait(at, to)));
-                    }
+                let round = &mut rounds[place];
+                if changes {
+                    round.changes += 1;
+                } else {
+                    round.approved += 1;
                 }
             }
-            let reviews = || {
-                replayed.iter().filter(|child| {
-                    child.task.instruction && child.task.parent.as_deref() == Some(slug.as_str())
-                })
-            };
-            for review in task.review_segments() {
-                let (from, to) = (review.from, review.to.unwrap_or(f64::INFINITY));
-                let held = task.holds.iter().any(|hold| {
-                    hold.role == "reviewer" && hold.from <= from && hold.to.is_none_or(|t| t > from)
+            if verdict_is(&line.text, "approve") {
+                approved = Some(at);
+            } else if line.text.starts_with(LANDED) {
+                if let Some(from) = approved.take() {
+                    wait(hours, |w| &mut w.approved_to_landed, from, at);
+                }
+                if let Some(hour) = hour_at(hours, until, at) {
+                    hour.landed += 1;
+                }
+            } else if changes {
+                // The next time in review after the one the verdict ended, by the stretches'
+                // order, so a move and a verdict in one second are read as written.
+                let segments = &task.stages.segments;
+                let ended = segments
+                    .iter()
+                    .rposition(|s| s.status == "review" && s.from <= at);
+                let next = segments[ended.map_or(0, |i| i + 1)..]
+                    .iter()
+                    .find(|s| s.status == "review" && s.from >= at);
+                if let Some(review) = next {
+                    wait(hours, |w| &mut w.changes_to_review, at, review.from);
+                }
+                let resumed = lines[index + 1..].iter().find(|later| {
+                    is_claim(later)
+                        || (!later.sender.is_empty()
+                            && !(later.kind == "system" && later.text.contains(RELEASED))
+                            && task.held_by(&later.sender, "executor", task.at(later).max(at)))
                 });
-                let staffed = if held {
-                    Some(from)
-                } else {
-                    let joined = task
-                        .holds
-                        .iter()
-                        .filter(|hold| hold.role == "reviewer")
-                        .map(|hold| hold.from);
-                    let claimed = reviews().flat_map(|child| {
-                        child
-                            .holds
-                            .iter()
-                            .filter(|hold| hold.role == "executor")
-                            .map(|hold| hold.from)
-                    });
-                    joined
-                        .chain(claimed)
-                        .filter(|at| from <= *at && *at < to)
-                        .min_by(f64::total_cmp)
-                };
-                if let Some(at) = staffed {
-                    events.review_to_reviewer.push((at, wait(from, at)));
+                if let Some(later) = resumed {
+                    wait(
+                        hours,
+                        |w| &mut w.changes_to_resumed,
+                        at,
+                        task.at(later).max(at),
+                    );
                 }
             }
         }
-        events
+        let reviews = || {
+            replayed.iter().filter(|child| {
+                child.task.instruction && child.task.parent.as_deref() == Some(slug.as_str())
+            })
+        };
+        for review in task.review_segments() {
+            let (from, to) = (review.from, review.to.unwrap_or(f64::INFINITY));
+            let held = task.holds.iter().any(|hold| {
+                hold.role == "reviewer" && hold.from <= from && hold.to.is_none_or(|t| t > from)
+            });
+            let staffed = if held {
+                Some(from)
+            } else {
+                let joined = task
+                    .holds
+                    .iter()
+                    .filter(|hold| hold.role == "reviewer")
+                    .map(|hold| hold.from);
+                let claimed = reviews().flat_map(|child| {
+                    child
+                        .holds
+                        .iter()
+                        .filter(|hold| hold.role == "executor")
+                        .map(|hold| hold.from)
+                });
+                joined
+                    .chain(claimed)
+                    .filter(|at| from <= *at && *at < to)
+                    .min_by(f64::total_cmp)
+            };
+            if let Some(at) = staffed {
+                wait(hours, |w| &mut w.review_to_reviewer, from, at);
+            }
+        }
     }
+    rounds
 }
 
 fn add(counts: &mut ByStatus<u32>, status: &str) {
@@ -450,44 +424,39 @@ fn reds(replayed: &[Replayed], start: f64, until: f64) -> Vec<Red> {
 /// database other than the live one. A board `TASKS_SERVER` names keeps none unless
 /// [`FOLDER_VAR`] names it.
 pub fn folder(env: &Env) -> Result<PathBuf, String> {
-    if let Some(path) = env.var(FOLDER_VAR) {
+    day_files(env, FOLDER, FOLDER_VAR, "reports")
+}
+
+/// Where the board `env` reaches keeps a family of day files: the folder `var` names, else `folder`
+/// in the git common dir of its working directory, `folder.<database>` for a database other than
+/// the live one. A board `TASKS_SERVER` names keeps none unless `var` names it, and the refusal
+/// names the files as `what`.
+pub fn day_files(env: &Env, folder: &str, var: &str, what: &str) -> Result<PathBuf, String> {
+    if let Some(path) = env.var(var) {
         return Ok(PathBuf::from(path));
     }
     if env.var("TASKS_SERVER").is_some() {
         return Err(format!(
-            "a board TASKS_SERVER names keeps no reports unless {FOLDER_VAR} names their folder"
+            "a board TASKS_SERVER names keeps no {what} unless {var} names their folder"
         ));
     }
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
     let name = match env.var("TASKS_DATABASE") {
-        Some(database) if database != crate::DATABASE => format!("{FOLDER}.{database}"),
-        _ => FOLDER.to_string(),
+        Some(database) if database != crate::DATABASE => format!("{folder}.{database}"),
+        _ => folder.to_string(),
     };
     Ok(common.join(name))
 }
 
 /// The day file of `day.day` written in `folder`, compact JSON on one line: a whole file in its
-/// place, written aside and renamed, so a reader finds the last one or the one before it, never a
-/// part.
+/// place, written aside and renamed ([`crate::board_health::write_whole`]), so a reader finds the
+/// last one or the one before it, never a part.
 pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
-    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let name = symphony_api::report_file(&day.day);
-    let path = folder.join(&name);
-    let partial = folder.join(format!(
-        ".{name}.{}.{}",
-        std::process::id(),
-        WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
     // Compact, `jq .` shows one indented; written by hand, as serde writes it ([`json`]).
     let mut text = json::day(day);
     text.push(b'\n');
-    std::fs::write(&partial, text)
-        .and_then(|()| std::fs::rename(&partial, &path))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&partial);
-            format!("{}: {e}", path.display())
-        })
+    let path = folder.join(symphony_api::report_file(&day.day));
+    crate::board_health::write_whole(&path, &text)
 }
 
 /// Whether the day file of `day` (`YYYY-MM-DD`) in `folder` is final ([`ReportDay::closed`]): false

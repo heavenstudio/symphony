@@ -11,7 +11,9 @@
 //! of the day are kept once per day. Every time is seconds since the epoch; every hour is a UTC
 //! hour, named by its first second ([`ReportHour::start`]), the key the other day files of the
 //! `symphony/` folder name their hours by too. A field added later is `#[serde(default)]`, so a
-//! reader built before it reads a newer file and one built after it an older file.
+//! reader built before it reads a newer file and one built after it an older file. The board
+//! writes the file by hand, as serde would (`crates/tasks/src/reports/json.rs`), so a field added
+//! here is written there too; a test there holds the two texts equal byte for byte.
 
 use serde::{Deserialize, Serialize};
 
@@ -152,35 +154,64 @@ pub struct ByStatus<T> {
     pub review: T,
 }
 
+/// The statuses of a [`ByStatus`], in the order of its fields: the order the file writes them.
+const STATUSES: [&str; 9] = [
+    "backlog",
+    "blocked",
+    "cancelled",
+    "concept",
+    "design",
+    "done",
+    "in_progress",
+    "ready",
+    "review",
+];
+
+/// Where `status` stands in [`STATUSES`]: one copy of the names' comparison for every kind of
+/// figure.
+fn status_index(status: &str) -> Option<usize> {
+    STATUSES.iter().position(|name| *name == status)
+}
+
 impl<T> ByStatus<T> {
     /// The figure of `status`; none for a name that is no status.
     pub fn get_mut(&mut self, status: &str) -> Option<&mut T> {
-        Some(match status {
-            "backlog" => &mut self.backlog,
-            "blocked" => &mut self.blocked,
-            "cancelled" => &mut self.cancelled,
-            "concept" => &mut self.concept,
-            "design" => &mut self.design,
-            "done" => &mut self.done,
-            "in_progress" => &mut self.in_progress,
-            "ready" => &mut self.ready,
-            "review" => &mut self.review,
-            _ => return None,
+        Some(match status_index(status)? {
+            0 => &mut self.backlog,
+            1 => &mut self.blocked,
+            2 => &mut self.cancelled,
+            3 => &mut self.concept,
+            4 => &mut self.design,
+            5 => &mut self.done,
+            6 => &mut self.in_progress,
+            7 => &mut self.ready,
+            _ => &mut self.review,
         })
     }
 
     /// Each status's figure, by name, as the file writes them.
     pub fn each(&self) -> [(&'static str, &T); 9] {
+        let [
+            backlog,
+            blocked,
+            cancelled,
+            concept,
+            design,
+            done,
+            in_progress,
+            ready,
+            review,
+        ] = STATUSES;
         [
-            ("backlog", &self.backlog),
-            ("blocked", &self.blocked),
-            ("cancelled", &self.cancelled),
-            ("concept", &self.concept),
-            ("design", &self.design),
-            ("done", &self.done),
-            ("in_progress", &self.in_progress),
-            ("ready", &self.ready),
-            ("review", &self.review),
+            (backlog, &self.backlog),
+            (blocked, &self.blocked),
+            (cancelled, &self.cancelled),
+            (concept, &self.concept),
+            (design, &self.design),
+            (done, &self.done),
+            (in_progress, &self.in_progress),
+            (ready, &self.ready),
+            (review, &self.review),
         ]
     }
 }

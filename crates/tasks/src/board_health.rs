@@ -549,30 +549,36 @@ impl Report {
         }
     }
 
-    /// Write it to `path` whole: to a file of this write's own beside it, then renamed over it, so
-    /// a reader never meets half of it, and no other write, of this process or another, writes or
-    /// renames that file meanwhile. Which of two writes at once lands last is the callers' to
-    /// order ([`Recorder`] writes one at a time).
+    /// Write it to `path` whole ([`write_whole`]). Which of two writes at once lands last is the
+    /// callers' to order ([`Recorder`] writes one at a time).
     pub fn write(&self, path: &Path) -> Result<(), String> {
-        static WRITES: AtomicU64 = AtomicU64::new(0);
-        let folder = path.parent().unwrap_or_else(|| Path::new("."));
-        std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-        let name = path
-            .file_name()
-            .map_or_else(|| FILE.into(), |name| name.to_string_lossy().into_owned());
-        let partial = folder.join(format!(
-            ".{name}.{}.{}",
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&partial, text + "\n")
-            .and_then(|()| std::fs::rename(&partial, path))
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&partial);
-                format!("{}: {e}", path.display())
-            })
+        write_whole(path, (text + "\n").as_bytes())
     }
+}
+
+/// Write `text` to `path` whole, its folder made first: to a file of this write's own beside it,
+/// then renamed over it, so a reader never meets half of it, and no other write, of this process
+/// or another, writes or renames that file meanwhile. The board's health record and the project's
+/// day files ([`crate::reports::write`]) are written so.
+pub(crate) fn write_whole(path: &Path, text: &[u8]) -> Result<(), String> {
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let folder = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let name = path
+        .file_name()
+        .map_or_else(|| FILE.into(), |name| name.to_string_lossy().into_owned());
+    let partial = folder.join(format!(
+        ".{name}.{}.{}",
+        std::process::id(),
+        WRITES.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&partial, text)
+        .and_then(|()| std::fs::rename(&partial, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            format!("{}: {e}", path.display())
+        })
 }
 
 /// Where the board `env` reaches keeps its record: the file `TASKS_HEALTH` names, else `FILE` in

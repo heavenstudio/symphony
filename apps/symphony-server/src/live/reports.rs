@@ -121,12 +121,7 @@ impl Hub {
                 return;
             }
         };
-        let cards = self
-            .branches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .0
-            .clone();
+        let cards = Arc::clone(&self.branches.lock().unwrap_or_else(|e| e.into_inner()).0);
         let root = self.root.clone();
         let folder = rollup.folder.clone();
         let said = Arc::clone(&rollup.said);

@@ -197,10 +197,7 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
     );
     let hour = |n: usize| &day.hours[n];
     assert_eq!(hour(0).top.held, counts(&[("ready", 2)]));
-    assert_eq!(
-        hour(0).top.task_hours,
-        by_status(&[("ready", 2.0)])
-    );
+    assert_eq!(hour(0).top.task_hours, by_status(&[("ready", 2.0)]));
     assert_eq!(hour(0).top.unclaimed_hours, 2.0);
     assert_eq!(
         hour(1).top.entered,
@@ -441,6 +438,11 @@ fn the_folder_is_the_one_named_else_beside_the_board_and_none_for_a_named_server
     );
     let refused = folder(&env(&[("TASKS_SERVER", "127.0.0.1:1")])).unwrap_err();
     assert!(refused.contains(FOLDER_VAR), "{refused}");
+    assert!(refused.contains("no reports unless"), "{refused}");
+    let other = day_files(&env(&[("TASKS_SERVER", "1")]), "f", "F_DIR", "f files").unwrap_err();
+    assert!(other.contains("no f files unless F_DIR"), "{other}");
+    // An empty setting names nothing: the refusal for a named server stands.
+    assert!(folder(&env(&[(FOLDER_VAR, ""), ("TASKS_SERVER", "1")])).is_err());
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
     let live = folder(&Env {
         vars: BTreeMap::new(),
@@ -539,9 +541,10 @@ fn the_longest_in_their_status_are_the_ten_oldest_by_since_then_slug_whatever_th
 /// and strings and numbers serde escapes or writes as `null`.
 #[test]
 fn a_day_file_s_text_is_the_one_serde_writes() {
-    let fixture: ReportDay =
-        serde_json::from_str(include_str!("../../../symphony-api/fixtures/report-day.json"))
-            .unwrap();
+    let fixture: ReportDay = serde_json::from_str(include_str!(
+        "../../../symphony-api/fixtures/report-day.json"
+    ))
+    .unwrap();
     let decisions = fixture.decisions.as_ref().unwrap();
     assert!(
         !decisions.open.is_empty() && !decisions.withdrawn.is_empty() && fixture.git.is_some(),
@@ -628,7 +631,10 @@ fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
         closed(&folder, "1999-01-02"),
         "only `closed` is read, whatever else the file holds"
     );
-    for (n, text) in [r#"{"closed":"yes"}"#, r#"{"hours":[]}"#, "[true]"].iter().enumerate() {
+    for (n, text) in [r#"{"closed":"yes"}"#, r#"{"hours":[]}"#, "[true]"]
+        .iter()
+        .enumerate()
+    {
         let day = format!("1999-02-0{}", n + 1);
         std::fs::write(folder.join(format!("{day}.json")), text).unwrap();
         assert!(!closed(&folder, &day), "{text}: no `closed` that is true");

@@ -108,17 +108,20 @@ pub fn excluded(project: &Project) -> Vec<String> {
 /// as written, and each lock file at any depth.
 fn pathspecs(excluded: &[String]) -> Vec<String> {
     let mut specs = vec![".".to_string()];
-    specs.extend(excluded.iter().map(|out| {
-        if LOCKS.contains(&out.as_str()) {
-            format!(":(exclude,glob)**/{out}")
+    for out in excluded {
+        let mut spec = String::from(if LOCKS.contains(&out.as_str()) {
+            ":(exclude,glob)**/"
         } else {
-            format!(":(exclude,literal){out}")
-        }
-    }));
+            ":(exclude,literal)"
+        });
+        spec.push_str(out);
+        specs.push(spec);
+    }
     specs
 }
 
-/// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them.
+/// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them,
+/// every argument handed over as one list.
 fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<String, String> {
     let mut git = crate::children::command("git");
     // The repository is the one at `root`, whatever the server was started from.
@@ -130,25 +133,25 @@ fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<
     ] {
         git.env_remove(name);
     }
+    let mut argv = vec![
+        "-c",
+        "core.quotePath=false",
+        "-c",
+        "log.showSignature=false",
+        "log",
+        "--no-color",
+        FORMAT,
+    ];
+    argv.extend(EVERY);
+    argv.extend(args);
+    argv.push("--end-of-options");
+    argv.extend(revs.iter().map(String::as_str));
+    argv.push("--");
+    argv.extend(paths.iter().map(String::as_str));
     let done = symphony_board::sys::output(
         git.env("GIT_OPTIONAL_LOCKS", "0")
-            .arg("-C")
-            .arg(root)
-            .args([
-                "-c",
-                "core.quotePath=false",
-                "-c",
-                "log.showSignature=false",
-                "log",
-                "--no-color",
-                FORMAT,
-            ])
-            .args(EVERY)
-            .args(args)
-            .arg("--end-of-options")
-            .args(revs)
-            .arg("--")
-            .args(paths),
+            .current_dir(root)
+            .args(&argv),
     )
     .map_err(|e| format!("git log could not start: {e}"))?;
     if !done.status.success() {
@@ -228,8 +231,9 @@ pub fn parse(text: &str) -> Vec<Commit> {
 /// What each commit on `read`'s line of first parents brought to the branch, oldest first: a
 /// commit there itself, a merge the commits of what it merged that no commit before it on the line
 /// brought (walked back from its other parents through [`Read::all`]). The commits are looked up by
-/// a scan, a millisecond for the thousand or so of two days, where a map would cost the server's
-/// binary its own (docs/CHECKS.md, size budgets).
+/// a scan, where a map would cost the server's binary its own (docs/CHECKS.md, size budgets): 8 ms
+/// in a debug build for this repository's two days to 2026-11-13 (941 commits, 151 of them on the
+/// line), at load 40.
 pub fn reached(read: &Read) -> Vec<Reached> {
     let mut seen: Vec<&str> = read.line.iter().map(|c| c.hash.as_str()).collect();
     let counted = |commit: &Commit| commit.parents.len() < 2 && commit.changed;

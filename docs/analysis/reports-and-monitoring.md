@@ -602,7 +602,12 @@ and 0.49 s wall, in one request and no write, on the tick; the rest runs on the 
 thread. A read of every task and line on that board would take 1.7 s. Both day files' figures took
 83 ms in a debug build, and the two files hold 26 KB, so a year of them is a few megabytes. The git
 reads are above; the documents are parsed again only where a file changed (`documents` keeps each
-by its stamp).
+by its stamp). In the server's binary, less the client it embeds, the roll-up adds 101,120 bytes
+(`just size-check`, 2026-11-13: 18,593,766 against main's 18,492,646, built the same way). The
+file grows by whole 16 KiB pages of code, six here, and how the compiler lays out the crates the
+roll-up touches moves the code around it by about a page from one build to the next, so it is kept
+small by its shape: no map, no sort, no derived reader of a row or of the day file, the day file
+written by hand, as serde would write it.
 
 ## Core page or plugin blocks
 

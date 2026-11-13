@@ -52,8 +52,11 @@ struct Step {
     verdict: Option<String>,
 }
 
-fn waits_on_owner(group: Group) -> bool {
-    matches!(group, Group::Decide | Group::Confirm)
+/// Whether `card` waits on the owner as it stands. Each card's thread is worked out here alone, so
+/// the server's binary holds that work once for both callers (docs/CHECKS.md, size budgets).
+#[inline(never)]
+fn waits_on_owner(card: &Decision, plugins: &Plugins) -> bool {
+    matches!(card.group(plugins), Group::Decide | Group::Confirm)
 }
 
 /// Where each dated line of `raw` starts and the second it names, read as [`entries`] reads them:
@@ -107,7 +110,7 @@ fn steps(card: &Decision, plugins: &Plugins) -> Vec<Step> {
         };
         steps.push(Step {
             at: *at,
-            waiting: waits_on_owner(then.thread(plugins).group),
+            waiting: waits_on_owner(&then, plugins),
             who: if line.who == "owner" {
                 Who::Owner
             } else {
@@ -120,15 +123,15 @@ fn steps(card: &Decision, plugins: &Plugins) -> Vec<Step> {
 }
 
 /// One card's history, as the day file counts it.
-struct History {
-    doc: String,
-    slug: String,
+struct History<'a> {
+    doc: &'a str,
+    slug: &'a str,
     steps: Vec<Step>,
     /// Whether it waits on the owner now: what a card with no dated line counts as at every hour.
     waiting_now: bool,
 }
 
-impl History {
+impl History<'_> {
     /// Whether it waited on the owner just before `at`; a card posted at or after `at` did not.
     fn waiting(&self, at: f64) -> bool {
         if self.steps.is_empty() {
@@ -159,9 +162,9 @@ impl History {
     /// Each line that took it out of the owner's queue, and how. Its first dated line (its posting,
     /// or the first since lines were dated) has no queue before it: the owner's line that leaves it
     /// out of the queue answered it, and an agent's posting of a card already auto-approved
-    /// auto-approved it; any other agent's posting out of the queue never asked the owner.
-    fn answers(&self) -> Vec<(Out, Answer)> {
-        let mut found = Vec::new();
+    /// auto-approved it; any other agent's posting out of the queue never asked the owner. Each goes
+    /// into `found` in its place by time and then slug.
+    fn answers(&self, found: &mut Vec<(Out, Answer)>) {
         for (k, step) in self.steps.iter().enumerate() {
             let before = k.checked_sub(1).map(|k| self.steps[k].waiting);
             if step.waiting || before == Some(false) {
@@ -178,17 +181,21 @@ impl History {
                 (Who::Owner, None) => "commented",
                 (Who::Agent, None) => "replied",
             };
-            found.push((
-                out,
-                Answer {
-                    doc: self.doc.clone(),
-                    slug: self.slug.clone(),
-                    at: step.at,
-                    how: how.to_string(),
-                },
-            ));
+            let place = found
+                .partition_point(|(_, kept)| (kept.at, kept.slug.as_str()) <= (step.at, self.slug));
+            found.insert(
+                place,
+                (
+                    out,
+                    Answer {
+                        doc: self.doc.into(),
+                        slug: self.slug.into(),
+                        at: step.at,
+                        how: how.to_string(),
+                    },
+                ),
+            );
         }
-        found
     }
 }
 
@@ -214,18 +221,16 @@ pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
     for doc in docs {
         for card in &doc.decisions {
             histories.push(History {
-                doc: doc.path.clone(),
-                slug: card.slug.clone(),
+                doc: &doc.path,
+                slug: &card.slug,
                 steps: steps(card, plugins),
-                waiting_now: waits_on_owner(card.group(plugins)),
+                waiting_now: waits_on_owner(card, plugins),
             });
         }
     }
     let mut answers: Vec<(Out, Answer)> = Vec::new();
-    for answer in histories.iter().flat_map(History::answers) {
-        let key = (answer.1.at, &answer.1.slug);
-        let at = answers.partition_point(|(_, kept)| (kept.at, &kept.slug) <= key);
-        answers.insert(at, answer);
+    for history in &histories {
+        history.answers(&mut answers);
     }
     let until = day.until;
     for hour in &mut day.hours {
@@ -246,7 +251,10 @@ pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
             .and_then(|hour| hour.decisions.as_mut());
         let (count, list) = match out {
             Out::Answered => (counts.map(|c| &mut c.answered), &mut lists.answered),
-            Out::AutoApproved => (counts.map(|c| &mut c.auto_approved), &mut lists.auto_approved),
+            Out::AutoApproved => (
+                counts.map(|c| &mut c.auto_approved),
+                &mut lists.auto_approved,
+            ),
             Out::Withdrawn => (counts.map(|c| &mut c.withdrawn), &mut lists.withdrawn),
         };
         if let Some(count) = count {
@@ -257,8 +265,8 @@ pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
     let mut open: Vec<OpenCard> = Vec::new();
     for history in histories.iter().filter(|history| history.waiting(until)) {
         let card = OpenCard {
-            doc: history.doc.clone(),
-            slug: history.slug.clone(),
+            doc: history.doc.into(),
+            slug: history.slug.into(),
             since: history.since(until),
         };
         // A card waiting since no line it has comes first.

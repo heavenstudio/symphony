@@ -12,7 +12,7 @@ use symphony_api::reports::{
 /// The text of `day`.
 pub fn day(day: &ReportDay) -> Vec<u8> {
     let mut out = Out(Vec::with_capacity(16 * 1024));
-    out.0.push(b'{');
+    out.open();
     out.count("schema", day.schema.into());
     out.text("project", &day.project);
     out.text("day", &day.day);
@@ -25,11 +25,11 @@ pub fn day(day: &ReportDay) -> Vec<u8> {
     day_flow(&mut out, "top", &day.top);
     day_flow(&mut out, "subtasks", &day.subtasks);
     out.list("rounds", &day.rounds, |out, round| {
-        out.0.push(b'{');
+        out.open();
         out.count("number", round.number.into());
         out.count("changes", round.changes.into());
         out.count("approved", round.approved.into());
-        out.0.push(b'}');
+        out.close();
     });
     out.list("reds", &day.reds, red);
     match &day.decisions {
@@ -40,12 +40,14 @@ pub fn day(day: &ReportDay) -> Vec<u8> {
         Some(git) => {
             out.object("git");
             out.text("branch", &git.branch);
-            out.list("excluded", &git.excluded, |out, path| out.value(path.as_str()));
-            out.0.push(b'}');
+            out.list("excluded", &git.excluded, |out, path| {
+                out.value(path.as_str())
+            });
+            out.close();
         }
         None => out.null("git"),
     }
-    out.0.push(b'}');
+    out.close();
     out.0
 }
 
@@ -108,7 +110,17 @@ impl Out {
     #[inline(never)]
     fn object(&mut self, name: &str) {
         self.key(name);
+        self.open();
+    }
+
+    #[inline(never)]
+    fn open(&mut self) {
         self.0.push(b'{');
+    }
+
+    #[inline(never)]
+    fn close(&mut self) {
+        self.0.push(b'}');
     }
 
     fn list<T>(&mut self, name: &str, items: &[T], item: fn(&mut Out, &T)) {
@@ -123,7 +135,7 @@ impl Out {
 }
 
 fn hour(out: &mut Out, hour: &ReportHour) {
-    out.0.push(b'{');
+    out.open();
     out.number("start", hour.start);
     flow(out, "top", &hour.top);
     flow(out, "subtasks", &hour.subtasks);
@@ -138,7 +150,7 @@ fn hour(out: &mut Out, hour: &ReportHour) {
             out.count("answered", counts.answered.into());
             out.count("auto_approved", counts.auto_approved.into());
             out.count("withdrawn", counts.withdrawn.into());
-            out.0.push(b'}');
+            out.close();
         }
         None => out.null("decisions"),
     }
@@ -150,11 +162,11 @@ fn hour(out: &mut Out, hour: &ReportHour) {
             out.count("added", git.added);
             out.count("removed", git.removed);
             out.count("reverts", git.reverts.into());
-            out.0.push(b'}');
+            out.close();
         }
         None => out.null("git"),
     }
-    out.0.push(b'}');
+    out.close();
 }
 
 fn flow(out: &mut Out, name: &str, flow: &Flow) {
@@ -168,10 +180,10 @@ fn flow(out: &mut Out, name: &str, flow: &Flow) {
             out.number(status, *hours);
         }
     }
-    out.0.push(b'}');
+    out.close();
     out.number("unclaimed_hours", flow.unclaimed_hours);
     out.count("bounces", flow.bounces.into());
-    out.0.push(b'}');
+    out.close();
 }
 
 /// The statuses whose count is not zero, as [`ByStatus`] writes them.
@@ -182,7 +194,7 @@ fn counts(out: &mut Out, name: &str, counts: &ByStatus<u32>) {
             out.count(status, (*count).into());
         }
     }
-    out.0.push(b'}');
+    out.close();
 }
 
 fn waits(out: &mut Out, waits: &Waits) {
@@ -191,14 +203,14 @@ fn waits(out: &mut Out, waits: &Waits) {
     out.list("review_to_reviewer", &waits.review_to_reviewer, wait);
     out.list("changes_to_resumed", &waits.changes_to_resumed, wait);
     out.list("changes_to_review", &waits.changes_to_review, wait);
-    out.0.push(b'}');
+    out.close();
 }
 
 fn wait(out: &mut Out, wait: &Wait) {
-    out.0.push(b'{');
+    out.open();
     out.text("slug", &wait.slug);
     out.number("seconds", wait.seconds);
-    out.0.push(b'}');
+    out.close();
 }
 
 fn day_flow(out: &mut Out, name: &str, flow: &DayFlow) {
@@ -209,50 +221,50 @@ fn day_flow(out: &mut Out, name: &str, flow: &DayFlow) {
             out.count("n", lead.n.into());
             out.number("median", lead.median);
             out.number("p90", lead.p90);
-            out.0.push(b'}');
+            out.close();
         }
         None => out.null("lead"),
     }
     out.list("longest", &flow.longest, |out, sitting| {
-        out.0.push(b'{');
+        out.open();
         out.text("slug", &sitting.slug);
         out.text("status", &sitting.status);
         out.number("since", sitting.since);
-        out.0.push(b'}');
+        out.close();
     });
-    out.0.push(b'}');
+    out.close();
 }
 
 fn red(out: &mut Out, red: &Red) {
-    out.0.push(b'{');
+    out.open();
     out.text("slug", &red.slug);
     out.text("series", &red.series);
     out.number("filed", red.filed);
     out.maybe("closed", red.closed);
     out.text("status", &red.status);
-    out.0.push(b'}');
+    out.close();
 }
 
 fn decisions(out: &mut Out, cards: &Decisions) {
     out.object("decisions");
     out.list("open", &cards.open, |out, card| {
-        out.0.push(b'{');
+        out.open();
         out.text("doc", &card.doc);
         out.text("slug", &card.slug);
         out.maybe("since", card.since);
-        out.0.push(b'}');
+        out.close();
     });
     out.list("answered", &cards.answered, answer);
     out.list("auto_approved", &cards.auto_approved, answer);
     out.list("withdrawn", &cards.withdrawn, answer);
-    out.0.push(b'}');
+    out.close();
 }
 
 fn answer(out: &mut Out, answer: &Answer) {
-    out.0.push(b'{');
+    out.open();
     out.text("doc", &answer.doc);
     out.text("slug", &answer.slug);
     out.number("at", answer.at);
     out.text("how", &answer.how);
-    out.0.push(b'}');
+    out.close();
 }

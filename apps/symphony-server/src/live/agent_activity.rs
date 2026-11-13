@@ -43,20 +43,7 @@ const DAY: f64 = 86_400.0;
 /// its working directory, `symphony/agents.<database>/` for a board database other than the live
 /// one.
 pub(crate) fn folder(env: &symphony_board::cli::Env) -> Result<PathBuf, String> {
-    let var = |name: &str| env.vars.get(name).filter(|value| !value.is_empty());
-    if let Some(named) = var(FOLDER_VAR) {
-        return Ok(PathBuf::from(named));
-    }
-    if var("TASKS_SERVER").is_some() {
-        return Err(format!(
-            "a board TASKS_SERVER names keeps no agents' day files unless {FOLDER_VAR} names a folder"
-        ));
-    }
-    let common = symphony_board::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-    Ok(common.join(match var("TASKS_DATABASE") {
-        Some(database) if database != symphony_board::DATABASE => format!("{FOLDER}.{database}"),
-        _ => FOLDER.to_string(),
-    }))
+    symphony_board::reports::day_files(env, FOLDER, FOLDER_VAR, "agents' day files")
 }
 
 /// One line of a day file: an object whose `type` names which. The tests read it back by its
