@@ -130,6 +130,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The day files a build writes under `symphony/` (the board's health, the agents' activity,
+    /// the reports) have no old folder: they are written while the old folders still stand, and
+    /// the move goes around them.
+    #[test]
+    fn the_day_files_folders_are_no_old_folders_own() {
+        let dir = common("days");
+        for (_, old) in OLD {
+            std::fs::create_dir_all(dir.join(old)).unwrap();
+        }
+        for new in [
+            crate::board_health::hours::FOLDER,
+            "symphony/agents",
+            "symphony/reports",
+        ] {
+            assert_eq!(refusal(&dir, new), None, "{new}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_link_to_an_old_folder_is_that_folder() {
         let dir = common("link");

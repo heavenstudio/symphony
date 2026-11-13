@@ -469,6 +469,61 @@ fn the_whole_state_moves_into_one_folder_and_a_second_run_finds_nothing_to_move(
     assert_eq!(s.tree(), before);
 }
 
+/// The day files a build writes under `symphony/` while the old folders still stand (the board's
+/// health, the agents' activity, the reports) are in place already: the move goes around them,
+/// moving and fencing what it moves as ever, and leaves them as they were.
+#[test]
+fn day_files_already_under_symphony_stay_as_they_are_and_the_move_goes_around_them() {
+    let s = State::new("move-day-files");
+    s.fill();
+    let days = [
+        symphony_board::board_health::hours::FOLDER,
+        "symphony/agents",
+        "symphony/reports",
+    ]
+    .map(|folder| format!("{folder}/2026-11-13.jsonl"));
+    for day in &days {
+        s.put(day);
+    }
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!((dry.code, dry.err.as_str()), (0, ""), "{}", dry.out);
+    assert_eq!(
+        dry.out,
+        format!(
+            "in {} (a dry run: nothing changes)\n{}{}",
+            s.common.display(),
+            WHOLE.map(|line| format!("would move {line}\n")).concat(),
+            FENCED
+                .map(|(old, _)| format!("would fence {old}\n"))
+                .concat()
+        )
+    );
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(done.out, s.said(&WHOLE, &s.older_install()));
+    s.moved();
+    for day in &days {
+        assert_eq!(
+            fs::read_to_string(s.common.join(day)).unwrap(),
+            format!("{day}\n")
+        );
+    }
+    let again = s.run(&[]);
+    assert_eq!(
+        (again.code, again.out.as_str(), again.err.as_str()),
+        (
+            0,
+            format!(
+                "nothing to move in {}\n{}",
+                s.common.display(),
+                s.older_install()
+            )
+            .as_str(),
+            ""
+        )
+    );
+}
+
 #[test]
 fn a_linked_worktrees_sweep_files_take_their_new_names_from_a_run_there() {
     let s = State::new("move-worktree");
