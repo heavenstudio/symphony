@@ -152,9 +152,16 @@ impl Worker {
         self.asked_again("the worker never connected again after a failed connection");
     }
 
+    /// Only a stall reaches the wait's backstop, and its failure says the load average.
     fn asked_again(&self, why: &str) {
-        let asked = self.asked.recv_timeout(Duration::from_secs(30));
-        assert_eq!(asked, Ok(()), "{why}");
+        let backstop = test_time::backstop(Duration::from_secs(30));
+        let asked = self.asked.recv_timeout(backstop);
+        assert_eq!(
+            asked,
+            Ok(()),
+            "{why}: stalled: the wait's wall-clock backstop of {backstop:?} ran out; {}",
+            test_time::Load::now()
+        );
     }
 }
 

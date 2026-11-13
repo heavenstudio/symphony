@@ -2388,14 +2388,13 @@ mod tests {
         assert_eq!(pending(&hub, ""), ["initial-card"], "held for its picture");
         assert!(!hub.pictures_arrived());
         tree.write("proposal/artifacts/late.png", "png");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while pending(&hub, "") != ["initial-card", "picture-card"] {
-            assert!(
-                Instant::now() < deadline,
-                "still held: {:?}",
-                pending(&hub, "")
-            );
-            std::thread::sleep(Duration::from_millis(50));
+        let posted = test_time::until_true(
+            "the held card to be posted once its picture landed",
+            test_time::backstop(Duration::from_secs(20)),
+            || pending(&hub, "") == ["initial-card", "picture-card"],
+        );
+        if let Err(stall) = posted {
+            panic!("{stall}; still held: {:?}", pending(&hub, ""));
         }
         assert!(!hub.pictures_arrived(), "nothing is awaited any more");
         hub.stop();

@@ -32,17 +32,27 @@ pub fn process_cwds() -> Option<Vec<PathBuf>> {
 
 /// [`process_cwds`] through `lsof`, a command for lsof the caller built, in the environment it
 /// chose (the board's starts without its starter's session); this adds the arguments.
-pub fn process_cwds_with(mut lsof: Command) -> Option<Vec<PathBuf>> {
+pub fn process_cwds_with(lsof: Command) -> Option<Vec<PathBuf>> {
+    process_cwds_within(lsof, LSOF_PATIENCE)
+}
+
+/// [`process_cwds_with`] given `patience` (a test's backstop, which only a stall reaches).
+fn process_cwds_within(mut lsof: Command, patience: Duration) -> Option<Vec<PathBuf>> {
     lsof.args(["-Fn", "-d", "cwd"]);
-    cwds_of(&mut lsof)
+    cwds_of(&mut lsof, patience)
 }
 
 /// [`process_cwds_with`], each working directory with the pid of the process working there, so a
 /// caller can ask when that process started. Readable rows survive a failed or partial listing;
 /// only a complete listing can prove a process absent. None means the command could not finish, or
 /// reading its completed output did not finish before the scan deadline.
-pub fn pid_cwds_with(mut lsof: Command) -> Option<PidCwds> {
-    let deadline = Instant::now() + LSOF_PATIENCE;
+pub fn pid_cwds_with(lsof: Command) -> Option<PidCwds> {
+    pid_cwds_within(lsof, LSOF_PATIENCE)
+}
+
+/// [`pid_cwds_with`] given `patience` (a test's backstop, which only a stall reaches).
+fn pid_cwds_within(mut lsof: Command, patience: Duration) -> Option<PidCwds> {
+    let deadline = Instant::now() + patience;
     // Request f explicitly: it is not implicit in every lsof version's field output.
     // Device/inode disambiguate literal caret names from lsof's control-byte display.
     lsof.args(["-FpfnDi", "-d", "cwd"]);
@@ -62,14 +72,19 @@ pub fn occupied(tree: &Path) -> Option<bool> {
 
 /// [`occupied`] through `lsof`, a command for lsof the caller built, as [`process_cwds_with`] takes
 /// it; this adds the arguments and `tree`.
-pub fn occupied_with(mut lsof: Command, tree: &Path) -> Option<bool> {
-    lsof.args(["-a", "-d", "cwd", "-Fp", "-x", "f", "+D"])
-        .arg(tree);
-    occupancy_of(&mut lsof)
+pub fn occupied_with(lsof: Command, tree: &Path) -> Option<bool> {
+    occupied_within(lsof, tree, LSOF_PATIENCE)
 }
 
-fn occupancy_of(command: &mut Command) -> Option<bool> {
-    let done = within(command, LSOF_PATIENCE)?;
+/// [`occupied_with`] given `patience` (a test's backstop, which only a stall reaches).
+fn occupied_within(mut lsof: Command, tree: &Path, patience: Duration) -> Option<bool> {
+    lsof.args(["-a", "-d", "cwd", "-Fp", "-x", "f", "+D"])
+        .arg(tree);
+    occupancy_of(&mut lsof, patience)
+}
+
+fn occupancy_of(command: &mut Command, patience: Duration) -> Option<bool> {
+    let done = within(command, patience)?;
     if done.stdout.split(|b| *b == b'\n').any(|line| {
         line.strip_prefix(b"p")
             .is_some_and(|pid| !pid.is_empty() && pid.iter().all(u8::is_ascii_digit))
@@ -81,9 +96,10 @@ fn occupancy_of(command: &mut Command) -> Option<bool> {
 }
 
 /// What `command`, run as `lsof -Fn -d cwd` would be, lists; whatever its exit code (`lsof` exits 1
-/// when it could not read some process), killed if it takes longer than `LSOF_PATIENCE`.
-fn cwds_of(command: &mut Command) -> Option<Vec<PathBuf>> {
-    let done = within(command, LSOF_PATIENCE)?;
+/// when it could not read some process), killed if it takes longer than `patience`
+/// (`LSOF_PATIENCE` outside tests).
+fn cwds_of(command: &mut Command, patience: Duration) -> Option<Vec<PathBuf>> {
+    let done = within(command, patience)?;
     parse_cwds(&done.stdout)
 }
 
@@ -144,6 +160,10 @@ fn within(command: &mut Command, limit: Duration) -> Option<Output> {
 mod tests {
     use super::*;
 
+    /// The patience a scan here is given: lsof's own, as a backstop only a stall reaches (RULES.md
+    /// `tests/no-test-fails-on-load`), so a loaded machine's slow lsof is never a scan that failed.
+    const PATIENT: Duration = test_time::backstop(LSOF_PATIENCE);
+
     #[test]
     fn holder_pids_are_sorted_unique_positive_and_ignore_unreadable_lines() {
         for (bytes, expected) in [
@@ -164,21 +184,27 @@ mod tests {
             parse_cwds(b"p1\nn/work/a\n"),
             Some(vec![PathBuf::from("/work/a")])
         );
-        assert_eq!(cwds_of(&mut Command::new("/no/such/lsof")), None);
+        assert_eq!(cwds_of(&mut Command::new("/no/such/lsof"), PATIENT), None);
         for code in ["0", "1", "2"] {
             let mut empty = Command::new("sh");
             empty.args(["-c", &format!("exit {code}")]);
-            assert_eq!(cwds_of(&mut empty), None, "{code}");
+            assert_eq!(cwds_of(&mut empty, PATIENT), None, "{code}");
         }
         let mut failing = Command::new("sh");
         failing.args(["-c", "printf 'p1\\nn/work/a\\n'; exit 1"]);
-        assert_eq!(cwds_of(&mut failing), Some(vec![PathBuf::from("/work/a")]));
+        assert_eq!(
+            cwds_of(&mut failing, PATIENT),
+            Some(vec![PathBuf::from("/work/a")])
+        );
     }
 
     #[test]
     fn each_cwd_is_read_with_the_pid_listed_before_it() {
         assert_eq!(
-            pid_cwds_with(stand_in("printf 'p5\\nfcwd\\nn/args/%s\\n' \"$*\"")),
+            pid_cwds_within(
+                stand_in("printf 'p5\\nfcwd\\nn/args/%s\\n' \"$*\""),
+                PATIENT
+            ),
             Some(PidCwds {
                 listed: vec![(5, PathBuf::from("/args/-FpfnDi -d cwd"))],
                 complete: true,
@@ -187,7 +213,7 @@ mod tests {
         assert_eq!(pid_cwds_with(Command::new("/no/such/lsof")), None);
         let here = std::env::current_dir().unwrap().canonicalize().unwrap();
         let mine = i64::from(std::process::id());
-        let seen = pid_cwds_with(Command::new("lsof")).unwrap();
+        let seen = pid_cwds_within(Command::new("lsof"), PATIENT).unwrap();
         assert!(
             seen.listed
                 .iter()
@@ -244,7 +270,7 @@ mod tests {
                 complete: false,
             },
         ] {
-            let scan = pid_cwds_with(stand_in(script)).unwrap();
+            let scan = pid_cwds_within(stand_in(script), PATIENT).unwrap();
             let listed = if has_rows {
                 vec![(5, PathBuf::from("/work/a"))]
             } else {
@@ -259,7 +285,7 @@ mod tests {
         let mut stub = Command::new("printf");
         stub.arg("p1\\nn/work/a\\np2\\nn/mnt/\\377x\\n");
         assert_eq!(
-            cwds_of(&mut stub),
+            cwds_of(&mut stub, PATIENT),
             Some(vec![
                 PathBuf::from("/work/a"),
                 PathBuf::from("/mnt/\u{fffd}x")
@@ -270,7 +296,7 @@ mod tests {
     #[test]
     fn the_real_cwd_scan_sees_this_process() {
         let here = std::env::current_dir().unwrap().canonicalize().unwrap();
-        let seen: Vec<PathBuf> = process_cwds()
+        let seen: Vec<PathBuf> = process_cwds_within(Command::new("lsof"), PATIENT)
             .unwrap()
             .into_iter()
             .map(|p| p.canonicalize().unwrap_or(p))
@@ -293,7 +319,7 @@ mod tests {
             stand_in("printf 'p1\\nn%s|%s\\n' \"$*\" \"${SYMPHONY_CWD_GIVEN-unset}\"");
         listing.env("SYMPHONY_CWD_GIVEN", "given");
         assert_eq!(
-            process_cwds_with(listing),
+            process_cwds_within(listing, PATIENT),
             Some(vec![PathBuf::from("-Fn -d cwd|given")])
         );
         assert_eq!(process_cwds_with(Command::new("/no/such/lsof")), None);
@@ -301,12 +327,18 @@ mod tests {
                       && printf 'p7\\n'; exit 1";
         let mut given = stand_in(search);
         given.env("SYMPHONY_CWD_GIVEN", "given");
-        assert_eq!(occupied_with(given, Path::new("/work/a b")), Some(true));
+        assert_eq!(
+            occupied_within(given, Path::new("/work/a b"), PATIENT),
+            Some(true)
+        );
         let mut elsewhere = stand_in(search);
         elsewhere.env("SYMPHONY_CWD_GIVEN", "given");
-        assert_eq!(occupied_with(elsewhere, Path::new("/work/c")), Some(false));
         assert_eq!(
-            occupied_with(stand_in(search), Path::new("/work/a b")),
+            occupied_within(elsewhere, Path::new("/work/c"), PATIENT),
+            Some(false)
+        );
+        assert_eq!(
+            occupied_within(stand_in(search), Path::new("/work/a b"), PATIENT),
             Some(false),
             "a command without what its caller set"
         );
@@ -334,12 +366,15 @@ mod tests {
             ("exit 2", None),
         ] {
             assert_eq!(
-                occupancy_of(Command::new("sh").args(["-c", script])),
+                occupancy_of(Command::new("sh").args(["-c", script]), PATIENT),
                 expected,
                 "{script}"
             );
         }
-        assert_eq!(occupancy_of(&mut Command::new("/no/such/lsof")), None);
+        assert_eq!(
+            occupancy_of(&mut Command::new("/no/such/lsof"), PATIENT),
+            None
+        );
     }
 
     #[test]
@@ -357,19 +392,24 @@ mod tests {
         for name in ["tab\tname", "café", "literal\\t^A"] {
             let dir = root.join(name).join("inner");
             std::fs::create_dir_all(&dir).unwrap();
+            // cat reads its input, which `child` holds open: it works there until it is killed.
             let child = Child({
                 let _spawning = spawn::spawning();
-                std::process::Command::new("sleep")
-                    .arg("60")
+                std::process::Command::new("cat")
+                    .stdin(std::process::Stdio::piped())
                     .current_dir(&dir)
                     .spawn()
                     .unwrap()
             });
+            let occupied = |tree: &Path| occupied_within(Command::new("lsof"), tree, PATIENT);
             assert_eq!(occupied(dir.parent().unwrap()), Some(true), "{name}");
             assert_eq!(occupied(&empty), Some(false));
             drop(child);
         }
-        assert_eq!(occupied(&root.join("missing")), None);
+        assert_eq!(
+            occupied_within(Command::new("lsof"), &root.join("missing"), PATIENT),
+            None
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

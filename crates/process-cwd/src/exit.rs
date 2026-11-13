@@ -171,6 +171,9 @@ mod tests {
     use std::thread::Thread;
     use std::time::{Duration, Instant};
 
+    /// The wall-clock backstop of these tests' waits, which only a stall reaches.
+    const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
     /// A waker that counts its wakes and unparks the thread that polls.
     struct Unpark {
         thread: Thread,
@@ -196,7 +199,7 @@ mod tests {
         Pin::new(exit).poll(&mut Context::from_waker(&waker))
     }
 
-    /// `exit`'s answer, polled again only once its waker is woken, within a bound that only a wake
+    /// `exit`'s answer, polled again only once its waker is woken, within a backstop that only a wake
     /// that never comes reaches.
     fn answer(exit: &mut Exit) -> io::Result<ExitStatus> {
         let waker = unpark();
@@ -207,7 +210,11 @@ mod tests {
                 return answer;
             }
             while waker.wakes.load(Ordering::SeqCst) == woken {
-                assert!(began.elapsed() < Duration::from_secs(30), "never woken");
+                assert!(
+                    began.elapsed() < BACKSTOP,
+                    "never woken: stalled past the backstop of {BACKSTOP:?}; {}",
+                    test_time::Load::now()
+                );
                 std::thread::park_timeout(Duration::from_secs(1));
             }
         }
@@ -221,14 +228,10 @@ mod tests {
     }
 
     fn until_unlisted(pid: u32) {
-        let began = Instant::now();
-        while listed(pid) {
-            assert!(
-                began.elapsed() < Duration::from_secs(30),
-                "child {pid} was never reaped"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true(format!("child {pid} to be reaped"), BACKSTOP, || {
+            !listed(pid)
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
     }
 
     #[test]
@@ -263,11 +266,10 @@ mod tests {
         let mut by_wait = waited(7);
         assert_eq!(by_wait.wait().unwrap().code(), Some(7));
         let mut by_try = waited(9);
-        let began = Instant::now();
-        while by_try.try_wait().unwrap().is_none() {
-            assert!(began.elapsed() < Duration::from_secs(30), "never ended");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true("the child to end", BACKSTOP, || {
+            by_try.try_wait().unwrap().is_some()
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
         for (child, code) in [(by_wait, 7), (by_try, 9)] {
             let mut exit = Exit::of(child).unwrap();
             assert!(
@@ -307,23 +309,32 @@ mod tests {
         assert!(answer(&mut Exit::of(child).unwrap()).unwrap().success());
     }
 
+    /// A child that never ends by itself: it reads a line from a pipe whose writer, returned, the
+    /// test holds to its end; its output goes to `stdout`.
+    fn hung(stdout: Stdio) -> (crate::spawn::Child, std::io::PipeWriter) {
+        let (input, held) = pipe().unwrap();
+        let child = Command::new("/bin/sh")
+            .args(["-c", "read -r line"])
+            .stdin(input)
+            .stdout(stdout)
+            .spawn()
+            .unwrap();
+        (child, held)
+    }
+
     #[test]
     fn dropping_a_pending_exit_kills_its_hung_child_and_the_child_is_still_reaped() {
         let (mut reader, writer) = pipe().unwrap();
-        let child = Command::new("/bin/sleep")
-            .arg("60")
-            .stdout(writer)
-            .spawn()
-            .unwrap();
+        let (child, _held) = hung(writer.into());
         let pid = child.id();
         let mut exit = Exit::of(child).unwrap();
         assert!(poll(&mut exit, &unpark()).is_pending());
-        let dropped = Instant::now();
-        drop(exit);
-        assert!(
-            dropped.elapsed() < Duration::from_secs(5),
-            "the drop waited for its child"
-        );
+        // A drop that waited for its child, which never ends by itself, would never return.
+        let dropping = std::thread::spawn(move || drop(exit));
+        test_time::until_true("the drop to end its child", BACKSTOP, || {
+            dropping.is_finished()
+        })
+        .unwrap_or_else(|stall| panic!("the drop waited for its child: {stall}"));
         // The child held the writer: its end reads as EOF only once it has been killed.
         let mut rest = Vec::new();
         reader.read_to_end(&mut rest).unwrap();
@@ -333,9 +344,10 @@ mod tests {
 
     #[test]
     fn dropping_an_exit_never_polled_kills_its_child_too() {
-        let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let (child, _held) = hung(Stdio::null());
         let pid = child.id();
         drop(Exit::of(child).unwrap());
+        // It never ends by itself: only the drop's kill takes it out of the table.
         until_unlisted(pid);
     }
 

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use symphony::machine::Registry;
-pub use symphony::machine::host::{Build, Lack, Verdict, judge};
+pub use symphony::machine::host::{Build, Lack, Verdict, judge, worktree_of};
 
 /// The hand-off a starter asks of the running server, in the machine folder: replace yourself with
 /// `exe`, serving from `root` (the starter's main checkout) with its build and client in `install`.

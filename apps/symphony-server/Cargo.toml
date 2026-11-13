@@ -35,3 +35,5 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 # The board store's test fixture (src/testing.rs, tests/after_http.rs) waits for its server through
 # the tests' wait (RULES.md `tests/no-test-fails-on-load`).
 test-time = { path = "../../crates/test-time" }
+# A paused runtime clock, so a drain's elapsed-time promise is read on time the test moves.
+tokio = { version = "1", features = ["test-util"] }

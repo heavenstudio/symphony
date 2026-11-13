@@ -20,7 +20,7 @@ pub(super) fn check(recipe: bool) {
         // The repository's setup, a recipe's start (a bare `just` in a cleared environment),
         // a piped child, a terminal's, and the drop's stop and descendant waits.
         let repo = Repo::new("forkless");
-        repo.start(&repo.tree, recipe);
+        repo.start(&repo.main, recipe);
         let mut command = Command::new("/bin/cat");
         command.stdin(Stdio::piped());
         let mut piped = repo.run(command);

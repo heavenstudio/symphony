@@ -230,6 +230,17 @@ mod tests {
     use super::*;
     use symphony_board::sys::Spawning as _;
 
+    /// Each wait here is on its event; only a stall reaches this wall-clock backstop.
+    const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(5));
+
+    /// What a wait that ran out says: `what` stalled, and the machine's load then.
+    fn stalled(what: &str) -> String {
+        format!(
+            "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+            test_time::Load::now()
+        )
+    }
+
     #[test]
     fn timestamps_are_utc_with_milliseconds() {
         assert_eq!(
@@ -279,9 +290,12 @@ mod tests {
         let reader = std::thread::spawn(move || forward(input, out, report, &Control::default()));
         for message in [b"dropped one\n".as_slice(), b"dropped two\n".as_slice()] {
             writer.write_all(message).unwrap();
-            failures
-                .recv_timeout(Duration::from_secs(5))
-                .expect("the sink must actually fail before the next write");
+            failures.recv_timeout(BACKSTOP).unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    stalled("the sink to actually fail before the next write")
+                )
+            });
         }
         // This write happens after both observed failures. A reader that exited on an error
         // either breaks this pipe or fails to forward this newly arriving record.
@@ -418,11 +432,16 @@ mod tests {
             ))
             .unwrap();
         });
-        let ended = recv.recv_timeout(Duration::from_secs(5));
+        let ended = recv.recv_timeout(BACKSTOP);
         drop(held_writer);
         thread.join().unwrap();
         ended
-            .expect("the log writer must stop while the inherited writer is still open")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    stalled("the log writer to stop while the inherited writer is still open")
+                )
+            })
             .unwrap();
         assert!(std::fs::read(&path).unwrap().is_empty());
         std::fs::remove_file(path).unwrap();

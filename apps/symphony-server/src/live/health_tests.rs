@@ -78,10 +78,11 @@ impl Relay {
     }
 }
 
-/// A store on `fixture`'s board through `relay`.
+/// A store on `fixture`'s board through `relay`. A cut ends its connections at once; an answer that
+/// comes is waited for to a backstop only a stall reaches, never to a loaded machine's 10 s.
 fn through(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
     let client = Client::new(&relay.addr, "sf", fixture.store.client().database())
-        .waiting(Duration::from_secs(10));
+        .waiting(test_time::backstop(Duration::from_secs(10)));
     symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST).unwrap()
 }
 
