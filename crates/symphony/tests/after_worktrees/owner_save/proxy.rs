@@ -1,111 +1,73 @@
-//! A private RPC proxy delays selected statements without changing the server under test.
+//! A private RPC proxy between the save and its board that makes the save's task CREATE uncertain
+//! without a wait: it holds the CREATE and closes the save's connection, so the save never hears
+//! how its write went, and runs the CREATE when its phase says.
+//!
+//! - `create`: the CREATE runs only once the read that follows it has been answered upstream, so
+//!   that read finds no task and the save stays pending; the save's next try finds the task.
+//! - `reply`: the CREATE runs before the connection is closed, so the read that follows it finds
+//!   the task and the save is confirmed at once.
 
 use super::{LIMIT, packet};
-use serde_json::{Value, json};
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 
-/// Every connection shares the delay counter and completion channel for one private case.
+/// A request as the proxy read it: its headers and its CBOR body.
+type Request = (String, Vec<u8>);
+
+/// What every connection of one case shares: the CREATE held, and how many CREATEs were run.
 #[derive(Clone)]
 struct Forward {
     upstream: String,
-    root: std::path::PathBuf,
     phase: &'static str,
-    chosen: Arc<Mutex<u8>>,
-    send: mpsc::Sender<()>,
+    held: Arc<Mutex<Option<Request>>>,
+    ran: Arc<Mutex<usize>>,
 }
 
 impl Forward {
-    fn delay(&self, call: &mut Value) -> bool {
-        let sql = call["params"][0].as_str().unwrap();
-        let create = sql.contains("CREATE type::record('task', $slug)");
-        let lookup = sql.contains("record::exists(type::record('task', $slug))") && !create;
-        let mut chosen = self.chosen.lock().unwrap();
-        // The store open's schema check is a read too (`Store::with`), sent once more when late.
-        let open = sql.contains("INFO FOR DB");
-        let applies = match self.phase {
-            // Both read attempts must time out before the save has a pre-dispatch refusal.
-            "open" => open && *chosen < 2,
-            "lookup" => lookup && *chosen < 2,
-            "create" | "message" | "reply" | "edited" | "wipe" => create,
-            "check" => create && *chosen == 0 || lookup && matches!(*chosen, 1 | 2),
-            "reopen" => create && *chosen == 0 || open && matches!(*chosen, 1 | 2),
-            "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => false,
-            _ => unreachable!(),
-        };
-        let delay = applies
-            && (*chosen == 0 || matches!(self.phase, "open" | "lookup" | "check" | "reopen"));
-        if delay {
-            *chosen += 1;
-            call["params"][0] = json!(match self.phase {
-                "open" | "lookup" => format!("SLEEP 4s;\n{sql}"),
-                "create" | "check" | "reopen" if create => sql.replacen(
-                    "CREATE type::record('task', $slug)",
-                    "SLEEP 4s;\nCREATE type::record('task', $slug)",
-                    1
-                ),
-                "check" | "reopen" => format!("SLEEP 4s;\n{sql}"),
-                "message" => sql.replacen(
-                    "CREATE type::record('message',",
-                    "SLEEP 4s;\nCREATE type::record('message',",
-                    1
-                ),
-                "reply" | "edited" | "wipe" => sql.to_string(),
-                _ => unreachable!(),
-            });
-        }
-        delay
+    fn creates_the_task(bytes: &[u8]) -> bool {
+        let call = symphony_board::cbor::decode(bytes).unwrap();
+        call["params"][0]
+            .as_str()
+            .is_some_and(|sql| sql.contains("CREATE type::record('task', $slug)"))
     }
 
-    fn forward(&self, mut incoming: BufReader<TcpStream>, first: (String, Vec<u8>)) {
+    fn forward(&self, mut incoming: BufReader<TcpStream>, first: Request) {
         let mut next = Some(first);
         while let Some((headers, bytes)) = next.take() {
-            let mut call = symphony_board::cbor::decode(&bytes).unwrap();
-            let delayed = self.delay(&mut call);
-            let (reply, bytes) = exchange(
-                &self.upstream,
-                &headers,
-                &symphony_board::cbor::encode(&call),
-            );
-            if delayed && self.phase == "edited" {
-                let vars = &call["params"][1];
-                let db = headers
-                    .lines()
-                    .find_map(|line| line.strip_prefix("surreal-db: "))
-                    .expect("private RPC names its database")
-                    .trim();
-                let client = symphony_board::rpc::Client::new(&self.upstream, "sf", db);
-                client.query("UPDATE type::record('task', $slug) SET priority = 4, title = 'Edited title', body = 'Edited body'; DELETE link WHERE slug = $slug AND kind = 'doc';",
-                    json!({"slug":vars["slug"]})).unwrap();
+            if *self.ran.lock().unwrap() == 0 && Self::creates_the_task(&bytes) {
+                if self.phase == "reply" {
+                    exchange(&self.upstream, &headers, &bytes);
+                    *self.ran.lock().unwrap() += 1;
+                } else {
+                    *self.held.lock().unwrap() = Some((headers, bytes));
+                }
+                // Closed with no reply: the save cannot tell whether its write ran.
+                return;
             }
-            if delayed && self.phase == "wipe" {
-                std::fs::remove_dir_all(self.root.join("artifacts/symphony-quick-tasks")).unwrap();
-            }
-            if delayed && matches!(self.phase, "reply" | "edited" | "wipe") {
-                std::thread::sleep(std::time::Duration::from_secs(4));
-            }
-            if delayed {
-                self.send.send(()).unwrap();
+            let reply = exchange(&self.upstream, &headers, &bytes);
+            if let Some((headers, bytes)) = self.held.lock().unwrap().take() {
+                exchange(&self.upstream, &headers, &bytes);
+                *self.ran.lock().unwrap() += 1;
             }
             if incoming
                 .get_mut()
-                .write_all(reply.as_bytes())
-                .and_then(|()| incoming.get_mut().write_all(&bytes))
+                .write_all(reply.0.as_bytes())
+                .and_then(|()| incoming.get_mut().write_all(&reply.1))
                 .is_err()
             {
-                break;
+                return;
             }
             next = match packet(&mut incoming) {
                 Ok(next) => next,
-                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => return,
                 Err(error) => panic!("read the next private proxy request: {error}"),
             };
         }
     }
 }
 
-fn exchange(upstream: &str, headers: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+fn exchange(upstream: &str, headers: &str, bytes: &[u8]) -> Request {
     let mut remote = TcpStream::connect(upstream).unwrap();
     remote.set_read_timeout(Some(LIMIT)).unwrap();
     remote.set_write_timeout(Some(LIMIT)).unwrap();
@@ -126,30 +88,29 @@ fn exchange(upstream: &str, headers: &str, bytes: &[u8]) -> (String, Vec<u8>) {
     packet(&mut BufReader::new(remote)).unwrap().unwrap()
 }
 
-/// Owns the listener and all forwarding connections for this case's database.
-pub(super) struct Delayed {
+/// Owns the listener and every forwarding connection of one case's database.
+pub(super) struct Holding {
     pub(super) address: std::net::SocketAddr,
+    /// How many of the save's task CREATEs ran: one, once it is over.
+    pub(super) ran: Arc<Mutex<usize>>,
     worker: Option<std::thread::JoinHandle<()>>,
     workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
-    pub(super) delayed: mpsc::Receiver<()>,
 }
 
-impl Delayed {
-    pub(super) fn start(upstream: String, phase: &'static str, root: &std::path::Path) -> Self {
+impl Holding {
+    pub(super) fn start(upstream: String, phase: &'static str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         assert_ne!(address.port(), 8765);
         let workers = Arc::new(Mutex::new(Vec::new()));
-        // Listener and owner share the handles so teardown joins every connection.
         let saved = workers.clone();
-        let (send, delayed) = mpsc::channel();
         let forward = Forward {
             upstream,
-            root: root.to_path_buf(),
             phase,
-            chosen: Arc::new(Mutex::new(0)),
-            send,
+            held: Arc::default(),
+            ran: Arc::default(),
         };
+        let ran = forward.ran.clone();
         let worker = std::thread::spawn(move || {
             for connection in listener.incoming() {
                 let mut incoming = BufReader::new(connection.unwrap());
@@ -164,14 +125,14 @@ impl Delayed {
         });
         Self {
             address,
+            ran,
             worker: Some(worker),
             workers,
-            delayed,
         }
     }
 }
 
-impl Drop for Delayed {
+impl Drop for Holding {
     fn drop(&mut self) {
         drop(TcpStream::connect(self.address).unwrap());
         self.worker.take().unwrap().join().unwrap();

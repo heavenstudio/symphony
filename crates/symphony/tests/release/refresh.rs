@@ -27,6 +27,10 @@ use super::{DAY, Fixture, NOW, git};
 const RELEASE: &str = "release-2026-11-12";
 /// The branch a project's pin moves on.
 const BRANCH: &str = "symphony/release-2026-11-12";
+/// How long a refresh waits for the shared server's reload, in seconds, in a test whose server has
+/// reloaded by the time it looks: what a stall alone reaches, the backstop of a minute
+/// ([`test_time::backstop`]).
+const RELOADED: &str = "360";
 
 /// The fixture with the refresh on and its Symphony a workspace of two packages pinning the
 /// board's SurrealDB, pushed: the commit.
@@ -259,7 +263,7 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", RELOADED),
     ];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
@@ -759,7 +763,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", RELOADED),
     ];
     let shown = consumer.display();
     let status = || {

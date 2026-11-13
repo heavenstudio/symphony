@@ -454,8 +454,9 @@ mod tests {
         super::super::git::git(dir, args).unwrap_or_else(|e| panic!("{e}"))
     }
 
+    /// A bound only a stall reaches: the backstop of a two-minute allowance.
     fn soon() -> Bound<'static> {
-        Bound::until(Instant::now() + std::time::Duration::from_secs(120))
+        Bound::until(Instant::now() + test_time::backstop(std::time::Duration::from_secs(120)))
     }
 
     const NOW: f64 = 1_800_000_000.0;
