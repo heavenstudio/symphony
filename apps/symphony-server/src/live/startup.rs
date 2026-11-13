@@ -84,6 +84,14 @@ impl Hub {
                     crate::front::tell(format_args!("→ board health: no hours kept ({why})"))
                 }
             }
+            // So are the project's day files, rolled up once an hour.
+            match symphony_board::reports::folder(&env) {
+                Ok(folder) => {
+                    *hub.reports.get_mut().unwrap_or_else(|e| e.into_inner()) =
+                        Some(super::reports::Rollup::new(folder));
+                }
+                Err(why) => eprintln!("→ reports: no day files written ({why})"),
+            }
             // So are the agents' day files, which a private server's ticks would say twice.
             match super::agent_activity::folder(&env) {
                 Ok(folder) => {

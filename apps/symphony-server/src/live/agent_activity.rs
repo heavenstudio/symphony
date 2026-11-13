@@ -44,20 +44,7 @@ const DAY: f64 = 86_400.0;
 /// its working directory, `symphony/agents.<database>/` for a board database other than the live
 /// one.
 pub(crate) fn folder(env: &symphony_board::cli::Env) -> Result<PathBuf, String> {
-    let var = |name: &str| env.vars.get(name).filter(|value| !value.is_empty());
-    if let Some(named) = var(FOLDER_VAR) {
-        return Ok(PathBuf::from(named));
-    }
-    if var("TASKS_SERVER").is_some() {
-        return Err(format!(
-            "a board TASKS_SERVER names keeps no agents' day files unless {FOLDER_VAR} names a folder"
-        ));
-    }
-    let common = symphony_board::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-    Ok(common.join(match var("TASKS_DATABASE") {
-        Some(database) if database != symphony_board::DATABASE => format!("{FOLDER}.{database}"),
-        _ => FOLDER.to_string(),
-    }))
+    symphony_board::reports::day_files(env, FOLDER, FOLDER_VAR, "agents' day files")
 }
 
 /// One line of a day file: an object whose `type` names which. The tests read it back by its
@@ -1133,17 +1120,18 @@ pub(crate) fn gated_stop(gate: &Gate, recorder: &mut Recorder, now: impl FnOnce(
 
 impl super::Hub {
     /// The gate of this hub's server generation, which both of its recorders keep to: the
-    /// agents' here and the board's health hours ([`symphony_board::board_health::Recorder::gated`]).
-    /// Until it is given, neither records.
+    /// agents' here and the board's health hours ([`symphony_board::board_health::Recorder::gated`]),
+    /// and so does the hourly roll-up's write of the day files (`live/reports.rs`). Until it is
+    /// given, none of them records.
     pub(crate) fn gate_recorders(&self, gate: Arc<Gate>) {
         self.health.gated(Arc::clone(&gate));
-        let _ = self.agents_gate.set(gate);
+        let _ = self.recording_gate.set(gate);
     }
 
     /// The snapshot `board` this tick took, recorded by the one server's recorder, at the server's
     /// time, as its gate lets it; a private server keeps none and does nothing.
     pub(super) fn record_agents(&self, board: &Board) {
-        let Some(gate) = self.agents_gate.get() else {
+        let Some(gate) = self.recording_gate.get() else {
             return;
         };
         let mut recorder = self
@@ -1159,7 +1147,7 @@ impl super::Hub {
 
     /// The hour so far written as the server stops.
     pub(super) fn stop_agents(&self) {
-        let Some(gate) = self.agents_gate.get() else {
+        let Some(gate) = self.recording_gate.get() else {
             return;
         };
         let mut recorder = self
