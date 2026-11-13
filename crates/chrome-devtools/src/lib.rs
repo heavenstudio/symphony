@@ -358,7 +358,13 @@ pub struct Request {
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
     /// The page itself gave it up (an abort, or the page going away), rather than the network.
+    /// A request of a followed frame ([`Chrome::follow_frames`]) still open when that frame went
+    /// away counts as given up too.
     pub canceled: bool,
+    /// The frame it was made for, when that is not the page's own: the address of the document it
+    /// was made for, a frame's own document request naming its own address (`about:srcdoc` for a
+    /// `srcdoc` frame's). `None` for the page's own frame, or before the page's first navigation.
+    pub frame: Option<String>,
     /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
     /// later use's, warmed at idle, not the page's own.
     pub prefetch: bool,
@@ -919,6 +925,11 @@ pub struct Chrome {
     deadline: Option<Instant>,
     /// The least a wait's wall-clock backstop allows ([`BACKSTOP_FLOOR`]).
     backstop: Duration,
+    /// The page's own frame, as its last navigation named it.
+    frame: Option<String>,
+    /// Whether the frames Chrome runs in processes of their own are followed
+    /// ([`Chrome::follow_frames`]).
+    following: bool,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -949,6 +960,8 @@ impl Chrome {
             arrivals: Vec::new(),
             deadline: None,
             backstop: BACKSTOP_FLOOR,
+            frame: None,
+            following: false,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -1037,10 +1050,25 @@ impl Chrome {
         Ok(())
     }
 
+    /// From now on, follow each frame of the page that Chrome runs in a process of its own (a
+    /// cross-site frame, a sandboxed one, and such frames within it): attached as it starts, and
+    /// held there until its network events are on, so the answer to its own document and every
+    /// request it makes are kept with the page's and end in [`Chrome::requests`] as the page's own
+    /// do. Unfollowed, such a frame's document request is seen to start, on the page, and never to
+    /// end: its answer goes to the frame's own process. Anything else the page starts that way (a
+    /// worker) is let run as it is. What starts while nothing is asked of the browser waits for
+    /// the next call or [`Chrome::pump`], which reads of it and lets it run.
+    pub fn follow_frames(&mut self) -> Result<()> {
+        self.following = true;
+        self.call("Target.setAutoAttach", auto_attach())?;
+        Ok(())
+    }
+
     /// Go to `url` and wait for its document to be parsed.
     pub fn open(&mut self, url: &str) -> Result<()> {
         self.forget_events();
-        self.call("Page.navigate", json!({"url": url}))?;
+        let navigated = self.call("Page.navigate", json!({"url": url}))?;
+        self.frame = navigated["frameId"].as_str().map(str::to_owned);
         self.wait_event("Page.domContentEventFired", Duration::from_secs(60))
     }
 
@@ -1052,6 +1080,7 @@ impl Chrome {
         let session = self.session.clone();
         let navigated =
             self.session_call_within("Page.navigate", json!({"url": url}), session, allowance)?;
+        self.frame = navigated["frameId"].as_str().map(str::to_owned);
         if let Some(error) = navigated["errorText"]
             .as_str()
             .filter(|error| !error.is_empty())
@@ -1185,9 +1214,34 @@ impl Chrome {
         self.arrivals.iter().copied().zip(&self.events)
     }
 
-    fn keep(&mut self, event: Value) {
+    /// Keep `event`; one that says a frame followed ([`Chrome::follow_frames`]) has started is
+    /// answered first ([`Chrome::follow`]).
+    fn keep(&mut self, event: Value) -> Result<()> {
+        if self.following && event["method"] == "Target.attachedToTarget" {
+            self.follow(&event["params"])?;
+        }
         self.events.push(event);
         self.arrivals.push(Instant::now());
+        Ok(())
+    }
+
+    /// A target the page started, attached and held (`attached`, as `Target.attachedToTarget`
+    /// says it): a frame's network events turned on and the frames within it followed, then it is
+    /// let run, in that order, as its session takes commands in turn. Their replies are not waited
+    /// for: a frame gone meanwhile refuses them, and nothing is left to follow. Anything but a
+    /// frame (a worker) is only let run.
+    fn follow(&mut self, attached: &Value) -> Result<()> {
+        let Some(session) = attached["sessionId"].as_str().map(str::to_owned) else {
+            return Ok(());
+        };
+        if attached["targetInfo"]["type"] == "iframe" {
+            self.send("Network.enable", json!({}), Some(session.clone()))?;
+            self.send("Target.setAutoAttach", auto_attach(), Some(session.clone()))?;
+        }
+        if attached["waitingForDebugger"] == true {
+            self.send("Runtime.runIfWaitingForDebugger", json!({}), Some(session))?;
+        }
+        Ok(())
     }
 
     fn forget_events(&mut self) {
@@ -1195,10 +1249,11 @@ impl Chrome {
         self.arrivals.clear();
     }
 
-    /// The requests seen since the last `open`, by Chrome's request id.
+    /// The requests seen since the last `open`, by Chrome's request id: the page's own frame's,
+    /// the frames in its process's, and with [`Chrome::follow_frames`] those of every frame.
     pub fn requests(&mut self) -> Result<Vec<Request>> {
         self.pump(Duration::from_millis(50))?;
-        Ok(requests(&self.events))
+        Ok(requests(&self.events, self.frame.as_deref()))
     }
 
     pub fn browser_call(&mut self, method: &str, params: Value) -> Result<Value> {
@@ -1252,17 +1307,52 @@ impl Chrome {
     }
 }
 
-/// The requests `events` tell of, in the order each was first seen, by Chrome's request id.
-fn requests(events: &[Value]) -> Vec<Request> {
+/// Why a followed frame's request that was still open when the frame's session ended never ends.
+const FRAME_GONE: &str = "its frame went away";
+
+/// The auto-attach that follows a page's, or a followed frame's, frames in processes of their own
+/// ([`Chrome::follow_frames`]): each held as it starts, on a session of its own beside the page's.
+fn auto_attach() -> Value {
+    json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true})
+}
+
+/// The requests `events` tell of, in the order each was first seen, by Chrome's request id, the
+/// page's own frame being `frame`. One request may be told of on two sessions: a followed frame's
+/// document starts on the page's and is answered on the frame's own. One still open on a session
+/// that then ended, its frame gone, counts as given up ([`FRAME_GONE`]), as the page's own requests
+/// do when it goes away.
+fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut requests: HashMap<String, Request> = HashMap::new();
+    // The sessions each request was told of on.
+    let mut told: HashMap<String, Vec<String>> = HashMap::new();
     let mut order = Vec::new();
     for event in events {
         let params = &event["params"];
+        if event["method"] == "Target.detachedFromTarget" {
+            let gone = params["sessionId"].as_str();
+            for (id, request) in &mut requests {
+                let on = told.get(id).into_iter().flatten();
+                if !request.finished
+                    && request.failed.is_none()
+                    && on.map(String::as_str).any(|on| Some(on) == gone)
+                {
+                    request.failed = Some(FRAME_GONE.to_string());
+                    request.canceled = true;
+                }
+            }
+            continue;
+        }
         let Some(id) = params["requestId"].as_str() else {
             continue;
         };
         if !requests.contains_key(id) {
             order.push(id.to_string());
+        }
+        if let Some(session) = event["sessionId"].as_str() {
+            let on = told.entry(id.to_string()).or_default();
+            if !on.iter().any(|on| on == session) {
+                on.push(session.to_string());
+            }
         }
         let request = requests.entry(id.to_string()).or_default();
         let stream = request.kind == "EventSource";
@@ -1271,6 +1361,15 @@ fn requests(events: &[Value]) -> Vec<Request> {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                 request.kind = params["type"].as_str().unwrap_or("").to_string();
                 request.prefetch |= prefetch(&params["request"]["headers"]);
+                request.frame = match (params["frameId"].as_str(), frame) {
+                    (Some(made_for), Some(own)) if made_for != own => Some(
+                        params["documentURL"]
+                            .as_str()
+                            .unwrap_or(&request.url)
+                            .to_string(),
+                    ),
+                    _ => None,
+                };
             }
             "Network.requestWillBeSentExtraInfo" => {
                 request.prefetch |= prefetch(&params["headers"]);
@@ -1382,7 +1481,7 @@ impl Chrome {
             if let Some(value) = self.read(true)? {
                 if let Some(found) = found(self, &value)? {
                     if value.get("id").is_none() {
-                        self.keep(value);
+                        self.keep(value)?;
                     }
                     return Ok(Some(found));
                 }
@@ -1406,7 +1505,7 @@ impl Chrome {
                     // Any reply, an error too: the page's renderer, or the browser on its
                     // behalf as it navigated, answered.
                 } else if value.get("id").is_none() {
-                    self.keep(value);
+                    self.keep(value)?;
                 }
             }
             if budget.exhausted(&self.owner.members()?) {

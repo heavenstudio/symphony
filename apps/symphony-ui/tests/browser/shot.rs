@@ -1856,6 +1856,232 @@ fn a_click_or_a_hover_into_a_frame_sandboxed_in_a_closed_root_or_the_pages_own_r
     }
 }
 
+/// The colour a framed document paints itself, by a stylesheet of its own.
+const FRAMED_GREEN: [u8; 4] = [0, 160, 0, 255];
+
+/// Where [`holding_a_frame`] draws its frame, `[x, y, width, height]` in CSS pixels.
+const FRAME_BOX: [f64; 4] = [200.0, 0.0, 300.0, 200.0];
+
+/// A page beside whose button, `#outside` (it counts its clicks in `window.clicks`), is an iframe
+/// at [`FRAME_BOX`] with `attributes` (its `src` among them).
+fn holding_a_frame(attributes: &str) -> Vec<u8> {
+    let [x, y, width, height] = FRAME_BOX;
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; }}
+  #outside {{ position: absolute; left: 0; top: 0; width: 120px; height: 40px; }}
+  iframe {{ position: absolute; left: {x}px; top: {y}px; width: {width}px; height: {height}px; border: 0; }}
+</style>
+<button id="outside" type="button" onclick="window.clicks = (window.clicks || 0) + 1">outside</button>
+<iframe {attributes}></iframe>"#
+    )
+    .into_bytes()
+}
+
+/// Serve a framed document at `path` on `site`, linking the stylesheet at `style`, which, unless
+/// `site` holds it, paints the document [`FRAMED_GREEN`].
+fn serve_framed(site: &site::Site, path: &str, style: &str) {
+    site.set_file(
+        path,
+        format!(r#"<!doctype html><link rel="stylesheet" href="{style}"><p>framed</p>"#)
+            .into_bytes(),
+        "text/html",
+    );
+    site.set_file(
+        style,
+        b"html { background: rgb(0, 160, 0); }".to_vec(),
+        "text/css",
+    );
+}
+
+#[test]
+fn a_page_with_a_frame_chrome_runs_in_a_process_of_its_own_is_shot_drawn_and_clicked_outside_it() {
+    // A frame sandboxed without the page's origin, as the client draws a document's mockup, and a
+    // frame of another site (the other stand-in, as `localhost`): Chrome runs each in a process of
+    // its own, which takes the answer to its document. The shot is taken once each frame's
+    // document and its stylesheet have loaded, the frame green in the picture, and a click on a
+    // control outside the frame lands on it.
+    let other = site();
+    serve_framed(&other, "/framed.html", "/framed.css");
+    let cross = format!("http://localhost:{}/framed.html", other.addr.port());
+    for (name, attributes, framing) in [
+        (
+            "sandboxed-src",
+            r#"sandbox="allow-scripts" src="/framed.html""#.to_string(),
+            None,
+        ),
+        ("cross-site", format!(r#"src="{cross}""#), Some(&other)),
+    ] {
+        for steps in [
+            &[][..],
+            &["--click", "#outside", "--eval", "window.clicks"][..],
+        ] {
+            let Some(chrome) = chrome::find() else {
+                eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+                return;
+            };
+            let site = site();
+            serve_framed(&site, "/framed.html", "/framed.css");
+            site.set_file("/page.html", holding_a_frame(&attributes), "text/html");
+            let scratch = Scratch::new(name);
+            let out = scratch.join("framed.png");
+            let output = shot(
+                &chrome,
+                &[
+                    &[
+                        site.url("/page.html").as_str(),
+                        "--out",
+                        out.to_str().unwrap(),
+                    ][..],
+                    steps,
+                ]
+                .concat(),
+            )
+            .output()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{name} {steps:?}: {}",
+                said(&output)
+            );
+            let clicked = if steps.is_empty() {
+                vec![]
+            } else {
+                vec![json!(1)]
+            };
+            assert_eq!(printed(&output), clicked, "{name} {steps:?}");
+            let served = framing.unwrap_or(&site).requests();
+            for path in ["/framed.html", "/framed.css"] {
+                assert!(
+                    served.iter().any(|served| served == path),
+                    "{name}: {path} not asked for: {served:?}"
+                );
+            }
+            let picture = Picture::read(&out);
+            let [x, y, width, height] = FRAME_BOX;
+            let middle = ((y + height / 2.0) as usize) * picture.width + (x + width / 2.0) as usize;
+            assert_eq!(
+                picture.rgba[middle], FRAMED_GREEN,
+                "{name} {steps:?}: the frame is not drawn in the picture"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
+    // The client draws a document's mockup as a frame sandboxed without the page's origin, which
+    // Chrome runs in a process of its own: here the board's next card shows one, in view.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    let mut board: Value = serde_json::from_str(&super::common::fixture("board.json")).unwrap();
+    board["next"][0]["pictures"] = json!([{"src": "/mockup.html", "caption": "Mockup"}]);
+    site.set_board(&board.to_string());
+    serve_framed(&site, "/mockup.html", "/mockup.css");
+    let scratch = Scratch::new("mockup");
+    let out = scratch.join("mockup.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/"),
+            "--out",
+            out.to_str().unwrap(),
+            "--wait-for",
+            ".hero .mockup iframe",
+            "--eval",
+            "(() => { const b = document.querySelector('.hero .mockup iframe').getBoundingClientRect(); \
+             return [b.x, b.y, b.width, b.height]; })()",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let [frame] = printed(&output).try_into().unwrap();
+    let [x, y, width, height] = rect(&frame);
+    assert!(width > 0.0 && height > 0.0, "{frame}");
+    for path in ["/mockup.html", "/mockup.css"] {
+        assert!(
+            site.requests().iter().any(|served| served == path),
+            "{path} not asked for: {:?}",
+            site.requests()
+        );
+    }
+    let picture = Picture::read(&out);
+    let middle = ((y + height / 2.0) as usize) * picture.width + (x + width / 2.0) as usize;
+    assert_eq!(
+        picture.rgba[middle], FRAMED_GREEN,
+        "the mockup at {frame} is not drawn in the picture"
+    );
+}
+
+#[test]
+fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame() {
+    // A sandboxed frame whose document the stand-in never answers, and a frame of another site
+    // whose stylesheet it never answers: the page's own document waits for its frame, and the
+    // shot fails within its five seconds naming the frame that never loaded, by its address, and
+    // what it still waits for in it. No picture is left.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    serve_framed(&other, "/stalled.html", "/hung.css");
+    other.hold_route("/hung.css", true);
+    site.hold_route("/hung.html", true);
+    let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
+    let hung = site.url("/hung.html");
+    for (name, attributes, waiting) in [
+        (
+            "hung-document",
+            r#"sandbox="allow-scripts" src="/hung.html""#.to_string(),
+            format!("the frame {hung} to load (its document is in flight)"),
+        ),
+        (
+            "hung-style",
+            format!(r#"src="{stalled}""#),
+            format!(
+                "1 request(s) in flight in the frame {stalled}: http://localhost:{}/hung.css",
+                other.addr.port()
+            ),
+        ),
+    ] {
+        let path = format!("/{name}.html");
+        site.set_file(&path, holding_a_frame(&attributes), "text/html");
+        let scratch = Scratch::new(name);
+        let out = scratch.join("hung.png");
+        let output = shot(
+            &chrome,
+            &[
+                &site.url(&path),
+                "--out",
+                out.to_str().unwrap(),
+                "--timeout",
+                "5",
+            ],
+        )
+        .output()
+        .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{name}: {}", said(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "symphony shot: {}: the page was not drawn within 5s: still waiting for the \
+                 document to load (it is interactive); {waiting}",
+                site.url(&path)
+            ),
+            "{name}: {}",
+            said(&output)
+        );
+        assert!(!out.exists(), "{name}: a failed shot left a picture");
+    }
+}
+
 /// A page that replaces the window's `addEventListener` with one that throws, after its own
 /// listeners are set, and, with `prototype`, the one every element and the window inherit too.
 fn refusing(prototype: bool) -> Vec<u8> {
