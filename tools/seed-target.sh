@@ -98,14 +98,24 @@ wait="${SYMPHONY_SEED_WAIT:-120}"
 case "$wait" in '' | *[!0-9]*) wait=120 ;; esac
 
 # Whatever ends this run ends the clone it started and removes what it staged. On a signal the run
-# then ends by that signal, so a Ctrl-C stops the build it came before as well.
+# then ends by that signal, so a Ctrl-C stops the build it came before as well. A trap runs between
+# two commands, so one run between the clone's fork and `job=$!` would find no job to end and leave
+# it running, waiting on the lock and then cloning: a signal while the job starts waits until the
+# job is recorded and job control is off again (`starting`, `pending`).
 staged=""
 job=""
+starting=""
+pending=""
 # shellcheck disable=SC2329 # the traps below run it
 finish() {
     if [ -n "$job" ]; then
         kill -TERM -- "-$job" 2>/dev/null
         wait "$job" 2>/dev/null
+        # The rest of its group, the lock tool and the copy, can outlive the job's shell: it is
+        # ended outright and waited for, so the staging never goes under a copy still writing it.
+        while kill -KILL -- "-$job" 2>/dev/null; do
+            sleep 0.1
+        done
         job=""
     fi
     if [ -n "$staged" ]; then
@@ -113,19 +123,36 @@ finish() {
         staged=""
     fi
 }
+# `ended SIGNAL`: this run ends by SIGNAL, at once, or while the job starts once it is recorded.
+ended() {
+    if [ -n "$starting" ]; then
+        pending="$1"
+        return
+    fi
+    finish
+    trap - "$1"
+    kill -"$1" $$
+}
 trap finish EXIT
 for signal in HUP INT TERM; do
     # shellcheck disable=SC2064 # each trap names its own signal
-    trap "finish; trap - $signal; kill -$signal \$\$" "$signal"
+    trap "ended $signal" "$signal"
 done
 
 # `under_lock COMMAND…`: COMMAND's status, run holding the main checkout's build lock. It runs as a
-# job of its own process group, which `finish` ends whole, the lock tool and the copy with it.
+# job of its own process group, which `finish` ends whole, the lock tool and the copy with it. Bash
+# puts the job in its group from both sides of the fork; the two calls race, macOS at times refuses
+# one though the other has made the group, and bash says so for the job's own call (`child setpgid
+# (PID to PID): Operation not permitted`) before the job's own redirection: so the job is forked
+# with stderr at /dev/null already.
 under_lock() {
+    starting=1
     set -m
-    locked "$wait" "$source/.cargo-lock" "$@" 2>/dev/null &
+    { locked "$wait" "$source/.cargo-lock" "$@" & } 2>/dev/null
     job=$!
     set +m
+    starting=""
+    [ -z "$pending" ] || ended "$pending"
     wait "$job"
     local status=$?
     job=""

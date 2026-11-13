@@ -33,6 +33,7 @@
 
 use super::starters::Doing;
 use super::{DATA, Home, LOG, ServerError, scratch};
+use crate::sys::FileLock;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -554,12 +555,18 @@ fn cp(options: &[&str], from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
-/// The store at `data`'s own lock ([`STORE_LOCK`]), taken for as long as the file returned is open;
-/// when another process holds it, the pid it wrote there, if it reads as one. The lock is the one
-/// SurrealKV takes (an exclusive `flock`), so a server that has the store open holds it whatever path
-/// it was given, and one that opens it meanwhile is refused. A store with no lock file yet gets an
-/// empty one, which SurrealKV fills when it opens the store.
-fn hold_store(data: &Path) -> Result<Result<fs::File, Option<i64>>, String> {
+/// The store at `data`'s own lock ([`STORE_LOCK`]), taken until the hold returned drops; when another
+/// process holds it, the pid it wrote there, if it reads as one. The lock is the one SurrealKV takes
+/// (an exclusive `flock`), so a server that has the store open holds it whatever path it was given,
+/// and one that opens it meanwhile is refused. A store with no lock file yet gets an empty one, which
+/// SurrealKV fills when it opens the store.
+///
+/// The hold lets go of the lock itself as it drops ([`FileLock`]): a `flock` belongs to the open
+/// file, and a child another thread forks while it is held keeps a copy of that file until its exec
+/// (a spawn that fails, until the kernel tears its child down): a close alone would leave the lock
+/// held by that child for as long, and a server started right after the snapshot would find its
+/// store locked.
+fn hold_store(data: &Path) -> Result<Result<FileLock, Option<i64>>, String> {
     let lock = data.join(STORE_LOCK);
     let file = fs::OpenOptions::new()
         .read(true)
@@ -569,7 +576,7 @@ fn hold_store(data: &Path) -> Result<Result<fs::File, Option<i64>>, String> {
         .open(&lock)
         .map_err(|e| format!("could not open {}: {e}", lock.display()))?;
     match file.try_lock() {
-        Ok(()) => Ok(Ok(file)),
+        Ok(()) => Ok(Ok(FileLock(file))),
         Err(fs::TryLockError::WouldBlock) => Ok(Err(fs::read_to_string(&lock)
             .ok()
             .and_then(|pid| pid.trim().parse().ok()))),
@@ -652,6 +659,7 @@ mod tests {
         hold_store, holds_log, named, order, stamp,
     };
     use crate::server::{Home, LOG, ServerError};
+    use crate::sys::FileLock;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -773,6 +781,9 @@ mod tests {
         std::fs::write(data.join(STORE_LOCK), "4242\n").unwrap();
         let holder = std::fs::File::open(data.join(STORE_LOCK)).unwrap();
         holder.try_lock().unwrap();
+        // Let go as the store's hold lets go of its own, by itself: a close alone leaves it held
+        // by any child another test's thread forked meanwhile, until that child's exec.
+        let holder = FileLock(holder);
         assert_eq!(hold_store(&data).unwrap().err(), Some(Some(4242)));
         std::fs::write(data.join(STORE_LOCK), "not a pid").unwrap();
         assert_eq!(hold_store(&data).unwrap().err(), Some(None));
@@ -786,11 +797,111 @@ mod tests {
         drop(held);
         // A folder that is no store's: refused, not taken.
         let missing = data.join("missing");
-        assert!(hold_store(&missing).unwrap_err().starts_with(&format!(
+        let Err(refused) = hold_store(&missing) else {
+            panic!("a folder that is no store's was taken");
+        };
+        assert!(refused.starts_with(&format!(
             "could not open {}: ",
             missing.join(STORE_LOCK).display()
         )));
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    /// A child another thread spawns, caught between its fork and its exec: it holds a copy of
+    /// every descriptor this process had open when it forked, as each child std forks does until
+    /// its exec, and with it the lock of each that is a locked file. It execs, and is waited for,
+    /// once this drops.
+    struct MidSpawn {
+        go: std::io::PipeWriter,
+        spawner: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl MidSpawn {
+        /// Another thread's spawn of `true`, returned once its child has forked, before it execs.
+        fn caught() -> MidSpawn {
+            use crate::sys::Spawning;
+            use std::io::Read;
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            let (mut forked, forked_by) = std::io::pipe().unwrap();
+            let (go_on, go) = std::io::pipe().unwrap();
+            let fds = (forked_by.as_raw_fd(), go_on.as_raw_fd(), go.as_raw_fd());
+            let spawner = std::thread::spawn(move || {
+                let (forked_fd, go_on_fd, go_fd) = fds;
+                let mut command = std::process::Command::new("true");
+                // SAFETY: close, write and read are async-signal-safe and touch only the child's
+                // copies of three pipe ends, which stay open in this process until the spawn
+                // returns. Its copy of the writer closed, the child goes on at a byte or at the
+                // reader's end, once this process lets go of the writer however it ends.
+                unsafe {
+                    command.pre_exec(move || {
+                        let mut byte = [0u8];
+                        libc::close(go_fd);
+                        retried(|| libc::write(forked_fd, byte.as_ptr().cast(), 1));
+                        retried(|| libc::read(go_on_fd, byte.as_mut_ptr().cast(), 1));
+                        Ok(())
+                    });
+                }
+                let child = command.spawn_locked();
+                drop((forked_by, go_on));
+                child.unwrap().wait().unwrap();
+            });
+            let mut byte = [0];
+            forked
+                .read_exact(&mut byte)
+                .expect("the child forked and said so");
+            MidSpawn {
+                go,
+                spawner: Some(spawner),
+            }
+        }
+    }
+
+    /// `call`, made again while it fails interrupted by a signal; it allocates nothing, so a forked
+    /// child may make it before its exec.
+    fn retried(mut call: impl FnMut() -> isize) {
+        while call() < 0
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {}
+    }
+
+    impl Drop for MidSpawn {
+        fn drop(&mut self) {
+            use std::io::Write;
+            let _ = self.go.write_all(b"x");
+            if let Some(spawner) = self.spawner.take() {
+                let _ = spawner.join();
+            }
+        }
+    }
+
+    /// A child another thread forks while a lock is held keeps a copy of the lock's file until its
+    /// exec, and a lock let go by closing its file alone stays held by that copy, which a parallel
+    /// run of the test above can meet. The store's hold lets go of its lock itself, so the lock is
+    /// free at once, whatever child forked while it was held.
+    #[test]
+    fn the_stores_lock_let_go_is_free_at_once_though_a_child_forked_meanwhile_has_not_execd() {
+        let dir = std::env::temp_dir().join(format!("snapshot-forked-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (data, closed) = (dir.join("data"), dir.join("closed"));
+        for folder in [&data, &closed] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        let held = hold_store(&data).unwrap().unwrap();
+        let bare = fs::File::create(closed.join(STORE_LOCK)).unwrap();
+        bare.try_lock().unwrap();
+        let child = MidSpawn::caught();
+        drop((held, bare));
+        assert!(
+            hold_store(&closed).unwrap().is_err(),
+            "a lock let go by its close alone is still held by the child's copy of its file"
+        );
+        assert!(
+            hold_store(&data).unwrap().is_ok(),
+            "the store's lock, let go, is still held by a child forked while it was held"
+        );
+        drop(child);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
