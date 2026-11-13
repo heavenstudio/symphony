@@ -417,6 +417,7 @@ dependencies = [
  "libc",
  "serde_json",
  "symphony-api",
+ "test-time",
  "tungstenite 0.30.0",
 ]
 
@@ -5236,6 +5237,7 @@ dependencies = [
  "symphony-docs",
  "symphony-plugin",
  "symphony-schema",
+ "test-time",
  "toml",
  "unicode-normalization",
 ]
@@ -5265,6 +5267,7 @@ dependencies = [
  "sha2",
  "symphony-api",
  "symphony-args",
+ "test-time",
  "tokenizers",
  "toml",
  "tract-linalg",
@@ -5309,6 +5312,7 @@ dependencies = [
  "symphony-api",
  "symphony-board",
  "symphony-plugin",
+ "test-time",
  "tokio",
  "tower",
  "tower-http",
@@ -5332,6 +5336,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "symphony-api",
+ "test-time",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -5413,6 +5418,13 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "test-time"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

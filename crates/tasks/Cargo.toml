@@ -43,3 +43,7 @@ sha2.workspace = true
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
+
+[dev-dependencies]
+# The CPU a test bills and its waits on a condition (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

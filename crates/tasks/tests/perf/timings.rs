@@ -120,13 +120,15 @@ fn say_claim_inbox_and_the_api_answer_within_their_bounds_on_a_board_at_scale() 
         entry.walls.push(ran.wall);
         entry.cpus.push((ran.tasks_cpu, ran.server_cpu));
     }
-    assert!(
-        board
-            .listeners
-            .hears(&recipient, "timed post 2", Duration::from_secs(5)),
-        "the last post reached its recipient: {:?}",
-        board.listeners.heard(&recipient)
-    );
+    if let Err(stall) = board
+        .listeners
+        .hears(&recipient, "timed post 2", Duration::from_secs(5))
+    {
+        panic!(
+            "the last post never reached its recipient: {stall}; it heard {:?}",
+            board.listeners.heard(&recipient)
+        );
+    }
     let mut over = Vec::new();
     for (name, Runs { walls, cpus, bound }) in timings {
         let wall = median(walls.clone());

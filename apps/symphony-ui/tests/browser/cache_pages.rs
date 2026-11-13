@@ -7,13 +7,13 @@
 //! drawn, saying so. A page whose feed reconnects holds its actions by the same rule. The release
 //! build, on the private stand-in (`site`).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::{Answered, Site};
-use crate::{SHOWN, common};
+use crate::{SHOWN, STALL, common};
 
 /// The reads a return visit checks, which the stand-in holds back to show what the page draws
 /// before any answer.
@@ -148,19 +148,28 @@ const STORE: &str = include_str!("../../assets/cache.js");
 /// it should (`assets/cache.js`); with the database made, the page's own open makes nothing.
 pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
     chrome.open(&site.url("/api/pending"));
-    let opened = chrome.eval(&format!(
-        r#"(async () => {{
-            {STORE}
-            const C = window.symphonyCache, format = {format}, until = performance.now() + 30000;
-            while (await C.keep(format, "warm", "task:warm", "task", "page", "", {{}}, undefined, false) !== true) {{
-                if (performance.now() > until) return false;
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }}
-            return C.forget(format, "warm", "task:warm");
-        }})()"#,
-        format = symphony_api::CACHE_FORMAT
-    ));
-    assert_eq!(opened, json!(true), "the store never opened its database");
+    chrome.eval(&format!("(async () => {{ {STORE}\n return null; }})()"));
+    let format = symphony_api::CACHE_FORMAT;
+    let keep = format!(
+        r#"window.symphonyCache.keep({format}, "warm", "task:warm", "task", "page", "", {{}}, undefined, false)"#
+    );
+    // A quiet machine keeps it within seconds; only a stall reaches the browser target's backstop
+    // (RULES.md `tests/no-test-fails-on-load`).
+    let opened = test_time::until_true(
+        "this origin's store keeping a scratch item",
+        crate::STALL,
+        || chrome.eval(&keep) == json!(true),
+    );
+    if let Err(stall) = opened {
+        panic!("the store never opened its database: {stall}");
+    }
+    assert_eq!(
+        chrome.eval(&format!(
+            r#"window.symphonyCache.forget({format}, "warm", "task:warm")"#
+        )),
+        json!(true),
+        "the store forgets the scratch item it kept"
+    );
 }
 
 /// A first visit to `page`: drawn from the server, live, and its reads kept.
@@ -539,19 +548,17 @@ fn a_server_that_does_not_answer_leaves_the_kept_copy_drawn_saying_so() {
 /// answers.
 #[track_caller]
 fn fails(site: &Site, read: &str, from: usize, times: usize) {
-    let started = Instant::now();
-    while site.answers(read)[from..]
-        .iter()
-        .filter(|answer| answer.status == 500)
-        .count()
-        < times
+    let failed = || {
+        site.answers(read)[from..]
+            .iter()
+            .filter(|answer| answer.status == 500)
+            .count()
+            >= times
+    };
+    if let Err(stall) =
+        test_time::until_true(format!("{read} failing {times} times"), STALL, failed)
     {
-        assert!(
-            started.elapsed() < SHOWN,
-            "{read} failed {times} times: {:#?}",
-            &site.answers(read)[from..]
-        );
-        std::thread::sleep(Duration::from_millis(50));
+        panic!("{stall}: {:#?}", &site.answers(read)[from..]);
     }
 }
 
@@ -560,21 +567,19 @@ fn fails(site: &Site, read: &str, from: usize, times: usize) {
 /// column it drew are reads of one route, each tried once before the feed is asked for.
 #[track_caller]
 fn asked_again_after_the_feed(site: &Site, read: &str, from: usize) {
-    let started = Instant::now();
-    loop {
+    let asked = || {
         let requests = site.requests();
         let feed = requests[from..]
             .iter()
             .position(|path| path == symphony_api::FEED_PATH);
-        if feed.is_some_and(|feed| requests[from + feed..].iter().any(|path| path == read)) {
-            return;
-        }
-        assert!(
-            started.elapsed() < SHOWN,
-            "{read} was not asked again once the feed was: {:#?}",
-            &site.targets()[from..]
-        );
-        std::thread::sleep(Duration::from_millis(50));
+        feed.is_some_and(|feed| requests[from + feed..].iter().any(|path| path == read))
+    };
+    if let Err(stall) = test_time::until_true(
+        format!("{read} asked again once the feed was"),
+        STALL,
+        asked,
+    ) {
+        panic!("{stall}: {:#?}", &site.targets()[from..]);
     }
 }
 
@@ -745,20 +750,14 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
                 .filter(|answer| answer.target == read)
                 .count();
             site.hold_route(read, false);
-            let started = Instant::now();
-            while site
-                .answers(route)
-                .iter()
-                .filter(|answer| answer.target == read)
-                .count()
-                == from
-            {
-                assert!(
-                    started.elapsed() < SHOWN,
-                    "{order:?}: {read} never answered"
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            test_time::until_true(format!("{order:?}: {read} answered"), STALL, || {
+                site.answers(route)
+                    .iter()
+                    .filter(|answer| answer.target == read)
+                    .count()
+                    > from
+            })
+            .expect("a read let go was never answered");
         }
         shows(&mut chrome, LIVE, "every read answered");
         shows(

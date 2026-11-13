@@ -1,7 +1,7 @@
-# Symphony's workspace: server, client, review library, wire types, docs checks, plugin seams, board, OS scanner and headless Chrome driver.
+# Symphony's workspace: server, client, review library, wire types, docs checks, plugin seams, board, OS scanner, headless Chrome driver and the tests' time.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-docs", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks"]
+members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-docs", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
 [workspace.package]
 edition = "2024"
