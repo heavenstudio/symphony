@@ -49,12 +49,15 @@ fn page() -> Page {
 /// Wednesday under way, half rolled up; a settings change on Monday.
 fn wire() -> ReportsPage {
     let mut monday_flow = BucketFlow::default();
-    monday_flow.entered.done = 3;
+    // One task approved again after its landing sent it back: four entries into done, three tasks.
+    monday_flow.entered.done = 4;
+    monday_flow.done = Some(3);
     monday_flow.held.ready = 2;
     monday_flow.held.review = 1;
     monday_flow.bounces = 1;
     let mut wednesday_flow = BucketFlow::default();
     wednesday_flow.entered.done = 4;
+    wednesday_flow.done = Some(4);
     wednesday_flow.held.in_progress = 5;
     ReportsPage {
         grain: Grain::Day,
@@ -392,7 +395,8 @@ fn the_figures_sum_the_window_and_say_what_is_missing() {
     let [done, lead, agents, decisions] = figures(&page());
     assert_eq!(
         (done.value.as_str(), done.detail.as_str()),
-        ("7", "3.5 a day on average")
+        ("7", "3.5 a day on average · 2 of 3 days counted"),
+        "Tuesday, recorded by no source, is no part of the sum"
     );
     assert_eq!(
         (lead.value.as_str(), lead.detail.as_str()),
@@ -475,6 +479,99 @@ fn the_charts_take_each_series_from_its_source_and_none_where_it_has_no_record()
 
 fn charts_of(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
     charts(page)
+}
+
+/// Tasks done reads the tasks done, each once ([`BucketFlow::done`]), never the entries into done;
+/// a period whose roll-up did not count them is a gap there, and the figure is over the periods
+/// that did, missing when none did.
+#[test]
+fn tasks_done_are_the_tasks_counted_once_and_a_period_that_did_not_count_them_is_a_gap() {
+    let charts = charts(&page());
+    let done = find(&charts, "done");
+    assert_eq!(
+        done.series[0].values,
+        [Some(3.0), None, Some(4.0)],
+        "Monday's three tasks, not its four entries into done"
+    );
+    assert!(
+        done.note.contains("each once at its last close"),
+        "{}",
+        done.note
+    );
+    assert!(done.note.contains("UTC"), "{}", done.note);
+    let mut wire = wire();
+    for bucket in &mut wire.buckets {
+        if let Some(flow) = &mut bucket.flow {
+            flow.done = None;
+        }
+    }
+    let uncounted = read(&wire);
+    let charts = charts_of(&uncounted);
+    let done = find(&charts, "done");
+    assert_eq!(done.series[0].values, [None, None, None]);
+    assert!(
+        done.gap(0) && done.gap(2),
+        "no zero drawn where nothing was counted"
+    );
+    let [figure, ..] = figures(&uncounted);
+    assert_eq!(
+        (figure.value.as_str(), figure.detail.as_str()),
+        ("–", "no roll-up in the window counted them")
+    );
+    wire.buckets[0].flow.as_mut().unwrap().done = Some(3);
+    let [figure, ..] = figures(&read(&wire));
+    assert_eq!(
+        (figure.value.as_str(), figure.detail.as_str()),
+        ("3", "3 a day on average · 1 of 3 days counted"),
+        "over Monday alone, the one period that counted them, and it says so"
+    );
+    wire.buckets[2].flow.as_mut().unwrap().done = Some(4);
+    let whole = ReportsPage {
+        buckets: vec![wire.buckets[0].clone(), wire.buckets[2].clone()],
+        ..wire
+    };
+    let [figure, ..] = figures(&read(&whole));
+    assert_eq!(
+        (figure.value.as_str(), figure.detail.as_str()),
+        ("7", "3.5 a day on average"),
+        "every period of the window counted them"
+    );
+}
+
+/// An answer from a server built before the tasks done were counted has no `done` member in its
+/// flows at all: Tasks done is a gap in each period and the figure missing, never a zero, though
+/// a status a count by status leaves out still reads as zero.
+#[test]
+fn an_answer_without_the_tasks_done_member_draws_gaps_not_zeros() {
+    let mut older = serde_json::to_value(wire()).unwrap();
+    for bucket in older["buckets"].as_array_mut().unwrap() {
+        if let Some(flow) = bucket["flow"].as_object_mut() {
+            flow.remove("done");
+        }
+    }
+    let older: Page = serde_json::from_value(older).unwrap();
+    let monday = &older.buckets[0];
+    assert_eq!(
+        (monday.written("flow.done"), monday.number("flow.done")),
+        (None, Some(0.0)),
+        "a figure always written reads none where missing, a status's count zero"
+    );
+    assert_eq!(
+        (
+            monday.written("flow.entered.done"),
+            monday.number("flow.entered.cancelled")
+        ),
+        (Some(4.0), Some(0.0))
+    );
+    let charts = charts_of(&older);
+    let done = find(&charts, "done");
+    assert_eq!(done.series[0].values, [None, None, None]);
+    assert!(done.gap(0) && done.gap(1) && done.gap(2), "no zero drawn");
+    let [figure, ..] = figures(&older);
+    assert_eq!(
+        (figure.value.as_str(), figure.detail.as_str()),
+        ("–", "no roll-up in the window counted them")
+    );
 }
 
 #[test]
@@ -799,6 +896,7 @@ fn full() -> ReportBucket {
                 review: 1.0,
                 ..ByStatus::default()
             },
+            done: Some(1),
             bounces: 1,
             reds_filed: 1,
             ..BucketFlow::default()
@@ -845,7 +943,7 @@ fn every_series_reads_a_member_the_wire_writes() {
         for spec in specs {
             for series in spec.series {
                 let paths = match series.pick {
-                    Pick::At(path) => vec![path],
+                    Pick::At(path) | Pick::Written(path) => vec![path],
                     Pick::Sum(one, other) => vec![one, other],
                     Pick::Role(_) => vec![],
                 };

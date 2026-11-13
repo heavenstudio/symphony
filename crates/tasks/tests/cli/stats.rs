@@ -1,10 +1,13 @@
-//! `show`'s stages and `stats`, on a board whose clock each command sets: every expected time is
-//! written out here by hand.
+//! `show`'s stages, `stats` and when each task took the status it holds (`list --json`, `search
+//! --json`, `tasks api`'s `in_status_since`), on a board whose clock each command sets: every
+//! expected time is written out here by hand.
 
 use crate::Case;
 use crate::common::{NOW, Seed, task};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::Instant;
+use symphony_board::reports::{DAY, day as report_day, day_start};
 use symphony_board::rows::{MessageRow, TaskRow};
 use symphony_board::sys::local_minute;
 
@@ -153,7 +156,7 @@ Done 2: lead time median 10.0 h · p75 13.0 h · p90 14.8 h
   review       median 3.0 h · p75 4.0 h · p90 4.6 h  (2 tasks)
 Waiting before the first claim (a part of the statuses above, not added to them): median 3.0 h · p75 4.0 h · p90 4.6 h
 Bounces (review → in_progress × tasks): 0 × 4 · 1 × 1
-Done per day (every top-level task closed in the last 3 days, whenever it was made):
+Done per day, local time (each top-level task done now, once, on the day of its last close in the last 3 days, whenever it was made):
 {}Longest in their status:
   sim/d                        ready       48.0 h
   sim/e                        backlog     48.0 h
@@ -275,7 +278,7 @@ fn stats_of_an_empty_board_and_a_window_of_no_days() {
     assert_eq!(
         c.ok("", &["stats", "--days", "1"]),
         format!(
-            "Stats: 0 top-level tasks made in the last 1 days; every figure is theirs but done per day\nDone 0\nDone per day (every top-level task closed in the last 1 days, whenever it was made):\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n"
+            "Stats: 0 top-level tasks made in the last 1 days; every figure is theirs but done per day\nDone 0\nDone per day, local time (each top-level task done now, once, on the day of its last close in the last 1 days, whenever it was made):\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n"
         )
     );
     let refused = c.run_as("", &["stats", "--days", "0"], "");
@@ -294,6 +297,194 @@ fn stats_of_an_empty_board_and_a_window_of_no_days() {
         c.ok("", &["stats", "--days", "3650"])
             .starts_with("Stats: 0 top-level tasks made in the last 3650 days;")
     );
+}
+
+/// A task of [`done_twice_and_undone`]: its slug, its parent, its status now and the hour (from
+/// the UTC midnight before `NOW`) it was last written, and its thread, each line its hour, kind and
+/// text.
+type Written = (
+    &'static str,
+    Option<&'static str>,
+    &'static str,
+    f64,
+    Vec<(f64, &'static str, &'static str)>,
+);
+
+/// A board of what makes the roll-up's entries into done and the tasks done part, its threads as
+/// the board writes them, every close on the hour: from the UTC midnight `D` before `NOW`, `sim/again`
+/// approved at 3, sent back to review by its landing and approved again at 4; `sim/next` approved at
+/// 20, sent back the next day and approved again at 24 + 3; `sim/cancelled` approved at 9 and
+/// cancelled by a hand edit at 10, which no line records; `sim/reopened` approved at 24 + 2 and sent
+/// back at 24 + 4; `sim/once` approved at 24 + 5, and its subtask closed at 24 + 6.
+fn done_twice_and_undone() -> Case {
+    let worked = |made: f64| {
+        vec![
+            (made, "system", "created by orch"),
+            (made + 0.5, "system", "exe claimed it"),
+            (made + 1.0, "system", "exe moved it in_progress → review"),
+        ]
+    };
+    let with = |mut lines: Vec<(f64, &'static str, &'static str)>,
+                more: &[(f64, &'static str, &'static str)]| {
+        lines.extend_from_slice(more);
+        lines
+    };
+    let back = "exe moved it done → review";
+    let tasks: Vec<Written> = vec![
+        (
+            "sim/again",
+            None,
+            "done",
+            4.0,
+            with(
+                worked(1.0),
+                &[
+                    (3.0, "verdict", "approve: fine"),
+                    (3.5, "system", back),
+                    (4.0, "verdict", "approve: the merge"),
+                    (4.5, "verdict", "landed sim/again on main"),
+                ],
+            ),
+        ),
+        (
+            "sim/next",
+            None,
+            "done",
+            27.0,
+            with(
+                worked(5.0),
+                &[
+                    (20.0, "verdict", "approve"),
+                    (25.0, "system", back),
+                    (27.0, "verdict", "approve"),
+                ],
+            ),
+        ),
+        (
+            "sim/cancelled",
+            None,
+            "cancelled",
+            10.0,
+            with(worked(6.0), &[(9.0, "verdict", "approve")]),
+        ),
+        (
+            "sim/reopened",
+            None,
+            "review",
+            28.0,
+            with(
+                worked(6.0),
+                &[(26.0, "verdict", "approve"), (28.0, "system", back)],
+            ),
+        ),
+        (
+            "sim/once",
+            None,
+            "done",
+            29.0,
+            with(worked(25.0), &[(29.0, "verdict", "approve")]),
+        ),
+        (
+            "sim/once/slice",
+            Some("sim/once"),
+            "done",
+            30.0,
+            vec![
+                (25.0, "system", "created by orch"),
+                (25.5, "system", "exe claimed it"),
+                (30.0, "verdict", "done: merged in"),
+            ],
+        ),
+    ];
+    let d = day_start(NOW);
+    let mut seed = Seed::default();
+    let mut sid = 0;
+    for (n, (slug, parent, status, updated, lines)) in tasks.into_iter().enumerate() {
+        seed = seed.task_row(TaskRow {
+            id: n as i64 + 1,
+            parent: parent.map(str::to_string),
+            created: d + lines[0].0 * H,
+            updated: d + updated * H,
+            ..task(slug, status)
+        });
+        for (hours, kind, text) in lines {
+            sid += 1;
+            seed.dump.messages.push(MessageRow {
+                id: sid,
+                slug: slug.into(),
+                sender: "exe".into(),
+                recipient: None,
+                kind: kind.into(),
+                text: text.into(),
+                ts: d + hours * H,
+            });
+        }
+    }
+    let c = Case::new();
+    c.store().copy(&seed.dump).expect("the seed copies");
+    c
+}
+
+/// `stats`' tasks done per day and the roll-up's (`reports::day`, which the Reports page's Tasks
+/// done sums) agree on one board read at one time: each top-level task done now, once, at its last
+/// close. A task done twice counts once, a task closed one day and again the next counts the next,
+/// and a task cancelled after its approve or reopened and still in review counts in neither, where
+/// the roll-up's entries into done count every one. `stats` names its days by this machine's time
+/// zone and the roll-up its hours by UTC, so the roll-up's hours are named here as `stats` names
+/// them: each close is on the hour, so its hour's first second falls on its day in any zone.
+#[test]
+fn stats_and_the_roll_up_count_the_same_tasks_done_on_each_day() {
+    let c = done_twice_and_undone();
+    let d = day_start(NOW);
+    let now = d + DAY + 12.0 * H;
+    let said: Value =
+        serde_json::from_str(&at(&c, now, 0.0).ok("", &["stats", "--days", "2", "--json"]))
+            .unwrap();
+    let mut stats: Vec<(String, u64)> = (said["done_per_day"].as_array().unwrap().iter())
+        .map(|day| {
+            (
+                day["day"].as_str().unwrap().to_string(),
+                day["done"].as_u64().unwrap(),
+            )
+        })
+        .filter(|(_, done)| *done > 0)
+        .collect();
+    stats.sort();
+    let read = c.store().report_records(d).unwrap();
+    let days = [
+        report_day("sim", d, d + DAY, now, &read),
+        report_day("sim", d + DAY, now, now, &read),
+    ];
+    let total = |pick: fn(&symphony_api::ReportHour) -> u32| -> Vec<u32> {
+        days.iter()
+            .map(|day| day.hours.iter().map(pick).sum())
+            .collect()
+    };
+    assert_eq!(
+        total(|h| h.top.done.unwrap()),
+        [1, 2],
+        "sim/again the first UTC day; sim/next and sim/once the second"
+    );
+    assert_eq!(
+        total(|h| h.top.entered.done),
+        [4, 3],
+        "sim/again twice, sim/next and sim/cancelled the first day; sim/next, sim/reopened and \
+         sim/once the second"
+    );
+    let mut rolled: Vec<(String, u64)> = Vec::new();
+    for hour in days.iter().flat_map(|day| &day.hours) {
+        let done = u64::from(hour.top.done.unwrap());
+        if done > 0 {
+            let name = local_minute(hour.start)[..10].to_string();
+            match rolled.iter_mut().find(|(day, _)| *day == name) {
+                Some((_, count)) => *count += done,
+                None => rolled.push((name, done)),
+            }
+        }
+    }
+    rolled.sort();
+    assert_eq!(stats, rolled);
+    assert_eq!(stats.iter().map(|(_, done)| done).sum::<u64>(), 3);
 }
 
 /// A board of `tasks` top-level tasks made at `NOW`, each claimed, sent to review, sent back,
@@ -378,4 +569,128 @@ fn stats_reads_the_board_once_however_many_tasks_it_holds() {
     // One read of the schema's version to open the board, one of the window.
     assert_eq!((few_requests.len(), reads(&few_requests)), (2, 1));
     assert_eq!((many_requests.len(), reads(&many_requests)), (2, 1));
+}
+
+/// Each task `listed` (a `list --json` or `search --json` answer) names, with its `in_status_since`.
+fn since_by_slug(listed: &str) -> BTreeMap<String, Value> {
+    let listed: Value = serde_json::from_str(listed).unwrap();
+    (listed["tasks"].as_array().unwrap().iter())
+        .map(|t| {
+            (
+                t["slug"].as_str().unwrap().to_string(),
+                t["in_status_since"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// [`pipeline_by`], and `sim/f` made 17 hours in, claimed at 18, in review at 19 and sent back at
+/// 20, still in progress.
+fn pipeline_sent_back() -> Case {
+    let (c, [orch, exe, rev]) = pipeline_by();
+    let t = |hours: f64| at(&c, START, hours);
+    t(17.0).ok(&orch, &["create", "sim/f", "Again"]);
+    t(18.0).ok(&exe, &["claim", "sim/f"]);
+    t(19.0).ok(&exe, &["move", "sim/f", "review"]);
+    t(19.0).ok(&rev, &["role", "sim/f", "reviewer"]);
+    t(20.0).ok(&rev, &["verdict", "sim/f", "changes", "one more case"]);
+    c
+}
+
+#[test]
+fn list_says_when_each_task_took_the_status_it_holds() {
+    let c = pipeline_sent_back();
+    let later = at(&c, START, 30.0);
+    let open = BTreeMap::from([
+        // Blocked by its executor 6 hours in.
+        ("sim/c".to_string(), json!(START + 6.0 * H)),
+        // Never claimed, a subtask among them: ready, or in the backlog, since they were made.
+        ("sim/d".to_string(), json!(START)),
+        ("sim/d/s".to_string(), json!(START)),
+        ("sim/e".to_string(), json!(START)),
+        // In progress again from the changes verdict, not from its first claim.
+        ("sim/f".to_string(), json!(START + 20.0 * H)),
+    ]);
+    assert_eq!(since_by_slug(&later.ok("", &["list", "--json"])), open);
+    let mut all = open.clone();
+    all.extend([
+        // Done at its approve, whenever it was made.
+        ("sim/a".to_string(), json!(START + 4.0 * H)),
+        ("sim/b".to_string(), json!(START + 16.0 * H)),
+        ("sim/old".to_string(), json!(START + 22.0 * H)),
+    ]);
+    assert_eq!(
+        since_by_slug(&later.ok("", &["list", "--json", "--all"])),
+        all
+    );
+    let blocked = since_by_slug(&later.ok("", &["list", "--json", "--status", "blocked"]));
+    assert_eq!(
+        blocked,
+        BTreeMap::from([("sim/c".to_string(), json!(START + 6.0 * H))])
+    );
+    // Search's rows are list's: they carry it too.
+    assert_eq!(
+        since_by_slug(&later.ok("", &["search", "Again", "--json"])),
+        BTreeMap::from([("sim/f".to_string(), json!(START + 20.0 * H))])
+    );
+    // The clock only counts: an hour later nothing moved, so nothing changed.
+    assert_eq!(
+        since_by_slug(&at(&c, START, 31.0).ok("", &["list", "--json", "--all"])),
+        all
+    );
+}
+
+#[test]
+fn the_api_says_when_each_task_named_took_its_status_and_refuses_one_no_task_has() {
+    let c = pipeline_sent_back();
+    let later = at(&c, START, 30.0);
+    let call = |slugs: Value| -> Value {
+        let input = json!({"method": "in_status_since", "args": {"slugs": slugs}}).to_string();
+        let ran = later.run_as("", &["api"], &input);
+        assert_eq!(ran.code, 0, "{}", ran.err);
+        serde_json::from_str(&ran.out).unwrap()
+    };
+    assert_eq!(
+        call(json!(["sim/f", "sim/a", "sim/c", "sim/f"])),
+        json!({"ok": {
+            "sim/a": START + 4.0 * H,
+            "sim/c": START + 6.0 * H,
+            "sim/f": START + 20.0 * H,
+        }})
+    );
+    assert_eq!(call(json!([])), json!({"ok": {}}));
+    assert_eq!(
+        call(json!(["sim/a", "sim/nope"])),
+        json!({"refused": "no task 'sim/nope'"})
+    );
+}
+
+/// `list --json --all` on a board of `tasks` tasks, through a relay that keeps each request: what
+/// it printed and the requests it sent.
+fn listed_measured(tasks: usize) -> (String, Vec<proxy::Request>) {
+    let c = seeded(tasks);
+    let relay = proxy::Proxy::to(&c.env.vars["TASKS_SERVER"]);
+    let mut env = c.env.clone();
+    env.vars.insert("TASKS_SERVER".into(), relay.addr.clone());
+    let through = Case { env };
+    let said = through.ok("", &["list", "--json", "--all"]);
+    (said, relay.take())
+}
+
+#[test]
+fn list_reads_when_tasks_took_their_status_in_one_request_however_many_it_lists() {
+    let (few, few_requests) = listed_measured(3);
+    let (many, many_requests) = listed_measured(300);
+    // Each seeded task was approved three and a half hours after it was made.
+    let since = |listed: &str| -> Vec<Value> { since_by_slug(listed).into_values().collect() };
+    assert_eq!(since(&few), vec![json!(NOW + 3.5 * H); 3]);
+    assert_eq!(since(&many), vec![json!(NOW + 3.5 * H); 300]);
+    let reads = |requests: &[proxy::Request]| {
+        (requests.iter())
+            .filter(|r| r.sql.contains("WHERE kind IN ['system', 'verdict']"))
+            .count()
+    };
+    assert_eq!(reads(&few_requests), 1);
+    assert_eq!(reads(&many_requests), 1);
+    assert_eq!(few_requests.len(), many_requests.len());
 }

@@ -1,0 +1,21 @@
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.18
+   Compiling bstr v1.13.1
+   Compiling gix-validate v0.11.4
+   Compiling gix-path v0.12.6
+   Compiling gix-utils v0.3.6
+   Compiling gix-features v0.49.1
+   Compiling gix-error v0.3.2
+   Compiling gix-quote v0.8.0
+   Compiling gix-hash v0.26.2
+   Compiling symphony-plugin v0.1.0 (/work/symphony-wt/release/crates/symphony-plugin)
+   Compiling gix v0.87.1
+   Compiling symphony-server v0.1.0 (/work/symphony-wt/release/apps/symphony-server)
+    Finished `release` profile [optimized] target(s) in 18m 51s
+size-budget: agent-send       3.2 MiB of 5.0 MiB; its line comes down to 3,540,000 (3,404,752 bytes plus 4 %)
+size-budget: symphony         13.6 MiB of 13.9 MiB
+size-budget: symphony-server  17.3 MiB of 17.7 MiB (36.6 MiB with the embedded client)
+size-budget: embedded client  19.4 MiB of 19.8 MiB (111 files)
+size-budget: tasks is 23.7 MiB (24,851,000 bytes), 0.1 MiB past its budget of 23.6 MiB (24,746,000 bytes) in tools/size-budget.toml. See what grew: `cargo bloat --release --crates --bin tasks` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within it: the last release (`git tag -l 'release-*'`), or before the first one, the commit that last set the budget (`git log -1 -- tools/size-budget.toml`). A reduction takes the bytes back first; a line is raised only in a commit of its own that names the growth and why no reduction will do, to the size plus 4 % and never higher, on a fresh reviewer's approve (docs/CHECKS.md, "A red at the size check").
+error: recipe `_size-check` failed on line 108 with exit code 1
+error: recipe `size-check` failed on line 104 with exit code 1

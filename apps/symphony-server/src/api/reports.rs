@@ -369,6 +369,9 @@ fn day_start(name: &str) -> Option<f64> {
 struct Sums {
     /// The roll-up's hours in it.
     rolled: u32,
+    /// Whether an hour of it did not count its tasks done ([`BucketFlow::done`]): a file written
+    /// before they were counted. The period then has none, its count being part of the period's.
+    done_uncounted: bool,
     flow: Option<(f64, BucketFlow)>,
     decisions: Option<(f64, DecisionCounts)>,
     git: Option<GitCounts>,
@@ -399,6 +402,10 @@ impl Sums {
             flow.held = hour.top.held;
         }
         add(&mut flow.entered, &hour.top.entered);
+        match hour.top.done {
+            Some(done) => *flow.done.get_or_insert(0) += done,
+            None => self.done_uncounted = true,
+        }
         add(&mut flow.task_hours, &hour.top.task_hours);
         flow.unclaimed_hours += hour.top.unclaimed_hours;
         flow.bounces += hour.top.bounces;
@@ -482,7 +489,10 @@ impl Sums {
             start,
             end,
             rolled: self.rolled,
-            flow: self.flow.map(|(_, flow)| flow),
+            flow: self.flow.map(|(_, flow)| BucketFlow {
+                done: flow.done.filter(|_| !self.done_uncounted),
+                ..flow
+            }),
             decisions: self.decisions.map(|(_, cards)| cards),
             git: self.git,
             waits,

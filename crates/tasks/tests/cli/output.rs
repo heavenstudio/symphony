@@ -270,6 +270,18 @@ mod py {
         )
     }
 
+    /// A task's record as `list --json` lists it: [`task`]'s fields, then when it took its status.
+    pub fn listed(t: &Task, in_status_since: f64, depth: usize) -> String {
+        let record = task(t, depth);
+        let closing = format!("\n{}}}", " ".repeat(depth));
+        let fields = record.strip_suffix(&closing).expect("an object's end");
+        format!(
+            "{fields},\n{}\"in_status_since\": {}{closing}",
+            " ".repeat(depth + 1),
+            float(in_status_since)
+        )
+    }
+
     pub fn message(m: &Message, depth: usize) -> String {
         object(
             vec![
@@ -333,9 +345,10 @@ fn json_is_the_records_as_python_lays_them_out() {
     c.ok(&orch, &["claim", "sim/a"]);
     c.ok(&orch, &["say", "sim/a", "line\nbreak"]);
     let board = c.store();
+    // The case's clock stands still, so each task took the status it holds when it was made.
     let tasks = |status: Option<&str>| -> String {
         let all = board.tasks(status).unwrap();
-        let laid: Vec<String> = all.iter().map(|t| py::task(t, 2)).collect();
+        let laid: Vec<String> = all.iter().map(|t| py::listed(t, t.created, 2)).collect();
         py::object(vec![("tasks", py::list(laid, 1))], 0) + "\n"
     };
     assert_eq!(c.ok("", &["list", "--json"]), tasks(None));

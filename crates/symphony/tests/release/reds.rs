@@ -81,6 +81,10 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         ),
         "It blocks every release, so it is staffed before anything else".into(),
         "never a test or check loosened".into(),
+        "a test red on the machine's load (it passes alone, or fails on a wall-clock bound, a \
+         sleep-ordered step or a timeout under load) is discarded in this fix instead, as RULES.md \
+         `tests/no-test-fails-on-load` says"
+            .into(),
         "It is filed as a fast fix, under a bound the land holds it to: its orchestrator, which \
          did not execute it, approves a fix that changes none of the project's tests and checks \
          (`[land] check_paths`)"

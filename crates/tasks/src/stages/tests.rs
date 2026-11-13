@@ -108,6 +108,33 @@ fn a_task_claimed_reviewed_and_approved_stops_at_its_verdict() {
     assert_eq!(found.lead_seconds(T0), Some(10_800.0));
 }
 
+/// The one rule of a task done, which `tasks stats` and the roll-up share: its last close, while
+/// it holds done.
+#[test]
+fn a_task_is_done_at_its_last_close_while_it_holds_done() {
+    let done = stages(facts("done", 3.0), &straight_through(), at(10.0));
+    assert_eq!(done.done_at(), Some(at(3.0)));
+    // Sent back to review by its landing, approved again: done once, at the second approve.
+    let mut again = straight_through();
+    again.push(sys(8, 4.0, "teal moved it done → review"));
+    again.push(verdict_by(9, 5.0, "approve: the merge", "plum"));
+    again.push(verdict(10, 6.0, "landed on main"));
+    let found = stages(facts("done", 5.0), &again, at(10.0));
+    assert_eq!(found.done_at(), Some(at(5.0)));
+    let entries = found.segments.iter().filter(|s| s.status == "done").count();
+    assert_eq!(entries, 2, "it entered done twice");
+    // Sent back and still in review: done no more.
+    let reopened = stages(facts("review", 4.0), &again[..8], at(10.0));
+    assert_eq!((reopened.closed, reopened.done_at()), (None, None));
+    // Cancelled after its approve, by a hand edit no line records: closed, but not done.
+    let cancelled = stages(facts("cancelled", 4.0), &straight_through(), at(10.0));
+    assert_eq!(cancelled.closed, Some(at(4.0)));
+    assert_eq!(cancelled.done_at(), None);
+    // Open: no close.
+    let open = stages(facts("review", 2.0), &straight_through()[..5], at(10.0));
+    assert_eq!(open.done_at(), None);
+}
+
 #[test]
 fn lines_out_of_order_or_twice_read_the_same() {
     let mut lines = straight_through();
@@ -887,4 +914,83 @@ fn holds_follow_claims_joins_hand_overs_and_releases() {
         ]
     );
     assert_eq!(holds(&[], T0), Vec::new());
+}
+
+#[test]
+fn in_status_since_is_when_the_task_took_the_status_it_holds() {
+    // Open: the move that put it in review, whatever the clock says now.
+    let bounced = [
+        sys(1, 0.0, "created by amber"),
+        sys(2, 1.0, "teal claimed it"),
+        sys(3, 2.0, "teal moved it in_progress → review"),
+        verdict_by(4, 3.0, "changes: the test is missing", "plum"),
+        sys(5, 5.0, "teal moved it in_progress → review"),
+    ];
+    assert_eq!(in_status_since(facts("review", 5.0), &bounced), at(5.0));
+    // Sent back: the verdict that did.
+    assert_eq!(
+        in_status_since(facts("in_progress", 3.0), &bounced[..4]),
+        at(3.0)
+    );
+    // Never claimed: its creation.
+    let made = [sys(1, 0.0, "created by owner")];
+    assert_eq!(in_status_since(facts("ready", 0.0), &made), T0);
+    assert_eq!(in_status_since(facts("backlog", 0.0), &[]), T0);
+    // Closed: its close, and a stray line after it moves nothing.
+    let mut approved = straight_through();
+    approved.push(verdict_by(8, 4.0, "changes: too late", "plum"));
+    assert_eq!(in_status_since(facts("done", 3.0), &approved), at(3.0));
+    // Released by its last executor: ready again from the release.
+    let released = [
+        sys(1, 1.0, "teal claimed it"),
+        sys(2, 2.0, "teal released executor (released)"),
+    ];
+    assert_eq!(in_status_since(facts("ready", 2.0), &released), at(2.0));
+    // Blocked by a cancelled dependency and given its status back.
+    let unblocked = [
+        sys(1, 1.0, "blocked: cancelled dependencies: sim/a (was ready)"),
+        sys(
+            2,
+            4.0,
+            "unblocked: no cancelled dependency left; back to ready",
+        ),
+    ];
+    assert_eq!(in_status_since(facts("ready", 4.0), &unblocked), at(4.0));
+    assert_eq!(
+        in_status_since(facts("blocked", 1.0), &unblocked[..1]),
+        at(1.0)
+    );
+    // A change the thread does not record: the task's last write.
+    let off_record = [sys(1, 1.0, "teal claimed it")];
+    assert_eq!(in_status_since(facts("review", 2.5), &off_record), at(2.5));
+    // Reopened from done: the reopening.
+    let reopened = [
+        sys(1, 0.5, "teal claimed it"),
+        sys(2, 2.0, "teal moved it in_progress → review"),
+        verdict_by(3, 3.0, "approve", "plum"),
+        sys(4, 4.0, "owner moved it done → review"),
+    ];
+    assert_eq!(in_status_since(facts("review", 4.0), &reopened), at(4.0));
+}
+
+#[test]
+fn in_status_since_is_the_replays_current_since_at_any_now() {
+    let cases: Vec<(Facts, Vec<Line>)> = vec![
+        (facts("done", 3.0), straight_through()),
+        (facts("ready", 0.0), vec![]),
+        (
+            facts("in_progress", 3.0),
+            vec![
+                sys(1, 1.0, "teal claimed it"),
+                sys(2, 2.0, "teal moved it in_progress → review"),
+                verdict(3, 3.0, "changes"),
+            ],
+        ),
+    ];
+    for (facts, lines) in cases {
+        let since = in_status_since(facts, &lines);
+        for now in [T0, at(3.0), at(100.0)] {
+            assert_eq!(stages(facts, &lines, now).current_since, since);
+        }
+    }
 }

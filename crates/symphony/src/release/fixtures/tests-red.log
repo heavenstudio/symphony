@@ -1,0 +1,88 @@
+   Compiling symphony-api v0.1.0 (/work/symphony-wt/release/crates/symphony-api)
+   Compiling chrome-devtools v0.1.0 (/work/symphony-wt/release/crates/chrome-devtools)
+   Compiling symphony v0.1.0 (/work/symphony-wt/release/crates/symphony)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 02s
+     Running unittests src/lib.rs (.target/debug/deps/chrome_devtools-0a1b2c3d4e5f6071)
+
+running 46 tests
+Chrome shutdown /tmp/symphony-chrome-501/19028-0/0: suite stdin closed
+Chrome cleanup /tmp/symphony-chrome-501/19028-0/0: group=19042 still present after browser reap
+test tests::a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends_at_the_backstop ... FAILED
+Chrome shutdown /tmp/symphony-chrome-501/17778-0/17: suite stdin closed
+test tests::cpu_exhaustion_stops_renderer_work_before_the_poll_allowance ... ok
+test tests::chrome_dies_with_its_suite ... ok
+
+failures:
+
+---- tests::a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends_at_the_backstop stdout ----
+Chrome evaluation still pending after 0 completed observer polls and 1.213201749s CPU: window.held === 1
+
+thread 'tests::a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends_at_the_backstop' (520185799) panicked at crates/chrome-devtools/src/tests.rs:2005:5:
+the blocked page spent its wait in 2.008174209s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends_at_the_backstop
+
+test result: FAILED. 45 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.14s
+
+error: test failed, to rerun pass `-p chrome-devtools --lib`
+     Running unittests src/lib.rs (.target/debug/deps/symphony-13c201e6dfbd32ff)
+
+running 690 tests
+test plugins::process::tests::a_real_process_killed_says_by_which_signal_and_a_missing_program_cannot_start ... ok
+test plugins::process::tests::a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down ... FAILED
+test owner_asks::tests::a_scan_is_due_when_the_documents_or_the_ask_store_change_or_a_minute_passes ... ok
+test plugins::process::tests::a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended ... FAILED
+test taskview::page_tests::a_bold_paragraph_longer_than_the_page_is_cut_between_its_lines ... ok
+
+failures:
+
+---- plugins::process::tests::a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down stdout ----
+
+thread 'plugins::process::tests::a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down' (520202979) panicked at crates/symphony/src/plugins/process_tests.rs:1020:5:
+assertion `left == right` failed
+  left: Err("its process did not declare: its process was ended: its stdout could not be read: the pipe broke")
+ right: Ok(Declaration { protocol: Version { major: 0, minor: 1 }, name: "tiny", components: ["tiny"], card_kinds: [DeclaredKind { name: "tiny", markers: ["Slot"] }], renderers: [], routes: [] })
+
+---- plugins::process::tests::a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended stdout ----
+
+thread 'plugins::process::tests::a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended' (520202651) panicked at crates/symphony/src/plugins/process_tests.rs:1284:42:
+called `Result::unwrap()` on an `Err` value: "its process did not declare: no answer in 10s"
+
+
+failures:
+    plugins::process::tests::a_call_that_finds_its_process_ending_waits_to_be_told_how_it_ended
+    plugins::process::tests::a_stdout_that_fails_ends_its_process_killed_and_the_plugin_down
+
+test result: FAILED. 688 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.15s
+
+error: test failed, to rerun pass `-p symphony --lib`
+     Running tests/release/main.rs (.target/debug/deps/release-5e2f8d6c1a0b9e37)
+
+running 1 test
+after_commit case=a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure pid=46447 +0.861s: waiting for socket entry at 127.0.0.1:49493
+Symphony: branch docs/verdict-46447-0-4: just verify failed: fixture content check refused
+error: recipe `verify` failed on line 15 with exit code 23
+test a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 3.44s
+
+   Doc-tests symphony_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests test_time
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 2 targets failed:
+    `-p chrome-devtools --lib`
+    `-p symphony --lib`
+
+verify: the client check is red: the tests ran against the client it built from this tree, /work/symphony-wt/release/build/verified-client/public, not the committed one
