@@ -35,10 +35,27 @@ pub(super) static OWNER_MOVES: LazyLock<String> = LazyLock::new(|| {
 static POOLED_MOVES: LazyLock<String> =
     LazyLock::new(|| format!("($m.kind = 'system' AND $m.sender = '{OWNER}')"));
 
-/// The mark on the owner's word about a task nobody orchestrates as an orchestrator's inbox carries
-/// it ([`heard`]): every orchestrator hears it there, since none of the task's relays it. Those on
-/// the task hear it unmarked, as they did.
+/// The mark on the owner's word about a task no live orchestrator holds, as the inbox of an
+/// orchestrator it reached for that carries it ([`heard`]): every orchestrator hears it there, since
+/// none of the task's relays it. This one is for a task nobody holds; one held by an orchestrator
+/// that is not live names it ([`unowned_mark`]). Those on the task, and its holder, hear it
+/// unmarked.
 const UNOWNED: &str = "[unowned: no orchestrator holds it] ";
+
+/// The mark ([`UNOWNED`]) for a task whose nearest holders are `held`, none of them live: each by
+/// its handle and health, `[unowned: no live orchestrator holds it: amber (stale)] `.
+fn unowned_mark(held: &[(&str, Health)]) -> String {
+    if held.is_empty() {
+        return UNOWNED.to_string();
+    }
+    let named: Vec<String> = (held.iter())
+        .map(|(handle, health)| format!("{handle} ({})", health.as_str()))
+        .collect();
+    format!(
+        "[unowned: no live orchestrator holds it: {}] ",
+        named.join(", ")
+    )
+}
 
 /// What the owner's move of a task to a finished status says to an inbox after the move's own line
 /// ([`heard`]): those on the task stop, without an orchestrator relaying it.
@@ -57,10 +74,10 @@ fn could_reach(m: &str, moves: &str) -> String {
 }
 
 /// `message`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
-/// finished status says it moves no further ([`NO_FURTHER`]), and the owner's word about a task
-/// nobody orchestrates, as an orchestrator hears it (`unowned`), is marked so ([`UNOWNED`]). The
-/// thread keeps the line as written.
-fn heard(mut message: Message, unowned: bool) -> Message {
+/// finished status says it moves no further ([`NO_FURTHER`]), and the owner's word about a task no
+/// live orchestrator holds, as an orchestrator it reached for that hears it, carries `mark`
+/// ([`unowned_mark`]). The thread keeps the line as written.
+fn heard(mut message: Message, mark: Option<&str>) -> Message {
     if message.sender != OWNER {
         return message;
     }
@@ -70,8 +87,8 @@ fn heard(mut message: Message, unowned: bool) -> Message {
     {
         message.text.push_str(NO_FURTHER);
     }
-    if unowned {
-        message.text.insert_str(0, UNOWNED);
+    if let Some(mark) = mark {
+        message.text.insert_str(0, mark);
     }
     message
 }
@@ -169,7 +186,8 @@ IF $had = NONE {{
 }
 
 impl Store {
-    /// Post to a task's thread. Only addressed messages and owner messages enter inboxes.
+    /// Post to a task's thread. Only addressed messages, verdicts and the owner's word enter inboxes
+    /// ([`Store::inbox`]).
     pub fn say(
         &self,
         slug: &str,
@@ -419,8 +437,9 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
 
     /// Unread addressed messages, verdicts for the executor and orchestrators, and the owner's word
     /// (its posts, verdicts and moves) on its tasks and the ones it orchestrates, and, for an
-    /// orchestrator, on every task nobody orchestrates, marked [`UNOWNED`] ([`heard`]). Unaddressed
-    /// agent posts remain on the thread without notifying participants.
+    /// orchestrator, on every task no live orchestrator holds (nobody, or a holder stale or of
+    /// unknown liveness), marked ([`unowned_mark`], [`heard`]); such a holder hears it too,
+    /// unmarked. Unaddressed agent posts remain on the thread without notifying participants.
     pub fn inbox(&self, handle: &str) -> Result<Vec<Message>, Error> {
         self.inbox_read(handle, None, None)
     }
@@ -461,18 +480,22 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         for held in &read.roles {
             holds.entry(&held.slug).or_default().push(&held.role);
         }
-        // Holders whose session still holds, as `Owners::of` counts them (`crate::orchestration`).
+        // Each orchestrator's health: those that still hold, as `Owners::of` counts them
+        // (`crate::orchestration`), hold their tasks; only a live one keeps the owner's word to itself.
         let now = (self.clock)();
         let native: HashMap<&str, f64> = (read.native_presence.iter())
             .map(|n| (n.handle.as_str(), n.until))
             .collect();
-        let holding: HashSet<&str> = (read.orchestrator_sessions.iter())
-            .filter(|row| {
+        let health_of: HashMap<&str, Health> = (read.orchestrator_sessions.iter())
+            .map(|row| {
                 let health = health::health(row, now, &self.host, &*self.pid_alive, false);
                 let until = native.get(row.handle.as_str()).copied();
-                native_health(row, health, now, until).holds()
+                (row.handle.as_str(), native_health(row, health, now, until))
             })
-            .map(|row| row.handle.as_str())
+            .collect();
+        let holding: HashSet<&str> = (health_of.iter())
+            .filter(|(_, health)| health.holds())
+            .map(|(handle, _)| *handle)
             .collect();
         let mut orchestrators: HashMap<&str, Vec<&str>> = HashMap::new();
         let held = (read.orchestrators.iter()).filter(|(_, who)| holding.contains(who.as_str()));
@@ -488,16 +511,27 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         // @orchestrator and verdicts go to the orchestrator of that task: one orchestrator a task,
         // never every one up the tree.
         let nearest = |slug: &str| holders(slug).is_some_and(|held| held.contains(&handle));
-        // A task nobody orchestrates, as `Owners::of` reads it.
-        let unowned = |slug: &str| holders(slug).is_none();
+        // A task no live orchestrator holds: the holders that are not live, none when nobody holds
+        // it (as `Owners::of` reads it); `None` when a live one holds it.
+        let unowned = |slug: &str| -> Option<Vec<(&str, Health)>> {
+            let held = holders(slug).map_or(&[][..], Vec::as_slice);
+            let health = |who: &&str| health_of.get(who).copied().unwrap_or(Health::Left);
+            if held.iter().any(|who| health(who) == Health::Live) {
+                return None;
+            }
+            Some(held.iter().map(|who| (*who, health(who))).collect())
+        };
         let orchestrating = read.orchestrating;
         let reaches = |m: &MessageRow| {
             let to = m.recipient.as_deref();
             let roles = holds.get(m.slug.as_str());
             // The owner's word, a post, a verdict or a move, reaches everyone on the task and its
-            // orchestrator; on a task nobody orchestrates, every orchestrator, since none relays it.
+            // orchestrator; on a task no live orchestrator holds, every orchestrator, since none
+            // relays it.
             let owners_word = m.sender == OWNER
-                && (roles.is_some() || nearest(&m.slug) || (orchestrating && unowned(&m.slug)));
+                && (roles.is_some()
+                    || nearest(&m.slug)
+                    || (orchestrating && unowned(&m.slug).is_some()));
             to == Some(handle)
                 || owners_word
                 || (m.kind == "verdict"
@@ -515,9 +549,11 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             .into_iter()
             .filter(reaches)
             .map(|row| {
-                // Only an orchestrator hears the mark: it is why the word reached it.
-                let unowned = orchestrating && row.sender == OWNER && unowned(&row.slug);
-                heard(message(row), unowned)
+                // Only an orchestrator it reached for that hears the mark, never the holder.
+                let marked = orchestrating && row.sender == OWNER && !nearest(&row.slug);
+                let mark = marked.then(|| unowned(&row.slug)).flatten();
+                let mark = mark.map(|held| unowned_mark(&held));
+                heard(message(row), mark.as_deref())
             })
             .collect())
     }
@@ -611,7 +647,7 @@ mod tests {
     }
 
     fn heard_text(sender: &str, kind: &str, text: &str, unowned: bool) -> String {
-        heard(said(sender, kind, text), unowned).text
+        heard(said(sender, kind, text), unowned.then_some(UNOWNED)).text
     }
 
     #[test]
@@ -650,5 +686,23 @@ mod tests {
         let agent = "amber moved it in_progress → cancelled";
         assert_eq!(heard_text("amber", "system", agent, true), agent);
         assert_eq!(heard_text("amber", "msg", "hi", true), "hi");
+    }
+
+    #[test]
+    fn the_mark_names_the_holders_that_are_not_live_or_says_nobody_holds_it() {
+        assert_eq!(unowned_mark(&[]), UNOWNED);
+        assert_eq!(
+            unowned_mark(&[("amber", Health::Stale)]),
+            "[unowned: no live orchestrator holds it: amber (stale)] "
+        );
+        assert_eq!(
+            unowned_mark(&[("amber", Health::Stale), ("teal", Health::Unknown)]),
+            "[unowned: no live orchestrator holds it: amber (stale), teal (unknown)] "
+        );
+        let mark = unowned_mark(&[("amber", Health::Unknown)]);
+        assert_eq!(
+            heard(said(OWNER, "msg", "stop"), Some(&mark)).text,
+            "[unowned: no live orchestrator holds it: amber (unknown)] stop"
+        );
     }
 }

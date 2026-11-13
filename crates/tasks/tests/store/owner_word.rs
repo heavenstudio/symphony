@@ -1,12 +1,14 @@
 //! The owner's word on a task reaches who acts on it at once, with no orchestrator relaying it:
-//! its posts and moves reach everyone on the task and the task's orchestrator, and on a task nobody
-//! orchestrates every orchestrator, marked so, through `tasks wait`, a channel and the inbox alike.
+//! its posts and moves reach everyone on the task and the task's orchestrator, and on a task no live
+//! orchestrator holds (nobody, or a holder gone stale) every orchestrator, marked so, through
+//! `tasks wait`, a channel and the inbox alike.
 //! Its cancel tells the executor the task moves no further. A task an orchestrator files is its
 //! own.
 
 use super::common::Fixture;
 use super::quiet_callbacks::listen;
 use symphony_board::cli::Env;
+use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::{NewSession, NewTask};
 
 const UNOWNED: &str = "[unowned: no orchestrator holds it] ";
@@ -71,7 +73,7 @@ fn the_owners_post_on_a_task_nobody_orchestrates_reaches_every_orchestrator_mark
         assert_eq!(words(read(&f, handle)), [said.as_str()], "{handle}");
         assert!(words(read(&f, handle)).is_empty(), "{handle}");
     }
-    // The executor hears it as it did, unmarked: the mark is why it reached an orchestrator.
+    // The executor hears it unmarked: the mark says why it reached an orchestrator.
     let plain = format!("MSG #{} tools/loose from owner — stop it", post.id);
     assert_eq!(words(read(&f, &exe)), [plain]);
     assert!(inbox(&f, &exe).is_empty(), "read by waiting");
@@ -113,6 +115,53 @@ fn the_owners_post_on_an_orchestrated_task_reaches_its_orchestrator_alone() {
     );
     assert!(words(read(&f, &theirs)).is_empty());
     assert!(inbox(&f, &theirs).is_empty());
+}
+
+/// An orchestrator holding a task that is not live, gone stale or lost, keeps the owner's word to
+/// itself no longer: every other orchestrator waiting hears the post and the cancel at once and
+/// once, marked with the holder that is not live; the stale holder still hears both, unmarked, and
+/// so does the executor.
+#[test]
+fn the_owners_word_on_a_task_whose_orchestrator_is_not_live_reaches_every_orchestrator() {
+    for lost in [false, true] {
+        let f = Fixture::empty();
+        let (gone, here) = (f.session("orchestrator"), f.session("orchestrator"));
+        let exe = f.session("worker");
+        f.task("tools/left");
+        f.store
+            .take_role("tools/left", &gone, "orchestrator")
+            .unwrap();
+        f.store.claim("tools/left", &exe).unwrap();
+        for handle in [&gone, &here, &exe] {
+            read(&f, handle);
+        }
+        // Quiet past the live line (stale) or past the lost line, with `here` and `exe` beating.
+        f.advance(LIVE_SECONDS + if lost { STALE_SECONDS } else { 0.0 } + 5.0);
+        for handle in [&here, &exe] {
+            f.store.touch(handle).unwrap();
+        }
+        let post = f.store.say("tools/left", "owner", "anyone?", None).unwrap();
+        f.store.move_to("tools/left", "cancelled", "owner").unwrap();
+        let moved = "owner moved it in_progress → cancelled";
+        let move_id = line(&f, "tools/left", moved);
+        let told = |mark: &str| {
+            [
+                format!("MSG #{} tools/left from owner — {mark}anyone?", post.id),
+                format!("MOVE #{move_id} tools/left from owner — {mark}{moved}{NO_FURTHER}"),
+            ]
+        };
+        // A lost holder holds the task no more; a stale one does, and is named.
+        let mark = match lost {
+            true => UNOWNED.to_string(),
+            false => format!("[unowned: no live orchestrator holds it: {gone} (stale)] "),
+        };
+        assert_eq!(words(read(&f, &here)), told(&mark), "lost: {lost}");
+        assert!(words(read(&f, &here)).is_empty(), "lost: {lost}");
+        assert_eq!(words(read(&f, &exe)), told(""), "lost: {lost}");
+        if !lost {
+            assert_eq!(words(read(&f, &gone)), told(""), "its own task's word");
+        }
+    }
 }
 
 #[test]

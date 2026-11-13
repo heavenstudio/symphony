@@ -1192,8 +1192,8 @@ orchestrator receives each task/post once, even if it leaves and returns; a new
 unanswered post can push a new line for the same task. Its count appears only when
 nonzero. `reap` makes the sole automatic recovery attempt described above.
 
-What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
-STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
+owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
 or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
 children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
@@ -1246,8 +1246,8 @@ while one waits is said and work that only departs renews no budget. Work it hea
 acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
 ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
 withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
-for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
-whoever held the role then.
+for that hand-over and never left out, and nothing repeats on its own. Posts, verdicts and the owner's `MOVE`
+lines are kept: they were said to whoever held the role then.
 Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 
@@ -1772,8 +1772,9 @@ orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
 STATUS of its move to `blocked`, which no digest row shows, and only its owner
 a claimed one's. A post to `@orchestrator`, and a
 verdict, go to the nearest holder still there, passing one gone quiet. The
-owner's word on an unclaimed task, a post, a verdict or a move, reaches every
-orchestrator, marked `[unowned: no orchestrator holds it]`, since none relays it
+owner's word, a post, a verdict or a move, asks more: on a task whose nearest
+holder is not live (stale, or of unknown liveness, as well as an unclaimed task)
+it reaches every orchestrator, marked, since none is there to relay it
 ([Talking on a task](#talking-on-a-task)). An orchestrator session that files a
 task with `just tasks create` holds its orchestrator role from that write
 (`created SLUG (ready); HANDLE orchestrates it`), unless `--no-role` or the task is already
@@ -2482,11 +2483,15 @@ Verdicts reach the executor and orchestrator. The owner's word, its posts, its
 verdicts and its moves (the thread's `owner moved it FROM → TO`, which a channel,
 `just tasks wait` and the inbox carry as a `MOVE` line, never again as a
 `STATUS`), reaches everyone on the task and the task's orchestrator, with no
-orchestrator relaying it; on a task nobody orchestrates it reaches every
-orchestrator too, its copy marked `[unowned: no orchestrator holds it]`
-(`Store::inbox`, `crates/tasks/src/store/messages.rs`). The owner's move to `done`
-or `cancelled` adds `; it moves no further: stop work on it`, so its executor and
-reviewer stop at once. The thread keeps every line as written. Post milestones only, address what someone must act on, never
+orchestrator relaying it. On a task no live orchestrator holds it reaches every
+orchestrator too: one nobody holds (none on it or above it, or only a lost or left
+one), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
+holder is stale or of unknown liveness, marked with that holder,
+`[unowned: no live orchestrator holds it: HANDLE (stale)]`; that holder hears it too,
+unmarked (`Store::inbox`, `crates/tasks/src/store/messages.rs`). Only a live holder
+keeps it to itself. The owner's cancel adds `; it moves no further: stop work on it`
+to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done` is
+an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
 acknowledge a message, and never repeat a post on a subtask and its parent.
 A session without a channel keeps `just tasks inbox`.
 

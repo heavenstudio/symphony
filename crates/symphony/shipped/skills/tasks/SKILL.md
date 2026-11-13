@@ -160,9 +160,10 @@ stay on the thread: read them with `just tasks show SLUG` or in the app.
 Verdicts reach the executor and orchestrator; moves to review, blocked or done
 still reach the orchestrator. The owner's word (posts, verdicts and moves, a move
 as a `MOVE` line) reaches everyone on the task and its orchestrator; on a task
-nobody orchestrates, every orchestrator too, marked
-`[unowned: no orchestrator holds it]`. An owner's `MOVE` that ends
-`it moves no further: stop work on it` means stop: the task is done or cancelled.
+no live orchestrator holds (nobody, or a holder stale or of unknown liveness),
+every orchestrator too, marked `[unowned: …]` with that holder if there is one,
+which hears it too. An owner's `MOVE` that ends
+`it moves no further: stop work on it` means stop: the owner cancelled the task.
 A post or `changes` verdict to `@executor`, or a post to the executor by handle,
 that no executor can read (no callback, and its terminal recorded closed or no live
 beat) brings the task's orchestrator
