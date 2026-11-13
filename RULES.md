@@ -50,6 +50,26 @@ follow-up task, never claiming green or loosening a test. After recovery another
 bounded postmortem (root cause, the class of recurrence, a shared API or refactor that would
 prevent it), reusing an existing analysis task; it blocks nothing.
 
+### `workflow/simplest-thing-that-solves-it`
+
+Keep it simple: the smallest thing that solves the problem in front of us. A problem met once is
+solved once: an agent runs the commands or a throwaway script, says on the thread what it ran and
+what came of it, and that is the end. It gets no committed tool, no tests, no review round and no
+task of its own. Code is committed only for what will be run again, and guarded only against what
+has happened or plainly will; a script that has done its one job is deleted, never hardened. An
+orchestrator filing work, an executor starting it and a reviewer judging it each refuse the larger
+form: "this is once and done" is a finding, and the reply is to do it and close the task.
+
+### `workflow/question-the-task-first`
+
+A task is questioned when it starts, before any code. The executor that claims it reads the brief
+against the tree and the board as they are now and answers two things on the thread: is this
+still needed (already done, overtaken by another change, about a state that no longer exists, a
+case nobody has), and is the way the brief asks for the simplest that solves it. A no to either
+goes to the orchestrator with the smaller alternative, which may be "cancel", and the executor
+does not build the brief as written while it waits. A brief is an instruction, not proof the work
+is worth doing.
+
 ### `workflow/release-reds-first`
 
 A red the release run files blocks every release, so it is fixed first, the way a bug fix is. The
@@ -261,6 +281,12 @@ did not: "I don't fully understand this issue. So pick whatever choice makes sen
 the decision does not need goes in a linked file, and pictures go where the thing judged is visual
 ([REVIEW](docs/REVIEW.md#writing-a-card)).
 
+### `docs/one-decision-per-card`
+
+A card asks one decision. A detail that carries choices of its own, its own A, B or C, is a card
+of its own that links the first, so no verdict has to decide several things at once
+([REVIEW](docs/REVIEW.md#writing-a-card)).
+
 ## Documents
 
 ### `history-is-not-reference`
@@ -269,6 +295,14 @@ Docs, guides, skills and code comments say how things are now, never what the co
 and a reviewer refuses a line that does. Evidence and superseded numbers go to `docs/history/`,
 which the Symphony passes over when it reads documents; a rejected approach keeps one line and a
 pointer.
+
+### `docs/no-ledger-in-documents`
+
+A document under `docs/` describes intent, behaviour and options. The owner's exact words and the
+dated history of who decided what, and when, live in the decision register (`docs/DECISIONS.md`,
+each card's dated lines) and on task threads; a document whose reason matters links its card,
+`[its card](DECISIONS.md#SLUG)` ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and
+`docs/history/` are the records that keep them.
 
 ### `docs/one-topic-per-doc`
 

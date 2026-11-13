@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::test_layouts::{Others, others, repository};
+use crate::test_tree::Tree;
 
 fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
     Build {
@@ -10,6 +12,7 @@ fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
         pin,
         schema,
         by: "/work/host".into(),
+        worktree: None,
     }
 }
 
@@ -162,6 +165,118 @@ fn the_project_itself_is_judged_by_its_new_entry_not_its_old_one() {
 }
 
 #[test]
+fn a_branchs_build_never_replaces_the_running_host_and_names_the_main_checkout() {
+    let running = build(&[], 1, 6);
+    let shelved = entry("shelf-project", &["shelf"], 1, 6);
+    let ours = build(&["shelf"], 1, 6);
+    let tree = "/work/trees/shelf-feature";
+    // The main checkout's build replaces a host lacking the project's plugin; the same build
+    // started in a linked worktree waits, registered, for the main checkout's start.
+    assert!(matches!(
+        judge(&running, &ours, &shelved, &registry(&[])),
+        Verdict::Replace(_)
+    ));
+    let Verdict::Waits(why) = judge(
+        &running,
+        &ours.clone().in_worktree(tree),
+        &shelved,
+        &registry(&[]),
+    ) else {
+        panic!("a branch's build does not replace the host");
+    };
+    assert_eq!(
+        why,
+        "the running Symphony lacks the plugin shelf, which shelf-project names: this start runs \
+         in the linked worktree /work/trees/shelf-feature, and a start in a linked worktree never \
+         replaces the running Symphony: run `just symphony` in /work/shelf-project"
+    );
+    // A newer pin or board schema the main checkout's build would replace the host for is refused,
+    // not registered, from a branch's.
+    let host = build(&["shelf"], 1, 6);
+    for (newer, bumped, lacks) in [
+        (
+            build(&["shelf"], 2, 6),
+            entry("shelf-project", &["shelf"], 2, 6),
+            "is at Symphony pin 1, older than shelf-project's 2",
+        ),
+        (
+            build(&["shelf"], 1, 7),
+            entry("shelf-project", &["shelf"], 1, 7),
+            "reads board schema 6, older than shelf-project's 7",
+        ),
+    ] {
+        assert!(matches!(
+            judge(&host, &newer, &bumped, &registry(&[])),
+            Verdict::Replace(_)
+        ));
+        let Verdict::Refuse(why) = judge(&host, &newer.in_worktree(tree), &bumped, &registry(&[]))
+        else {
+            panic!("a branch's newer build is refused");
+        };
+        assert_eq!(
+            why,
+            format!(
+                "the running Symphony {lacks}: this start runs in the linked worktree \
+                 /work/trees/shelf-feature, and a start in a linked worktree never replaces the \
+                 running Symphony: run `just symphony` in /work/shelf-project"
+            )
+        );
+    }
+    // A host that serves the project serves it whichever checkout's build registers it.
+    assert_eq!(
+        judge(&host, &ours.in_worktree(tree), &shelved, &registry(&[])),
+        Verdict::Serves
+    );
+}
+
+#[test]
+fn a_build_started_in_a_linked_worktree_is_a_branchs_and_in_a_main_checkout_is_not() {
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree.root);
+    let Others {
+        submodule,
+        separate,
+        bare,
+        bare_worktree,
+    } = others(&tree.root);
+    let this = Build::this(&main);
+    assert_eq!(this.worktree, None);
+    // A submodule's and a `--separate-git-dir` checkout's `.git` is a file naming their repository's
+    // own git dir: each is its repository's main checkout.
+    for dir in [
+        main.clone(),
+        main.join("docs"),
+        tree.root.clone(),
+        submodule.clone(),
+        submodule.join("docs"),
+        separate.clone(),
+        separate.join("docs"),
+        bare,
+    ] {
+        assert_eq!(
+            this.clone().started_in(&dir).worktree,
+            None,
+            "{}",
+            dir.display()
+        );
+    }
+    // A bare repository's worktree is a linked one: its git dir has a `commondir`.
+    for (dir, top) in [
+        (linked.clone(), &linked),
+        (linked.join("docs"), &linked),
+        (bare_worktree.clone(), &bare_worktree),
+        (bare_worktree.join("docs"), &bare_worktree),
+    ] {
+        assert_eq!(
+            this.clone().started_in(&dir).worktree.as_ref(),
+            Some(top),
+            "{}",
+            dir.display()
+        );
+    }
+}
+
+#[test]
 fn a_build_reads_its_own_plugins_pin_and_schema_and_a_server_its_front() {
     let this = Build::this(Path::new("/work/here"));
     assert_eq!(this.pin, crate::machine::PIN);
@@ -190,6 +305,14 @@ impl Build {
     fn with_by(self, by: &str) -> Build {
         Build {
             by: by.into(),
+            ..self
+        }
+    }
+
+    /// This build as started in the linked worktree `tree`.
+    fn in_worktree(self, tree: &str) -> Build {
+        Build {
+            worktree: Some(tree.into()),
             ..self
         }
     }

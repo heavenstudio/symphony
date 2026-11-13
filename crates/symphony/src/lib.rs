@@ -79,6 +79,11 @@ pub mod hook;
 #[path = "../tests/common/tree.rs"]
 mod test_tree;
 
+/// The git layouts a checkout can have, which the unit tests share with the server's.
+#[cfg(test)]
+#[path = "../tests/common/layouts.rs"]
+mod test_layouts;
+
 #[cfg(test)]
 #[path = "../../../tools/test-support/script_board.rs"]
 mod fixture_script;
