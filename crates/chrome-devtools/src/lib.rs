@@ -118,6 +118,19 @@ struct WaitBudget {
     started: Instant,
     allowance: Duration,
     floor: Duration,
+    end: Option<End>,
+}
+
+/// The check that ended a wait, the first [`WaitBudget::exhausted`] found true: what its error
+/// says, whatever the clock reads by the time the error is made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End {
+    /// The caller's deadline had passed.
+    Deadline,
+    /// The wall-clock backstop ran out: the browser, or the page under test, stalled.
+    Backstop,
+    /// The allowance was spent, in browser CPU or in completed turns.
+    Allowance,
 }
 
 /// The page under test's part in a wait's observer turns: the probes of it not answered yet and
@@ -144,6 +157,7 @@ impl WaitBudget {
             started: Instant::now(),
             allowance: cpu,
             floor: BACKSTOP_FLOOR,
+            end: None,
         }
     }
 
@@ -185,11 +199,27 @@ impl WaitBudget {
         self.started.elapsed() >= self.backstop()
     }
 
+    /// Whether the wait is over: past the caller's deadline, past the backstop, or its allowance
+    /// spent, checked in that order. The first check found true is the wait's [`End`], kept for
+    /// its error.
     fn exhausted(&mut self, members: &[process::Member]) -> bool {
-        self.past_deadline()
-            || self.past_backstop()
-            || self.cpu.exhausted(members)
-            || self.polls >= self.max_polls
+        if self.end.is_none() {
+            self.end = if self.past_deadline() {
+                Some(End::Deadline)
+            } else if self.past_backstop() {
+                Some(End::Backstop)
+            } else if self.cpu.exhausted(members) || self.polls >= self.max_polls {
+                Some(End::Allowance)
+            } else {
+                None
+            };
+        }
+        self.end.is_some()
+    }
+
+    /// Whether the backstop ended the wait: its renderer, or the browser, stalled.
+    fn stalled(&self) -> bool {
+        self.end == Some(End::Backstop)
     }
 
     /// One turn the page took part in, as the reply to an evaluation in it proves.
@@ -273,15 +303,14 @@ impl WaitBudget {
         }
     }
 
-    /// Why a wait on `what` ended without what it waited for: past the caller's deadline, a
-    /// stall that ran to the backstop, or else its allowance spent (`spent`, naming it).
+    /// Why a wait on `what` ended without what it waited for, as its [`End`] says: past the
+    /// caller's deadline, a stall that ran to the backstop, or else its allowance spent (`spent`,
+    /// naming it). A wait whose allowance ran out is no deadline, however late its error is made.
     fn ended(&self, what: &str, spent: String) -> Error {
-        if self.past_deadline() {
-            Error::deadline(what)
-        } else if self.past_backstop() {
-            Error::stall(what, self)
-        } else {
-            Error::new(spent)
+        match self.end {
+            Some(End::Deadline) => Error::deadline(what),
+            Some(End::Backstop) => Error::stall(what, self),
+            Some(End::Allowance) | None => Error::new(spent),
         }
     }
 }
@@ -1049,7 +1078,7 @@ impl Chrome {
             }
             self.pump(POLL)?;
         };
-        if budget.past_backstop() && !budget.past_deadline() {
+        if budget.stalled() {
             return Err(Error::stall(expression, &budget));
         }
         eprintln!("Chrome {state} after {}: {expression}", budget.spent());
@@ -1081,7 +1110,7 @@ impl Chrome {
                     && seen(&chrome.events) + 1 >= count)
                     .then_some(()))
             })?;
-            if found.is_none() && budget.past_backstop() && !budget.past_deadline() {
+            if found.is_none() && budget.stalled() {
                 return Err(Error::stall(&format!("waiting for {method}"), &budget));
             }
         }

@@ -303,6 +303,9 @@ fn a_message_posted_or_a_brief_edited_while_away_is_a_200_drawn_and_kept() {
     let before = return_held(&mut chrome, &site, &READS);
     let said = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &said);
+    // The notice can show before a loaded machine has drawn the kept thread under it: the thread is
+    // read once its kept message is in.
+    draws(&mut chrome, SLUG, "Task brief", "Owner message");
     assert_eq!(
         chrome
             .eval("document.querySelector('#task-thread').innerText.includes('Posted while away')"),
@@ -443,14 +446,10 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
             .filter(|answer| answer.status == 500)
             .count()
     };
-    let started = std::time::Instant::now();
-    while failed(&site) < 2 {
-        assert!(
-            started.elapsed() < crate::SHOWN,
-            "the check was not asked again: {:#?}",
-            since(&site, &before, "/api/task-page")
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    if let Err(stall) =
+        test_time::until_true("the check asked again", crate::STALL, || failed(&site) >= 2)
+    {
+        panic!("{stall}: {:#?}", since(&site, &before, "/api/task-page"));
     }
     from_the_device(&mut chrome, &checking);
     actions_wait(&mut chrome);
