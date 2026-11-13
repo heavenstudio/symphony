@@ -201,7 +201,10 @@ fn a_write_under_way_as_a_takeover_of_its_hold_commits_fails_and_tried_again_is_
         gate.reached();
         // The hold has lapsed: a restore takes the session over, and commits first.
         let taken = fixture.store.take_session(handle, "a restore").unwrap();
-        assert!(!closing.is_finished(), "the close went on before the gate opened");
+        assert!(
+            !closing.is_finished(),
+            "the close went on before the gate opened"
+        );
         drop(opening);
         (closing.join().unwrap(), taken)
     });

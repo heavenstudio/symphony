@@ -765,7 +765,10 @@ mod tests {
         for nothing in ["", "soon", "-1", "NaN", "inf", "1e400", "3 s"] {
             assert_eq!(read(nothing), fallback, "{nothing:?}");
         }
-        assert_eq!(Env::default().seconds("TASKS_SOME_WAIT", fallback), fallback);
+        assert_eq!(
+            Env::default().seconds("TASKS_SOME_WAIT", fallback),
+            fallback
+        );
     }
 
     #[test]

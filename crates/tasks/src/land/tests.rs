@@ -908,10 +908,7 @@ fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
     fs::create_dir_all(&dir).unwrap();
     let mark = dir.join("ran-to-its-end");
     let mut child = sys::command("sh")
-        .args([
-            "-c",
-            &format!("(sleep 600; touch '{}') &", mark.display()),
-        ])
+        .args(["-c", &format!("(sleep 600; touch '{}') &", mark.display())])
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

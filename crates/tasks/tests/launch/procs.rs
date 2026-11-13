@@ -7,7 +7,7 @@ use crate::World;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
-    board, busy_reason, descendants_by, harmless, helper, land, listed, named, reap_busy_reason,
+    self, PS_PATIENCE, board, busy_reason, harmless, helper, land, listed, named, reap_busy_reason,
     shell, symphony_app, table, table_file, test_run, under, verify,
 };
 
@@ -411,6 +411,12 @@ fn sh_ps(script: &str) -> symphony_board::sys::Command {
     let mut ps = symphony_board::sys::Command::new("/bin/sh");
     ps.args(["-c", script]);
     ps
+}
+
+/// What the stand-in reads of the table under `pid`, given the backstop of `ps`'s own 30 s, so a
+/// loaded machine's slow start never reads as a `ps` that gave no table.
+fn descendants_by(ps: symphony_board::sys::Command, pid: i64) -> Result<Vec<String>, LaunchError> {
+    procs::descendants_by(ps, pid, PS_PATIENCE * 6)
 }
 
 #[test]

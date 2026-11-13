@@ -954,7 +954,10 @@ fn a_board_held_exclusively_as_the_run_starts_is_still_found_frozen() {
         std::thread::sleep(std::time::Duration::from_millis(2500));
         drop(holder);
     });
-    let refused = cutover::cutover(&old.path, &old.unreachable()).unwrap_err();
+    // The run waits out the holder for the backstop of the old store's own 30 s, so a loaded
+    // machine's late release never reads as a board held past its wait.
+    let busy = std::time::Duration::from_secs(180);
+    let refused = cutover::cutover_waiting(&old.path, &old.unreachable(), busy).unwrap_err();
     release.join().unwrap();
     assert!(
         refused

@@ -89,7 +89,11 @@ fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives
     let mut tries = 0;
     let done = retried(PATIENCE, || {
         tries += 1;
-        if tries < 3 { Err(Failure::Again) } else { Ok(tries) }
+        if tries < 3 {
+            Err(Failure::Again)
+        } else {
+            Ok(tries)
+        }
     });
     assert_eq!(done, Ok(3));
     assert_eq!(Store::tried_again_here() - before, 2);

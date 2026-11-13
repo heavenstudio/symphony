@@ -114,7 +114,8 @@ pub fn trigger(
     let window = says(env);
     let mut until = None;
     // The window opens at the first look, once the command has started.
-    let listening = move |_: &Path| *until.get_or_insert_with(|| Instant::now() + window) > Instant::now();
+    let listening =
+        move |_: &Path| *until.get_or_insert_with(|| Instant::now() + window) > Instant::now();
     trigger_listening(env, main, common, slug, commit, listening)
 }
 
@@ -494,15 +495,13 @@ mod tests {
         let common = main.join(".git");
         let (gate, done) = (main.join("gate"), main.join("done"));
         held_at(&main, &gate, &done);
-        for (set, window) in [
-            (None, SAYS),
-            (Some("0.2"), Duration::from_millis(200)),
-        ] {
+        for (set, window) in [(None, SAYS), (Some("0.2"), Duration::from_millis(200))] {
             let _ = fs::remove_file(&gate);
             let mut pairs = vec![("PATH", "/usr/bin:/bin")];
             pairs.extend(set.map(|value| (SAYS_VAR, value)));
             let began = Instant::now();
-            let (Started::Command(_), heard) = trigger(&env(&pairs), &main, &common, "tools/w", "a")
+            let (Started::Command(_), heard) =
+                trigger(&env(&pairs), &main, &common, "tools/w", "a")
             else {
                 panic!("the command starts");
             };

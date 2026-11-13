@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use symphony_board::cli::Env;
-use symphony_board::launch::hc::{Binary, Hc};
+use symphony_board::launch::hc::{Binary, ENDING_VAR, Hc};
 use symphony_board::launch::{Ask, LaunchError, Machine, Started};
 use symphony_board::sys::Command;
 use symphony_board::{Error, NewTask, Store};
@@ -138,7 +138,15 @@ impl Hc for Hooked<'_> {
     fn board(&self) -> String {
         self.inner.board()
     }
+
+    fn ending(&self) -> std::time::Duration {
+        self.inner.ending()
+    }
 }
+
+/// How long a world's hc gives a killed terminal to end, in seconds: the backstop of hc's own ten,
+/// so a loaded machine's slow looks never run it out before the terminal ends by its count of them.
+const ENDING_SECONDS: &str = "120";
 
 /// The id of the project's space in a new world's Herdr app.
 pub const SPACE: &str = "sp-lamp";
@@ -186,6 +194,7 @@ impl World {
                 folder.0.join("hc.json").display().to_string(),
             ),
             ("FAKE_HC_LOG", folder.0.join("hc.log").display().to_string()),
+            (ENDING_VAR, ENDING_SECONDS.to_string()),
         ] {
             env.vars.insert(key.into(), value);
         }

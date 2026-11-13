@@ -439,7 +439,9 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     }
     env.cwd.clone_from(&folders.dir);
     let pid = folders.dir.join("pid");
-    let mut args = ["run", "--phase", "test", "--"].map(str::to_string).to_vec();
+    let mut args = ["run", "--phase", "test", "--"]
+        .map(str::to_string)
+        .to_vec();
     args.extend(until_asked(&accepted, &pid));
     let called = now();
     let (tell, done) = mpsc::channel();
@@ -1799,10 +1801,14 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
     }
     let release = Release(folders.dir.join("release"));
     // A child left running when the command ends goes to the system, out of its reach: it is
-    // released once the recorder's last reading is written. It holds none of the streams the test
-    // reads to their end.
+    // released once the recorder's last reading is written. It ends too once the test's folder is
+    // gone, which a release written just before the folder's removal would leave it never to see,
+    // and by itself after six minutes of its looks, should the test be killed before either. It
+    // holds none of the streams the test reads to their end.
     let leaves = format!(
-        "(while [ ! -e '{}' ]; do sleep 0.05; done) </dev/null >/dev/null 2>&1 & sleep 1.5",
+        "(i=0; while [ -d '{}' ] && [ ! -e '{}' ] && [ $i -lt 7200 ]; do sleep 0.05; \
+         i=$((i + 1)); done) </dev/null >/dev/null 2>&1 & sleep 1.5",
+        folders.dir.display(),
         release.0.display()
     );
     // Plain runs at once, each reaped by the test only once every recorder wrote its end line: the

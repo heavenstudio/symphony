@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
-use symphony_board::launch::hc::{Binary, Hc, board_of, is_not_found, text_of};
+use symphony_board::launch::hc::{Binary, ENDING_VAR, Hc, board_of, is_not_found, text_of};
 use symphony_board::sys::Command;
 
 fn binary(named: &str) -> Binary {
@@ -184,6 +184,16 @@ fn a_kill_that_leaves_its_terminal_live_a_while_waits_for_it_to_finish_before_th
     });
     hooked.close(&gone).unwrap();
     assert_eq!(w.calls_of(&["rm", &gone]), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn a_killed_terminal_is_given_ten_seconds_to_end_unless_the_environment_says() {
+    assert_eq!(binary(FAKE).ending(), Duration::from_secs(10));
+    let mut w = World::new();
+    assert_eq!(w.hc().ending(), Duration::from_secs(120), "a world's own");
+    w.set(ENDING_VAR, "0.5");
+    assert_eq!(w.hc().ending(), Duration::from_millis(500));
+    assert_eq!(Hooked::new(&w).ending(), Duration::from_millis(500));
 }
 
 /// hc as the world runs it, giving a killed terminal a fifth of a second to end.

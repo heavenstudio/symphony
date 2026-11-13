@@ -384,11 +384,14 @@ fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
 #[test]
 fn same_key_classification_rechecks_a_concurrently_remapped_target() {
     let f = Fixture::new(Seed::default().session("target"));
-    f.store.client().query(
-        "UPDATE session:target SET agent = 'old-key';
+    f.store
+        .client()
+        .query(
+            "UPDATE session:target SET agent = 'old-key';
          CREATE callback_state:['binding', 'new-key'] CONTENT { in_process: false };",
-        json!({}),
-    ).unwrap();
+            json!({}),
+        )
+        .unwrap();
     let gate = Gate::new();
     paused_at(
         &f,
