@@ -23,7 +23,7 @@ use super::common::older_board;
 use super::conciliation::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
-/// The release a night of the fixture's clock tags.
+/// The release a run of the fixture's clock tags.
 const RELEASE: &str = "release-2026-11-12";
 /// The branch a project's pin moves on.
 const BRANCH: &str = "symphony/release-2026-11-12";
@@ -258,10 +258,10 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
     ];
 
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(fixture.remote_tags(), [RELEASE]);
     let made = git(&consumer, &["rev-parse", BRANCH]);
@@ -287,11 +287,11 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
         ),
     ] {
         assert!(
-            out.contains(&format!("nightly: refresh: {said}")),
+            out.contains(&format!("release: refresh: {said}")),
             "{said}\n{out}"
         );
     }
-    assert!(out.contains("nightly: refresh-consumer green ("), "{out}");
+    assert!(out.contains("release: refresh-consumer green ("), "{out}");
 
     // The branch is one commit on its old main: the manifest naming the release's tag in place of
     // main, and the lock binding it, both packages at the release.
@@ -325,7 +325,7 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     );
     assert!(message.contains("and nothing else."), "{message}");
     // Its gate ran once, in the refresh's worktree, on those two; that worktree is gone.
-    let tree = fixture.root.join("wt/nightly-refresh/consumer");
+    let tree = fixture.root.join("wt/release-refresh/consumer");
     assert_eq!(
         gated(&fixture),
         [format!("{}: Cargo.lock host/Cargo.toml ", tree.display())]
@@ -375,18 +375,18 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     assert!(asked < merged, "{log}");
 
     // Asked again, its main takes the release: nothing is made or moved twice.
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
+            "release: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
             &release[..12]
         )),
         "{out}"
     );
     assert!(
         out.contains(&format!(
-            "nightly: refresh: the shared server (process 4343, port {port}) is built from \
+            "release: refresh: the shared server (process 4343, port {port}) is built from \
              {shown}, whose main took {RELEASE} before this refresh, as its own reload \
              (apps/symphony-server/src/reload.rs) follows that checkout's Cargo.lock\n"
         )),
@@ -404,12 +404,12 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
     let port = shared_server(&fixture, &consumer);
     let release = fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
     let home = cargo_home(&fixture);
-    let (code, out, err) = fixture.nightly_with(
+    let (code, out, err) = fixture.release_with(
         NOW,
         &["--check", super::CHECK],
         &[
             ("CARGO_HOME", &home),
-            ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "1"),
+            ("SYMPHONY_RELEASE_RELOAD_SECONDS", "1"),
         ],
     );
     assert_eq!(code, 0, "{out}{err}");
@@ -430,7 +430,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
         &status[from..],
         format!(
             "landings: 7 on origin/main since {RELEASE} ({}); the last tools/g ({})\n\
-             next run: after 13 more landings (7 of 20), or the night's run\n\
+             next run: after 13 more landings (7 of 20), or the scheduled run\n\
              last refresh: green, of {RELEASE} by the run {}, 2026-11-12 10:00 (1 h ago)\n  \
              consumer: its pin to {RELEASE} is on the branch {BRANCH} ({made}), made through its \
              own commit gate and not pushed\n  \
@@ -460,7 +460,7 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
     let out = fixture.night(NOW, 0);
     assert!(
-        out.contains("nightly: refresh: the shared server: none answers on this machine"),
+        out.contains("release: refresh: the shared server: none answers on this machine"),
         "{out}"
     );
     register(&fixture, &[("consumer", &consumer)]);
@@ -472,18 +472,18 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     let port = shared_server(&fixture, &fixture.main);
 
     let (code, out, err) =
-        fixture.nightly_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: the shared server (process 4242, port {port}) is built from {}, \
+            "release: refresh: the shared server (process 4242, port {port}) is built from {}, \
              this repository's main checkout, which its own reload follows\n",
             fixture.main.display()
         )),
         "{out}"
     );
     assert!(
-        out.contains("nightly: refresh-consumer red (")
+        out.contains("release: refresh-consumer red (")
             && out.contains(&format!(
                 "its commit gate refused the move to {RELEASE} (`git commit --quiet --file "
             ))
@@ -494,15 +494,15 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
         "{out}"
     );
     assert!(
-        out.contains("nightly: filed tests/nightly-red-refresh-consumer"),
+        out.contains("release: filed tests/release-red-refresh-consumer"),
         "{out}"
     );
-    let red = &fixture.reds()["tests/nightly-red-refresh-consumer"];
+    let red = &fixture.reds()["tests/release-red-refresh-consumer"];
     assert!(red.red());
     assert!(red.body.contains("the gate is red"), "{}", red.body);
     assert!(
         red.body
-            .contains("Then an orchestrator reruns the refresh, `just nightly --refresh`"),
+            .contains("Then an orchestrator reruns the refresh, `just release --refresh`"),
         "{}",
         red.body
     );
@@ -513,13 +513,13 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
         worktrees(&consumer),
         [consumer.to_string_lossy().into_owned()]
     );
-    assert!(!fixture.root.join("wt/nightly-refresh/consumer").exists());
+    assert!(!fixture.root.join("wt/release-refresh/consumer").exists());
     let status = fixture.run(NOW + 90.0, &["--status"], 0);
     assert!(
         status.contains(
             "  by hand: a project whose own gate or hooks refuse the move lands its branch \
              symphony/RELEASE through its own landing; a main checkout off its default branch or \
-             with tracked edits is put right by its owner; then an orchestrator's `just nightly \
+             with tracked edits is put right by its owner; then an orchestrator's `just release \
              --refresh` finishes the rest\n"
         ),
         "{status}"
@@ -528,14 +528,14 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     // Green again, a retry makes the branch, moves its main to it and closes the red.
     fs::remove_file(fixture.root.join("gate-red")).unwrap();
     let (code, out, err) =
-        fixture.nightly_with(NOW + 120.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+        fixture.release_with(NOW + 120.0, &["--refresh"], &[("CARGO_HOME", &home)]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        out.contains("release: closed tests/release-red-refresh-consumer"),
         "{out}"
     );
     assert_eq!(
-        fixture.reds()["tests/nightly-red-refresh-consumer"].status,
+        fixture.reds()["tests/release-red-refresh-consumer"].status,
         "cancelled"
     );
     assert_eq!(git(&consumer, &["rev-parse", &format!("{BRANCH}^")]), head);
@@ -580,7 +580,7 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
 
     // Off its default branch: the branch is made, its main stays, and its board is moved to the
     // schema of the pin its main locks, whatever release is newest.
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert_eq!(fixture.remote_tags(), [RELEASE]);
     let made = git(&consumer, &["rev-parse", BRANCH]);
@@ -589,24 +589,24 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         out.contains(&format!(
             "its main checkout {shown} is on the branch elsewhere, not its main, so its main was \
              not moved: the branch {BRANCH} is left for it, and once that is put right an \
-             orchestrator's `just nightly --refresh` fast-forwards it and moves its board"
+             orchestrator's `just release --refresh` fast-forwards it and moves its board"
         )),
         "{out}"
     );
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its board moved from schema 5 to 16, its store \
+            "release: refresh: consumer: its board moved from schema 5 to 16, its store \
              snapshotted first to {}\n",
             snapshot.display()
         )),
         "{out}"
     );
     assert_eq!(board.schema("tasks").unwrap(), Some(16));
-    assert!(fixture.reds()["tests/nightly-red-refresh-consumer"].red());
+    assert!(fixture.reds()["tests/release-red-refresh-consumer"].red());
 
     // On no branch at all: not moved either.
     git(&consumer, &["checkout", "-q", "--detach", "main"]);
-    let (code, out, err) = fixture.nightly_with(NOW + 30.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 30.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
@@ -622,11 +622,11 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     let manifest = consumer.join("host/Cargo.toml");
     let kept = fs::read_to_string(&manifest).unwrap();
     fs::write(&manifest, format!("{kept}# an edit of its owner's\n")).unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its pin to {RELEASE} is on the branch {BRANCH} ({}) \
+            "release: refresh: consumer: its pin to {RELEASE} is on the branch {BRANCH} ({}) \
              already\n",
             &made[..12]
         )) && out.contains(&format!(
@@ -649,7 +649,7 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
             .unwrap()
     };
     let (lock_at, manifest_at) = (written("Cargo.lock"), written("host/Cargo.toml"));
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
@@ -685,20 +685,20 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     git(&consumer, &["add", "notes.txt"]);
     git(&consumer, &["commit", "-q", "-m", "its own work"]);
     let moved_on = git(&consumer, &["rev-parse", "main"]);
-    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 180.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     let again = git(&consumer, &["rev-parse", BRANCH]);
     assert_ne!(again, made);
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its pin to {RELEASE} is on the branch {BRANCH} ({}), \
+            "release: refresh: consumer: its pin to {RELEASE} is on the branch {BRANCH} ({}), \
              made again on its tip through its own commit gate and not pushed\n",
             &again[..12]
         )) && out.contains(&format!(
-            "nightly: refresh: consumer: its main is fast-forwarded to {BRANCH} ({}) in its main \
+            "release: refresh: consumer: its main is fast-forwarded to {BRANCH} ({}) in its main \
              checkout {shown}",
             &again[..12]
-        )) && out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        )) && out.contains("release: closed tests/release-red-refresh-consumer"),
         "{out}"
     );
     assert_eq!(git(&consumer, &["rev-parse", "main"]), again);
@@ -756,7 +756,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
     ];
     let shown = consumer.display();
     let status = || {
@@ -785,7 +785,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
         "echo '# the owner' >> justfile && git add justfile\n",
     )
     .unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     let made = git(&consumer, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
     assert!(
@@ -809,7 +809,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
 
     // An edit of its owner's, not staged: kept, and the move's files put back.
     fs::write(&late, "echo '# the owner' >> justfile\n").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&refused(&made))
@@ -823,7 +823,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     // Its owner edits the lock git wrote: that file is left as it is and named, with the command
     // that puts it back, never one that throws away anything else; the other is put back.
     fs::write(&late, "echo '# the owner' >> Cargo.lock\n").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     let put_back = format!("git -C {shown} restore --staged --worktree -- Cargo.lock");
     assert!(
@@ -850,7 +850,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     let locked = consumer.join(".git/index.lock");
     fs::write(&locked, "").unwrap();
     fs::write(&late, "true\n").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 180.0, &["--refresh"], &extra);
     fs::remove_file(&locked).unwrap();
     assert_eq!(code, 1, "{out}{err}");
     assert!(
@@ -868,13 +868,13 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     // before the move, so the one that answers after is not taken as its reload's new build.
     fs::remove_file(&late).unwrap();
     let port = reloading_server(&fixture, &consumer, &release, None);
-    let (code, out, err) = fixture.nightly_with(NOW + 240.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 240.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(git(&consumer, &["rev-parse", "main"]), made);
     assert_eq!(status(), "");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: the shared server (process 4343, port {port}) is built from \
+            "release: refresh: the shared server (process 4343, port {port}) is built from \
              {shown}, whose main this refresh moved to {RELEASE}: none built from it answered \
              before the move, so whether this one is built after it cannot be told; its own \
              reload"
@@ -882,7 +882,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
         "{out}"
     );
     assert!(
-        out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        out.contains("release: closed tests/release-red-refresh-consumer"),
         "{out}"
     );
 }
@@ -909,14 +909,14 @@ fn a_branch_holding_more_than_the_move_never_reaches_main() {
     let branch = format!("refs/heads/{BRANCH}");
     let left = format!(
         "so its main was not moved to it: the branch is left as it is, for its own landing, or \
-         for `git -C {shown} branch -D {BRANCH}` and an orchestrator's `just nightly --refresh` \
+         for `git -C {shown} branch -D {BRANCH}` and an orchestrator's `just release --refresh` \
          to make it again"
     );
 
     // Its commit gate stages a file of its own into the pin's commit: the commit, read as git
     // holds it after the hook, is more than the move, and its main is not moved to it.
     fs::write(fixture.root.join("gate-stages"), "").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW, &["--check", super::CHECK], &extra);
+    let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     let hooked = git(&consumer, &["rev-parse", &branch]);
     assert!(
@@ -935,7 +935,7 @@ fn a_branch_holding_more_than_the_move_never_reaches_main() {
     git(&consumer, &["branch", "-D", BRANCH]);
     git(&consumer, &["tag", BRANCH, &head]);
     fs::write(fixture.root.join("ff-red"), "").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains("when asked first, in a ref transaction then aborted"),
@@ -953,7 +953,7 @@ fn a_branch_holding_more_than_the_move_never_reaches_main() {
     git(&consumer, &["commit", "-q", "-m", "the owner's own"]);
     git(&consumer, &["switch", "-q", "main"]);
     let owners = git(&consumer, &["rev-parse", &branch]);
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
@@ -970,7 +970,7 @@ fn a_branch_holding_more_than_the_move_never_reaches_main() {
     // Once its owner drops it, the move is made again and its main takes that very commit, not
     // the tag of its name.
     git(&consumer, &["branch", "-D", BRANCH]);
-    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 180.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     let again = git(&consumer, &["rev-parse", &branch]);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), again);
@@ -1036,11 +1036,11 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     // Its board's database is not running: nothing starts it, and nothing is moved.
     let common = consumer.join(".git");
     fs::create_dir_all(common.join("sf-tasks")).unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
+            "release: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
             &release[..12]
         )),
         "{out}"
@@ -1049,7 +1049,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
         out.contains(&format!(
             "the board's database in {} is not running (no address is recorded): nothing is read \
              or exported, and nothing is started: its schema was not read, snapshotted or moved; \
-             once it runs (any `just tasks` in {} starts it), an orchestrator's `just nightly \
+             once it runs (any `just tasks` in {} starts it), an orchestrator's `just release \
              --refresh` moves it",
             common.join("sf-tasks").display(),
             consumer.display()
@@ -1077,7 +1077,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     let mut blank: serde_json::Value = serde_json::from_str(&recorded).unwrap();
     blank["version"] = serde_json::json!("");
     fs::write(&record, blank.to_string()).unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 75.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 75.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
@@ -1094,7 +1094,7 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
 
     // Its own migrate fails: red, its schema where it was and the snapshot kept.
     fs::write(fixture.root.join("migrate-red"), "").unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 90.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 90.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     let root = consumer.display();
     assert!(
@@ -1113,15 +1113,15 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
         fs::read_to_string(&snapshot).unwrap().contains("sim/kept"),
         "the store as it was is kept"
     );
-    assert!(fixture.reds()["tests/nightly-red-refresh-consumer"].red());
+    assert!(fixture.reds()["tests/release-red-refresh-consumer"].red());
 
     // Its migrate green again: snapshotted, then moved by its own command, and the red closed.
     fs::remove_file(fixture.root.join("migrate-red")).unwrap();
-    let (code, out, err) = fixture.nightly_with(NOW + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its board moved from schema 5 to 16, its store \
+            "release: refresh: consumer: its board moved from schema 5 to 16, its store \
              snapshotted first to {}\n",
             snapshot.display()
         )),
@@ -1129,14 +1129,14 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     );
     assert!(
         out.contains(&format!(
-            "nightly: refresh: the shared server (process 4242, port {port}) is built from {root}, \
+            "release: refresh: the shared server (process 4242, port {port}) is built from {root}, \
              whose main took {RELEASE} before this refresh, as its own reload \
              (apps/symphony-server/src/reload.rs) follows that checkout's Cargo.lock\n"
         )),
         "{out}"
     );
     assert!(
-        out.contains("nightly: closed tests/nightly-red-refresh-consumer"),
+        out.contains("release: closed tests/release-red-refresh-consumer"),
         "{out}"
     );
     let kept = fs::read_to_string(&snapshot).unwrap();
@@ -1155,11 +1155,11 @@ fn a_project_whose_main_takes_the_release_has_its_board_moved_after_a_snapshot()
     );
 
     // At its pin's schema, a later refresh moves nothing.
-    let (code, out, err) = fixture.nightly_with(NOW + 180.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 180.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(
-            "nightly: refresh: consumer: its board is at schema 16, its pin's: nothing to move"
+            "release: refresh: consumer: its board is at schema 16, its pin's: nothing to move"
         ),
         "{out}"
     );
@@ -1185,16 +1185,16 @@ fn a_project_pinned_past_the_release_takes_it_already_and_nothing_is_made() {
     let home = cargo_home(&fixture);
 
     let (code, out, err) =
-        fixture.nightly_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
+            "release: refresh: consumer: its main takes {RELEASE} already (its lock pins {})\n",
             &ahead[..12]
         )),
         "{out}"
     );
-    assert!(out.contains("nightly: refresh-consumer green ("), "{out}");
+    assert!(out.contains("release: refresh-consumer green ("), "{out}");
     // Never moved back: no branch, no commit gate, its main and its files as they were.
     assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
     assert_eq!(gated(&fixture).len(), gates);
@@ -1225,7 +1225,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
 
     // The fix itself is released, off main's first-parent line; then the consumer is registered.
     register(&fixture, &[]);
-    fixture.run(NOW, &["--check", super::CHECK, "--release", &fix], 0);
+    fixture.run(NOW, &["--check", super::CHECK, "--commit", &fix], 0);
     assert_eq!(fixture.tagged(RELEASE), fix);
     register(&fixture, &[("consumer", &consumer)]);
     let (board, running) = board_at(&consumer, 5);
@@ -1238,7 +1238,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     let extra = [
         ("CARGO_HOME", home.as_str()),
         ("SF_SURREAL", surreal.as_str()),
-        ("SYMPHONY_NIGHTLY_RELOAD_SECONDS", "1"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "1"),
     ];
     let shown = consumer.display();
     let (m, f) = (&meanwhile[..12], &fix[..12]);
@@ -1250,22 +1250,22 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     );
 
     // Neither ahead nor behind: left, and said with both commits, green.
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains(&format!("nightly: refresh: {left}\n")),
+        out.contains(&format!("release: refresh: {left}\n")),
         "{left}\n{out}"
     );
     assert!(
         out.contains(&format!(
-            "nightly: refresh: the shared server (process 4242, port {port}) is built from \
+            "release: refresh: the shared server (process 4242, port {port}) is built from \
              {shown}: it does not take {RELEASE}, as consumer's main pins the Symphony beside it, \
              which this refresh left as it is (its step says why)\n"
         )),
         "{out}"
     );
-    assert!(out.contains("nightly: refresh-consumer green ("), "{out}");
-    assert!(!out.contains("nightly: filed"), "{out}");
+    assert!(out.contains("release: refresh-consumer green ("), "{out}");
+    assert!(!out.contains("release: filed"), "{out}");
     assert!(fixture.reds().is_empty());
     // Its files: no branch, no worktree, no commit gate run, its main and checkout as they were.
     assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
@@ -1273,7 +1273,7 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
         worktrees(&consumer),
         [consumer.to_string_lossy().into_owned()]
     );
-    assert!(!fixture.root.join("wt/nightly-refresh/consumer").exists());
+    assert!(!fixture.root.join("wt/release-refresh/consumer").exists());
     assert_eq!(gated(&fixture).len(), gates);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     assert_eq!(pinned(&consumer, "main", "fixture-core"), meanwhile);
@@ -1308,12 +1308,12 @@ fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_des
     let next = "release-2026-11-13";
     assert_eq!(fixture.tagged(next), merged);
     register(&fixture, &[("consumer", &consumer)]);
-    let (code, out, err) = fixture.nightly_with(NOW + DAY + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + DAY + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     let made = git(&consumer, &["rev-parse", &format!("symphony/{next}")]);
     assert!(
         out.contains(&format!(
-            "nightly: refresh: consumer: its main is fast-forwarded to symphony/{next} ({}) in its \
+            "release: refresh: consumer: its main is fast-forwarded to symphony/{next} ({}) in its \
              main checkout {shown}",
             &made[..12]
         )),
@@ -1361,7 +1361,7 @@ fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
     );
 
     // A pin whose SurrealDB cannot be read fails closed.
-    let (code, out, err) = fixture.nightly_with(NOW + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         out.contains(&format!(
@@ -1384,7 +1384,7 @@ fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
     fixture.night(NOW + DAY, 0);
     assert_eq!(fixture.tagged("release-2026-11-13"), newer);
     register(&fixture, &[("consumer", &consumer)]);
-    let (code, out, err) = fixture.nightly_with(NOW + DAY + 60.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + DAY + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert_eq!(
         git(&consumer, &["rev-parse", "main"]),

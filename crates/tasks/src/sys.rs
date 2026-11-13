@@ -16,7 +16,7 @@
 //! marks of how its starter was asked for ([`MARKS`]): it is the project's command or the board's
 //! own work, never the one command an agent handed a path to, or the land the `land` recipe asked
 //! for. Clippy refuses a child made anywhere else in the crate, however its path is spelled,
-//! imported or gated (the crate's clippy.toml, `disallowed-methods`; tried by the nightly's
+//! imported or gated (the crate's clippy.toml, `disallowed-methods`; tried by the release run's
 //! `tests/child_guard`).
 
 use std::collections::BTreeMap;

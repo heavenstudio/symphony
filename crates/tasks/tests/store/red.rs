@@ -17,7 +17,7 @@ fn unfiled(actor: &str) -> String {
 /// What a mark on `slug`, of no red series, is told, whoever marks it.
 fn unseries(slug: &str) -> String {
     format!(
-        "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, tests/main-red-* and tests/nightly-red-*, never on one named under it"
+        "{slug} is no red series' own task: a red is marked only on a task of the series reds are filed in, tests/main-red-*, tests/release-red-* and tests/nightly-red-*, never on one named under it"
     )
 }
 

@@ -1,4 +1,4 @@
-//! A night on a main whose generated files the regenerator a land starts makes after it: it waits
+//! A run on a main whose generated files the regenerator a land starts makes after it: it waits
 //! while one makes them, gives one a land has just started its time to take main, follows main
 //! when what it made lands, releases nothing of a main whose committed files are behind its
 //! sources, and files nothing for it, the regenerator's own red being the task; `--status` says
@@ -65,7 +65,7 @@ fn ended() -> i64 {
     i64::from(child.id())
 }
 
-/// A night with the stand-in check, `extra` in its environment, started in the background, its
+/// A run with the stand-in check, `extra` in its environment, started in the background, its
 /// stdout to `said`.
 fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) -> Child {
     fixture
@@ -77,7 +77,7 @@ fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) ->
         .unwrap()
 }
 
-/// Wait until the night started with its stdout to `said` has said `line`, still running.
+/// Wait until the run started with its stdout to `said` has said `line`, still running.
 fn until_said(night: &mut Child, said: &std::path::Path, line: &str) {
     let until = Instant::now() + Duration::from_secs(60);
     while !fs::read_to_string(said).unwrap_or_default().contains(line) {
@@ -102,7 +102,7 @@ fn ended_with(night: &mut Child) -> Option<i32> {
         if let Some(status) = night.try_wait().unwrap() {
             break status.code();
         }
-        assert!(Instant::now() < until, "the night never ended");
+        assert!(Instant::now() < until, "the run never ended");
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -113,11 +113,11 @@ fn a_main_whose_generated_files_are_behind_it_is_released_nothing_and_filed_noth
     let tip = generating(&fixture);
     // What the regenerator wrote of the candidate refuses it at once.
     regenerator(&fixture, "red", &tip, ended());
-    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}\n{err}");
     assert!(
         err.contains(&format!(
-            "symphony nightly: the client: red on main at {} since ",
+            "symphony release: the client: red on main at {} since ",
             &tip[..7]
         )) && err.contains(
             ": the generator the client failed (tests/main-red-regenerate); main holds none found \
@@ -151,7 +151,7 @@ fn a_night_waits_while_the_regenerator_makes_mains_files_then_checks_and_release
         &mut night,
         &said,
         &format!(
-            "nightly: waiting for the regenerator: the client: making them of main at {} since ",
+            "release: waiting for the regenerator: the client: making them of main at {} since ",
             &tip[..7]
         ),
     );
@@ -166,13 +166,13 @@ fn a_night_waits_while_the_regenerator_makes_mains_files_then_checks_and_release
     assert_eq!(code, Some(0), "{out}");
     assert!(
         out.contains(&format!(
-            "nightly: the client: current on main at {}",
+            "release: the client: current on main at {}",
             &tip[..7]
         )),
         "{out}"
     );
     assert!(
-        out.contains("nightly: green; tagged release-2026-11-12, pushed to origin"),
+        out.contains("release: green; tagged release-2026-11-12, pushed to origin"),
         "{out}"
     );
     assert_eq!(fixture.tagged("release-2026-11-12"), tip);
@@ -183,7 +183,7 @@ fn a_night_on_a_main_with_no_generators_or_another_tip_waits_for_nothing() {
     let fixture = Fixture::new();
     let status = fixture.run(NOW, &["--status"], 0);
     assert!(!status.contains("regenerator"), "{status}");
-    // Behind, but on a commit of this checkout's that the remote's main is not: the night checks
+    // Behind, but on a commit of this checkout's that the remote's main is not: the run checks
     // the remote's, whose own check says.
     let tip = generating(&fixture);
     regenerator(&fixture, "red", &tip, 1);
@@ -191,7 +191,7 @@ fn a_night_on_a_main_with_no_generators_or_another_tip_waits_for_nothing() {
     fixture.commit("a commit of this checkout alone");
     let out = fixture.night(NOW, 0);
     assert!(
-        out.contains("nightly: green; tagged release-2026-11-12"),
+        out.contains("release: green; tagged release-2026-11-12"),
         "{out}"
     );
     assert_eq!(fixture.tagged("release-2026-11-12"), tip);
@@ -212,7 +212,7 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
         &mut night,
         &said,
         &format!(
-            "nightly: waiting for the regenerator a land starts to take it: the client: red on \
+            "release: waiting for the regenerator a land starts to take it: the client: red on \
              main at {} since ",
             &first[..7]
         ),
@@ -235,7 +235,7 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
     assert_eq!(code, Some(0), "{out}");
     assert!(
         out.contains(&format!(
-            "nightly: the client: current on main at {}",
+            "release: the client: current on main at {}",
             &tip[..7]
         )),
         "{out}"
@@ -247,15 +247,15 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
 fn a_night_no_regenerator_takes_main_for_is_refused_once_its_time_is_up() {
     let fixture = Fixture::new();
     let tip = generating(&fixture);
-    let (code, out, err) = fixture.nightly_with(
+    let (code, out, err) = fixture.release_with(
         NOW,
         &["--check", CHECK],
-        &[("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS", "1")],
+        &[("SYMPHONY_RELEASE_REGENERATOR_SECONDS", "1")],
     );
     assert_eq!(code, 1, "{out}\n{err}");
     assert!(
         out.contains(&format!(
-            "nightly: waiting for the regenerator a land starts to take it: the client: never \
+            "release: waiting for the regenerator a land starts to take it: the client: never \
              regenerated here; the next land starts the regenerator, which makes them of main at \
              {}",
             &tip[..7]
@@ -264,7 +264,7 @@ fn a_night_no_regenerator_takes_main_for_is_refused_once_its_time_is_up() {
     );
     assert!(
         err.contains(&format!(
-            "symphony nightly: the client: never regenerated here; the next land starts the \
+            "symphony release: the client: never regenerated here; the next land starts the \
              regenerator, which makes them of main at {}: no release of a main whose generated \
              files are behind its sources",
             &tip[..7]
@@ -286,7 +286,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     regenerator(&fixture, "building", &tip, pid);
     let said = fixture.root.join("night.out");
     let mut night = started(&fixture, &said, &[]);
-    until_said(&mut night, &said, "nightly: waiting for the regenerator: ");
+    until_said(&mut night, &said, "release: waiting for the regenerator: ");
     // The regenerator lands what it made of the tip, pushes it, then says so.
     let landed = fixture.land(
         "gen/index",
@@ -301,7 +301,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     assert_eq!(code, Some(0), "{out}");
     assert!(
         out.contains(&format!(
-            "nightly: origin/main moved on to {} while the night waited for the regenerator: \
+            "release: origin/main moved on to {} while the run waited for the regenerator: \
              that is what it checks",
             &landed[..12]
         )),
@@ -309,7 +309,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     );
     assert!(
         out.contains(&format!(
-            "nightly: the client: current on main at {}",
+            "release: the client: current on main at {}",
             &landed[..7]
         )),
         "{out}"
@@ -331,14 +331,14 @@ fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
         .command(
             NOW,
             &["--check", CHECK],
-            &[("SYMPHONY_NIGHTLY_REGENERATOR_SECONDS", "2")],
+            &[("SYMPHONY_RELEASE_REGENERATOR_SECONDS", "2")],
         )
         .stdin(Stdio::null())
         .stdout(fs::File::create(&said).unwrap())
         .stderr(fs::File::create(&heard).unwrap())
         .spawn()
         .unwrap();
-    until_said(&mut night, &said, "nightly: waiting for the regenerator: ");
+    until_said(&mut night, &said, "release: waiting for the regenerator: ");
     fixture.write("local.txt", "never pushed");
     let local = fixture.commit("a commit of this checkout alone");
     let code = ended_with(&mut night);
@@ -349,7 +349,7 @@ fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
     assert_eq!(code, Some(1), "{out}\n{err}");
     assert!(
         err.contains(&format!(
-            "symphony nightly: main moved on to {} here, but origin/main is still at {}, whose \
+            "symphony release: main moved on to {} here, but origin/main is still at {}, whose \
              generated files the regenerator was last seen not to have made: no release of a \
              main whose generated files are behind its sources",
             &local[..12],

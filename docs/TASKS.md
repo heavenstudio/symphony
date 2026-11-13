@@ -769,8 +769,9 @@ inbox`, by a stamp. The command that finished the work never waits on it and say
 it; each sweep runs from the main checkout, by the main checkout's build of `tasks` (never
 the caller's, whose sweep may not have landed; with none built it says so and sweeps nothing),
 and appends what it did to `sf-tasks/sweep.log` in the git common dir. Status writes through
-`tasks api` (for example, a nightly or reap caller writing status) do not start this CLI trigger;
-the next hourly sweep covers them. The Symphony's explicit finish action starts its own sweep.
+`tasks api` (for example, a release run or reap caller writing status) do not start this CLI
+trigger; the next hourly sweep covers them. The Symphony's explicit finish action starts its own
+sweep.
 A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
 it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
 goes with it once merged, if no other worktree holds it and it still points where it did. Two
@@ -793,10 +794,10 @@ session is bound to the worktree (by its worktree, or as the agent the worktree'
 lock give), none of those sessions is live or stale, and every task tied to the worktree, at
 least one, is done or cancelled. A live agent's worktree is never touched: its session, live or
 stale, keeps it, and so does a lock the board cannot answer for (an agent it knows nothing of, a
-land that runs, the nightly's checkout, any other reason, a start it cannot read). Every
-worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the nightly make
-included: a land's goes by the same rule once its process is gone; the nightly's checkout,
-which it resets and builds on each night, stays. A worktree with tracked edits or commits not
+land that runs, the release run's checkout, any other reason, a start it cannot read). Every
+worktree git lists is the sweep's, the `../symphony-wt/*` trees the land and the release run make
+included: a land's goes by the same rule once its process is gone; the release run's checkout,
+which it resets and builds on each day, stays. A worktree with tracked edits or commits not
 in main is never removed, whatever its task's stage: an orchestrator decides. What git ignores
 in a finished worktree's artifacts folder (the project's `[project] artifacts`, `artifacts/`
 when it names none: the pictures its thread names, a test's leftovers), less its build output, is
@@ -869,8 +870,8 @@ in-process agent's worktree is tied to its task by its session), and nothing ran
 hour: no agent bound to it beat or made a tool call, the board's recorder recorded no build or
 test there (a reviewer may build in its executor's worktree), nothing touched its git files or
 its top folder, and no process works inside it. The worktree a land left when its process
-ended loses it after the same hour, and the nightly's checkout once nothing touched it for 7
-days, as long as the nightly itself keeps one. Any other worktree tied to no task keeps its
+ended loses it after the same hour, and the release run's checkout once nothing touched it for 7
+days, as long as the release run itself keeps one. Any other worktree tied to no task keeps its
 build: the owner's, or one made by hand. A task in concept, design, ready, in progress or
 blocked keeps it, as do a land that runs and a lock the sweep does not know. Right before it
 removes, the sweep reads the worktree listing, the board and the recorder's records again and
@@ -1493,8 +1494,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
   "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/nightly.rs", "/crates/symphony/src/nightly/checks.rs",
-  "/crates/symphony/src/nightly/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony/src/release.rs", "/crates/symphony/src/release/checks.rs",
+  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
@@ -1517,8 +1518,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   orchestrator's approve for a fresh reviewer's. What it does not see is product: a module
   declared inside an inline module is looked for beside its file, and a test-only file named
   only by a macro or a build script, or a lint set in a file no entry names, is product. The
-  nightly files every red so (RULES.md `workflow/nightly-reds-first`,
-  [RELEASES](RELEASES.md#the-nightly)), but a stop the owner clears, for which nothing
+  release run files every red so (RULES.md `workflow/release-reds-first`,
+  [RELEASES](RELEASES.md#the-release-run)), but a stop the owner clears, for which nothing
   lands; the regenerator files its reds (`tests/main-red-regenerate`,
   `tests/main-red-check`) with no fast-fix mark, as it does on every project's board.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
@@ -1547,7 +1548,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
   its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
   the docs audit, is evidence at a document change's tip, run on main's tip by the
-  regenerator a land starts ([below](#the-regenerator)), and part of the nightly's full
+  regenerator a land starts ([below](#the-regenerator)), and part of the release run's full
   verification ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
 - **Generated paths.** A generator's `outputs` are the paths it owns: the path itself
   and, for a folder, what is inside it (`gen/` and `gen` own `gen/a`, never `gen-x/a` or
@@ -1607,7 +1608,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   the land still stands.
   A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
   `TASKS_ON_LAND=off` starts none anywhere. The Symphony's own repository names its
-  release cadence there, whose night waits for that regenerator
+  release cadence there, whose run waits for that regenerator
   ([RELEASES](RELEASES.md#the-cadence)).
 
 The merge of the task's tip is one step of the land, the one a hosted pull request's
@@ -1771,7 +1772,7 @@ does.
   (one past its time or one that could not run neither passed nor failed). A later round
   it passes on closes it, and a later red files `tests/main-red-check-2`, and on. So a red
   a land let through is on the board within a round of that land, not first found by a
-  night, while whatever runs that check on main refuses (the Symphony's commit of the
+  release run, while whatever runs that check on main refuses (the Symphony's commit of the
   owner's verdicts). Where the land runs the check, every merge passed it, and the
   regenerator runs none.
 
@@ -1793,7 +1794,7 @@ A test's board (`TASKS_SERVER`) starts none unless `TASKS_REGENERATE=on`, and `o
 starts none anywhere.
 
 Between a land and the regenerator's commit, main's committed client is older than its
-sources, and a server built from main then embeds the older client. The nightly waits,
+sources, and a server built from main then embeds the older client. The release run waits,
 within its time, while the regenerator makes main's outputs, and releases nothing of a
 main still behind, filing nothing for it: the regenerator's red is the task then
 ([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
@@ -1895,7 +1896,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
 - Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's (a review) did not ([Tasks and roles](#tasks-and-roles)).
-- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and runs nightly ([CHECKS](CHECKS.md)).
+- Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and is the release run's ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
@@ -2036,9 +2037,10 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   create naming `red` from any other session is refused, and `set_field`
   refuses the board's own `_board` fields. The mark goes only on a task of a
   series reds are filed in (`red::SERIES`: `tests/main-red-*`, a red verify
-  of main, and `tests/nightly-red-*`, a red night), whoever marks it, so no
-  feature takes it; never on a task named under one (`red::filed`: no `/`
-  past the series' prefix), which the nightly's reading of its reds and
+  of main, `tests/release-red-*`, a red release run, and `tests/nightly-red-*`,
+  its name before the rename and a consumer's nightly's), whoever marks it, so
+  no feature takes it; never on a task named under one (`red::filed`: no `/`
+  past the series' prefix), which the release run's reading of its reds and
   land's of the standing reds take for ordinary work too. `mark_red` marks an open red its
   filer filed before it marked reds, and makes it p0, once: what it judges is
   read in the transaction that writes, so two at once post one line. While the
@@ -2048,12 +2050,12 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   done or cancelled exempts nothing: the work under it counts again, new
   work there included. Its close is never refused, though it raises its
   owners' counts: whether or not the closing store caps starts (the
-  nightly's does not), it holds their slot counters and the red's own,
+  release run's does not), it holds their slot counters and the red's own,
   `counter:['red', SLUG]`, which every start of work under the open red holds
   too, so a start decided on a board read before the close is decided again,
   counted. A close decides what it holds on the task as it read it, and its
   write goes on only from that version, so a red marked between the two
-  (an earlier red the nightly or main's verify marks) is read and decided
+  (an earlier red the release run or main's verify marks) is read and decided
   again, and a task it read as not on the board is refused there, never
   closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
   the mark of an open red that stays open as ordinary work (main's green

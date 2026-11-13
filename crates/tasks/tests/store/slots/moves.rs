@@ -432,7 +432,7 @@ fn closes() -> [(&'static str, Close); 4] {
 }
 
 /// A store closing [`RED`]: one capping starts as the cap's board does, or one capping none, as the
-/// nightly's and any board without a cap: a red's close holds its counters on either.
+/// release run's and any board without a cap: a red's close holds its counters on either.
 type Writer = fn(&Fixture) -> Store;
 
 /// One way to close [`RED`]: a close ([`closes`]) on a closing store ([`Writer`]), and how it is

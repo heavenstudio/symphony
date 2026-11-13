@@ -74,7 +74,7 @@ tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]
 ```
 
 It is the board's binary that runs it (`.target/bin/tasks run`, as `tools/record.sh` does for
-the recipes and the nightly, and the board's own `tasks` for a review callback), never
+the recipes and the release run, and the board's own `tasks` for a review callback), never
 `just tasks run`: the `tasks` recipe `symphony init`
 installs, and this repository's own, refuse `run` as `tasks` reads it, first after any
 `--database NAME`, and run nothing. An agent runs `just tasks` unasked under the allow rules,

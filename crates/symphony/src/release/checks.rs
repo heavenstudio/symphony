@@ -1,6 +1,6 @@
-//! A check of the nightly: one command run in the candidate's checkout, its output in a log of its
+//! A check of the release: one command run in the candidate's checkout, its output in a log of its
 //! own, recorded through the candidate's `tools/record.sh` as one test operation of the board's
-//! recorder (`tasks run`, docs/MACHINE_WORK.md), labelled `nightly NAME`. The steps inside it are
+//! recorder (`tasks run`, docs/MACHINE_WORK.md), labelled `release NAME`. The steps inside it are
 //! not recorded again. A candidate without the script runs it as it is.
 //!
 //! A check runs in a process group of its own and inherits no descriptor of the run's: not its lock,
@@ -224,7 +224,7 @@ fn moved(cwd: Option<&Path>, argv: &[String]) -> Vec<String> {
                 "sh".to_string(),
                 "-c".into(),
                 "cd \"$1\" && shift && exec \"$@\"".into(),
-                "nightly".into(),
+                "release".into(),
                 cwd.to_string_lossy().into_owned(),
             ];
             line.extend(argv.iter().cloned());
@@ -237,7 +237,7 @@ fn moved(cwd: Option<&Path>, argv: &[String]) -> Vec<String> {
 pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) -> Ran {
     let line = recorded(
         checkout,
-        &format!("nightly {}", step.name),
+        &format!("release {}", step.name),
         &moved(step.cwd.as_deref(), &step.argv),
     );
     let opened = File::create(log).and_then(|mut file| {
@@ -537,7 +537,7 @@ mod tests {
     fn a_check_runs_without_the_marks_of_how_the_run_was_asked_for() {
         // The marks are this test's own process's, set when it is started: set here, they would
         // reach every other test's children too.
-        const CASE: &str = "SF_NIGHTLY_MARKS_CASE";
+        const CASE: &str = "SF_RELEASE_MARKS_CASE";
         if std::env::var_os(CASE).is_some() {
             let tree = Tree::new();
             let log = tree.path("verify.log");
@@ -545,7 +545,7 @@ mod tests {
                 &Step::shell(
                     "verify",
                     "echo \"marks ${SYMPHONY_UNASKED-unset} ${SYMPHONY_LAND-unset} \
-                     ${SF_NIGHTLY_KEPT-unset}\"",
+                     ${SF_RELEASE_KEPT-unset}\"",
                 ),
                 &tree.root,
                 &log,
@@ -559,11 +559,11 @@ mod tests {
             symphony_board::sys::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "nightly::checks::tests::a_check_runs_without_the_marks_of_how_the_run_was_asked_for",
+                    "release::checks::tests::a_check_runs_without_the_marks_of_how_the_run_was_asked_for",
                 ])
                 .env(CASE, "1")
                 .envs(symphony_board::sys::MARKS.map(|name| (name, "1")))
-                .env("SF_NIGHTLY_KEPT", "kept"),
+                .env("SF_RELEASE_KEPT", "kept"),
         )
         .unwrap();
         let said = String::from_utf8_lossy(&done.stdout);
@@ -600,7 +600,7 @@ mod tests {
         assert!(ran.green(), "{ran:?}");
         assert_eq!(
             fs::read_to_string(&recorded).unwrap(),
-            format!("test|nightly verify|{}\n", root.display())
+            format!("test|release verify|{}\n", root.display())
         );
         assert!(
             fs::read_to_string(tree.path("verify.log"))
@@ -633,7 +633,7 @@ mod tests {
         assert!(ran.green(), "{ran:?}");
         assert_eq!(
             fs::read_to_string(&recorded).unwrap(),
-            format!("test|nightly conciliate-x|{}\n", root.display()),
+            format!("test|release conciliate-x|{}\n", root.display()),
             "the recorder runs in the checkout"
         );
         let log = fs::read_to_string(tree.path("x.log")).unwrap();

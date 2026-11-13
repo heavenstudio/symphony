@@ -30,11 +30,11 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
 
     let out = fixture.run(NOW, &["--check", VERIFY], 1);
     for said in [
-        "nightly: verify red (exit 1, ",
-        "nightly:   verify/lint green (exit 0, 1 s); log ",
-        "nightly:   verify/size-check red (exit 1, 1 s); log ",
-        "nightly: red: verify/size-check, verify/tests; no release",
-        "nightly: filed tests/nightly-red-verify-size-check, tests/nightly-red-verify-tests\n",
+        "release: verify red (exit 1, ",
+        "release:   verify/lint green (exit 0, 1 s); log ",
+        "release:   verify/size-check red (exit 1, 1 s); log ",
+        "release: red: verify/size-check, verify/tests; no release",
+        "release: filed tests/release-red-verify-size-check, tests/release-red-verify-tests\n",
     ] {
         assert!(out.contains(said), "{said:?} in:\n{out}");
     }
@@ -42,8 +42,8 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
         [
-            "tests/nightly-red-verify-size-check",
-            "tests/nightly-red-verify-tests"
+            "tests/release-red-verify-size-check",
+            "tests/release-red-verify-tests"
         ],
         "one task a red step, and none for the check its steps hold"
     );
@@ -57,15 +57,15 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
             && log.ends_with("/verify.steps/size-check.log"),
         "the step's log is kept with the run's: {log}"
     );
-    let red = &reds["tests/nightly-red-verify-size-check"];
+    let red = &reds["tests/release-red-verify-size-check"];
     assert!(red.red() && red.priority == 0, "{red:?}");
     assert_eq!(
         red.title,
-        format!("Nightly red: verify/size-check on {}", &planted[..12])
+        format!("Release red: verify/size-check on {}", &planted[..12])
     );
     for said in [
-        "The Symphony nightly is red in `verify/size-check` on main at ".to_string(),
-        "Command: `just size-check`, in the nightly's clean checkout of that commit: exit 1."
+        "The Symphony release run is red in `verify/size-check` on main at ".to_string(),
+        "Command: `just size-check`, in the release run's clean checkout of that commit: exit 1."
             .into(),
         format!("Log: {log}"),
         "```\nsize-check said it is red\n```".into(),
@@ -74,7 +74,7 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
         assert!(red.body.contains(&said), "{said:?} in:\n{}", red.body);
     }
     assert!(
-        reds["tests/nightly-red-verify-tests"]
+        reds["tests/release-red-verify-tests"]
             .body
             .contains("```\ntests said it is red\n```")
     );
@@ -83,15 +83,15 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
     fixture.land("red-size-check", None, "within the budget");
     let out = fixture.run(NOW + 3600.0, &["--check", VERIFY], 1);
     assert!(
-        out.contains("nightly: closed tests/nightly-red-verify-size-check"),
+        out.contains("release: closed tests/release-red-verify-size-check"),
         "{out}"
     );
     assert!(
-        out.contains("nightly: updated tests/nightly-red-verify-tests"),
+        out.contains("release: updated tests/release-red-verify-tests"),
         "{out}"
     );
     assert_eq!(
-        fixture.reds()["tests/nightly-red-verify-size-check"].status,
+        fixture.reds()["tests/release-red-verify-size-check"].status,
         "cancelled"
     );
 
@@ -99,11 +99,11 @@ fn each_red_step_is_its_own_task_with_its_own_log_and_closes_when_it_is_green() 
     fixture.land("red-tests", None, "the test fixed");
     let out = fixture.run(NOW + 7200.0, &["--check", VERIFY], 0);
     assert!(
-        out.contains("nightly: closed tests/nightly-red-verify-tests"),
+        out.contains("release: closed tests/release-red-verify-tests"),
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
-    assert!(!fixture.reds().contains_key("tests/nightly-red-verify"));
+    assert!(!fixture.reds().contains_key("tests/release-red-verify"));
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn a_red_of_the_check_filed_before_it_listed_steps_hears_of_them_and_closes_when
     fixture.night(NOW, 1);
     assert_eq!(
         fixture.reds().keys().collect::<Vec<_>>(),
-        ["tests/nightly-red-verify"]
+        ["tests/release-red-verify"]
     );
 
     // The check now lists its steps, and its tests are red.
@@ -121,14 +121,14 @@ fn a_red_of_the_check_filed_before_it_listed_steps_hears_of_them_and_closes_when
     let red = fixture.land("red-tests", Some("red"), "a test red");
     let out = fixture.run(NOW + 3600.0, &["--check", VERIFY], 1);
     assert!(
-        out.contains("nightly: filed tests/nightly-red-verify-tests"),
+        out.contains("release: filed tests/release-red-verify-tests"),
         "{out}"
     );
     assert!(
-        out.contains("nightly: updated tests/nightly-red-verify"),
+        out.contains("release: updated tests/release-red-verify"),
         "{out}"
     );
-    let thread = fixture.thread("tests/nightly-red-verify");
+    let thread = fixture.thread("tests/release-red-verify");
     let run = fixture.runs().last().unwrap()["id"]
         .as_str()
         .unwrap()
@@ -137,29 +137,29 @@ fn a_red_of_the_check_filed_before_it_listed_steps_hears_of_them_and_closes_when
         thread.last().unwrap(),
         &format!(
             "Red on {} (run {run}, 2026-11-12 11:00) in its steps alone, each a task of its own: \
-             `verify/tests` (exit 1) in tests/nightly-red-verify-tests. Whoever holds this task \
+             `verify/tests` (exit 1) in tests/release-red-verify-tests. Whoever holds this task \
              reads those first, as one can be this same failure. This task closes once `verify` \
              is green.",
             &red[..12]
         )
     );
-    assert_eq!(fixture.reds()["tests/nightly-red-verify"].status, "ready");
+    assert_eq!(fixture.reds()["tests/release-red-verify"].status, "ready");
     // The step's red names the check's, as the two can be one failure.
     assert!(
-        fixture.reds()["tests/nightly-red-verify-tests"]
+        fixture.reds()["tests/release-red-verify-tests"]
             .body
             .contains(
-                "The open red of `verify` itself, tests/nightly-red-verify, was filed before this \
+                "The open red of `verify` itself, tests/release-red-verify, was filed before this \
                  one"
             ),
         "{}",
-        fixture.reds()["tests/nightly-red-verify-tests"].body
+        fixture.reds()["tests/release-red-verify-tests"].body
     );
 
     fixture.land("red-tests", None, "the test fixed");
     let out = fixture.run(NOW + 7200.0, &["--check", VERIFY], 0);
     assert!(
-        out.contains("nightly: closed tests/nightly-red-verify-tests, tests/nightly-red-verify\n"),
+        out.contains("release: closed tests/release-red-verify-tests, tests/release-red-verify\n"),
         "{out}"
     );
 }
