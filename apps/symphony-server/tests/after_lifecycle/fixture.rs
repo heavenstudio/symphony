@@ -48,6 +48,11 @@ pub const PATIENCE: Duration = Duration::from_secs(30);
 
 const SCRATCH_PREFIX: &str = "after-lifecycle-";
 
+/// The folder every scratch folder of this target is made in, as the fixture names it.
+fn scratch_parent() -> PathBuf {
+    Path::new(FIXTURE_ROOT).join("../../artifacts/after_lifecycle")
+}
+
 /// Validate the freshly linked executable once before measuring server starts. The OS's first
 /// image launch is setup, waited for to its end under no case deadline (`setup_success`); every
 /// server still has the unchanged patience for its actual startup.
@@ -115,7 +120,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         static REAP: Once = Once::new();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = Path::new(FIXTURE_ROOT).join("../../artifacts/after_lifecycle");
+        let root = scratch_parent();
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));

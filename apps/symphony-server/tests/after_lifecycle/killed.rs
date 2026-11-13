@@ -8,7 +8,10 @@
 //! is one that has just started, so a signal meant for the pid's old process ends it at or right
 //! after its exec, before it says anything: only this journal says this process sent it. A process
 //! the fixture signals by pid and does not wait for itself is an [`Owned`], signalled only while it
-//! is still the process that was taken.
+//! is still the process that was taken, as far as a read of its start just before the signal says:
+//! between that read and `kill(2)` the process may end, be reaped and its pid be given again, a
+//! window of microseconds that macOS, with no pidfd to signal through, cannot close (Linux's
+//! `pidfd_send_signal` would). Linux dates a start in clock ticks (10 ms), macOS in microseconds.
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -28,7 +31,8 @@ const LINE_BYTES: usize = 400;
 const LOG_TAIL: u64 = 1024 * 1024;
 /// How deep below a scratch folder its logs are looked for.
 const LOG_DEPTH: usize = 4;
-/// How long each of the system's commands may take. They run at once, so this bounds a capture.
+/// How long each of the system's commands may take. Their three readers run at once, the memory
+/// one running `sysctl` and then `vm_stat`, so a capture takes at most twice this.
 #[cfg(target_os = "macos")]
 const COMMAND_PATIENCE: std::time::Duration = std::time::Duration::from_secs(30);
 /// The system's log is read from this long before the child's spawn to this long after the capture.
@@ -161,7 +165,8 @@ impl Owned {
     }
 
     /// Send `signal`, journaled with `why`, while its pid still names the process taken; otherwise
-    /// send nothing, and journal that.
+    /// send nothing, and journal that. The pid is read just before `kill(2)`, not with it (the
+    /// window the module's comment names).
     pub fn signal(&self, signal: i32, why: &str) {
         if self.alive() {
             send(self.pid, signal, why);
@@ -223,7 +228,7 @@ pub fn capture(dead: &Dead) -> String {
 
 /// The folder the fixture's scratch folders are made in, and the start of this process's names.
 fn scratch_root() -> (PathBuf, String) {
-    let root = Path::new(super::FIXTURE_ROOT).join("../../artifacts/after_lifecycle");
+    let root = super::scratch_parent();
     (
         root.canonicalize().unwrap_or(root),
         format!("{}{}-", super::SCRATCH_PREFIX, std::process::id()),
@@ -232,7 +237,8 @@ fn scratch_root() -> (PathBuf, String) {
 
 /// The system's record of `dead`'s pid at `at`: its log over the child's life, memory, swap and
 /// load, and this test's processes alive (those `ours` names: descendants of this process, and
-/// processes naming its scratch folders), each command run at once under its own patience.
+/// processes naming its scratch folders), each reader run at once, each command under its own
+/// patience.
 #[cfg(target_os = "macos")]
 fn system(text: &mut String, dead: &Dead, at: SystemTime, ours_named: &Path) {
     let pid = dead.pid;
