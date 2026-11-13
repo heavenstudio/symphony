@@ -802,9 +802,13 @@ disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
-Symphony's process (`just symphony`) runs every five minutes. A lock in `symphony/tasks/`,
-beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
-hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
+Symphony's process (`just symphony`) runs every five minutes for each project it serves that
+has a board, each on a schedule of its own in its own checkout, started as the project is
+registered and stopped as it is removed, so one project's failing or hung sweep holds up no
+other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
+reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
+app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
@@ -1798,8 +1802,8 @@ none (`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs
   gives it, as the board (`Store::give_if_due`): each look of an orchestrator's `just tasks wait`
   and of its `attach` monitor, `just tasks pull`, each pass of the detached dispatcher a
   command-line write starts while a channel is registered, the machine server's clock for every
-  project it serves, and the idle sweep (`just tasks reap`, from the server's maintenance worker,
-  for the project the server was started for). So a lost or left holder's task (`B was given
+  project it serves, and the idle sweep (`just tasks reap`, from the server's maintenance of each
+  project it serves that has a board). So a lost or left holder's task (`B was given
   orchestrator from A (lost)`), one filed by a build or a tool that gives none, or one on a board
   copied in (`B was given orchestrator (nobody orchestrated it)`) is given at the next of them, on
   every board, with no sweep run. Each read is bounded: one that shows every open task held reads

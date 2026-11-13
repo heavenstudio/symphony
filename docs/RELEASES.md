@@ -178,10 +178,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    package a consumer's code calls: `crates/tasks` (`symphony_board`), `crates/symphony` (with
    `symphony_plugin`, `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
    `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`. Each holds the
-   functions and methods it names by signature, the structs a consumer builds by the fields it
-   builds them with, and the plugin traits by the methods a plugin writes. The blocks a consumer
-   builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`, `Image`, `Presentation` and
-   `Fragment`), and a field read or a method called on a value that no guard names, are caught
+   functions and methods it names, most by signature (coerced to their pointer type), some by a
+   call written as a consumer writes it, and a few, a generic one among them, by name alone; the
+   structs a consumer builds by the fields it builds them with; the variants a consumer builds,
+   compares or matches, as it does, but the blocks'; and the plugin traits by the methods a plugin
+   writes. Each enum whose variants a guard holds is also matched there by every variant, the
+   guards' own choice: a variant added fails the guard, and waits for a consumer release plan only
+   where a consumer matches that enum whole, while a variant that only that match names goes or
+   changes with it. The blocks a consumer builds (`symphony_api`'s `Block`,
+   `Span`, `Media`, `Cell`, `Image`, `Presentation` and `Fragment`, and the variants of
+   `FigureSize`, `ContainerKind` and `InlineKind` they take), the signature of a function a guard
+   names alone, and a field read or a method called on a value that no guard names, are caught
    only here, by the conciliation.
 5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a
    task on this repository's board, `tests/release-red-NAME`, filed at p0 and marked red, so it
