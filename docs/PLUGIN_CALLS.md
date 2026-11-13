@@ -82,25 +82,25 @@ file this process held.
 A line timed alone:
 
 ```json
-{"at_ms":1762941600123,"pid":4242,"plugin":"game","path":"linked","seam":"card_kinds","name":"hull","call":"slot","us":0.412}
+{"at_ms":1762941600123,"pid":4242,"plugin":"game","path":"linked","seam":"card_kinds","name":"widget","call":"slot","us":0.412}
 ```
 
 The same call through the loopback:
 
 ```json
-{"at_ms":1762941600124,"pid":4242,"plugin":"game","path":"loopback","seam":"card_kinds","name":"hull","call":"slot","us":0.398,"round_trip_us":14.215,"request_bytes":612,"answer_bytes":26}
+{"at_ms":1762941600124,"pid":4242,"plugin":"game","path":"loopback","seam":"card_kinds","name":"widget","call":"slot","us":0.398,"round_trip_us":14.215,"request_bytes":612,"answer_bytes":26}
 ```
 
 And answered by the plugin's own process:
 
 ```json
-{"at_ms":1762941600125,"pid":4242,"plugin":"game","path":"process","seam":"card_kinds","name":"hull","call":"slot","us":1.2,"round_trip_us":61.5,"request_bytes":631,"answer_bytes":47}
+{"at_ms":1762941600125,"pid":4242,"plugin":"game","path":"process","seam":"card_kinds","name":"widget","call":"slot","us":1.2,"round_trip_us":61.5,"request_bytes":631,"answer_bytes":47}
 ```
 
 ## The loopback
 
 Each call goes as a protocol would send it: the request built from the call's arguments, one member
-named by its call and holding its fields (`{"card_kinds.slot":{"kind":"hull","card":{…}}}`),
+named by its call and holding its fields (`{"card_kinds.slot":{"kind":"widget","card":{…}}}`),
 written as JSON and read back, the plugin called with what was read, and its answer written and read
 back as `{"answer":…}`. What came back is the answer the seam gives, so the server runs on what
 crossed JSON. `round_trip_us` less `us` is the JSON's cost; the comparisons that tell a value lost

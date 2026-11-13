@@ -8,7 +8,7 @@
 //! One source, two places: the docs audit holds it as a module of its own and judges, in the
 //! Symphony's own checkout ([`PROJECT`], holding [`LISTS`]), what [`audited`] names; the hooks test
 //! (`crates/symphony/tests/hooks/named_recipes.rs`) takes this file by its path and judges what the
-//! Symphony ships and the strings its binaries print. Each entry of the lists is kept current by
+//! Symphony delivers and the strings its binaries print. Each entry of the lists is kept current by
 //! the one place that judges its file ([`Rule::errors`]). It names nothing else of the crate's, so
 //! either can hold it.
 
@@ -23,7 +23,7 @@ pub const PROJECT: &str = "symphony";
 /// and `#` starts a comment ([`Rule::read`]).
 pub const LISTS: &str = "tools/named-recipes.txt";
 
-/// What the Symphony ships, from the root of its checkout: the skills, the Codex rules and the
+/// What the Symphony delivers, from the root of its checkout: the skills, the Codex rules and the
 /// recipes init installs ([`INSTALLED`]).
 pub const SHIPPED: &str = "crates/symphony/shipped/";
 
@@ -31,7 +31,7 @@ pub const SHIPPED: &str = "crates/symphony/shipped/";
 pub const INSTALLED: &str = "crates/symphony/shipped/symphony.just";
 
 /// What to do about a name the rule refuses.
-pub const ADVICE: &str = "ship it in crates/symphony/shipped/symphony.just, name the command another way, or list it in \
+pub const ADVICE: &str = "add it to crates/symphony/shipped/symphony.just, name the command another way, or list it in \
      tools/named-recipes.txt";
 
 /// The records under `docs/`, which say what was decided or found rather than how things are now:
@@ -213,7 +213,7 @@ impl<'a> Rule<'a> {
 
 /// Whether `file`, a path from the root of the Symphony's own checkout, is one of its guides: an
 /// `AGENTS.md`, `README.md` or `RULES.md` at its root or in a package under `crates/` or `apps/`,
-/// what it ships aside. A guide may name any recipe of this repository's justfile.
+/// what it delivers aside. A guide may name any recipe of this repository's justfile.
 pub fn guide(file: &str) -> bool {
     let (folder, name) = file.rsplit_once('/').unwrap_or(("", file));
     GUIDES.contains(&name)
@@ -222,8 +222,8 @@ pub fn guide(file: &str) -> bool {
 }
 
 /// Whether the docs audit judges the names in `file`, a path from the root of the Symphony's own
-/// checkout, beside the documents it walks: a file of what the Symphony ships ([`SHIPPED`]) or a
-/// guide ([`guide`]).
+/// checkout, beside the documents it walks: a file of what the Symphony delivers ([`SHIPPED`])
+/// or a guide ([`guide`]).
 pub fn beside_documents(file: &str) -> bool {
     file.starts_with(SHIPPED) || guide(file)
 }

@@ -1,12 +1,12 @@
-//! Every `just NAME` the Symphony tells a project to run in what it ships and prints is a recipe
+//! Every `just NAME` the Symphony tells a project to run in what it delivers and prints is a recipe
 //! `symphony init` installs (`shipped/symphony.just`), or the consumer's landing, named as the
 //! project's own: in the shipped skills, rules and recipes, and the strings its binaries print. The
 //! rule is the docs audit's, read by the one reader the audit holds (`src/docs_audit/recipes.rs`,
 //! taken here by its path) from this repository's lists (`tools/named-recipes.txt`), so the two
-//! cannot disagree; the audit judges the documents, what the Symphony ships and the guides, and this
-//! test what it ships and the binaries' strings, each keeping current the lists' entries for the
-//! files the other does not judge. The allow rules init writes and the Codex rules it ships allow
-//! those recipes but the two server ones.
+//! cannot disagree; the audit judges the documents, what the Symphony delivers and the guides, and
+//! this test what it delivers and the binaries' strings, each keeping current the lists' entries
+//! for the files the other does not judge. The allow rules init writes and the Codex rules it
+//! delivers allow those recipes but the two server ones.
 
 // The audit's own reader, of which this test needs less than the audit does.
 #[path = "../../src/docs_audit/recipes.rs"]
@@ -252,7 +252,7 @@ fn files(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// The texts the Symphony ships or prints, each as (file from the workspace root, the line it
+/// The texts the Symphony delivers or prints, each as (file from the workspace root, the line it
 /// starts on, text): the shipped skills, rules and recipes, and the string literals of the members'
 /// sources. The documents and the guides are the docs audit's alone.
 fn texts() -> Vec<(String, usize, String)> {

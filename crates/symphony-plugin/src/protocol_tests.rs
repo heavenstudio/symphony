@@ -86,9 +86,9 @@ pub(crate) fn reads_back_in_any_order<T: Serialize + DeserializeOwned + PartialE
 
 pub(crate) fn card() -> CardData {
     CardData {
-        slug: "pick-a-hull".into(),
-        doc: "docs/SHIPS.md".into(),
-        topic: "Hulls \"quoted\"".into(),
+        slug: "pick-a-widget".into(),
+        doc: "docs/WIDGETS.md".into(),
+        topic: "Widgets \"quoted\"".into(),
         text: "Pick one.\n*Slot:* North · cover — ✅ \\ back".into(),
         thread: vec![
             ThreadLineData {
@@ -128,7 +128,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         (Declare { protocol: PROTOCOL }.into(), "plugin.declare"),
         (
             Render {
-                component: "ship".into(),
+                component: "report".into(),
                 page: page(),
                 argument: "lantern".into(),
                 option: Some("wide".into()),
@@ -138,7 +138,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Resolve {
-                component: "ship".into(),
+                component: "report".into(),
                 page: page(),
                 argument: String::new(),
                 option: None,
@@ -148,7 +148,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             CacheVersion {
-                component: "ship".into(),
+                component: "report".into(),
                 page: page(),
             }
             .into(),
@@ -156,7 +156,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Recognises {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -164,7 +164,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Pictures {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 root: root.clone(),
                 card: card(),
             }
@@ -173,7 +173,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Slot {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -181,7 +181,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             TriageCategory {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -189,7 +189,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             AutoApprovable {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -197,7 +197,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             CardGates {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -205,7 +205,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             ApprovalNeedsAgent {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -213,7 +213,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Chosen {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card(),
             }
             .into(),
@@ -221,10 +221,10 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Draw {
-                renderer: "glb".into(),
+                renderer: "stl".into(),
                 page: page(),
                 file: FileData {
-                    src: "/x/hulls/a.glb?v=1#top".into(),
+                    src: "/x/widgets/a.stl?v=1#top".into(),
                     label: String::new(),
                 },
             }
@@ -233,16 +233,16 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             Serve {
-                route: "hulls".into(),
+                route: "widgets".into(),
                 root: root.clone(),
-                rest: "a.glb".into(),
+                rest: "a.stl".into(),
             }
             .into(),
             "routes.serve",
         ),
         (
             ShowRegion {
-                region: "art".into(),
+                region: "pictures".into(),
                 root: root.clone(),
             }
             .into(),
@@ -348,7 +348,7 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
         ),
         (
             RunCommand {
-                command: "ship-art".into(),
+                command: "draw-widgets".into(),
                 args: vec!["--all".into(), String::new(), "a b".into()],
             }
             .into(),
@@ -427,14 +427,14 @@ fn every_calls_request_reads_back_whatever_order_its_members_come_in() {
 #[test]
 fn a_request_reads_back_only_as_its_own_call() {
     let (_, read, _) = wire(Slot {
-        kind: "hull".into(),
+        kind: "widget".into(),
         card: card(),
     });
     assert_eq!(Recognises::from_request(read.clone()), None);
     assert_eq!(
         Slot::from_request(read),
         Some(Slot {
-            kind: "hull".into(),
+            kind: "widget".into(),
             card: card(),
         })
     );
@@ -463,23 +463,23 @@ fn refused(text: &str) -> String {
 fn an_unknown_call_or_a_missing_field_is_refused_naming_it_with_an_answer_the_host_shows() {
     let card = serde_json::to_string(&card()).unwrap();
     let unknown = refused(&format!(
-        r#"{{"card_kinds.colour":{{"kind":"hull","card":{card}}}}}"#
+        r#"{{"card_kinds.colour":{{"kind":"widget","card":{card}}}}}"#
     ));
     assert!(
         unknown.contains("unknown variant `card_kinds.colour`"),
         "{unknown}"
     );
-    let missing = refused(r#"{"card_kinds.slot":{"kind":"hull"}}"#);
+    let missing = refused(r#"{"card_kinds.slot":{"kind":"widget"}}"#);
     assert!(missing.contains("missing field `card`"), "{missing}");
     let nested = refused(&format!(
-        r#"{{"card_kinds.slot":{{"kind":"hull","card":{}}}}}"#,
-        card.replace(r#""slug":"pick-a-hull","#, "")
+        r#"{{"card_kinds.slot":{{"kind":"widget","card":{}}}}}"#,
+        card.replace(r#""slug":"pick-a-widget","#, "")
     ));
     assert!(nested.contains("missing field `slug`"), "{nested}");
     // The request is one member, its call: its fields beside it, or a second member, are refused.
     for text in [
-        r#"{"kind":"hull"}"#,
-        r#"{"card_kinds.slot":{"kind":"hull"},"card_kinds.gates":{"kind":"hull"}}"#,
+        r#"{"kind":"widget"}"#,
+        r#"{"card_kinds.slot":{"kind":"widget"},"card_kinds.gates":{"kind":"widget"}}"#,
         r#"{}"#,
         r#""card_kinds.slot""#,
     ] {
@@ -495,13 +495,13 @@ fn a_newer_peers_extra_fields_are_ignored_wherever_they_stand() {
     card["colour"] = "red".into();
     card["thread"][0]["mood"] = serde_json::json!({"at": 2.5});
     let text = serde_json::json!({
-        "card_kinds.slot": {"kind": "hull", "card": card, "since": 1.5}
+        "card_kinds.slot": {"kind": "widget", "card": card, "since": 1.5}
     })
     .to_string();
     assert_eq!(
         serde_json::from_str::<Request>(&text).unwrap(),
         Request::from(Slot {
-            kind: "hull".into(),
+            kind: "widget".into(),
             card: self::card(),
         })
     );
@@ -580,7 +580,7 @@ fn a_path_that_is_not_utf8_cannot_be_written() {
     use std::os::unix::ffi::OsStrExt as _;
     let root = PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff"));
     let request: Request = Serve {
-        route: "hulls".into(),
+        route: "widgets".into(),
         root,
         rest: String::new(),
     }
@@ -688,10 +688,10 @@ fn the_internally_tagged_blocks_spans_and_media_hold_no_fraction_and_read_back_i
     let blocks = vec![
         Block::Heading {
             level: 3,
-            anchor: "hulls".into(),
+            anchor: "widgets".into(),
             spans: vec![
                 Span::Text {
-                    text: "Hulls".into(),
+                    text: "Widgets".into(),
                 },
                 Span::Image {
                     image: image.clone(),
@@ -705,11 +705,11 @@ fn the_internally_tagged_blocks_spans_and_media_hold_no_fraction_and_read_back_i
         },
         Block::Media {
             media: Media::Viewer {
-                src: "/x/a.glb".into(),
-                label: "hull".into(),
+                src: "/x/a.stl".into(),
+                label: "widget".into(),
                 poster: None,
                 viewer: Viewer {
-                    element: "model-viewer".into(),
+                    element: "stl-viewer".into(),
                     views: vec![View {
                         label: "front".into(),
                         set: vec![("orbit".into(), "0deg 75deg 2.5m".into())],
@@ -724,7 +724,7 @@ fn the_internally_tagged_blocks_spans_and_media_hold_no_fraction_and_read_back_i
                 media: Media::Gallery {
                     items: vec![GalleryItem {
                         name: "a".into(),
-                        src: "/x/a.glb".into(),
+                        src: "/x/a.stl".into(),
                         poster: Some("/x/a.png".into()),
                     }],
                     viewer: Viewer::default(),
@@ -748,8 +748,8 @@ fn an_owned_card_task_file_and_page_lend_what_they_were_made_of() {
     let task = task();
     assert_eq!(TaskData::of(&task.task()), task);
     let file = FileData {
-        src: "/a.glb".into(),
-        label: "hull".into(),
+        src: "/a.stl".into(),
+        label: "widget".into(),
     };
     assert_eq!(FileData::of(&file.file()), file);
     let root = Path::new("/r/ünï code");
@@ -787,10 +787,10 @@ impl Plugin for Declaring {
     }
     fn nav(&self) -> Vec<NavItem> {
         vec![NavItem {
-            label: "⬡ hulls".into(),
-            title: "Hulls".into(),
-            href: "/x/hulls".into(),
-            document: "docs/HULLS.md".into(),
+            label: "⬡ widgets".into(),
+            title: "Widgets".into(),
+            href: "/x/widgets".into(),
+            document: "docs/WIDGETS.md".into(),
         }]
     }
     fn home_regions(&self) -> Vec<&dyn HomeRegion> {
@@ -837,7 +837,7 @@ impl Plugin for Declaring {
 
 impl Component for Declaring {
     fn name(&self) -> &str {
-        "ship"
+        "report"
     }
     fn render(&self, _: &Page<'_>, _: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
         Ok(vec![Block::Paragraph {
@@ -848,25 +848,25 @@ impl Component for Declaring {
 
 impl CardKind for Declaring {
     fn name(&self) -> &str {
-        "hull"
+        "widget"
     }
     fn recognises(&self, _: &Card<'_>) -> bool {
         true
     }
     fn markers(&self) -> &[&str] {
-        &["Slot", "Hull"]
+        &["Slot", "Widget"]
     }
 }
 
 impl Renderer for Declaring {
     fn name(&self) -> &str {
-        "glb"
+        "stl"
     }
     fn extensions(&self) -> &[&str] {
-        &["glb", "gltf"]
+        &["stl", "obj"]
     }
     fn content_type(&self) -> &str {
-        "model/gltf-binary"
+        "model/stl"
     }
     fn draw(&self, _: &Page<'_>, _: &File<'_>) -> Result<Drawing, String> {
         Ok(Drawing::Viewer(Viewer::default()))
@@ -875,7 +875,7 @@ impl Renderer for Declaring {
 
 impl Route for Declaring {
     fn path(&self) -> &str {
-        "hulls"
+        "widgets"
     }
     fn serve(&self, _: &Path, _: &str) -> Option<Reply> {
         None
@@ -884,7 +884,7 @@ impl Route for Declaring {
 
 impl HomeRegion for Declaring {
     fn id(&self) -> &str {
-        "art"
+        "pictures"
     }
     fn region(&self, _: &Path) -> Option<Region> {
         None
@@ -942,7 +942,7 @@ impl DocCheck for Declaring {
         "data"
     }
     fn inputs(&self) -> Vec<String> {
-        vec!["data/ships.toml".into()]
+        vec!["data/widgets.toml".into()]
     }
     fn check(&self, _: &Docs) -> Vec<Problem> {
         Vec::new()
@@ -975,10 +975,10 @@ impl Generator for Declaring {
 
 impl Command for Declaring {
     fn name(&self) -> &str {
-        "ship-art"
+        "draw-widgets"
     }
     fn summary(&self) -> &str {
-        "draw the ships' art"
+        "draw the widgets' pictures"
     }
     fn run(&self, _: &[String], _: &mut dyn std::io::Write, _: &mut dyn std::io::Write) -> i32 {
         0
@@ -1004,25 +1004,25 @@ impl Transport for Declaring {
 fn a_declaration_names_every_seams_objects_in_the_plugins_order_and_reads_back_the_same() {
     let declared = Declaration::of(&Declaring);
     assert_eq!(declared.name, "declaring");
-    assert_eq!(declared.components, ["ship"]);
+    assert_eq!(declared.components, ["report"]);
     assert_eq!(
         declared.card_kinds,
         [DeclaredKind {
-            name: "hull".into(),
-            markers: vec!["Slot".into(), "Hull".into()],
+            name: "widget".into(),
+            markers: vec!["Slot".into(), "Widget".into()],
         }]
     );
     assert_eq!(
         declared.renderers,
         [DeclaredRenderer {
-            name: "glb".into(),
-            extensions: vec!["glb".into(), "gltf".into()],
-            content_type: "model/gltf-binary".into(),
+            name: "stl".into(),
+            extensions: vec!["stl".into(), "obj".into()],
+            content_type: "model/stl".into(),
         }]
     );
-    assert_eq!(declared.routes, ["hulls"]);
+    assert_eq!(declared.routes, ["widgets"]);
     assert_eq!(declared.nav, Declaring.nav());
-    assert_eq!(declared.home_regions, ["art"]);
+    assert_eq!(declared.home_regions, ["pictures"]);
     assert_eq!(declared.board_actions, ["land"]);
     assert_eq!(
         declared.board_fields,
@@ -1041,7 +1041,7 @@ fn a_declaration_names_every_seams_objects_in_the_plugins_order_and_reads_back_t
         declared.doc_checks,
         [DeclaredCheck {
             name: "data".into(),
-            inputs: vec!["data/ships.toml".into()],
+            inputs: vec!["data/widgets.toml".into()],
         }]
     );
     assert_eq!(declared.prose_rules, ["words"]);
@@ -1057,8 +1057,8 @@ fn a_declaration_names_every_seams_objects_in_the_plugins_order_and_reads_back_t
     assert_eq!(
         declared.commands,
         [DeclaredCommand {
-            name: "ship-art".into(),
-            summary: "draw the ships' art".into(),
+            name: "draw-widgets".into(),
+            summary: "draw the widgets' pictures".into(),
         }]
     );
     assert_eq!(declared.transports, ["uds"]);
@@ -1121,7 +1121,7 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     };
     answers::<Declare>(a, Declaration::of(&Declaring));
     answers::<Render>(a, Ok(vec![paragraph()]));
-    answers::<Render>(a, Err("no such hull".into()));
+    answers::<Render>(a, Err("no such widget".into()));
     answers::<Resolve>(a, Ok(()));
     answers::<CacheVersion>(a, Some("v2".into()));
     answers::<Recognises>(a, true);
@@ -1129,7 +1129,7 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
         a,
         vec![Picture {
             src: Some("/x/a.png".into()),
-            caption: "the hull".into(),
+            caption: "the widget".into(),
             waiting: true,
         }],
     );
@@ -1142,17 +1142,17 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     answers::<Draw>(a, Ok(Drawing::Blocks(vec![paragraph()])));
     answers::<Draw>(a, Ok(Drawing::Viewer(Viewer::default())));
     answers::<Serve>(a, Some(Reply::Json("{\"a\":1.5}".into())));
-    answers::<Serve>(a, Some(Reply::File("/r/a.glb".into())));
+    answers::<Serve>(a, Some(Reply::File("/r/a.stl".into())));
     answers::<ShowRegion>(
         a,
         Some(Region {
-            id: "art".into(),
-            title: "Art".into(),
+            id: "pictures".into(),
+            title: "Pictures".into(),
             note: String::new(),
             bars: vec![ProgressBar {
-                key: "hulls".into(),
-                name: "Hulls".into(),
-                page: "docs/HULLS.md".into(),
+                key: "widgets".into(),
+                name: "Widgets".into(),
+                page: "docs/WIDGETS.md".into(),
                 title: "3 of 7".into(),
                 done: 3,
                 waiting: 1,
@@ -1198,7 +1198,7 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     answers::<Changed>(a, Some("models".into()));
     answers::<Forget>(a, ());
     answers::<CheckDocs>(a, vec![ProblemData::of(&Problem::new("a", 0, "b".into()))]);
-    answers::<DocComponents>(a, vec!["ship".into()]);
+    answers::<DocComponents>(a, vec!["report".into()]);
     answers::<CheckProse>(a, vec![(2, "every".into())]);
     answers::<RunCommand>(a, -1);
     answers::<RegisterAgent>(a, Ok("/tmp/s.sock".into()));
@@ -1269,7 +1269,7 @@ fn every_calls_request_goes_in_an_envelope_and_reads_back_by_its_id_in_any_order
 
 #[test]
 fn a_line_holds_exactly_one_known_member_and_ignores_every_other() {
-    let request = r#"{"card_kinds.slot":{"kind":"hull","card":{"slug":"a","doc":"d","topic":"t","text":"x","thread":[]}}}"#;
+    let request = r#"{"card_kinds.slot":{"kind":"widget","card":{"slug":"a","doc":"d","topic":"t","text":"x","thread":[]}}}"#;
     // Members a later minor adds around a call are ignored, wherever they stand.
     for line in [
         format!(r#"{{"id":7,"request":{request}}}"#),

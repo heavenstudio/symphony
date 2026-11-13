@@ -60,7 +60,7 @@ owner's: the new names, how long the old ones are still read, and how the state 
 **How the old names go:**
 
 - **A, a bridge (recommended).** One release reads both names, new first, and says once per run
-  when it used an old one. It also ships the command that moves a project's state. Each project
+  when it used an old one. It also delivers the command that moves a project's state. Each project
   moves on a day the owner picks. The first release after both registered projects have moved
   stops reading the old names. Cost: a small helper for variables and folders, and one or two
   releases that carry it. The consuming project keeps working until its pin and wrappers move.
@@ -418,7 +418,7 @@ Category a4, plus the two names outside the grep:
   the old key read during the bridge. The shipped `tasks` skill names the new key, so
   `symphony init` installs no old name.
 
-**Binaries and scripts.** Symphony ships none with an old name:
+**Binaries and scripts.** Symphony delivers none with an old name:
 
 - **Binaries:** `symphony`, `symphony-server`, `symphony-shelf`, `symphony-ui-dev`, `tasks`,
   `agent-send`, `tasks-copy`, `tasks-reclaim`, `tasks-cutover` and `fake-hc`.

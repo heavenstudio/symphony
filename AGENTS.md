@@ -312,8 +312,8 @@ the shipped skills, the docs, the guides and the binaries' strings is an install
 the consumer's landing, this repository's own where its lists (`tools/named-recipes.txt`)
 name it for that file, or in a guide a recipe of its justfile: one rule and one reader
 (`crates/symphony/src/docs_audit/recipes.rs`), by which the docs audit judges, in this
-checkout, its documents but the records, what it ships and its guides, and
-`crates/symphony/tests/hooks/named_recipes.rs` what it ships and the binaries' strings
+checkout, its documents but the records, what it delivers and its guides, and
+`crates/symphony/tests/hooks/named_recipes.rs` what it delivers and the binaries' strings
 ([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
