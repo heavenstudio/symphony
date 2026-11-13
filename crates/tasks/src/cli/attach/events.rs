@@ -1,12 +1,12 @@
-//! The event lines for what changed between two looks ([`diff`]): ROLE, STATUS, NEW, and STALE,
-//! LOST or LIVENESS UNKNOWN for a quiet child, each said once. A recipient never hears its own
+//! The event lines for what changed between two looks ([`diff`]): ROLE, GIVEN, STATUS, NEW, and
+//! STALE, LOST or LIVENESS UNKNOWN for a quiet child, each said once. A recipient never hears its own
 //! writes, nor the roles its own children (sessions it registered, `parent`) take or let go, nor
 //! the move a child's claim or release makes: it staffed them. Nor is the owner's move said as a
 //! STATUS: the owner's line itself reaches its inbox, as a `MOVE` (`Store::inbox`).
 
 use super::Seen;
 use crate::health::{Health, LIVE_SECONDS};
-use crate::orchestration::{moved, moved_for, told};
+use crate::orchestration::{given, given_event, moved, moved_for, told};
 use crate::stages::MOVED;
 use crate::{Board, Error, Message, Store};
 use std::collections::BTreeSet;
@@ -141,8 +141,9 @@ pub fn diff_on(
 }
 
 /// A move of the orchestrator role: the session it left and the one it reached each hear it once,
-/// from the line the move wrote on the thread, but for the one that wrote it. Returns each (slug,
-/// session) a move named.
+/// from the line the move wrote on the thread, but for the one that wrote it. The tasks the board
+/// gave this session ([`given`]) are said in one GIVEN line, however many there are, not one ROLE
+/// line each. Returns each (slug, session) a move named, whose move says the task.
 fn role_moves<'m>(
     store: &Store,
     now: &Seen,
@@ -152,6 +153,7 @@ fn role_moves<'m>(
     emit: &mut dyn FnMut(&str),
 ) -> Result<BTreeSet<(&'m str, &'m str)>, Error> {
     let mut parties: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut gave: Vec<&str> = Vec::new();
     let on_flipped = |m: &&Message| m.kind == "system" && flipped.contains(&m.slug);
     let lines = messages.iter().filter(on_flipped);
     for message in lines {
@@ -163,7 +165,11 @@ fn role_moves<'m>(
         }
         // The session that moved it, handing it on or taking it over, made the move: it is not
         // told its own write, nor told it again as a role change.
-        if message.sender != handle {
+        if message.sender != handle && to == handle && given(&message.text).is_some() {
+            if !gave.contains(&message.slug.as_str()) {
+                gave.push(&message.slug);
+            }
+        } else if message.sender != handle {
             let status = match now.statuses.get(&message.slug) {
                 Some(status) => status.clone(),
                 None => store.get(&message.slug)?.status,
@@ -176,6 +182,9 @@ fn role_moves<'m>(
                 .chain([&to])
                 .map(|who| (message.slug.as_str(), *who)),
         );
+    }
+    if let Some(line) = given_event(&gave) {
+        emit(&line);
     }
     Ok(parties)
 }

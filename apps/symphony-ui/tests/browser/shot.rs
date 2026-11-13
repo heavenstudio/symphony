@@ -1464,6 +1464,517 @@ fn a_click_on_a_link_taller_than_its_scrolling_box_aims_at_a_line_the_box_shows_
     );
 }
 
+/// A page 3200 px wide and tall, its meta viewport `meta` (none when empty): a button far right, one
+/// far down, a checkbox hidden in its label far right and down (pressed on its styled track), a
+/// button in the middle, and one far down to hover, which records the pointer coming over it. On
+/// a phone at its own scale (`initial-scale=1`) the page widens the layout viewport to 1560x3376, a
+/// quarter's zoom, and the screen shows 390x844 of it, scrolled within it apart from the page; at
+/// `initial-scale=2` it shows 195x422. With no meta viewport, or one without a scale, the phone
+/// shows the whole layout viewport, zoomed out to a quarter.
+fn wide(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; width: 3200px; height: 3200px; position: relative; }}
+  .spot {{ position: absolute; }}
+  button {{ width: 80px; height: 30px; }}
+  .toggle {{ position: relative; display: inline-flex; gap: 8px; align-items: center; }}
+  .hidden {{ position: absolute; left: 12px; top: 8px; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }}
+  .track {{ display: inline-block; width: 40px; height: 24px; background: #ccc; }}
+</style>
+<div class="spot" style="left: 1200px; top: 300px"><button id="right" type="button">far right</button></div>
+<div class="spot" style="left: 20px; top: 2600px"><button id="down" type="button">far down</button></div>
+<div class="spot" style="left: 2600px; top: 1800px"><label class="toggle"><input type="checkbox" id="toggle" class="hidden"><span class="track" id="track"></span> far right and down</label></div>
+<div class="spot" style="left: 300px; top: 600px"><button id="mid" type="button">mid</button></div>
+<div class="spot" style="left: 900px; top: 2900px"><button id="hovered" type="button">hover me</button></div>
+<script>
+  window.came = [];
+  document.getElementById('hovered').addEventListener('pointerover', event => came.push(event.target.id));
+  window.view = () => {{ const v = visualViewport; return {{inner: [innerWidth, innerHeight], screen: [v.offsetLeft, v.offsetTop, v.width, v.height], scale: v.scale}}; }};
+</script>
+{POINTED}"##
+    )
+    .into_bytes()
+}
+
+/// `symphony shot` on [`wide`] with `meta` and `steps`, then its one evaluation: the presses and
+/// clicks the page recorded, whether the checkbox is checked, what the hover recorded and the
+/// view as the last step left it. `None` without a Chrome.
+fn on_wide(name: &str, meta: &str, steps: &[&str]) -> Option<Value> {
+    let eval = "[landed, document.getElementById('toggle').checked, came, view()]";
+    let (output, out, _requests, _scratch) =
+        on_page(name, &wide(meta), &[steps, &["--eval", eval][..]].concat())?;
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    assert!(Picture::read(&out).width > 0);
+    Some(after.clone())
+}
+
+/// Each press and click [`wide`] records for its far right button, its far down button and its
+/// checkbox's label, clicked in that order.
+fn far_presses() -> Value {
+    json!([
+        ["pointerdown", "right"],
+        ["click", "right"],
+        ["pointerdown", "down"],
+        ["click", "down"],
+        ["pointerdown", "track"],
+        ["click", "track"],
+        ["click", "toggle"]
+    ])
+}
+
+#[test]
+fn a_phone_click_on_a_page_wider_than_its_screen_lands_where_the_screen_shows_its_target() {
+    let Some(after) = on_wide(
+        "wide-phone",
+        "width=device-width, initial-scale=1",
+        &[
+            "--phone", "--click", "#right", "--click", "#down", "--click", "#toggle", "--hover",
+            "#hovered",
+        ],
+    ) else {
+        return;
+    };
+    // The case at all: the screen shows a part of a larger layout viewport (1560x3376 on this
+    // Chrome), scrolled within it.
+    assert_eq!(after[3]["scale"], json!(1), "{after}");
+    let screen = rect(&after[3]["screen"]);
+    assert_eq!(screen[2..], [390.0, 844.0], "{after}");
+    let inner = &after[3]["inner"];
+    assert!(
+        inner[0].as_f64().unwrap() > 390.0 && inner[1].as_f64().unwrap() > 844.0,
+        "{after}"
+    );
+    assert!(
+        screen[1] > 0.0,
+        "the screen moved down within the layout viewport: {after}"
+    );
+    // Each press landed on its target, far right, far down and on the label's track, which checked
+    // the box; the hover came over its button. Main pressed each on the page's root, exit 0.
+    assert_eq!(after[0], far_presses(), "{after}");
+    assert_eq!(after[1], json!(true), "{after}");
+    assert_eq!(after[2], json!(["hovered"]), "{after}");
+}
+
+#[test]
+fn a_phone_click_on_a_page_zoomed_in_lands_on_its_target_on_the_screen_moved_within_the_page() {
+    let Some(after) = on_wide(
+        "wide-zoomed",
+        "width=device-width, initial-scale=2",
+        &["--phone", "--click", "#mid", "--click", "#down"],
+    ) else {
+        return;
+    };
+    // Zoomed in twice: the screen shows 195x422 of the page, scrolled away from its corner.
+    assert_eq!(after[3]["scale"], json!(2), "{after}");
+    let screen = rect(&after[3]["screen"]);
+    assert_eq!(screen[2..], [195.0, 422.0], "{after}");
+    assert!(screen[1] > 0.0, "{after}");
+    assert_eq!(
+        after[0],
+        json!([
+            ["pointerdown", "mid"],
+            ["click", "mid"],
+            ["pointerdown", "down"],
+            ["click", "down"]
+        ]),
+        "{after}"
+    );
+}
+
+#[test]
+fn a_phone_with_no_meta_viewport_and_a_desktop_still_click_where_they_did() {
+    for (name, view) in [
+        ("wide-bare-phone", &["--phone"][..]),
+        ("wide-desktop", &["--size", "800x600"][..]),
+    ] {
+        let steps = [
+            "--click", "#right", "--click", "#down", "--click", "#toggle", "--hover", "#hovered",
+        ];
+        let Some(after) = on_wide(name, "", &[view, &steps[..]].concat()) else {
+            return;
+        };
+        // No part of the layout viewport off the screen: the phone zoomed out to show it whole, the
+        // desktop's window being it.
+        let screen = rect(&after[3]["screen"]);
+        assert_eq!(screen[..2], [0.0, 0.0], "{name}: {after}");
+        assert_eq!(after[0], far_presses(), "{name}: {after}");
+        assert_eq!(after[1], json!(true), "{name}: {after}");
+        assert_eq!(after[2], json!(["hovered"]), "{name}: {after}");
+    }
+}
+
+/// Labels whose control comes after them in the document, which Chrome hovers with its hovered
+/// label: a label naming a text field by `for`, a span inside a label around its checkbox, a link
+/// inside a label naming a checkbox by `for`, and far right, past a phone's screen on a page as wide
+/// as [`wide`], a label naming a checkbox by `for`. With `meta` as the page's meta viewport.
+fn followed(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; width: 3200px; height: 3200px; position: relative; }}
+  .spot {{ position: absolute; }}
+</style>
+<div class="spot" style="left: 20px; top: 40px"><label for="email" id="lfor">Email</label> <input id="email"></div>
+<div class="spot" style="left: 20px; top: 120px"><label><span id="lspan">Accept the terms</span> <input type="checkbox" id="accept"></label></div>
+<div class="spot" style="left: 20px; top: 200px"><label for="agree">I accept the <a id="terms" href="#terms">terms</a></label> <input type="checkbox" id="agree"></div>
+<div class="spot" style="left: 1200px; top: 300px"><label for="far" id="lfar">far right</label> <input type="checkbox" id="far"></div>
+{POINTED}"##
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_a_desktop_and_a_phone()
+ {
+    // Each label's target hovered, then clicked: hovered once the hover is done, and the click
+    // landing on the label, which clicks its control, or on the link, which a label's activation
+    // leaves alone. A pointer read as the last element the page's hover matches was on the control
+    // each label hovers, and each step was refused.
+    let hovered = |id: &str| format!("document.getElementById('{id}').matches(':hover')");
+    let ids = ["lfor", "lspan", "terms", "lfar"];
+    let checks = ids.map(hovered);
+    let mut steps = Vec::new();
+    for (id, check) in ids.iter().zip(&checks) {
+        let css = format!("#{id}");
+        steps.extend(
+            ["--hover", &css, "--eval", check, "--click", &css].map(|step| step.to_string()),
+        );
+    }
+    let after = "[landed, ['accept', 'agree', 'far'].map(id => document.getElementById(id).checked), \
+                 location.hash, visualViewport.offsetLeft]";
+    for (name, meta, view) in [
+        ("followed-desktop", "", &[][..]),
+        (
+            "followed-phone",
+            "width=device-width, initial-scale=1",
+            &["--phone"][..],
+        ),
+    ] {
+        let steps: Vec<&str> = view
+            .iter()
+            .copied()
+            .chain(steps.iter().map(String::as_str))
+            .chain(["--eval", after])
+            .collect();
+        let Some((output, out, _requests, _scratch)) = on_page(name, &followed(meta), &steps)
+        else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        let lines = printed(&output);
+        let [lfor, lspan, terms, lfar, after] = lines.as_slice() else {
+            panic!("{name}: five evaluations: {}", said(&output));
+        };
+        assert_eq!(
+            [lfor, lspan, terms, lfar],
+            [&json!(true); 4],
+            "{name}: {}",
+            said(&output)
+        );
+        assert_eq!(
+            after[0],
+            json!([
+                ["pointerdown", "lfor"],
+                ["click", "lfor"],
+                ["click", "email"],
+                ["pointerdown", "lspan"],
+                ["click", "lspan"],
+                ["click", "accept"],
+                ["pointerdown", "terms"],
+                ["click", "terms"],
+                ["pointerdown", "lfar"],
+                ["click", "lfar"],
+                ["click", "far"]
+            ]),
+            "{name}: {after}"
+        );
+        // The checkbox inside the label and the one far right checked, the one whose label holds
+        // the link left alone, the link followed.
+        assert_eq!(after[1], json!([true, false, true]), "{name}: {after}");
+        assert_eq!(after[2], json!("#terms"), "{name}: {after}");
+        assert!(Picture::read(&out).width > 0);
+        if name == "followed-phone" {
+            // The far label was pressed with the screen moved right within the page, to show it.
+            assert!(after[3].as_f64().unwrap() > 0.0, "{name}: {after}");
+        }
+    }
+}
+
+/// Three frames, each a button filling it that tells the page of the pointer coming over it and
+/// of its click (`messages`, which `heard` waits on): one of the page's own, which shares its
+/// process; one sandboxed without the page's origin, as the client draws its document mockups,
+/// which Chrome runs in a process of its own; and the same in a component's closed shadow root,
+/// which the page's hit test sees only as its host. Each frame's document takes the move over it,
+/// so the page hears none; the sandboxed ones leave their element and its host unhovered in the
+/// page too. With `meta` as the page's meta viewport.
+fn framed(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    let button = |which: &str| {
+        format!(
+            "<style>body {{ margin: 0 }} button {{ width: 100%; height: 100vh }}</style><button \
+             type='button' onpointerover='parent.postMessage(&quot;over {which}&quot;, &quot;*&quot;)' \
+             onclick='parent.postMessage(&quot;pressed {which}&quot;, &quot;*&quot;)'>{which}</button>"
+        )
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
+  iframe, x-closed {{ display: block; border: 0; margin: 0 0 20px; width: 220px; }}
+</style>
+<iframe id="own" width="220" height="50" srcdoc="{own}"></iframe>
+<iframe id="sandboxed" sandbox="allow-scripts" width="220" height="50" srcdoc="{sandboxed}"></iframe>
+<x-closed id="closed" data-doc="{closed}"></x-closed>
+<script>
+  window.messages = [];
+  addEventListener('message', event => messages.push(event.data));
+  // Once every one of `notes` has come, the messages so far, sorted: frames in processes of their
+  // own post them in no order the page can rely on.
+  window.heard = (...notes) => new Promise(resolve => {{
+    const check = () => notes.every(note => messages.includes(note)) ? resolve(messages.slice().sort()) : setTimeout(check, 10);
+    check();
+  }});
+  customElements.define('x-closed', class extends HTMLElement {{
+    constructor() {{
+      super();
+      const frame = document.createElement('iframe');
+      frame.sandbox = 'allow-scripts';
+      frame.width = 220;
+      frame.height = 50;
+      frame.style.cssText = 'display: block; border: 0';
+      frame.srcdoc = this.dataset.doc;
+      this.attachShadow({{mode: 'closed'}}).append(frame);
+    }}
+  }});
+</script>
+{POINTED}"##,
+        own = button("own"),
+        sandboxed = button("sandboxed"),
+        closed = button("closed"),
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_click_or_a_hover_into_a_frame_sandboxed_in_a_closed_root_or_the_pages_own_reaches_its_button()
+{
+    // Each frame hovered, then clicked: the pointer came over its button, and the click pressed
+    // it, on a desktop and a phone. The page hears no move over any, and the sandboxed frames are
+    // not hovered in it: the pointer's place inside a frame goes unconfirmed, the one in a closed
+    // root found by the browser's own hit, and the step goes on as aimed. Each read waits for the
+    // notes it expects, the frames posting them from processes of their own.
+    let steps = [
+        "--hover",
+        "#own",
+        "--eval",
+        "heard('over own')",
+        "--click",
+        "#own",
+        "--hover",
+        "#sandboxed",
+        "--eval",
+        "heard('pressed own', 'over sandboxed')",
+        "--click",
+        "#sandboxed",
+        "--hover",
+        "#closed",
+        "--eval",
+        "heard('pressed sandboxed', 'over closed')",
+        "--click",
+        "#closed",
+        "--eval",
+        "heard('pressed closed').then(notes => [notes, landed])",
+    ];
+    for (name, meta, view) in [
+        ("framed-desktop", "", &[][..]),
+        (
+            "framed-phone",
+            "width=device-width, initial-scale=1",
+            &["--phone"][..],
+        ),
+    ] {
+        let Some((output, out, _requests, _scratch)) =
+            on_page(name, &framed(meta), &[view, &steps[..]].concat())
+        else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        assert_eq!(
+            printed(&output),
+            [
+                json!(["over own"]),
+                json!(["over own", "over sandboxed", "pressed own"]),
+                json!([
+                    "over closed",
+                    "over own",
+                    "over sandboxed",
+                    "pressed own",
+                    "pressed sandboxed"
+                ]),
+                // The page itself saw no press: each went into its frame.
+                json!([
+                    [
+                        "over closed",
+                        "over own",
+                        "over sandboxed",
+                        "pressed closed",
+                        "pressed own",
+                        "pressed sandboxed"
+                    ],
+                    []
+                ]),
+            ],
+            "{name}: {}",
+            said(&output)
+        );
+        assert!(Picture::read(&out).width > 0);
+    }
+}
+
+/// A page that replaces the window's `addEventListener` with one that throws, after its own
+/// listeners are set, and, with `prototype`, the one every element and the window inherit too.
+fn refusing(prototype: bool) -> Vec<u8> {
+    let target = if prototype {
+        "window.addEventListener = EventTarget.prototype.addEventListener = refuse;"
+    } else {
+        "window.addEventListener = refuse;"
+    };
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<button id="plain" type="button">plain</button>
+{POINTED}
+<script>
+  const refuse = function () {{ throw new Error('no listeners here'); }};
+  {target}
+</script>"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_page_whose_listeners_throw_is_still_clicked_and_keeps_nothing_of_the_watch() {
+    // The watch listens through EventTarget's own methods, so a window whose own throws still
+    // reports the move; one whose inherited methods throw gives no report, and the button found
+    // there, hovered, takes the click. Either way the page keeps no trace of the watch.
+    for (name, prototype) in [("refusing-window", false), ("refusing-prototype", true)] {
+        let Some((output, _out, _requests, _scratch)) = on_page(
+            name,
+            &refusing(prototype),
+            &[
+                "--hover",
+                "#plain",
+                "--click",
+                "#plain",
+                "--eval",
+                "[landed, 'symphony-shot-pointer' in window, Object.keys(window).filter(key => key.startsWith('symphony'))]",
+            ],
+        ) else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        assert_eq!(
+            printed(&output),
+            [json!([
+                [["pointerdown", "plain"], ["click", "plain"]],
+                false,
+                []
+            ])],
+            "{name}: {}",
+            said(&output)
+        );
+    }
+}
+
+/// A button whose hover opens a menu over the whole page, a record of the pointer moving (`/moved`,
+/// which a settle waits on) and pressing (`/pressed`), and each press's target (`pressed`).
+const OPENS_ON_HOVER: &[u8] = br#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  #menu { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.3); }
+  #menu.open { display: block; }
+</style>
+<button id="opener" type="button">opens on hover</button>
+<div id="menu"></div>
+<script>
+  window.pressed = [];
+  document.getElementById('opener').addEventListener('pointerenter', () => document.getElementById('menu').classList.add('open'));
+  addEventListener('pointermove', () => fetch('/moved'), true);
+  addEventListener('pointerdown', event => { pressed.push(event.target.id); fetch('/pressed'); }, true);
+</script>"#;
+
+#[test]
+fn a_click_whose_hover_opens_a_menu_over_its_target_fails_naming_it_and_presses_nothing() {
+    // The aim finds the button on top; the pointer reaching it opens the menu over it, so a press
+    // there would reach the menu.
+    let Some((output, out, requests, _scratch)) =
+        on_page("opens-on-hover", OPENS_ON_HOVER, &["--click", "#opener"])
+    else {
+        return;
+    };
+    assert_eq!(output.status.code(), Some(1), "{}", said(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        "symphony shot: --click #opener: the press would have landed on div#menu.open, on top at \
+         its middle once the pointer reached it; nothing was pressed (for a menu its hover opens, \
+         --hover it, then --click the item meant)",
+        "{}",
+        said(&output)
+    );
+    assert!(
+        !requests.iter().any(|path| path == "/pressed"),
+        "pressed: {requests:?}"
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+    // A hover there has done what it does: the pointer reached the button and opened the menu,
+    // whose item then takes the click, as the failure says.
+    let Some((output, out, _requests, _scratch)) = on_page(
+        "opens-on-hover-hovered",
+        OPENS_ON_HOVER,
+        &[
+            "--hover",
+            "#opener",
+            "--eval",
+            "document.getElementById('menu').className",
+            "--click",
+            "#menu",
+            "--eval",
+            "pressed",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), [json!("open"), json!(["menu"])]);
+    assert_eq!(Picture::read(&out).width, 1440);
+}
+
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
 /// per launch named by its id, then becomes the real Chrome (`SHOT_REAL_CHROME`) in place.
 fn recording_chrome(scratch: &Scratch) -> (PathBuf, PathBuf) {

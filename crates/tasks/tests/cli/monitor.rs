@@ -473,8 +473,11 @@ fn the_heartbeat_keeps_the_session_live() {
 fn quiet_child(m: &Monitor) -> (String, String) {
     let orch = m.register("orchestrator");
     let child = m.child("worker", &orch);
-    // Nobody's work: the parent files it but does not orchestrate it.
-    m.ok(&orch, &["create", "sim/a", "A", "--no-role"]);
+    // Nobody's work, as a task is until the board gives it an orchestrator: filed through the
+    // store, which gives none, so the parent hears of it as the child's parent.
+    m.board()
+        .create(&NewTask::new("sim/a", "A", &orch))
+        .unwrap();
     m.ok(&child, &["claim", "sim/a"]);
     m.now.set(m.last_seen(&child));
     (orch, child)

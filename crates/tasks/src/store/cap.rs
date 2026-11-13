@@ -411,19 +411,22 @@ impl Store {
     }
 
     /// The slot counters `by`'s change of `slug`'s parent to `parent` holds under the cap: the open
-    /// work at and below it changes orchestrator with its tree, decided as a start. None for the
-    /// owner's change, or with no cap.
+    /// work at and below it changes orchestrator with its tree, decided as a start; with `kept`,
+    /// the orchestrator the move gives `slug` to, the one it had, it stays that one's work. None for
+    /// the owner's change, or with no cap.
     pub(super) fn reparenting(
         &self,
         slug: &str,
         parent: Option<&str>,
         by: &str,
+        kept: Option<&str>,
     ) -> Result<Vec<Value>, Failure> {
         let Some(cap) = self.slots().filter(|_| by != super::work::OWNER) else {
             return Ok(Vec::new());
         };
         let opens = Opens {
             parent: Some(parent.map(String::from)),
+            orchestrator: kept.map(String::from),
             what: format!("{slug} cannot go under {}", parent.unwrap_or("nothing")),
             ..Opens::default()
         };

@@ -97,7 +97,12 @@ fn look(
         let ids: Vec<i64> = inbox.iter().map(|m| m.id).collect();
         store.ack(handle, &ids)?;
     }
-    let board = store.board()?;
+    let mut board = store.board()?;
+    // An orchestrator's look gives what no orchestrator holds, when one that stays could take it,
+    // and reads the board the give left, so the receiver's line comes from this look.
+    if kind == "orchestrator" && store.give_if_due(&board) {
+        board = store.board()?;
+    }
     let mut now = seen(&board, handle, kind);
     let holdings = (kind == "orchestrator" && w.pull_every.is_some())
         .then(|| store.slot_holdings())

@@ -8,9 +8,10 @@ use symphony_board::{Message, NewLaunch, Role, Session, Task};
 
 #[test]
 fn each_command_says_what_it_did_in_one_line() {
-    let c = Case::new();
+    let mut c = Case::new();
+    // Past its first live line, orch stays once it holds sim/a, so the board gives it sim/b too.
     let (orch, exe, rev) = (
-        c.register("orchestrator"),
+        c.register_settled("orchestrator"),
         c.register("worker"),
         c.register("reviewer"),
     );
@@ -21,9 +22,9 @@ fn each_command_says_what_it_did_in_one_line() {
         &format!("created sim/a (ready); {orch} orchestrates it\n"),
     );
     says(
-        &orch,
-        &["create", "sim/b", "B", "--stage", "design", "--no-role"],
-        "created sim/b (design)\n",
+        &exe,
+        &["create", "sim/b", "B", "--stage", "design"],
+        &format!("created sim/b (design); {orch} orchestrates it\n"),
     );
     says(
         &orch,
@@ -644,9 +645,10 @@ fn inbox_prints_one_line_a_message_then_nothing() {
 #[test]
 fn export_writes_the_snapshot_and_says_where() {
     let c = Case::new();
-    let (orch, exe) = (c.register("orchestrator"), c.register("worker"));
+    // No orchestrator live: the tasks wait for one, holding none.
+    let exe = c.register("worker");
     c.ok(
-        &orch,
+        &exe,
         &[
             "create",
             "sim/a",
@@ -655,11 +657,10 @@ fn export_writes_the_snapshot_and_says_where() {
             "docs/SPEC.md#Jump",
             "--link",
             "notes.md",
-            "--no-role",
         ],
     );
     c.ok(
-        &orch,
+        &exe,
         &[
             "create",
             "sim/b",
@@ -668,7 +669,6 @@ fn export_writes_the_snapshot_and_says_where() {
             "sim/a",
             "--priority",
             "1",
-            "--no-role",
         ],
     );
     c.ok(&exe, &["claim", "sim/a"]);

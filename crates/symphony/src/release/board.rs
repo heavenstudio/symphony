@@ -395,16 +395,18 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
                  {EACH_TARGET}."
             );
         }
-        if named.is_some() || runs_tests(&ran.command) {
-            return format!(
-                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: its log names no \
-                 failed test target, so {EACH_TARGET}."
-            );
-        }
+        // A conciliation is a `cargo test` run too, but in a project's copy, which has no
+        // `just test-rs` of this repository's.
         if conciliates(ran) {
             return format!(
                 "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
                  test, so nothing narrower than the check itself, the command above, {place}."
+            );
+        }
+        if named.is_some() || runs_tests(&ran.command) {
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: its log names no \
+                 failed test target, so {EACH_TARGET}."
             );
         }
         return format!(
@@ -2176,8 +2178,11 @@ mod tests {
     fn a_conciliations_failures_are_rerun_in_its_scratch_copy_with_its_own_command() {
         let tree = crate::test_tree::Tree::new();
         let conciliation = Ran {
-            command: "cargo --config 'patch…' test --no-fail-fast -p game (in /copies/sf at 1a2b)"
-                .into(),
+            command:
+                "cargo test --no-fail-fast --target-dir /copies/sf/.git/symphony-release-target \
+                      -p game (in /copies/sf at 1a2b, its Cargo.lock moved to the candidate by \
+                      cargo update -p 'https://h/o/symphony#symphony' --precise c0ffee)"
+                    .into(),
             log: cargo_log(&tree, 1),
             ..ran("conciliate-consumer", 101)
         };
@@ -2195,6 +2200,8 @@ mod tests {
             log: tree.write("quiet.log", "error: no matching package\n"),
             ..conciliation
         };
+        // Its command is a `cargo test` run, and still no `just test-rs` is named for the copy.
+        assert!(runs_tests(&quiet.command), "{}", quiet.command);
         assert!(
             alone(&quiet, &night(&[])).ends_with("the command above, in its scratch copy."),
             "{}",

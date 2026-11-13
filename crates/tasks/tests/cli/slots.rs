@@ -97,7 +97,7 @@ fn a_claim_past_the_cap_the_project_file_sets_is_refused_naming_the_open_tasks()
 
 #[test]
 fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_too() {
-    let (c, _) = in_project("slots-move", &cap(2));
+    let (mut c, _) = in_project("slots-move", &cap(2));
     let (orch, worker) = holding(&c, 2);
     c.ok(&worker, &["move", "work/1", "blocked"]);
     c.ok(&worker, &["claim", "work/2"]);
@@ -110,8 +110,30 @@ fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_t
         "{}",
         ran.err
     );
+    // Past its first live line, beating and holding tasks, orch stays.
+    let later = crate::common::NOW + symphony_board::health::LIVE_SECONDS + 1.0;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    c.store().touch(&orch).unwrap();
     let other = c.register("worker");
-    c.ok(&other, &["create", "sim/loose", "Loose"]);
+    // Filed by a worker with no work of its own, a task is the one orchestrator's that stays: ready,
+    // it holds no slot, so the give is never refused; started, it would be a third.
+    assert_eq!(
+        c.ok(&other, &["create", "sim/given", "Given"]),
+        format!("created sim/given (ready); {orch} orchestrates it\n")
+    );
+    let ran = c.run_as(&other, &["claim", "sim/given"], "");
+    assert_eq!(ran.code, 1, "{}", ran.err);
+    assert!(
+        ran.err.starts_with(&format!(
+            "✖ sim/given cannot start: {orch} holds 2 open tasks"
+        )),
+        "{}",
+        ran.err
+    );
+    // Started in the moment before the board gives it an orchestrator (filed through the store,
+    // which gives none), open work is refused to an orchestrator at the cap.
+    let loose = symphony_board::NewTask::new("sim/loose", "Loose", &other);
+    c.store().create(&loose).unwrap();
     c.ok(&other, &["claim", "sim/loose"]);
     let ran = c.run_as(&orch, &["role", "sim/loose", "orchestrator"], "");
     assert_eq!(ran.code, 1, "{}", ran.err);

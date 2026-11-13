@@ -469,6 +469,10 @@ fn a_channel_turned_off_starts_the_wait_from_the_whole_digest_but_a_told_post() 
     let (orch, o) = orchestrator(&f);
     let barrier = f.session("worker");
     f.task("tools/gap");
+    // Its orchestrator holds it, so the look below has nothing to give.
+    f.store
+        .take_role("tools/gap", &orch, "orchestrator")
+        .unwrap();
     f.store.claim("tools/gap", &f.session("worker")).unwrap();
     let post = (f.store)
         .say("tools/gap", "owner", "continue", Some("@executor"))

@@ -88,6 +88,9 @@ pub struct Limits {
     pub pause: Duration,
     /// How long a call waits for its answer.
     pub wait: Duration,
+    /// How long a call given up and sent a `cancel` may still be answered: a process that has not
+    /// answered it by then is ended.
+    pub cancel: Duration,
     /// The longest line either way, its newline aside.
     pub line: usize,
     /// The size past which its log is rolled.
@@ -99,6 +102,7 @@ impl Default for Limits {
         Self {
             pause: PAUSE,
             wait: WAIT,
+            cancel: WAIT,
             line: LINE_MAX,
             log: LOG_MAX,
         }
@@ -1024,7 +1028,7 @@ impl Remote {
     /// The call `id`, its request the `sent`th line queued, given up after its wait: why it has no
     /// answer, or none when it was answered or failed meanwhile. A process that did not take even
     /// its request in that wait reads no more and is ended. Else the call is cancelled, and a
-    /// process that has not answered it a wait later is ended.
+    /// process that has not answered it [`Limits::cancel`] later is ended ([`Self::after_cancel`]).
     fn given_up(&self, connection: &Arc<Connection>, id: u64, sent: u64) -> Option<String> {
         let wait = self.limits.wait;
         {
@@ -1043,22 +1047,29 @@ impl Remote {
             cancel.push(b'\n');
             let _ = self.queued(connection, cancel);
         }
-        let (this, cancelled) = (self.this(), connection.clone());
+        let (this, cancelled, cancel) = (self.this(), connection.clone(), self.limits.cancel);
         // With no thread to watch it, the call stays given up until the process ends or answers.
         let _ = std::thread::Builder::new()
             .name(format!("plugin {} call {id}", self.name))
             .spawn(move || {
-                std::thread::sleep(wait);
-                if lock(&cancelled.waiting).given_up.contains(&id) {
-                    this.end(
-                        &cancelled,
-                        Some(format!(
-                            "call {id} had no answer {wait:?} after it was cancelled"
-                        )),
-                    );
-                }
+                std::thread::sleep(cancel);
+                this.after_cancel(&cancelled, id);
             });
         Some(format!("no answer in {wait:?}"))
+    }
+
+    /// The call `id`, given up and sent a `cancel`, once [`Limits::cancel`] has passed since: a
+    /// process that has not answered it is ended, and one that has is kept.
+    fn after_cancel(&self, connection: &Connection, id: u64) {
+        if lock(&connection.waiting).given_up.contains(&id) {
+            let cancel = self.limits.cancel;
+            self.end(
+                connection,
+                Some(format!(
+                    "call {id} had no answer {cancel:?} after it was cancelled"
+                )),
+            );
+        }
     }
 }
 
