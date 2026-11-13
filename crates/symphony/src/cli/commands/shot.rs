@@ -4,6 +4,7 @@
 //! their order (clicks, typing, keys, hovering, scripts, pauses, captures) and saves a PNG. It reads
 //! the page only through the browser: it never starts, stops or reconfigures a Symphony server.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -18,9 +19,13 @@ const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CS
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
-and no request but a feed stream in flight for 300 ms, its frames' among them, those Chrome runs
-in a process of their own too), runs the steps in the order given, and saves a PNG. It only reads
-the page: no server is started, stopped or changed.
+and no request but a feed stream in flight for 300 ms, its frames' and its workers' among them,
+those Chrome runs in a process of their own and a shared worker's too, but none of a frame since
+removed, or held by a document its frame has left, nor a document its frame went on from), runs
+the steps in the order given, and saves a PNG. A dialog the page or a frame opens is dismissed as
+it opens, and the page goes on: an alert closed, a confirm or a prompt answered as by its Cancel,
+a beforeunload let leave; --report names each. It only reads the page: no server is started,
+stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
@@ -30,17 +35,17 @@ options:
   --out FILE.png       where the final picture goes (its folder is made)
   --timeout SECS       how long the page's load, each step and the final capture may each take,
                        every call to the browser within them included, before the shot fails
-                       naming what it waited for, a frame by its address (default 20; a pause
-                       adds its own length)
+                       naming what it waited for, a frame by its address and a worker by its
+                       script's (default 20; a pause adds its own length)
   --size WxH           the viewport in CSS pixels (default 1440x900)
   --phone              a mid phone's screen instead, as the browser tests emulate it: 390x844
                        at 3x, mobile
   --full-page          capture the whole page rather than the viewport
   --scheme light|dark  the colour scheme the page is told the system prefers
-  --report             print, as JSON, the console errors and failed requests seen, and the
-                       document's scroll width against the viewport's (horizontal overflow); a
-                       frame Chrome runs in a process of its own (a cross-site or sandboxed one)
-                       has its failed requests there, not its console errors
+  --report             print, as JSON, the console errors and failed requests seen, a frame's
+                       (one Chrome runs in a process of its own too) naming its address, the
+                       dialogs dismissed (each one's kind, text and document), and the
+                       document's scroll width against the viewport's (horizontal overflow)
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
@@ -588,8 +593,12 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
     };
     said(view, "setting the view", late)?;
     // A frame in a process of its own (a cross-site one, a sandboxed one: a document's mockup) is
-    // answered in that process: followed, its requests end as the page's own do.
+    // answered in that process, and a worker's script in the worker: followed, their requests end
+    // as the page's own do.
     said(chrome.follow_frames(), "following the page's frames", late)?;
+    // A dialog holds its document until answered: each is dismissed as it opens, and the report
+    // names it.
+    chrome.dismiss_dialogs();
     if let Some(scheme) = &shot.scheme {
         let value = match scheme {
             Scheme::Light => "light",
@@ -605,12 +614,17 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
         )?;
     }
     if shot.report {
-        for domain in ["Runtime.enable", "Log.enable"] {
+        for domain in CONSOLE {
             said(chrome.call(domain, json!({})), domain, late)?;
         }
+        // A frame in a process of its own has a console of its own.
+        chrome.enable_in_frames(&CONSOLE);
     }
     Ok(())
 }
+
+/// The domains a report reads the console's errors from, the page's own and each frame's.
+const CONSOLE: [&str; 2] = ["Runtime.enable", "Log.enable"];
 
 impl Step {
     fn run(
@@ -1872,7 +1886,8 @@ fn not_drawn(after: &str, wait: Wait, still: &[String], failed: &[Value]) -> Str
 
 /// What a page still lacks to count as drawn, in words; empty once it has all of it. The requests
 /// in flight of a frame in it are said apart, after the page's own, by the frame's address: a
-/// frame whose document is among them as that frame still to load.
+/// frame whose document is among them as that frame still to load. A worker's are said last, by
+/// its script's address.
 fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
     let mut missing = Vec::new();
     if state["visible"] == "hidden" {
@@ -1897,23 +1912,13 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
         .collect();
     let own: Vec<&str> = pending
         .iter()
-        .filter(|request| request.frame.is_none())
+        .filter(|request| request.frame.is_none() && request.worker.is_none())
         .map(|request| request.url.as_str())
         .collect();
     if !own.is_empty() {
         missing.push(in_flight(&own, ""));
     }
-    // Each frame with requests in flight, in the order its first was seen.
-    let mut frames: Vec<&str> = Vec::new();
-    for frame in pending
-        .iter()
-        .filter_map(|request| request.frame.as_deref())
-    {
-        if !frames.contains(&frame) {
-            frames.push(frame);
-        }
-    }
-    for frame in frames {
+    for frame in each(&pending, |request| request.frame.as_deref()) {
         let theirs: Vec<&Request> = pending
             .iter()
             .copied()
@@ -1928,7 +1933,29 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
             missing.push(in_flight(&urls, &format!(" in the frame {frame}")));
         }
     }
+    for worker in each(&pending, |request| request.worker.as_deref()) {
+        let urls: Vec<&str> = pending
+            .iter()
+            .filter(|request| request.worker.as_deref() == Some(worker))
+            .map(|request| request.url.as_str())
+            .collect();
+        missing.push(in_flight(&urls, &format!(" in the worker {worker}")));
+    }
     missing
+}
+
+/// Each frame or worker `whose` names among `requests`, once, in the order its first was seen.
+fn each<'a>(
+    requests: &[&'a Request],
+    whose: impl Fn(&'a Request) -> Option<&'a str>,
+) -> Vec<&'a str> {
+    let mut found: Vec<&str> = Vec::new();
+    for name in requests.iter().copied().filter_map(whose) {
+        if !found.contains(&name) {
+            found.push(name);
+        }
+    }
+    found
 }
 
 /// Requests in flight, by their addresses (the first three named), `whose` after their count.
@@ -1996,13 +2023,105 @@ fn failure(request: &Request) -> Option<Value> {
     }
 }
 
-/// The report: the console's errors and the page's uncaught exceptions, the requests that failed
-/// (not those the page gave up itself) or were answered 400 or over, and horizontal overflow.
-fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
-    let mut console = Vec::new();
-    for event in events {
+/// Which frame each event a report reads came from, learnt as the events go: each followed frame's
+/// session (`Target.attachedToTarget`), each execution context's frame on its session
+/// (`Runtime.executionContextCreated`), each request's frame (`Network.requestWillBeSent`), each
+/// frame's address by its latest navigation, and the page's own frame, the one navigated with no
+/// parent.
+#[derive(Default)]
+struct Origins {
+    sessions: HashMap<String, String>,
+    contexts: HashMap<(String, i64), String>,
+    requests: HashMap<String, String>,
+    addresses: HashMap<String, String>,
+    page: Option<String>,
+}
+
+impl Origins {
+    /// What `event` says of the frames.
+    fn learn(&mut self, event: &Value) {
         let params = &event["params"];
+        let text = |value: &Value| value.as_str().map(str::to_string);
         match event["method"].as_str() {
+            Some("Target.attachedToTarget") if params["targetInfo"]["type"] == "iframe" => {
+                if let (Some(session), Some(frame)) = (
+                    text(&params["sessionId"]),
+                    text(&params["targetInfo"]["targetId"]),
+                ) {
+                    self.sessions.insert(session, frame);
+                }
+            }
+            Some("Runtime.executionContextCreated") => {
+                let context = &params["context"];
+                if let (Some(id), Some(frame)) = (
+                    context["id"].as_i64(),
+                    text(&context["auxData"]["frameId"]),
+                ) {
+                    self.contexts.insert((session(event), id), frame);
+                }
+            }
+            Some("Network.requestWillBeSent") => {
+                if let (Some(id), Some(frame)) = (text(&params["requestId"]), text(&params["frameId"]))
+                {
+                    self.requests.insert(id, frame);
+                }
+            }
+            Some("Page.frameNavigated") => {
+                let frame = &params["frame"];
+                if let (Some(id), Some(url)) = (text(&frame["id"]), text(&frame["url"])) {
+                    if frame["parentId"].is_null() {
+                        self.page = Some(id.clone());
+                    }
+                    self.addresses.insert(id, url);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The address of the frame `event` came from, when it is not the page's own and is known: by
+    /// the execution context it names (`context`), else by the request it names (`request`), else
+    /// by the followed frame's session it came on.
+    fn frame(&self, event: &Value, context: Option<i64>, request: Option<&str>) -> Option<&str> {
+        let on = session(event);
+        let frame = context
+            .and_then(|context| self.contexts.get(&(on.clone(), context)))
+            .or_else(|| request.and_then(|request| self.requests.get(request)))
+            .or_else(|| self.sessions.get(&on))?;
+        (self.page.as_ref() != Some(frame))
+            .then(|| self.addresses.get(frame).map(String::as_str))
+            .flatten()
+    }
+}
+
+/// The session `event` came on, `""` for the browser's own.
+fn session(event: &Value) -> String {
+    event["sessionId"].as_str().unwrap_or("").to_string()
+}
+
+/// The report: the console's errors and the uncaught exceptions of the page and its frames (a
+/// frame's naming its address), the requests that failed (not those the page gave up itself) or
+/// were answered 400 or over, the dialogs the shot dismissed (each one's kind, text and the
+/// address of the document that opened it), and horizontal overflow.
+fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
+    let mut console: Vec<Value> = Vec::new();
+    let mut dialogs = Vec::new();
+    let mut origins = Origins::default();
+    for event in events {
+        origins.learn(event);
+        let params = &event["params"];
+        let framed = |mut said: Value, context: &Value, request: &Value| {
+            if let Some(frame) = origins.frame(event, context.as_i64(), request.as_str()) {
+                said["frame"] = json!(frame);
+            }
+            said
+        };
+        match event["method"].as_str() {
+            Some("Page.javascriptDialogOpening") => dialogs.push(json!({
+                "type": params["type"],
+                "message": params["message"],
+                "url": params["url"],
+            })),
             Some("Runtime.consoleAPICalled")
                 if matches!(params["type"].as_str(), Some("error" | "assert")) =>
             {
@@ -2016,7 +2135,11 @@ fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
                         other => other.to_string(),
                     })
                     .collect();
-                console.push(json!({"source": "console", "text": text.join(" ")}));
+                console.push(framed(
+                    json!({"source": "console", "text": text.join(" ")}),
+                    &params["executionContextId"],
+                    &Value::Null,
+                ));
             }
             Some("Runtime.exceptionThrown") => {
                 let details = &params["exceptionDetails"];
@@ -2024,7 +2147,11 @@ fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
                     .as_str()
                     .or_else(|| details["text"].as_str())
                     .unwrap_or("");
-                console.push(json!({"source": "exception", "text": text}));
+                console.push(framed(
+                    json!({"source": "exception", "text": text}),
+                    &details["executionContextId"],
+                    &Value::Null,
+                ));
             }
             Some("Log.entryAdded") if params["entry"]["level"] == "error" => {
                 let entry = &params["entry"];
@@ -2032,7 +2159,7 @@ fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
                 if let Some(url) = entry["url"].as_str().filter(|url| !url.is_empty()) {
                     said["url"] = json!(url);
                 }
-                console.push(said);
+                console.push(framed(said, &Value::Null, &entry["networkRequestId"]));
             }
             _ => {}
         }
@@ -2043,6 +2170,7 @@ fn report(events: &[Value], requests: &[Request], layout: &Value) -> Value {
     json!({
         "console_errors": console,
         "failed_requests": failed,
+        "dialogs": dialogs,
         "scroll_width": layout["scroll_width"],
         "viewport_width": layout["viewport_width"],
         "horizontal_overflow": scroll > viewport,

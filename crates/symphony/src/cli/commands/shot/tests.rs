@@ -300,6 +300,36 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
 }
 
 #[test]
+fn the_help_says_what_the_page_waits_for_what_a_dialog_gets_and_what_the_report_names() {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(main(&args(&["--help"]), &mut out, &mut err), 0);
+    let words = String::from_utf8(out)
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for said in [
+        // Frames and workers are waited for, but none gone or left.
+        "its frames' and its workers' among them, those Chrome runs in a process of their own and \
+         a shared worker's too, but none of a frame since removed, or held by a document its frame \
+         has left, nor a document its frame went on from",
+        // A dialog is dismissed and named, never waited out.
+        "A dialog the page or a frame opens is dismissed as it opens, and the page goes on: an \
+         alert closed, a confirm or a prompt answered as by its Cancel, a beforeunload let leave; \
+         --report names each",
+        "naming what it waited for, a frame by its address and a worker by its script's",
+        // Every frame's console errors are in the report, each naming its frame.
+        "the console errors and failed requests seen, a frame's (one Chrome runs in a process of \
+         its own too) naming its address, the dialogs dismissed (each one's kind, text and \
+         document)",
+    ] {
+        assert!(words.contains(said), "{said:?} not in the help: {words}");
+    }
+    // Nor does it still say a frame apart keeps its console errors out.
+    assert!(!words.contains("not its console errors"), "{words}");
+}
+
+#[test]
 fn every_line_of_the_help_fits_a_hundred_columns() {
     // The usage before it is one line, as a synopsis is; the help's own lines are wrapped.
     for line in HELP.lines() {
@@ -491,6 +521,54 @@ fn a_frames_requests_in_flight_are_said_after_the_pages_own_by_the_frame_its_doc
             "4 request(s) in flight in the frame http://b/mock.html: http://b/1.png, \
              http://b/2.png, http://b/3.png and 1 more",
             "1 request(s) in flight in the frame about:srcdoc: about:blank#x",
+        ]
+    );
+}
+
+/// `request` a worker made, the worker's script at `script`.
+fn a_workers(url: &str, kind: &str, script: &str) -> Request {
+    Request {
+        worker: Some(script.into()),
+        ..request(url, kind)
+    }
+}
+
+#[test]
+fn a_workers_requests_in_flight_are_said_last_by_its_script_never_as_a_frames() {
+    let loaded = json!({"ready": "complete", "navigation": null, "loading": 0});
+    // A worker's finished and given-up requests, and its streams, hold nothing.
+    let quiet = [
+        Request {
+            finished: true,
+            ..a_workers("http://a/w.js", "Script", "http://a/w.js")
+        },
+        Request {
+            failed: Some("its worker ended".into()),
+            canceled: true,
+            ..a_workers("http://a/data.json", "Fetch", "http://a/w.js")
+        },
+        a_workers("http://a/feed", "EventSource", "http://a/w.js"),
+    ];
+    assert!(waiting(&loaded, &quiet).is_empty());
+    // Its own script still loading, and a worker's fetch, each by its worker, after a frame's and
+    // the page's own, in the order each worker's first was seen.
+    let said = waiting(
+        &loaded,
+        &[
+            a_workers("http://b/shared.js", "Script", "http://b/shared.js"),
+            a_workers("http://a/1.json", "Fetch", "http://a/w.js"),
+            framed("http://b/p.png", "Image", "http://b/mock.html"),
+            request("http://a/api", "Fetch"),
+            a_workers("http://a/2.json", "Fetch", "http://a/w.js"),
+        ],
+    );
+    assert_eq!(
+        said,
+        [
+            "1 request(s) in flight: http://a/api",
+            "1 request(s) in flight in the frame http://b/mock.html: http://b/p.png",
+            "1 request(s) in flight in the worker http://b/shared.js: http://b/shared.js",
+            "2 request(s) in flight in the worker http://a/w.js: http://a/1.json, http://a/2.json",
         ]
     );
 }
@@ -2006,12 +2084,17 @@ fn traffic_is_quiet_since_its_last_request_began_finished_or_failed_but_not_befo
 }
 
 #[test]
-fn the_report_keeps_errors_failures_and_overflow_and_leaves_out_the_rest() {
+fn the_report_keeps_errors_failures_dialogs_and_overflow_and_leaves_out_the_rest() {
     let event = |method: &str, params: Value| json!({"method": method, "params": params});
     let events = [
         event(
             "Runtime.consoleAPICalled",
             json!({"type": "error", "args": [{"type": "string", "value": "boom"}, {"type": "number", "value": 3}, {"type": "object", "description": "Error: deep"}]}),
+        ),
+        // A dialog, by its kind, its text and its document, whatever else Chrome says of it.
+        event(
+            "Page.javascriptDialogOpening",
+            json!({"type": "confirm", "message": "Sure?", "url": "http://h/", "hasBrowserHandler": false, "defaultPrompt": ""}),
         ),
         event(
             "Runtime.consoleAPICalled",
@@ -2074,6 +2157,7 @@ fn the_report_keeps_errors_failures_and_overflow_and_leaves_out_the_rest() {
                 {"url": "http://h/missing", "status": 404},
                 {"url": "http://h/refused", "error": "net::ERR_CONNECTION_REFUSED"},
             ],
+            "dialogs": [{"type": "confirm", "message": "Sure?", "url": "http://h/"}],
             "scroll_width": 1500,
             "viewport_width": 1440,
             "horizontal_overflow": true,
@@ -2086,6 +2170,110 @@ fn the_report_keeps_errors_failures_and_overflow_and_leaves_out_the_rest() {
     );
     assert_eq!(fits["horizontal_overflow"], json!(false));
     assert_eq!(fits["console_errors"], json!([]));
+    assert_eq!(fits["dialogs"], json!([]));
+}
+
+#[test]
+fn the_report_names_the_frame_each_error_came_from_but_the_pages_own() {
+    let on = |session: &str, method: &str, params: Value| {
+        json!({"sessionId": session, "method": method, "params": params})
+    };
+    let navigated = |session: &str, frame: &str, parent: Option<&str>, url: &str| {
+        let mut told = json!({"id": frame, "url": url});
+        if let Some(parent) = parent {
+            told["parentId"] = json!(parent);
+        }
+        on(session, "Page.frameNavigated", json!({"frame": told}))
+    };
+    let context = |session: &str, id: i64, frame: &str| {
+        on(
+            session,
+            "Runtime.executionContextCreated",
+            json!({"context": {"id": id, "auxData": {"frameId": frame, "isDefault": true}}}),
+        )
+    };
+    let console = |session: &str, context: i64, text: &str| {
+        on(
+            session,
+            "Runtime.consoleAPICalled",
+            json!({"type": "error", "executionContextId": context, "args": [{"type": "string", "value": text}]}),
+        )
+    };
+    let logged = |session: &str, request: Option<&str>, text: &str| {
+        let mut entry = json!({"level": "error", "source": "network", "text": text});
+        if let Some(request) = request {
+            entry["networkRequestId"] = json!(request);
+        }
+        on(session, "Log.entryAdded", json!({"entry": entry}))
+    };
+    let events = [
+        // The page, a frame in its process (`near`), and a frame in a process of its own (`far`,
+        // followed on a session of its own, its contexts numbered apart from the page's).
+        navigated("page", "top", None, "http://a/"),
+        context("page", 1, "top"),
+        navigated("page", "near", Some("top"), "http://a/near.html"),
+        context("page", 2, "near"),
+        on(
+            "page",
+            "Target.attachedToTarget",
+            json!({"sessionId": "far", "targetInfo": {"targetId": "far", "type": "iframe", "url": ""}}),
+        ),
+        navigated("far", "far", Some("top"), "http://b/far.html"),
+        context("far", 1, "far"),
+        on(
+            "far",
+            "Network.requestWillBeSent",
+            json!({"requestId": "picture", "frameId": "far", "request": {"url": "http://b/p.png"}}),
+        ),
+        on(
+            "page",
+            "Network.requestWillBeSent",
+            json!({"requestId": "icon", "frameId": "top", "request": {"url": "http://a/icon"}}),
+        ),
+        console("page", 1, "the page's"),
+        console("page", 2, "near's"),
+        console("far", 1, "far's"),
+        on(
+            "far",
+            "Runtime.exceptionThrown",
+            json!({"exceptionDetails": {"text": "Uncaught", "executionContextId": 1, "exception": {"description": "Error: far"}}}),
+        ),
+        // By the request it names, else by the frame's session it came on.
+        logged("far", Some("picture"), "its picture"),
+        logged("page", Some("icon"), "the page's icon"),
+        logged("far", None, "far's violation"),
+        // A context not told of: by its session, a followed frame's, else none named.
+        console("far", 9, "far's unknown context"),
+        console("page", 7, "the page's unknown context"),
+        // A frame named by the document it was in when the error came.
+        navigated("page", "near", Some("top"), "http://a/near-2.html"),
+        context("page", 3, "near"),
+        console("page", 3, "near's next"),
+    ];
+    let said = report(&events, &[], &json!({}));
+    let source = |source: &str, text: &str, frame: Option<&str>| {
+        let mut said = json!({"source": source, "text": text});
+        if let Some(frame) = frame {
+            said["frame"] = json!(frame);
+        }
+        said
+    };
+    let far = Some("http://b/far.html");
+    assert_eq!(
+        said["console_errors"],
+        json!([
+            source("console", "the page's", None),
+            source("console", "near's", Some("http://a/near.html")),
+            source("console", "far's", far),
+            source("exception", "Error: far", far),
+            source("network", "its picture", far),
+            source("network", "the page's icon", None),
+            source("network", "far's violation", far),
+            source("console", "far's unknown context", far),
+            source("console", "the page's unknown context", None),
+            source("console", "near's next", Some("http://a/near-2.html")),
+        ])
+    );
 }
 
 #[test]
