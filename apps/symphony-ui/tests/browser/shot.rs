@@ -897,7 +897,10 @@ const POINTED: &str = r#"<script>
 
 /// Checkboxes under labels: one hidden in its label as screen-reader-only inputs are, one under
 /// its label's styled track, one under a label that names it by `for`; then one under a label that
-/// names another, and one under a link inside its own label, whose press follows the link.
+/// names another, and one under a link inside its own label, whose press follows the link. Then,
+/// each hidden in its label: one under a button in a component's shadow root, one under an object,
+/// and a second checkbox over its label's text, the label's control being the first; and an icon
+/// with `pointer-events: none` in a label that names another checkbox.
 fn labels() -> Vec<u8> {
     format!(
         r##"<!doctype html>
@@ -916,6 +919,15 @@ fn labels() -> Vec<u8> {
 <p><input type="checkbox" id="named"><label for="named" id="named-label" class="over">over it, naming it</label></p>
 <p><input type="checkbox" id="unnamed"><label for="named" id="another" class="over">over it, naming another</label></p>
 <p><label class="toggle"><input type="checkbox" id="linked"><a href="#terms" id="terms" class="over">the terms, over it</a></label></p>
+<p><label class="toggle"><input type="checkbox" id="shadowed" class="hidden"><x-press id="press"></x-press> a button in a shadow root, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="objected" class="hidden"><object id="object" class="track" type="text/plain"></object> an object, over it</label></p>
+<p><label class="toggle" id="pair"><input type="checkbox" id="first"> its label's text over it<input type="checkbox" id="second" class="hidden" style="left: 70px"></label></p>
+<p><input type="checkbox" id="other"> <label for="other" id="other-label"><svg id="mark" width="24" height="24" style="pointer-events: none"><rect width="24" height="24" fill="#08f"/></svg> a mark in another's label</label></p>
+<script>
+  customElements.define('x-press', class extends HTMLElement {{
+    constructor() {{ super(); this.attachShadow({{mode: 'open'}}).innerHTML = '<button type="button" id="inner" style="display: block; width: 40px; height: 24px"></button>'; }}
+  }});
+</script>
 {POINTED}"##
     )
     .into_bytes()
@@ -982,24 +994,79 @@ fn a_click_on_a_checkbox_under_another_controls_label_or_a_link_in_its_own_stays
     }
 }
 
+#[test]
+fn a_click_on_a_checkbox_under_a_shadow_roots_button_or_an_object_in_its_label_stays_covered() {
+    // The press lands on the button inside the component, or in the object's own document: neither
+    // activates the label, so either is a cover, the button named in its host's shadow root.
+    for (name, css, cover) in [
+        (
+            "label-shadow",
+            "#shadowed",
+            "button#inner in x-press#press's shadow root",
+        ),
+        ("label-object", "#objected", "object#object.track"),
+    ] {
+        let message = format!(
+            "--click {css} stayed covered: {cover} was on top at its middle after every scroll \
+             within 5s"
+        );
+        if !refused(name, &labels(), "--click", css, &message) {
+            return;
+        }
+    }
+}
+
+#[test]
+fn a_target_whose_label_clicks_another_control_says_so_and_offers_no_label_to_target() {
+    // The label that holds each one clicks another checkbox: named for what a press there does,
+    // never as the thing to target. The second checkbox's own clip hides it, the icon takes no
+    // pointer.
+    for (name, css, message) in [
+        (
+            "label-pair",
+            "#second",
+            "--click #second stayed clipped by its own clip: label#pair.toggle, which holds it, \
+             was on top at its middle after every scroll within 5s; a press there clicks \
+             input#first (by its label), not it",
+        ),
+        (
+            "label-mark",
+            "#mark",
+            "--click #mark takes no pointer at its middle (pointer-events: none): \
+             label#other-label, which holds it, was on top there after every scroll within 5s; a \
+             press there clicks input#other (by its label), not it",
+        ),
+    ] {
+        if !refused(name, &labels(), "--click", css, message) {
+            return;
+        }
+    }
+}
+
 /// An icon with `pointer-events: none` in its button; a disabled button with `pointer-events:
 /// none` in its row; an SVG ring around an empty middle; and a button under a cover of zero
-/// opacity.
+/// opacity. Then a toolbar of two buttons with neither id nor class, each holding an icon with
+/// `pointer-events: none`; a button its visibility hides; and a link in a panel folded to no
+/// height.
 fn ancestors() -> Vec<u8> {
     format!(
         r##"<!doctype html>
 <meta charset="utf-8">
 <style>
   body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
-  body > div {{ margin: 0 0 40px; }}
-  #icon, #off {{ pointer-events: none; }}
+  body > div, nav, main {{ margin: 0 0 40px; }}
+  #icon, #off, .glyph {{ pointer-events: none; }}
   .wrap {{ position: relative; display: inline-block; }}
   .clear {{ position: absolute; inset: 0; opacity: 0; background: #000; }}
+  #panel {{ max-height: 0; overflow: hidden; }}
 </style>
 <div><button id="go"><svg id="icon" width="24" height="24"><rect width="24" height="24" fill="#08f"/></svg> go</button></div>
 <div id="row" class="row"><button id="off" disabled>off</button></div>
 <div><svg id="rings" width="100" height="100"><circle id="ring" cx="50" cy="50" r="40" fill="none" stroke="#00f" stroke-width="8"/></svg></div>
 <div><span class="wrap"><button id="faded">under a clear cover</button><span id="veil" class="clear"></span></span></div>
+<nav class="tools"><button onclick="window.pressed = 'bold'"><svg class="glyph" width="24" height="24"><rect width="24" height="24" fill="#0a0"/></svg></button><button onclick="window.pressed = 'italic'"><svg class="glyph" id="italic" width="24" height="24"><rect width="24" height="24" fill="#a0a"/></svg></button></nav>
+<div id="shelf"><button id="unseen" style="visibility: hidden">unseen</button> its visibility hidden</div>
+<main id="board"><div id="panel"><p><a id="folded" href="#folded-followed">folded away</a></p></div></main>
 {POINTED}"##
     )
     .into_bytes()
@@ -1068,9 +1135,59 @@ fn a_ring_a_disabled_button_with_no_pointer_and_a_clear_cover_still_refuse_the_c
     }
 }
 
+#[test]
+fn a_target_in_one_of_buttons_alike_is_offered_a_selector_that_finds_its_button_alone() {
+    // Its button's name finds the first button too: the selector offered pins it among its kin.
+    let message = "--click #italic takes no pointer at its middle (pointer-events: none): nav.tools \
+                   > button, which holds it, was on top there after every scroll within 5s; target \
+                   nav.tools > button:nth-of-type(2) instead";
+    if !refused("toolbar", &ancestors(), "--click", "#italic", message) {
+        return;
+    }
+    // Targeted as the failure says, the second button takes the press, not the first.
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "toolbar-button",
+        &ancestors(),
+        &[
+            "--click",
+            "nav.tools > button:nth-of-type(2)",
+            "--eval",
+            "window.pressed",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), [json!("italic")]);
+}
+
+#[test]
+fn a_target_its_visibility_hides_or_a_box_around_it_clips_away_fails_saying_so_offering_nothing() {
+    // Neither takes no pointer: each says its own cause, and names nothing to target instead.
+    for (name, css, message) in [
+        (
+            "unseen",
+            "#unseen",
+            "--click #unseen stayed hidden within 5s: its visibility is hidden, so no press \
+             reaches it",
+        ),
+        (
+            "folded",
+            "#folded",
+            "--click #folded stayed clipped: div#panel clips it away at its middle after every \
+             scroll within 5s",
+        ),
+    ] {
+        if !refused(name, &ancestors(), "--click", css, message) {
+            return;
+        }
+    }
+}
+
 /// A link wrapped over two lines, its first line ending a line a spacer fills and its second
 /// starting one another spacer ends, so the middle of its bounding box falls on a spacer; and,
-/// further down, a link wrapped over twenty lines, taller than a view 300 px high. The words are
+/// further down, a link wrapped over twenty lines, taller than a view 300 px high; and further
+/// down still, one wrapped over eight lines (192 px) in a scrolling box 72 px high. The words are
 /// boxes of their own, so no font moves a line's break.
 fn wrapped() -> Vec<u8> {
     let words = r#"<span class="word"></span>"#;
@@ -1086,17 +1203,22 @@ fn wrapped() -> Vec<u8> {
   #short {{ width: 300px; }}
   #long {{ width: 60px; }}
   .filler {{ height: 600px; }}
+  #box {{ height: 72px; width: 300px; overflow: auto; }}
+  #box p {{ width: 60px; }}
 </style>
 <p id="short"><span class="spacer" id="before"></span><a id="wrapped" href="#wrapped-followed">{words} {words}</a><span class="spacer" id="after"></span></p>
 <div class="filler"></div>
 <p id="long"><a id="tall" href="#tall-followed">{}</a></p>
+<div class="filler"></div>
+<div id="box"><p><a id="boxed" href="#boxed-followed">{}</a></p></div>
 <div class="filler"></div>
 <script>
   window.reached = id => {{ const e = document.getElementById(id), b = e.getBoundingClientRect(); const at = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); return [!!at && e.contains(at), at && at.className]; }};
   window.lines = id => document.getElementById(id).getClientRects().length;
 </script>
 {POINTED}"##,
-        vec![words; 20].join(" ")
+        vec![words; 20].join(" "),
+        vec![words; 8].join(" ")
     )
     .into_bytes()
 }
@@ -1138,6 +1260,33 @@ fn a_click_on_a_link_wrapped_over_lines_aims_at_its_first_line_in_view_and_follo
     assert!(tall[1].as_f64().unwrap() > 300.0, "{tall}");
     assert!(tall[2].as_f64().unwrap() < 0.0, "{tall}");
     assert_eq!(tall[3], json!("#tall-followed"), "{tall}");
+}
+
+#[test]
+fn a_click_on_a_link_taller_than_its_scrolling_box_aims_at_a_line_the_box_shows_and_follows_it() {
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "boxed",
+        &wrapped(),
+        &[
+            "--size",
+            "800x300",
+            "--click",
+            "#boxed",
+            "--eval",
+            "(e => { const box = document.getElementById('box').getBoundingClientRect(), first = (r => r.y + r.height / 2)(e.getClientRects()[0]); return [lines('boxed'), first < box.y, first >= 0, location.hash]; })(document.getElementById('boxed'))",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    // Scrolled to the middle of its box, its first line's middle is above the box, which clips it
+    // away there, yet in the view: aimed at a line the box shows, and followed.
+    assert_eq!(
+        printed(&output),
+        [json!([8, true, true, "#boxed-followed"])],
+        "{}",
+        said(&output)
+    );
 }
 
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
