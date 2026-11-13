@@ -203,6 +203,9 @@ pub(super) struct FileLand {
     pub(super) push: bool,
     pub(super) timeout_seconds: u64,
     pub(super) check: bool,
+    /// What holds the project's tests and checks, which a red's fix its orchestrator approves
+    /// changes none of (`symphony_board::land::check_paths`); its defaults when left out.
+    pub(super) check_paths: Option<Vec<String>>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -215,6 +218,7 @@ impl Default for FileLand {
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             check: true,
+            check_paths: None,
             unknown: Unknown::new(),
         }
     }

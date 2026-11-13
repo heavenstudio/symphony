@@ -265,6 +265,7 @@ fn step(consumer: &Consumer, name: &str, names: &[String], against: &Against<'_>
         error: None,
         timed_out: false,
         interrupted: false,
+        load: None,
     };
     match done {
         Ok(Done::Skipped(why)) => (None, vec![format!("left out: {why}")], Taken::Behind),
