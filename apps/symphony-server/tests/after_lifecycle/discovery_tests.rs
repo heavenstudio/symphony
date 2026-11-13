@@ -9,7 +9,7 @@ const WARMED: &str = "→ native read data warmed:";
 #[test]
 fn a_cold_start_announces_its_url_before_its_first_board_read() {
     let repo = Repo::new("announce before board");
-    repo.start(&repo.tree, false);
+    repo.start(&repo.main, false);
     let log = repo.home.join("server.log");
     let said = until("the first board read's line", || {
         fs::read_to_string(&log)
@@ -27,7 +27,7 @@ fn a_cold_start_announces_its_url_before_its_first_board_read() {
 #[test]
 fn cold_auto_port_starts_skip_census_but_live_announcements_survive_bad_hints() {
     let repo = Repo::new("discovery port hints");
-    let started = repo.start(&repo.tree, false);
+    let started = repo.start(&repo.main, false);
     assert!(
         !repo
             .base
@@ -61,7 +61,7 @@ fn cold_auto_port_starts_skip_census_but_live_announcements_survive_bad_hints() 
         if let Some(contents) = contents {
             fs::write(&address, contents).unwrap();
         }
-        let recovered = repo.start(&repo.tree, false);
+        let recovered = repo.start(&repo.main, false);
         assert!(
             repo.base
                 .join(format!("env.{}", recovered.child.id()))
@@ -84,7 +84,7 @@ fn cold_auto_port_starts_skip_census_but_live_announcements_survive_bad_hints() 
         &repo.main.join("artifacts/docs-app.port"),
         &free.to_string(),
     );
-    repo.start(&repo.tree, false);
+    repo.start(&repo.main, false);
     assert_eq!(repo.record(), Some(running.clone()));
     assert_eq!(repo.check_server().pid, running.pid);
     let log = fs::read_to_string(repo.home.join("server.log")).unwrap();

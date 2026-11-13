@@ -1,6 +1,11 @@
 //! A start of the one server, and `project add`: the checkout's project registered in the machine
 //! folder, the host rule ([`crate::host`]) applied to the running server, then the project's URL,
-//! a start of this build, or the hand-off to it.
+//! a start of this build, or the hand-off to it. A start in a linked worktree, whichever build it
+//! runs, never starts the one server, registers a project with it or replaces it. It prints the
+//! running server's page for that worktree when the server serves its project, and is refused
+//! otherwise, naming `--port 0`, a server of its own; `--shared` is the owner's word that a start
+//! there may start the one server, and the host rule never lets it replace a running one. A
+//! worktree of a repository git names no main checkout of (a bare one's) is refused either way.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -42,8 +47,14 @@ pub(crate) enum Started {
 
 /// Register `checkout`'s project and have the one server serve it: the running one when it does,
 /// this build in its place when the host rule says so (`if_up` asks only, and starts nothing),
-/// else this build started.
-pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Started, String> {
+/// else this build started. In a linked worktree it only finds the running server ([`found`]),
+/// unless `shared` lets the start there start it.
+pub(crate) fn one(
+    checkout: &Checkout,
+    home: &Home,
+    if_up: bool,
+    shared: bool,
+) -> Result<Started, String> {
     // A checkout whose state an older build keeps in its old folders registers nothing and starts
     // nothing from here: its board would start empty beside the old one, and its build install
     // beside it. One registered otherwise (an older build's `project add`) is served, and nothing
@@ -54,9 +65,21 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
             return Err(why);
         }
     }
+    if checkout.linked() && checkout.mainless() {
+        return Err(format!(
+            "{} is a linked worktree of {}, a repository git names no main checkout of for the \
+             machine's Symphony to serve: `just symphony --port 0` here serves this worktree on a \
+             server of its own",
+            checkout.top.display(),
+            checkout.common.display()
+        ));
+    }
+    if checkout.linked() && !shared {
+        return found(checkout, home);
+    }
     let machine = home.dir().to_path_buf();
     let entry = Entry::of(&checkout.main)?;
-    let ours = Build::this(&checkout.main);
+    let ours = Build::this(&checkout.main).started_in(&checkout.top);
     // Its start read as soon as the look `up` makes finds it answering as its pid: the start of
     // that server, the window between that answer and this read aside.
     let running = home.up().map(|running| {
@@ -67,16 +90,7 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
         .as_ref()
         .and_then(|(running, _)| crate::probe::front(running.port, Duration::from_secs(5)));
     match (running, front) {
-        (Some((running, _)), Some(front)) if front.pin == 0 => {
-            // A server from before the machine folder serves its one checkout at `/` and takes no
-            // hand-off request: it updates itself from its sources, or a stop and a start replace it.
-            eprintln!(
-                "· the running Symphony predates the registry: it serves {} alone, at /; \
-                 `just symphony --stop`, then `just symphony`, serves every project",
-                front.root
-            );
-            Ok(Started::Serving(running, String::new()))
-        }
+        (Some((running, _)), Some(front)) if front.pin == 0 => Ok(predates(running, &front)),
         (Some((running, server)), Some(front)) => {
             let registry = Registry::read(&machine)?;
             match crate::host::judge(&Build::of(&front), &ours, &entry, &registry) {
@@ -123,6 +137,63 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
 
 fn register(machine: &Path, entry: &Entry) -> Result<(), String> {
     Registry::change(machine, |registry| registry.add(entry.clone())).map(|_| ())
+}
+
+/// `running`, a server from before the machine folder (`front` says pin 0): it serves its one
+/// checkout at `/` and takes no hand-off request; it updates itself from its sources, or a stop and
+/// a start replace it.
+fn predates(running: Running, front: &symphony_api::Front) -> Started {
+    eprintln!(
+        "· the running Symphony predates the registry: it serves {} alone, at /; \
+         `just symphony --stop`, then `just symphony`, serves every project",
+        front.root
+    );
+    Started::Serving(running, String::new())
+}
+
+/// A start in the linked worktree `checkout.top` without `--shared`: the running server, found but
+/// only read ([`Home::found`]), when it serves the project registered at the main checkout, the
+/// registry only read too; else why nothing was started, naming what to run.
+fn found(checkout: &Checkout, home: &Home) -> Result<Started, String> {
+    let running = home.found();
+    let front = running
+        .as_ref()
+        .and_then(|running| crate::probe::front(running.port, Duration::from_secs(5)));
+    let (Some(running), Some(front)) = (running, front) else {
+        return Err(refused(checkout, "no Symphony answers"));
+    };
+    if front.pin == 0 {
+        return Ok(predates(running, &front));
+    }
+    let registry = Registry::read(home.dir())?;
+    let served = registry.projects.iter().find(|entry| {
+        entry.root == checkout.main
+            && front.projects.contains(&entry.id)
+            && Build::of(&front).lacks(entry).is_none()
+    });
+    match served {
+        Some(entry) => Ok(Started::Serving(running, entry.id.clone())),
+        None => Err(refused(
+            checkout,
+            &format!(
+                "the running Symphony does not serve {}",
+                checkout.main.display()
+            ),
+        )),
+    }
+}
+
+/// Why a start in the linked worktree of `checkout` started nothing: what it found, `what`, and
+/// what to run instead.
+fn refused(checkout: &Checkout, what: &str) -> String {
+    format!(
+        "{what}, and a start in a linked worktree ({}) never starts the machine's Symphony, \
+         registers a project with it or replaces it: `just symphony --port 0` here serves this \
+         worktree on a server of its own; `just symphony` in {} has the machine's serve it; \
+         `--shared` lets a start here start the machine's, never replacing one that runs",
+        checkout.top.display(),
+        checkout.main.display()
+    )
 }
 
 /// Ask `running`, `server` as it was found, to hand its sockets to `request`'s build and wait for
@@ -184,7 +255,7 @@ mod tests {
     use symphony_board::sys::{Command, Start, Stdio};
 
     /// A hand-off asks only the server found: a pid whose start differs from the one recorded when
-    /// it was found is sent nothing (SIGUSR1 would end the `sleep` holding it), and the start is
+    /// it was found is sent nothing (SIGUSR1 would end the `cat` holding it), and the start is
     /// refused; the process found is asked, and said.
     #[test]
     fn a_hand_off_is_asked_of_the_server_found_and_of_no_process_given_its_pid_since() {
