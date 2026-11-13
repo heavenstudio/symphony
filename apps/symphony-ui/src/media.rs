@@ -118,33 +118,37 @@ pub fn PictureView(src: String, caption: String, #[props(default)] thumb: bool) 
     }
 }
 
-/// A document image preserves the server's sizing, thumbnail original and presentation. The
-/// node reserves its real box before visibility; only its src waits for the shared latch. Its
-/// address and its original's are written under the project's base, as a link's is, so a copied
-/// image address opens the picture with no page to refer it.
-///
-/// Once the latch opens the img is drawn afresh with its src, never given one on the node drawn
-/// without it: Chrome draws a src-less img as its alt text and rebuilds its box for the picture,
-/// and a rebuild asked for in the frame an ancestor slot takes `content-visibility: auto` is lost,
-/// leaving a picture with no box that never loads (a folded card opened by a click).
+/// The src a document picture holds until its latch opens: an empty picture of no size, drawn
+/// with no request. Its width and height of 0 give it no aspect ratio, so the img's own width and
+/// height attributes size its box.
+pub const WAITING: &str =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='0' height='0'/%3E";
+
+/// A document image preserves the server's sizing, thumbnail original and presentation. Until the
+/// shared latch opens its src is [`WAITING`], so the img is a picture from its first frame: it
+/// takes the box its width and height give it (none without them), and the latch only changes
+/// the src of that one node, which keeps a keyboard focus on it. With no src Chrome would draw it
+/// as its alt text, holding no box, and rebuild its box when the src came; a rebuild asked for in
+/// the frame an ancestor slot takes `content-visibility: auto` is lost, leaving a picture with no
+/// box that is never requested (a folded card opened by a click). Its address and its original's
+/// are written under the project's base, as a link's is, so a copied image address opens the
+/// picture with no page to refer it.
 #[component]
 pub fn DocumentPicture(image: Image) -> Element {
     let (shown, reveal) = crate::viewport::use_visibility(false);
     use_runtime(shown);
     let attrs = &image.presentation.attributes;
     rsx! {
-        for shown in std::iter::once(shown()) {
-            img { key: "{shown}",
-                src: shown.then(|| crate::project::href(&image.src)), alt: image.alt.clone(),
-                class: image.presentation.class.clone(), id: image.presentation.id.clone(), title: image.presentation.title.clone(),
-                width: attrs.get("width").cloned(), height: attrs.get("height").cloned(),
-                loading: attrs.get("loading").cloned().unwrap_or_else(|| "lazy".into()),
-                decoding: attrs.get("decoding").cloned().unwrap_or_else(|| "async".into()),
-                style: attrs.get("style").cloned(), role: attrs.get("role").cloned(), tabindex: attrs.get("tabindex").cloned(),
-                "aria-label": attrs.get("aria-label").cloned(), "aria-hidden": attrs.get("aria-hidden").cloned(),
-                "data-full": attrs.get("data-full").map(|full| crate::project::href(full)),
-                ..reveal.clone(),
-            }
+        img {
+            src: if shown() { crate::project::href(&image.src) } else { WAITING.to_string() }, alt: image.alt.clone(),
+            class: image.presentation.class.clone(), id: image.presentation.id.clone(), title: image.presentation.title.clone(),
+            width: attrs.get("width").cloned(), height: attrs.get("height").cloned(),
+            loading: attrs.get("loading").cloned().unwrap_or_else(|| "lazy".into()),
+            decoding: attrs.get("decoding").cloned().unwrap_or_else(|| "async".into()),
+            style: attrs.get("style").cloned(), role: attrs.get("role").cloned(), tabindex: attrs.get("tabindex").cloned(),
+            "aria-label": attrs.get("aria-label").cloned(), "aria-hidden": attrs.get("aria-hidden").cloned(),
+            "data-full": attrs.get("data-full").map(|full| crate::project::href(full)),
+            ..reveal,
         }
     }
 }
@@ -339,8 +343,8 @@ mod tests {
         let mut image: Image = serde_json::from_value(serde_json::json!({"src":"/thumb.png","alt":"Lamp","presentation":{"attributes":{"width":"640","height":"480","data-full":"/original.png"}}})).unwrap();
         image.presentation.id = "picture".into();
         let html = dioxus_ssr::render_element(rsx! { DocumentPicture { image } });
-        // Shown (the host draws everything), one picture, with its src.
-        assert_eq!(html.matches("<img").count(), 1, "{html}");
+        // Shown (the host draws everything): its own src, never the waiting one.
+        assert!(!html.contains("data:image"), "{html}");
         for attr in [
             "src=\"/thumb.png\"",
             "width=\"640\"",

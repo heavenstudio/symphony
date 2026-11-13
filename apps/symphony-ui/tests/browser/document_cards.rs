@@ -516,11 +516,12 @@ fn document_callout_title_stops_short_of_its_sections_comment_button() {
 /// The folded card's document: the register's resolved card, its picture a block of its first
 /// history entry between two paragraphs, its src landing as the entries draw and the card's slots
 /// take `content-visibility: auto` (`DocumentPicture`). The outline carries no block, as the
-/// server's does: a folded card's section is read only once it is opened.
+/// server's does, and a folded card's section is read only once it is opened: the site, and the
+/// answer the card's section is read with, set by the test before it opens the card.
 const FOLDED: &str = "docs/FOLDED.md";
 const FOLDED_PICTURE: &str = "/docs/analysis/split.svg";
 
-fn folded_card_site() -> Site {
+fn folded_card_site() -> (Site, Value) {
     let site = Site::start(dist(), &common::fixture("board.json"));
     let question = "Where do the pictures a card shows live? A: the ignored folder. F: committed beside the card. Recommended: F.";
     let code = |words: &str| json!({"type":"code","text":words});
@@ -594,10 +595,12 @@ fn folded_card_site() -> Site {
     site.set_json("/api/document", &json!({"document":{"version":2,"path":FOLDED,"title":"Decision register","waiting":[],"crumbs":[],
         "headings":[],"sections":outline,"cards":[folded],"threads":{},"tasks":[]},
         "anchors":{"card:folded-picture":["folded-picture"],"section:register:0":["decision-register"],"section:register:1":["resolved"]}}));
+    // The server answers a read with the sections it names alone, and the page names a folded
+    // card's only once it is opened: until then a read is the headings'.
+    let [register, resolved, card_section] = sections;
     site.set_json(
         "/api/section",
-        &json!({"version":2,"change":{"path":FOLDED,"sections":sections,"threads":threads,
-        "cards":[{"key":"folded-picture","value":folded}]}}),
+        &json!({"version":2,"change":{"path":FOLDED,"sections":[register, resolved]}}),
     );
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
     site.set_file(
@@ -605,7 +608,9 @@ fn folded_card_site() -> Site {
         br#"<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="teal"/></svg>"#.to_vec(),
         "image/svg+xml",
     );
-    site
+    let opened = json!({"version":2,"change":{"path":FOLDED,"sections":[card_section],"threads":threads,
+        "cards":[{"key":"folded-picture","value":folded}]}});
+    (site, opened)
 }
 
 /// The folded card's picture: how many boxes it has, its drawn size and its loaded width; with
@@ -631,7 +636,7 @@ const SUMMARY_HOLDS_STILL: &str = r#"(() => {
 
 #[test]
 fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
-    let site = folded_card_site();
+    let (site, opened) = folded_card_site();
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1440, 900);
     page.open(&site.url(&format!("/{FOLDED}")));
@@ -645,11 +650,23 @@ fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
         json!([false, false]),
         "the card starts folded, its history not drawn"
     );
-    // A real click on its summary, as a reader opens it, once the page around it is drawn.
+    // A real click on its summary, as a reader opens it, once the page around it is drawn; the
+    // card's section is read only then, as the page draws its history.
     assert!(
         page.wait_for(SUMMARY_HOLDS_STILL, SHOWN),
         "the folded card's summary holds still"
     );
+    let card_read = |site: &Site| {
+        site.targets()
+            .iter()
+            .any(|target| target.starts_with("/api/section") && target.contains("folded-picture"))
+    };
+    assert!(
+        !card_read(&site),
+        "a folded card's section is read only once it is opened: {:?}",
+        site.targets()
+    );
+    site.set_json("/api/section", &opened);
     let point = page.eval(&format!(
         "(() => {{ const box = document.querySelector({}).getBoundingClientRect(); return {{x: box.left + 40, y: box.top + box.height / 2}}; }})()",
         json!(summary)
@@ -666,12 +683,14 @@ fn document_card_folded_and_opened_by_a_click_draws_its_picture() {
     );
     // Waited for by what needs no layout: a page's layout read in the frames the picture's src
     // lands in gives the picture back its box, and would hide its loss.
-    let image = "document.querySelector('details#folded-picture .history img[src]')";
+    let image = "document.querySelector('details#folded-picture .history img[src*=\"split.svg\"]')";
     assert!(
         page.wait_for(&format!("{image} !== null"), SHOWN),
-        "the opened card draws its history and asks for its picture: {}",
-        page.eval(FOLDED_IMAGE)
+        "the opened card reads its section, draws its history and gives its picture its src: {}; {:?}",
+        page.eval(FOLDED_IMAGE),
+        site.targets()
     );
+    assert!(card_read(&site));
     // Lost, the picture has no box at all and is never requested, however long it is waited for.
     assert!(
         page.wait_for(&format!("{image}?.naturalWidth === 600"), SHOWN),
