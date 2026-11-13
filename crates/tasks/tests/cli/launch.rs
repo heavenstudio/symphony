@@ -955,9 +955,9 @@ fn through_just_tasks_the_api_records_no_launch_outside_the_project_nor_a_conver
     assert_eq!(
         record(&p.env, &inside, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
         json!({"refused": "a record written through a recipe an agent runs unasked names no \
-            conversation, not aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee: a restore resumes only one the \
-            board recorded itself, launching or finding the agent; the binary run by itself \
-            records any"})
+            conversation, not aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee: the board's launcher records \
+            one, and a Codex thread comes from its agent's own callback; the binary run by \
+            itself records any"})
     );
     assert_eq!(p.board().task_sessions("sim/jump").unwrap(), vec![]);
     // In the project, naming no conversation, it is recorded.
@@ -994,6 +994,85 @@ fn through_just_tasks_the_api_records_no_launch_outside_the_project_nor_a_conver
     );
     assert!(!elsewhere.exists());
     assert_eq!(p.calls_of("run"), Vec::<Vec<String>>::new());
+}
+
+#[test]
+fn through_just_tasks_a_callback_gives_a_launch_record_only_its_callers_own_codex_thread() {
+    let mut p = Terminals::new("unasked-thread");
+    let orch = p.orchestrator();
+    let inside = p.dir.join("wt/given");
+    fs::create_dir_all(&inside).unwrap();
+    p.set(symphony_board::confine::MARKER, "1");
+    let ran = p.as_(
+        &orch,
+        &[
+            "launch",
+            "sim/jump",
+            "--kind",
+            "codex",
+            "--worktree",
+            &inside.display().to_string(),
+        ],
+    );
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let record = |p: &Terminals| {
+        let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
+        s
+    };
+    let handle = record(&p).handle;
+    assert_eq!(record(&p).claude_session, "codex:");
+    let not_own = |thread: &str| {
+        format!(
+            "✖ codex:{thread} is not this session's own Codex thread (CODEX_THREAD_ID, which a \
+             callback with no address detects): through a recipe an agent runs unasked a callback \
+             registers only its caller's, as the board takes it into the handle's launch record \
+             for a restore to resume; the binary run by itself registers any\n"
+        )
+    };
+    // A thread named that is not the caller's: refused with no thread of its own, or another.
+    let ran = p.as_(&handle, &["callback", "codex:dead-beef"]);
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (1, "", not_own("dead-beef"))
+    );
+    p.set("CODEX_THREAD_ID", "0abc-12");
+    let ran = p.as_(&handle, &["callback", "codex:dead-beef"]);
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (1, "", not_own("dead-beef"))
+    );
+    assert_eq!(record(&p).claude_session, "codex:");
+    assert!(!p.board().callbacks().unwrap().contains_key(&handle));
+    // Its own thread, detected or named: registered, and the record takes it.
+    let ran = p.as_(&handle, &["callback"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    assert_eq!(record(&p).claude_session, "codex:0abc-12");
+    let ran = p.as_(&handle, &["callback", "codex:0abc-12"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    // A restore through `just tasks` resumes that thread, in the worktree the record names.
+    p.board()
+        .close_task_session("sim/jump", &handle, "idle", "r")
+        .unwrap();
+    p.set_state({
+        let mut state = p.state();
+        state["terminals"] = json!([]);
+        state
+    });
+    let ran = p.run(&["restore", "sim/jump"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let [_, resumed] = <[_; 2]>::try_from(p.calls_of("run")).unwrap();
+    assert_eq!(resumed[resumed.len() - 2..], ["resume", "0abc-12"]);
+    assert!(
+        resumed
+            .windows(2)
+            .any(|pair| pair[0] == "--cwd" && pair[1] == inside.display().to_string())
+    );
+    // The binary run by itself registers any.
+    let mut unmarked = p.env.clone();
+    unmarked.vars.remove(symphony_board::confine::MARKER);
+    unmarked.vars.insert("TASKS_SESSION".into(), handle.clone());
+    let ran = run(&unmarked, &["callback", "codex:dead-beef"], "");
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
 }
 
 #[test]

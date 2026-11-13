@@ -326,10 +326,18 @@ too, lead only into those places or under the project's worktree base (`<repo>-w
 or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
 line naming the folder and starts nothing. A launch takes no `--prompt` there: an
 agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
-alone, and the rest goes on the task's thread, which `/work` reads. `tasks api`'s
+alone, and the rest goes on the task's thread, which `/work` reads. A restore
+resumes the conversation its record names. Under the mark `tasks api`'s
 `record_launch` records neither a worktree outside those places nor a conversation
-id, so a restore resumes only a conversation the board recorded itself, launching
-or finding the agent. The reply recipes keep their writes to the same places
+id, and `just tasks callback` registers a Codex thread only as the caller's own
+(`CODEX_THREAD_ID`, which it detects with no address), which the board writes into
+the handle's open Codex record. So a record's conversation is one the board's
+launcher recorded (the id it chose at a launch, or one it read from the agent's
+terminal, heartbeat binding or callback) or the Codex thread an agent registered
+from its own process. Two limits stay: `--as` names any handle, so an agent may
+register its own thread for another handle, whose restore then resumes that
+agent's conversation; and a record an older build wrote is not told apart. The
+reply recipes keep their writes to the same places
 (AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
 writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
 (`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
@@ -555,7 +563,8 @@ no allow rule passes a command with an env prefix, so
 `TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
 with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
-`codex:THREAD-UUID` works too. A session with no channel is listed as such and
+`codex:THREAD-UUID` works too; through `just tasks` a `codex:` one only as the
+session's own thread ([Where it lives](#where-it-lives)). A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
 
 `just agent-send HANDLE "text"` addresses an agent without a task. The sender
@@ -777,7 +786,11 @@ the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 goes to an idle reviewer only when the board would take its verdict, by the rule the
 verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
 reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled, and the reviewer's role a reuse took for it let go.
+cancelled, and the reviewer's role a reuse took for it let go. Through `just tasks` a pass
+launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
+worktree, one continuing a branch checked out in the main checkout (its
+`.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
+is refused.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once

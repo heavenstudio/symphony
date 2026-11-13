@@ -310,8 +310,10 @@ the places allowed, and write nothing; under the mark `tasks export` also replac
 earlier snapshot (a file whose first line is `# Task board snapshot`). An agent the board
 starts there, in auto mode, stays in those places or under the project's worktree base the same
 way: `tasks launch --worktree` and `restore` refuse any other folder, a launch takes no
-`--prompt` (an agent's first message is its person's word: the rest goes on the thread), and
-`tasks api`'s `record_launch` records no other folder and no conversation id
+`--prompt` (an agent's first message is its person's word: the rest goes on the thread),
+`tasks api`'s `record_launch` records no other folder and no conversation id, and `tasks
+callback` registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`), what a restore
+then resumes; `--as` names any handle, so that thread may be registered for another
 (`crates/tasks/src/launch/bounds.rs`, [TASKS](docs/TASKS.md#where-it-lives)). The binaries run by
 themselves, which no rule allows, write where they are told: the owner's way to such a place. A
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard

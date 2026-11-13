@@ -59,7 +59,7 @@ pub mod staff;
 mod startup;
 mod uuid;
 
-pub use bounds::Bounds;
+pub use bounds::{Bounds, own_thread};
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
 pub use defaults::{Defaults, Resolved};
@@ -245,11 +245,13 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         )));
     }
     // Through a recipe an agent runs unasked: no word of the launcher's in the first message, and
-    // no folder outside the project ([`Bounds`]).
+    // no folder outside the project ([`Bounds`]). A given folder is used as the check resolved it,
+    // not resolved again.
+    let mut admitted = None;
     if let Some(bounds) = &m.bounds {
         bounds.prompt(slug, &ask.prompt).map_err(Error::Refused)?;
         if let Some(given) = &ask.worktree {
-            bounds.admit("--worktree", given).map_err(Error::Refused)?;
+            admitted = Some(bounds.admit("--worktree", given).map_err(Error::Refused)?);
         }
     }
     store.touch(&ask.actor)?;
@@ -313,7 +315,8 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 ))
                 .into());
             }
-            let path = given.canonicalize().unwrap_or_else(|_| given.clone());
+            let path =
+                admitted.unwrap_or_else(|| given.canonicalize().unwrap_or_else(|_| given.clone()));
             if let Some(handle) = live_executor_in(store, &path)? {
                 return Err(Error::Refused(format!(
                     "{} has live executor {handle}: launch in a separate worktree",

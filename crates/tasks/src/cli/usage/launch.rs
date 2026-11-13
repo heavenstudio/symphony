@@ -41,8 +41,8 @@ options:
   --detached            a worktree on no branch, for read-only work (a
                         reviewer's and an instruction's are)
   --worktree WORKTREE   use this worktree instead of making one under
-                        <repo>-wt/; through just tasks, one in the project
-                        or under <repo>-wt/
+                        <repo>-wt/ (or SYMPHONY_WT_DIR); through just tasks,
+                        one in the checkout or under that folder
   --tab TAB             the Herdr app tab (stream) for its terminal; default
                         code for an executor, review for a reviewer
   --prompt PROMPT       text sent after /work SLUG HANDLE; refused through

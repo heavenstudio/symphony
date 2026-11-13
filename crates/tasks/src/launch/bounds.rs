@@ -8,10 +8,18 @@
 //! first: `launch --worktree DIR`, the worktree a launch makes, and the worktree a record names that
 //! a restore makes again and starts in, an older record's too. A launch takes no `--prompt` there:
 //! an agent's first message is its person's own word, so it is `/work SLUG HANDLE` alone, and what
-//! else the launcher has to say goes on the task's thread, which `/work` reads, as board text. And
-//! `tasks api`'s `record_launch` writes no record a restore would start elsewhere, nor one naming a
-//! conversation: a restore resumes only one the board recorded itself, launching or finding the
-//! agent. The binary run by itself, which no rule allows, starts an agent anywhere.
+//! else the launcher has to say goes on the task's thread, which `/work` reads, as board text.
+//!
+//! The conversation a restore resumes is the one the record names. Under the mark `tasks api`'s
+//! `record_launch` writes no record a restore would start elsewhere, nor one naming a conversation,
+//! and `callback` registers a Codex thread only as its caller's own (`CODEX_THREAD_ID`,
+//! [`own_thread`]), which the board writes into the handle's open Codex record (`codex:`). So a
+//! conversation a record names was recorded by the board's own launcher (the id it chose at a
+//! launch, or one it read from the agent's terminal, heartbeat binding or callback), or is the
+//! Codex thread an agent registered from its own process. Two limits stay: `--as` names any
+//! handle, so an agent may register its own thread for another handle, whose restore then resumes
+//! that agent's conversation; and a record an older build wrote is not told apart. The binary run
+//! by itself, which no rule allows, starts an agent anywhere and records any conversation.
 
 use crate::NewLaunch;
 use crate::cli::Env;
@@ -113,12 +121,67 @@ impl Bounds {
         if !launch.claude_session.is_empty() {
             return Err(format!(
                 "a record written through a recipe an agent runs unasked names no conversation, \
-                 not {}: a restore resumes only one the board recorded itself, launching or \
-                 finding the agent; the binary run by itself records any",
+                 not {}: the board's launcher records one, and a Codex thread comes from its \
+                 agent's own callback; the binary run by itself records any",
                 launch.claude_session
             ));
         }
         self.admit("the record's worktree", Path::new(&launch.worktree))
             .map(|_| ())
+    }
+}
+
+/// Whether `callback`, run in `env`, may register `address`: under the mark a Codex thread only as
+/// the caller's own (`CODEX_THREAD_ID`, which `callback` detects with no address), since the board
+/// writes it into the handle's open Codex launch record as the conversation a restore resumes. Any
+/// other address, and any address without the mark, passes.
+///
+/// # Errors
+///
+/// One line naming the thread and whose a callback registers.
+pub fn own_thread(env: &Env, address: &str) -> Result<(), String> {
+    let Some(thread) = address.strip_prefix("codex:") else {
+        return Ok(());
+    };
+    if env.var(confine::MARKER).is_none() || env.var("CODEX_THREAD_ID") == Some(thread) {
+        return Ok(());
+    }
+    Err(format!(
+        "{address} is not this session's own Codex thread (CODEX_THREAD_ID, which a callback with \
+         no address detects): through a recipe an agent runs unasked a callback registers only \
+         its caller's, as the board takes it into the handle's launch record for a restore to \
+         resume; the binary run by itself registers any"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(vars: &[(&str, &str)]) -> Env {
+        Env {
+            vars: vars
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            cwd: PathBuf::from("/"),
+        }
+    }
+
+    #[test]
+    fn under_the_mark_a_callback_registers_only_its_callers_own_codex_thread() {
+        let mark = (confine::MARKER, "1");
+        let marked = env(&[mark, ("CODEX_THREAD_ID", "0abc-12")]);
+        assert_eq!(own_thread(&marked, "codex:0abc-12"), Ok(()));
+        assert!(own_thread(&marked, "codex:dead-beef").is_err());
+        // No thread of its own, or an empty one, is no thread to register.
+        assert!(own_thread(&env(&[mark]), "codex:0abc-12").is_err());
+        assert!(own_thread(&env(&[mark, ("CODEX_THREAD_ID", "")]), "codex:").is_err());
+        // A socket reaches no launch record.
+        assert_eq!(own_thread(&marked, "uds:/tmp/inbox.sock"), Ok(()));
+        // Without the mark, or with an empty one, any.
+        for unmarked in [env(&[]), env(&[(confine::MARKER, "")])] {
+            assert_eq!(own_thread(&unmarked, "codex:dead-beef"), Ok(()));
+        }
     }
 }
