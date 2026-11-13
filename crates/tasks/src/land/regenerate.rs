@@ -368,19 +368,21 @@ fn lock_file(folder: &Path) -> Result<File, String> {
 
 /// The regenerator's lock in the lands' `folder`, taken without waiting and named by this process
 /// and its start, as a land names its lock: none while another holds it. A regenerator that died
-/// leaves the file naming it, and the lock free.
+/// leaves the file naming it, and the lock free. The name is written in place, as the lock is the
+/// file's, in one write: a land reading it meanwhile finds it empty ([`holder`]) or whole.
 fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
     let file = lock_file(folder)?;
     match file.try_lock() {
         Ok(()) => {
             let pid = std::process::id();
+            let name = match started(i64::from(pid)) {
+                Some(start) => format!("the regenerator (pid {pid}, started {start})"),
+                None => format!("the regenerator (pid {pid})"),
+            };
             let mut named = &file;
             let _ = named.set_len(0);
             let _ = named.seek(SeekFrom::Start(0));
-            let _ = match started(i64::from(pid)) {
-                Some(start) => write!(named, "the regenerator (pid {pid}, started {start})"),
-                None => write!(named, "the regenerator (pid {pid})"),
-            };
+            let _ = named.write_all(name.as_bytes());
             Ok(Some(sys::FileLock(file)))
         }
         Err(TryLockError::WouldBlock) => Ok(None),
@@ -389,7 +391,8 @@ fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
 }
 
 /// Who holds the regenerator's lock in the lands' `folder`, in words, and what it makes since when;
-/// none when no process holds it, one that died included.
+/// none when no process holds it, one that died included. A lock taken and not yet named is
+/// another regenerator's.
 fn holder(folder: &Path) -> Result<Option<String>, String> {
     let mut file = lock_file(folder)?;
     match file.try_lock() {
