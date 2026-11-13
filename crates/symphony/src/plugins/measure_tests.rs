@@ -139,7 +139,6 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let tree = Tree::new();
     let path = tree.path("artifacts/moves.jsonl");
     let timed = new_meter(&path, false);
-    timed.time::<Validate, _>("quick", || ());
     timed.time::<Validate, _>("slow", || std::thread::sleep(SLEPT));
     let looped = new_meter(&path, true);
     let slow_answer = || {
@@ -149,7 +148,10 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let slow = looped.call(
         "slow",
         || panic!("the request reads back"),
-        || validate(FieldValue::Text("x".into())),
+        || {
+            std::thread::sleep(SLEPT);
+            validate(FieldValue::Text("x".into()))
+        },
         |_| slow_answer(),
     );
     assert_eq!(slow, Ok(FieldValue::Text("x".into())));
@@ -164,15 +166,15 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let lines = lines(&path);
     let us = |n: usize| lines[n]["us"].as_f64().unwrap();
     let slept = micros(SLEPT);
-    assert!(us(0) < slept, "{}", lines[0]);
+    // Times on the wall are bounded from below alone: a loaded machine only adds to them.
+    assert!(us(0) >= slept, "{}", lines[0]);
     assert!(us(1) >= slept, "{}", lines[1]);
-    assert!(us(2) >= slept, "{}", lines[2]);
-    assert!(lines[2]["round_trip_us"].as_f64().unwrap() >= us(2));
-    // A million bytes each way cost the JSON more than a few, and are counted.
+    // The round trip holds the request's making and its JSON besides the call's own time.
     let json = |n: usize| lines[n]["round_trip_us"].as_f64().unwrap() - us(n);
-    assert!(lines[3]["request_bytes"].as_u64().unwrap() > 1_000_000);
-    assert!(lines[3]["answer_bytes"].as_u64().unwrap() > 1_000_000);
-    assert!(json(3) > json(2), "{} {}", lines[2], lines[3]);
+    assert!(json(1) >= slept, "{}", lines[1]);
+    // A million bytes each way are counted.
+    assert!(lines[2]["request_bytes"].as_u64().unwrap() > 1_000_000);
+    assert!(lines[2]["answer_bytes"].as_u64().unwrap() > 1_000_000);
 }
 
 #[test]

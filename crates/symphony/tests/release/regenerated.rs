@@ -5,7 +5,7 @@
 //! where the regenerator stands.
 
 use std::fs;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony_board::land::regenerate::State;
 use symphony_board::sys::{Child, Command, Stdio};
@@ -50,12 +50,33 @@ fn regenerator_landing(fixture: &Fixture, state: &str, tip: &str, landed: Option
     .unwrap();
 }
 
-/// A process that lives until it is ended: a regenerator, as far as its state says.
-fn living() -> Child {
-    let mut sleep = Command::new("sleep");
-    sleep.arg("60").stdin(Stdio::null());
-    sleep.spawn().unwrap()
+/// A process that lives until the test ends it, or ends however it ends: a regenerator, as far as
+/// its state says.
+struct Living(Child);
+
+impl Living {
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
 }
+
+impl Drop for Living {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn living() -> Living {
+    let mut sleep = Command::new("sleep");
+    sleep.arg("1000").stdin(Stdio::null());
+    Living(sleep.spawn().unwrap())
+}
+
+/// The time a run gives a regenerator a land has just started to take main, or main's move to
+/// reach the remote, in a test whose run waits on it rather than for its end: what a stall alone
+/// reaches. Its end is a test of its own, with a time of a second or two.
+const GRACE: &str = "360";
 
 /// A process that has ended: its pid.
 fn ended() -> i64 {
@@ -77,34 +98,40 @@ fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) ->
         .unwrap()
 }
 
-/// Wait until the run started with its stdout to `said` has said `line`, still running.
+/// Wait until the run started with its stdout to `said` has said `line`, still running, with the
+/// backstop of a minute.
 fn until_said(night: &mut Child, said: &std::path::Path, line: &str) {
-    let until = Instant::now() + Duration::from_secs(60);
-    while !fs::read_to_string(said).unwrap_or_default().contains(line) {
-        assert!(
-            Instant::now() < until,
-            "it never said {line:?}: {}",
+    test_time::until_true(
+        format!("the run said {line:?}"),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            // Looked at before what it said: one that has ended has said all it will.
+            let ended = night.try_wait().unwrap().is_some();
+            let so_far = fs::read_to_string(said).unwrap_or_default();
+            assert!(
+                !ended || so_far.contains(line),
+                "it ended before it said {line:?}: {so_far}"
+            );
+            so_far.contains(line)
+        },
+    )
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: it said {}",
             fs::read_to_string(said).unwrap_or_default()
-        );
-        assert!(
-            night.try_wait().unwrap().is_none(),
-            "it ended before it said {line:?}: {}",
-            fs::read_to_string(said).unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        )
+    });
 }
 
-/// The exit code of `night` once it ends, within two minutes.
+/// The exit code of `night` once it ends, with the backstop of two minutes.
 fn ended_with(night: &mut Child) -> Option<i32> {
-    let until = Instant::now() + Duration::from_secs(120);
-    loop {
-        if let Some(status) = night.try_wait().unwrap() {
-            break status.code();
-        }
-        assert!(Instant::now() < until, "the run never ended");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    test_time::until(
+        "the run ended",
+        test_time::backstop(Duration::from_secs(120)),
+        || night.try_wait().unwrap(),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"))
+    .code()
 }
 
 #[test]
@@ -143,7 +170,7 @@ fn a_main_whose_generated_files_are_behind_it_is_released_nothing_and_filed_noth
 fn a_night_waits_while_the_regenerator_makes_mains_files_then_checks_and_releases() {
     let fixture = Fixture::new();
     let tip = generating(&fixture);
-    let mut making = living();
+    let making = living();
     regenerator(&fixture, "building", &tip, i64::from(making.id()));
     let said = fixture.root.join("night.out");
     let mut night = started(&fixture, &said, &[]);
@@ -160,8 +187,7 @@ fn a_night_waits_while_the_regenerator_makes_mains_files_then_checks_and_release
     assert!(night.try_wait().unwrap().is_none(), "it waits");
     regenerator(&fixture, "current", &tip, 1);
     let code = ended_with(&mut night);
-    let _ = making.kill();
-    let _ = making.wait();
+    drop(making);
     let out = fs::read_to_string(&said).unwrap();
     assert_eq!(code, Some(0), "{out}");
     assert!(
@@ -207,7 +233,11 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
     // has just started has written nothing yet.
     regenerator(&fixture, "red", &first, ended());
     let said = fixture.root.join("night.out");
-    let mut night = started(&fixture, &said, &[]);
+    let mut night = started(
+        &fixture,
+        &said,
+        &[("SYMPHONY_RELEASE_REGENERATOR_SECONDS", GRACE)],
+    );
     until_said(
         &mut night,
         &said,
@@ -220,7 +250,7 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
     std::thread::sleep(Duration::from_secs(3));
     assert!(night.try_wait().unwrap().is_none(), "it waits");
     // It takes main, makes them, and they are current.
-    let mut making = living();
+    let making = living();
     regenerator(&fixture, "building", &tip, i64::from(making.id()));
     std::thread::sleep(Duration::from_secs(3));
     assert!(
@@ -229,8 +259,7 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
     );
     regenerator(&fixture, "current", &tip, 1);
     let code = ended_with(&mut night);
-    let _ = making.kill();
-    let _ = making.wait();
+    drop(making);
     let out = fs::read_to_string(&said).unwrap();
     assert_eq!(code, Some(0), "{out}");
     assert!(
@@ -281,11 +310,15 @@ fn a_night_no_regenerator_takes_main_for_is_refused_once_its_time_is_up() {
 fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     let fixture = Fixture::new();
     let tip = generating(&fixture);
-    let mut making = living();
+    let making = living();
     let pid = i64::from(making.id());
     regenerator(&fixture, "building", &tip, pid);
     let said = fixture.root.join("night.out");
-    let mut night = started(&fixture, &said, &[]);
+    let mut night = started(
+        &fixture,
+        &said,
+        &[("SYMPHONY_RELEASE_REGENERATOR_SECONDS", GRACE)],
+    );
     until_said(&mut night, &said, "release: waiting for the regenerator: ");
     // The regenerator lands what it made of the tip, pushes it, then says so.
     let landed = fixture.land(
@@ -295,8 +328,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     );
     regenerator_landing(&fixture, "current", &tip, Some(&landed), pid);
     let code = ended_with(&mut night);
-    let _ = making.kill();
-    let _ = making.wait();
+    drop(making);
     let out = fs::read_to_string(&said).unwrap();
     assert_eq!(code, Some(0), "{out}");
     assert!(
@@ -323,7 +355,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
 fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
     let fixture = Fixture::new();
     let tip = generating(&fixture);
-    let mut making = living();
+    let making = living();
     regenerator(&fixture, "building", &tip, i64::from(making.id()));
     let said = fixture.root.join("night.out");
     let heard = fixture.root.join("night.err");
@@ -342,8 +374,7 @@ fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
     fixture.write("local.txt", "never pushed");
     let local = fixture.commit("a commit of this checkout alone");
     let code = ended_with(&mut night);
-    let _ = making.kill();
-    let _ = making.wait();
+    drop(making);
     let out = fs::read_to_string(&said).unwrap();
     let err = fs::read_to_string(&heard).unwrap();
     assert_eq!(code, Some(1), "{out}\n{err}");
