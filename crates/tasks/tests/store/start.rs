@@ -121,6 +121,44 @@ fn a_server_on_a_surrealkv_engine_keeps_its_rows_in_that_folder_for_the_next_one
 }
 
 #[test]
+fn a_server_up_on_another_engine_than_the_one_named_fails_its_start_with_why() {
+    let dir = folder("elsewhere");
+    let binary = dir.join("surreal");
+    // The real server, on its address (the fourth word), on the in-memory engine whatever it is
+    // handed.
+    crate::fixture_script::write(
+        &binary,
+        &format!(
+            "#!/bin/sh\nexec '{}' start --unauthenticated --bind \"$4\" --log error memory\n",
+            surreal().display()
+        ),
+        false,
+    );
+    let data = dir.join("data");
+    let engine = format!("surrealkv://{}", data.display());
+    let log = dir.join("surreal.log");
+    let refused = std::panic::catch_unwind(|| launch_on(&binary, &log, &engine))
+        .expect_err("a server on another engine than the one named is refused");
+    let why = refused
+        .downcast_ref::<String>()
+        .expect("the refusal says why");
+    assert!(
+        why.starts_with("the SurrealDB server on 127.0.0.1:")
+            && why.contains(&format!(
+                ": it holds no store in {}: its lock {} cannot be opened (",
+                data.display(),
+                data.join("LOCK").display()
+            ))
+            && why.contains(&format!(
+                "so it runs on an engine other than {engine}; its log ({}):\n",
+                log.display()
+            )),
+        "{why}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_store_is_held_where_its_engine_names_only_while_its_lock_is_taken() {
     let dir = folder("held");
     let engine = format!("surrealkv://{}", dir.display());
