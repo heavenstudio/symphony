@@ -14,6 +14,7 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+pub(crate) mod reports;
 mod validated;
 mod warm;
 
@@ -53,6 +54,7 @@ const READS: &[&str] = &[
     "/api/asks",
     "/api/ask",
     "/api/health",
+    symphony_api::REPORTS_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -208,6 +210,33 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 "the Symphony server is starting",
             ),
         });
+    }
+    // The reports are the project's day files and its git alone, the board never read: a board
+    // slow or down leaves them as they are.
+    if path == symphony_api::REPORTS_PATH {
+        let asked = reports::asked(
+            query(&request, "grain").as_deref(),
+            query(&request, "days").as_deref(),
+        );
+        let (grain, days) = match asked {
+            Ok(asked) => asked,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || reports::answer(&hub, grain, days)).await {
+                Ok(page) => no_store(Json(page)),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the reports could not be read: {e}"),
+                ),
+            },
+        );
     }
     // Uploads are the server's own, the same file for every branch's pages: a branch card's
     // picture names `/@tree/artifacts/uploads/…` and is read from this checkout's store.
@@ -1227,11 +1256,13 @@ pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
 pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bool {
     let page = path.trim_end_matches('/');
     // `/task` with no slug is the board, as the shell's routes read it.
-    matches!(page, "" | "/tasks" | "/task" | "/agents" | "/queue")
-        || project
-            .nav
-            .iter()
-            .any(|nav| nav.href.trim_end_matches('/') == page)
+    matches!(
+        page,
+        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports"
+    ) || project
+        .nav
+        .iter()
+        .any(|nav| nav.href.trim_end_matches('/') == page)
         || path.starts_with("/task/")
         || project.is_document_route(path.trim_start_matches('/'))
 }

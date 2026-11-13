@@ -870,7 +870,7 @@ fn every_kind_of_line_reads_back_as_written_and_what_is_none_of_them_reads_as_no
             text.starts_with(&format!("{{\"type\":\"{kind}\",\"schema\":1,")),
             "{text}"
         );
-        assert_eq!(Line::read(&text).as_ref(), Some(line), "{text}");
+        assert_eq!(read_line(&text).as_ref(), Some(line), "{text}");
     }
     for text in [
         "",
@@ -880,7 +880,7 @@ fn every_kind_of_line_reads_back_as_written_and_what_is_none_of_them_reads_as_no
         "{\"type\":\"start\",\"schema\":1}",
         "{\"type\":\"change\",\"schema\":1,\"at\":\"noon\"}",
     ] {
-        assert_eq!(Line::read(text), None, "{text}");
+        assert_eq!(read_line(text), None, "{text}");
     }
 }
 

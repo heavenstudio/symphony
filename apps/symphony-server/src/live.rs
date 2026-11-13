@@ -164,6 +164,9 @@ pub(crate) struct Hub {
     /// The agents' health changes and hourly counts, appended to their day files by the machine's
     /// one server alone ([`agent_activity`]); none on a private server.
     pub(crate) agent_activity: Mutex<Option<agent_activity::Recorder>>,
+    /// Where the Reports page reads the project's day files ([`crate::api::reports::Folders`]),
+    /// found at its first read: the folders the shared server's writers find, or a test's.
+    pub(crate) report_folders: OnceLock<crate::api::reports::Folders>,
     /// When they are recorded: its server generation's gate ([`symphony_board::recording`]), the
     /// one `health` and the roll-up's writes of the day files ([`reports`]) keep to as well, given
     /// as the hub starts ([`Hub::gate_recorders`]); none records nothing.
@@ -308,6 +311,7 @@ impl Hub {
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
+            report_folders: OnceLock::new(),
             recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
@@ -1774,7 +1778,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
     }
 }
 
-mod agent_activity;
+pub(crate) mod agent_activity;
 mod asks;
 mod board_status;
 mod health;

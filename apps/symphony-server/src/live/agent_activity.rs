@@ -9,7 +9,6 @@
 //! `symphony/agents/YYYY-MM-DD.jsonl` in the git common dir ([`folder`]). Only the machine's one
 //! server keeps a recorder (`startup.rs`); a private server keeps none and writes nothing.
 
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
@@ -25,7 +24,7 @@ pub(crate) const FOLDER: &str = "symphony/agents";
 /// Names the day files' folder in place of the common dir's: a test's own.
 pub(crate) const FOLDER_VAR: &str = "SYMPHONY_AGENT_ACTIVITY";
 /// The version of the lines' shape, in every line.
-pub(crate) const SCHEMA: u32 = 1;
+pub(crate) const SCHEMA: u32 = symphony_api::AGENT_ACTIVITY_SCHEMA;
 /// How many days a day file is kept after its day.
 pub(crate) const KEPT_DAYS: u32 = 90;
 /// The longest time between two snapshots that counts as watched, in seconds: past it (a board
@@ -47,185 +46,26 @@ pub(crate) fn folder(env: &symphony_board::cli::Env) -> Result<PathBuf, String> 
     symphony_board::reports::day_files(env, FOLDER, FOLDER_VAR, "agents' day files")
 }
 
-/// One line of a day file: an object whose `type` names which. The tests read it back by its
-/// `type` (`Line::read`), since serde's buffered reading of a tagged enum cannot read a number
-/// under serde_json's `arbitrary_precision`, which the workspace builds it with.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum Line {
-    /// The server began watching: what happened between the line before and this one went unseen.
-    Start(Start),
-    /// A session as the first snapshot after a start found it, which is no change.
-    Seen(Seen),
-    /// A session whose health changed between two snapshots.
-    Change(Change),
-    /// What an hour held.
-    Hour(Hour),
-}
+/// The lines' types are the wire's ([`symphony_api::agent_activity`]), which the Reports page reads.
+pub(crate) use symphony_api::agent_activity::{
+    AgentChange as Change, AgentHour as Hour, AgentLine as Line, AgentSeen as Seen,
+    AgentStart as Start, Gauge, KindLevel, Level, RoleLevel, RoleModel, SessionHour,
+};
 
-impl Line {
-    /// The line `text` says; none when it does not read as one. The server writes and never reads
-    /// these lines: the tests read them back as a reader of the files would.
-    #[cfg(test)]
-    pub(crate) fn read(text: &str) -> Option<Line> {
-        let value: serde_json::Value = serde_json::from_str(text).ok()?;
-        let line = match value.get("type")?.as_str()? {
-            "start" => Line::Start(serde_json::from_value(value).ok()?),
-            "seen" => Line::Seen(serde_json::from_value(value).ok()?),
-            "change" => Line::Change(serde_json::from_value(value).ok()?),
-            "hour" => Line::Hour(serde_json::from_value(value).ok()?),
-            _ => return None,
-        };
-        Some(line)
-    }
-
-    /// The UTC day whose file holds it: an hour's, its start's; any other, its time's.
-    pub(crate) fn day(&self) -> String {
-        day(match self {
-            Line::Start(line) => line.at,
-            Line::Seen(line) => line.at,
-            Line::Change(line) => line.at,
-            Line::Hour(line) => line.start,
-        })
-    }
-}
-
-/// Every line names its writer: `pid`, the server's process, and `generation`, when it began
-/// recording (its start line's `at`), so two servers of one hand-off are told apart.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Start {
-    pub schema: u32,
-    /// When, by the server's clock, in seconds since the epoch.
-    pub at: f64,
-    pub pid: u32,
-    pub generation: f64,
-    /// The sessions on the board.
-    pub sessions: usize,
-    /// Of them, those that had left: no line says them.
-    pub left: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Seen {
-    pub schema: u32,
-    pub at: f64,
-    pub pid: u32,
-    pub generation: f64,
-    pub handle: String,
-    pub kind: String,
-    pub model: String,
-    /// The task it holds a role on ([`held`]), and that role; none when it holds none.
-    pub task: Option<String>,
-    pub role: Option<String>,
-    /// `live`, `stale`, `unknown` or `lost`: a session seen `left` is counted on the start line.
-    pub health: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Change {
-    pub schema: u32,
-    pub at: f64,
-    pub pid: u32,
-    pub generation: f64,
-    pub handle: String,
-    pub kind: String,
-    pub model: String,
-    pub task: Option<String>,
-    pub role: Option<String>,
-    /// Its health in the snapshot before; none for a session new on the board.
-    pub from: Option<String>,
-    /// Its health in this one; none for a session gone from the board.
-    pub to: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Hour {
-    pub schema: u32,
-    /// When it was written.
-    pub at: f64,
-    pub pid: u32,
-    pub generation: f64,
-    /// The hour's start, a whole UTC hour in seconds since the epoch: the roll-up's `start`, on
-    /// which the two files join.
-    pub start: f64,
-    /// Where what it watched begins: the hour's start, or the first snapshot in it after a start.
-    pub from: f64,
-    /// Where it ends: the hour's end, or when the server stopped.
-    pub to: f64,
-    /// The seconds of it between two snapshots at most [`GAP`] apart: what the counts below cover.
-    pub observed_s: f64,
-    /// The snapshots taken in it.
-    pub samples: u64,
-    /// By the session's kind and model.
-    pub sessions: Vec<SessionHour>,
-    /// Live sessions holding a role on a task in progress or in review, by that role and the
-    /// session's model.
-    pub running: Vec<RoleModel>,
-    /// The same by role alone, each session once for each role it holds.
-    pub running_roles: Vec<RoleLevel>,
-    /// The same sessions, each once.
-    pub running_agents: Level,
-    /// Sessions holding such a role whose health is live, stale or unknown, not lost or left: an
-    /// agent waiting on a long build makes no tool call and reads stale, but still holds its work.
-    pub holding: Vec<RoleModel>,
-    pub holding_roles: Vec<RoleLevel>,
-    pub holding_agents: Level,
-    /// Live sessions by their kind, whatever they hold.
-    pub live: Vec<KindLevel>,
-    /// The machine's load average over 1 and over 15 minutes, read at each snapshot; none when it
-    /// could not be read.
-    pub load_1m: Option<Gauge>,
-    pub load_15m: Option<Gauge>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SessionHour {
-    pub kind: String,
-    pub model: String,
-    /// Sessions whose row says they connected in the hour, up to `to`.
-    pub started: u64,
-    /// Changes to stale, and to lost, seen in it.
-    pub went_stale: u64,
-    pub went_lost: u64,
-    /// Seconds sessions spent stale, and lost, within `observed_s`.
-    pub stale_s: f64,
-    pub lost_s: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct RoleModel {
-    pub role: String,
-    pub model: String,
-    pub peak: u64,
-    pub mean: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct RoleLevel {
-    pub role: String,
-    pub peak: u64,
-    pub mean: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct KindLevel {
-    pub kind: String,
-    pub peak: u64,
-    pub mean: f64,
-}
-
-/// A count over the hour: the most at any time in it, and its mean over the time watched.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Level {
-    pub peak: u64,
-    pub mean: f64,
-}
-
-/// A reading over the hour, as [`Level`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Gauge {
-    pub peak: f64,
-    pub mean: f64,
+/// The line `text` says; none when it does not read as one, as a reader of the files reads it:
+/// by its `type`, one struct at a time ([`symphony_api::agent_activity`]). The server writes these
+/// lines and reads only their hours (`api/reports.rs`); the tests read every line back.
+#[cfg(test)]
+pub(crate) fn read_line(text: &str) -> Option<Line> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let line = match value.get("type")?.as_str()? {
+        "start" => Line::Start(serde_json::from_value(value).ok()?),
+        "seen" => Line::Seen(serde_json::from_value(value).ok()?),
+        "change" => Line::Change(serde_json::from_value(value).ok()?),
+        "hour" => Line::Hour(serde_json::from_value(value).ok()?),
+        _ => return None,
+    };
+    Some(line)
 }
 
 /// The whole hour `at` falls in: its start.
@@ -1077,7 +917,7 @@ pub(crate) fn prune(folder: &Path, now: f64) {
 }
 
 /// The lines of `day`'s file in `folder`, in order; a line that does not read (cut short, an empty
-/// one, one of a shape none of these is) is passed over, as `Line::read` reads them.
+/// one, one of a shape none of these is) is passed over, as [`read_line`] reads them.
 #[cfg(test)]
 pub(crate) fn read_day(folder: &Path, day: &str) -> Vec<Line> {
     let Ok(file) = regular(
@@ -1088,7 +928,7 @@ pub(crate) fn read_day(folder: &Path, day: &str) -> Vec<Line> {
     };
     let mut text = String::new();
     let _ = io::Read::read_to_string(&mut &file, &mut text);
-    text.lines().filter_map(Line::read).collect()
+    text.lines().filter_map(read_line).collect()
 }
 
 /// The snapshot `board` of a tick recorded by `recorder` as its server generation's `gate`
