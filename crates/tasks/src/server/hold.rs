@@ -10,7 +10,7 @@
 //! role decides it (an orchestrator's, say): the board, which holds the roles, is not read while it
 //! is held. Each hold and release is a line of `sf-tasks/hold.log`, which nothing removes.
 
-use super::{DATA, Doing, Home, LOG, Running, ServerError, Waited, io};
+use super::{DATA, Doing, Home, LOG, REPLAY_THROUGH, Running, ServerError, Waited, io};
 use crate::sys::local_minute;
 use std::fmt;
 use std::fs;
@@ -158,12 +158,14 @@ impl Home {
             .map_or(Ok(()), |hold| Err(ServerError::Held(hold)))
     }
 
-    /// Every server on this board's data stopped cleanly, the recorded one first, then one no
-    /// record names, and the record of each removed once it has ended: those it stopped. A server
-    /// that has not answered yet is still starting (replaying its log) and is waited for, never
-    /// signalled: a signal before its handlers are set ends it at once, as a kill would, and a store
-    /// cut off in its replay can lose what that replay had not yet written. One that does not answer
-    /// within the patience is left running and the stop refused, naming it. Under the lock.
+    /// Every server on this board's data stopped cleanly, the recorded one first, then the one a
+    /// private replay's record still standing takes for the replay's ([`Home::left_replay_through`],
+    /// which refuses the stop while that cannot be told), then one no record names,
+    /// and the record of each removed once it has ended: those it stopped. A server that has not
+    /// answered yet is still starting (replaying its log) and is waited for, never signalled: a
+    /// signal before its handlers are set ends it at once, as a kill would, and a store cut off in
+    /// its replay can lose what that replay had not yet written. One that does not answer within
+    /// the patience is left running and the stop refused, naming it. Under the lock.
     pub(super) fn stop_serving(&self) -> Result<Vec<Running>, ServerError> {
         let mut stopped = Vec::new();
         if let Some(running) = self.recorded() {
@@ -175,6 +177,13 @@ impl Home {
             if serving {
                 stopped.push(running);
             }
+        }
+        if let Some(left) = self.left_replay_through()? {
+            self.stop_left_replay(
+                &left,
+                &format!("{REPLAY_THROUGH}: the stop of every server on the data goes on"),
+            )?;
+            stopped.push(left.server);
         }
         if let Some(running) = self.unrecorded() {
             self.stop_one(&running)?;

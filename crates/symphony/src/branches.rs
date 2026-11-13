@@ -261,7 +261,7 @@ fn registers(at: &Path, rev: &str, project: &Project) -> Option<Vec<String>> {
 /// them, none when it could not run. Its input and output go through
 /// [`symphony_board::sys::spawn_piped`]: it runs before readiness, and a child another thread
 /// spawns meanwhile must hold neither end open.
-fn blobs(at: &Path, specs: &[String]) -> Option<Vec<String>> {
+pub(crate) fn blobs(at: &Path, specs: &[String]) -> Option<Vec<String>> {
     if specs.is_empty() {
         return Some(Vec::new());
     }
@@ -404,16 +404,21 @@ fn shapes(texts: &[String]) -> Arc<Shapes> {
 /// main): a card the fork did not hold as it is now is one its branch wrote.
 pub(crate) struct Fork(Arc<Shapes>);
 
+/// Where the checkout at `root` forked from main: its merge base with the project's default
+/// branch, none when it has none.
+pub(crate) fn fork_base(root: &Path) -> Option<String> {
+    let project = Project::of(root);
+    let base = git(root, &["merge-base", &project.default_branch, "HEAD"])?
+        .trim()
+        .to_string();
+    (!base.is_empty()).then_some(base)
+}
+
 impl Fork {
     /// The fork of the checkout at `root`, none when it has no merge base with main.
     pub(crate) fn of(root: &Path) -> Option<Fork> {
         let project = Project::of(root);
-        let base = git(root, &["merge-base", &project.default_branch, "HEAD"])?
-            .trim()
-            .to_string();
-        if base.is_empty() {
-            return None;
-        }
+        let base = fork_base(root)?;
         let specs: Vec<String> = registers(root, &base, &project)
             .unwrap_or_default()
             .iter()

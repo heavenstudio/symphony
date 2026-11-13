@@ -203,11 +203,11 @@ pub struct Store {
     hand_off: Option<HandOff>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
-    /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
-    /// caps nothing.
-    slots: Option<usize>,
-    /// When the pipeline alarm the PULL digest says raises and clears ([`crate::alarm`]).
-    alarm: crate::alarm::Thresholds,
+    /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an
+    /// orchestrator may hold before a start is refused, the low-volume threshold, the agents a
+    /// machine runs and when the pipeline alarm raises and clears; set, or the project file's as
+    /// it is now.
+    limits: crate::limits::Held,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
     /// What a write on a board at another version is refused with, naming the board's project.
@@ -390,7 +390,7 @@ impl Store {
     /// work is refused when it would raise an orchestrator's open tasks past the store's cap
     /// ([`crate::slots`]).
     pub fn claim(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.ruling(slug, handle, self.slots.is_some(), |view| {
+        self.ruling(slug, handle, true, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if !EXECUTING.contains(&task.status.as_str()) {
@@ -629,6 +629,7 @@ impl Store {
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
     /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
+    /// The cap is read once, so a project file changed meanwhile never splits one decision.
     fn ruling(
         &self,
         slug: &str,
@@ -636,13 +637,14 @@ impl Store {
         starts: bool,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
-        let which = if starts {
+        let cap = self.slots();
+        let which = if starts && cap.is_some() {
             Which::Starting(slug)
         } else {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let ruled = self.ruled(&which, slug, &decide)?;
+            let ruled = self.ruled(&which, slug, cap, &decide)?;
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let mut body = String::from(WRITE);

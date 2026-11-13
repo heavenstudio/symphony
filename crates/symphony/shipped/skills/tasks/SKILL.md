@@ -197,7 +197,8 @@ Act on requests without an acknowledgement post.
 
 ## Review (reviewer)
 
-Choose reviewer families, models and launch methods under the project's policy.
+Choose reviewer families, models and launch methods under the project's policy;
+`just tasks limits` names the reviewer's model the project sets.
 Reviewers must be independent of the author and use the project's required stamps.
 
 `just tasks role SLUG reviewer` on a task in `review`, then read the diff and
@@ -294,7 +295,11 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   A given checkout with a live or stale executor is refused. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
   configured multiplexer's project space. Explicit flags and the destination
-  project's launch configuration select the agent, model and effort. Launch
+  project's launch configuration select the agent, model and effort: its
+  `[agents] launch`, on the model its `[agents.models]` names for the role. It is
+  refused while the machine runs as many agents as the project's `[limits]
+  machine_agents` allows. `just tasks limits` prints the limits and each role's
+  model in force, and where each came from. Launch
   records the handle, role, conversation, checkout, branch, terminal and start time.
   Its prompt uses the work skill with the task slug and registered handle.
   Always pass `--kind`. Choose a terminal reviewer only when the project's

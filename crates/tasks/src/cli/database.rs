@@ -187,10 +187,40 @@ fn said(home: &Home) -> String {
     let replaying = under_way
         .as_deref()
         .is_some_and(|doing| doing.contains("a private replay of the store's log"));
+    let (left, untold) = match home.left_replay_told() {
+        Ok(left) => (left, None),
+        Err(why) => (None, Some(why)),
+    };
     match home.serving() {
         Some(running) if replaying && home.recorded().is_none_or(|r| r.pid != running.pid) => {
             said.push_str(&format!(
                 ". Its private replay's server is pid {} at {}: wait until it ends",
+                running.pid, running.addr
+            ));
+        }
+        Some(running)
+            if left
+                .as_ref()
+                .is_some_and(|left| left.named && left.server.pid == running.pid) =>
+        {
+            said.push_str(&format!(
+                ". Its private replay's server is pid {} at {}, left running when its starter \
+                 ended: never the board's server, it is stopped cleanly by the board's next \
+                 command once it answers (never before), which then starts the board's own",
+                running.pid, running.addr
+            ));
+        }
+        Some(running)
+            if left
+                .as_ref()
+                .is_some_and(|left| left.server.pid == running.pid) =>
+        {
+            said.push_str(&format!(
+                ". Its server is pid {} at {}, which the private replay's record \
+                 (sf-tasks/replay.json) does not name: while that record stands every server on \
+                 the data is taken for the replay's, never the board's, so the board's next \
+                 command stops it cleanly once it answers (never before), then starts the \
+                 board's own",
                 running.pid, running.addr
             ));
         }
@@ -206,10 +236,18 @@ fn said(home: &Home) -> String {
                 ""
             }
         )),
+        None if untold.is_some() => said.push_str(". No server is found on its data"),
         None if held.is_some() => said.push_str(". No server runs on its data"),
         None => {
             said.push_str(". No server runs on its data: the board's next command starts one");
         }
+    }
+    if let Some(why) = untold {
+        said.push_str(&format!(
+            ". The private replay's record stands, and whether its server still runs on the data \
+             cannot be told: {why}, so the board's next command is refused while it cannot. {}",
+            home.untold_rule()
+        ));
     }
     if let Some(doing) = under_way {
         said.push_str(&format!(". Under way: {doing}"));

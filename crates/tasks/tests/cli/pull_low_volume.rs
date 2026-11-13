@@ -63,6 +63,39 @@ fn low_volume_uses_the_recipients_canonical_count_and_existing_cap() {
 }
 
 #[test]
+fn low_volume_holds_to_the_threshold_the_store_is_held_to_and_zero_says_it_to_none() {
+    let c = Case::new();
+    let orch = c.f.session("orchestrator");
+    for n in 0..2 {
+        let slug = format!("sim/mine-{n}");
+        c.task(&slug, "in_progress");
+        c.f.store.take_role(&slug, &orch, "orchestrator").unwrap();
+    }
+    let board = c.f.store.board().unwrap();
+    for (low, heard) in [(3, true), (2, false), (0, false)] {
+        let store = c.f.other().limiting(symphony_board::limits::Limits {
+            low_volume: low,
+            ..Default::default()
+        });
+        let warnings: Vec<_> = digest(&store, &[], None, NOW, &[])
+            .unwrap()
+            .only_for(&board, &orch)
+            .lines()
+            .into_iter()
+            .filter(|l| l.starts_with("  low_volume "))
+            .collect();
+        let expected = if heard {
+            vec![format!(
+                "  low_volume {orch} open=2 threshold={low} cap=none — pick disjoint ready work or resolve owned blockers using actual resources and ownership"
+            )]
+        } else {
+            vec![]
+        };
+        assert_eq!(warnings, expected, "low_volume = {low}");
+    }
+}
+
+#[test]
 fn only_orchestrator_recipients_receive_the_condition() {
     let c = Case::new();
     for kind in ["worker", "reviewer", "orchestrator"] {

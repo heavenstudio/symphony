@@ -19,6 +19,8 @@ pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MO
 
 Start an agent on a task in an hc terminal of its own, its first message
 /work SLUG HANDLE. --kind says which agent runs, --role what it does there.
+Refused while this machine runs as many agents as the project's [limits]
+machine_agents allows (`just tasks limits` prints it).
 
 positional arguments:
   slug
@@ -26,9 +28,9 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
-  --model MODEL         default the model of the project's [agents] launch for
-                        its agent, else gpt-6.1-sol for codex, sonnet for
-                        claude
+  --model MODEL         default the model the project's [agents.models] names
+                        for the role, else its [agents] launch model, for its
+                        agent; else gpt-6.1-sol for codex, sonnet for claude
   --kind {codex,claude}
                         the agent it runs (default: the project's [agents]
                         launch, else codex); worker and reviewer, older

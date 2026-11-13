@@ -139,11 +139,16 @@ package's AGENTS.md, a skill, a doc or a board task, and it is committed, so eve
 agent sees it. In a Claude Code session the memory guard refuses the writes there it
 can read (below), and `.claude/settings.json` denies Edit there as well.
 
-**Models.** The orchestrator may run on the most capable model, for diagnosis and
-design. Executors and reviewers run on Opus: an Agent launch passes `model: "opus"`
-(a subagent otherwise inherits its orchestrator's model), and `[agents] launch` in
-`symphony.toml` says the same for a board launch. A resumed agent keeps the model it
-started on.
+**Models.** The model each role runs on is a setting, so a change of mind is one edit:
+`[agents.models]` in `symphony.toml` (`orchestrator`, `executor`, `reviewer`), which a board
+launch takes and `just tasks limits` prints with where each came from
+([TASKS](docs/TASKS.md#limits-and-models)). Until this file names them (it waits for the
+machine to run a build that reads the table), the orchestrator may run on the most capable
+model, for diagnosis and design, and executors and reviewers run on Opus, as `[agents] launch`
+says for a board launch. An Agent launch passes the model `just tasks limits` names for the
+role, `model: "opus"` today (a subagent otherwise inherits its orchestrator's model). A
+resumed agent keeps the model it started on. The work-in-progress limits are settings the same
+way, in `[limits]`.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
 HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
