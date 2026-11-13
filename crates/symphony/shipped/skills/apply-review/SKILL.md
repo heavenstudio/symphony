@@ -53,7 +53,11 @@ do not treat it as approval, and change documents only when it asks for that.
    indented four spaces). Never edit the owner's words
    or marker, and never rewrite an earlier line: history is append-only. Plain words; explain jargon the owner asked about. A reply may use
    markdown links and images (the web app renders them), which is how to answer
-   "show me side by side" with an existing picture under `artifacts/`.
+   "show me side by side" with an existing picture. A card's picture is a file
+   committed beside its document under `docs/`, so a clone shows it: copy one
+   from the ignored `artifacts/` folder there and commit it, never link into
+   `artifacts/` or an owner's upload. `just symphony-cli docs-audit --check`
+   refuses a card picture git does not track.
    Keep any hidden `review:unseen-owner` comment: it prevents a reply that had not seen a stale owner save from closing that save.
    Write each line with `just symphony-reply PATH SLUG "<reply>" --as <handle>`,
    and resolve an owner callout with `just symphony-reply PATH L<line> "<answer>"
