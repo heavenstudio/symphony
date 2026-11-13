@@ -1974,9 +1974,12 @@ fn block_on_held(chrome: &mut Chrome, arrived: &std::sync::mpsc::Receiver<()>) {
              window.held = (window.held || 0) + 1; }, 0); 0",
         )
         .unwrap();
-    arrived
-        .recv_timeout(Duration::from_secs(60))
-        .expect("the page never asked for /held");
+    test_time::until(
+        "the page asks for /held",
+        test_time::backstop(Duration::from_secs(10)),
+        || arrived.try_recv().ok(),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
 }
 
 #[test]
@@ -1988,29 +1991,40 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     let (base, release, arrived) = holding_server();
     let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
     chrome.open(&base).unwrap();
-    // Chrome's own work after its first page (up to half a second of CPU, measured) passes
-    // first, so the CPU allowance below meets a still browser.
-    chrome.pump(Duration::from_secs(1)).unwrap();
 
     // The page's renderer blocked for 3 s while the rest of the browser runs on: two and a half
-    // times the wait's 1.2 s, which observer turns alone would spend. Only the turns the page
-    // takes part in count, so the wait sees it run again and meet its condition.
+    // times the 48 turns of a 1.2 s wait, which observer turns alone would spend. Only the turns
+    // the page takes part in count, so the wait sees it run again and meet its condition.
+    //
+    // The turns are what this wait proves, so it keeps the 48 turns `wait_for` gives 1.2 s and
+    // takes the protocol's CPU allowance. Chrome's own work in its first seconds after a page (a
+    // renderer made and others retired, the browser busy: more than a second of CPU on a loaded
+    // machine) lands in any wait begun then, and 1.2 s of browser CPU would bound that work,
+    // not the page's turns (RULES.md `tests/no-test-fails-on-load`).
     block_on_held(&mut chrome, &arrived);
+    let mut budget = chrome.page_budget(Duration::from_millis(1200)).unwrap();
+    assert_eq!(budget.max_polls, 48);
+    budget.cpu = process::Budget::new(PROTOCOL_CPU, &chrome.owner.members().unwrap());
+    let started = Instant::now();
     let late = release.clone();
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(3));
         late.send(()).unwrap();
     });
-    let started = Instant::now();
-    assert!(
-        chrome
-            .wait_for("window.held === 1", Duration::from_millis(1200))
-            .unwrap(),
-        "the blocked page spent its wait in {:?}",
-        started.elapsed()
-    );
+    let met = chrome
+        .eval_bounded("window.held === 1", &mut budget)
+        .unwrap();
     let took = started.elapsed();
-    assert!(took >= Duration::from_millis(2500), "met in {took:?}");
+    let passed = budget.page.as_ref().unwrap().passed;
+    assert_eq!(
+        met,
+        Some(json!(true)),
+        "the blocked page's wait ended in {took:?}, {} of its {} turns counted and {passed} passed \
+         without the page",
+        budget.polls,
+        budget.max_polls
+    );
+    assert!(took >= Duration::from_secs(3), "met in {took:?}");
     releaser.join().unwrap();
 
     // The whole browser stopped: no turn completes and no CPU is spent, which no allowance
