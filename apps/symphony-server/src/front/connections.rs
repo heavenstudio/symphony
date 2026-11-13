@@ -64,6 +64,9 @@ struct Connections {
     shared: Arc<Shared>,
     accepting_stopped: watch::Sender<bool>,
     unanswered: watch::Sender<usize>,
+    /// How long a rejected socket's read side is drained after its 503 ([`super::SHUTDOWN_GRACE`]
+    /// outside tests).
+    grace: std::time::Duration,
 }
 
 impl Connections {
@@ -73,6 +76,7 @@ impl Connections {
             shared,
             accepting_stopped: watch::Sender::new(false),
             unanswered: watch::Sender::new(0),
+            grace: super::SHUTDOWN_GRACE,
         }
     }
 
@@ -121,6 +125,7 @@ impl Listener for Connections {
                 admitted: admitted.clone(),
                 shared: self.shared.clone(),
                 stopped: Box::pin(async move { stopped.until_stopped().await }),
+                grace: self.grace,
             },
             Connection {
                 peer: accepted.1,
@@ -161,6 +166,8 @@ struct FirstResponse {
     admitted: Arc<AtomicBool>,
     shared: Arc<Shared>,
     stopped: Pin<Box<dyn Future<Output = ()> + Send>>,
+    /// Its [`Connections`]' read-side drain grace.
+    grace: std::time::Duration,
 }
 
 impl FirstResponse {
@@ -181,6 +188,7 @@ impl Drop for FirstResponse {
             && let Some(mut stream) = self.stream.take()
         {
             let needs_response = !self.response_started;
+            let grace = self.grace;
             tokio::spawn(async move {
                 if needs_response {
                     let _ = stream.write_all(UNAVAILABLE).await;
@@ -189,7 +197,7 @@ impl Drop for FirstResponse {
                 // reading through that EOF: a pre-write try_read misses bytes still in flight,
                 // and closing with unread input can reset the socket and destroy the response.
                 let _ = stream.shutdown().await;
-                let _ = tokio::time::timeout(super::SHUTDOWN_GRACE, async {
+                let _ = tokio::time::timeout(grace, async {
                     let mut discard = [0; 4096];
                     loop {
                         match stream.read(&mut discard).await {
@@ -281,7 +289,20 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    const LIMIT: Duration = Duration::from_secs(15);
+    /// Each test waits on its events; only a stall reaches this wall-clock backstop.
+    const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(15));
+
+    /// `work` to its end, or a failure that says it stalled and the load average then.
+    async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(BACKSTOP, work)
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "stalled: the test's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+                    test_time::Load::now()
+                )
+            })
+    }
 
     async fn connections() -> (Connections, SocketAddr, Arc<Shared>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -299,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepted_sockets_get_their_first_response_even_when_stop_precedes_the_request() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let cases = [
                 "",
                 "P",
@@ -331,13 +352,12 @@ mod tests {
             // shutdown bound concurrently rather than multiplying that bound by the case count.
             futures_util::future::join_all(cases).await;
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn a_peer_closing_without_a_response_releases_the_drain() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let (connections, address, shared) = connections().await;
             let mut unanswered = connections.unanswered.subscribe();
             let mut accepting_stopped = connections.accepting_stopped.subscribe();
@@ -353,13 +373,12 @@ mod tests {
             serving.await.unwrap();
             assert_eq!(*unanswered.borrow(), 0);
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn an_answered_keepalive_connection_does_not_hold_the_drain() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let (connections, address, shared) = connections().await;
             let mut unanswered = connections.unanswered.subscribe();
             let app = Router::new().fallback(|| async { StatusCode::NO_CONTENT });
@@ -383,13 +402,12 @@ mod tests {
                 io::ErrorKind::UnexpectedEof
             );
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn only_nonempty_writes_release_an_unanswered_socket() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let (mut connections, address, _) = connections().await;
             assert_eq!(connections.local_addr().unwrap().peer, address);
             let mut client = TcpStream::connect(address).await.unwrap();
@@ -414,13 +432,12 @@ mod tests {
             client.read_to_end(&mut received).await.unwrap();
             assert_eq!(received, response);
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn an_admitted_body_finishes_after_stop() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let (connections, address, shared) = connections().await;
             let mut accepting_stopped = connections.accepting_stopped.subscribe();
             let app = Router::new().fallback(|request: Request| async {
@@ -441,12 +458,12 @@ mod tests {
             assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
             assert!(response.ends_with("\r\n\r\npayload"), "{response}");
             serving.await.unwrap();
-        }).await.unwrap();
+        }).await;
     }
 
     #[tokio::test]
     async fn malformed_requests_keep_their_parser_response() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             let (connections, address, shared) = connections().await;
             let serving = tokio::spawn(connections.serve(super::super::router(shared.clone())));
             let mut client = TcpStream::connect(address).await.unwrap();
@@ -457,8 +474,7 @@ mod tests {
             shared.stop();
             serving.await.unwrap();
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
@@ -498,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_unread_request_gets_503_without_a_connection_reset() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             for read_prefix in [false, true] {
             let (mut connections, address, shared) = connections().await;
             let mut unanswered = connections.unanswered.subscribe();
@@ -531,15 +547,17 @@ mod tests {
             );
             }
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     async fn rejected_sockets_drain_bytes_sent_after_the_503_before_closing() {
-        tokio::time::timeout(LIMIT, async {
+        within(async {
             for middleware_answered in [false, true] {
                 let (mut connections, address, shared) = connections().await;
+                // The drain must outlast the test's own steps however loaded the machine is: only
+                // the client's EOF below ends it, never the grace.
+                connections.grace = BACKSTOP * 2;
                 let mut unanswered = connections.unanswered.subscribe();
                 let mut client = TcpStream::connect(address).await.unwrap();
                 let (mut stream, _) = connections.accept().await;
@@ -572,7 +590,6 @@ mod tests {
                 unanswered.wait_for(|count| *count == 0).await.unwrap();
             }
         })
-        .await
-        .unwrap();
+        .await;
     }
 }

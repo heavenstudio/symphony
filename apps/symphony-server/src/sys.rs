@@ -323,6 +323,16 @@ pub(crate) fn output_while(
 mod tests {
     use super::*;
 
+    /// The deadline these tests give a command that ends by itself, and the backstop of their waits:
+    /// six times the 30 s they had as a bound, which only a stall reaches.
+    const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
+    /// Waits until `condition` holds, failing as a stall past [`BACKSTOP`].
+    #[track_caller]
+    fn until(what: &str, condition: impl FnMut() -> bool) {
+        test_time::until_true(what, BACKSTOP, condition).unwrap_or_else(|stall| panic!("{stall}"));
+    }
+
     #[test]
     fn this_process_is_alive_and_a_reaped_child_is_not() {
         assert!(pid_alive(i64::from(std::process::id())));
@@ -360,24 +370,27 @@ mod tests {
 
     #[test]
     fn a_command_that_outlasts_its_time_is_ended_and_an_error() {
+        // It sleeps a day: only its end at the deadline lets the call answer.
         let mut slow = Command::new("sleep");
-        slow.arg("30");
-        let began = Instant::now();
-        assert!(output_within(slow, Duration::from_millis(200)).is_err());
-        assert!(began.elapsed() < Duration::from_secs(10));
+        slow.arg("86400");
+        let ending = std::thread::spawn(move || output_within(slow, Duration::from_millis(200)));
+        until("the outlasting command to be ended", || {
+            ending.is_finished()
+        });
+        assert!(ending.join().unwrap().is_err());
         let mut quick = Command::new("echo");
         quick.arg("said");
-        let out = output_within(quick, Duration::from_secs(30)).unwrap();
+        let out = output_within(quick, BACKSTOP).unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "said\n");
         let mut large = Command::new("sh");
         large.args(["-c", "head -c 131072 /dev/zero; printf warning >&2"]);
-        let out = output_while(large, Duration::from_secs(30), || true, moment).unwrap();
+        let out = output_while(large, BACKSTOP, || true, moment).unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, vec![0; 131072]);
         assert_eq!(out.stderr, b"warning");
         let mut failing = Command::new("sh");
         failing.args(["-c", "exit 3"]);
-        let out = output_within(failing, Duration::from_secs(30)).unwrap();
+        let out = output_within(failing, BACKSTOP).unwrap();
         assert_eq!(out.status.code(), Some(3), "the status of its reap");
     }
 
@@ -404,7 +417,12 @@ mod tests {
 
     #[test]
     fn a_taken_process_is_signalled_only_while_its_pid_names_it() {
-        let mut child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        // It lives until the case kills it, or until its input closes: a wait on one never killed
+        // ends at once, as `wait` closes that input first.
+        let mut child = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         let pid = i64::from(child.id());
         let taken = Taken::of(pid);
         assert!(taken.alive());
@@ -435,11 +453,7 @@ mod tests {
     fn a_child_that_ended_is_left_unreaped_holding_its_pid_until_it_is_waited_for() {
         let mut child = Command::new("true").spawn().unwrap();
         let pid = i64::from(child.id());
-        let began = Instant::now();
-        while !exited(&child) {
-            assert!(began.elapsed() < Duration::from_secs(30), "true ran on");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        until("true to end", || exited(&child));
         // A zombie: no other process can have its pid or lead a group of its id.
         assert!(pid_alive(pid));
         assert_eq!(process_starts(&[pid]), [Start::Ended]);
@@ -452,7 +466,8 @@ mod tests {
 
     #[test]
     fn a_stopped_child_has_not_exited() {
-        let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        // It sleeps a day: it lives until the case kills it.
+        let mut child = Command::new("/bin/sleep").arg("86400").spawn().unwrap();
         let pid = i64::from(child.id());
         signal(pid, libc::SIGSTOP);
         // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
@@ -496,23 +511,17 @@ mod tests {
             program: program.into(),
             stopped: false,
         };
-        let began = Instant::now();
-        while !exited(&owned.child) {
-            assert!(
-                began.elapsed() < Duration::from_secs(30),
-                "{program} ran on"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        until(&format!("{program} to end"), || exited(&owned.child));
         owned
     }
 
     #[test]
     fn a_group_kill_is_said_with_its_group_program_and_why_only_while_it_has_a_member() {
-        // The command ends at once and leaves a descendant in its group: the stop names the
-        // group, the program and why, then the group ends, its leader reaped only after.
+        // The command ends at once and leaves a descendant in its group, which sleeps a day: the
+        // stop names the group, the program and why, then the group ends, its leader reaped only
+        // after.
         let mut leaves = Command::new("sh");
-        leaves.args(["-c", "sleep 30 & exit 0"]);
+        leaves.args(["-c", "sleep 86400 & exit 0"]);
         let mut owned = ended_group(&mut leaves, "sh");
         let group = i64::from(owned.child.id());
         assert!(group_runs(group), "the descendant holds the group");
@@ -526,14 +535,7 @@ mod tests {
                 "· Symphony: SIGKILL to process group {group} of `sh`: the case asks"
             )]
         );
-        let stopped = Instant::now();
-        while group_runs(group) {
-            assert!(
-                stopped.elapsed() < Duration::from_secs(10),
-                "group {group} lives"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        until(&format!("group {group} to end"), || !group_runs(group));
         // A second stop sends nothing and says nothing, and answers the same end.
         let again = owned.stop_saying("again", |line| said.push(line.to_owned()));
         assert!(again.unwrap().success());
@@ -553,7 +555,7 @@ mod tests {
         // command's stdout and stderr until something ends it. A child another test spawns holds
         // neither end (symphony_board::sys::pipe).
         let (held, mut test_end) = symphony_board::sys::pipe().unwrap();
-        let timeout = Duration::from_secs(30);
+        let timeout = BACKSTOP;
         let fd = held.as_raw_fd();
         let mut command = Command::new("sh");
         command.args([
@@ -569,23 +571,24 @@ mod tests {
         // The command's own deadline: past it, only the test's end closing would let the call go.
         let out = answer
             .recv_timeout(timeout)
-            .expect("no answer within the deadline while a descendant held the output")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "no answer within the deadline while a descendant held the output; {}",
+                    test_time::Load::now()
+                )
+            })
             .unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, b"said");
         // The owned group ended the descendant: the last reader closes, and a write here fails.
         drop(held);
-        let stopped = Instant::now();
-        loop {
+        until("the descendant to stop reading", || {
             match test_end.write(&[0]) {
-                Err(error) if error.kind() == ErrorKind::BrokenPipe => break,
-                Ok(_) => {
-                    assert!(stopped.elapsed() < timeout, "the descendant still reads");
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                Err(error) if error.kind() == ErrorKind::BrokenPipe => true,
+                Ok(_) => false,
                 other => panic!("group shutdown: {other:?}"),
             }
-        }
+        });
     }
 
     #[test]
@@ -599,7 +602,7 @@ mod tests {
         let mut command = Command::new("sh");
         command.args([
             "-c",
-            "sh -c 'printf r >&\"$1\"; exec sleep 30' fixture \"$1\" & wait",
+            "sh -c 'printf r >&\"$1\"; exec sleep 86400' fixture \"$1\" & wait",
             "fixture",
             &fd.to_string(),
         ]);
@@ -608,7 +611,7 @@ mod tests {
         let mut ready = false;
         let result = output_while(
             command,
-            Duration::from_secs(30),
+            BACKSTOP,
             || {
                 let mut input = &reader;
                 match input.read(&mut [0]) {
@@ -628,20 +631,14 @@ mod tests {
         );
         assert_eq!(result.unwrap_err(), "command cancelled");
         drop(writer);
-        let stopped = Instant::now();
-        loop {
+        // A surviving descendant, which sleeps a day, would hold this pipe open.
+        until("the group's end to close its pipe", || {
             let mut input = &reader;
             match input.read(&mut [0]) {
-                Ok(0) => break,
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    assert!(
-                        stopped.elapsed() < Duration::from_secs(5),
-                        "a surviving descendant would hold this pipe open"
-                    );
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                Ok(0) => true,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => false,
                 other => panic!("group shutdown: {other:?}"),
             }
-        }
+        });
     }
 }

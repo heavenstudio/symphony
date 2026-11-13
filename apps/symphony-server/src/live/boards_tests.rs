@@ -8,11 +8,15 @@ use super::Hub;
 use crate::testing::{Tree, board::surreal, git, repository_at};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Schema, Store};
+
+/// The wall-clock backstop of a wait here on the hub's read: only a stall reaches it (RULES.md
+/// `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
 /// A fixture project: its checkout, holding `symphony.toml` with its id, and its hub.
 struct Project {
@@ -68,20 +72,22 @@ impl Project {
     }
 
     /// Wait for the hub to say why it reads no board in words that start with `start` (not that it
-    /// has read none yet, or that its board's server is starting), for at most 30 s: those words.
+    /// has read none yet, or that its board's server is starting): those words. Only a stall
+    /// reaches the wait's backstop.
     fn refused(&self, start: &str) -> String {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            match self.read() {
-                Err(why) if why.starts_with(start) => return why,
-                read => assert!(
-                    Instant::now() < deadline,
-                    "{}: {read:?}",
-                    self.root.display()
-                ),
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        let mut read = self.read();
+        let refused = test_time::until(
+            format!("{}: the hub to say {start:?}", self.root.display()),
+            BACKSTOP,
+            || {
+                read = self.read();
+                read.as_ref()
+                    .err()
+                    .filter(|why| why.starts_with(start))
+                    .cloned()
+            },
+        );
+        refused.unwrap_or_else(|stall| panic!("{stall}; it read {read:?}"))
     }
 
     /// The slugs of the tasks the hub last read, or why it reads no board.
@@ -94,20 +100,19 @@ impl Project {
         }
     }
 
-    /// Wait for the hub to read `slugs`, for at most 30 s.
+    /// Wait for the hub to read `slugs`; only a stall reaches the wait's backstop.
     fn reads(&self, slugs: &[&str]) {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            let read = self.read();
-            if read.as_ref().is_ok_and(|read| read == slugs) {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{}: {read:?}",
-                self.root.display()
-            );
-            std::thread::sleep(Duration::from_millis(50));
+        let mut read = self.read();
+        let waited = test_time::until_true(
+            format!("{}: the hub to read {slugs:?}", self.root.display()),
+            BACKSTOP,
+            || {
+                read = self.read();
+                read.as_ref().is_ok_and(|read| read == slugs)
+            },
+        );
+        if let Err(stall) = waited {
+            panic!("{stall}; it read {read:?}");
         }
     }
 }
