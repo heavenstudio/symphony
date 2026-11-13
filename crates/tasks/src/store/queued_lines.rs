@@ -13,6 +13,7 @@
 //! | STATUS | its look hears the move ([`Seen::hears_move`]) |
 //! | ROLE | it holds a role on the task ([`Seen::hears_roles`]) |
 //! | ROLE of a move | it is a party to the move ([`moved_for`]) |
+//! | GIVEN | always: the board gave it those tasks, and a later move of one says itself |
 //! | BLOCKED | it oversees the session on that task ([`Overseen::hears_of`]) |
 //! | STALE, LIVENESS UNKNOWN | it is told of the session going quiet ([`Seen::hears_quiet`]) |
 //! | LOST | that, and of the work named, what it is told of ([`told`]) |
@@ -145,6 +146,7 @@ impl Queued {
                     Now::Said(format!("{head}{CLAIMABLE}{}", heard.join(", ")))
                 }
             }
+            // GIVEN, addressed messages and verdicts.
             _ => Now::Kept,
         }
     }

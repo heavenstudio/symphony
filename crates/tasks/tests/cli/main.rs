@@ -131,6 +131,18 @@ impl Case {
         self.register_with(kind, &[])
     }
 
+    /// A session of `kind` registered before the first live line and beating at the case's clock,
+    /// as an orchestrator that stays must be: it stays once it also waits, watches or holds a task.
+    pub fn register_settled(&mut self, kind: &str) -> String {
+        let now = self.env.vars["TASKS_NOW"].clone();
+        let before = now.parse::<f64>().unwrap() - symphony_board::health::LIVE_SECONDS - 1.0;
+        self.env.vars.insert("TASKS_NOW".into(), before.to_string());
+        let handle = self.register(kind);
+        self.env.vars.insert("TASKS_NOW".into(), now);
+        self.store().touch(&handle).unwrap();
+        handle
+    }
+
     /// The board, as of the clock `TASKS_NOW` pins.
     pub fn store(&self) -> Store {
         connect(&self.env).unwrap()

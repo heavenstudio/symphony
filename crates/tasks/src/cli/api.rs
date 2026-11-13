@@ -371,7 +371,17 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "create" => {
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
-            shape::task(&board.get()?.create(&new)?)
+            let store = board.get()?;
+            let made = store.create(&new)?;
+            // Every open task has an orchestrator: filed, it stays filed when no give is written,
+            // and the board's next read of the whole board gives it.
+            match store.give_filed(&made.slug, &new.by, None) {
+                Ok(_) => shape::task(&store.get(&made.slug)?),
+                Err(error) => {
+                    eprintln!("{}: no orchestrator was given it yet: {error}", made.slug);
+                    shape::task(&made)
+                }
+            }
         }
         "amend" => {
             args!(slug: need, title: need, links: or(Vec::<String>::new()), by: actor);
