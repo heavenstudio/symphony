@@ -5,6 +5,7 @@ use crate::{Hooked, World};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::slice::from_ref;
+use symphony_board::Store;
 use symphony_board::launch::hc::{Hc, Object};
 use symphony_board::launch::reap::{self, CHANGED, Kept, REAP_SECONDS, Reap, Sweep};
 use symphony_board::launch::screen::{ON_SCREEN, Screen};
@@ -44,6 +45,11 @@ impl World {
 
     /// One idle sweep through `hc`, then the timer's interval.
     pub(crate) fn sweep_through(&self, hc: &dyn Hc) -> Sweep {
+        self.sweep_on(self.store(), hc)
+    }
+
+    /// One idle sweep through `hc` that reads the board by `store`, then the timer's interval.
+    pub(crate) fn sweep_on(&self, store: &Store, hc: &dyn Hc) -> Sweep {
         let m = self.machine();
         let how = Reap {
             state: self.dir().join("reap.json"),
@@ -52,7 +58,7 @@ impl World {
             caller: None,
             min_idle: REAP_SECONDS,
         };
-        let swept = reap::sweep(self.store(), hc, &how, &mut Vec::new()).unwrap();
+        let swept = reap::sweep(store, hc, &how, &mut Vec::new()).unwrap();
         self.f.advance(REAP_SECONDS);
         swept.expect("no other sweep holds the lock")
     }

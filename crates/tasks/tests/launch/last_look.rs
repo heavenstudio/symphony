@@ -17,7 +17,7 @@ type Change = fn(&World, &str);
 
 /// An hc whose `nth` `hc get` finds the terminal changed: `change` edits it just before that call
 /// answers. `gets` counts the calls.
-fn changes_at_get<'world>(
+pub(crate) fn changes_at_get<'world>(
     world: &'world World,
     nth: usize,
     change: &'world dyn Fn(&str),

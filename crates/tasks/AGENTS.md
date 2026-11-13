@@ -258,7 +258,9 @@ The next successful sweep confirms the terminal or retires the registration.
 An incomplete terminal inventory still confirms its identified threads; it withholds retirement of
 unmatched registrations until an inventory establishes absence. PULL lists unknown handles only
 while they hold claimable work, just as the per-child warning does.
-The shared server sweeps once on startup, then every five minutes. Each command has a four-minute
+The shared server sweeps each project it serves that has a board, in that project's checkout, once
+it first serves it (at startup, or as the project is registered), then every five minutes, each on
+a schedule of its own until the project is removed. Each command has a four-minute
 deadline and its owned process group is ended on timeout or shutdown, so the next sweep can run.
 An unchanged callback snapshot drains its durable outbox without rescanning the inbox; its message
 cursor advances only with the persisted observation and queued events.
@@ -382,8 +384,23 @@ identities in `callback_state.pull_unanswered`, separate from main's whole-board
 withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
 defines pending work for the digest, restore selection and sweep: a post since that handle took
 its role, without a later message, status move or verdict by it on that task or a descendant.
-The descendant lookup reads only that recipient's eligible records after the post through
-`message_sender`, then checks actual task parents. Direct `land-approve` approvals journal a
+`Store::pending_posts` reads in proportion to what it is asked (`unanswered::Asked`), never the
+board: PULL and recovery ask for the posts overdue on open tasks and read only the threads and
+launches of tasks `in_progress`, `blocked` or in `review`; the reap asks for the posts its judged
+handle and the sessions under it owe, on the threads that address one of them, hold a system
+record one made (`message_recipient`, `message_sender`) or name one in a role. Threads, launches
+and the threads below a task are record ranges (`message:[slug, ..]`, `task_session:[slug, ..]`),
+and only the posts still asked after the in-memory filters read the threads below their task after
+the post (the own thread's answer is the thread check). In a board command each of its reads (four
+at most) waits at most `UNANSWERED_WAIT` (10 s, `TASKS_UNANSWERED_WAIT` when set), sent once
+(`Store::looking_up_within`, `rpc::Client::bounded`); a store none is set on waits on it as on
+any read. A PULL then skips its unanswered posts and says why, and the reap, at its judgment or
+either last look, keeps the terminal it could not judge and goes on to the next (the cli target's
+`pull::command` and the launch target's `reap_unread` set the wait short). The plans
+inside its closures are pinned by `store/unanswered_reads.rs`, its cost on the generated board by
+the perf target's `unanswered`. Recovery's final check reads only that recipient's eligible
+records after the post through `message_sender`, then checks actual task parents. Direct
+`land-approve` approvals journal a
 message through the existing board API. The final recovery reservation rechecks the recipient's
 records and the parent edges used in its answer decision before reserving the attempt. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
@@ -662,8 +679,9 @@ A product deadline a test would otherwise trip on a loaded machine is a setting,
 set and never raised for anyone else: the recorder's waits scale by `TASKS_RUN_WAIT_SCALE` on a
 scratch board alone (docs/MACHINE_WORK.md), and these are seconds (`Env::seconds`):
 `tools/record.sh`'s probe `TASKS_RECORDER_PROBE_WAIT`, the landing's listening window
-`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, and a Codex delivery's
-`TASKS_CODEX_WAIT`. A test of the deadline itself sets it short; every other test gives it a
+`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, a Codex delivery's
+`TASKS_CODEX_WAIT`, and each read of the unanswered-post lookup `TASKS_UNANSWERED_WAIT` (a store a
+test opens itself sets none). A test of the deadline itself sets it short; every other test gives it a
 backstop, so its result never turns on how loaded the machine is. Where a test must act only after
 the product did something on a thread of its own, the product leaves a mark it reads only when
 set: the recorder makes the file `TASKS_RUN_END_MARK` names once it has stamped its command's end
@@ -1524,8 +1542,9 @@ its 384-F32 chunks publish atomically. Missing parts are repaired, removed
 sources are pruned, and a model id change re-embeds every source. The schema's
 `task_embedding` HNSW index is cosine/F32 over `task_chunk.embedding`.
 
-The shared Symphony server runs `tasks embed --maintenance --threads 1` through
-the project's committed-main launcher, at startup and every minute, in an owned
+The shared Symphony server runs `tasks embed --maintenance --threads 1` for each
+project it serves that has a board, through that project's committed-main launcher,
+as it first serves it and every minute, in an owned
 child with `nice -n 10` and without the starter's agent, database or server
 environment. Private previews never run it. Failures retry; server shutdown
 cancels the child, and completed sources survive interruption. If the shared

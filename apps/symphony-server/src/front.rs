@@ -83,6 +83,11 @@ pub struct Shared {
     /// ([`symphony_board::recording`]).
     pub(crate) recording: Arc<symphony_board::recording::Gate>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
+    /// The workers that maintain this project's board, its idle sweep and its embedding catch-up,
+    /// when the one server serves it beside its starter's ([`crate::projects`]): joined as it stops,
+    /// so none, nor any child of theirs, outlives its state. The starter's own are the server's
+    /// ([`Background`]).
+    maintenance: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 impl Shared {
@@ -153,6 +158,7 @@ impl Shared {
             api: tokio::sync::OnceCell::new(),
             saves: std::sync::OnceLock::new(),
             recording,
+            maintenance: Mutex::new(Vec::new()),
         })
     }
 
@@ -179,20 +185,58 @@ impl Shared {
 
     /// Stop the server and finish its live refresh before returning. The lifecycle lock also
     /// covers hub initialization, so a concurrent first request cannot start a worker after stop.
+    /// The project's maintenance ends first ([`Shared::maintained`]).
     pub fn stop(&self) {
         {
             let _asleep = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
             self.stopped.send_replace(true);
             self.wake.notify_all();
         }
+        self.end_maintenance(&mut self.maintenance.lock().unwrap_or_else(|e| e.into_inner()));
         let _held = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(hub) = self.api.get() {
             hub.stop();
         }
     }
 
+    /// Keep `workers`, the maintenance of this project's board, until it stops, when each is
+    /// joined: each sees the stop at its next look and ends the child it runs. Workers kept once it
+    /// stopped are joined at once.
+    pub(crate) fn maintained(&self, workers: Vec<std::thread::JoinHandle<()>>) {
+        let mut held = self.maintenance.lock().unwrap_or_else(|e| e.into_inner());
+        held.extend(workers);
+        if self.stopping() {
+            self.end_maintenance(&mut held);
+        }
+    }
+
+    /// How many maintenance workers it holds: none once a stop joined them, as a stop joins them
+    /// with the list held.
+    #[cfg(test)]
+    pub(crate) fn maintaining(&self) -> usize {
+        self.maintenance
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
+    }
+
+    /// Join every worker of `held`, the maintenance list, held so a second stop meanwhile waits
+    /// for these joins rather than return before they end.
+    fn end_maintenance(&self, held: &mut Vec<std::thread::JoinHandle<()>>) {
+        for worker in held.drain(..) {
+            let name = worker.thread().name().unwrap_or("maintenance").to_owned();
+            if worker.join().is_err() {
+                tell(format_args!(
+                    "· {}{} worker panicked while stopping",
+                    name,
+                    of_project(self)
+                ));
+            }
+        }
+    }
+
     /// A background timer wakes immediately on shutdown, including when stop preceded the wait.
-    fn wait(&self, duration: Duration) -> bool {
+    pub(crate) fn wait(&self, duration: Duration) -> bool {
         let held = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
         let _held = self
             .wake
@@ -920,16 +964,19 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             shared.stop();
         }
     }
-    background.workers.extend(session_maintenance(
-        &shared,
-        serve.home.as_deref(),
-        Stamp::now,
-    ));
-    background.workers.extend(embeddings::start(
-        &shared,
-        serve.home.as_deref(),
-        Stamp::now,
-    ));
+    // The generation is live from here, and only from here does any project's maintenance start:
+    // a hand-off that fails ends a replacement by a kill that stops no state, and would leave the
+    // children of a maintenance started before it. The starter's project is maintained by workers
+    // of the server's own; each other project it serves by workers its state holds, started by
+    // the projects' watch ([`crate::projects::Projects::watch`]), which then reads the registry
+    // again on its own so a project registered or removed starts or stops its maintenance with
+    // no request.
+    background
+        .workers
+        .extend(maintenance(&shared, serve.home.as_deref()));
+    if let Some(projects) = &projects {
+        background.workers.push(projects.watch());
+    }
     if serve.home.is_some() {
         handover_when_asked(&shared);
     }
@@ -1040,6 +1087,37 @@ impl Started {
     }
 }
 
+/// What the machine's one server (`home`, its machine folder) runs for each project it serves, on
+/// the wall clock: the idle sweep ([`session_maintenance`]) and the embedding catch-up
+/// ([`embeddings::start`]), each a worker of its own, so one project's hung or failing round never
+/// holds up another's. A private preview (no `home`) runs none.
+pub(crate) fn maintenance(
+    shared: &Arc<Shared>,
+    home: Option<&Path>,
+) -> Vec<std::thread::JoinHandle<()>> {
+    session_maintenance(shared, home, Stamp::now)
+        .into_iter()
+        .chain(embeddings::start(shared, home, Stamp::now))
+        .collect()
+}
+
+/// Whether the project `shared` serves has a board to maintain, as its hub last read it
+/// ([`crate::live::Hub::has_board`]). A round waits while it has none, or while that is not known
+/// yet (no hub, or its first board read not done), so maintenance never makes a board in a
+/// registered project that has none.
+fn has_board(shared: &Shared) -> bool {
+    shared.api.get().and_then(|hub| hub.has_board()) == Some(true)
+}
+
+/// How the log names the project a maintenance line is about: ` of ID` for a project the one
+/// server serves under `/ID`, nothing for a server of its own.
+fn of_project(shared: &Shared) -> String {
+    match shared.base.trim_start_matches('/') {
+        "" => String::new(),
+        id => format!(" of {id}"),
+    }
+}
+
 /// A private preview may use a copied board, whose old pane identities must never be used to
 /// clean up real agent terminals. Only the machine's shared installation starts this worker,
 /// which reads the time from `clock` ([`Stamp::now`] outside tests).
@@ -1061,13 +1139,13 @@ fn session_maintenance(
 /// caps run on wall time, so the schedule reads both: after a sleep the wall clock makes a round
 /// due at once, before a live pane's Unknown cap expires.
 #[derive(Clone, Copy)]
-struct Stamp {
+pub(crate) struct Stamp {
     mono: Instant,
     wall: SystemTime,
 }
 
 impl Stamp {
-    fn now() -> Stamp {
+    pub(crate) fn now() -> Stamp {
         Stamp {
             mono: Instant::now(),
             wall: SystemTime::now(),
@@ -1111,35 +1189,46 @@ fn board_build_on(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf
     builds::of_main(&main, "tasks", path).ok_or_else(|| builds::missing(&main, "tasks"))
 }
 
-/// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`.
-fn maintenance_worker(
+/// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,
+/// in the checkout of the project `shared` serves: its board, its build of `tasks`, its `reap.json`
+/// and its health record. A round due waits while the project has no board ([`has_board`]).
+pub(crate) fn maintenance_worker(
     shared: Arc<Shared>,
     interval: Duration,
     timeout: Duration,
     clock: impl Fn() -> Stamp + Send + 'static,
 ) -> std::thread::JoinHandle<()> {
     worker(SWEEP_WORKER, move || {
+        let of = of_project(&shared);
         let mut last: Option<Stamp> = None;
+        // A round due that waited for a board: late for that, not for a sleep.
+        let mut board_waited = false;
         while !shared.stopping() {
             let now = clock();
-            if !sweep_due(last, now, interval) {
+            let due = sweep_due(last, now, interval);
+            if !due || !has_board(&shared) {
+                board_waited |= due;
                 if shared.wait(Duration::from_millis(250)) {
                     break;
                 }
                 continue;
             }
             let started = Instant::now();
-            if let Some(late) = last.and_then(|at| sweep_late(at, now, interval)) {
+            if let Some(late) = last
+                .filter(|_| !board_waited)
+                .and_then(|at| sweep_late(at, now, interval))
+            {
                 eprintln!(
-                    "· idle-session sweep started {:.0}s late: the machine slept or the worker was not running",
+                    "· idle-session sweep{of} started {:.0}s late: the machine slept or the worker was not running",
                     late.as_secs_f64()
                 );
             }
             last = Some(now);
+            board_waited = false;
             // The board's nonblocking reap lock admits one sweeper across all servers.
             // Log before waiting on output: a hung child must still leave its actual start time.
-            eprintln!("· idle-session sweep started");
-            let swept = match crate::live::measured("idle-session sweep", || {
+            eprintln!("· idle-session sweep{of} started");
+            let swept = match crate::live::measured(&format!("idle-session sweep{of}"), || {
                 let mut command = Command::new(board_build(&shared.root)?);
                 command.arg("reap").current_dir(&shared.root);
                 sys::output_while(
@@ -1154,7 +1243,10 @@ fn maintenance_worker(
             }) {
                 Ok(done) if done.status.success() => {
                     if !done.stderr.is_empty() {
-                        eprintln!("{}", String::from_utf8_lossy(&done.stderr).trim());
+                        eprintln!(
+                            "· idle-session sweep{of} says:\n{}",
+                            String::from_utf8_lossy(&done.stderr).trim()
+                        );
                     }
                     Some(Ok(()))
                 }
@@ -1164,20 +1256,20 @@ fn maintenance_worker(
                         done.status,
                         String::from_utf8_lossy(&done.stderr).trim()
                     );
-                    eprintln!("· idle-session sweep failed: {why}");
+                    eprintln!("· idle-session sweep{of} failed: {why}");
                     Some(Err(why))
                 }
                 Err(_) if shared.stopping() => {
-                    eprintln!("· idle-session sweep cancelled");
+                    eprintln!("· idle-session sweep{of} cancelled");
                     None
                 }
                 Err(e) => {
-                    eprintln!("· idle-session sweep failed: {e}");
+                    eprintln!("· idle-session sweep{of} failed: {e}");
                     Some(Err(e.to_string()))
                 }
             };
             eprintln!(
-                "· idle-session sweep ended after {:.3}s",
+                "· idle-session sweep{of} ended after {:.3}s",
                 started.elapsed().as_secs_f64()
             );
             // A cancelled sweep says nothing of the board, nor does one that found no board
