@@ -16,6 +16,6 @@ client = 20_750_000
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
 symphony-server = 18_570_000
-symphony = 18_000_000
+symphony = 14_580_000
 tasks = 24_700_000
 agent-send = 5_250_000

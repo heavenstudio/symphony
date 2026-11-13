@@ -306,7 +306,9 @@ reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src
 one place that names that check), and the loopback that measures a compiled plugin's calls through
 the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
 installs none links none of it; a plugin answering from its process needs only the host's side of
-the protocol).
+the protocol). The same test of `symphony` holds the JSON Schema validator out of it, which would
+add a fifth to its size: a schema check is a library call a consumer's code makes
+(`symphony::schema::validate`), and `symphony serve` answers `validate` as a function it lacks.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A

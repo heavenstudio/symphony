@@ -1,7 +1,7 @@
 //! The `symphony` binary (`just symphony-cli`): `status` (`just symphony-status`), `reply`
 //! (`just symphony-reply`), `triage`, `ask` (`just symphony-ask`), `verdict-asks`, the commands
-//! the project's plugins add, and `serve`, one line-oriented JSON entry to the register, the asks and
-//! the schema check, one JSON line per call.
+//! the project's plugins add, and `serve`, one line-oriented JSON entry to the register and the asks,
+//! one JSON line per call.
 
 mod commands;
 mod publish;
@@ -26,7 +26,7 @@ use crate::lint;
 use crate::plugins::Plugins;
 use crate::register::{self, Decision, QUESTION, ReviewError, Who, card_end, parse_decisions};
 use crate::text::{os_error, read_text, write_whole};
-use crate::{schema, triage};
+use crate::triage;
 
 const STATUS_USAGE: &str =
     "usage: symphony status [-h] [--root ROOT] [--json] [--open] [--tidy] [--lint] [--now NOW]";
@@ -474,6 +474,11 @@ fn bad(message: String) -> Failure {
     }
 }
 
+/// What `serve` answers a `validate` request: an unknown function, as any name it lacks, and where a
+/// schema check is.
+const VALIDATE_REFUSED: &str = "unknown function \"validate\": serve has no schema check; link \
+                                symphony_schema::validate (symphony::schema) instead";
+
 /// A card as `serve` answers it: its fields and everything read off it.
 #[derive(Serialize)]
 struct CardData<'a> {
@@ -560,11 +565,6 @@ fn lines_arg<'a>(request: &'a Value, name: &str) -> Result<Vec<&'a str>, Failure
                 .ok_or_else(|| bad(format!("{name} must hold strings")))
         })
         .collect()
-}
-
-/// Any JSON the request carries under `name`; null when it carries none.
-fn value_arg<'a>(request: &'a Value, name: &str) -> &'a Value {
-    request.get(name).unwrap_or(&Value::Null)
 }
 
 fn int_arg(request: &Value, name: &str) -> Result<i64, Failure> {
@@ -708,10 +708,10 @@ fn dispatch(request: &Value) -> Result<Value, Failure> {
         "split_message" => json!(edit::split_message(text_arg(request, "message")?)?),
         "section_text" => json!(edit::section_text(text()?, text_arg(request, "anchor")?)),
         "now_stamp" => json!(now_stamp()),
-        "validate" => json!(
-            schema::validate(value_arg(request, "instance"), value_arg(request, "schema"))
-                .map_err(|e| bad(e.0))?
-        ),
+        // A schema check is a library call (`symphony::schema::validate`), never a request: the
+        // validator would add a fifth to this binary (tests/links.rs). The refusal is any unknown
+        // name's, saying where the check is.
+        "validate" => return Err(bad(VALIDATE_REFUSED.into())),
         "expand_components" => json!(
             crate::render::Render::new(text_arg(request, "root")?)
                 .expand_components(text()?, text_arg(request, "doc_path")?)
