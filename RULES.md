@@ -74,7 +74,10 @@ its red's fix starts at the local branch `release-candidate`, never at main, mer
 again before review and never merges main before its approve, and commits the client its own
 sources make when it changes what the client is built from; its task's text says so. Its own land
 moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
-fixed outside this repository is answered by cancelling its task, saying where.
+whose fix landed with another red's task is closed as covered by that landing, which answers it
+once that land advanced the candidate; closing one as covered by any other landing drops the
+candidate, its fix being on main and not in it. A red fixed outside this repository is answered by
+cancelling its task, saying where.
 
 ### `workflow/shared-data-lands-first`
 

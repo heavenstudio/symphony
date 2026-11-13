@@ -169,6 +169,8 @@ pub(crate) struct Night<'a> {
     /// The release candidate's tip, when the run's reds are a release candidate's
     /// ([`super::candidate`]): their tasks say how a fix of one starts, merges and lands.
     pub(crate) candidate: Option<&'a str>,
+    /// Whether the run reran the release candidate, whose tip it checked, rather than main's.
+    pub(crate) rerun: bool,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -443,8 +445,12 @@ fn held(tip: &str) -> String {
          approved commit of this branch that holds the candidate and the fix alone. A land that \
          conflicts comes back to its executor: merge main then and ask for a fresh approve, and the \
          candidate takes the commit approved before that merge. A fix that merges main before any \
-         approve leaves the candidate nothing to take, and drops it. A fix made outside this \
-         repository answers this red by the task cancelled, saying where. Once every red of the \
+         approve leaves the candidate nothing to take, and drops it. A fix that landed with another \
+         red's task answers this red by the task closed as covered by that landing (`just tasks \
+         done SLUG NOTE --covered-by OTHER`), once that land advances the candidate; closed as \
+         covered by any other landing, its fix is on main and not in the candidate, which is \
+         dropped. A fix made outside this repository answers this red by the task cancelled, \
+         saying where. Once every red of the \
          candidate is answered, its tip is rerun (the next landing starts it, or `just release \
          --rerun`): each step that was red, did not run or whose inputs a fix changed, and the \
          conciliation.\n\n",
@@ -473,7 +479,7 @@ fn closed_by(name: &str, night: &Night<'_>) -> String {
 /// ([`beside`]) and what closes it.
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
-        "The Symphony release run is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
+        "The Symphony release run is red in `{name}` on {on} at {commit} (run {id}, {when}).\n\n\
          Command: `{command}`, in the release run's clean checkout of that commit: {ended}.\n\
          Log: {log}\n\
          {load}\n\n\
@@ -486,6 +492,11 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {closed}\n\n\
          key: {key}\ncheck: {name}",
         held = night.candidate.map(held).unwrap_or_default(),
+        on = if night.rerun {
+            "the release candidate"
+        } else {
+            "main"
+        },
         closed = closed_by(&ran.name, night),
         beside = beside.unwrap_or_default(),
         name = ran.name,
@@ -1090,6 +1101,7 @@ mod tests {
             closes: &|_| true,
             whole: true,
             candidate: None,
+            rerun: false,
         }
     }
 
@@ -1647,6 +1659,10 @@ mod tests {
             "commit the distribution its own sources make (`just client-update`)",
             "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
              approve, and the candidate takes the commit approved before that merge.",
+            "A fix that landed with another red's task answers this red by the task closed as \
+             covered by that landing (`just tasks done SLUG NOTE --covered-by OTHER`), once that \
+             land advances the candidate; closed as covered by any other landing, its fix is on \
+             main and not in the candidate, which is dropped.",
             "A fix made outside this repository answers this red by the task cancelled, saying \
              where.",
             "(the next landing starts it, or `just release --rerun`)",
@@ -1667,6 +1683,26 @@ mod tests {
                  before the approve."
             ),
             "{again}"
+        );
+        assert!(
+            filed.contains("\nThe Symphony release run is red in `verify` on main at cafe01234567"),
+            "the run that first holds it ran main's tip: {filed}"
+        );
+
+        // A rerun of the candidate red again says what it checked: the candidate, not main.
+        let board = Fake::default();
+        let rerun = Night {
+            rerun: true,
+            ..held
+        };
+        report(&board, &rerun, &checks);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        assert!(
+            filed.contains(
+                "\nThe Symphony release run is red in `verify` on the release candidate at \
+                 cafe01234567 (run "
+            ),
+            "{filed}"
         );
 
         // A red run that holds no candidate says none of it.

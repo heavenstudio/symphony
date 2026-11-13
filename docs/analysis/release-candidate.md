@@ -6,8 +6,8 @@ forward, which any candidate needs (A, below), the rename to `just release`
 ([below](#the-names)) and A's held candidate (`crates/symphony/src/release/candidate.rs`,
 [RELEASES](../RELEASES.md#the-release-candidate)). The owner chose A on its card in
 [DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
-corrections wait on the owner approving A again, and the three choices A leaves open are cards of
-their own there.
+corrections follow from A and stand with it, auto-approved on its card at 20:35 the same day, and
+the three choices A leaves open are cards of their own there.
 
 The owner, 2026-11-12, in the order the board records them (the express-path task, filed at 18:05,
 quotes the first; its scope note at 18:08 says the release candidate question came next):

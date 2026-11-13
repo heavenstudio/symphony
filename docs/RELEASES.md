@@ -296,8 +296,9 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
   of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
-  lands by `just land`, as any task. A fix made outside this repository (a consumer's) answers
-  its red by the task cancelled, saying where.
+  lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
+  landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
+  repository (a consumer's) answers its red by the task cancelled, saying where.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
   approve on that task named that is the landed branch's tip or behind it, descends from the
@@ -309,7 +310,11 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   landing counts only once `origin/main`, as this checkout last fetched or pushed it, holds its
   merge: one landed in the main checkout and not pushed (its push failed) waits, said, until its
   retry pushes, and the next count or run reads it. A red's task done (approved) waits for its
-  land; one cancelled with no landing is answered, its fix made outside this repository.
+  land, unless it was closed as covered by another's landing (its thread's last verdict says so):
+  covered by a landing that advanced the candidate, it is answered, that fix holding its own;
+  covered by a red's task whose land has not advanced it yet, it waits for that land; covered by
+  any other landing, its fix is on main and not in the candidate, which is dropped. One cancelled
+  with no landing is answered, its fix made outside this repository.
 - **The rerun.** Once every red is answered, the candidate's tip is rerun: by the `--due` of the
   land that answered the last red, else by the next landing's, the next scheduled run, or `just
   release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the
@@ -324,7 +329,8 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   candidate again.
 - **Its release notes** say, between the checks and the changes, the commit first judged and by
   which run, how many reruns it took, each red's task and how it was answered (the commit it
-  advanced to, or outside this repository), and what was carried green from which run.
+  advanced to, the landing that covered it, or outside this repository), and what was carried green
+  from which run.
 
 ### Its bounds
 
@@ -334,12 +340,19 @@ The candidate is dropped, and a run of main's tip is due at once, whatever the c
 - it was first judged `[releases] candidate_hours` (24) hours ago;
 - a red's task landed with no approved commit that passes the advance, as when its executor merged
   main before any approve;
+- a red's task was closed as covered by a landing that did not advance it, its fix on main and not
+  in the candidate;
 - a release it does not descend from was tagged (one on main passed it), or its tip is not on
   `origin/main`;
 - or `just release --drop`, an orchestrator's act, drops it.
 
-A release of its tip tagged by other means ends it as released. The bounds are read whenever it is
-settled: by each `--due`, at the start of each run, and after each red rerun.
+A release of its tip tagged by other means ends it as released. Each bound is read whenever it is
+settled, by each `--due` and at the start of each run; the reruns bound also after each red rerun.
+
+The run of main's tip a drop makes due follows it once that run reaches its first check, or finds
+that tip released already: one stopped before, as by a fetch that failed, leaves it due, and the next
+landing asks for it again. That run is a run of main's tip as any other: red, it holds its commit
+as a new release candidate.
 
 ### Main while it is open
 
@@ -536,8 +549,9 @@ release candidate first judged at …, 1 carried green)`). Then the release cand
 settled: open, its tip, the commit first judged, by which run and how long ago, its runs and red
 reruns against `candidate_reruns`, when `candidate_hours` drops it, each red with its task, round
 and answer (`open (in_progress)`, `open (landed here, not pushed)`, `answered: its land … advanced
-the candidate to …`), and what its rerun waits for; ended, how and when, and whether the run of
-main's tip its drop made due has started; `none held`, or `off` while a bound is 0. Then it
+the candidate to …`, `answered: its task closed as covered by …`), and what its rerun waits for;
+ended, how and when, its red runs, and whether the run of main's tip its drop made due has reached
+its checks; `none held`, or `off` while a bound is 0. Then it
 prints the cadence, the landings since what it counts from and what the next run waits for, and
 the last refresh, with each line it said and each red step:
 

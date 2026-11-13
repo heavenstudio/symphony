@@ -1343,7 +1343,7 @@ refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
 command closes work in progress but a subtask's `done` and a close as covered by another
-task's landing ([below](#a-task-another-landing-covers)). `landed` takes the statuses this landing
+task's landing ([above](#a-task-another-landing-covers)). `landed` takes the statuses this landing
 closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
@@ -1362,7 +1362,7 @@ posted no card, stays in its own column however its documents stand.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
-task's landing ([below](#a-task-another-landing-covers)).** A session
+task's landing ([above](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
 role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
@@ -1576,8 +1576,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   `--due`, reads the land afterwards and moves the candidate to the newest commit of the
   branch an approve named that holds the candidate and the fix alone. A conflict goes back to
   `@executor` as above, who merges the default branch then and asks for a fresh approve; the
-  candidate keeps the commit approved before that merge. A red fixed outside this repository
-  is answered by its task cancelled, saying where; one done waits for its land.
+  candidate keeps the commit approved before that merge. A red whose fix landed with another
+  red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
+  which answers it once that land advanced the candidate; one covered by any other landing has
+  its fix on main and not in the candidate, which is dropped. A red fixed outside this
+  repository is answered by its task cancelled, saying where; one done otherwise waits for its
+  land.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]

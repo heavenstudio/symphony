@@ -1070,6 +1070,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     // What the run makes of the release candidate, known before the board is told, whose red
     // tasks say the candidate they are fixed on.
     let decided_red = ran.is_ok() && record.result == "red";
+    let mut followed = None;
     let mut next = match held {
         Some(mut held) if rerun => {
             if let Some(tag) = &record.tag {
@@ -1083,13 +1084,26 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             }
             Some(held)
         }
-        earlier if decided_red && options.out_of_cycle.is_none() && !options.refresh => {
-            repo.project.releases.holds_candidates().then(|| {
-                let mut new = candidate::Candidate::of(&record);
-                // The branch the run last set, so the new candidate's move starts from it.
-                new.branch = earlier.and_then(|earlier| earlier.branch);
-                new
-            })
+        earlier
+            if decided_red
+                && options.out_of_cycle.is_none()
+                && !options.refresh
+                && repo.project.releases.holds_candidates() =>
+        {
+            let mut new = candidate::Candidate::of(&record);
+            // The branch the run last set, so the new candidate's move starts from it.
+            new.branch = earlier.and_then(|earlier| earlier.branch);
+            Some(new)
+        }
+        // The run of main's tip a drop made due reached its checks, or found that tip released
+        // already, so the drop is followed; one stopped before them leaves it due, and the next
+        // landing asks for it again.
+        Some(mut ended)
+            if ended.due() && (cadence::attempted(&record) || record.result == "unchanged") =>
+        {
+            ended.followed();
+            followed = Some(ended);
+            None
         }
         _ => None,
     };
@@ -1157,6 +1171,15 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             code = 1;
         }
     }
+    if let Some(ended) = &followed
+        && let Err(problem) = candidate::write(&folder, ended)
+    {
+        let _ = writeln!(
+            err,
+            "symphony release: cannot record the release candidate: {problem}"
+        );
+        code = 1;
+    }
     record::prune(&folder, record::KEPT_RUNS, record::KEPT_LOGS);
     record::release(&folder, &record.id);
     drop(lock);
@@ -1176,8 +1199,8 @@ enum Turn {
 /// What the run of `repo` in `folder` makes of its release candidate, read into `held`: an open
 /// one is settled, within `until`, against the remote's main fetched again ([`settle_held`]), and
 /// then is rerun once every red of it is answered, or else waits, which `--rerun` refuses. A
-/// dropped one whose drop made a run due is followed by this run of main's tip. A record that does
-/// not read stops the run.
+/// dropped one whose drop made a run due is followed by this run of main's tip, once it reaches its
+/// checks ([`candidate::Candidate::followed`]). A record that does not read stops the run.
 fn turn(
     repo: &Repo,
     options: &Options,
@@ -1220,11 +1243,8 @@ fn turn(
              tip"
             .into(),
         )),
-        Some(ended) if ended.due() => {
-            ended.followed();
-            candidate::write(folder, ended).map_err(Stop::Error)?;
-            Ok(Turn::Main)
-        }
+        // A dropped one whose drop made a run of main's tip due stays due until that run reaches
+        // its checks ([`candidate::Candidate::followed`]), so one stopped short is asked for again.
         _ => Ok(Turn::Main),
     }
 }
@@ -1547,6 +1567,7 @@ fn tell(
         closes: &closing,
         whole: !options.refresh,
         candidate: holding,
+        rerun: record.rerun.is_some(),
     };
     let board = crate::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();

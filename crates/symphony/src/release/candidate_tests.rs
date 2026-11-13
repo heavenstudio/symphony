@@ -115,8 +115,8 @@ fn a_record_reads_back_as_written_and_one_that_does_not_read_is_an_error() {
 #[test]
 fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
     let commit = "c".repeat(40);
-    let conciliate = ran("conciliate-star-foundry", 1, Vec::new());
-    let refresh = ran("refresh-star-foundry", 1, Vec::new());
+    let conciliate = ran("conciliate-lamp-shop", 1, Vec::new());
+    let refresh = ran("refresh-lamp-shop", 1, Vec::new());
     let first = run(
         "r1",
         &commit,
@@ -137,7 +137,7 @@ fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
         reds,
         vec![
             ("verify-tests", "verify/tests", None),
-            ("conciliate-star-foundry", "conciliate-star-foundry", None),
+            ("conciliate-lamp-shop", "conciliate-lamp-shop", None),
         ],
         "a release's refresh is no red of the candidate"
     );
@@ -180,7 +180,7 @@ fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
         waiting,
         vec![
             SLUG.to_string(),
-            "conciliate-star-foundry (no task: the board did not file it)".into()
+            "conciliate-lamp-shop (no task: the board did not file it)".into()
         ]
     );
 }
@@ -403,7 +403,8 @@ fn status_and_notes_say_where_it_stands_and_how_it_was_answered() {
         said.contains(": released as release-2026-11-12; first judged"),
         "{said}"
     );
-    assert!(said.ends_with(", 2 rounds\n"), "{said}");
+    // Its two red runs, the green rerun that released it not among them.
+    assert!(said.ends_with(", 2 red runs of it\n"), "{said}");
     candidate.state = State::Dropped;
     candidate.ended = Some(Ended {
         at: NOW,
@@ -435,6 +436,40 @@ fn only_a_verdict_that_approves_is_an_approve() {
         approving(&messages),
         vec!["approve: abc1234 reads well".to_string(), "approve".into()]
     );
+}
+
+#[test]
+fn only_a_threads_last_verdict_closing_it_as_covered_names_the_covering_landing() {
+    let line = symphony_board::covered_line("tests/x", &"c".repeat(40), "otter", "its fix");
+    let thread = |messages: &[(&str, &str)]| -> Vec<serde_json::Value> {
+        (messages.iter())
+            .map(|(kind, text)| serde_json::json!({"kind": kind, "text": text}))
+            .collect()
+    };
+    let covered = Some(Covered {
+        task: "tests/x".into(),
+        commit: "c".repeat(12),
+    });
+    assert_eq!(
+        covering(&thread(&[("verdict", "approve: abc"), ("verdict", &line)])),
+        covered
+    );
+    assert_eq!(
+        covering(&thread(&[("verdict", &line), ("message", "a word after")])),
+        covered,
+        "a message is no verdict"
+    );
+    assert_eq!(
+        covering(&thread(&[("verdict", &line), ("verdict", "approve: def")])),
+        None,
+        "a verdict after the close stands over it"
+    );
+    assert_eq!(covering(&thread(&[("message", &line)])), None);
+    assert_eq!(
+        covering(&thread(&[("verdict", "covered by tests/x")])),
+        None
+    );
+    assert_eq!(covering(&[]), None);
 }
 
 /// A scratch repository on `main`.
@@ -486,12 +521,13 @@ impl Scratch {
     }
 }
 
-/// A board of the test's own: each task's status, the approves on each thread, and the open red
-/// of each key; and what the settle asked.
+/// A board of the test's own: each task's status, the approves on each thread, the landing each
+/// task was closed as covered by, and the open red of each key; and what the settle asked.
 #[derive(Default)]
 struct Fake {
     statuses: Vec<(String, String)>,
     approves: Vec<(String, Vec<String>)>,
+    covered: Vec<(String, Covered)>,
     open: Vec<(String, String)>,
     asked: RefCell<Vec<String>>,
 }
@@ -510,6 +546,13 @@ impl Board for Fake {
             .find(|(known, _)| known == slug)
             .map(|(_, texts)| texts.clone())
             .unwrap_or_default())
+    }
+
+    fn covered(&self, slug: &str) -> Result<Option<Covered>, String> {
+        self.asked.borrow_mut().push(format!("covered {slug}"));
+        Ok((self.covered.iter())
+            .find(|(known, _)| known == slug)
+            .map(|(_, covered)| covered.clone()))
     }
 
     fn open_red(&self, key: &str) -> Result<Option<String>, String> {
@@ -845,6 +888,160 @@ fn a_red_whose_task_is_cancelled_with_no_landing_is_answered_and_one_done_waits_
     assert_eq!(candidate.reds[2].answer, None);
     assert_eq!(candidate.reds[2].seen.as_deref(), Some("review"));
     assert_eq!(candidate.commit, tip, "a fix made elsewhere moves nothing");
+}
+
+/// The task of the red of `verify/lint`, beside [`SLUG`]'s.
+const LINT: &str = "tests/release-red-verify-lint";
+
+/// The candidate a run of `commit` red in both of verify's steps holds, each red on its task.
+fn two_reds_at(commit: &str) -> Candidate {
+    let mut candidate = Candidate::of(&run("r1", commit, vec![verify(false, false)]));
+    candidate.named(&[
+        Held {
+            key: "verify-lint".into(),
+            name: "verify/lint".into(),
+            slug: LINT.into(),
+        },
+        Held {
+            key: "verify-tests".into(),
+            name: "verify/tests".into(),
+            slug: SLUG.into(),
+        },
+    ]);
+    candidate
+}
+
+/// The red of `candidate` on the task `slug`.
+fn red_of<'a>(candidate: &'a Candidate, slug: &str) -> &'a Red {
+    (candidate.reds.iter())
+        .find(|red| red.slug.as_deref() == Some(slug))
+        .unwrap()
+}
+
+#[test]
+fn a_red_closed_as_covered_by_another_reds_land_waits_for_it_and_is_answered_by_its_advance() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let (tip, [_, two], main) = fixing(&scratch);
+    let merge = scratch.land(SLUG);
+    let mut candidate = two_reds_at(&tip);
+    let board = Fake {
+        statuses: vec![(LINT.into(), "done".into())],
+        approves: vec![(SLUG.into(), vec![format!("approve: {two}")])],
+        covered: vec![(
+            LINT.into(),
+            Covered {
+                task: SLUG.into(),
+                commit: merge[..12].into(),
+            },
+        )],
+        ..Fake::default()
+    };
+    // Landed here, not pushed: the covering land has not advanced it, so the covered red waits.
+    let said = settle(
+        &mut candidate,
+        &line(&scratch, &main, Some(&merge)),
+        &board,
+        NOW + 60.0,
+        BOUNDS,
+    );
+    assert!(candidate.open(), "{said:?}");
+    assert_eq!(candidate.commit, tip);
+    let lint = red_of(&candidate, LINT);
+    assert_eq!(lint.answer, None);
+    assert_eq!(
+        lint.seen.as_deref(),
+        Some(
+            format!("closed as covered by {SLUG}, whose land has not advanced the candidate yet")
+                .as_str()
+        )
+    );
+    // Pushed: the land advances it, and its fix answers the covered red too.
+    let said = settle(
+        &mut candidate,
+        &line(&scratch, &merge, Some(&merge)),
+        &board,
+        NOW + 120.0,
+        BOUNDS,
+    );
+    assert_eq!(candidate.commit, two, "{said:?}");
+    assert_eq!(
+        red_of(&candidate, LINT).answer,
+        Some(Answer::Covered {
+            task: SLUG.into(),
+            merge: merge.clone(),
+            commit: two.clone(),
+        })
+    );
+    assert_eq!(
+        said[1],
+        format!(
+            "{LINT} is closed as covered by {SLUG}'s land ({}), which advanced the release \
+             candidate to {}: its red is answered",
+            short(&merge),
+            short(&two)
+        ),
+        "{said:?}"
+    );
+    assert_eq!(candidate.hold(), Some(Hold::Answered { tip: two.clone() }));
+    let status = candidate.status(NOW + 120.0, BOUNDS);
+    assert!(
+        status.contains(&format!(
+            "{LINT} (verify/lint, round 1): answered: its task closed as covered by {SLUG}'s land \
+             {}, which advanced the candidate to {}",
+            short(&merge),
+            short(&two)
+        )),
+        "{status}"
+    );
+    let notes = candidate.notes(&[]).join("\n");
+    assert!(
+        notes.contains(&format!(
+            "- {LINT} (verify/lint): covered by {SLUG}'s land, which advanced it to {}",
+            short(&two)
+        )),
+        "{notes}"
+    );
+}
+
+#[test]
+fn a_red_closed_as_covered_by_a_landing_that_did_not_advance_it_drops_the_candidate() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    // tools/other landed on main after the candidate; the lint red is closed as covered by it.
+    let (tip, _, main) = fixing(&scratch);
+    let mut candidate = two_reds_at(&tip);
+    let board = Fake {
+        statuses: vec![(LINT.into(), "done".into()), (SLUG.into(), "review".into())],
+        covered: vec![(
+            LINT.into(),
+            Covered {
+                task: "tools/other".into(),
+                commit: main[..12].into(),
+            },
+        )],
+        ..Fake::default()
+    };
+    let said = settle(
+        &mut candidate,
+        &line(&scratch, &main, Some(&main)),
+        &board,
+        NOW + 60.0,
+        BOUNDS,
+    );
+    assert_eq!(candidate.state, State::Dropped, "{said:?}");
+    let why = candidate.ended.clone().unwrap().why;
+    assert_eq!(
+        why,
+        format!(
+            "{LINT} was closed as covered by tools/other's land ({}), which did not advance the \
+             candidate: its fix is on main, not in the candidate",
+            &main[..12]
+        )
+    );
+    assert_eq!(said, vec![format!("dropped the release candidate: {why}")]);
+    assert!(candidate.due(), "a drop makes a run of main's tip due");
+    assert_eq!(candidate.commit, tip);
 }
 
 #[test]

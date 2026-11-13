@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use symphony_board::NewSession;
+use symphony_board::{NewSession, NewTask};
 
 use super::{CHECK, Fixture, NOW, git};
 
@@ -413,8 +413,15 @@ fn the_red_reruns_bound_drops_it_and_main_is_run_at_once() {
     assert_eq!(candidate["ended"]["due"], true);
     let filed = &fixture.reds()["tests/release-red-verify-2"].body;
     assert!(
-        !filed.contains("release candidate"),
-        "a red of a dropped candidate is main's: {filed}"
+        filed.starts_with(&format!(
+            "The Symphony release run is red in `verify` on the release candidate at {} (run ",
+            &missed[..12]
+        )),
+        "what it checked: {filed}"
+    );
+    assert!(
+        !filed.contains("this run holds") && !filed.contains("`release-candidate`"),
+        "a red of a dropped candidate is main's, fixed there: {filed}"
     );
 
     // The drop made a run of main's tip due, whatever the count: it runs, and holds main's tip.
@@ -530,7 +537,162 @@ fn a_release_on_main_that_passes_it_drops_it() {
         "main's tip run at once: {out}"
     );
     assert_eq!(record(&fixture)["state"], "dropped");
+    assert_eq!(
+        record(&fixture)["ended"]["due"],
+        false,
+        "main's tip released already: the run its drop made due is followed"
+    );
     assert_eq!(branch(&fixture), None);
+}
+
+#[test]
+fn a_red_closed_as_covered_by_another_reds_land_is_answered_by_it_and_the_rerun_releases() {
+    let fixture = holding("");
+    let outside = fixture.root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let script = STEPS.replace("OUTSIDE", &outside.to_string_lossy());
+    fixture.write("steps.sh", &script);
+    fixture.write("red-lint", "red");
+    fixture.write("red-tests", "red");
+    let red = fixture.commit("two reds");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let verify = "verify=sh steps.sh";
+    fixture.run(NOW, &["--check", verify], 1);
+    assert_eq!(record(&fixture)["commit"], red.as_str());
+    let (lint, tests) = (
+        "tests/release-red-verify-lint",
+        "tests/release-red-verify-tests",
+    );
+
+    // The lint red's fix fixes both; the tests red is closed as covered by its landing.
+    git(
+        &fixture.main,
+        &["checkout", "-q", "-b", lint, "release-candidate"],
+    );
+    for file in ["red-lint", "red-tests"] {
+        fs::remove_file(fixture.main.join(file)).unwrap();
+    }
+    let fixed = fixture.commit("fix both reds");
+    git(&fixture.main, &["checkout", "-q", "main"]);
+    let hands = hands(&fixture);
+    approve(&fixture, &hands, lint, &fixed, true);
+    let merge = land(&fixture, lint, true);
+    let store = fixture.store();
+    let landed = format!("landed {lint} on main at {}", &merge[..12]);
+    (store.landed(lint, &hands.orchestrator, &landed, false, &["done"])).unwrap();
+    (store.take_role(tests, &hands.orchestrator, "orchestrator")).unwrap();
+    let note = "its fix landed with the lint red's";
+    (store.close_covered(tests, &hands.orchestrator, lint, &merge, note)).unwrap();
+
+    let out = due(&fixture, NOW + 300.0, lint, &merge, 0);
+    for said in [
+        format!(
+            "release: {tests} is closed as covered by {lint}'s land ({}), which advanced the \
+             release candidate to {}: its red is answered\n",
+            &merge[..12],
+            &fixed[..12]
+        ),
+        "release: green; tagged release-2026-11-12, pushed to origin\n".into(),
+    ] {
+        assert!(out.contains(&said), "{said}\n\n{out}");
+    }
+    assert_eq!(fixture.tagged("release-2026-11-12"), fixed);
+    assert_eq!(record(&fixture)["state"], "released");
+    let message = fixture.message("release-2026-11-12");
+    assert!(
+        message.contains(&format!(
+            "- {tests} (verify/tests): covered by {lint}'s land, which advanced it to {}\n",
+            &fixed[..12]
+        )),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_red_closed_as_covered_by_a_landing_that_did_not_advance_it_drops_it_and_main_is_run() {
+    let fixture = holding("");
+    let red = held(&fixture);
+    // A task on main, no red's, fixes the red, and the red is closed as covered by its landing.
+    let hands = hands(&fixture);
+    let store = fixture.store();
+    let other = "tools/fixed-on-main";
+    let task = NewTask::new(other, "Fixed on main", &hands.orchestrator);
+    store.create(&task).unwrap();
+    (store.take_role(other, &hands.orchestrator, "orchestrator")).unwrap();
+    store.claim(other, &hands.executor).unwrap();
+    (store.move_to(other, "review", &hands.executor)).unwrap();
+    git(&fixture.main, &["checkout", "-q", "-b", other, "main"]);
+    fs::remove_file(fixture.main.join("red")).unwrap();
+    fixture.commit("fixed on main");
+    let merge = land(&fixture, other, true);
+    let landed = format!("landed {other} on main at {}", &merge[..12]);
+    (store.landed(other, &hands.orchestrator, &landed, false, &["review"])).unwrap();
+    (store.take_role(RED, &hands.orchestrator, "orchestrator")).unwrap();
+    let note = "its fix landed on main";
+    (store.close_covered(RED, &hands.orchestrator, other, &merge, note)).unwrap();
+
+    let out = due(&fixture, NOW + 300.0, other, &merge, 0);
+    for said in [
+        format!(
+            "release: dropped the release candidate: {RED} was closed as covered by {other}'s \
+             land ({}), which did not advance the candidate: its fix is on main, not in the \
+             candidate\n",
+            &merge[..12]
+        ),
+        "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
+            .into(),
+        "release: green; tagged release-2026-11-12, pushed to origin\n".into(),
+    ] {
+        assert!(out.contains(&said), "{said}\n\n{out}");
+    }
+    assert_eq!(fixture.tagged("release-2026-11-12"), merge, "main's tip");
+    let candidate = record(&fixture);
+    assert_eq!(candidate["commit"], red.as_str());
+    assert_eq!(
+        (&candidate["state"], &candidate["ended"]["due"]),
+        (&"dropped".into(), &false.into())
+    );
+}
+
+#[test]
+fn a_drops_run_of_main_stopped_before_its_checks_is_asked_for_again() {
+    let fixture = holding("");
+    held(&fixture);
+    fixture.run(NOW + 60.0, &["--drop"], 0);
+    // The remote cannot be fetched: the run stops before its first check.
+    let origin = fixture.origin.to_string_lossy().into_owned();
+    let nowhere = fixture.root.join("nowhere");
+    fs::create_dir_all(&nowhere).unwrap();
+    let unset = ["remote", "set-url", "origin", nowhere.to_str().unwrap()];
+    git(&fixture.main, &unset);
+    let (code, out, err) = fixture.release_at(NOW + 120.0, &["--check", CHECK, "--due"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(
+        out.contains(
+            "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
+        ),
+        "{out}"
+    );
+    assert!(fixture.reds().contains_key("tests/release-red-run"));
+    assert_eq!(
+        record(&fixture)["ended"]["due"],
+        true,
+        "a run that reached no check does not follow the drop"
+    );
+
+    git(&fixture.main, &["remote", "set-url", "origin", &origin]);
+    let out = fixture.run(NOW + 180.0, &["--check", CHECK, "--due"], 1);
+    assert!(
+        out.contains(
+            "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
+        ),
+        "asked for again: {out}"
+    );
+    let candidate = record(&fixture);
+    assert_eq!(
+        candidate["state"], "open",
+        "main's tip, red, is held anew: {candidate:#}"
+    );
 }
 
 /// A stand-in verify that runs the steps it is named (all of lint, size-check and tests when none

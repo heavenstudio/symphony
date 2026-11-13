@@ -13,8 +13,10 @@
 //! A red is answered by its own task's land, which advances the candidate to the newest commit of
 //! the landed branch an approve on that task named, that descends from the candidate's tip and holds
 //! beyond it nothing main held before the land ([`settle`], [`passes`]), once the remote's main holds
-//! the merge; or by its task cancelled with no landing, its fix made outside this repository (one
-//! done is approved, and waits for its land). Once every
+//! the merge; by its task closed as covered by a landing that advanced the candidate, whose fix
+//! holds it (one covered by any other landing has its fix on main and not in the candidate, which
+//! is dropped); or by its task cancelled with no landing, its fix made outside this repository (one
+//! done otherwise is approved, and waits for its land). Once every
 //! red is answered, its tip is rerun ([`Candidate::plan`]): each check or step that was red or did
 //! not run, each whose inputs changed, and the conciliation. Until the stamps give a step inputs of
 //! its own, a step's inputs are the whole tree, so a step keeps its green only from a commit whose
@@ -109,6 +111,13 @@ pub(crate) struct Red {
 pub(crate) enum Answer {
     /// Its task's land, `merge`, advanced the candidate to `commit`.
     Landed { merge: String, commit: String },
+    /// Its task was closed as covered by the land `merge` of the task `task`, which advanced the
+    /// candidate to `commit`: that fix holds its own.
+    Covered {
+        task: String,
+        merge: String,
+        commit: String,
+    },
     /// Its task was closed, `status`, with no landing: its fix made outside this repository.
     Closed { status: String },
 }
@@ -520,7 +529,7 @@ impl Candidate {
                     ""
                 };
                 format!(
-                    "last release candidate: {}, {} ({}): {}{then}; {first}, {} round{}\n",
+                    "last release candidate: {}, {} ({}): {}{then}; {first}, {} red run{} of it\n",
                     if self.state == State::Released {
                         "released"
                     } else {
@@ -555,6 +564,12 @@ impl Candidate {
                 let how = match &red.answer {
                     Some(Answer::Landed { commit, .. }) => {
                         format!("advanced it to {}", short(commit))
+                    }
+                    Some(Answer::Covered { task, commit, .. }) => {
+                        format!(
+                            "covered by {task}'s land, which advanced it to {}",
+                            short(commit)
+                        )
                     }
                     Some(Answer::Closed { .. }) => "answered outside this repository".into(),
                     None => "green in the rerun".into(),
@@ -605,6 +620,16 @@ impl Red {
                 short(merge),
                 short(commit)
             ),
+            Some(Answer::Covered {
+                task,
+                merge,
+                commit,
+            }) => format!(
+                "answered: its task closed as covered by {task}'s land {}, which advanced the \
+                 candidate to {}",
+                short(merge),
+                short(commit)
+            ),
             Some(Answer::Closed { status }) => format!(
                 "answered: its task {status} with no landing, its fix made outside this repository"
             ),
@@ -628,8 +653,19 @@ pub(crate) trait Board {
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
     /// The texts of the approving verdicts on `slug`'s thread, oldest first.
     fn approves(&self, slug: &str) -> Result<Vec<String>, String>;
+    /// The landing `slug` was closed as covered by, when its thread's last verdict is a covered
+    /// close's line (`just tasks done SLUG NOTE --covered-by OTHER`).
+    fn covered(&self, slug: &str) -> Result<Option<Covered>, String>;
     /// The open red task of the key `key`, when the board has one.
     fn open_red(&self, key: &str) -> Result<Option<String>, String>;
+}
+
+/// The landing a task was closed as covered by: the covering task and the commit its landing
+/// names, shortened as the board's line shortens it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Covered {
+    pub(crate) task: String,
+    pub(crate) commit: String,
 }
 
 impl Board for CliBoard {
@@ -638,17 +674,40 @@ impl Board for CliBoard {
     }
 
     fn approves(&self, slug: &str) -> Result<Vec<String>, String> {
-        let thread = self
-            .call("thread", &json!({"slug": slug}))
-            .map_err(|e| e.0)?;
-        Ok(approving(
-            thread.as_array().map(Vec::as_slice).unwrap_or_default(),
-        ))
+        Ok(approving(&thread(self, slug)?))
+    }
+
+    fn covered(&self, slug: &str) -> Result<Option<Covered>, String> {
+        Ok(covering(&thread(self, slug)?))
     }
 
     fn open_red(&self, key: &str) -> Result<Option<String>, String> {
         board::open(self, key)
     }
+}
+
+/// The messages of `slug`'s thread, as the board shapes them, oldest first.
+fn thread(board: &CliBoard, slug: &str) -> Result<Vec<serde_json::Value>, String> {
+    let thread = board
+        .call("thread", &json!({"slug": slug}))
+        .map_err(|e| e.0)?;
+    Ok(match thread {
+        serde_json::Value::Array(messages) => messages,
+        _ => Vec::new(),
+    })
+}
+
+/// The landing a thread's `messages` say their task was closed as covered by: its last verdict,
+/// when that is a covered close's line ([`symphony_board::covered_by`]).
+fn covering(messages: &[serde_json::Value]) -> Option<Covered> {
+    let last = (messages.iter().rev())
+        .filter(|message| message["kind"] == "verdict")
+        .find_map(|message| message["text"].as_str())?;
+    let line = symphony_board::covered_by(last)?;
+    Some(Covered {
+        task: line.other.to_string(),
+        commit: line.commit.to_string(),
+    })
 }
 
 /// The texts of the approving verdicts among a thread's `messages`, as the board shapes them: a
@@ -680,8 +739,9 @@ pub(crate) struct Line<'a> {
 
 /// Settle the open `candidate` at `now`: each red whose task landed on the remote's main advances
 /// it ([`advance`]), oldest landing first, or drops it when no approved commit passes; a land the
-/// remote's main lacks yet waits for its push; a task cancelled with no landing answers its red;
-/// then its bounds. What it did, each said.
+/// remote's main lacks yet waits for its push; a task closed as covered by another's landing is
+/// read by [`covering_says`]; a task cancelled with no landing answers its red; then its bounds.
+/// What it did, each said.
 pub(crate) fn settle(
     candidate: &mut Candidate,
     line: &Line<'_>,
@@ -768,6 +828,14 @@ pub(crate) fn settle(
             .unwrap_or_default(),
         None => Vec::new(),
     };
+    // What a red closed as covered by another's landing is read against: the landings that
+    // advanced the candidate, and the reds' tasks that may yet.
+    let advances = candidate.advances.clone();
+    let unanswered: Vec<String> = (candidate.reds.iter())
+        .filter(|red| red.answer.is_none())
+        .filter_map(|red| red.slug.clone())
+        .collect();
+    let mut dropped = None;
     for red in candidate.reds.iter_mut().filter(|red| red.answer.is_none()) {
         let Some(slug) = red.slug.clone() else {
             continue;
@@ -796,13 +864,34 @@ pub(crate) fn settle(
                 red.answer = Some(Answer::Closed { status });
                 red.seen = None;
             }
-            Ok(Some(status)) if status == "done" => {
-                red.seen = Some("approved, waiting for its land".into());
-            }
+            // One done is approved and waits for its land, unless it was closed as covered by
+            // another's landing, which answers it, waits or drops the candidate.
+            Ok(Some(status)) if status == "done" => match board.covered(&slug) {
+                Ok(None) => red.seen = Some("approved, waiting for its land".into()),
+                Ok(Some(covered)) => match covering_says(&slug, &covered, &advances, &unanswered) {
+                    Covering::Answered(answer, said) => {
+                        noted.push(said);
+                        red.answer = Some(answer);
+                        red.seen = None;
+                    }
+                    Covering::Waits(seen) => red.seen = Some(seen),
+                    Covering::Drops(why) => {
+                        dropped = Some(why);
+                        break;
+                    }
+                },
+                Err(error) => noted.push(format!("the board: {error}")),
+            },
             Ok(Some(status)) => red.seen = Some(status),
             Ok(None) => red.seen = Some("not on the board".into()),
             Err(error) => noted.push(format!("the board: {error}")),
         }
+    }
+    if let Some(why) = dropped {
+        noted.push(format!("dropped the release candidate: {why}"));
+        candidate.drop(now, why);
+        candidate.settled_at = Some(now);
+        return noted;
     }
     match bound(candidate, line, now, bounds) {
         Some(Bound::Dropped(why)) => {
@@ -820,6 +909,59 @@ pub(crate) fn settle(
     }
     candidate.settled_at = Some(now);
     noted
+}
+
+/// What a red closed as covered by another's landing makes of the candidate.
+enum Covering {
+    /// Answered, said: the covering landing advanced the candidate.
+    Answered(Answer, String),
+    /// Unanswered, seen so: the covering task is a red's whose land has not advanced it yet.
+    Waits(String),
+    /// Dropped, for this reason: its fix landed on main and not in the candidate.
+    Drops(String),
+}
+
+/// What the red task `slug`, closed as `covered`, makes of the candidate: answered when the
+/// covering landing is one of its `advances`, whose fix holds this red's too; waiting while the
+/// covering task is one of the `unanswered` reds' tasks, whose land advances it once pushed; else
+/// dropped, as the fix is on main and not in the candidate, as a red's land with no approved
+/// commit that passes drops it.
+fn covering_says(
+    slug: &str,
+    covered: &Covered,
+    advances: &[Advance],
+    unanswered: &[String],
+) -> Covering {
+    let advanced = advances
+        .iter()
+        .find(|advance| advance.slug == covered.task && advance.merge.starts_with(&covered.commit));
+    if let Some(advance) = advanced {
+        return Covering::Answered(
+            Answer::Covered {
+                task: advance.slug.clone(),
+                merge: advance.merge.clone(),
+                commit: advance.to.clone(),
+            },
+            format!(
+                "{slug} is closed as covered by {}'s land ({}), which advanced the release \
+                 candidate to {}: its red is answered",
+                advance.slug,
+                short(&advance.merge),
+                short(&advance.to)
+            ),
+        );
+    }
+    if unanswered.contains(&covered.task) {
+        return Covering::Waits(format!(
+            "closed as covered by {}, whose land has not advanced the candidate yet",
+            covered.task
+        ));
+    }
+    Covering::Drops(format!(
+        "{slug} was closed as covered by {}'s land ({}), which did not advance the candidate: its \
+         fix is on main, not in the candidate",
+        covered.task, covered.commit
+    ))
 }
 
 /// What a candidate's bounds found.
