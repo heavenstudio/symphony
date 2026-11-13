@@ -420,15 +420,18 @@ so, which the server counts as its clock says them.
 **Agents at work per hour**, beside the tasks done and in progress (the owner, 2026-11-12: "Agents
 per hour is absolutely something we need. [...] adding to that number of agents, orchestrators,
 reviewers (possibly two charts?) so that it becomes easier to understand how healthy a pipeline
-is"). An hour holds the sessions running in it by role (executor, reviewer, orchestrator) and model,
-the most at once and the mean; a session runs while it is live and holds that role on a task in
-progress or in review. Beside them is the machine's load average over 1 and 15 minutes, read at
-each snapshot, so delivery speed reads against the agents at work and the machine's load.
+is"). An hour holds, by role (executor, reviewer, orchestrator) and model, the most at once and the
+mean of the sessions **running**, live and holding that role on a task in progress or in review,
+and of those **holding** it, live, stale or unknown: an agent waiting on a long build reads stale
+and leaves running, but still holds its work. Beside them are the **live** sessions by kind, which
+counts an orchestrator whose tasks are all ready or blocked, and the machine's load average over 1
+and 15 minutes, read at each snapshot, so delivery speed reads against the agents at work and the
+machine's load.
 
 The shared server records all of this but the tokens and the working time from the board snapshot
 its tick already makes, with no board read or write of its own: a line for each change in a
 session's health, and an hour's line with the sessions started, gone stale and gone lost, their
-time stale and lost, the running counts and the load, in day files kept 90 days
+time stale and lost, the running, holding and live counts and the load, in day files kept 90 days
 ([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)).
 
 **Money, estimated at API prices** (the owner, 2026-11-11: "tokens are hard to measure, since
@@ -591,7 +594,7 @@ No report writes to the board. The only board load is one read per project an ho
 | pass rates, durations, slowest suites, flakiest tests, machine minutes | hourly, from the run files |
 | flow, lead time, task-hours, bounces, defects, escape rate | hourly, one read of the window |
 | board health per hour | appended hourly from memory |
-| agents per hour: started, stale and lost, running by role and model, the load | appended from the server's per-tick snapshot: a change line as it happens, an hour line hourly |
+| agents per hour: started, stale and lost, running and holding by role and model, live by kind, the load | appended from the server's per-tick snapshot: a change line as it happens, an hour line hourly |
 | tokens | hourly, from token rows |
 
 ## The phone

@@ -193,6 +193,7 @@ fn the_first_snapshot_says_a_start_and_each_session_not_left_as_seen_and_no_chan
             schema: SCHEMA,
             at: H + 5.0,
             pid: std::process::id(),
+            generation: H + 5.0,
             sessions: 4,
             left: 1,
         })
@@ -465,6 +466,14 @@ fn role(role: &str, peak: u64, mean: f64) -> RoleLevel {
     }
 }
 
+fn kind(kind: &str, peak: u64, mean: f64) -> KindLevel {
+    KindLevel {
+        kind: kind.into(),
+        peak,
+        mean,
+    }
+}
+
 #[test]
 fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran_beside_the_load() {
     let mut recorder = Recorder::new(PathBuf::from("/nowhere"));
@@ -492,6 +501,8 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
         Hour {
             schema: SCHEMA,
             at: H + 3600.0,
+            pid: std::process::id(),
+            generation: H + 60.0,
             hour: H,
             from: H + 60.0,
             to: H + 3600.0,
@@ -541,6 +552,27 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
                 peak: 3,
                 mean: 2.661
             },
+            // amber-heron held its work while live or stale, all but its 600 s lost: 2940 s of 3540 s.
+            holding: vec![
+                row("executor", "opus", 1, 0.831),
+                row("orchestrator", "opus", 1, 1.0),
+                row("reviewer", "sonnet", 1, 1.0),
+            ],
+            holding_roles: vec![
+                role("executor", 1, 0.831),
+                role("orchestrator", 1, 1.0),
+                role("reviewer", 1, 1.0),
+            ],
+            holding_agents: Level {
+                peak: 3,
+                mean: 2.831
+            },
+            // Live workers: amber-heron for 2340 s, dune-fox from `H + 2040`, 1560 s: 3900 / 3540.
+            live: vec![
+                kind("orchestrator", 1, 1.0),
+                kind("reviewer", 1, 1.0),
+                kind("worker", 2, 1.102),
+            ],
             // 29 minutes at 2 and 30 at 4: (29 × 2 + 30 × 4) × 60 / 3540.
             load_1m: Some(Gauge {
                 peak: 4.0,
@@ -558,6 +590,8 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
         Hour {
             schema: SCHEMA,
             at: H + 3690.0,
+            pid: std::process::id(),
+            generation: H + 60.0,
             hour: H + 3600.0,
             from: H + 3600.0,
             to: H + 3690.0,
@@ -575,6 +609,22 @@ fn the_hourly_line_counts_by_kind_and_model_the_time_stale_and_lost_and_what_ran
                 role("reviewer", 1, 1.0),
             ],
             running_agents: Level { peak: 3, mean: 3.0 },
+            holding: vec![
+                row("executor", "opus", 1, 1.0),
+                row("orchestrator", "opus", 1, 1.0),
+                row("reviewer", "sonnet", 1, 1.0),
+            ],
+            holding_roles: vec![
+                role("executor", 1, 1.0),
+                role("orchestrator", 1, 1.0),
+                role("reviewer", 1, 1.0),
+            ],
+            holding_agents: Level { peak: 3, mean: 3.0 },
+            live: vec![
+                kind("orchestrator", 1, 1.0),
+                kind("reviewer", 1, 1.0),
+                kind("worker", 2, 2.0),
+            ],
             load_1m: Some(Gauge {
                 peak: 4.0,
                 mean: 4.0
@@ -697,7 +747,7 @@ fn running_counts_live_holders_on_work_in_progress_or_review_once_for_each_role(
         .into_iter()
         .map(|(handle, model)| session(handle, "worker", model, H, Health::Live))
         .collect();
-    let counted = running(&board(
+    let running = counted(&board(
         vec![
             task(
                 "t/1",
@@ -723,14 +773,14 @@ fn running_counts_live_holders_on_work_in_progress_or_review_once_for_each_role(
         sessions,
     ));
     assert_eq!(
-        counted.by_model.into_iter().collect::<Vec<_>>(),
+        running.running.by_model.into_iter().collect::<Vec<_>>(),
         [
             (("executor".to_string(), "opus".to_string()), 1),
             (("orchestrator".to_string(), "sonnet".to_string()), 1),
             (("reviewer".to_string(), "opus".to_string()), 1),
         ]
     );
-    assert_eq!(counted.agents, 2, "a and c, each once");
+    assert_eq!(running.running.agents, 2, "a and c, each once");
 }
 
 #[test]
@@ -999,11 +1049,12 @@ impl Clock {
     }
 }
 
-/// A hub on a scratch repository recording to `folder`, its clock moved by the test with the
-/// fixture's.
-fn recording_hub(root: &Path, folder: &Path, clock: &Clock) -> Hub {
+/// A hub on a scratch repository recording to `folder` as `gate` lets it, its clock moved by the
+/// test with the fixture's.
+fn recording_hub(root: &Path, folder: &Path, clock: &Clock, gate: Arc<Gate>) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     *hub.agent_activity.get_mut().unwrap() = Some(Recorder::new(folder.to_path_buf()));
+    hub.gate_agents(gate);
     let clock = clock.clone();
     hub.clock = Box::new(move || clock.now());
     hub
@@ -1034,7 +1085,7 @@ fn on_a_scratch_board_the_hub_says_stale_lost_and_back_at_its_own_time_then_a_cl
     let folder = tree.path("agents");
     let fixture = executor_on_a_scratch_board();
     let clock = Clock(Arc::new(Mutex::new(NOW)));
-    let hub = recording_hub(&root, &folder, &clock);
+    let hub = recording_hub(&root, &folder, &clock, Arc::default());
 
     hub.board_read(&fixture.store).unwrap();
     pass(&fixture, &clock, 91.0);
@@ -1103,6 +1154,7 @@ fn recording_makes_no_board_write_though_the_board_counts_writes() {
     );
 
     *hub.agent_activity.lock().unwrap() = Some(Recorder::new(folder.clone()));
+    hub.gate_agents(Arc::default());
     for _ in 0..3 {
         hub.board_read(&fixture.store).unwrap();
         pass(&fixture, &clock, 91.0);
@@ -1134,6 +1186,7 @@ fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
         move |_| store.take().ok_or_else(|| "one store in this test".into()),
     )
     .unwrap();
+    hub.gate_agents(Arc::default());
     hub.start_initial_board();
     let deadline = Instant::now() + Duration::from_secs(60);
     while hub.task_snapshot().is_err() {
@@ -1241,6 +1294,8 @@ fn cost() {
     let line = [Line::Change(Change {
         schema: SCHEMA,
         at: H,
+        pid: 4242,
+        generation: H,
         handle: "amber-heron".into(),
         kind: "worker".into(),
         model: "claude-opus-5-5".into(),
@@ -1259,5 +1314,427 @@ fn cost() {
         "append of one change line: {:.1} µs CPU, {:.1} µs wall",
         (crate::live::cpu_millis().unwrap() - cpu) * 1e3 / f64::from(rounds),
         wall.elapsed().as_secs_f64() * 1e6 / f64::from(rounds)
+    );
+}
+
+#[test]
+fn holding_keeps_the_quiet_holders_running_leaves_out_and_live_counts_every_live_session_by_kind() {
+    let board = board(
+        vec![
+            task(
+                "t/build",
+                "in_progress",
+                &[
+                    // Waiting on a long build: no tool call, so stale, but still at work.
+                    ("amber-heron", "executor", H, Health::Stale),
+                    ("cedar-owl", "orchestrator", H, Health::Live),
+                ],
+            ),
+            task(
+                "t/review",
+                "review",
+                &[
+                    ("birch-wren", "reviewer", H, Health::Unknown),
+                    ("dune-fox", "executor", H, Health::Lost),
+                ],
+            ),
+            // An orchestrator whose task is only ready holds nothing running or held.
+            task(
+                "t/ready",
+                "ready",
+                &[("elm-jay", "orchestrator", H, Health::Live)],
+            ),
+        ],
+        vec![
+            session("amber-heron", "worker", "opus", H, Health::Stale),
+            session("birch-wren", "reviewer", "sonnet", H, Health::Unknown),
+            session("cedar-owl", "orchestrator", "opus", H, Health::Live),
+            session("dune-fox", "worker", "opus", H, Health::Lost),
+            session("elm-jay", "orchestrator", "opus", H, Health::Live),
+            session("fir-kite", "worker", "opus", H, Health::Left),
+        ],
+    );
+    let counted = counted(&board);
+    let by_model = |holders: &Holders| holders.by_model.clone().into_iter().collect::<Vec<_>>();
+    let key = |role: &str, model: &str| (role.to_string(), model.to_string());
+    assert_eq!(
+        by_model(&counted.running),
+        [(key("orchestrator", "opus"), 1)]
+    );
+    assert_eq!(counted.running.agents, 1);
+    assert_eq!(
+        by_model(&counted.holding),
+        [
+            (key("executor", "opus"), 1),
+            (key("orchestrator", "opus"), 1),
+            (key("reviewer", "sonnet"), 1),
+        ],
+        "stale and unknown holders hold their work; the lost one does not"
+    );
+    assert_eq!(counted.holding.agents, 3);
+    assert_eq!(
+        counted.live.into_iter().collect::<Vec<_>>(),
+        [("orchestrator".to_string(), 2)],
+        "both live orchestrators, the one holding only a ready task too; no other session is live"
+    );
+}
+
+/// The writer a line names: its pid and generation.
+fn writer(line: &Line) -> (u32, f64) {
+    match line {
+        Line::Start(l) => (l.pid, l.generation),
+        Line::Seen(l) => (l.pid, l.generation),
+        Line::Change(l) => (l.pid, l.generation),
+        Line::Hour(l) => (l.pid, l.generation),
+    }
+}
+
+/// What a reader makes of `hour`'s lines, from one writer or several, as docs/AGENT_ACTIVITY.md
+/// says: seconds, samples and changes added, peaks the largest, means weighted by `observed_s`,
+/// `started` from the line with the latest `to`; and each line's span and writer.
+#[derive(Debug, PartialEq)]
+struct Summed {
+    spans: Vec<(f64, f64, f64)>,
+    observed_s: f64,
+    samples: u64,
+    went_stale: u64,
+    stale_s: f64,
+    started: u64,
+    running_peak: u64,
+    /// The running and the holding agents' means.
+    means: Means,
+}
+
+/// Two means, alike to within the thousandth each line keeps of its own.
+#[derive(Debug)]
+struct Means(f64, f64);
+
+impl PartialEq for Means {
+    fn eq(&self, other: &Means) -> bool {
+        (self.0 - other.0).abs() <= 0.001 && (self.1 - other.1).abs() <= 0.001
+    }
+}
+
+fn summed(lines: &[Line], hour: f64) -> Summed {
+    let lines: Vec<&Hour> = hours(lines)
+        .into_iter()
+        .filter(|line| line.hour == hour)
+        .collect();
+    let observed_s: f64 = lines.iter().map(|line| line.observed_s).sum();
+    let mean = |level: fn(&Hour) -> f64| {
+        lines
+            .iter()
+            .map(|line| level(line) * line.observed_s)
+            .sum::<f64>()
+            / observed_s
+    };
+    let sessions = |count: fn(&SessionHour) -> f64| {
+        lines
+            .iter()
+            .flat_map(|line| &line.sessions)
+            .map(count)
+            .sum::<f64>()
+    };
+    let latest = lines
+        .iter()
+        .max_by(|a, b| a.to.total_cmp(&b.to))
+        .expect("a line of the hour");
+    Summed {
+        spans: lines
+            .iter()
+            .map(|line| (line.from, line.to, line.generation))
+            .collect(),
+        observed_s,
+        samples: lines.iter().map(|line| line.samples).sum(),
+        went_stale: sessions(|row| row.went_stale as f64) as u64,
+        stale_s: sessions(|row| row.stale_s),
+        started: latest.sessions.iter().map(|row| row.started).sum(),
+        running_peak: lines
+            .iter()
+            .map(|line| line.running_agents.peak)
+            .max()
+            .unwrap_or(0),
+        means: Means(
+            mean(|line| line.running_agents.mean),
+            mean(|line| line.holding_agents.mean),
+        ),
+    }
+}
+
+/// How a reload's hand-off at `H + 1830` ends.
+#[derive(Clone, Copy)]
+enum HandOff {
+    Committed,
+    /// The replacement never became ready, and is killed.
+    FailedBeforeTheClose,
+    /// Its commit failed after the old server closed its gate, which opens again at `H + 1890`.
+    FailedAfterTheClose,
+}
+
+/// An hour of amber-heron executing, live and then stale from `H + 600`, every minute from `H + 60`
+/// a tick of the serving server and, from `H + 1260`, of its replacement too, both recording to one
+/// folder through their gates; the hand-off at `H + 1830` ends as `outcome` says, and a server
+/// replaced stops at `H + 1925`. The day's lines.
+fn hand_off(outcome: HandOff) -> Vec<Line> {
+    let folder = Scratch::new("hand-off");
+    let at = |t: f64| {
+        executing(if t < H + 600.0 {
+            Health::Live
+        } else {
+            Health::Stale
+        })
+    };
+    let (old_gate, new_gate) = (Gate::default(), Gate::default());
+    new_gate.hold();
+    let mut old = Some(Recorder::new(folder.path().to_path_buf()));
+    let mut new = Recorder::new(folder.path().to_path_buf());
+    let mut replacement = false;
+    for minute in 1..=60 {
+        let t = H + 60.0 * f64::from(minute);
+        match (outcome, minute) {
+            (_, 21) => replacement = true,
+            (HandOff::Committed, 31) => {
+                old_gate.close(H + 1830.0);
+                new_gate.open();
+            }
+            (HandOff::Committed, 33) => {
+                old_gate.stop(old.as_mut().unwrap(), || H + 1925.0);
+                old = None;
+            }
+            (HandOff::FailedBeforeTheClose, 31) => replacement = false,
+            (HandOff::FailedAfterTheClose, 31) => old_gate.close(H + 1830.0),
+            (HandOff::FailedAfterTheClose, 32) => {
+                old_gate.open();
+                replacement = false;
+            }
+            _ => {}
+        }
+        if let Some(old) = old.as_mut() {
+            old_gate.record(old, &at(t), || t);
+        }
+        if replacement {
+            new_gate.record(&mut new, &at(t), || t);
+        }
+    }
+    read_day(folder.path(), &day(H))
+}
+
+#[test]
+fn a_reloads_two_servers_never_record_the_same_moment_so_a_reader_sums_their_hour_as_any_other() {
+    let starts = |lines: &[Line]| -> Vec<f64> {
+        lines
+            .iter()
+            .filter(|line| matches!(line, Line::Start(_)))
+            .map(|line| writer(line).1)
+            .collect()
+    };
+    let stale = [(H + 600.0, "amber-heron", Some("live"), Some("stale"))];
+
+    // Committed: the old server's hour ends at the commit, the replacement's begins at its first
+    // snapshot after it; what the replacement's ticks saw before it is not recorded.
+    let lines = hand_off(HandOff::Committed);
+    assert_eq!(starts(&lines), [H + 60.0, H + 1860.0]);
+    assert_eq!(changes(&lines), stale, "the change is said once");
+    for line in &lines {
+        let (pid, generation) = writer(line);
+        assert_eq!(pid, std::process::id());
+        let at = match line {
+            Line::Hour(hour) => hour.to,
+            Line::Start(l) => l.at,
+            Line::Seen(l) => l.at,
+            Line::Change(l) => l.at,
+        };
+        assert!(
+            (generation == H + 60.0 && at <= H + 1830.0)
+                || (generation == H + 1860.0 && at >= H + 1860.0),
+            "{line:?}"
+        );
+    }
+    assert_eq!(
+        summed(&lines, H),
+        Summed {
+            spans: vec![
+                (H + 60.0, H + 1830.0, H + 60.0),
+                (H + 1860.0, H + 3600.0, H + 1860.0)
+            ],
+            // 1770 s watched by the old server and 1740 s by the replacement; the 30 s between
+            // the commit and the replacement's first snapshot by neither.
+            observed_s: 3510.0,
+            samples: 59,
+            went_stale: 1,
+            // Stale from `H + 600` to the commit, and from the replacement's first snapshot.
+            stale_s: 1230.0 + 1740.0,
+            started: 1,
+            running_peak: 1,
+            means: Means(540.0 / 3510.0, 1.0),
+        }
+    );
+
+    // The replacement never became ready: it recorded nothing, and the old server watched it all.
+    let lines = hand_off(HandOff::FailedBeforeTheClose);
+    assert_eq!(starts(&lines), [H + 60.0]);
+    assert!(lines.iter().all(|line| writer(line).1 == H + 60.0));
+    assert_eq!(changes(&lines), stale);
+    assert_eq!(
+        summed(&lines, H),
+        Summed {
+            spans: vec![(H + 60.0, H + 3600.0, H + 60.0)],
+            observed_s: 3540.0,
+            samples: 59,
+            went_stale: 1,
+            stale_s: 3000.0,
+            started: 1,
+            running_peak: 1,
+            means: Means(540.0 / 3540.0, 1.0),
+        }
+    );
+
+    // The commit failed after the close: the old server's hour ends at the close and goes on from
+    // its first snapshot after the gate opened again, the time between watched by no one.
+    let lines = hand_off(HandOff::FailedAfterTheClose);
+    assert_eq!(starts(&lines), [H + 60.0]);
+    assert_eq!(changes(&lines), stale);
+    assert_eq!(
+        summed(&lines, H),
+        Summed {
+            spans: vec![
+                (H + 60.0, H + 1830.0, H + 60.0),
+                (H + 1920.0, H + 3600.0, H + 60.0)
+            ],
+            observed_s: 1770.0 + 1680.0,
+            samples: 30 + 28,
+            went_stale: 1,
+            stale_s: 1230.0 + 1680.0,
+            started: 1,
+            running_peak: 1,
+            means: Means(540.0 / 3450.0, 1.0),
+        }
+    );
+}
+
+#[test]
+fn an_hour_across_a_stop_and_a_start_has_two_lines_a_reader_adds_taking_started_from_the_later() {
+    let folder = Scratch::new("restart-hour");
+    // birch-wren connects at `H + 1300`, while no server runs.
+    let at = |t: f64| {
+        let mut board = executing(Health::Live);
+        if t >= H + 1300.0 {
+            board.sessions.push(session(
+                "birch-wren",
+                "reviewer",
+                "sonnet",
+                H + 1300.0,
+                Health::Live,
+            ));
+        }
+        board
+    };
+    let gate = Gate::default();
+    let mut before = Recorder::new(folder.path().to_path_buf());
+    for minute in 1..=20 {
+        let t = H + 60.0 * f64::from(minute);
+        gate.record(&mut before, &at(t), || t);
+    }
+    gate.stop(&mut before, || H + 1230.0);
+    let mut after = Recorder::new(folder.path().to_path_buf());
+    for minute in 25..=60 {
+        let t = H + 60.0 * f64::from(minute);
+        gate.record(&mut after, &at(t), || t);
+    }
+    let lines = read_day(folder.path(), &day(H));
+    let started: Vec<u64> = hours(&lines)
+        .iter()
+        .map(|hour| hour.sessions.iter().map(|row| row.started).sum())
+        .collect();
+    assert_eq!(
+        started,
+        [1, 2],
+        "each line counts the hour's sessions from its start"
+    );
+    assert_eq!(
+        summed(&lines, H),
+        Summed {
+            spans: vec![
+                (H + 60.0, H + 1230.0, H + 60.0),
+                (H + 1500.0, H + 3600.0, H + 1500.0)
+            ],
+            observed_s: 1170.0 + 2100.0,
+            samples: 20 + 35,
+            went_stale: 0,
+            stale_s: 0.0,
+            started: 2,
+            running_peak: 1,
+            means: Means(1.0, 1.0),
+        }
+    );
+}
+
+#[test]
+fn an_hour_in_which_every_board_read_failed_has_no_line() {
+    let mut recorder = Recorder::new(PathBuf::from("/nowhere"));
+    let mut lines = recorder.observe(&executing(Health::Live), H + 60.0, None);
+    // The server runs on, but its next snapshot is two hours later.
+    lines.extend(recorder.observe(&executing(Health::Live), H + 7260.0, None));
+    lines.extend(recorder.flush(H + 7300.0));
+    let summed: Vec<(f64, f64, f64)> = hours(&lines)
+        .iter()
+        .map(|hour| (hour.hour, hour.from, hour.to))
+        .collect();
+    assert_eq!(
+        summed,
+        [
+            (H, H + 60.0, H + 3600.0),
+            (H + 7200.0, H + 7260.0, H + 7300.0)
+        ],
+        "no line for the hour from `H + 3600`"
+    );
+}
+
+#[test]
+fn a_hub_records_only_as_its_generations_gate_lets_it_and_none_without_one() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("agents");
+    let fixture = executor_on_a_scratch_board();
+    let kinds = || -> Vec<String> {
+        read_day(&folder, &day(NOW))
+            .iter()
+            .map(|line| serde_json::to_value(line).unwrap()["type"].to_string())
+            .collect()
+    };
+
+    let mut ungated = Hub::new(&root, &root.join("build/client"));
+    *ungated.agent_activity.get_mut().unwrap() = Some(Recorder::new(folder.clone()));
+    ungated.board_read(&fixture.store).unwrap();
+    ungated.stop_agents();
+    assert!(kinds().is_empty(), "a hub given no gate records nothing");
+
+    let clock = Clock(Arc::new(Mutex::new(NOW)));
+    let gate = Arc::new(Gate::default());
+    gate.hold();
+    let hub = recording_hub(&root, &folder, &clock, gate.clone());
+    hub.board_read(&fixture.store).unwrap();
+    assert!(
+        kinds().is_empty(),
+        "a replacement records nothing before its commit"
+    );
+    gate.open();
+    pass(&fixture, &clock, 30.0);
+    hub.board_read(&fixture.store).unwrap();
+    pass(&fixture, &clock, 30.0);
+    hub.board_read(&fixture.store).unwrap();
+    gate.close(NOW + 75.0);
+    pass(&fixture, &clock, 30.0);
+    hub.board_read(&fixture.store).unwrap();
+    pass(&fixture, &clock, 30.0);
+    hub.board_read(&fixture.store).unwrap();
+    hub.stop_agents();
+    assert_eq!(kinds(), ["\"start\"", "\"seen\"", "\"hour\""]);
+    let lines = read_day(&folder, &day(NOW));
+    let hour = hours(&lines)[0];
+    assert_eq!(
+        (hour.from, hour.to, hour.observed_s, hour.samples),
+        (NOW + 30.0, NOW + 75.0, 45.0, 2),
+        "the hour ends at the close, written once"
     );
 }

@@ -15,6 +15,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use symphony_board::{Board, Health, Session};
 
 /// The day files' folder in the git common dir, in the one folder of Symphony's there, as the runs'
@@ -101,13 +102,15 @@ impl Line {
     }
 }
 
+/// Every line names its writer: `pid`, the server's process, and `generation`, when it began
+/// recording (its start line's `at`), so two servers of one hand-off are told apart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Start {
     pub schema: u32,
     /// When, by the server's clock, in seconds since the epoch.
     pub at: f64,
-    /// The server's process.
     pub pid: u32,
+    pub generation: f64,
     /// The sessions on the board.
     pub sessions: usize,
     /// Of them, those that had left: no line says them.
@@ -118,6 +121,8 @@ pub(crate) struct Start {
 pub(crate) struct Seen {
     pub schema: u32,
     pub at: f64,
+    pub pid: u32,
+    pub generation: f64,
     pub handle: String,
     pub kind: String,
     pub model: String,
@@ -132,6 +137,8 @@ pub(crate) struct Seen {
 pub(crate) struct Change {
     pub schema: u32,
     pub at: f64,
+    pub pid: u32,
+    pub generation: f64,
     pub handle: String,
     pub kind: String,
     pub model: String,
@@ -148,6 +155,8 @@ pub(crate) struct Hour {
     pub schema: u32,
     /// When it was written.
     pub at: f64,
+    pub pid: u32,
+    pub generation: f64,
     /// The hour's start, a whole hour in seconds since the epoch.
     pub hour: f64,
     /// Where what it watched begins: the hour's start, or the first snapshot in it after a start.
@@ -167,6 +176,13 @@ pub(crate) struct Hour {
     pub running_roles: Vec<RoleLevel>,
     /// The same sessions, each once.
     pub running_agents: Level,
+    /// Sessions holding such a role whose health is live, stale or unknown, not lost or left: an
+    /// agent waiting on a long build makes no tool call and reads stale, but still holds its work.
+    pub holding: Vec<RoleModel>,
+    pub holding_roles: Vec<RoleLevel>,
+    pub holding_agents: Level,
+    /// Live sessions by their kind, whatever they hold.
+    pub live: Vec<KindLevel>,
     /// The machine's load average over 1 and over 15 minutes, read at each snapshot; none when it
     /// could not be read.
     pub load_1m: Option<Gauge>,
@@ -198,6 +214,13 @@ pub(crate) struct RoleModel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RoleLevel {
     pub role: String,
+    pub peak: u64,
+    pub mean: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct KindLevel {
+    pub kind: String,
     pub peak: u64,
     pub mean: f64,
 }
@@ -239,6 +262,13 @@ pub(crate) fn load_average() -> Option<[f64; 2]> {
     // call.
     let read = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
     (read == 3).then_some([loads[0], loads[2]])
+}
+
+/// Who writes a line ([`Start`]).
+#[derive(Debug, Clone, Copy)]
+struct Writer {
+    pid: u32,
+    generation: f64,
 }
 
 /// A session as the last snapshot showed it.
@@ -290,59 +320,34 @@ fn update<K: Ord + Clone, V: Default>(
     }
 }
 
-/// What one snapshot counted running.
+/// What one snapshot counted of the sessions holding an executor, reviewer or orchestrator role on
+/// a task in progress or in review: by role and model, by role (each once for each such role it
+/// holds), and the sessions each once.
 #[derive(Debug, Clone, Default)]
-struct Running {
+struct Holders {
     by_model: BTreeMap<(String, String), u64>,
     by_role: BTreeMap<String, u64>,
     agents: u64,
 }
 
-/// A count summed over the hour: its peak, the count times the seconds it held, and the sum of
+/// What one snapshot counted: the sessions running and holding work, the live sessions by kind.
+#[derive(Debug, Clone, Default)]
+struct Counted {
+    running: Holders,
+    holding: Holders,
+    live: BTreeMap<String, u64>,
+}
+
+/// A value summed over the hour: its peak, the value times the seconds it held, and the sum of
 /// the samples (the mean of an hour with no time watched).
 #[derive(Debug, Clone, Copy, Default)]
-struct CountSum {
-    peak: u64,
-    timed: f64,
-    sampled: u64,
-}
-
-impl CountSum {
-    fn held(&mut self, count: u64, seconds: f64) {
-        self.peak = self.peak.max(count);
-        let count = count as f64;
-        self.timed += count * seconds;
-    }
-
-    fn sampled(&mut self, count: u64) {
-        self.peak = self.peak.max(count);
-        self.sampled += count;
-    }
-
-    fn level(&self, observed: f64, samples: u64) -> Level {
-        let mean = if observed > 0.0 {
-            self.timed / observed
-        } else if samples > 0 {
-            self.sampled as f64 / samples as f64
-        } else {
-            0.0
-        };
-        Level {
-            peak: self.peak,
-            mean: rounded(mean),
-        }
-    }
-}
-
-/// A reading summed over the hour, as [`CountSum`].
-#[derive(Debug, Clone, Copy, Default)]
-struct GaugeSum {
+struct Sum {
     peak: f64,
     timed: f64,
     sampled: f64,
 }
 
-impl GaugeSum {
+impl Sum {
     fn held(&mut self, value: f64, seconds: f64) {
         self.peak = self.peak.max(value);
         self.timed += value * seconds;
@@ -366,6 +371,64 @@ impl GaugeSum {
             mean: rounded(mean),
         }
     }
+
+    fn level(&self, observed: f64, samples: u64) -> Level {
+        let gauge = self.gauge(observed, samples);
+        Level {
+            peak: gauge.peak as u64,
+            mean: gauge.mean,
+        }
+    }
+}
+
+/// [`Holders`] summed over the hour.
+#[derive(Debug, Clone, Default)]
+struct HoldersSum {
+    by_model: BTreeMap<(String, String), Sum>,
+    by_role: BTreeMap<String, Sum>,
+    agents: Sum,
+}
+
+impl HoldersSum {
+    /// `holders` added to each sum by `add`, a count at a time.
+    fn add(&mut self, holders: &Holders, add: impl Fn(&mut Sum, f64)) {
+        for (key, count) in &holders.by_model {
+            update(&mut self.by_model, key, |sum| add(sum, *count as f64));
+        }
+        for (role, count) in &holders.by_role {
+            update(&mut self.by_role, role, |sum| add(sum, *count as f64));
+        }
+        add(&mut self.agents, holders.agents as f64);
+    }
+
+    fn levels(&self, observed: f64, samples: u64) -> (Vec<RoleModel>, Vec<RoleLevel>, Level) {
+        let by_model = self
+            .by_model
+            .iter()
+            .map(|((role, model), sum)| {
+                let level = sum.level(observed, samples);
+                RoleModel {
+                    role: role.clone(),
+                    model: model.clone(),
+                    peak: level.peak,
+                    mean: level.mean,
+                }
+            })
+            .collect();
+        let by_role = self
+            .by_role
+            .iter()
+            .map(|(role, sum)| {
+                let level = sum.level(observed, samples);
+                RoleLevel {
+                    role: role.clone(),
+                    peak: level.peak,
+                    mean: level.mean,
+                }
+            })
+            .collect();
+        (by_model, by_role, self.agents.level(observed, samples))
+    }
 }
 
 /// A kind and model's health over the hour.
@@ -385,11 +448,11 @@ struct Summing {
     observed: f64,
     samples: u64,
     quiet: BTreeMap<(String, String), Quiet>,
-    by_model: BTreeMap<(String, String), CountSum>,
-    by_role: BTreeMap<String, CountSum>,
-    agents: CountSum,
+    running: HoldersSum,
+    holding: HoldersSum,
+    live: BTreeMap<String, Sum>,
     /// The load over 1 and over 15 minutes, once one was read.
-    load: Option<[GaugeSum; 2]>,
+    load: Option<[Sum; 2]>,
 }
 
 impl Summing {
@@ -400,9 +463,9 @@ impl Summing {
             observed: 0.0,
             samples: 0,
             quiet: BTreeMap::new(),
-            by_model: BTreeMap::new(),
-            by_role: BTreeMap::new(),
-            agents: CountSum::default(),
+            running: HoldersSum::default(),
+            holding: HoldersSum::default(),
+            live: BTreeMap::new(),
             load: None,
         }
     }
@@ -424,13 +487,28 @@ impl Summing {
         }
     }
 
-    /// `seconds` of the hour, during which the sessions, the running counts and the load were as
-    /// the last snapshot left them.
+    /// What a snapshot `counted`, and the load read then, added to each sum by `add`.
+    fn add(&mut self, counted: &Counted, load: Option<[f64; 2]>, add: impl Fn(&mut Sum, f64)) {
+        self.running.add(&counted.running, &add);
+        self.holding.add(&counted.holding, &add);
+        for (kind, count) in &counted.live {
+            update(&mut self.live, kind, |sum| add(sum, *count as f64));
+        }
+        if let Some(load) = load {
+            let sums = self.load.get_or_insert_default();
+            for (sum, value) in sums.iter_mut().zip(load) {
+                add(sum, value);
+            }
+        }
+    }
+
+    /// `seconds` of the hour, during which the sessions, the counts and the load were as the last
+    /// snapshot left them.
     fn held(
         &mut self,
         seconds: f64,
         sessions: &[Tracked],
-        running: &Running,
+        counted: &Counted,
         load: Option<[f64; 2]>,
     ) {
         self.observed += seconds;
@@ -445,42 +523,24 @@ impl Summing {
                 _ => {}
             }
         }
-        for (key, count) in &running.by_model {
-            update(&mut self.by_model, key, |sum| sum.held(*count, seconds));
-        }
-        for (role, count) in &running.by_role {
-            update(&mut self.by_role, role, |sum| sum.held(*count, seconds));
-        }
-        self.agents.held(running.agents, seconds);
-        if let Some(load) = load {
-            let sums = self.load.get_or_insert_default();
-            for (sum, value) in sums.iter_mut().zip(load) {
-                sum.held(value, seconds);
-            }
-        }
+        self.add(counted, load, |sum, value| sum.held(value, seconds));
     }
 
     /// A snapshot taken in the hour.
-    fn sampled(&mut self, running: &Running, load: Option<[f64; 2]>) {
+    fn sampled(&mut self, counted: &Counted, load: Option<[f64; 2]>) {
         self.samples += 1;
-        for (key, count) in &running.by_model {
-            update(&mut self.by_model, key, |sum| sum.sampled(*count));
-        }
-        for (role, count) in &running.by_role {
-            update(&mut self.by_role, role, |sum| sum.sampled(*count));
-        }
-        self.agents.sampled(running.agents);
-        if let Some(load) = load {
-            let sums = self.load.get_or_insert_default();
-            for (sum, value) in sums.iter_mut().zip(load) {
-                sum.sampled(value);
-            }
-        }
+        self.add(counted, load, Sum::sampled);
     }
 
-    /// Its line, written at `at` and ending at `to`; `started` the sessions that connected in it by
-    /// kind and model.
-    fn line(&self, at: f64, to: f64, started: BTreeMap<(String, String), u64>) -> Hour {
+    /// Its line, written by `writer` at `at` and ending at `to`; `started` the sessions that
+    /// connected in it by kind and model.
+    fn line(
+        &self,
+        writer: Writer,
+        at: f64,
+        to: f64,
+        started: BTreeMap<(String, String), u64>,
+    ) -> Hour {
         let mut kinds: BTreeSet<&(String, String)> = self.quiet.keys().collect();
         kinds.extend(started.keys());
         let sessions = kinds
@@ -499,41 +559,37 @@ impl Summing {
             })
             .collect();
         let (observed, samples) = (self.observed, self.samples);
+        let (running, running_roles, running_agents) = self.running.levels(observed, samples);
+        let (holding, holding_roles, holding_agents) = self.holding.levels(observed, samples);
         Hour {
             schema: SCHEMA,
             at,
+            pid: writer.pid,
+            generation: writer.generation,
             hour: self.hour,
             from: self.from,
             to,
             observed_s: rounded(observed),
             samples,
             sessions,
-            running: self
-                .by_model
+            running,
+            running_roles,
+            running_agents,
+            holding,
+            holding_roles,
+            holding_agents,
+            live: self
+                .live
                 .iter()
-                .map(|((role, model), sum)| {
+                .map(|(kind, sum)| {
                     let level = sum.level(observed, samples);
-                    RoleModel {
-                        role: role.clone(),
-                        model: model.clone(),
+                    KindLevel {
+                        kind: kind.clone(),
                         peak: level.peak,
                         mean: level.mean,
                     }
                 })
                 .collect(),
-            running_roles: self
-                .by_role
-                .iter()
-                .map(|(role, sum)| {
-                    let level = sum.level(observed, samples);
-                    RoleLevel {
-                        role: role.clone(),
-                        peak: level.peak,
-                        mean: level.mean,
-                    }
-                })
-                .collect(),
-            running_agents: self.agents.level(observed, samples),
             load_1m: self.load.map(|load| load[0].gauge(observed, samples)),
             load_15m: self.load.map(|load| load[1].gauge(observed, samples)),
         }
@@ -567,40 +623,53 @@ fn held(board: &Board, handle: &str) -> Option<(String, String)> {
     best.map(|(_, task, role)| (task.to_string(), role.to_string()))
 }
 
-/// What `board` counts running: each live session holding an executor, reviewer or orchestrator
-/// role on a task in progress or in review, once for each such role, by its model.
-fn running(board: &Board) -> Running {
-    let mut held: BTreeSet<(&str, &str)> = BTreeSet::new();
+/// What `board` counts: of the sessions holding an executor, reviewer or orchestrator role on a
+/// task in progress or in review, those live (running) and those live, stale or unknown (holding),
+/// each once for each such role, by its model; and the live sessions by kind, whatever they hold.
+fn counted(board: &Board) -> Counted {
+    let mut held: BTreeMap<(&str, &str), bool> = BTreeMap::new();
     for task in board
         .tasks
         .iter()
         .filter(|task| RUNNING_STATUSES.contains(&task.status.as_str()))
     {
         for role in &task.roles {
-            if role.health == Health::Live && RUNNING_ROLES.contains(&role.role.as_str()) {
-                held.insert((role.role.as_str(), role.handle.as_str()));
+            if RUNNING_ROLES.contains(&role.role.as_str())
+                && matches!(role.health, Health::Live | Health::Stale | Health::Unknown)
+            {
+                let key = (role.role.as_str(), role.handle.as_str());
+                held.insert(key, role.health == Health::Live);
             }
         }
     }
-    let mut models: BTreeMap<&str, &str> = held.iter().map(|(_, handle)| (*handle, "")).collect();
-    if !models.is_empty() {
-        for session in &board.sessions {
-            if let Some(model) = models.get_mut(session.row.handle.as_str()) {
-                *model = session.row.model.as_str();
-            }
+    let mut models: BTreeMap<&str, &str> = held.keys().map(|(_, handle)| (*handle, "")).collect();
+    let mut counted = Counted::default();
+    for session in &board.sessions {
+        if let Some(model) = models.get_mut(session.row.handle.as_str()) {
+            *model = session.row.model.as_str();
+        }
+        if session.health == Health::Live {
+            update(&mut counted.live, &session.row.kind, |count| *count += 1);
         }
     }
-    let mut running = Running::default();
-    for (role, handle) in held {
-        let model = models.get(handle).copied().unwrap_or_default();
-        *running
-            .by_model
-            .entry((role.to_string(), model.to_string()))
-            .or_default() += 1;
-        *running.by_role.entry(role.to_string()).or_default() += 1;
-    }
-    running.agents = models.len() as u64;
-    running
+    let holders = |live_only: bool| {
+        let mut holders = Holders::default();
+        let mut agents = BTreeSet::new();
+        for ((role, handle), _) in held.iter().filter(|(_, live)| **live || !live_only) {
+            let model = models.get(handle).copied().unwrap_or_default();
+            *holders
+                .by_model
+                .entry((role.to_string(), model.to_string()))
+                .or_default() += 1;
+            *holders.by_role.entry(role.to_string()).or_default() += 1;
+            agents.insert(*handle);
+        }
+        holders.agents = agents.len() as u64;
+        holders
+    };
+    counted.running = holders(true);
+    counted.holding = holders(false);
+    counted
 }
 
 /// The line `session` of `board` says at `now`, its health in the snapshot before `before` (none
@@ -612,6 +681,7 @@ fn say(
     before: Option<Health>,
     first: bool,
     now: f64,
+    writer: Writer,
     summing: &mut Option<Summing>,
 ) -> Option<Line> {
     let row = &session.row;
@@ -628,6 +698,8 @@ fn say(
         return Some(Line::Seen(Seen {
             schema: SCHEMA,
             at: now,
+            pid: writer.pid,
+            generation: writer.generation,
             handle: row.handle.clone(),
             kind: row.kind.clone(),
             model: row.model.clone(),
@@ -646,6 +718,8 @@ fn say(
     Some(Line::Change(Change {
         schema: SCHEMA,
         at: now,
+        pid: writer.pid,
+        generation: writer.generation,
         handle: row.handle.clone(),
         kind: row.kind.clone(),
         model: row.model.clone(),
@@ -694,8 +768,10 @@ pub(crate) struct Recorder {
     begun: bool,
     /// When the last snapshot was observed.
     last: Option<f64>,
-    /// What it counted running, and the load read then.
-    running: Running,
+    /// When its first snapshot was taken: the generation its lines name.
+    generation: Option<f64>,
+    /// What the last snapshot counted, and the load read then.
+    counted: Counted,
     load: Option<[f64; 2]>,
     summing: Option<Summing>,
     /// The day (since the epoch) whose old files were last pruned.
@@ -712,11 +788,19 @@ impl Recorder {
             sessions: Vec::new(),
             begun: false,
             last: None,
-            running: Running::default(),
+            generation: None,
+            counted: Counted::default(),
             load: None,
             summing: None,
             pruned: None,
             unwritten: None,
+        }
+    }
+
+    fn writer(&self) -> Writer {
+        Writer {
+            pid: std::process::id(),
+            generation: self.generation.unwrap_or_default(),
         }
     }
 
@@ -743,7 +827,7 @@ impl Recorder {
                 Ok(()) => self.unwritten = None,
                 Err(why) => {
                     if self.unwritten.as_ref() != Some(&why) {
-                        eprintln!("· agent activity: {why}");
+                        crate::front::tell(format_args!("· agent activity: {why}"));
                     }
                     self.unwritten = Some(why);
                 }
@@ -761,13 +845,14 @@ impl Recorder {
     /// health changed since the snapshot before.
     pub(crate) fn observe(&mut self, board: &Board, now: f64, load: Option<[f64; 2]>) -> Vec<Line> {
         let mut lines = Vec::new();
+        self.generation.get_or_insert(now);
         let load = load.or(self.load);
         self.advance(now, Rows::Board(board), &mut lines);
         self.roll(hour_of(now), now, now, Rows::Board(board), &mut lines);
         self.changes(board, now, &mut lines);
-        self.running = running(board);
+        self.counted = counted(board);
         if let Some(summing) = &mut self.summing {
-            summing.sampled(&self.running, load);
+            summing.sampled(&self.counted, load);
         }
         self.last = Some(now);
         self.load = load;
@@ -786,7 +871,7 @@ impl Recorder {
             let until = now.min(hour + HOUR);
             self.roll(hour, from, now, rows, lines);
             if let Some(summing) = &mut self.summing {
-                summing.held(until - from, &self.sessions, &self.running, self.load);
+                summing.held(until - from, &self.sessions, &self.counted, self.load);
             }
             from = until;
         }
@@ -801,7 +886,7 @@ impl Recorder {
         if let Some(done) = self.summing.take() {
             let to = done.hour + HOUR;
             let started = self.started(rows, done.hour, to);
-            lines.push(Line::Hour(done.line(at, to, started)));
+            lines.push(Line::Hour(done.line(self.writer(), at, to, started)));
         }
         self.summing = Some(Summing::new(hour, from));
     }
@@ -829,13 +914,15 @@ impl Recorder {
 
     /// Each session of `board` as against the snapshot before, at `now`.
     fn changes(&mut self, board: &Board, now: f64, lines: &mut Vec<Line>) {
+        let writer = self.writer();
         let first = !self.begun;
         self.begun = true;
         if first {
             lines.push(Line::Start(Start {
                 schema: SCHEMA,
                 at: now,
-                pid: std::process::id(),
+                pid: writer.pid,
+                generation: writer.generation,
                 sessions: board.sessions.len(),
                 left: board
                     .sessions
@@ -845,7 +932,7 @@ impl Recorder {
             }));
         }
         let said = |session: &Session, before: Option<Health>, summing: &mut Option<Summing>| {
-            say(board, session, before, first, now, summing)
+            say(board, session, before, first, now, writer, summing)
         };
         // The board keeps its sessions by when they connected, then handle, so a tick that adds
         // none or adds new ones finds those before in their order: only their health is compared.
@@ -885,6 +972,8 @@ impl Recorder {
             lines.push(Line::Change(Change {
                 schema: SCHEMA,
                 at: now,
+                pid: writer.pid,
+                generation: writer.generation,
                 handle: session.handle,
                 kind: session.kind,
                 model: session.model,
@@ -905,7 +994,7 @@ impl Recorder {
         if let Some(done) = self.summing.take() {
             let to = now.clamp(done.from, done.hour + HOUR);
             let started = self.started(Rows::Tracked, done.hour, to);
-            lines.push(Line::Hour(done.line(now, to, started)));
+            lines.push(Line::Hour(done.line(self.writer(), now, to, started)));
         }
         self.last = None;
         lines
@@ -913,8 +1002,8 @@ impl Recorder {
 }
 
 /// `lines` appended to the files of their days in `folder`, made as needed: each day's lines in one
-/// write, after a newline when a writer before was cut short in its line, so each line stays its
-/// own. Only the machine's one server writes them, from its worker alone, so no lock is taken.
+/// write, opened to append, after a newline when a writer before was cut short in its line, so each
+/// line stays its own. No lock is taken: one server records at a time ([`Gate`]).
 pub(crate) fn append(folder: &Path, lines: &[Line]) -> io::Result<()> {
     let mut by_day: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for line in lines {
@@ -1013,30 +1102,101 @@ pub(crate) fn read_day(folder: &Path, day: &str) -> Vec<Line> {
     text.lines().filter_map(Line::read).collect()
 }
 
+/// When a server generation's hubs record their agents: one gate for every project it serves
+/// (`front::Shared`). A reload's hand-off has two generations alive at once, so the replacement's
+/// gate waits until the hand-off commits, and the generation it replaces closes its own just
+/// before it commits, its hours ending there: no two record the same moment. A hand-off that fails
+/// after that close opens the gate again.
+#[derive(Debug, Default)]
+pub(crate) struct Gate(Mutex<Recording>);
+
+#[derive(Debug, Clone, Copy, Default)]
+enum Recording {
+    #[default]
+    Open,
+    /// A replacement's, until its hand-off commits.
+    Waiting,
+    /// Closed at this time, by the server's clock, as the hand-off commits.
+    Closed(f64),
+}
+
+impl Gate {
+    /// A replacement's: nothing is recorded until [`Gate::open`].
+    pub(crate) fn hold(&self) {
+        *self.state() = Recording::Waiting;
+    }
+
+    pub(crate) fn open(&self) {
+        *self.state() = Recording::Open;
+    }
+
+    /// Nothing recorded after `at`, by the server's clock, which ends each hour being summed.
+    pub(crate) fn close(&self, at: f64) {
+        *self.state() = Recording::Closed(at);
+    }
+
+    fn state(&self) -> MutexGuard<'_, Recording> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The snapshot `board` of a tick recorded by `recorder` as the gate lets it, at `now`, read
+    /// while the gate is held so that a close falls between two ticks: open, recorded; waiting,
+    /// not; closed, the hour so far written once, ending at the close.
+    pub(crate) fn record(&self, recorder: &mut Recorder, board: &Board, now: impl FnOnce() -> f64) {
+        let state = self.state();
+        match *state {
+            Recording::Open => recorder.record(board, now(), load_average()),
+            Recording::Waiting => {}
+            Recording::Closed(at) => recorder.stop(at),
+        }
+    }
+
+    /// `recorder`'s server stopping at `now`: the hour so far written, ending at the close if the
+    /// gate closed.
+    pub(crate) fn stop(&self, recorder: &mut Recorder, now: impl FnOnce() -> f64) {
+        let state = self.state();
+        match *state {
+            Recording::Open => recorder.stop(now()),
+            Recording::Waiting => {}
+            Recording::Closed(at) => recorder.stop(at),
+        }
+    }
+}
+
 impl super::Hub {
+    /// The gate of this hub's server generation: until it is given, nothing is recorded.
+    pub(crate) fn gate_agents(&self, gate: Arc<Gate>) {
+        let _ = self.agents_gate.set(gate);
+    }
+
     /// The snapshot `board` this tick took, recorded by the one server's recorder, at the server's
-    /// time; a private server keeps none and does nothing.
+    /// time, as its gate lets it; a private server keeps none and does nothing.
     pub(super) fn record_agents(&self, board: &Board) {
+        let Some(gate) = self.agents_gate.get() else {
+            return;
+        };
         let mut recorder = self
             .agent_activity
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(recorder) = recorder.as_mut() {
-            let now = self.now();
             super::measured("agent activity", || {
-                recorder.record(board, now, load_average());
+                gate.record(recorder, board, || self.now());
             });
         }
     }
 
     /// The hour so far written as the server stops.
     pub(super) fn stop_agents(&self) {
+        let Some(gate) = self.agents_gate.get() else {
+            return;
+        };
         let mut recorder = self
             .agent_activity
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(recorder) = recorder.as_mut() {
-            recorder.stop(self.now());
+            gate.stop(recorder, || self.now());
         }
     }
 }

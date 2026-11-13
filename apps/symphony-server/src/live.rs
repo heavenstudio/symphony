@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, RwLock, Weak, mpsc};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::backstop::{Backstop, Sweep, Wake};
@@ -162,6 +162,9 @@ pub(crate) struct Hub {
     /// The agents' health changes and hourly counts, appended to their day files by the machine's
     /// one server alone ([`agent_activity`]); none on a private server.
     pub(crate) agent_activity: Mutex<Option<agent_activity::Recorder>>,
+    /// When they are recorded: its server generation's gate ([`agent_activity::Gate`]), given as the
+    /// hub starts; none records nothing.
+    agents_gate: OnceLock<Arc<agent_activity::Gate>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
@@ -295,6 +298,7 @@ impl Hub {
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
+            agents_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
@@ -1760,6 +1764,7 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
 }
 
 mod agent_activity;
+pub(crate) use agent_activity::Gate as AgentsGate;
 mod asks;
 mod board_status;
 mod health;
