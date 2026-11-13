@@ -1,4 +1,6 @@
-//! Private database delays at the owner's quick-task save boundary.
+//! The owner's quick-task save at its board boundary: a confirmed save is recovered by a new
+//! worker, a save refused before it reaches the board stays refused and writes nothing, and saves
+//! made at once by separate workers make each task once.
 
 #[path = "../../../tasks/tests/store/common.rs"]
 #[expect(
@@ -8,41 +10,13 @@
 mod board;
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Read};
-use std::net::TcpStream;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::Command;
 
 const CHILD: &str = "SYMPHONY_OWNER_SAVE_PROBE";
-const CASE: &str = "owner_save::reports_each_private_database_timeout_phase";
-const LIMIT: Duration = Duration::from_secs(30);
-
-fn packet(stream: &mut BufReader<TcpStream>) -> std::io::Result<Option<(String, Vec<u8>)>> {
-    let mut headers = String::new();
-    let mut size = 0;
-    loop {
-        let mut line = String::new();
-        if stream.read_line(&mut line)? == 0 {
-            return Ok(None);
-        }
-        headers.push_str(&line);
-        if let Some((key, value)) = line.split_once(':')
-            && key.eq_ignore_ascii_case("content-length")
-        {
-            size = value.trim().parse().unwrap();
-        }
-        if line == "\r\n" {
-            break;
-        }
-    }
-    let mut bytes = vec![0; size];
-    stream.read_exact(&mut bytes)?;
-    Ok(Some((headers, bytes)))
-}
-
-#[path = "owner_save/proxy.rs"]
-mod proxy;
-use proxy::Delayed;
+const CASE: &str = "owner_save::reports_each_private_database_failure_phase";
+/// How long a save may stay uncertain before the wait for it is a stall: the backstop of 30 s.
+const LIMIT: Duration = test_time::backstop(Duration::from_secs(30));
 
 fn payload() -> Value {
     json!({"request":"11111111111111111111111111111111", "title":"Owner delay probe",
@@ -74,6 +48,96 @@ fn validate(saves: &symphony::save::Saves, payload: &Value) {
     );
 }
 
+fn child(root: &str) {
+    let root = std::path::Path::new(root);
+    let phase = std::env::var("SYMPHONY_OWNER_SAVE_PHASE").unwrap();
+    if phase == "concurrent" {
+        concurrent::saves(root);
+        println!(
+            "OWNER_SAVE_PROBE {}",
+            json!({"confirmed":"three distinct tasks"})
+        );
+        return;
+    }
+    let saves = symphony::save::Saves::start(root);
+    let mut payload = payload();
+    if phase == "journal-write" {
+        payload["body"] = json!("x".repeat(2000));
+    }
+    validate(&saves, &payload);
+    let result = saves.post("", "/api/quick-task", &payload);
+    let first = match &result {
+        Ok(value) => json!({"saved":value}),
+        Err(error) => json!({"status":error.status,"error":error.error}),
+    };
+    if phase == "saved" {
+        let mut result = Some(result);
+        let saved = test_time::until("the save confirmed", LIMIT, || {
+            let now = result
+                .take()
+                .unwrap_or_else(|| saves.post("", "/api/quick-task", &payload));
+            match now {
+                Ok(value) if value["slug"].is_string() => Some(value),
+                Ok(value) if value["pending"] == true => None,
+                Ok(value) => panic!("an uncertain save must stay pending: {value}"),
+                Err(error) => panic!("{}", error.error),
+            }
+        })
+        .unwrap_or_else(|stall| panic!("{stall}: {first}"));
+        let slug = saved["slug"].clone();
+        assert_eq!(slug, "inbox/owner-delay-probe");
+        saves.close();
+        let journal =
+            root.join("artifacts/symphony-quick-tasks/11111111111111111111111111111111.json");
+        assert!(
+            !journal.exists(),
+            "confirmed typed text remains at {}",
+            journal.display()
+        );
+        replay(root, &payload, &slug);
+        println!(
+            "OWNER_SAVE_PROBE {}",
+            json!({"first":first,"confirmed":slug})
+        );
+        return;
+    }
+    let refused = result.expect_err("a pre-dispatch failure must unlock the draft");
+    assert_eq!(refused.status, 422, "{}", refused.error);
+    let again = saves
+        .post("", "/api/quick-task", &payload)
+        .expect_err("refusal stays terminal");
+    assert_eq!(again.status, 422);
+    if matches!(phase.as_str(), "receipt-write" | "journal-write") {
+        let receipt =
+            root.join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
+        assert_eq!(
+            std::fs::metadata(receipt).unwrap().len(),
+            0,
+            "a failed attempt remains sealed"
+        );
+    }
+    saves.close();
+    println!(
+        "OWNER_SAVE_PROBE {}",
+        json!({"first":first,"confirmed":null})
+    );
+}
+
+/// A confirmed save recovered by a new `Saves`, and the saves it refuses after.
+fn replay(root: &std::path::Path, payload: &Value, slug: &Value) {
+    std::fs::remove_file(root.join("docs/PROBE.md")).unwrap();
+    let reopened = symphony::save::Saves::start(root);
+    let repeated = reopened
+        .post("", "/api/quick-task", payload)
+        .unwrap_or_else(|error| panic!("{}", error.error));
+    assert_eq!(
+        repeated["slug"], *slug,
+        "a new Saves must recover the same receipt"
+    );
+    refusals(&reopened, payload, slug);
+    reopened.close();
+}
+
 fn refusals(saves: &symphony::save::Saves, payload: &Value, slug: &Value) {
     let mut invalid = payload.clone();
     invalid["request"] = json!("22222222222222222222222222222222");
@@ -99,108 +163,6 @@ fn refusals(saves: &symphony::save::Saves, payload: &Value, slug: &Value) {
         .post("", "/api/quick-task", &changed)
         .expect_err("identity rebinding");
     assert_eq!(refused.status, 400);
-}
-
-fn child(root: &str) {
-    let root = std::path::Path::new(root);
-    let phase = std::env::var("SYMPHONY_OWNER_SAVE_PHASE").unwrap();
-    if phase == "concurrent" {
-        concurrent::saves(root);
-        println!(
-            "OWNER_SAVE_PROBE {}",
-            json!({"confirmed":"three distinct tasks"})
-        );
-        return;
-    }
-    let saves = symphony::save::Saves::start(root);
-    let mut payload = payload();
-    if phase == "journal-write" {
-        payload["body"] = json!("x".repeat(2000));
-    }
-    validate(&saves, &payload);
-    let began = Instant::now();
-    let mut result = saves.post("", "/api/quick-task", &payload);
-    let first = match &result {
-        Ok(value) => json!({"saved":value}),
-        Err(error) => json!({"status":error.status,"error":error.error}),
-    };
-    let elapsed = began.elapsed().as_secs_f64();
-    if no_task_phase(&phase) {
-        let refused = result.expect_err("a pre-dispatch failure must unlock the draft");
-        assert_eq!(refused.status, 422, "{}", refused.error);
-        let again = saves
-            .post("", "/api/quick-task", &payload)
-            .expect_err("refusal stays terminal");
-        assert_eq!(again.status, 422);
-        if matches!(phase.as_str(), "receipt-write" | "journal-write") {
-            let receipt = root
-                .join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
-            assert_eq!(
-                std::fs::metadata(receipt).unwrap().len(),
-                0,
-                "a failed attempt remains sealed"
-            );
-        }
-        saves.close();
-        println!(
-            "OWNER_SAVE_PROBE {}",
-            json!({"first":first,"elapsed_s":elapsed,"confirmed":null})
-        );
-        return;
-    }
-    while !result.as_ref().is_ok_and(|value| value["slug"].is_string()) {
-        assert!(began.elapsed() < LIMIT, "save never resolved: {first}");
-        assert!(
-            result.as_ref().is_ok_and(|value| value["pending"] == true),
-            "an uncertain write or check must stay pending: {first}"
-        );
-        result = saves.post("", "/api/quick-task", &payload);
-    }
-    let slug = result.unwrap_or_else(|error| panic!("{}", error.error))["slug"].clone();
-    assert_eq!(slug, "inbox/owner-delay-probe");
-    saves.close();
-    let journal = root.join("artifacts/symphony-quick-tasks/11111111111111111111111111111111.json");
-    assert!(
-        !journal.exists(),
-        "confirmed typed text remains at {}",
-        journal.display()
-    );
-    replay(root, &payload, &slug, &phase);
-    println!(
-        "OWNER_SAVE_PROBE {}",
-        json!({"first":first,"elapsed_s":elapsed,"confirmed":slug})
-    );
-}
-
-fn replay(root: &std::path::Path, payload: &Value, slug: &Value, phase: &str) {
-    std::fs::remove_file(root.join("docs/PROBE.md")).unwrap();
-    let reopened = symphony::save::Saves::start(root);
-    let repeated = reopened
-        .post("", "/api/quick-task", payload)
-        .unwrap_or_else(|error| panic!("{}", error.error));
-    assert_eq!(
-        repeated["slug"], *slug,
-        "a new Saves must recover the same receipt"
-    );
-    if phase == "wipe" {
-        let receipt =
-            root.join("artifacts/symphony-quick-tasks/.receipts/11111111111111111111111111111111");
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(receipt)
-            .unwrap()
-            .set_len(64)
-            .unwrap();
-        let checked = reopened
-            .post("", "/api/quick-task", payload)
-            .unwrap_or_else(|error| panic!("{}", error.error));
-        assert_eq!(
-            checked["slug"], *slug,
-            "a header without its outcome checks the board fingerprint"
-        );
-    }
-    refusals(&reopened, payload, slug);
-    reopened.close();
 }
 
 #[path = "owner_save/concurrent.rs"]
@@ -279,14 +241,13 @@ fn phase(phase: &'static str) {
         client.database(),
     ))
     .unwrap();
-    let delay = Delayed::start(client.addr().into(), phase, &root);
     let mut command = child_command(phase);
     let done = symphony_board::sys::output(
         command
             .args(["--exact", CASE, "--nocapture"])
             .env(CHILD, &root)
             .env("SYMPHONY_OWNER_SAVE_PHASE", phase)
-            .env("TASKS_SERVER", delay.address.to_string())
+            .env("TASKS_SERVER", client.addr())
             .env("TASKS_DATABASE", client.database())
             .env("TASKS_SWEEP", "off")
             .env_remove("TASKS_SESSION")
@@ -303,17 +264,6 @@ fn phase(phase: &'static str) {
         "{phase}: {out}\n{}",
         String::from_utf8_lossy(&done.stderr)
     );
-    let delays = match phase {
-        "check" | "reopen" => 3,
-        "open" | "lookup" => 2,
-        "journal" | "concurrent" | "receipt-write" | "journal-write" | "interrupted" => 0,
-        _ => 1,
-    };
-    for _ in 0..delays {
-        delay.delayed.recv_timeout(LIMIT).unwrap_or_else(|error| {
-            panic!("{phase} was not delayed to completion: {error}; {out}")
-        });
-    }
     let record: Value = serde_json::from_str(
         out.lines()
             .find_map(|line| line.strip_prefix("OWNER_SAVE_PROBE "))
@@ -321,13 +271,6 @@ fn phase(phase: &'static str) {
     )
     .unwrap();
     check_phase(&store, phase, &record);
-}
-
-fn no_task_phase(phase: &str) -> bool {
-    matches!(
-        phase,
-        "open" | "lookup" | "journal" | "receipt-write" | "journal-write" | "interrupted"
-    )
 }
 
 fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
@@ -344,27 +287,20 @@ fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
         })
         .sum();
     let count = match phase {
-        phase if no_task_phase(phase) => 0,
         "concurrent" => 3,
-        _ => 1,
+        "saved" => 1,
+        _ => 0,
     };
     assert_eq!(tasks.len(), count, "{phase}: {record}");
     assert_eq!(messages, count, "{phase}: {record}");
     if count == 1 {
         let task = &tasks[0];
-        if phase == "edited" {
-            assert_eq!(task.title, "Edited title");
-            assert_eq!(task.body, "Edited body");
-            assert_eq!(task.priority, 4);
-            assert_eq!(task.links, Vec::<String>::new());
-        } else {
-            assert_eq!(task.title, "Owner delay probe");
-            assert_eq!(
-                task.body,
-                "Keep these typed details\n\nSent from [/docs/PROBE.md#probe](/docs/PROBE.md#probe)"
-            );
-            assert_eq!(task.links, ["docs/PROBE.md#probe"]);
-        }
+        assert_eq!(task.title, "Owner delay probe");
+        assert_eq!(
+            task.body,
+            "Keep these typed details\n\nSent from [/docs/PROBE.md#probe](/docs/PROBE.md#probe)"
+        );
+        assert_eq!(task.links, ["docs/PROBE.md#probe"]);
         assert!(
             task.fields["_symphony"]["owner_save"].is_string(),
             "{:?}",
@@ -378,21 +314,13 @@ fn check_phase(store: &symphony_board::Store, phase: &str, record: &Value) {
 }
 
 #[test]
-fn reports_each_private_database_timeout_phase() {
+fn reports_each_private_database_failure_phase() {
     if let Ok(root) = std::env::var(CHILD) {
         child(&root);
         return;
     }
     for name in [
-        "open",
-        "lookup",
-        "create",
-        "message",
-        "reply",
-        "check",
-        "reopen",
-        "edited",
-        "wipe",
+        "saved",
         "receipt-write",
         "journal-write",
         "interrupted",

@@ -717,11 +717,10 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
     );
 }
 
-#[test]
-fn a_process_that_ends_fails_its_waiting_calls_and_starts_again_after_its_pause() {
-    let tree = Tree::new();
+/// The plugin `tiny` in `tree`, its first process ending at its first call and the next serving as
+/// the plugin does, `pause` before a restart: its remote and the count of its starts.
+fn ending_once(tree: &Tree, pause: Duration) -> (&'static Remote, Arc<AtomicUsize>) {
     let starts = Arc::new(AtomicUsize::new(0));
-    // The first start ends at its first call; the next serves as the plugin does.
     let dying = hand_made(
         tiny_declared(),
         Arc::new(|_, _| Said::End),
@@ -737,13 +736,20 @@ fn a_process_that_ends_fails_its_waiting_calls_and_starts_again_after_its_pause(
         }
         serving()
     });
-    let pause = Duration::from_millis(300);
     let remote = Remote::leaked(
         "tiny",
-        process_in(&tree, "tiny"),
+        process_in(tree, "tiny"),
         start,
         limits(PATIENT, pause),
     );
+    (remote, starts)
+}
+
+#[test]
+fn a_process_that_ends_fails_its_waiting_calls_and_says_so_while_its_pause_lasts() {
+    let tree = Tree::new();
+    // A pause longer than the test, so each call after the end finds it down.
+    let (remote, starts) = ending_once(&tree, Duration::from_secs(600));
     let (component, kind) = seams(remote);
     let page = Page::new(&tree.root, "docs/A.md");
     assert_eq!(
@@ -761,6 +767,21 @@ fn a_process_that_ends_fails_its_waiting_calls_and_starts_again_after_its_pause(
         assert!(!kind.recognises(card));
         assert_eq!(kind.slot(card), None);
     });
+    assert_eq!(starts.load(Ordering::SeqCst), 1, "not started again");
+}
+
+#[test]
+fn a_process_that_ends_starts_again_after_its_pause() {
+    let tree = Tree::new();
+    let pause = Duration::from_millis(300);
+    let (remote, starts) = ending_once(&tree, pause);
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md");
+    assert_eq!(
+        component.render(&page, "a", None),
+        Err("plugin tiny: its process was killed by signal 9".into())
+    );
+    until("the remote is down", || remote.down().is_some());
     std::thread::sleep(pause);
     assert_eq!(
         component.render(&page, "a", None),
@@ -918,7 +939,19 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     // Once the wait after its cancel has run out, the process that answered is kept.
     remote.after_cancel(&connection, render.id);
     assert!(remote.down().is_none(), "{:?}", remote.down());
-    assert_eq!(text(component.render(&page, "b", None)), "on time");
+    // Kept, it answers the next call: one a loaded machine leaves past its wait is answered late,
+    // dropped as the first was, and asked again.
+    let next =
+        test_time::until(
+            "the next call answered within its wait",
+            PATIENT,
+            || match component.render(&page, "b", None) {
+                Err(why) if why == "plugin tiny: no answer in 1s" => None,
+                answered => Some(answered),
+            },
+        )
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    assert_eq!(text(next), "on time");
     assert_eq!(seen.kills(), 0);
     let log = tree.read("artifacts/plugins/tiny.log");
     assert!(
@@ -1008,7 +1041,7 @@ fn a_line_that_is_not_utf8_is_logged_shown_and_skipped_and_the_calls_after_it_an
             Seen::default(),
             "exited with code 0",
         ),
-        limits(Duration::from_secs(2), PAUSE),
+        patient(),
     );
     let (component, _) = seams(remote);
     let page = Page::new(&tree.root, "docs/A.md");

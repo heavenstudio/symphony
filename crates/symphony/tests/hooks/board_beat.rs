@@ -87,6 +87,12 @@ impl Checkout {
             .env("TASKS_SERVER", client.addr())
             .env("TASKS_DATABASE", client.database())
             .env("TASKS_NOW", board.now().to_string())
+            // A clock that never passes: the beat ends when the board's binary does, never at the
+            // hook's limit on a loaded machine's clock.
+            .env(
+                "SYMPHONY_HOOK_BEAT_CLOCK",
+                self.scratch.join("clock-never-passes"),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
