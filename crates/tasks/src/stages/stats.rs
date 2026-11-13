@@ -61,8 +61,8 @@ pub struct Summary {
     pub per_stage: Vec<(String, Spread)>,
     /// How many tasks review sent back how often: bounces, then tasks.
     pub bounces: Vec<(u32, usize)>,
-    /// Tasks done on each day of the window, oldest first: every close given, whenever its
-    /// task was made.
+    /// Tasks done on each day of the window, oldest first: every close given, one a task, its last
+    /// while it holds done ([`super::Stages::done_at`]), whenever its task was made.
     pub done_per_day: Vec<(String, usize)>,
     /// The open tasks that held their status longest, longest first.
     pub slowest: Vec<Sitting>,
