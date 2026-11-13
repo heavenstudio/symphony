@@ -224,7 +224,10 @@ fn a_roll_up_git_cannot_read_still_writes_the_board_s_figures_and_leaves_git_s_o
 
     hub.reports_tick(Some(&fixture.store));
     let today = day(&folder, midnight());
-    assert_eq!(today.git, None, "a folder with no repository has no history to read");
+    assert_eq!(
+        today.git, None,
+        "a folder with no repository has no history to read"
+    );
     assert!(today.hours.iter().all(|hour| hour.git.is_none()));
     assert_eq!(
         today.hours.iter().map(|hour| hour.landed).sum::<u32>(),
