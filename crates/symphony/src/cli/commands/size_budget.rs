@@ -1,7 +1,8 @@
 //! `symphony size-budget ROOT RELEASE`: each binary this workspace ships, as `cargo install` builds
 //! it into RELEASE, and the client distribution the server embeds, against its line in the budget
 //! file under ROOT ([`BUDGET`], docs/CHECKS.md "Size budgets"). Within every line it prints each
-//! size beside its budget (exit 0); past one it says the size, the budget and how to see what grew
+//! size beside its budget, and where the rule ([`line_for`]) brings down a binary's line that
+//! stands above it (exit 0); past one it says the size, the budget and how to see what grew
 //! (exit 1). A budget it cannot read, one with no line for a shipped binary ([`BUILDS`]) or a line
 //! for none, a binary it cannot find, or a server built from another client than the one beside
 //! it, is exit 2.
@@ -27,6 +28,10 @@ const EMBEDDER: &str = "symphony-server";
 /// Where the shipped set is stated, as a refusal names it.
 const SHIPPED: &str = "`BUILDS` in crates/symphony/src/init.rs";
 const USAGE: &str = "usage: symphony size-budget ROOT RELEASE";
+/// How far above a binary's size its line is set, in percent, and the bytes the line is rounded
+/// down to (docs/CHECKS.md, "Where a line stands").
+const MARGIN_PERCENT: u64 = 4;
+const ROUNDED_TO: u64 = 10_000;
 
 /// The budget file: the embedded client's line and each shipped binary's, in bytes.
 #[derive(Deserialize)]
@@ -208,16 +213,32 @@ fn folder(folder: &Path) -> io::Result<Distribution> {
     Ok(found)
 }
 
-/// Each line within its budget on `out`, each one past it on `err` with how to see what grew. Exit
-/// 1 when one is past.
+/// Where the rule sets a binary's line at `bytes`: its size plus [`MARGIN_PERCENT`], rounded down
+/// to [`ROUNDED_TO`], and never below the size itself.
+fn line_for(bytes: u64) -> u64 {
+    let raised = u128::from(bytes) * u128::from(100 + MARGIN_PERCENT) / 100;
+    let rounded = raised / u128::from(ROUNDED_TO) * u128::from(ROUNDED_TO);
+    u64::try_from(rounded).unwrap_or(u64::MAX).max(bytes)
+}
+
+/// Each line within its budget on `out`, and where the rule would bring down a binary's line that
+/// stands above it; each one past it on `err` with how to see what grew. Exit 1 when one is past.
 fn report(lines: &[Measured], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let width = lines.iter().map(|line| name(line).len()).max().unwrap_or(0);
     let mut past = 0;
     for line in lines {
         if line.bytes <= line.budget {
+            let lower = match line.what {
+                What::Binary { .. } if line_for(line.bytes) < line.budget => format!(
+                    "; its line comes down to {} ({} bytes plus {MARGIN_PERCENT} %)",
+                    grouped(line_for(line.bytes)),
+                    grouped(line.bytes)
+                ),
+                _ => String::new(),
+            };
             let _ = writeln!(
                 out,
-                "size-budget: {:<width$}  {} of {}{}",
+                "size-budget: {:<width$}  {} of {}{}{lower}",
                 name(line),
                 mib(line.bytes),
                 mib(line.budget),
@@ -267,8 +288,10 @@ fn refusal(line: &Measured) -> String {
             "size-budget: {name}{} {over}. See what grew: `cargo bloat --release --crates --bin \
              {name}` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
              it: the last release (`git tag -l 'release-*'`), or before the first one, the commit \
-             that last set the budget (`git log -1 -- {BUDGET}`); a budget is raised only in the \
-             commit that needs it, saying why.",
+             that last set the budget (`git log -1 -- {BUDGET}`). A reduction takes the bytes \
+             back first; a line is raised only in a commit of its own that names the growth and \
+             why no reduction will do, to the size plus 4 % and never higher, on a fresh \
+             reviewer's approve (docs/CHECKS.md, \"A red at the size check\").",
             match whole {
                 Some(whole) => format!(
                     ", less its embedded client (its file is {} bytes),",

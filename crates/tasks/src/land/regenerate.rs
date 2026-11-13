@@ -286,10 +286,11 @@ enum Started {
 /// committed `settings` name its generators, detached: `tasks regenerate` from the main checkout,
 /// by a test's `TASKS_BIN` on a test's board, else by the land's own build, else the main
 /// checkout's build of `tasks` ([`crate::builds::of_main`]), with `env`'s environment but its
-/// session, its output appended to [`LOG`]; a thread reaps it. While one runs it starts nothing
-/// and signals nothing: the default branch's ref is all a land leaves it, and the one running
-/// reads it once it ends. None when there are no generators or `env` starts none ([`enabled`]);
-/// else the line saying it started, that one runs, or why it did not start.
+/// session and the unasked recipes' mark, the land's kept, its output appended to [`LOG`]; a
+/// thread reaps it. While one runs it starts nothing and signals nothing: the default branch's ref
+/// is all a land leaves it, and the one running reads it once it ends. None when there are no
+/// generators or `env` starts none ([`enabled`]); else the line saying it started, that one runs,
+/// or why it did not start.
 pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     if settings.generators.is_empty() || !enabled(env) {
         return None;
@@ -319,6 +320,12 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
         sys::sessionless(&mut command).env_remove("TASKS_TASK");
         for name in GIT_VARS {
             command.env_remove(name);
+        }
+        // The land's mark, which no other child keeps (`sys::MARKS`): the regenerator lands what
+        // it makes, so it runs only as a land started it ([`admit`]). The unasked recipes' mark it
+        // does not keep: its generators and check write where the project says.
+        if let Some(asked) = env.var(RECIPE) {
+            command.env(RECIPE, asked);
         }
         command
             .arg("regenerate")
