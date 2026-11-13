@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: rerun its focused tests, judge its evidence and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 53848b2100ffc804 files=SKILL.md -->
+<!-- symphony-stamp: ad7fae9d93e86b7a files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -32,8 +32,9 @@ assumes no certificate or landing system.
      once): name the smaller form, which may be "once and done", as a finding.
 6. Record the verdict: `just tasks verdict TARGET approve "FULL_SHA: why" --as HANDLE`, naming the
    whole tip you read (the approve is the task's stamp: TARGET becomes `done`, and the default
-   landing lands that commit and no other), or `just tasks verdict TARGET changes "what and where" --as HANDLE`. The board
-   refuses the verdict of a session that ever executed TARGET or a slice of it (a subtask without
+   landing lands that commit and no other), or
+   `just tasks verdict TARGET changes "what and where" --as HANDLE`. The board refuses the
+   verdict of a session that ever executed TARGET or a slice of it (a subtask without
    `--instruction`). Never judge a task you executed.
 7. Close an instruction with `just tasks done SLUG "the verdict and the tip" --as HANDLE`.
 

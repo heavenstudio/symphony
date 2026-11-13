@@ -31,8 +31,9 @@ assumes no certificate or landing system.
      once): name the smaller form, which may be "once and done", as a finding.
 6. Record the verdict: `just tasks verdict TARGET approve "FULL_SHA: why" --as HANDLE`, naming the
    whole tip you read (the approve is the task's stamp: TARGET becomes `done`, and the default
-   landing lands that commit and no other), or `just tasks verdict TARGET changes "what and where" --as HANDLE`. The board
-   refuses the verdict of a session that ever executed TARGET or a slice of it (a subtask without
+   landing lands that commit and no other), or
+   `just tasks verdict TARGET changes "what and where" --as HANDLE`. The board refuses the
+   verdict of a session that ever executed TARGET or a slice of it (a subtask without
    `--instruction`). Never judge a task you executed.
 7. Close an instruction with `just tasks done SLUG "the verdict and the tip" --as HANDLE`.
 

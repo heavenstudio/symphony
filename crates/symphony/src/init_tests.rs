@@ -878,7 +878,10 @@ fn a_link_target_is_beside_in_another_skill_or_in_the_page_itself() {
         link_target("work", "finish.md", "#parent-feature-delivery"),
         Some(("work", "finish.md", Some("parent-feature-delivery")))
     );
-    assert_eq!(link_target("work", "SKILL.md", "https://example.com/a.md"), None);
+    assert_eq!(
+        link_target("work", "SKILL.md", "https://example.com/a.md"),
+        None
+    );
     assert_eq!(link_target("work", "SKILL.md", "../loose.md"), None);
 }
 
@@ -926,7 +929,11 @@ fn every_page_a_shipped_skill_links_is_shipped_and_every_page_it_ships_is_named(
                 .files
                 .iter()
                 .any(|(other, body)| other != file && body.contains(file.as_str()));
-            assert!(named, "{}/{file} is shipped and no page names it", skill.name);
+            assert!(
+                named,
+                "{}/{file} is shipped and no page names it",
+                skill.name
+            );
         }
     }
     // The walk reads links: the work skill's own router leads to each of its stage pages.
