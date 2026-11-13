@@ -85,14 +85,14 @@ the line's start), on `3d95edfa`. It ended red at 18:27, in two checks:
 - **`verify`, after 3,325 s.** Its size check found `symphony` at 19,719,136 bytes against a
   budget of 19,200,000, and `symphony-server` less its client at 20,341,566 against 20,100,000.
   `just verify` stops at its first red, so the docs audit and every test target never ran.
-- **`conciliate-star-foundry`, after 154 s.** Star Foundry's `gate-review` no longer compiles
-  against the candidate: it calls `cli::board_client`, which the board's library no longer has.
-  Behind it, hidden by the first, a second break: a field added to the public `land::Generator`,
-  which Star Foundry's tests build by its four fields. Both are being put back on this side, on the
-  red's own task.
+- **The consuming project's `conciliate-ID` step, after 154 s.** Its `gate-review` no longer
+  compiles against the candidate: it calls `cli::board_client`, which the board's library no longer
+  has. Behind it, hidden by the first, a second break: a field added to the public
+  `land::Generator`, which the consuming project's tests build by its four fields. Both are being
+  put back on this side, on the red's own task.
 
-Filed: `tests/nightly-red-verify` and `tests/nightly-red-conciliate-star-foundry`. In the hour the
-run took, main gained 3 landings.
+Filed: `tests/nightly-red-verify` and the consuming project's `tests/nightly-red-conciliate-ID`. In
+the hour the run took, main gained 3 landings.
 
 What it taught, under every option:
 
@@ -371,7 +371,7 @@ branch holds).
 | the same: keys and reuse | stands: the keys compare the candidate's tip with its first commit | stands | stands | stands, and skips less on a busy day |
 | the same: its card on how old a green may be | stands; a green carried to a rerun is at most the candidate's age | stands | stands | stands |
 | `tools/nightly-and-regenerator-edges`, all seven | stand: items 1 and 2 are the first run's wait on main's tip | stand | stand | stand |
-| `tests/nightly-red-conciliate-star-foundry`: the consumer's calls put back | stands | stands | stands | stands |
+| the consuming project's `tests/nightly-red-conciliate-ID`: its calls put back | stands | stands | stands | stands |
 
 ## Why A
 
@@ -400,9 +400,9 @@ code cannot change on its default branch until its pin moves. Tonight's two brea
 and are being put back; a deliberate one needs a way. The owner's, on a card:
 
 - **A, two releases.** The change adds the new item and keeps the old one working beside it, with
-  no `#[deprecated]` mark: Star Foundry's `just lint-rs` runs clippy with `-D warnings` (its
-  justfile and workspace lints), so the mark would turn its own lint red once its pin moves. The
-  release carries both; the refresh moves the pin as today; the consumer moves to the new item
+  no `#[deprecated]` mark: the consuming project's `just lint-rs` runs clippy with `-D warnings`
+  (its justfile and workspace lints), so the mark would turn its own lint red once its pin moves.
+  The release carries both; the refresh moves the pin as today; the consumer moves to the new item
   through a task of its own. A later task here removes the old item once no consumer's default
   branch calls it, which that run's conciliation proves. Nothing in the run or the refresh
   changes, and no consumer's main breaks. The cost: the old item is kept for a release or more, and
@@ -461,9 +461,9 @@ release-inputs` (the files the client's release build reads), which keeps its na
 
 ### What keeps working during the change
 
-Everything moves at once, as the owner chose for the last rename (2026-11-11, on Star Foundry's
-names: "B - just remove the bandaid quickly. Break things then fix them ASAP"). Five things need
-care:
+Everything moves at once, as the owner chose for the last rename (2026-11-11, on the consuming
+project's names: "B - just remove the bandaid quickly. Break things then fix them ASAP"). Five
+things need care:
 
 - **The old recipe.** `just nightly` answers one line, "`just nightly` is now `just release`", and
   exits 2, running nothing, until the first release `just release` cuts; then it goes.
@@ -678,8 +678,8 @@ merging the candidate back into main changes main's tree: no
   refresh's test that a consumer already takes the release (`nightly/refresh.rs`), how reds are
   filed and closed (`nightly/board.rs`), the red series (`crates/tasks/src/red.rs`), the sweep's
   lock name (`crates/tasks/src/sweep/holder.rs`), the land and its generated paths (TASKS), the
-  refresh's Cargo-only commit (RELEASES), the justfile and `symphony.toml`; and, read only, Star
-  Foundry's `just lint-rs` (clippy with `-D warnings`).
+  refresh's Cargo-only commit (RELEASES), the justfile and `symphony.toml`; and, read only, the
+  consuming project's `just lint-rs` (clippy with `-D warnings`).
 - **Measured:** the first run's record and logs (`.git/symphony/nightly/`); landings per hour and
   the packages each changed (`git log --first-parent --merges`, `git diff --name-only`) on
   `origin/main` at `c70a7515`; the packages' local dependencies (their `Cargo.toml`); that no

@@ -69,6 +69,14 @@ const NEXT: &str = "next: start the board and the shared server from builds of t
                     next `just tasks` starts the board; `just symphony` the shared server); no \
                     older build may run on this repository again\n";
 
+/// What a run that moved a hold with the board's folder ends with instead: no board command starts
+/// the board while the hold stands.
+const NEXT_HELD: &str = "next: release the hold first, with a build of the new code (`just tasks \
+                         database release --as HANDLE`, by the handle that holds it), then start \
+                         the board and the shared server from builds of the new code (the next \
+                         `just tasks` starts the board; `just symphony` the shared server); no \
+                         older build may run on this repository again\n";
+
 /// A repository whose main checkout is `main/`, with a linked worktree `wt/`, and a machine folder
 /// of its own holding no server's record.
 struct State {
@@ -319,6 +327,50 @@ fn program(name: &str, cwd: &Path) -> (Started, String) {
     (started, line)
 }
 
+/// A process ps names by the whole command line `line` (perl, renamed, with no environment for
+/// ps to show), working in `cwd` and holding `open` open, by the path given, when there is one;
+/// once ps says it runs.
+fn renamed(line: &str, cwd: &Path, open: Option<&str>) -> Started {
+    let started = Started(
+        Command::new("/usr/bin/env")
+            .args([
+                "-i",
+                "/usr/bin/perl",
+                "-e",
+                "my $line = shift; my $file; \
+                 if (@ARGV) { open($file, '<', $ARGV[0]) or die \"$ARGV[0]: $!\" } \
+                 $0 = $line; sleep 600",
+                line,
+            ])
+            .args(open)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_named(started.0.id(), line);
+    started
+}
+
+/// The lines of `out` after its first that say a server was passed, and the rest.
+fn passes(out: &str) -> (BTreeSet<String>, String) {
+    let mut passed = BTreeSet::new();
+    let mut rest = String::new();
+    for (at, line) in out.split_inclusive('\n').enumerate() {
+        if at > 0 && line.starts_with("passed ") {
+            passed.insert(line.to_string());
+        } else {
+            rest.push_str(line);
+        }
+    }
+    (passed, rest)
+}
+
+/// The lines of `err`, each once.
+fn lines(err: &str) -> BTreeSet<String> {
+    err.lines().map(String::from).collect()
+}
+
 /// The folders a run leaves a fence in once they move, and where each went.
 const FENCED: [(&str, &str); 4] = [
     ("sf-tasks", "symphony/tasks"),
@@ -344,32 +396,29 @@ fn refusal(why: &str) -> String {
     format!("symphony move-state: {why}\n")
 }
 
+/// The moves a run makes of a [`State::fill`]ed repository, in order.
+const WHOLE: [&str; 12] = [
+    "sf-tasks to symphony/tasks",
+    "sf-surreal to symphony/surreal",
+    "sf-symphony to symphony/server",
+    "sf-task-models to symphony/models",
+    "sf-runs to symphony/runs",
+    "sf-cargo/dx-0.7.10 to symphony/tools/dx-0.7.10",
+    "sf-cargo/dx-home to symphony/tools/dx-home",
+    "sf-docs/verdict-backlog to symphony/server/verdict-backlog",
+    "sf-docs/verdict-publications to symphony/server/verdict-publications",
+    "sf-docs/verdict-commits.lock to symphony/server/verdict-commits.lock",
+    "sf-docs/verdict-writes.lock to symphony/server/verdict-writes.lock",
+    "worktrees/wt/sf-sweep-remove.lock to worktrees/wt/symphony-sweep-remove.lock",
+];
+
 #[test]
 fn the_whole_state_moves_into_one_folder_and_a_second_run_finds_nothing_to_move() {
     let s = State::new("move-whole");
     s.fill();
     let done = s.run(&[]);
     assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
-    assert_eq!(
-        done.out,
-        s.said(
-            &[
-                "sf-tasks to symphony/tasks",
-                "sf-surreal to symphony/surreal",
-                "sf-symphony to symphony/server",
-                "sf-task-models to symphony/models",
-                "sf-runs to symphony/runs",
-                "sf-cargo/dx-0.7.10 to symphony/tools/dx-0.7.10",
-                "sf-cargo/dx-home to symphony/tools/dx-home",
-                "sf-docs/verdict-backlog to symphony/server/verdict-backlog",
-                "sf-docs/verdict-publications to symphony/server/verdict-publications",
-                "sf-docs/verdict-commits.lock to symphony/server/verdict-commits.lock",
-                "sf-docs/verdict-writes.lock to symphony/server/verdict-writes.lock",
-                "worktrees/wt/sf-sweep-remove.lock to worktrees/wt/symphony-sweep-remove.lock",
-            ],
-            &s.older_install()
-        )
-    );
+    assert_eq!(done.out, s.said(&WHOLE, &s.older_install()));
     s.moved();
     // The project's own and the older install's files stay, the fences stand where the folders an
     // older build would make again were, and nothing else of the old names is left.
@@ -805,6 +854,10 @@ fn an_older_builds_replay_record_ask_to_end_and_hold_stand_across_the_move() {
     drop(closing);
     let done = s.run(&[]);
     assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(
+        done.out,
+        s.said(&WHOLE, &s.older_install()).replace(NEXT, NEXT_HELD)
+    );
     s.moved();
     let after = s.tree();
     assert_eq!(after["symphony/tasks/replay.json"], record);
@@ -897,10 +950,12 @@ fn a_live_server_in_either_record_refuses_and_a_dead_one_does_not() {
 fn a_land_at_work_refuses_and_the_record_of_a_group_gone_moves_along() {
     let s = State::new("move-land");
     s.fill();
-    // The lock two lands take in turn, held as a land holds it, naming the land.
+    // The lock two lands take in turn, held as a land holds it, naming the land: lsof names the
+    // process that holds it open, here this test's own.
     s.write("sf-tasks/land.lock", "the land of tools/x (pid 41)");
     let lock = fs::File::open(s.common.join("sf-tasks/land.lock")).unwrap();
     lock.try_lock().unwrap();
+    let me = std::process::id();
     let before = s.tree();
     let done = s.run(&[]);
     assert_eq!(
@@ -908,10 +963,18 @@ fn a_land_at_work_refuses_and_the_record_of_a_group_gone_moves_along() {
         (
             1,
             "",
-            refusal(
+            [
+                format!(
+                    "pid {me} ({}) has sf-tasks/land.lock open, this repository's state: stop it \
+                     and run this again",
+                    command_of(me)
+                ),
                 "the land of tools/x (pid 41) holds sf-tasks/land.lock: let it end and run this \
                  again"
-            )
+                    .to_string(),
+            ]
+            .map(|why| refusal(&why))
+            .concat()
         )
     );
     assert_eq!(s.tree(), before);
@@ -1005,6 +1068,222 @@ fn a_program_of_the_board_or_the_server_in_or_naming_the_repository_refuses() {
     // The same program outside the repository, or another program inside it, is no reason.
     let _outside = program("tasks", &s.machine);
     let _other = program("sleep", &s.wt);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    s.moved();
+}
+
+/// Private boards an older build's tests left running on the pinned SurrealDB's old program: each
+/// server whose data and working folder lie outside the repository is passed, named on stdout by
+/// the dry run and the run, and keeps running while the state moves. Outside: a folder of its own;
+/// a repository nested in the main checkout's build folder, which git finds there; a working
+/// folder since removed, with its data, as a removed worktree's test left them; and the program at
+/// its new path, by which the command line names the common dir and no old folder.
+#[test]
+fn a_surreal_server_whose_data_and_working_folder_lie_outside_is_passed_and_keeps_running() {
+    let s = State::new("move-outside-servers");
+    s.fill();
+    let common = s.common.to_str().unwrap();
+    let given = common.strip_prefix("/private").unwrap_or(common);
+    let base = s.main.parent().unwrap();
+    let old = format!("{given}/sf-surreal/3.3.0/surreal start --unauthenticated --bind 127.0.0.1");
+    let own = base.join("review-test/main/.git/sf-tasks");
+    let nested = s.main.join(".target/exp/repo");
+    let removed = s.main.join(".target/removed");
+    let removed_data = base.join("removed-test/main/.git/sf-tasks/data");
+    for folder in [
+        own.join("data"),
+        nested.clone(),
+        removed.clone(),
+        removed_data.clone(),
+    ] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    git(&nested, &["init", "-q"]);
+    let nested_data = nested.join(".git/sf-tasks/data");
+    fs::create_dir_all(&nested_data).unwrap();
+    let path = |folder: &Path| folder.display().to_string();
+    // Each server's command line, its working folder and its data folder.
+    let servers = [
+        (
+            format!("{old}:4201 surrealkv://{}", path(&own.join("data"))),
+            own.clone(),
+            path(&own.join("data")),
+        ),
+        (
+            format!("{old}:4202 memory"),
+            base.to_path_buf(),
+            "in memory".to_string(),
+        ),
+        (
+            format!("{old}:4203 surrealkv://{}", path(&nested_data)),
+            nested.clone(),
+            path(&nested_data),
+        ),
+        (
+            format!("{old}:4204 surrealkv://{}", path(&removed_data)),
+            removed.clone(),
+            path(&removed_data),
+        ),
+        (
+            format!(
+                "{given}/symphony/surreal/3.3.0/surreal start --bind 127.0.0.1:4205 \
+                 surrealkv://data"
+            ),
+            own.clone(),
+            path(&own.join("data")),
+        ),
+    ];
+    let mut running: Vec<Started> = servers
+        .iter()
+        .map(|(line, cwd, _)| renamed(line, cwd, None))
+        .collect();
+    fs::remove_dir_all(&removed).unwrap();
+    fs::remove_dir_all(base.join("removed-test")).unwrap();
+    let passed: BTreeSet<String> = servers
+        .iter()
+        .zip(&running)
+        .map(|((line, cwd, data), server)| {
+            let at = if cwd.exists() {
+                path(cwd)
+            } else {
+                format!("{}, gone", path(cwd))
+            };
+            format!(
+                "passed pid {} ({line}): a SurrealDB server whose data ({data}) and working folder \
+                 ({at}) lie outside this repository; it keeps running\n",
+                server.0.id()
+            )
+        })
+        .collect();
+
+    let before = s.tree();
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!((dry.code, dry.err.as_str()), (0, ""), "{}", dry.out);
+    assert_eq!(
+        passes(&dry.out),
+        (
+            passed.clone(),
+            format!(
+                "in {} (a dry run: nothing changes)\n{}{}",
+                s.common.display(),
+                WHOLE.map(|line| format!("would move {line}\n")).concat(),
+                FENCED
+                    .map(|(old, _)| format!("would fence {old}\n"))
+                    .concat()
+            )
+        )
+    );
+    assert_eq!(s.tree(), before);
+
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    assert_eq!(
+        passes(&done.out),
+        (passed, s.said(&WHOLE, &s.older_install()))
+    );
+    s.moved();
+    for server in &mut running {
+        assert_eq!(server.0.try_wait().unwrap(), None, "a passed server ended");
+    }
+}
+
+/// Whatever touches the repository's own state is refused by its pid, by whatever path it names
+/// it: a server on the board's data by its absolute path, or by one relative to the checkout it
+/// works in; one whose data lies outside but which works in a checkout; one whose program and data
+/// are both relative, working in the common dir; one outside by both folders that holds a file of
+/// the board's open; and processes holding the board's files by relative paths, which only lsof
+/// finds. None is signalled, and once they have ended the state moves.
+#[test]
+fn a_server_or_a_process_on_the_repositorys_state_by_any_path_is_refused() {
+    let s = State::new("move-inside-servers");
+    s.fill();
+    let common = s.common.to_str().unwrap();
+    let given = common.strip_prefix("/private").unwrap_or(common);
+    let outside = s.main.parent().unwrap().join("outside");
+    fs::create_dir_all(outside.join("data")).unwrap();
+    let old = format!("{given}/sf-surreal/3.3.0/surreal start --bind 127.0.0.1");
+    let elsewhere = format!("surrealkv://{}/data", outside.display());
+    let absolute = format!("{old}:4301 surrealkv://{given}/sf-tasks/data");
+    let relative = format!("{old}:4302 surrealkv://.git/sf-tasks/data");
+    let in_worktree = format!("{old}:4303 {elsewhere}");
+    let all_relative =
+        "sf-surreal/3.3.0/surreal start --bind 127.0.0.1:4304 surrealkv://sf-tasks/data";
+    let holding = format!("{old}:4305 {elsewhere}");
+    let health = s.common.join("sf-tasks/health.json").display().to_string();
+    let mut running = [
+        renamed(&absolute, &outside, None),
+        renamed(&relative, &s.main, None),
+        renamed(&in_worktree, &s.wt, None),
+        renamed(all_relative, &s.common, None),
+        renamed(&holding, &outside, Some(&health)),
+        renamed(
+            "holder",
+            &s.common.join("sf-tasks/data"),
+            Some("000001.sst"),
+        ),
+        renamed(
+            "reader",
+            &s.machine,
+            Some("../main/.git/sf-tasks/health.json"),
+        ),
+    ];
+    let pid = |at: usize| running[at].0.id();
+    let on_state = |at: usize, line: &str| {
+        format!(
+            "pid {} ({line}) runs on this repository's state: stop it and run this again",
+            pid(at)
+        )
+    };
+    let open = |at: usize, line: &str, what: &str| {
+        format!(
+            "pid {} ({line}) {what}, this repository's state: stop it and run this again",
+            pid(at)
+        )
+    };
+    let refused = [
+        on_state(0, &absolute),
+        on_state(1, &relative),
+        on_state(2, &in_worktree),
+        format!(
+            "pid {} ({all_relative}), a program of the board or the server, works in {}, a \
+             folder of this repository: stop it and run this again",
+            pid(3),
+            s.common.display()
+        ),
+        open(4, &holding, "has sf-tasks/health.json open"),
+        open(5, "holder", "works in sf-tasks/data"),
+        open(6, "reader", "has sf-tasks/health.json open"),
+    ]
+    .map(|why| refusal(&why).trim_end().to_string());
+    let refused = BTreeSet::from(refused);
+
+    let before = s.tree();
+    let dry = s.run(&["--dry-run"]);
+    assert_eq!(
+        (dry.code, lines(&dry.err)),
+        (1, refused.clone()),
+        "{}",
+        dry.err
+    );
+    assert_eq!(passes(&dry.out).0, BTreeSet::new(), "{}", dry.out);
+    let done = s.run(&[]);
+    assert_eq!(
+        (done.code, done.out.as_str(), lines(&done.err)),
+        (1, "", refused),
+        "{}",
+        done.err
+    );
+    assert_eq!(s.tree(), before);
+    for process in &mut running {
+        assert_eq!(
+            process.0.try_wait().unwrap(),
+            None,
+            "the move signalled a process"
+        );
+    }
+
+    drop(running);
     let done = s.run(&[]);
     assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
     s.moved();

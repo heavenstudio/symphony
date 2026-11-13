@@ -40,17 +40,34 @@
 # verdict entry is in both the older install and the server's folder, when a move would cross
 # disks, or while anything of the repository runs: a process whose command line names a path under
 # those folders (the board's SurrealDB, the shared server installed there, a board build kept
-# there), a process with a file open under the client's build tools it moves or removes, or working
-# there (a client build running them, by lsof), the board's server its record names, the machine's one Symphony server (its record in
-# the machine folder: SYMPHONY_MACHINE_DIR, else the platform's), which serves every registered
-# project, a land (its lock sf-tasks/land.lock held, or the process group sf-tasks/land/running
-# names alive; the board's record and these in symphony/tasks/ too, once a stopped run moved the
-# folder there), a fetch of SurrealDB holding its lock, or any program of the board or the server
-# (tasks, agent-send, tasks-copy, tasks-reclaim, symphony, symphony-server, surreal) working in a
-# checkout of the repository or its common dir, or naming one. A run that finds nothing to move
-# says so and exits 0, and a second run finishes what a stopped one left. --dry-run prints the
-# moves and the refusals and changes nothing. It reads the process table with ps, working folders
-# and the open files under the tools with lsof, and the land's lock with perl.
+# there), a process with a file open under the board's or the server's folder or under the
+# client's build tools it moves or removes, or working there, by whatever path it opened them (a
+# board command or a server by a relative path, a client build running the tools: by lsof), the
+# board's server its record names, the machine's one Symphony server (its record in the machine
+# folder: SYMPHONY_MACHINE_DIR, else the platform's), which serves every registered project, a land
+# (its lock sf-tasks/land.lock held, or the process group sf-tasks/land/running names alive; the
+# board's record and these in symphony/tasks/ too, once a stopped run moved the folder there), a
+# fetch of SurrealDB holding its lock, or any program of the board or the server (tasks,
+# agent-send, tasks-copy, tasks-reclaim, symphony, symphony-server, surreal) working in a checkout
+# of the repository or its common dir, or naming one.
+#
+# A SurrealDB server (`surreal start … DATA`) whose data folder and working folder both lie
+# outside the repository is passed and named on stdout, though it runs the pinned program from
+# sf-surreal: a test's private board left running, which holds nothing of this repository's state
+# but that program's file, and keeps running it once it moves. Its data folder, the last word of its command
+# line (`memory`, or a path after `surrealkv://`, `rocksdb://` or `file://`), is made absolute
+# against its working folder and resolved; a folder lies in the repository when it is under the
+# common dir or a checkout git lists, or where git, asked there, finds this repository (one it
+# finds nested in a checkout's ignored files is another), and a working folder since removed lies
+# in none. A server with another shape, or one lsof finds with a file open under the board's or the
+# server's folder, is refused like any other process.
+#
+# A run that finds nothing to move says so and exits 0, and a second run finishes what a stopped
+# one left. --dry-run prints the moves, the passes and the refusals and changes nothing. It reads
+# the process table with ps, working folders and the open files under those folders with lsof, the
+# repositories with git and the land's lock with perl. Its last line says what comes next: with a
+# hold moved, releasing it first by a build of the new code, as no board command starts the board
+# while it stands.
 #
 # Where sf-tasks, sf-surreal, sf-symphony or sf-task-models moved or went, it leaves a one-line
 # file of that name saying where, right after that folder's own move: a build of the old code then
@@ -321,11 +338,13 @@ recorded_pid() {
     [[ "$text" =~ $pattern ]] || return 1
     printf '%s\n' "${BASH_REMATCH[1]}"
 }
-# The command line of process PID while it runs; failure when it does not.
+# The command line of process PID while it runs, less the blanks a process that renamed itself
+# leaves at its end; failure when it does not run.
 command_of() {
     local line
     [ "$1" -gt 0 ] 2>/dev/null && [ "$1" != "$$" ] || return 1
     line="$(ps -ww -o command= -p "$1" 2>/dev/null)" || return 1
+    line="${line%"${line##*[![:space:]]}"}"
     [ -n "$line" ] || return 1
     printf '%s\n' "$line"
 }
@@ -361,8 +380,119 @@ elif [ -n "$machine" ] && pid="$(recorded_pid "$machine/server.json")" && line="
     fi
 fi
 
+# The folders of this repository: its common dir and each checkout git lists, as named, resolved,
+# and (on macOS, where /tmp and /var are links into /private) without /private.
+roots=()
+add_root() {
+    roots+=("$1")
+    case "$1" in /private/*) roots+=("${1#/private}") ;; esac
+}
+add_root "$common"
+if [ "$given" != "$common" ]; then add_root "$given"; fi
+while IFS= read -r entry; do
+    case "$entry" in
+        "worktree "*)
+            path="${entry#worktree }"
+            add_root "$path"
+            if real="$(cd "$path" 2>/dev/null && pwd -P)" && [ "$real" != "$path" ]; then add_root "$real"; fi
+            ;;
+    esac
+done < <(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+    git -C "$common" worktree list --porcelain 2>/dev/null)
+
+# PATH made absolute against the folder FROM when it is relative, its `.` and `..` parts folded.
+absolute() {
+    local path="$1" part out="" parts=() folded=()
+    case "$path" in /*) ;; *) path="$2/$path" ;; esac
+    IFS=/ read -r -a parts <<<"$path"
+    for part in ${parts[@]+"${parts[@]}"}; do
+        case "$part" in
+            "" | .) ;;
+            ..)
+                if [ "${#folded[@]}" -gt 0 ]; then
+                    unset "folded[$((${#folded[@]} - 1))]"
+                    folded=(${folded[@]+"${folded[@]}"})
+                fi
+                ;;
+            *) folded+=("$part") ;;
+        esac
+    done
+    for part in ${folded[@]+"${folded[@]}"}; do out="$out/$part"; done
+    printf '%s\n' "${out:-/}"
+}
+# Whether the absolute, folded FOLDER lies in this repository: under its common dir or a checkout
+# git lists, or where git, asked from it or from the nearest folder above it that exists, finds
+# this repository. Where git finds another repository (one nested in a checkout's ignored files),
+# it lies outside; where it finds none, it lies in a checkout only by its path.
+in_repository() {
+    local folder="$1" real="$1" found root
+    while [ "$real" != / ] && [ ! -d "$real" ]; do
+        real="${real%/*}"
+        real="${real:-/}"
+    done
+    real="$(cd "$real" 2>/dev/null && pwd -P)" || return 0
+    for root in "$common" "${common#/private}" "$given"; do
+        case "$folder/" in "$root"/*) return 0 ;; esac
+        case "$real/" in "$root"/*) return 0 ;; esac
+    done
+    if found="$(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES
+        git -C "$real" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" &&
+        [ -n "$found" ]; then
+        found="$(cd "$found" 2>/dev/null && pwd -P)" || return 0
+        [ "$found" = "$common" ]
+        return
+    fi
+    for root in "${roots[@]}"; do
+        case "$folder/" in "$root"/*) return 0 ;; esac
+        case "$real/" in "$root"/*) return 0 ;; esac
+    done
+    return 1
+}
+# Whether process PID, whose command line is LINE, is a SurrealDB server whose data folder and
+# working folder both lie outside this repository, as `passing` then says. Its data folder is the
+# path its command line ends with, made absolute against its working folder (none for `memory`);
+# a working folder that no longer exists is in no repository. A server whose program, data or
+# working folder cannot be told is not one.
+passing=""
+outside_server() {
+    local pid="$1" line="$2" program last data cwd where
+    program="${line%% *}"
+    [ "${program##*/}" = surreal ] || return 1
+    case "${line#"$program"}" in " start "*) ;; *) return 1 ;; esac
+    command -v lsof >/dev/null 2>&1 || return 1
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+    [ -n "$cwd" ] || return 1
+    last="${line##* }"
+    case "$last" in
+        memory) data="" ;;
+        surrealkv://?* | surrealkv+versioned://?* | rocksdb://?* | file://?*)
+            data="$(absolute "${last#*://}" "$cwd")"
+            if in_repository "$data"; then return 1; fi
+            ;;
+        *) return 1 ;;
+    esac
+    if [ -d "$cwd" ]; then
+        if in_repository "$(absolute "$cwd" /)"; then return 1; fi
+        where="$cwd"
+    else
+        where="$cwd, gone"
+    fi
+    passing="pid $pid ($line): a SurrealDB server whose data (${data:-in memory}) and working folder ($where) lie outside this repository"
+}
+# The servers passed, their pids in `passes` too: lsof below still refuses one with a file open
+# under the board's or the server's folder.
+passed=()
+passed_pid=()
+passes=" "
+pass() {
+    passed+=("$passing")
+    passed_pid+=("$1")
+    passes="$passes$1 "
+}
+
 # The old folders as a command line may name them: as git gave the common dir, resolved, and (on
-# macOS, where /tmp and /var are links into /private) without /private.
+# macOS) without /private. A server outside the repository that names only the old SurrealDB's
+# program is passed: it holds nothing of the repository's state but that program's file.
 prefixes=("$given/sf-" "$common/sf-")
 case "$common" in /private/*) prefixes+=("${common#/private}/sf-") ;; esac
 if table="$(ps -ww -axo pid=,command= 2>/dev/null)"; then
@@ -371,8 +501,12 @@ if table="$(ps -ww -axo pid=,command= 2>/dev/null)"; then
         for prefix in "${prefixes[@]}"; do
             case "$line" in
                 *"$prefix"*)
-                    refuse "pid $pid ($line) runs on this repository's state: stop it and run this again"
-                    named="$named$pid "
+                    if outside_server "$pid" "$line"; then
+                        pass "$pid"
+                    else
+                        refuse "pid $pid ($line) runs on this repository's state: stop it and run this again"
+                        named="$named$pid "
+                    fi
                     break
                     ;;
             esac
@@ -382,22 +516,37 @@ else
     refuse "the process table could not be read (ps), so nothing running could be ruled out"
 fi
 
-# A process with a file open under an older build's copy of the client's build tools this run moves
-# or removes, or working there, as lsof finds it: a build running them, whatever its command line
-# names. No build removes these, since another worktree's may be running them; only this run does.
+# A process with a file open under the board's or the server's folder this run moves, or under an
+# older build's copy of the client's build tools it moves or removes, or working there, as lsof
+# finds it, by whatever path it opened them: a board command or a server by a relative path, a
+# build running the tools, whatever its command line names. No build removes the tools, since
+# another worktree's may be running them; only this run does.
 for pair in "${folders[@]}"; do
     old="${pair% *}"
-    case "$old" in sf-cargo/*) ;; *) continue ;; esac
+    case "$old" in
+        sf-tasks | sf-symphony)
+            what_it_is="this repository's state"
+            then_what="stop it and run this again"
+            ;;
+        sf-cargo/*)
+            what_it_is="an older build's copy of the client's build tools"
+            then_what="let it end and run this again"
+            ;;
+        *) continue ;;
+    esac
     planned "$old" || continue
     if ! command -v lsof >/dev/null 2>&1; then
-        refuse "lsof is needed to rule out a process with a file open under $old, the client's build tools"
+        case "$old" in
+            sf-cargo/*) refuse "lsof is needed to rule out a process with a file open under $old, the client's build tools" ;;
+            *) refuse "lsof is needed to rule out a process with a file open under $old, $what_it_is" ;;
+        esac
         continue
     fi
     while IFS=$'\t' read -r pid fd file; do
         [ -n "$pid" ] && [ "$pid" != "$$" ] && [[ "$named" != *" $pid "* ]] || continue
         line="$(command_of "$pid")" || continue
         if [ "$fd" = cwd ]; then what="works in ${file#"$common"/}"; else what="has ${file#"$common"/} open"; fi
-        refuse "pid $pid ($line) $what, an older build's copy of the client's build tools: let it end and run this again"
+        refuse "pid $pid ($line) $what, $what_it_is: $then_what"
         named="$named$pid "
     done < <(lsof -nP -w -Fpfn +D "$common/$old" 2>/dev/null |
         awk '/^p/ { pid = substr($0, 2); told = 0; next }
@@ -439,33 +588,13 @@ if pid="$(fetching "$common/sf-surreal")" && [[ "$named" != *" $pid "* ]]; then
     named="$named$pid "
 fi
 
-# The folders of this repository: its common dir and each checkout git lists, as named, resolved,
-# and (on macOS) without /private.
-roots=()
-add_root() {
-    roots+=("$1")
-    case "$1" in /private/*) roots+=("${1#/private}") ;; esac
-}
-add_root "$common"
-if [ "$given" != "$common" ]; then add_root "$given"; fi
-while IFS= read -r entry; do
-    case "$entry" in
-        "worktree "*)
-            path="${entry#worktree }"
-            add_root "$path"
-            if real="$(cd "$path" 2>/dev/null && pwd -P)" && [ "$real" != "$path" ]; then add_root "$real"; fi
-            ;;
-    esac
-done < <(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
-    git -C "$common" worktree list --porcelain 2>/dev/null)
-
 # Every program of the board and the server, by its name (the program ps names, or its command
 # line's first word), working in a folder of the repository or naming one: a board command,
 # monitor, dispatcher, sweep or embedding pass, a server.
 programs=" tasks agent-send tasks-copy tasks-reclaim symphony symphony-server surreal "
 candidates=" "
 consider() {
-    [ -n "$1" ] && [ "$1" != "$$" ] && [[ "$named" != *" $1 "* ]] &&
+    [ -n "$1" ] && [ "$1" != "$$" ] && [[ "$named" != *" $1 "* ]] && [[ "$passes" != *" $1 "* ]] &&
         [[ "$candidates" != *" $1 "* ]] || return 0
     case "$programs" in *" ${2##*/} "*) candidates="$candidates$1 " ;; esac
 }
@@ -495,14 +624,28 @@ if [ "$candidates" != " " ]; then
             case "$line" in *"$root"/* | *"$root" | *"$root "*) where="names $root" && break ;; esac
         done
         if [ -n "$where" ]; then
-            refuse "pid $pid ($line), a program of the board or the server, $where, a folder of this repository: stop it and run this again"
-            named="$named$pid "
+            if outside_server "$pid" "$line"; then
+                pass "$pid"
+            else
+                refuse "pid $pid ($line), a program of the board or the server, $where, a folder of this repository: stop it and run this again"
+                named="$named$pid "
+            fi
         fi
     done
 fi
 
+# The servers passed and refused by nothing after, each on a line of its own.
+tell_passed() {
+    local i
+    for i in "${!passed[@]}"; do
+        [[ "$named" != *" ${passed_pid[$i]} "* ]] || continue
+        printf 'passed %s; it keeps running\n' "${passed[$i]}"
+    done
+}
+
 if [ "$dry_run" = yes ]; then
     printf 'in %s (a dry run: nothing changes)\n' "$common"
+    tell_passed
     for i in "${!from[@]}"; do
         printf 'would move %s to %s\n' "${from[$i]}" "${to[$i]}"
     done
@@ -542,6 +685,7 @@ fence() {
 }
 
 printf 'in %s\n' "$common"
+tell_passed
 for i in "${!unfenced[@]}"; do
     fence "${unfenced[$i]}"
 done
@@ -569,5 +713,11 @@ done
 if present "$common/sf-docs"; then
     printf 'sf-docs holds an older install and nothing Symphony reads: it is safe to delete (%s)\n' "$common/sf-docs"
 fi
+# A hold that moved with the board's folder still holds it: no board command starts it until its
+# holder releases it.
 # shellcheck disable=SC2016 # the backquotes name commands for the reader; nothing runs them here
-printf 'next: start the board and the shared server from builds of the new code (the next `just tasks` starts the board; `just symphony` the shared server); no older build may run on this repository again\n'
+if [ -f "$common/symphony/tasks/hold" ]; then
+    printf 'next: release the hold first, with a build of the new code (`just tasks database release --as HANDLE`, by the handle that holds it), then start the board and the shared server from builds of the new code (the next `just tasks` starts the board; `just symphony` the shared server); no older build may run on this repository again\n'
+else
+    printf 'next: start the board and the shared server from builds of the new code (the next `just tasks` starts the board; `just symphony` the shared server); no older build may run on this repository again\n'
+fi

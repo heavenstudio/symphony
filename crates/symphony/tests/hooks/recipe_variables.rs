@@ -1,15 +1,19 @@
-//! A variable a recipe sets for Symphony is one Symphony reads. `just verify` points the browser
-//! tests' servers at the client it has just checked by `SYMPHONY_UI_DIST`: under a name the server
-//! does not read they would serve the embedded client, and the run would pass on a client it never
-//! checked.
+//! A variable a recipe sets for Symphony is one Symphony reads. `just verify` (its script,
+//! `tools/verify.sh`) points the browser tests' servers at the client it has just checked by
+//! `SYMPHONY_UI_DIST`: under a name the server does not read they would serve the embedded client,
+//! and the run would pass on a client it never checked.
 
 use std::path::{Path, PathBuf};
 
-/// The recipe files: this workspace's own and the one `symphony init` installs.
-const RECIPES: [&str; 2] = ["justfile", "crates/symphony/shipped/symphony.just"];
+/// The recipe files, this workspace's own and the one `symphony init` installs, and the script
+/// the verify recipe runs.
+const RECIPES: [&str; 3] = ["justfile", "crates/symphony/shipped/symphony.just", VERIFY];
 
-/// What the verify recipe's test step names as the client it checked.
-const VERIFIED: &str = "build/verified-client/public";
+/// The verify recipe's script.
+const VERIFY: &str = "tools/verify.sh";
+
+/// Where the verify script has the client check build the client it then checks.
+const VERIFIED: &str = "build/verified-client";
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -52,24 +56,44 @@ fn assigned(text: &str) -> Vec<(usize, String, String)> {
     found
 }
 
+/// The text of `file`, in the workspace.
+fn text_of(file: &str) -> String {
+    std::fs::read_to_string(workspace().join(file)).unwrap_or_else(|e| panic!("{file}: {e}"))
+}
+
 /// Each variable `file` sets, as `assigned` reads it.
 fn set_in(file: &str) -> Vec<(usize, String, String)> {
-    let text =
-        std::fs::read_to_string(workspace().join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
-    assigned(&text)
+    assigned(&text_of(file))
 }
 
 #[test]
 fn the_verify_recipe_names_the_client_it_checked_by_the_variable_the_server_reads() {
-    let named: Vec<String> = set_in("justfile")
+    let script = text_of(VERIFY);
+    let lines: Vec<&str> = script.lines().map(str::trim).collect();
+    // The client check builds into its folder, and the client it built is that folder's public/.
+    let folder = format!("client={VERIFIED}");
+    assert!(lines.contains(&folder.as_str()), "{VERIFY} sets {folder}");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("client-check \"$client\"")),
+        "{VERIFY} runs the client check into \"$client\""
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("fresh=\"$PWD/$client/public\"")),
+        "{VERIFY} takes the client it checked from \"$client\"/public"
+    );
+    let named: Vec<String> = assigned(&script)
         .into_iter()
-        .filter(|(_, _, value)| value.contains(VERIFIED))
+        .filter(|(_, _, value)| value == "\"$fresh\"")
         .map(|(_, name, _)| name)
         .collect();
     assert_eq!(
         named,
         [symphony_env::UI_DIST.name],
-        "the justfile names {VERIFIED} once, to the server by the variable it reads"
+        "{VERIFY} names the client it checked once, to the server by the variable it reads"
     );
 }
 
@@ -78,7 +102,10 @@ fn every_symphony_variable_a_recipe_sets_is_one_symphony_reads() {
     let read: Vec<&str> = symphony_env::ALL
         .iter()
         .map(|var| var.name)
-        .chain([symphony_board::land::RECIPE])
+        .chain([
+            symphony_board::land::RECIPE,
+            symphony_board::confine::MARKER,
+        ])
         .collect();
     let unread: Vec<String> = RECIPES
         .iter()
@@ -92,7 +119,8 @@ fn every_symphony_variable_a_recipe_sets_is_one_symphony_reads() {
         .collect();
     assert!(
         unread.is_empty(),
-        "set for Symphony, read by nothing of it (symphony_env::ALL, the land's marker):\n{}",
+        "set for Symphony, read by nothing of it (symphony_env::ALL, the land's marker, the \
+         unasked recipes' marker):\n{}",
         unread.join("\n")
     );
 }

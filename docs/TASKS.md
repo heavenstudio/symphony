@@ -496,6 +496,42 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
+### The folder move
+
+An older build keeps a repository's state in folders of the git common dir under the old names,
+and a build of this code refuses to start a board, a server or a recorder there until
+`tools/move-state.sh` has moved them into `symphony/` (its header lists each move). It is run once
+per repository, from any of its checkouts, `--dry-run` first, with the board held and the shared
+server stopped. Every move is a rename, and nothing moves while anything of the repository runs:
+a process whose command line names the old folders, one with a file of the board's, the server's
+or the old client tools open or working there, by whatever path (lsof finds the ones named
+relatively), a server either record names, a land, a fetch of SurrealDB, or a program of the
+board or the server in a checkout. Each refusal names the pid and says what to end.
+
+A SurrealDB server whose data folder and working folder both lie outside the repository is passed
+instead, and named on stdout with both: a test's private board an older build left running on the
+pinned program from the old folder, which it keeps running once that moves. Its data is the last
+word of its command line (`memory`, or a path after `surrealkv://` or another engine's scheme),
+made absolute against its working folder. A folder lies in the repository when the common dir
+holds it or git, asked there, finds this repository, or, where git finds none, when a checkout
+holds it; a repository nested in a checkout's ignored files is another, and a working folder since
+removed lies in none. One that also has a file of the board's or the server's open is refused. The
+move signals no process, passed or refused.
+
+The board's records of processes move with its folder, byte for byte, and the new build reads
+them as its own: the hold the move was made under, a private replay's record and each ask to end
+a server. The hold still holds the board after the move, so the script's closing line then says
+to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
+otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
+
+Each old folder that moved is left a one-line file of its name saying where it went, so a build
+from before the move fails there instead of starting an empty board beside the moved state. Such
+a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
+setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
+20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,
+a sweep or `tasks-reclaim`. Both mean the state moved: merge main and rebuild. `just tasks
+database release` run by such a build does nothing to it, as the file is no hold.
+
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a

@@ -64,7 +64,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <rect class="inner" x="394" y="330" width="110" height="44" rx="5"/><text x="406" y="350">every thread</text><text x="406" y="366">post</text>
 <rect class="inner" x="512" y="330" width="110" height="44" rx="5"/><text x="524" y="350">open asks</text>
 <text class="m" x="40" y="400" font-size="12">One file per project, rebuilt from what Symphony already reads, updated by difference:</text>
-<text class="m" x="40" y="418" font-size="12">changed documents, new posts. A full scan of Star Foundry's 143 documents: about 0.1 s.</text>
+<text class="m" x="40" y="418" font-size="12">changed documents, new posts. A full scan of the consuming project's 143 documents: about 0.1 s.</text>
 
 <path class="arrow" d="M638,366 L680,366"/>
 

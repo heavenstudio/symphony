@@ -29,9 +29,9 @@ board, in the order of [The implementation tasks](#the-implementation-tasks).
     register is this busy. Every clone and every consumer's Cargo copy carries it, for good, and
     every checkout holds all of it: each worktree and each consumer's pinned Cargo checkout, 4.3 MiB
     each today, about 0.9 GiB each after a year at that pace.
-  - **The committed half, for Star Foundry:** its documents show 2.47 GiB of pictures that are
-    still in its ignored folder. Committed plainly, that is 2.47 GiB in each of its worktrees, about
-    0.94 TiB across today's 388, and that decides plain commits against LFS there.
+  - **The committed half, for the consuming project:** its documents show 2.47 GiB of pictures that
+    are still in its ignored folder. Committed plainly, that is 2.47 GiB in each of its worktrees,
+    about 0.94 TiB across today's 388, and that decides plain commits against LFS there.
   - **The local half:** about 125 MiB a day of pictures here, held under 5 GB on this one disk,
     with no copy anywhere else.
 - **Evidence posted only on a thread is in no clone under any option but committing it.** The
@@ -75,11 +75,11 @@ How facts are marked:
   marks what could have been checked and was not.
 
 "Read 2026-11-12" is this machine at about 15:00 that day, with Symphony's main at `6029a28f`.
-Every worktree that `git worktree list` names, and Star Foundry's checkout and worktrees, were read
-in place and changed in nothing. GitHub's sizes, the backup, Star Foundry's build folders and its
-documents' pictures by month, and the open tasks' posts were read at about 16:00. Sizes are in GiB
-and MiB (powers of two), as GitHub's quotas are; the sweep's cap is in GB (powers of ten), as the
-sweep counts it.
+Every worktree that `git worktree list` names, and the consuming project's checkout and worktrees,
+were read in place and changed in nothing. GitHub's sizes, the backup, the consuming project's build
+folders and its documents' pictures by month, and the open tasks' posts were read at about 16:00.
+Sizes are in GiB and MiB (powers of two), as GitHub's quotas are; the sweep's cap is in GB (powers
+of ten), as the sweep counts it.
 
 ![Today: an artifact is a path in one checkout](attached-artifacts/today.svg)
 
@@ -93,8 +93,8 @@ Measured with `du`, `find` and `stat` over every checkout's artifacts folder, re
 |---|---|---|---|---|
 | This repository, 41 checkouts | 17 (one empty) | 5,788 | 4.62 GiB | 1,453 files, 248.9 MiB |
 | of which its main checkout | 1 | 1,782 | 234 MiB | 1,366 files, 233.5 MiB |
-| Star Foundry's main checkout | 1 | 295,963 | 17.2 GiB | 18,863 files, 5.46 GiB |
-| Star Foundry's 388 worktrees | 388 | not counted | 219 GiB (`du`) | 9,138 files, 1.88 GiB |
+| The consuming project's main checkout | 1 | 295,963 | 17.2 GiB | 18,863 files, 5.46 GiB |
+| The consuming project's 388 worktrees | 388 | not counted | 219 GiB (`du`) | 9,138 files, 1.88 GiB |
 
 - **This repository's pictures are its tasks' evidence.** 1,427 of the 1,453 are in folders named
   for a task (`app/header-names/`, `tools/task-timeline/`), as AGENTS.md asks: "Pictures kept as a
@@ -104,11 +104,11 @@ Measured with `du`, `find` and `stat` over every checkout's artifacts folder, re
 - **The rest is scratch data, not evidence.**
   - 3.35 GiB is one review's scratch repository and board (`hg-review`).
   - 1.0 GiB is two worktrees' test proofs (`standalone-proof`).
-  - Star Foundry's 219 GiB in worktrees is mostly per-agent folders of coverage profiles, builds
-    and boards. Only 20.6 GiB of it is in folders tagged as caches (`CACHEDIR.TAG`, as Cargo tags
-    its build folders), and one worktree holds 40 GiB of coverage profiles.
-- **Star Foundry's pictures** total 28,001 files and 7.35 GiB. Half are under 30 KiB, nine in ten
-  are under 730 KiB, and one is over 10 MiB (12.5 MiB).
+  - The consuming project's 219 GiB in worktrees is mostly per-agent folders of coverage profiles,
+    builds and boards. Only 20.6 GiB of it is in folders tagged as caches (`CACHEDIR.TAG`, as Cargo
+    tags its build folders), and one worktree holds 40 GiB of coverage profiles.
+- **The consuming project's pictures** total 28,001 files and 7.35 GiB. Half are under 30 KiB, nine
+  in ten are under 730 KiB, and one is over 10 MiB (12.5 MiB).
 
 ### How they are named
 
@@ -138,8 +138,8 @@ Measured with `du`, `find` and `stat` over every checkout's artifacts folder, re
   - A link into the artifacts folder that is not on disk gets a warning, "not on this machine",
     looked for under the audit's own checkout (`artifacts`, same file).
   - No document here links a picture in the artifacts folder.
-- **Star Foundry's documents by path into its ignored folder.** Its 143 Markdown documents show
-  1,533 pictures.
+- **The consuming project's documents by path into its ignored folder.** Its 143 Markdown documents
+  show 1,533 pictures.
   - 1,491 of them point into `artifacts/`, at 1,340 distinct paths. Most are in its ship documents
     (`docs/ships/coalition.md` alone shows 290), and 23 are in its register.
   - 1,310 of those paths are in its main checkout: 2.47 GiB, all distinct, 1,276 of them PNG.
@@ -172,7 +172,7 @@ Measured with `du`, `find` and `stat` over every checkout's artifacts folder, re
 Growth is read from each file's modification time, of what is still on disk. Files in removed
 worktrees are not counted, so these are lower bounds:
 
-| Day | This repository's pictures | Star Foundry's pictures |
+| Day | This repository's pictures | The consuming project's pictures |
 |---|---|---|
 | 2026-11-06 to 2026-11-10 | none (this repository's folder starts on 11-11) | 49 MiB in all: 16 on 11-07, 7 on 11-08, 25 on 11-09, 1 on 11-10 |
 | 2026-11-11 | 600 files, 94 MiB | none |
@@ -182,8 +182,8 @@ worktrees are not counted, so these are lower bounds:
   At that rate a 5 GiB cap holds about 40 days, if nothing is removed.
 - **This repository's documents** gained 5.2 MiB of committed pictures in the two days they have
   had any. That is about 2.5 MiB a day, or about 0.9 GiB a year at that pace.
-- **Star Foundry's pictures** came mostly in October: 7,756 files, 1.7 GiB, in its worktrees alone.
-  The 1,310 pictures its documents show date, by file time, as follows:
+- **The consuming project's pictures** came mostly in October: 7,756 files, 1.7 GiB, in its
+  worktrees alone. The 1,310 pictures its documents show date, by file time, as follows:
 
   | Month | Files | Size |
   |---|---|---|
@@ -197,7 +197,7 @@ worktrees are not counted, so these are lower bounds:
   - 65.6 MiB is the client distribution (2,922 blobs, 474 MiB before compression);
   - 4.9 MiB is the committed pictures;
   - 4.5 MiB is everything else, code and documents.
-- **A consumer's Cargo fetch.** Star Foundry's Cargo keeps two kinds of copy of Symphony:
+- **A consumer's Cargo fetch.** The consuming project's Cargo keeps two kinds of copy of Symphony:
   - **A bare copy of its history** for each URL: 78 MiB and 87 MiB.
   - **A checkout for each pinned commit:** 20 of them, 1.7 GiB in all, each about 379 MiB. Of each
     checkout, 272 MiB is the client distribution and 4.9 MiB is `docs/`, with 47 pictures (`du` of
@@ -209,8 +209,8 @@ worktrees are not counted, so these are lower bounds:
     of pictures stay.
   - Cargo fetches the whole history: shallow fetches are still the unstable `-Zgit=shallow-deps`
     ([unstable](https://doc.rust-lang.org/cargo/reference/unstable.html)).
-- **GitHub** reports Symphony's repository at 132,161 KB and Star Foundry's at 124,909 KB (`gh repo
-  view --json diskUsage`, read only). Both repositories are private.
+- **GitHub** reports Symphony's repository at 132,161 KB and the consuming project's at 124,909 KB
+  (`gh repo view --json diskUsage`, read only). Both repositories are private.
 - **Artifacts add nothing to any of these today**, being ignored. Committed pictures add their bytes
   to every clone and every pinned checkout, for good.
 
@@ -252,9 +252,9 @@ worktrees are not counted, so these are lower bounds:
     files back up". Past the bandwidth quota: "Git LFS support is disabled on your account until the
     next month" (the billing page). So LFS shows a picture in a clone only while the account is
     inside its quota or pays.
-  - **How fast a fresh clone uses it.** Each fresh clone downloads every LFS file in its tree. Star
-    Foundry's documents show 2.47 GiB, so about four fresh clones a month use the free 10 GiB of
-    bandwidth, and the fifth gets pointers until the next month, unless the account pays.
+  - **How fast a fresh clone uses it.** Each fresh clone downloads every LFS file in its tree. The
+    consuming project's documents show 2.47 GiB, so about four fresh clones a month use the free 10
+    GiB of bandwidth, and the fifth gets pointers until the next month, unless the account pays.
 - **Bandwidth is each download.** "When you download a Git LFS file, the bandwidth you use is
   included in the repository owner's bandwidth usage", GitHub Actions included
   ([storage and bandwidth](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-storage-and-bandwidth-usage)).
@@ -392,19 +392,19 @@ kept as a copy of E's store, which was considered, fails in the same way C does.
 
 ### The options side by side
 
-Numbers are this repository's unless a row names Star Foundry. Under every option, what stays local
-is kept by one rule and one cap ([Retention](#retention)).
+Numbers are this repository's unless a row names the consuming project. Under every option, what
+stays local is kept by one rule and one cap ([Retention](#retention)).
 
 | | A. The sweep's folder | B. Git LFS | C. A ref of their own | D. Git notes | E. The store alone | F. The split |
 |---|---|---|---|---|---|---|
 | A plain clone shows the documents' pictures | no | yes, with git-lfs and the quota intact or paid | no | no | no | yes |
 | Committed to main | nothing | a pointer per file, for good | nothing | nothing | nothing | the pictures documents show, for good |
-| A clone of main adds | 0 | the pointers, and then every file in its tree: 249 MiB here, up to 7.35 GiB for Star Foundry, if all evidence went in | 0 (tried) | 0 | 0 | the documents' pictures: 5.2 MiB in the history here now, about 2.5 MiB a day; 2.47 GiB for Star Foundry |
+| A clone of main adds | 0 | the pointers, and then every file in its tree: 249 MiB here, up to 7.35 GiB for the consuming project, if all evidence went in | 0 (tried) | 0 | 0 | the documents' pictures: 5.2 MiB in the history here now, about 2.5 MiB a day; 2.47 GiB for the consuming project |
 | A consumer's Cargo fetch adds | 0 | the pointers, never the files (tried) | 0 (tried) | 0 | 0 | the documents' pictures, in its copy of the history and in each pinned checkout |
 | The host's quota and cost | none | 10 GiB stored and 10 GiB a month downloaded free, then $0.07 a GiB a month and $0.0875 a GiB | unknown: GitHub documents only the repository's size (under 5 GB strongly recommended), and whether these refs count in it is unknown | as C | none | the repository's size: 129 MiB on GitHub now |
 | Removing what reached GitHub | never, short of deleting the repository or asking support | as B | deleting the ref, then unknown | rewriting the notes history | nothing reaches it | never: it would rewrite main |
-| Each worktree's disk | its own files | a copy of every file in its tree, unless it skips them | none | none | none | a copy of the documents' pictures: 4.3 MiB here today, about 0.9 GiB after a year at that pace; 2.47 GiB for Star Foundry |
-| A dead disk here loses | all of it | what no push sent | what no push sent | what no push sent | all of it: about 250 MiB here, growing by up to 125 MiB a day, and Star Foundry's 7.35 GiB | the working evidence only |
+| Each worktree's disk | its own files | a copy of every file in its tree, unless it skips them | none | none | none | a copy of the documents' pictures: 4.3 MiB here today, about 0.9 GiB after a year at that pace; 2.47 GiB for the consuming project |
+| A dead disk here loses | all of it | what no push sent | what no push sent | what no push sent | all of it: about 250 MiB here, growing by up to 125 MiB a day, and the consuming project's 7.35 GiB | the working evidence only |
 | A link names | a path in a checkout | the committed path | the file's SHA-256 | the file's SHA-256, if the note holds a list | the file's SHA-256 | in a document, the committed path; on a thread, the file's SHA-256 |
 | Needs on every machine | nothing | git-lfs | nothing new | nothing new | nothing new | nothing new |
 
@@ -426,8 +426,8 @@ task's branch.
 - **A clone shows them where git-lfs is installed and the quota holds.** Without git-lfs, a clone
   has pointers until `git lfs pull`. Past the account's LFS quota with no payment method, a clone
   gets "only ... the pointer files" until the next month (the billing page,
-  [Git LFS](#git-lfs)). Star Foundry's 2.47 GiB of documents' pictures use the free 10 GiB a month
-  in about four fresh clones. A consumer's Cargo fetch always has pointers (tried).
+  [Git LFS](#git-lfs)). The consuming project's 2.47 GiB of documents' pictures use the free 10 GiB
+  a month in about four fresh clones. A consumer's Cargo fetch always has pointers (tried).
 - **A pointer per file reaches main for good.** The owner asked not to commit artifacts directly,
   and this commits pointers to them.
 - **Nothing pushed comes back off GitHub**
@@ -481,7 +481,7 @@ and prints the line to post.
 - **The same picture taken twice is stored once.** The 1,453 pictures here are 1,384 contents.
 - **Nothing reaches git, so a clone shows nothing.** That fails the requirement.
 - **One disk, no backup.** If this disk dies, every attached file is lost: about 250 MiB here today,
-  growing by up to about 125 MiB a day, and Star Foundry's 7.35 GiB.
+  growing by up to about 125 MiB a day, and the consuming project's 7.35 GiB.
 - **A reviewer elsewhere and a second machine see none of it.**
 
 ### F. The split (recommended)
@@ -519,13 +519,13 @@ while the file is kept.
   - **Every checkout holds all of them.** Each worktree and each consumer's pinned Cargo checkout
     has the documents' pictures as the tree holds them at that commit: 4.3 MiB each today, about
     0.9 GiB each after a year at that pace. Across this repository's 40 worktrees that is about
-    36 GiB, and across the 20 pinned checkouts Star Foundry's Cargo keeps, about 18 GiB.
+    36 GiB, and across the 20 pinned checkouts the consuming project's Cargo keeps, about 18 GiB.
   - Every clone and every consumer's copy of the history carries the history's 5.2 MiB, growing at
     the same pace.
   - GitHub holds the whole repository at 129 MiB.
   - None of it is ever removed.
-- **The committed half, for Star Foundry.** Its documents show 1,310 pictures on disk, 2.47 GiB, all
-  distinct, mostly from September; 30 more are already lost. Committing them would:
+- **The committed half, for the consuming project.** Its documents show 1,310 pictures on disk, 2.47
+  GiB, all distinct, mostly from September; 30 more are already lost. Committing them would:
   - take its repository on GitHub from 122 MiB to about 2.6 GiB, past the 1 GB GitHub calls ideal
     and under the 5 GB it strongly recommends;
   - put 2.47 GiB into every clone;
@@ -534,8 +534,8 @@ while the file is kept.
   Under LFS instead, those pictures use 2.47 GiB of the free 10 GiB, its worktrees can skip them,
   and each fresh clone downloads 2.47 GiB of the free 10 GiB a month: about four fresh clones a
   month, after which a clone gets pointers unless the account pays. That per-worktree cost is what
-  decides plain commits against LFS for Star Foundry. Which to choose, and whether to shrink the
-  PNGs first, is Star Foundry's call.
+  decides plain commits against LFS for the consuming project. Which to choose, and whether to
+  shrink the PNGs first, is the consuming project's call.
 - **The local half.** It adds 0 bytes to git. It is about 125 MiB a day of pictures here, held under
   5 GB on this one disk, with no copy elsewhere. A dead disk loses the working evidence, and no
   clone or other machine sees it.
@@ -545,7 +545,7 @@ main, at about 2.5 MiB a day. Plain commits need no tool on any machine, no quot
 server or the docs audit read a file. They also show in a clone with no condition. LFS would keep
 the pictures out of consumers' Cargo copies, at the cost of git-lfs everywhere, a pointer reader in
 the server and the audit, and storage on GitHub that is never freed. LFS is the better fit only
-where a project's documents show a great deal, as Star Foundry's do.
+where a project's documents show a great deal, as the consuming project's do.
 
 ## Removing what reaches GitHub
 
@@ -634,7 +634,7 @@ be remove". Under every option it reads:
   cancelled holds it, or a document names it. Closed tasks' evidence is what becomes a candidate.
 
 Under F, a document names committed pictures, so the document rule keeps local files only for links
-made before F, such as Star Foundry's, until they are committed.
+made before F, such as the consuming project's, until they are committed.
 
 ### One cap
 
@@ -647,9 +647,9 @@ unwritten. It is counted in powers of ten, as `kept.rs` counts it, so about 4.66
 - **What it leaves out:** the main checkout's own task folders, as the sweep does. A file there
   comes under the cap only when it is attached. Until then their only bound is the board's
   low-disk warning, on every page while free disk is under `SYMPHONY_LOW_DISK_GB` gigabytes, 20 when
-  unset (`crates/tasks/src/board_health/disk.rs`). They hold 234 MiB here, and 17.2 GiB in Star
-  Foundry's main checkout, 5.46 GiB of it pictures. Follow-up, not filed: bring them under the
-  cap, or count them in its measure.
+  unset (`crates/tasks/src/board_health/disk.rs`). They hold 234 MiB here, and 17.2 GiB in the
+  consuming project's main checkout, 5.46 GiB of it pictures. Follow-up, not filed: bring them under
+  the cap, or count them in its measure.
 - **It is a project's setting.** Each project writes its own cap.
 
 ### One kept folder
@@ -681,7 +681,7 @@ and nothing is removed automatically.
 - **Scratch data is not evidence.** The sweep's rule for leftovers applies to it (the owner: "build
   should not"), and nothing here attaches it.
 
-### Star Foundry on day one
+### The consuming project on day one
 
 Its 7.35 GiB of pictures sit in two places, and each comes under the design differently.
 
@@ -702,9 +702,9 @@ worktree's 40 GiB of coverage profiles. Removing the largest few brings it under
 over the cap for good, asking each time: its documents' pictures are committed and leave the cap,
 so what stays referenced is its open tasks' files.
 
-`swept_cap_gb = 10` is proposed for Star Foundry: room for its open tasks' evidence and about a
-month of new pictures at October's pace (1.7 GiB that month, in its worktrees). The figure is its
-own call.
+`swept_cap_gb = 10` is proposed for the consuming project: room for its open tasks' evidence and
+about a month of new pictures at October's pace (1.7 GiB that month, in its worktrees). The figure
+is its own call.
 
 ## The reference index
 
@@ -746,9 +746,9 @@ own call.
   - **The board:** posts whose id is above the last one read (ids only grow; this thread's first
     post is 2039), and briefs whose task changed since.
   - **A task's close** drops its thread and its own files from the referenced set.
-- **A full rebuild is cheap, measured.** A regular expression over Star Foundry's 143 documents
-  (22 MiB) took 0.07 to 0.12 s in three runs, at load 49 on 16 cores. Over this board's 2,041 posts,
-  once read (2.4 MiB), it took 0.03 s.
+- **A full rebuild is cheap, measured.** A regular expression over the consuming project's 143
+  documents (22 MiB) took 0.07 to 0.12 s in three runs, at load 49 on 16 cores. Over this board's
+  2,041 posts, once read (2.4 MiB), it took 0.03 s.
 - **It is read only when needed:** by the cap's check, by the removal command, and by a listing of
   the store (`symphony-cli artifacts`: each file's size, when it was attached and by which task, and
   what names it). It is never read on a page view.
@@ -834,8 +834,8 @@ and keep a thread's evidence reachable.
    - **The removal command** refuses a referenced or tracked file.
 
    Nothing runs on a timer.
-5. **A note for Star Foundry's board.** It is not filed from here, and nothing in Star Foundry is
-   changed from here. It is for its own board, to decide its own calls:
+5. **A note for the consuming project's board.** It is not filed from here, and nothing in the
+   consuming project is changed from here. It is for its own board, to decide its own calls:
 
    > Symphony's owner chose F on 2026-11-12: a picture a document or a decision card shows is
    > committed beside it, and working evidence stays in the main checkout's store under the sweep's
@@ -855,9 +855,9 @@ machine's server asking this one for a picture. Each is filed when it is wanted.
 
 ## Open questions
 
-1. **Size.** Attachments take the uploads' limit of 10 MiB a file, and one of Star Foundry's 28,001
-   pictures is larger (12.5 MiB). Should agents get a higher limit, or keep this one? A larger file
-   stays in `swept/`.
+1. **Size.** Attachments take the uploads' limit of 10 MiB a file, and one of the consuming
+   project's 28,001 pictures is larger (12.5 MiB). Should agents get a higher limit, or keep this
+   one? A larger file stays in `swept/`.
 2. **The committed half under LFS here as well.** It would keep the documents' pictures out of
    consumers' Cargo copies (4.9 MiB of `docs/` per pinned checkout today). The cost is git-lfs on
    every machine, a pointer reader in the server and the audit, and GitHub storage that is never
@@ -871,13 +871,13 @@ machine's server asking this one for a picture. Each is filed when it is wanted.
   - Cargo's `fetch` at its master, 2026-11-12.
 - **Measured:**
   - sizes, counts and file times of every artifacts folder of this repository's 41 checkouts and of
-    Star Foundry's main checkout and 388 worktrees, with the folders among them tagged as caches
-    (`du`, `find`, `stat`, `shasum`);
+    the consuming project's main checkout and 388 worktrees, with the folders among them tagged as
+    caches (`du`, `find`, `stat`, `shasum`);
   - the 2,041 posts of this board's 307 tasks, and each task's stage (`just tasks list --all --json`
     and `show --json`);
-  - Star Foundry's document pictures (`grep` of its Markdown, then `stat` and `shasum`);
+  - The consuming project's document pictures (`grep` of its Markdown, then `stat` and `shasum`);
   - this repository's history (`git count-objects`, `git log --raw`, `git cat-file --batch-check`);
-  - Star Foundry's Cargo copies of Symphony (`du`, their `packed-refs`);
+  - The consuming project's Cargo copies of Symphony (`du`, their `packed-refs`);
   - both repositories' size on GitHub (`gh repo view`, read only);
   - Time Machine's destinations (`tmutil`);
   - the scratch trials;
@@ -888,8 +888,8 @@ machine's server asking this one for a picture. Each is filed when it is wanted.
   - what every checkout holds after a year, and across today's worktrees and pinned checkouts:
     each checkout's share at that pace, times today's counts;
   - LFS's cost, from GitHub's published prices;
-  - Star Foundry's set-aside size, from its folders tagged as caches, without telling compiled files
-    apart.
+  - The consuming project's set-aside size, from its folders tagged as caches, without telling
+    compiled files apart.
 - **From outside:** each claim beside its URL, read 2026-11-12.
 - **Unknown:** whether GitHub accepts and keeps a ref outside heads and tags, counts its objects in
   the repository's size, and frees them when the ref is deleted. Nothing here depends on it.
