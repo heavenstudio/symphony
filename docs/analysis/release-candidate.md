@@ -1,7 +1,8 @@
 # A release candidate held still
 
 How a red found by the full run gets fixed so that a release comes, and what the run and its
-command are called. This is a design: nothing here is built. The owner chose A on its card in
+command are called. This is a design: nothing here is built but the refresh's rule that a pin
+moves only forward, which any candidate needs (A, below). The owner chose A on its card in
 [DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
 corrections wait on the owner approving A again, and the three choices A leaves open are cards of
 their own there.
@@ -197,10 +198,10 @@ What it changes:
   (`nightly/notes.rs`). A chained candidate's first-parent line shows the second fix and its merge
   of the first, and drops the first fix's own subject (tried). A candidate release's notes list
   each red's task and the commit it advanced to, from the record.
-- **The refresh: a pin moves only forward.** Today a refresh counts a consumer as having the release
-  when the release is an ancestor of its pin, and otherwise moves the pin to the release
-  (`nightly/refresh.rs`), with no test that the release descends from the pin. A pin moved by hand
-  to a commit of main while a candidate is open is neither: moving it to the release would drop
+- **The refresh: a pin moves only forward.** Built ahead of the rest
+  ([RELEASES](../RELEASES.md#the-refresh), `nightly/refresh.rs`): a refresh moves a consumer's pin
+  only to a release that descends from it. A pin moved by hand to a commit of main while a
+  candidate is open is neither ahead of the release nor behind: moving it to the release would drop
   what it had since the candidate, a newer board schema among them (tried). Such a pin is left
   where it is and named in the refresh's report and in `--status`; the next release that descends
   from it moves it.
@@ -513,7 +514,7 @@ Their slugs keep the old word; their code uses the names on main when they merge
 
 ## The implementation tasks
 
-None is filed. In the order above:
+The first is built (`tools/refresh-moves-pins-forward`); none other is filed. In the order above:
 
 1. **The refresh moves a pin only forward.** A consumer whose pin neither holds the release nor is
    held by it is left, named in the step's output, its record and `--status`, and moved by the

@@ -108,6 +108,9 @@ that `just tasks migrate` must not be run, and where the recovery is described
 - the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
   board's tables as they are: once there is a record they read the board's schema first, and the
   recorder then runs its command all the same, asking the board nothing;
+- a consuming project's own code that reaches the board through the library
+  (`symphony_board::cli::board_client`) and opens its store on the client it is handed: once there
+  is a record the board's schema is read first, and no client is handed over for a board below it;
 - the heartbeat (`tasks beat`, the hook's), quietly, since it never refuses a tool call: it binds
   nothing and writes no key. It reads the board's schema only when the record is above its build's:
   below that, a board that went back is at another schema than its build's, and the schema guard
@@ -1637,7 +1640,8 @@ does.
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
   is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
-  client input builds no client.
+  client input builds no client. A key names one generator, so the file is refused when
+  two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
   inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
   main moved during the build, it is made on main's tip as it is then, with those
