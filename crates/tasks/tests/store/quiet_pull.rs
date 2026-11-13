@@ -115,12 +115,13 @@ fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() 
     assert!(pending[0].contains(&format!("post #{} —", next.id)));
 }
 
-/// A launch record no reader decodes, which fails the unanswered scan's read of them.
+/// A launch record no reader decodes, on the task the scan asks about, which fails the scan's read
+/// of that task's thread and launches.
 const UNREADABLE_LAUNCH: &str = "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['unreadable', 'nobody'] CONTENT { slug: 'unreadable', handle: 'nobody',
-    role: 'executor', claude_session: '', worktree: '', branch: '', pane: '', model: '',
-    started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
-const READABLE_LAUNCHES: &str = "DELETE task_session:['unreadable', 'nobody'] RETURN NONE;
+UPSERT task_session:['tools/unanswered', 'nobody'] CONTENT { slug: 'tools/unanswered',
+    handle: 'nobody', role: 'executor', claude_session: '', worktree: '', branch: '', pane: '',
+    model: '', started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
+const READABLE_LAUNCHES: &str = "DELETE task_session:['tools/unanswered', 'nobody'] RETURN NONE;
 DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
 
 #[test]
@@ -169,17 +170,18 @@ fn a_failed_unanswered_scan_delivers_the_rest_and_never_repeats_a_told_post() {
     // read just before the scan until the request after the scan's own read of them, so the
     // agents view earlier in the same pass, and all that follows, read the board as it is.
     let (writer, skips) = (f.other_client(), Arc::new(AtomicUsize::new(0)));
-    let (counted, mut unreadable) = (Arc::clone(&skips), false);
+    let (counted, mut unreadable, mut scanned) = (Arc::clone(&skips), false, false);
     let relay = crate::relay::Relay::with_before(
         f.store.client().addr(),
         0,
         Some(Box::new(move |sql| {
             if sql.contains("'landed ' + slug + ' on main'") {
                 writer.write(UNREADABLE_LAUNCH, json!({})).unwrap();
-                unreadable = true;
-            } else if unreadable && sql.contains("FROM task_session ORDER BY started") {
+                (unreadable, scanned) = (true, false);
+            } else if unreadable && sql.contains("launches: array::flatten($launched") {
                 counted.fetch_add(1, Ordering::SeqCst);
-            } else if unreadable {
+                scanned = true;
+            } else if unreadable && scanned {
                 writer.write(READABLE_LAUNCHES, json!({})).unwrap();
                 unreadable = false;
             }

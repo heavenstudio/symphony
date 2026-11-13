@@ -108,9 +108,16 @@ pub struct Flow {
     pub held: ByStatus<u32>,
     /// How many times a task took each status in the hour, done and cancelled included: a task
     /// made counts once in the status it was made in, a claim of ready work once in `in_progress`,
-    /// and a task sent back from review takes `in_progress` again.
+    /// and a task sent back from review takes `in_progress` again. A task approved, sent back to
+    /// review by its landing and approved again takes done twice: the tasks done are [`Flow::done`].
     #[serde(default)]
     pub entered: ByStatus<u32>,
+    /// The tasks done in the hour, each once: a task that held done when the file was read, in the
+    /// hour of its last close, as `tasks stats` counts its tasks done per day
+    /// (`symphony_board::stages::Stages::done_at`). One cancelled or reopened since counts in none.
+    /// None in a file that does not record it.
+    #[serde(default)]
+    pub done: Option<u32>,
     /// The task-hours spent in each open status in the hour.
     #[serde(default)]
     pub task_hours: ByStatus<f64>,
@@ -223,7 +230,8 @@ fn is_zero<T: Default + PartialEq>(figure: &T) -> bool {
 /// The tasks over a whole day: what does not add up across hours.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DayFlow {
-    /// Creation to close of each close in the day; none with no close.
+    /// Creation to close of the tasks done in the day, each once at its last close, as
+    /// [`Flow::done`] counts them; none with none.
     #[serde(default)]
     pub lead: Option<Spread>,
     /// The open tasks that had held their status longest at [`ReportDay::until`], longest first,

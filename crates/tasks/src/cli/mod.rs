@@ -245,7 +245,7 @@ fn run(
         return snapshot::run(&parsed, env, out, err);
     }
     let reached = Clock::of(env).and_then(|clock| {
-        let store = open(reach(env, &env.cwd, true)?, &clock)?;
+        let store = looking_up(open(reach(env, &env.cwd, true)?, &clock)?, env);
         let store = capped_saying(store, env, &mut |problem| {
             let _ = writeln!(err, "⚠ {problem}");
         });
@@ -332,10 +332,15 @@ fn with_nearest_slug(store: &Store, why: String) -> String {
 /// the one in the git common dir of the working directory, started if it is not running; its clock
 /// pinned at `TASKS_NOW` if that is set; its starts held to the cap the project sets ([`capped`]).
 pub fn connect(env: &Env) -> Result<Store, String> {
-    Ok(capped(
-        open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?,
-        env,
-    ))
+    let store = open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?;
+    Ok(capped(looking_up(store, env), env))
+}
+
+/// `store`, each read of its unanswered-post lookup waiting [`crate::UNANSWERED_WAIT`] at most, or
+/// what `TASKS_UNANSWERED_WAIT` sets ([`Env::seconds`]), and sent once: a command does without the
+/// posts rather than wait minutes on them.
+fn looking_up(store: Store, env: &Env) -> Store {
+    store.looking_up_within(env.seconds(crate::UNANSWERED_WAIT_VAR, crate::UNANSWERED_WAIT))
 }
 
 /// `store`, held to the limits the main checkout of `env`'s repository writes ([`crate::limits`]):

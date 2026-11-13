@@ -4,12 +4,13 @@
 //! board of the test's own (or the one named) while it runs, then how it ended and how long it took.
 //! The recorder finishes after its command does, so what it keeps is waited for.
 //!
-//! Every run here is on a scratch board, and takes [`SCALE`] but one that bounds its own time by a
-//! wait it rules out: each wait of the recorder's a machine's speed meets (its word that it watches
-//! its command, the board's answer, git's, and apart from its command another run's end and the day
-//! files' lock) is that many times its own, so a loaded machine never decides what a run records.
-//! What the scale would hide, a recorder grown slow, the quickest of a test's several runs shows
-//! ([`QUICKEST_START`]). A wait of the tests' own is on its condition, with a backstop only a stall
+//! Every run here is on a scratch board, and takes [`SCALE`], or the largest scale where a board
+//! that never answers must still be asked however late its end is stamped ([`ASKED`]) or a held
+//! lock must not hold a run up ([`LOCK_SCALE`]): each wait of the recorder's a machine's speed
+//! meets (its word that it watches its command, the board's answer, git's, and apart from its
+//! command another run's end and the day files' lock) is that many times its own, so a loaded
+//! machine never decides what a run records. What the scale would hide, a recorder grown slow, the
+//! quickest of a test's several runs shows ([`QUICKEST_START`]). A wait of the tests' own is on its condition, with a backstop only a stall
 //! reaches ([`patience`]), and one that gives up says what the work folder holds ([`holds`]): never
 //! recorded, or recorded and never finished.
 

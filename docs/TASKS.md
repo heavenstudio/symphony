@@ -1185,7 +1185,8 @@ A channel registered anew starts again from the whole digest: `--off`, a registr
 session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
 Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
 stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
-A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+The scan reads only the open tasks' threads, and each of its reads waits at most ten seconds and is sent once, so a
+board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
 those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
 next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
@@ -2444,7 +2445,13 @@ tasks done per day, which its header says:
 - how many tasks review sent back how often (`0 × 41 · 1 × 6 · 2 × 1`);
 - top-level tasks done on each day of the window, whenever they were made (a
   task made a month ago and closed yesterday counts yesterday), by this
-  machine's time zone, every date of the window named once;
+  machine's time zone, every date of the window named once: each task done
+  now, once, on the day of its last close (`Stages::done_at`), so one approved,
+  sent back to review by its landing and approved again counts once, at the
+  second approve, and one cancelled or reopened since counts on no day. The
+  Reports page's Tasks done counts the same tasks by the same rule, by UTC
+  day (its day files' `done`, beside `entered.done`, which counts every entry
+  into done);
 - the ten open tasks that have held their status longest, with that status
   and how long;
 - how many tasks are blocked and how many are ready with no executor, each

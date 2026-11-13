@@ -26,21 +26,26 @@ fn shown(task: &symphony_board::Task) -> symphony_api::Task {
     .unwrap()
 }
 
-/// The one record in `folder` once it is in `state`.
+/// The one record in `folder` once it is in `state`: written by the recorder once the board
+/// answered which task it is for, so waited for on its condition, with a backstop only a stall
+/// reaches (30 s was its bound on the wall). A wait that gives up says what the folder holds.
 fn once(folder: &Path, state: Step) -> Record {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let [(one, _)] = work::read(folder).records.as_slice()
-            && one.state == state
-        {
-            return one.clone();
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no operation {state:?} within 30 s"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until(
+        format!("one operation {state:?}"),
+        test_time::backstop(Duration::from_secs(30)),
+        || match work::read(folder).records.as_slice() {
+            [(one, _)] if one.state == state => Some(one.clone()),
+            _ => None,
+        },
+    )
+    .unwrap_or_else(|stall| {
+        let records: Vec<_> = work::read(folder)
+            .records
+            .into_iter()
+            .map(|(record, _)| record)
+            .collect();
+        panic!("{stall}: the folder holds {records:?}")
+    })
 }
 
 #[test]
