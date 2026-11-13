@@ -548,6 +548,15 @@ fn a_reds_orchestrator_approves_only_a_fix_changing_no_check_and_a_fresh_reviewe
         independent(&lifted, &approval_by("slate"), &held),
         Ok(Scope::Whole)
     );
+    // So is one filed with an older wording of the risk, by the opening every wording keeps.
+    let older = holding(
+        &roles,
+        Some("a red is fixed as a bug fix is: an older wording of it"),
+    );
+    assert_eq!(
+        independent(&older, &approval_by("ochre"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
+    );
     // A red with no fast-fix mark, as the regenerator files, is approved as any task is.
     let unmarked = red(&roles, None);
     assert!(

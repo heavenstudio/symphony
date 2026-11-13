@@ -39,13 +39,15 @@ mod tests;
 /// The entries a project that names none has: its tests and what they compare against (a `tests/`,
 /// `fixtures/`, `testdata/` or `snapshots/` folder anywhere, a module file named `tests.rs` or
 /// `NAME_tests.rs`, a `.snap`), the switches that turn a package's tests off (its `[lib]`'s `test`,
-/// `doctest` and `harness`, its `[[test]]`, `[[bench]]` and `[[bin]]` targets whole, each with its
-/// `test`, `harness` and `required-features`, `autotests` and `autobenches`), its recipes (the
-/// justfile and the `symphony.just` it imports) and the `tools/` folder of what they run (verify's
-/// steps and the Symphony's size budget among it), its lint and format settings (Clippy's file,
-/// rustfmt's, Cargo's configuration, the workspace's and each package's `[lints]`), the tables of
-/// its project file that say what checks, lands and releases, and the Symphony's own checkers, its
-/// run's list of them and this gate, which name nothing in another project.
+/// `doctest` and `harness`, its `[[test]]`, `[[bench]]`, `[[bin]]` and `[[example]]` targets whole,
+/// each with its `test`, `harness` and `required-features`, `autotests` and `autobenches`, and its
+/// `[features]`, which decide what `#[cfg(feature = …)]` and `required-features` leave out of a
+/// test run), the `[dev-dependencies]` its tests alone build with, its recipes (the justfile and
+/// the `symphony.just` it imports) and the `tools/` folder of what they run (verify's steps and the
+/// Symphony's size budget among it), its lint and format settings (Clippy's file, rustfmt's,
+/// Cargo's configuration, the workspace's and each package's `[lints]`), the tables of its project
+/// file that say what checks, lands and releases, and the Symphony's own checkers, its run's list
+/// of them and this gate, which name nothing in another project.
 pub const DEFAULT: &[&str] = &[
     "tests/",
     "fixtures/",
@@ -60,8 +62,11 @@ pub const DEFAULT: &[&str] = &[
     "Cargo.toml [test]",
     "Cargo.toml [bench]",
     "Cargo.toml [bin]",
+    "Cargo.toml [example]",
     "Cargo.toml [package.autotests]",
     "Cargo.toml [package.autobenches]",
+    "Cargo.toml [features]",
+    "Cargo.toml [dev-dependencies]",
     "/justfile",
     "/symphony.just",
     "/tools/",

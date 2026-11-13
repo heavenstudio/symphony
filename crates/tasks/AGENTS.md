@@ -977,8 +977,9 @@ first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
 A red a tool files may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
 nightly's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
 approve to that bound, since the board cannot read the repository: `land::independent` gives it
-`Scope::ChecksUnchanged`, keyed on that recorded risk, which no session clears, as well as on the
-red mark, which its filer can lift (`unmark_red`), and `land::unchanged_checks` refuses it when
+`Scope::ChecksUnchanged`, keyed on that recorded risk, which no session clears, by the opening
+every wording of it keeps (`fast_fix::RED_OPENING`, pinned by a test, `fast_fix::bounds`), as well
+as on the red mark, which its filer can lift (`unmark_red`), and `land::unchanged_checks` refuses it when
 `check_paths::touched` finds the fix changing a test or a check, or cannot say: a path git fails to
 read or more than one merge base (`land/check_paths.rs`, `tests/sweep/land_approval.rs`).
 Only a session of

@@ -133,8 +133,11 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
         "Cargo.toml [test]",
         "Cargo.toml [bench]",
         "Cargo.toml [bin]",
+        "Cargo.toml [example]",
         "Cargo.toml [package.autotests]",
         "Cargo.toml [package.autobenches]",
+        "Cargo.toml [features]",
+        "Cargo.toml [dev-dependencies]",
     ];
     let mut root = package.to_vec();
     root.extend(["/Cargo.toml [workspace.lints]", "Cargo.toml [lints]"]);
@@ -552,6 +555,25 @@ version = \"0.1.0\"
 workspace = true
 ";
 
+/// A package with an example its tests run, a default feature and a test's dependency, as
+/// apps/symphony-ui has.
+const UI: &str = "\
+[package]
+name = \"ui\"
+version = \"0.1.0\"
+
+[features]
+default = [\"overlays\"]
+overlays = []
+
+[dev-dependencies]
+tempfile = \"3\"
+
+[[example]]
+name = \"wasm_size\"
+test = true
+";
+
 #[test]
 fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() {
     let repo = Repo::new("touched");
@@ -569,6 +591,7 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
         ("symphony.toml", PROJECT),
         ("Cargo.toml", WORKSPACE),
         ("lamp/Cargo.toml", PACKAGE),
+        ("ui/Cargo.toml", UI),
         ("tools/size-budget.toml", "[symphony]\nbytes = 100\n"),
         ("README.md", "Lamps\n"),
         ("src/lints.rs", "#![deny(missing_docs)]\npub fn l() {}\n"),
@@ -677,6 +700,29 @@ fn a_branch_changes_the_entries_paths_its_tables_and_its_rust_tests_and_lints() 
             "lamp/Cargo.toml [package.autotests]",
         ]
     );
+    // An example's test turned off, a default feature dropped (what it gates leaves the test run)
+    // and a test's dependency changed, each by itself.
+    for (name, from, to, table) in [
+        ("example", "test = true", "test = false", "example"),
+        (
+            "features",
+            "default = [\"overlays\"]",
+            "default = []",
+            "features",
+        ),
+        (
+            "dev",
+            "tempfile = \"3\"",
+            "tempfile = \"2\"",
+            "dev-dependencies",
+        ),
+    ] {
+        assert_eq!(
+            repo.touched(name, &[("ui/Cargo.toml", &UI.replace(from, to))]),
+            [format!("ui/Cargo.toml [{table}]")],
+            "{name}"
+        );
+    }
     // A file that is no TOML counts in each table it might hold; a new one in each it holds.
     assert_eq!(
         repo.touched(

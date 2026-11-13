@@ -1383,7 +1383,9 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   marked red, its orchestrator's approve (or its filer's) lands only a fix whose diff from
   where it left the default branch changes none of the project's tests and checks, and a
   fresh reviewer's lands any fix. It goes by the recorded risk, which no session clears, so
-  a red whose mark its filer lifted is held to the bound still. A loosened test or check is
+  a red whose mark its filer lifted is held to the bound still, and knows it by its opening,
+  `a red is fixed as a bug fix is` (`fast_fix::RED_OPENING`), which every wording of it keeps,
+  so a red filed before a rewording is held as well. A loosened test or check is
   how a red turns green unfixed, so a fix that changes one needs a reader that did not ask
   for it; when the code is fixed and the failing test, unchanged, passes, the test is that
   reader. The refusal names what the fix changes and sends the task back to review for
@@ -1394,17 +1396,20 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   value differs. With none written it is `["tests/", "fixtures/", "testdata/",
   "snapshots/", "*_tests.rs", "tests.rs", "*.snap", "Cargo.toml [lib.test]", "Cargo.toml
   [lib.doctest]", "Cargo.toml [lib.harness]", "Cargo.toml [test]", "Cargo.toml [bench]",
-  "Cargo.toml [bin]", "Cargo.toml [package.autotests]", "Cargo.toml
-  [package.autobenches]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
-  ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml [workspace.lints]", "Cargo.toml [lints]",
-  "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
+  "Cargo.toml [bin]", "Cargo.toml [example]", "Cargo.toml [package.autotests]",
+  "Cargo.toml [package.autobenches]", "Cargo.toml [features]", "Cargo.toml
+  [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
+  ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
+  [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
   "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
   "/crates/symphony/src/nightly.rs", "/crates/symphony/src/nightly/checks.rs",
   "/crates/symphony/src/nightly/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
-  that say which tests run and how (a `[[test]]`, `[[bench]]` or `[[bin]]` target whole, its
-  `test`, `harness` and `required-features` with it), the recipes and the scripts and budget under
+  that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
+  target whole, its `test`, `harness` and `required-features` with it, and the features, whose
+  defaults decide what `#[cfg(feature = …)]` and `required-features` leave out of a test run)
+  and what tests alone build with (`[dev-dependencies]`), the recipes and the scripts and budget under
   `tools/` they run, the lint and format settings, the project file's tables that say what
   checks, lands and releases, and the checks' own code: the size budgets, the docs audit,
   the release run's checks and their steps, this land with its list, and the red and
