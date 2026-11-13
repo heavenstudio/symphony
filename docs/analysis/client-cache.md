@@ -100,11 +100,11 @@ server restart (`crates/symphony-api/src/lib.rs`, the feed contract).
 
 ## Measured
 
-Measured 2026-11-11 on a private server: the release `symphony-server` of `c9a0af8` (Star Foundry's
-installed host, this branch's base) run with `--port 0` and a temporary machine folder, never the
+Measured 2026-11-11 on a private server: the release `symphony-server` of `c9a0af8` (the consuming
+project's installed host, this branch's base) run with `--port 0` and a temporary machine folder, never the
 shared server. It served a copy of this repository's board (146 tasks, 547 messages, read once from
 the live board and loaded into a private in-memory database) and this repository's `docs/`, plus
-Star Foundry's `docs/DECISIONS.md` (128 KB, 128 cards) as a large register. Each page was loaded in
+the consuming project's `docs/DECISIONS.md` (128 KB, 128 cards) as a large register. Each page was loaded in
 headless Chrome 157, driven over its DevTools protocol, at 1280 × 900. **Cold** is a new profile;
 **warm** is the same profile in a new browser, so only the disk cache is left, as on a return visit.
 Five runs of each, medians; loopback and Chrome's Fast 3G profile (562.5 ms latency, 180,000 B/s
@@ -123,12 +123,12 @@ code first runs a read: the start of its first API request.
 | task board `/tasks` | loopback | 539 ms | 401 ms | 49 ms |
 | a task (`perf/panel-first-open`) | loopback | 254 ms | 192 ms | 73 ms |
 | this register | loopback | 339 ms | 194 ms | 65 ms |
-| Star Foundry's register | loopback | 412 ms | 296 ms | 63 ms |
+| the consuming project's register | loopback | 412 ms | 296 ms | 63 ms |
 | home `/` | Fast 3G | 5.2 s | 2.3 s | 1.8 s |
 | task board `/tasks` | Fast 3G | 6.8 s | 3.8 s | 1.8 s |
 | a task | Fast 3G | 7.1 s | 2.9 s | 1.8 s |
 | this register | Fast 3G | 7.2 s | 3.0 s | 1.8 s |
-| Star Foundry's register | Fast 3G | 7.3 s | 3.1 s | 1.8 s |
+| the consuming project's register | Fast 3G | 7.3 s | 3.1 s | 1.8 s |
 
 | page | sent, cold | sent, warm | of it, data | requests | warm: on the wire, from disk |
 |---|---|---|---|---|---|
@@ -136,7 +136,7 @@ code first runs a read: the start of its first API request.
 | task board `/tasks` | 262 KB | 14.4 KB | 13.5 KB in 9 reads | 20 | 12, 8 |
 | a task | 450 KB | 9.0 to 16.4 KB | 8.1 to 15.5 KB in 5 or 6 reads | 17 or 18 | 8 or 9, 9 |
 | this register | 462 KB | 13.6 to 17.7 KB | 12.7 to 16.8 KB in 11 or 14 reads | 24 or 27 | 14 or 17, 10 |
-| Star Foundry's register | 476 KB | 27.6 KB | 26.7 KB in 9 reads | 22 | 12, 10 |
+| the consuming project's register | 476 KB | 27.6 KB | 26.7 KB in 9 reads | 22 | 12, 10 |
 
 Bytes are what crossed the network, gzipped, headers included (Resource Timing's `transferSize`,
 and the navigation's for the HTML), besides the feed's open stream. Requests count the HTML and
@@ -170,9 +170,9 @@ reads each, min / median / max, curl on loopback; load average 25). Every one is
 | `/api/task-page` | 9.0 KB | 2.5 KB | 13 / 21 / 31 ms |
 | `/api/task-history` (10 messages) | 31.9 KB | 7.0 KB | 12 / 14 / 14 ms |
 | `/api/document?view=outline`, this register | 6.1 KB | 1.7 KB | 27 / 44 / 67 ms |
-| `/api/document?view=outline`, Star Foundry's register | 56.4 KB | 15.2 KB | 152 / 204 / 317 ms |
+| `/api/document?view=outline`, the consuming project's register | 56.4 KB | 15.2 KB | 152 / 204 / 317 ms |
 | every section body, this register | 77.5 KB | 16.9 KB | |
-| every section body, Star Foundry's register | 463.5 KB | 84.5 KB | |
+| every section body, the consuming project's register | 463.5 KB | 84.5 KB | |
 | `/api/queue` | 0.6 KB | 0.4 KB | 1 / 1 / 2 ms |
 | `/api/activity` | 13.4 KB | 2.9 KB | 1 / 1 / 9 ms |
 | `/api/pending` | 0.4 KB | 0.2 KB | 1 / 1 / 1 ms |
@@ -277,7 +277,7 @@ Sizes are the raw JSON of each read, measured on the private server.
 | board | `/api/board`; the counts and the first page of each column, for the default filter (24 h) | searches, the week and older windows, *Load more* pages | `/tasks` reads 38 KB in all |
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
 | task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
-| document | its outline, and the section bodies it drew, stored by their `hash`, for the 20 documents opened last | versions, diffs, asks, folders | this register: 6 KB outline, 78 KB of bodies if read to the end; Star Foundry's register: 56 KB outline, 464 KB of bodies |
+| document | its outline, and the section bodies it drew, stored by their `hash`, for the 20 documents opened last | versions, diffs, asks, folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
 | header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
 
 **Caps.** At most 8 MB a project: 2 MB for tasks, 6 MB for documents, and the board and queue
@@ -285,9 +285,10 @@ outside both, at well under 100 KB here (each column's first read is one page, s
 does not grow it much). At most 32 MB for the origin, which the projects of the one
 server share. An entry not used for 14 days goes; over a cap, the least recently used entry of that
 kind goes first. A task is kept only once opened: nothing is fetched ahead. At the sizes above, 30
-tasks take about 1.3 MB; documents fill their 6 MB at about eleven registers the size of Star
-Foundry's read to the end, or some seventy of this repository's. A busy week of opened tasks cannot
-push the board or the documents out, and a long reading session cannot push out the tasks.
+tasks take about 1.3 MB; documents fill their 6 MB at about eleven registers the size of the
+consuming project's read to the end, or some seventy of this repository's. A busy week of opened
+tasks cannot push the board or the documents out, and a long reading session cannot push out the
+tasks.
 
 A section body is stored once per hash and project, and goes when no kept outline names it. A page
 of a branch (`/@<tree>/…`) is kept under its own scope, and goes by the same age rule once its
@@ -352,7 +353,7 @@ medians, today). Times are first content on a return visit.
 | task board `/tasks` | 401 ms | about 60 ms | 3.8 s | about 1.8 s | about 0.6 s |
 | a task | 192 ms | about 85 ms | 2.9 s | about 1.8 s | about 0.6 s |
 | this register | 194 ms | about 80 ms | 3.0 s | about 1.8 s | about 0.6 s |
-| Star Foundry's register | 296 ms | about 85 ms | 3.1 s | about 1.8 s | about 0.6 s |
+| the consuming project's register | 296 ms | about 85 ms | 3.1 s | about 1.8 s | about 0.6 s |
 
 - **On the phone** the cache takes out every wait for data: 0.5 to 2 s a page. What is left is
   the code's start, 1.8 s, of which the two scripts' revalidations in a row are about 1.2 s;
@@ -370,7 +371,7 @@ medians, today). Times are first content on a return visit.
   | task board `/tasks` | 13.5 KB | 6.4 KB |
   | a task | 8.1 KB, 15.5 KB with its thread | 5.2 KB, 5.5 KB with its thread |
   | this register | 12.7 KB | 10.5 KB |
-  | Star Foundry's register | 26.7 KB | 9.9 KB |
+  | the consuming project's register | 26.7 KB | 9.9 KB |
 
   What is left is mostly the header: `/api/activity` is 2.9 KB, and a document reads it twice. A
   header read once per page would take this register to about 6.4 KB (inferred). A task's row
@@ -449,8 +450,8 @@ repeats that follow it (inferred, not tried).
 - **Measured:** the tables under [Measured](#measured), the read sizes, the feed's events on the
   private server, IndexedDB and localStorage on that server's origin in headless Chrome, and a
   conditional request answered `304` to the page's own `fetch`, all on 2026-11-11, on a machine
-  other agents were loading. The private server's board is a copy of this repository's; Star
-  Foundry's board, many times larger, was not measured.
+  other agents were loading. The private server's board is a copy of this repository's; the
+  consuming project's board, many times larger, was not measured.
 - **Read in the web's specifications, not tried on the tailnet:** that IndexedDB and localStorage
   work on a plain `http://` page and Cache Storage and service workers do not. The private server
   answers only `localhost` and the tailnet's names (`apps/symphony-server/src/gate.rs`,

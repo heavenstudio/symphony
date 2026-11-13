@@ -35,11 +35,17 @@ symphony-api = { path = "../symphony-api" }
 symphony-plugin = { path = "../symphony-plugin" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
 symphony-docs = { path = "../symphony-docs" }
+# Its variables, each by its one SYMPHONY_ name.
+symphony-env = { path = "../symphony-env" }
 toml.workspace = true
 symphony-board = { path = "../tasks" }
 # `symphony shot`: a page in a private headless Chrome, driven as the client's browser tests drive it.
 chrome-devtools = { path = "../chrome-devtools" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
-# The board the verdicts' and asks' tests run on: the store's own test server (SurrealDB, in memory), a
-# database of its own per test (tests/picks/main.rs takes the store's tests' common file).
+[dev-dependencies]
+# The board the verdicts' and asks' tests run on is the store's own test server (SurrealDB, in
+# memory), a database of its own per test: tests/picks/main.rs and the other fixtures take the
+# store's tests' common file, which waits for its server through the tests' wait (RULES.md
+# `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

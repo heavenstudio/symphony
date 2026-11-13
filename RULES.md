@@ -68,17 +68,26 @@ was not the thing to fix, and a fresh reviewer judges that. It is filed as a fas
 that changes none of the project's tests and checks (`[land] check_paths`,
 [TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
 a fix that changes a test, a check, a budget or a run step lands only on a fresh reviewer's
-approve. A fix that lands starts no run of its own: the next is the cadence's or the schedule's
-([RELEASES](docs/RELEASES.md#the-release-run)).
+approve. A red run holds its commit as the release candidate, so the release is that commit and
+its reds' fixes alone however fast main moves ([RELEASES](docs/RELEASES.md#the-release-candidate)):
+its red's fix starts at the local branch `release-candidate`, never at main, merges that branch
+again before review and never merges main before its approve, and commits the client its own
+sources make when it changes what the client is built from; its task's text says so. Its own land
+moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
+whose fix landed with another red's task is closed as covered by that landing, which answers it
+once that land advanced the candidate; closing one as covered by any other landing drops the
+candidate, its fix being on main and not in it. A red fixed outside this repository is answered by
+cancelling its task, saying where.
 
 ### `workflow/shared-data-lands-first`
 
 Data or an interface other tasks read (a wire type, a schema, a document's decided content)
 reaches main in a small task of its own before the work that uses it; what it breaks on main
-becomes a named follow-up task, not a fix inside it. Every branch builds on main alone: never
-read or copy files from another branch or worktree (`just tasks create` refuses a brief naming
-the worktree of a `--depends` task not yet done); wait, or ask on that task's thread. A chain's
-next slice may start on the previous slice's approved tip by merging that branch.
+becomes a named follow-up task, not a fix inside it. Every branch builds on main alone, but a
+release candidate's red fix, which builds on `release-candidate` (`workflow/release-reds-first`):
+never read or copy files from another branch or worktree (`just tasks create` refuses a brief
+naming the worktree of a `--depends` task not yet done); wait, or ask on that task's thread. A
+chain's next slice may start on the previous slice's approved tip by merging that branch.
 
 ### `workflow/blocked-work-followup`
 
@@ -131,6 +140,23 @@ tip), tells its orchestrator on its thread with the command and output, and carr
 review and landing name the red and do not wait on it. The orchestrator checks the board for a
 task already holding that red, files one at p0 if there is none, and staffs it at once; a second
 finder adds its evidence to that task and files nothing.
+
+### `tests/no-test-fails-on-load`
+
+A test passes or fails on what the code did, never on how long a loaded machine took to let it.
+The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
+for cpu wall clock time usage - not total time spent or be removed from nightly". A bound on a cost
+is a bound on the CPU the work took, or on a count of the work. A wait is a wait on its condition:
+its only time is a wall-clock backstop that only a stall reaches, and its failure says it was a
+stall and gives the load average. Elapsed time stays only where the product's promise is elapsed
+time, with its clock injected where it can be. A test that can be none of these is proposed on
+its task's thread, with the promise it guards and why no CPU bound, count, wait or injected clock
+can stand in for it; the orchestrator puts it to the owner, and it leaves `just verify` only on the
+owner's word. Until then it stays and runs. A product's real-time promise is never dropped: a test
+the owner lets go moves to a recipe a quiet machine runs, which still runs it, and none leaves
+before that recipe exists; docs/CHECKS.md lists each with its promise and the owner's word. No
+budget or tolerance is widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
+use it: [CHECKS](docs/CHECKS.md#time-in-tests).
 
 ### `a-test-that-passes-either-way-is-not-a-test`
 

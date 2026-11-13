@@ -24,7 +24,7 @@ pub(super) fn acquire(path: &Path, dry_run: bool) -> Result<Option<sys::FileLock
     coalesce::tree_lock(path).map(Some).ok_or_else(|| {
         format!(
             "cannot take worktree removal lock {}",
-            admin.join("sf-sweep-remove.lock").display()
+            admin.join("symphony-sweep-remove.lock").display()
         )
     })
 }

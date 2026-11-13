@@ -1,11 +1,10 @@
 //! The task board, reached through the project's build of the `tasks` binary, found as the heartbeat
 //! finds it: the checkout's `.target/bin/tasks` link (else, from a linked worktree, the main
-//! checkout's), else the live build its main checkout's launcher recorded, else `tasks` on `PATH`
-//! ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
+//! checkout's), else `tasks` on `PATH` ([`crate::builds`]). Its API (`tasks api`, crates/tasks/src/cli/api.rs) is for reading, its
 //! commands for writing. The board is the one the environment reaches: `TASKS_SERVER` and
 //! `TASKS_DATABASE` name a test's, else the server in the checkout's git common dir; `TASKS_NOW` pins
-//! its clock. `SF_TASKS_CLI` names another command to run in the binary's place (split as a shell
-//! splits it), as the tests of the board's own tools name theirs.
+//! its clock. `SYMPHONY_TASKS_CLI` names another command to run in the binary's place (split as a
+//! shell splits it), as the tests of the board's own tools name theirs.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,7 +27,7 @@ pub struct CliBoard {
 const TASKS: &str = "tasks";
 
 /// `command` split as a shell splits it: on blanks, with single and double quotes and backslashes keeping
-/// a word whole, as Python's `shlex.split` does for `SF_REVIEW`.
+/// a word whole, as Python's `shlex.split` does.
 pub fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -73,30 +72,29 @@ pub fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
-fn words(env: &str, default: Vec<String>) -> Vec<String> {
-    match std::env::var(env) {
-        Ok(command) if !command.trim().is_empty() => shell_words(&command),
+fn words(env: symphony_env::Var, default: Vec<String>) -> Vec<String> {
+    match env.text() {
+        Some(command) if !command.trim().is_empty() => shell_words(&command),
         _ => default,
     }
 }
 
 /// The project's build of the board's binary from the checkout at `root`: its link (the main
-/// checkout's from a linked worktree), else the live build the main checkout's launcher recorded in
-/// the common dir, as the heartbeat runs it. None leaves `tasks` to the search path.
+/// checkout's from a linked worktree), as the heartbeat runs it. None leaves `tasks` to the search
+/// path.
 pub fn tasks_binary(root: &Path) -> Option<PathBuf> {
     crate::builds::linked(root, TASKS)
-        .or_else(|| crate::hook::live_build(&symphony_board::git::checkout_common_dir(root)?))
 }
 
 impl CliBoard {
     /// The board the environment reaches from the checkout at `root`, through the project's build
     /// of the board's binary ([`tasks_binary`]), else `tasks` on the search path.
     pub fn new(root: &Path) -> CliBoard {
-        CliBoard::named_else_found(words("SF_TASKS_CLI", Vec::new()), root)
+        CliBoard::named_else_found(words(symphony_env::TASKS_CLI, Vec::new()), root)
     }
 
-    /// The board through `named` (`SF_TASKS_CLI`'s words) when it names a command, else through the
-    /// project's build of the board's binary from `root`.
+    /// The board through `named` (`SYMPHONY_TASKS_CLI`'s words) when it names a command, else
+    /// through the project's build of the board's binary from `root`.
     fn named_else_found(named: Vec<String>, root: &Path) -> CliBoard {
         if !named.is_empty() {
             return CliBoard::with_command(named, &[], root);

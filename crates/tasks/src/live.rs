@@ -1,12 +1,14 @@
 //! A project's live board, and which builds may move it forward.
 //!
 //! A project's live board is the `tasks` database on its repository's board server, the one on the
-//! data in its common dir (`sf-tasks/data`), however a run reaches it: through its project, or by
-//! an address, a `TASKS_SERVER` or a client made for it, which is known by the server listening
-//! there and the data it serves, wherever the run is ([`served`], [`find`]). Only where this machine
-//! cannot say who listens there is it known by the record of the run's repository, or of a
-//! registered project, that names its port. Any other board is a scratch one, which every writer
-//! moves forward as the schema rule says ([`crate::schema::decide`]).
+//! data in its common dir (`symphony/tasks/data`, or the board's old folder's while an older
+//! build's board is still there: [`crate::unmoved`]), however a run reaches it: through its
+//! project, or by an address, a `TASKS_SERVER` or a client made for it, which is known by the server
+//! listening there and the data it serves, wherever the run is ([`served`], [`find`]). Only where
+//! this machine cannot say who listens there is it known by the record of the run's repository, or
+//! of a registered project, that names its port ([`crate::unmoved::board_record`]). Any other board
+//! is a scratch one, which every writer moves forward as the schema rule says
+//! ([`crate::schema::decide`]).
 //!
 //! A writer moves a live board forward only when the repository's default branch says this build's
 //! schema is its own ([`may_move`]), by what it commits ([`committed`]), never what a checkout holds
@@ -49,8 +51,7 @@ const OWN_SOURCE: &str = include_str!("schema.rs");
 pub const CARGO: &str = "CARGO_MANIFEST_DIR";
 
 /// How a refusal names a scratch board to a program that reads the board's database from the
-/// environment alone: every program that reaches a board, the Symphony and `tasks-cutover` among
-/// them.
+/// environment alone: every program that reaches a board, the Symphony and `tasks-copy` among them.
 pub const SCRATCH_VARIABLE: &str = "`TASKS_DATABASE=NAME`";
 
 /// How a refusal names a scratch board to `tasks` and `agent-send`, which take it as a flag.
@@ -92,7 +93,7 @@ pub enum Recorded {
 
 /// The port `common`'s board server record names ([`Recorded`]).
 pub fn recorded(common: &Path) -> Recorded {
-    let record = common.join(server::FOLDER).join("server.json");
+    let record = crate::unmoved::board_record(common);
     let Ok(text) = std::fs::read_to_string(record) else {
         return Recorded::None;
     };

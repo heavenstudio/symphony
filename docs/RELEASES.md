@@ -30,9 +30,11 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
-   main line), the commit a project can fetch, and takes its tip. A tip that is a release already
-   is not checked again. A tip that does not descend from the newest release is neither checked
-   nor tagged: a release only moves forward, so a main that went back stops the run.
+   main line), the commit a project can fetch, and takes its tip; while a release candidate is
+   held it takes that one's tip instead, or runs nothing ([below](#the-release-candidate)). A tip
+   that is a release already is not checked again. A tip that does not descend from the newest
+   release is neither checked nor tagged: a release only moves forward, so a main that went back
+   stops the run.
    When the candidate is the main checkout's main too, the run asks the regenerator a land
    starts where main's generated files stand (`just tasks regenerate --status`,
    [TASKS](TASKS.md#the-regenerator)): while it makes them the run waits, within its time, and
@@ -49,7 +51,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    regenerator was last seen not to have made the candidate's files. A
    project with no generators waits for nothing, and so does a candidate the main checkout does
    not hold as its main, whose own client check says. An out-of-cycle release (below) does not
-   ask.
+   ask, and neither does a rerun of the release candidate, whose fixes commit their client.
 2. **Its own checkout.** It checks the candidate out at `../symphony-wt/release` (`release` in the
    `[agents] worktrees` folder of `symphony.toml`, or `--worktree PATH`): a detached worktree it
    made itself, locked with its own reason (`the Symphony release run's checkout`) so the board's
@@ -103,8 +105,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    After each check, after each project's conciliation and before it tags, the run looks at its
    checkout again, and after a conciliation at that project's scratch copy too:
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
-   - `git status --porcelain` must name nothing outside `.target/` (in a copy, nothing but its
-     `Cargo.lock`, which the patched build rewrites);
+   - `git status --porcelain` must name nothing outside `.target/`, and in a copy, whose
+     `.target/` is the project's tooling's to write, nothing outside it but its `Cargo.lock`, which
+     the patched build rewrites;
    - no process may be in it, as at the start (step 2). The check's own killed group and the
      board's recorder writing down how the check ended are on their way out, so they are not
      counted.
@@ -148,9 +151,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    (`cargo --config 'patch."URL".NAME.path=…'`, so no file of the project changes), and
    `cargo test --no-fail-fast` runs its packages that depend on one, under its own toolchain pin,
    as the check `conciliate-ID`, with `SYMPHONY_MACHINE_DIR` naming a folder that holds a copy of
-   the registry (in the run's logs), not the machine's own. A folder in a copy's place that the
-   release run did not make, unless empty, is left as it is, and that project's check is red; a copy
-   whose project left the registry is removed, and a copy's `.target/` built on for 7 days is
+   the registry (in the run's logs), not the machine's own. It builds in the copy's own build
+   folder, `.git/symphony-release-target`, named to cargo alone (`--target-dir`, with
+   `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` unset), so nothing the project's tests start
+   is told it: never in the project's `.target/`, which is its tooling's to empty, seed or build in
+   (a project's cargo wrapper may empty a `.target/` it keeps no record of, while the build runs
+   from it), and which the copy loses with every other ignored file each time it is made ready.
+   The board's sweep reaches no copy, which is no worktree, and no target seed clones into or out
+   of one. A folder in a copy's place that the release run did not make, unless empty, is left as
+   it is, and that project's check is red; a copy whose project left the registry is removed, and
+   a copy's build folder built on for 7 days is
    cleared. A registry that cannot be read is the red check `conciliate`: nothing is conciliated,
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
    Symphony's from git, is named in the run's output and record and in the release's message
@@ -182,6 +192,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
    - the log's last lines;
+   - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
+     named no failed test and never ran or never compiled because a file its own build had made
+     was gone (its executable, cargo's `could not execute process … (never executed)` for no such
+     file; a library it links, rustc's `extern location for … does not exist`; a build script's
+     output, `couldn't find file` in a `…/build/UNIT/out/`) failed for its build folder, not for a
+     test of its own. The red says so, an environment failure, naming those targets and files,
+     the target cargo started last before the first that found one gone (what removed them ran
+     then: that target, something it started, or something outside the run), and what the build
+     folder holds when the red is filed, each entry with when it was made. Those targets are no
+     failures to rerun: with no other failure, the rerun is a run of the target they went while,
+     or of its build, with a look at its build folder after it;
    - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
@@ -198,8 +219,10 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    A check red again while its task is open adds a line to that task, with that run's load and
    reruns; a run green in it closes the task (`cancelled`, saying the check passed) when its
    candidate holds the commit the check was last found red on. The next red of a closed task's
-   check is `tests/release-red-NAME-2`, then `-3`. A fix that lands starts no run of its own:
-   the next is the cadence's or the schedule's.
+   check is `tests/release-red-NAME-2`, then `-3`. A run of main's tip that is red in a check
+   holds that commit as the release candidate ([below](#the-release-candidate)), and its reds'
+   tasks say how a fix of one starts, merges and lands; their fixes' lands, not main's tip, are
+   what the next run checks.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
    checkout it cannot take, a git lock held, a process in the run's folders, a checkout or copy
    changed under a check, a main behind the newest release, a push that fails, a run told to
@@ -263,7 +286,100 @@ checks and conciliation on COMMIT, then the same tag. It refuses a commit that i
 `origin/main`, one released already and one that does not descend from the newest release, and
 tags nothing when a check is red (filing its red as a release run does). A green release closes a
 red only when COMMIT holds the commit that red was found on, so an urgent fix from before a red
-leaves it open.
+leaves it open. It holds no release candidate and runs whatever one is held; a release of it that
+the candidate does not descend from drops the candidate ([below](#its-bounds)).
+
+## The release candidate
+
+A release may never come if each run judges main's tip: a red's fix lands with everything else
+that landed meanwhile, and the next run judges a different tree, whose new landings can be red in
+turn. So a run of main's tip red in a check holds the commit it judged as the release candidate
+while its reds are fixed, and the release that comes is that commit and its fixes alone, however
+fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the options weighed:
+[the analysis](analysis/release-candidate.md), A).
+
+- **Held.** Its record is `candidate.json` beside the runs (`.git/symphony/release/`): the commit
+  it holds now (its tip), the commit first judged and by which run, the runs of it that decided
+  (its rounds), each red with its task and how it was answered, each check and step with the
+  commit it was last green on, the advances, and, once it ends, how. The local branch
+  `release-candidate` names its tip. Only the run moves that branch, and only from the commit it
+  last set it to: one moved by someone else, or checked out in a worktree, is left as it is and
+  said. Nothing pushes it, and it goes when the candidate ends. One candidate at a time. A run
+  that stopped short holds none, an out-of-cycle release holds none, and `[releases]
+  candidate_reruns = 0` or `candidate_hours = 0` holds none at all. A record this build cannot
+  read, or of a newer version, stops the run as the red `run` and is left as it is.
+- **A red's fix** is the red's own task, whose text says so. Its branch, named for its slug,
+  starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
+  as that branch moves when another red's fix lands, and never merges main before its approve
+  ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
+  built from it commits the distribution its own sources make (`just client-update`), the one kind
+  of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
+  of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
+  lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
+  landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
+  repository (a consumer's) answers its red by the task cancelled, saying where.
+- **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
+  run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
+  approve on that task named that is the landed branch's tip or behind it, descends from the
+  candidate's tip, and holds beyond it nothing main held before the land (`git rev-list --count
+  X ^TIP` equal to `git rev-list --count X ^TIP ^MERGE^1`). A land that went straight in gives its
+  tip; one that conflicted, whose executor merged main and was approved again, gives the commit
+  approved before that merge. A task forked at the candidate passes the same tests, which is why
+  only a red's own land moves it, and a land of any other task, stray or not, moves nothing. A
+  landing counts only once `origin/main`, as this checkout last fetched or pushed it, holds its
+  merge: one landed in the main checkout and not pushed (its push failed) waits, said, until its
+  retry pushes, and the next count or run reads it. A red's task done (approved) waits for its
+  land, unless it was closed as covered by another's landing (its thread's last verdict says so):
+  covered by a landing that advanced the candidate, it is answered, that fix holding its own;
+  covered by a red's task whose land has not advanced it yet, it waits for that land; covered by
+  any other landing, its fix is on main and not in the candidate, which is dropped. One cancelled
+  with no landing is answered, its fix made outside this repository.
+- **The rerun.** Once every red is answered, the candidate's tip is rerun: by the `--due` of the
+  land that answered the last red, else by the next landing's, the next scheduled run, or `just
+  release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the
+  client its own sources make. Of each check it runs what was red, what did not run and what a fix
+  changed, then the conciliation, whole. Until the stamps give a step inputs of its own, a step's
+  inputs are the whole tree: a check or step green on a commit whose tree is the tip's keeps that
+  green and is not run (*carried*, named in the run's record and the release's message), and any
+  other runs. So a check that lists its steps reruns its red ones alone (`just verify tests`) when
+  the tree is the same, as when every red was answered outside this repository, and runs whole
+  otherwise; one that lists none runs whole. Green, it tags the tip and refreshes the machine as
+  any release; red, it is one more round, its reds filed as any run's and their tasks saying the
+  candidate again.
+- **Its release notes** say, between the checks and the changes, the commit first judged and by
+  which run, how many reruns it took, each red's task and how it was answered (the commit it
+  advanced to, the landing that covered it, or outside this repository), and what was carried green
+  from which run.
+
+### Its bounds
+
+The candidate is dropped, and a run of main's tip is due at once, whatever the count, when:
+
+- as many reruns as `[releases] candidate_reruns` allows (3) came back red;
+- it was first judged `[releases] candidate_hours` (24) hours ago;
+- a red's task landed with no approved commit that passes the advance, as when its executor merged
+  main before any approve;
+- a red's task was closed as covered by a landing that did not advance it, its fix on main and not
+  in the candidate;
+- a release it does not descend from was tagged (one on main passed it), or its tip is not on
+  `origin/main`;
+- or `just release --drop`, an orchestrator's act, drops it.
+
+A release of its tip tagged by other means ends it as released. Each bound is read whenever it is
+settled, by each `--due` and at the start of each run; the reruns bound also after each red rerun.
+
+The run of main's tip a drop makes due follows it once that run reaches its first check, or finds
+that tip released already: one stopped before, as by a fetch that failed, leaves it due, and the next
+landing asks for it again. That run is a run of main's tip as any other: red, it holds its commit
+as a new release candidate.
+
+### Main while it is open
+
+While a candidate is open no run checks main's tip: a `--due` whose candidate waits for a red says
+so (`next run: held for the release candidate …`) and runs nothing, and so does a scheduled run or
+`just release`, which exits 0 recording no run; `--rerun` is refused. The count resumes once it
+ends: after its release, from that release, so a busy day's landings start a run of main's tip at
+the next landing; after a drop, at once.
 
 ## The cadence
 
@@ -283,7 +399,8 @@ also starts once enough tasks have landed, whatever the hour
   green or red, whichever is nearer the tip. A run that stopped short before its first check (a
   fetch that failed, a process in its folders) is not counted from. So a red tip is counted from
   as a release is: the landings after it count afresh, and the next landing does not start the
-  same red run again.
+  same red run again. A red tip held as the release candidate holds the count instead (*The
+  release candidate holds it*, below).
 - **The first count.** With no release and no run on record, the count is from the line's start,
   so the first landing after the cadence lands takes the line's whole history and starts a run at
   once: the owner wants a release. It says so, in the land's output as in `--status`: "the first
@@ -308,9 +425,17 @@ also starts once enough tasks have landed, whatever the hour
   does: the full verification, the conciliation, the tag and its push, each red filed, then the
   refresh. A tip that cannot be built so is said, and its run goes on from the linked build, which
   meets the same red in its checks. The record names what started it (`cause`: `20 landings since
-  release-…, the last SLUG`). A red run files its reds, as any release run does, and holds no
-  later count back. A linked build older than the cadence knows no `--due`: the land shows its
-  refusal, and `tools/rs-bin.sh --link symphony` in the main checkout renews the link.
+  release-…, the last SLUG`). A red run files its reds, as any release run does. A linked build
+  older than the cadence knows no `--due`: the land shows its refusal, and `tools/rs-bin.sh --link
+  symphony` in the main checkout renews the link.
+- **The release candidate holds it.** Before it counts, `--due` settles the release candidate
+  under the run's lock ([the advance](#the-release-candidate)), unless a run holds the lock, which
+  settles it itself. While one is open and a red of it waits, the count starts nothing, however
+  many have landed (`next run: held for the release candidate …`); once every red is answered, the
+  rerun of its tip is due, and once it is dropped, a run of main's tip is, each whatever the count
+  (`cause`: `the release candidate …'s reds answered` or `the release candidate dropped: WHY`). A
+  record the counting build cannot read (a newer build's) starts the run, whose build of the tip
+  reads it or stops on it. `every_landings = 0` starts none of these either.
 - **One run at a time.** While a run holds the lock (a scheduled run's, one run by hand, an
   out-of-cycle release's, a refresh's or another landing's, its build included), `--due` starts
   nothing and says the count waits for it. The landings it saw meanwhile are not lost: once that
@@ -321,7 +446,8 @@ also starts once enough tasks have landed, whatever the hour
 ## The refresh
 
 Asked whether a green release should refresh the machine, the owner, 2026-11-12: "yes, a green
-release should refresh". The clients are the projects the machine serves, Star Foundry among them.
+release should refresh". The clients are the projects the machine serves, the consuming project
+among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project the conciliation covers (step 4 above: registered, its `symphony.toml` naming plugins, this
 repository aside) whose packages take one of the Symphony's from git
@@ -373,7 +499,7 @@ repository aside) whose packages take one of the Symphony's from git
   live board is moved to the schema of the pin its main locks then: the release once its main took
   it, or an older pin whose schema it is still behind, so a refresh finishes what an earlier one
   left, whatever release is newest. The store is snapshotted first, as it runs
-  (`sf-tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
+  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
   5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
   one command that moves a project's board, and the schema is read again. A board whose database
   is not running is refused, since nothing here starts, signals or stops a database. So is one
@@ -404,8 +530,8 @@ task.
 
 What stays by hand, said under a red refresh in `--status` too:
 
-- a project whose own gate or hooks refuse the move (Star Foundry's guard lets only its own
-  landing move its main): it lands `symphony/RELEASE` through its own landing;
+- a project whose own gate or hooks refuse the move (the consuming project's guard lets only its
+  own landing move its main): it lands `symphony/RELEASE` through its own landing;
 - a main checkout off its default branch or with tracked edits: its owner puts it right;
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself. It runs the refresh again for the newest release here, as a run of its own under
@@ -425,7 +551,11 @@ does either only on the owner's word. The cadence's run is that word, given on 2
 cadence*, above): a land starts `--due` without asking, and the release it runs is automatic. A
 green release's refresh is that word too ("yes, a green release should refresh"), so its retry,
 `just release --refresh`, is an orchestrator's act, run on a red refresh's task without asking.
-Running `--due` by hand starts a release, and stays the owner's call.
+Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
+retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
+answered and no landing has started its rerun (a red answered outside this repository, say), and
+`just release --drop`, for a candidate its fixes cannot reach, after which the next landing runs
+main's tip.
 
 ## Status
 
@@ -434,8 +564,16 @@ what was red and the tasks filed), a later out-of-cycle release when there is on
 interrupted run while its logs are kept, the last green run, and the releases here that the last
 run found missing from the remote, with the push that delivers one, and, in a project with
 `[land] generators`, where the regenerator stands (`regenerator: …`). A release run older than 36
-hours is marked overdue. Then it prints the cadence, the landings since what it counts from and
-what the next run waits for, and the last refresh, with each line it said and each red step:
+hours is marked overdue, and a rerun of the release candidate is named as one (`(round 2 of the
+release candidate first judged at …, 1 carried green)`). Then the release candidate as last
+settled: open, its tip, the commit first judged, by which run and how long ago, its runs and red
+reruns against `candidate_reruns`, when `candidate_hours` drops it, each red with its task, round
+and answer (`open (in_progress)`, `open (landed here, not pushed)`, `answered: its land … advanced
+the candidate to …`, `answered: its task closed as covered by …`), and what its rerun waits for;
+ended, how and when, its red runs, and whether the run of main's tip its drop made due has reached
+its checks; `none held`, or `off` while a bound is 0. Then it
+prints the cadence, the landings since what it counts from and what the next run waits for, and
+the last refresh, with each line it said and each red step:
 
 ```text
 landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
@@ -443,14 +581,16 @@ next run: after 13 more landings (7 of 20), or the scheduled run
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
-  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/sf-tasks/snapshots/before-schema-17-release-2026-11-12.surql
+  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/symphony/tasks/snapshots/before-schema-17-release-2026-11-12.surql
   the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
 ```
 
 Under a red refresh it names each red step and its log, then what stays by hand (*The refresh*,
-above). The next run is `due` once the count is reached, `in progress` while a run holds the
-lock, or `off` when `every_landings` is 0. It reads the record and this checkout's tags and refs,
-fetches nothing and writes nothing.
+above). The next run is `due` once the count is reached, or the release candidate's rerun or drop
+makes it so, `held for the release candidate` while a red of it waits, `in progress` while a run
+holds the lock, or `off` when `every_landings` is 0. It reads the record and this checkout's tags
+and refs, fetches nothing and writes nothing, so a land the candidate has not been settled with
+yet is the next count's or run's to read.
 
 ## The schedule
 
@@ -527,7 +667,8 @@ once by the links above.
 
 The release run never tags a commit that is not on `origin/main`, that does not descend from the
 newest release or that a check found red, never moves or deletes a tag, and pushes nothing but its
-new tag. It resets and cleans no checkout but its own, removes no folder it did not make, and itself
+new tag: never the branch `release-candidate`, which it moves only from the commit it set it to
+and never while a worktree has it checked out. It resets and cleans no checkout but its own, removes no folder it did not make, and itself
 writes nothing to a consuming project's checkout; what a project's own tests do in its scratch
 copy is theirs. Its refresh writes to a project only the branch its pin moves on, made through the
 project's own commit gate, the worktree that makes it, removed after, the fast-forward of its main

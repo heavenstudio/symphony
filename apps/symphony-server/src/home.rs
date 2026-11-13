@@ -1,7 +1,7 @@
 //! The one Symphony server of the machine, and the folder it is found by: the machine folder
 //! (`symphony::machine::dir`), which every project and every worktree shares (the shape of the
-//! board's server, `Home` in `symphony/crates/tasks/src/server.rs`). The server's build and client
-//! stay in the project's `sf-symphony/` in its git common dir, its install folder, and a record a
+//! board's server, `Home` in `crates/tasks/src/server.rs`). The server's build and client stay in
+//! the project's `symphony/server/` in its git common dir, its install folder, and a record a
 //! server before the machine folder left there is read once, to find that server.
 //!
 //! It holds the server's record (its port and pid), the lock its starters take, and its log. A start
@@ -12,7 +12,7 @@
 //! server's own command line, or replaced by the server it starts. `--stop` ends it ([`Home::stop`]).
 
 use crate::probe;
-use crate::sys::{pid_alive, signal};
+use crate::sys::{Taken, pid_alive, signal};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -27,7 +27,7 @@ mod discovery;
 
 /// The project's install folder in its git common dir: the server's build and its client, and
 /// the record of a server started before the machine folder.
-pub const FOLDER: &str = "sf-symphony";
+pub const FOLDER: &str = symphony_board::folders::SERVER;
 /// The app's port: the owner's bookmarks, and the phone's.
 pub const DEFAULT_PORT: u16 = 8765;
 /// In the folder: where the server answers, the lock its starters take, its log.
@@ -51,7 +51,7 @@ const KEPT: [&str; 6] = [
     "PATH",
     "USER",
     "LANG",
-    crate::front::TEST_PID,
+    crate::front::TEST_PID.name,
     symphony::machine::DIR_ENV,
 ];
 
@@ -192,17 +192,29 @@ impl Home {
         self.start()
     }
 
-    /// Stop this folder's server, if it runs, and forget its record: what it was, if anything.
+    /// Stop this folder's server, if it runs, and forget its record: what it was, if anything. It is
+    /// signalled only while its pid names the process found, by the start read when it was found
+    /// ([`Taken`], which says the window left before `kill(2)`): the recorded one's is read before
+    /// its command line, so it is that server's or an earlier process's; one the process table
+    /// names, once the table is read (a window of that read's length).
     pub fn stop(&self) -> Result<Option<Running>, ServerError> {
         let _held = self.lock()?;
         let legacy_selected = !self.dir.join(ADDRESS).exists() && self.recorded().is_some();
         let found = self
             .recorded()
-            .and_then(|recorded| self.running_of(recorded.pid))
-            .or_else(|| self.unrecorded());
-        if let Some(running) = &found {
-            self.end(running.pid)?;
+            .and_then(|recorded| {
+                let server = Taken::of(recorded.pid);
+                Some((self.running_of(recorded.pid)?, server))
+            })
+            .or_else(|| {
+                let running = self.unrecorded()?;
+                let server = Taken::of(running.pid);
+                Some((running, server))
+            });
+        if let Some((_, server)) = &found {
+            self.end(server.pid, "asked to stop (`--stop`)", || !server.alive())?;
         }
+        let found = found.map(|(running, _)| running);
         let address = self.dir.join(ADDRESS);
         if address.exists() {
             fs::remove_file(&address).map_err(io("could not remove", &address))?;
@@ -316,13 +328,20 @@ impl Home {
         }
     }
 
-    /// Ask `pid` to end, then make it; it is gone when this returns.
-    fn end(&self, pid: i64) -> Result<(), ServerError> {
+    /// Ask `pid` to end, then make it; it is gone when this returns, as `gone` says, which is asked
+    /// again just before each signal, so one gone (its pid given to another process) is sent none.
+    /// Each signal is said on stderr before it is sent, with its pid and `why`, so a log kept of a
+    /// process that ended by one shows this sent it.
+    fn end(&self, pid: i64, why: &str, mut gone: impl FnMut() -> bool) -> Result<(), ServerError> {
         for (how, wait) in [(libc::SIGTERM, GRACE), (libc::SIGKILL, GRACE)] {
+            if gone() {
+                return Ok(());
+            }
+            crate::front::tell(format_args!("{}", ending(pid, how, why)));
             signal(pid, how);
             let began = Instant::now();
             while began.elapsed() < wait {
-                if !pid_alive(pid) {
+                if gone() {
                     return Ok(());
                 }
                 std::thread::sleep(Duration::from_millis(20));
@@ -331,6 +350,27 @@ impl Home {
         Err(ServerError::NotUp(format!(
             "the Symphony server (pid {pid}) did not end when told to"
         )))
+    }
+
+    /// End the server `child` this start just started, `server` as it was taken then, for `what`
+    /// it did not do within the patience; it is reaped when this returns. It is this process's
+    /// child, so once it ends it stays a zombie, which a signal 0 still finds, until it is reaped:
+    /// its own end is waited for, not its pid's, and until then its pid is its own.
+    fn end_started(
+        &self,
+        server: &Taken,
+        child: &mut Child,
+        what: &str,
+    ) -> Result<(), ServerError> {
+        let why = format!(
+            "this start's server did not {what} within {}",
+            seconds(self.patience)
+        );
+        self.end(server.pid, &why, || match child.try_wait() {
+            Ok(status) => status.is_some(),
+            // Not this process's to reap after all: its start says.
+            Err(_) => !server.alive(),
+        })
     }
 
     /// Start the server, detached, wait until it and its app answer, and record it. Under the lock.
@@ -379,6 +419,7 @@ impl Home {
         let mut child = crate::cli::startup("spawn detached server", || command.spawn())
             .map_err(io("could not start", &self.exe))?;
         let pid = i64::from(child.id());
+        let server = Taken::of(pid);
         // Port 0 is the server's to pick: it binds first and says which it got, so nothing else
         // can take a port between a probe and the bind.
         let port = if self.port == 0 {
@@ -388,8 +429,7 @@ impl Home {
                 Some(port) => port,
                 None => {
                     if child.try_wait().ok().flatten().is_none() {
-                        self.end(pid)?;
-                        let _ = child.wait();
+                        self.end_started(&server, &mut child, "announce its port")?;
                     }
                     return Err(ServerError::NotUp(format!(
                         "the Symphony server did not start: {}; its log is {}",
@@ -410,13 +450,12 @@ impl Home {
             self.came_up(&running, &mut child)
         }) {
             if child.try_wait().ok().flatten().is_none() {
-                self.end(running.pid)?;
-                let _ = child.wait();
+                self.end_started(&server, &mut child, "answer")?;
                 return Err(ServerError::NotUp(format!(
-                    "the Symphony server (pid {}, port {}) did not answer within {} s; its log is {}",
+                    "the Symphony server (pid {}, port {}) did not answer within {}; its log is {}",
                     running.pid,
                     running.port,
-                    self.patience.as_secs(),
+                    seconds(self.patience),
                     log.display()
                 )));
             }
@@ -479,6 +518,25 @@ impl Home {
         }
         result
     }
+}
+
+/// What [`Home::end`] says before it sends `how`, SIGTERM or the SIGKILL after it, to the server
+/// `pid`, which it ends for `why`.
+fn ending(pid: i64, how: libc::c_int, why: &str) -> String {
+    if how == libc::SIGKILL {
+        format!(
+            "· Symphony: SIGKILL to the server, pid {pid}: it did not end within {} s of SIGTERM \
+             ({why})",
+            GRACE.as_secs()
+        )
+    } else {
+        format!("· Symphony: SIGTERM to the server, pid {pid}: {why}")
+    }
+}
+
+/// `patience` in seconds, as a person reads it: `60 s`, or `0.5 s` for one under a second.
+fn seconds(patience: Duration) -> String {
+    format!("{} s", patience.as_secs_f64())
 }
 
 /// Whether anything holds loopback `port`, where the one server always listens: only a refused

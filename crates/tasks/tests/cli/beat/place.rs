@@ -68,7 +68,7 @@ fn from(mut event: Value, cwd: &Path) -> Value {
 
 /// Subagent `agent-1`'s background `cargo build`, about to run.
 fn background_build() -> Value {
-    bash("tools/rs-bin.sh sf-slots cargo build")
+    bash("tools/rs-bin.sh slots cargo build")
         .agent("agent-1")
         .with("run_in_background", json!(true))
         .0

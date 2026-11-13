@@ -258,7 +258,7 @@ fn set_up(options: &Options, store: &Store) -> Result<Board, Failed> {
         .map(|(n, recipient)| (n, recipient.handle.clone()))
         .collect();
     for (n, handle) in listening {
-        let path = PathBuf::from(format!("/tmp/sf-load-{run}-{n}.sock"));
+        let path = PathBuf::from(format!("/tmp/symphony-load-{run}-{n}.sock"));
         listen(
             &path,
             handle.clone(),

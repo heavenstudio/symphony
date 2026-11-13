@@ -22,20 +22,22 @@ prose published pushed ran so started successful the this to when written
 # Text of this repository's own development: a source kit's client build, which no project runs,
 # the checks a task here proves its work with, its size budgets, its measurements, and its releases,
 # which the release run cuts and no project runs, with the test targets a candidate red's task
-# reruns alone and `just nightly`, the old name of `just release` that RELEASES says answers until
-# the first release under the new one.
+# reruns alone, the client a release candidate's fix commits, and `just nightly`, the old name of
+# `just release` that RELEASES says answers until the first release under the new one.
 own apps/symphony-server/src/api/client.rs symphony-ui-dist
 own apps/symphony-server/src/development.rs symphony-ui-dev
 own crates/symphony/src/cli/commands/size_budget.rs size-check
 own crates/symphony/src/release.rs release verify
-own crates/symphony/src/release/board.rs release test-rs
+own crates/symphony/src/release/board.rs client-update release test-rs
 own crates/symphony/src/release/cadence.rs release
+own crates/symphony/src/release/candidate.rs release
 own crates/symphony/src/release/place.rs release
 own crates/symphony/src/release/record.rs release
 own crates/symphony/src/release/refresh.rs release
 own crates/symphony/src/release/schedule.rs release
 own docs/CHECKS.md client-check client-update lint-rs release size-check test-rs verify
 own docs/PLUGIN_PROTOCOL.md test-rs
-own docs/RELEASES.md nightly release test-rs verify
+own docs/RELEASES.md client-update nightly release test-rs verify
+own docs/TASKS.md client-update
 
 filed docs/CHECKS.md check-fast tools/check-fast

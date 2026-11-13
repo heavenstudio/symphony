@@ -40,10 +40,18 @@ use owner::stage as owner_stage;
 #[path = "forkless.rs"]
 mod forkless;
 
+#[path = "killed.rs"]
+pub mod killed;
+
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
 pub const PATIENCE: Duration = Duration::from_secs(30);
 
 const SCRATCH_PREFIX: &str = "after-lifecycle-";
+
+/// The folder every scratch folder of this target is made in, as the fixture names it.
+fn scratch_parent() -> PathBuf {
+    Path::new(FIXTURE_ROOT).join("../../artifacts/after_lifecycle")
+}
 
 /// Validate the freshly linked executable once before measuring server starts. The OS's first
 /// image launch is setup, waited for to its end under no case deadline (`setup_success`); every
@@ -112,7 +120,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         static REAP: Once = Once::new();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = Path::new(FIXTURE_ROOT).join("../../artifacts/after_lifecycle");
+        let root = scratch_parent();
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         REAP.call_once(|| scratch::reap_dead_scratch(&root, SCRATCH_PREFIX));
@@ -349,10 +357,17 @@ pub struct Process {
     command: String,
     executable: Executable,
     launch: String,
+    /// When its spawn began, by the wall clock: where the system's log for its pid is read from.
+    spawned: std::time::SystemTime,
     stdout: PathBuf,
     stderr: PathBuf,
     server_log: Option<PathBuf>,
-    server_pid: Option<i64>,
+    /// The server [`Process::ready`] found answering, the child itself or a process under it.
+    server: Option<killed::Owned>,
+    /// The signals this Process sent its child itself.
+    sent: Vec<i32>,
+    /// What was known of the child's pid when it ended by a signal this Process did not send.
+    killed: Option<String>,
     descendants: Option<Descendants>,
     // Normal commands use Instant::elapsed; the private clock makes wait-boundary tests deterministic.
     wait_elapsed: Box<dyn FnMut(&Instant) -> Duration + Send>,
@@ -512,10 +527,13 @@ impl Process {
             command: invocation,
             executable,
             launch,
+            spawned: launching,
             stdout,
             stderr,
             server_log: None,
-            server_pid: None,
+            server: None,
+            sent: Vec::new(),
+            killed: None,
             descendants: Some(descendants),
             wait_elapsed: Box::new(Instant::elapsed),
         }
@@ -525,7 +543,19 @@ impl Process {
         output(&self.stdout, &self.stderr)
     }
 
+    /// The child's end. One by a signal this Process did not send also says on stderr what was
+    /// known of its pid then ([`killed::capture`]), kept beside its logs.
     pub fn wait(&mut self) -> ExitStatus {
+        let known = self.killed.is_some();
+        let status = self.ended();
+        if !known && let Some(killed) = &self.killed {
+            eprintln!("{killed}");
+        }
+        status
+    }
+
+    /// [`Process::wait`], what was known of a signal's pid kept for the caller to say.
+    fn ended(&mut self) -> ExitStatus {
         let child = &mut self.child;
         let id = child.id();
         let stdout = &self.stdout;
@@ -543,31 +573,50 @@ impl Process {
             || child.try_wait().unwrap(),
             &mut self.wait_elapsed,
         );
-        if let Some(pid) = self.server_pid {
+        self.capture_if_killed(status);
+        if let Some(server) = self.server.take() {
             until("private server to exit after its launcher", || {
-                (!symphony_server::sys::pid_alive(pid)).then_some(())
+                (!server.alive()).then_some(())
             });
         }
-        self.server_pid = None;
         status
     }
 
+    /// Once, when `status` is an end by a signal this Process did not send: what was known of the
+    /// child's pid at that moment, kept beside its logs, for its failure to say.
+    fn capture_if_killed(&mut self, status: ExitStatus) {
+        if let Some(signal) = status.signal()
+            && !self.sent.contains(&signal)
+            && self.killed.is_none()
+        {
+            self.killed = Some(killed::capture(&killed::Dead {
+                pid: self.child.id(),
+                command: &self.command,
+                signal,
+                spawned: self.spawned,
+                kept: &self.stdout.with_extension("killed"),
+            }));
+        }
+    }
+
     pub fn success(&mut self) {
-        let status = self.wait();
+        let status = self.ended();
         self.succeeded(status);
     }
 
     /// `success` for setup's run, which waits for the child's own end, never a case's deadline:
     /// a new file's first exec waits for macOS to assess it, one file at a time machine-wide, as
-    /// machine_copy's prime does. The target's load-scaled budget in sf-tool-tests still bounds a
+    /// machine_copy's prime does. The test runner's load-scaled budget still bounds a
     /// hung one.
     fn setup_success(&mut self) {
         let status = self.child.wait().unwrap();
+        self.capture_if_killed(status);
         self.succeeded(status);
     }
 
-    /// Fail with the child's pid, command, status and output, and for a silent signal its
-    /// executable's identity at spawn and now, unless `status` is a success.
+    /// Fail with the child's pid, command, status and output, for a silent signal its
+    /// executable's identity at spawn and now, and for a signal this Process did not send what was
+    /// known of its pid then, unless `status` is a success.
     fn succeeded(&self, status: ExitStatus) {
         let output = self.output();
         let identity = if status.signal().is_some() && output.is_empty() {
@@ -575,9 +624,14 @@ impl Process {
         } else {
             String::new()
         };
+        let killed = self
+            .killed
+            .as_deref()
+            .map(|killed| format!("\n{killed}"))
+            .unwrap_or_default();
         assert!(
             status.success(),
-            "child {} ({}) failed with {status}{identity}: {output}",
+            "child {} ({}) failed with {status}{identity}: {output}{killed}",
             self.child.id(),
             self.command,
         );
@@ -622,15 +676,22 @@ impl Process {
             },
             &mut self.wait_elapsed,
         );
-        self.server_pid = Some(actual.pid);
+        self.server = Some(killed::Owned::of(actual.pid));
         actual
     }
 
-    pub fn signal(&self, signal: i32) {
-        symphony_server::sys::signal(
-            self.server_pid.unwrap_or(i64::from(self.child.id())),
-            signal,
-        );
+    /// `signal` to the server [`Process::ready`] found, else to the child, journaled.
+    pub fn signal(&mut self, signal: i32) {
+        let child = i64::from(self.child.id());
+        match &self.server {
+            Some(server) if server.pid != child => {
+                server.signal(signal, &format!("the case signals the server of {}", self.command));
+            }
+            _ => {
+                self.sent.push(signal);
+                killed::send(child, signal, &format!("the case signals {}", self.command));
+            }
+        }
     }
 }
 
@@ -657,7 +718,7 @@ fn launch_report(
             .as_millis(),
         spawning.elapsed().as_secs_f64() * 1000.0
     );
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         eprintln!(
             "{}: {report}",
             std::thread::current().name().unwrap_or("lifecycle")
@@ -668,18 +729,23 @@ fn launch_report(
 
 impl Drop for Process {
     fn drop(&mut self) {
-        let server = self.server_pid.take();
-        if let Some(pid) = server {
-            symphony_server::sys::signal(pid, libc::SIGKILL);
+        let server = self.server.take();
+        if let Some(server) = &server {
+            server.signal(libc::SIGKILL, "a Process dropped: its server");
         }
         if self.child.try_wait().ok().flatten().is_none() {
+            killed::note(
+                i64::from(self.child.id()),
+                libc::SIGKILL,
+                &format!("a Process dropped: its own child, {}", self.command),
+            );
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
-        if let Some(pid) = server {
+        if let Some(server) = server {
             wait_cleanup(
-                || format!("owned private server {pid} to exit"),
-                || Ok(!symphony_server::sys::pid_alive(pid)),
+                || format!("owned private server {} to exit", server.pid),
+                || Ok(!server.alive()),
                 Instant::elapsed,
             );
         }
@@ -687,7 +753,7 @@ impl Drop for Process {
             descendants.wait();
         }
         profile_warm(&self.output());
-        if self.command.starts_with("\"just\"") && std::env::var_os("SF_SYMPHONY_PROFILE").is_some()
+        if self.command.starts_with("\"just\"") && symphony_env::PROFILE.os().is_some()
         {
             eprintln!("{}\n{}", self.launch, self.output());
         }
@@ -695,7 +761,7 @@ impl Drop for Process {
 }
 
 fn profile_warm(output: &str) {
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         for line in output.lines().filter(|line| {
             line.contains("→ native read data warmed:") || line.contains("· Symphony startup ")
         }) {
@@ -719,7 +785,8 @@ pub struct Repo {
     pub port: Option<u16>,
     pub bin: PathBuf,
     pub builds: PathBuf,
-    detached: Mutex<Vec<i64>>,
+    /// The shared servers its cleanup ends, each taken while it answered as itself.
+    detached: Mutex<Vec<killed::Owned>>,
     descendants: Mutex<Vec<Descendants>>,
     stand_ins: Mutex<StandIns>,
     next: AtomicUsize,
@@ -794,7 +861,7 @@ impl Repo {
         symlink("/usr/bin/false", bin.join("tailscale")).unwrap();
         let repo = Self {
             builds: base.join("builds"),
-            install: main.join(".git/sf-symphony"),
+            install: main.join(".git/symphony/server"),
             base,
             main,
             tree,
@@ -827,22 +894,22 @@ impl Repo {
                 .into(),
             ),
             (
-                "SF_SYMPHONY_PORT",
+                "SYMPHONY_PORT",
                 self.port.unwrap_or(0).to_string().into(),
             ),
             (
-                "SF_SYMPHONY_TEST_PID",
+                "SYMPHONY_TEST_PID",
                 std::process::id().to_string().into(),
             ),
-            // SF_SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
+            // SYMPHONY_STARTUP_TRACE=1 keeps starter stages in timeout reports. Stop and
             // serving commands stay quiet even when the same fixture environment asks for it.
-            ("SF_SYMPHONY_STARTUP_TRACE", "1".into()),
+            ("SYMPHONY_STARTUP_TRACE", "1".into()),
             // Foreground previews must not discover any surrounding repository's live data.
             // An invalid database name is refused before connecting or starting a board engine.
             ("TASKS_DATABASE", "lifecycle fixture has no board".into()),
             ("ASKS_DB", self.base.join("private-asks.db").into()),
-            ("SF_LIFECYCLE_BINARY", APP.into()),
-            ("SF_LIFECYCLE_LOG", self.builds.clone().into()),
+            ("SYMPHONY_LIFECYCLE_BINARY", APP.into()),
+            ("SYMPHONY_LIFECYCLE_LOG", self.builds.clone().into()),
         ];
         // Keep the coverage collector on foreground children. Home must still exercise its real
         // environment filter; its detached child writes LLVM's default profile in the scratch cwd.
@@ -942,10 +1009,13 @@ impl Repo {
                 command: invocation,
                 executable,
                 launch,
+                spawned: launching,
                 stdout,
                 stderr,
                 server_log: Some(self.home.join("server.log")),
-                server_pid: None,
+                server: None,
+                sent: Vec::new(),
+                killed: None,
                 descendants: None,
                 wait_elapsed: Box::new(Instant::elapsed),
             },
@@ -973,8 +1043,7 @@ impl Repo {
                     && actual.root == self.main.to_str().unwrap()
             })
         {
-            write(&self.base.join(format!("owned.{}", record.pid)), "");
-            self.detached.lock().unwrap().push(record.pid);
+            self.own(record.pid);
         }
     }
 
@@ -983,9 +1052,14 @@ impl Repo {
         if let Some(record) = self.record()
             && front(record.port).is_some_and(|actual| actual.pid == record.pid)
         {
-            write(&self.base.join(format!("owned.{}", record.pid)), "");
-            self.detached.lock().unwrap().push(record.pid);
+            self.own(record.pid);
         }
+    }
+
+    /// Own the shared server `pid`, which just answered as itself, for cleanup.
+    fn own(&self, pid: i64) {
+        write(&self.base.join(format!("owned.{pid}")), "");
+        self.detached.lock().unwrap().push(killed::Owned::of(pid));
     }
 
     pub fn record(&self) -> Option<symphony_server::home::Running> {
@@ -1048,13 +1122,15 @@ impl Repo {
             command.arg("--stop");
             let _ = self.run(command).wait();
         }
-        for &pid in self.detached.lock().unwrap().iter() {
-            if symphony_server::sys::pid_alive(pid) {
-                symphony_server::sys::signal(pid, libc::SIGKILL);
+        // A server the stop ended is gone, and its pid may name a process started since: each is
+        // signalled only while its pid still names the server taken.
+        for server in self.detached.lock().unwrap().iter() {
+            if server.alive() {
+                server.signal(libc::SIGKILL, "a case's cleanup: a shared server its stop left");
             }
             wait_cleanup(
-                || format!("owned shared server {pid} to exit"),
-                || Ok(!symphony_server::sys::pid_alive(pid)),
+                || format!("owned shared server {} to exit", server.pid),
+                || Ok(!server.alive()),
                 Instant::elapsed,
             );
         }

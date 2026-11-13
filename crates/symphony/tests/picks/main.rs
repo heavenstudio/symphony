@@ -37,7 +37,7 @@ fn review_binary() -> &'static std::path::Path {
     BINARY.get_or_init(|| {
         review_binary_for(
             &common::repo(),
-            std::env::var("SF_TEST_SYMPHONY_PREBUILT").as_deref() == Ok("1"),
+            std::env::var("SYMPHONY_TEST_PREBUILT").as_deref() == Ok("1"),
         )
         .unwrap_or_else(|why| panic!("{why}"))
     })

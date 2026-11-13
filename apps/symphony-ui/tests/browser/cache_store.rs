@@ -56,23 +56,23 @@ window.t = {
     },
     async parts() { return (await t.all("parts")).map(part => t.names(part.key)); },
     async kept() { return Object.keys(await t.items()).sort(); },
-    // A clean store, and one that answers. The store's next call opens the database anew, against
-    // its 500 ms deadline, which a loaded machine can miss: the calls before the open answers go
-    // on without the cache, as a page would. So a case starts only once a scratch item is kept,
-    // the open answered, and the item forgotten, leaving the database empty but for the format
-    // every case's calls name first.
-    async reset() {
+    // A clean store. The store's next call opens the database anew, against its 500 ms deadline,
+    // which a loaded machine can miss: the calls before the open answers go on without the cache,
+    // as a page would. So a case starts only once `opened` says a scratch item was kept, the open
+    // answered, and the item forgotten, leaving the database empty but for the format every
+    // case's calls name first ([`fresh`] asks it until it does).
+    async erase() {
         await new Promise(resolve => {
             const request = indexedDB.deleteDatabase("symphony-cache");
             // The store closes its connection when asked, so the deletion is never blocked.
             request.onsuccess = request.onerror = () => resolve();
         });
-        const C = window.symphonyCache, until = performance.now() + 30000;
-        while (await C.keep(1, "reset", "task:reset", "task", "page", "", {}, undefined, false) !== true) {
-            if (performance.now() > until) throw new Error("the store never opened its database");
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
+    },
+    async opened() {
+        const C = window.symphonyCache;
+        if (await C.keep(1, "reset", "task:reset", "task", "page", "", {}, undefined, false) !== true) return false;
         await C.forget(1, "reset", "task:reset");
+        return true;
     },
 };
 "#;
@@ -80,7 +80,10 @@ window.t = {
 /// A folder holding the store and the pages that load it: `/` as the shell would, and the others
 /// in a browser whose IndexedDB is missing, refused, never answers or answers past the deadline.
 fn pages() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sf-browser-cache-store-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "symphony-browser-cache-store-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::write(dir.join("assets/cache.js"), STORE).unwrap();
@@ -142,12 +145,18 @@ fn items_kept(chrome: &mut Chrome) -> Vec<String> {
     serde_json::from_value(run(chrome, "return t.kept();")).unwrap()
 }
 
-/// A fresh store, at time `ms`.
+/// A fresh store, at time `ms`: the database deleted, then asked until the store has opened it
+/// anew. A quiet machine opens it within seconds; only a stall reaches the browser target's
+/// backstop (RULES.md `tests/no-test-fails-on-load`).
 fn fresh(chrome: &mut Chrome, ms: u64) {
-    run(
-        chrome,
-        &format!("await t.reset(); t.at({ms}); return null;"),
-    );
+    run(chrome, "await t.erase(); return null;");
+    let opened = test_time::until_true("the store opening its database anew", crate::STALL, || {
+        run(chrome, "return t.opened();") == json!(true)
+    });
+    if let Err(stall) = opened {
+        panic!("{stall}");
+    }
+    run(chrome, &format!("t.at({ms}); return null;"));
 }
 
 #[test]

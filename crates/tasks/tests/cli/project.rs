@@ -237,6 +237,61 @@ fn the_board_guide_is_the_files_else_the_default() {
     assert_eq!(found.guide(), project::GUIDE);
 }
 
+/// A board whose server cannot start says where its SurrealDB comes from in the board guide the
+/// project's file names: with no store yet, the SurrealDB it needs is missing; with the board's
+/// store there, it is a board that cannot be served.
+#[test]
+fn a_board_that_cannot_be_served_names_the_guide_the_project_file_names() {
+    let main = repository(&scratch("project-guide-refusal").join("main"))
+        .canonicalize()
+        .unwrap();
+    write(
+        &main.join(FILE),
+        "[project]\nid = \"lamp-works\"\n[board]\nguide = \"handbook/BOARD.md\"\n",
+    );
+    let missing = main.join("no-surreal");
+    let vars = [(
+        "SYMPHONY_SURREAL".to_string(),
+        missing.display().to_string(),
+    )];
+    let env = symphony_board::cli::Env {
+        vars: vars.into_iter().collect(),
+        cwd: main.clone(),
+    };
+    let ran = crate::run(&env, &["list"], "");
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            2,
+            format!(
+                "✖ SurrealDB {} is not at {}, where `SYMPHONY_SURREAL` names it \
+                 (handbook/BOARD.md#where-it-lives)\n",
+                symphony_board::server::SURREAL_VERSION,
+                missing.display()
+            )
+        )
+    );
+    let data = main
+        .join(".git")
+        .join(symphony_board::folders::TASKS)
+        .join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let ran = crate::run(&env, &["list"], "");
+    assert_eq!(
+        (ran.code, ran.err),
+        (
+            2,
+            format!(
+                "✖ the board's store at {} cannot be served: SurrealDB {}, which serves it, is not \
+                 at {}, where `SYMPHONY_SURREAL` names it (handbook/BOARD.md#where-it-lives)\n",
+                data.display(),
+                symphony_board::server::SURREAL_VERSION,
+                missing.display()
+            )
+        )
+    );
+}
+
 #[test]
 fn a_folder_in_no_repository_has_no_board() {
     let dir = scratch("project-none");

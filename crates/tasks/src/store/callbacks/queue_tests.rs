@@ -7,7 +7,7 @@ use std::time::Instant;
 
 /// Where a re-run of a queue test below finds its folder, whose stand-in is the only codex on its
 /// `PATH`.
-const QUEUE_CASE: &str = "SF_CODEX_QUEUE_CASE";
+const QUEUE_CASE: &str = "SYMPHONY_CODEX_QUEUE_CASE";
 
 /// The codex queue stand-in. In mode `wait` it ends once a line reaches its release; otherwise it
 /// says what it was given and ends as its mode says.
@@ -23,7 +23,7 @@ input=other; output=other; error=other
 test /dev/fd/0 -ef /dev/null && input=null
 test /dev/fd/1 -ef /dev/null && output=null
 test /dev/fd/2 -ef /dev/null && error=null
-printf '%s|' "${CLAUDE_CODE_MESSAGING_TOKEN-unset}" "${SF_CODEX_QUEUE_KEPT-unset}" \
+printf '%s|' "${CLAUDE_CODE_MESSAGING_TOKEN-unset}" "${SYMPHONY_CODEX_QUEUE_KEPT-unset}" \
     "$input" "$output" "$error" > "$here/saw"
 printf %s "$$" > "$here/pid"
 case $mode in
@@ -35,7 +35,10 @@ esac
 
 /// A folder of its own under the temporary one, holding the stand-in.
 fn stand_in(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sf-codex-queue-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "symphony-codex-queue-{name}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     fixture_script::write(&dir.join("codex"), CODEX, false);
@@ -52,7 +55,7 @@ fn rerun(name: &str, dir: &std::path::Path) {
             .env(QUEUE_CASE, dir)
             .env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
             .env("CLAUDE_CODE_MESSAGING_TOKEN", "a-token")
-            .env("SF_CODEX_QUEUE_KEPT", "kept"),
+            .env("SYMPHONY_CODEX_QUEUE_KEPT", "kept"),
     )
     .unwrap();
     let done = crate::sys::wait_output(case).unwrap();

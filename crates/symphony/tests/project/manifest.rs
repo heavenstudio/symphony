@@ -1,5 +1,5 @@
-//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and Star
-//! Foundry's committed manifest.
+//! `symphony.toml`: every default a missing key takes, what the file refuses by name, and the
+//! consuming project's committed manifest.
 
 use std::path::Path;
 
@@ -141,6 +141,25 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     let project = parsed("[verdicts]\ncheck = [\"make\", \"test\"]\n").unwrap();
     assert_eq!(project.verdicts.check, ["make", "test"]);
     assert!(project.verdicts.land.is_empty());
+    // The release candidate's bounds: 3 red reruns and 24 hours, 0 in either holding none.
+    let releases = parsed("").unwrap().releases;
+    assert_eq!(
+        (releases.candidate_reruns, releases.candidate_hours),
+        (3, 24)
+    );
+    assert!(releases.holds_candidates());
+    let releases = parsed("[releases]\ncandidate_hours = 6\n")
+        .unwrap()
+        .releases;
+    assert_eq!(
+        (releases.candidate_reruns, releases.candidate_hours),
+        (3, 6)
+    );
+    for off in ["candidate_reruns = 0", "candidate_hours = 0"] {
+        let releases = parsed(&format!("[releases]\n{off}\n")).unwrap().releases;
+        assert!(!releases.holds_candidates(), "{off}");
+    }
+    assert!(refused("[releases]\ncandidate_hours = -1\n").contains("candidate_hours"));
 }
 
 #[test]
@@ -534,10 +553,10 @@ fn documents_history_artifacts_and_the_record_folder_resolve_against_the_project
     assert_eq!(project.artifact("asks/a.json"), "artifacts/asks/a.json");
     let (root, common) = (Path::new("/w/tree"), Path::new("/w/main/.git"));
     assert_eq!(project.record_folder(root, common), None);
-    let shared = parsed("[verdicts]\nrecord = \".git/sf-land/verdicts\"\n").unwrap();
+    let shared = parsed("[verdicts]\nrecord = \".git/land/verdicts\"\n").unwrap();
     assert_eq!(
         shared.record_folder(root, common).unwrap(),
-        common.join("sf-land/verdicts")
+        common.join("land/verdicts")
     );
     let local = parsed("[verdicts]\nrecord = \"records\"\n").unwrap();
     assert_eq!(

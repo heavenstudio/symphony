@@ -1,10 +1,10 @@
-//! A write on the board in the live board's own shape (the repository's own, in its git dir, reached
-//! from the repository with no `TASKS_*` variable naming it), run by the `tasks` executable as
-//! `just tasks` runs it, every build of which is `cli::process_main`: it hands its delivery to a
-//! detached `tasks dispatch` of that executable, which opens `sf-tasks/dispatch.log` beside the
-//! board for what it says, takes this host's dispatch lease and delivers to the recipient's native
-//! callback. A post, a `tasks api` post shaped as `land-approve --verdict changes`' and a changes
-//! verdict each do.
+//! A write on the board in the live board's own shape (the repository's own, in its git dir,
+//! reached from the repository with no `TASKS_*` variable naming it), run by the `tasks` executable
+//! as `just tasks` runs it, every build of which is `cli::process_main`: it hands its delivery to a
+//! detached `tasks dispatch` of that executable, which opens `symphony/tasks/dispatch.log` beside
+//! the board for what it says, takes this host's dispatch lease and delivers to the recipient's
+//! native callback. A post, a `tasks api` post shaped as `land-approve --verdict changes`' and a
+//! changes verdict each do.
 //!
 //! The executable is whichever `tasks` the including test binary's package builds: this crate's in
 //! the server tests, and the project's board-only one, the build the live board runs, in that
@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::{Env, connect};
 use symphony_board::server::FOLDER;
 use symphony_board::sys::{self, Command, hostname};
@@ -76,20 +76,28 @@ fn lease(store: &Store) -> Value {
 /// Waits until `recipient` has heard `text` and the dispatcher of write number `nth` has let this
 /// host's lease go: the nth detached dispatcher to take it, none having found it held.
 fn delivered(store: &Store, listeners: &Listeners, recipient: &str, text: &str, nth: u64) {
-    let until = Instant::now() + Duration::from_secs(60);
-    loop {
-        let lease = lease(store);
-        let released = lease["revision"] == json!(nth) && lease["until"] == json!(0);
-        if released && listeners.hears(recipient, text, Duration::ZERO) {
-            assert_eq!(lease["asked"], json!(0), "{lease}");
-            return;
-        }
-        assert!(
-            Instant::now() < until,
-            "write {nth}: {text:?} not delivered by its dispatcher within a minute; lease {lease}, heard {:?}",
+    let heard = || {
+        listeners
+            .heard(recipient)
+            .iter()
+            .any(|line| line.contains(text))
+    };
+    let done = test_time::until(
+        format!("write {nth}: {text:?} delivered by its dispatcher, its lease let go"),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let lease = lease(store);
+            let released = lease["revision"] == json!(nth) && lease["until"] == json!(0);
+            (released && heard()).then_some(lease)
+        },
+    );
+    match done {
+        Ok(lease) => assert_eq!(lease["asked"], json!(0), "{lease}"),
+        Err(stall) => panic!(
+            "{stall}; lease {}, heard {:?}",
+            lease(store),
             listeners.heard(recipient)
-        );
-        std::thread::sleep(Duration::from_millis(20));
+        ),
     }
 }
 
@@ -98,7 +106,7 @@ struct Sockets(PathBuf);
 
 impl Sockets {
     fn new() -> Sockets {
-        let dir = std::env::temp_dir().join(format!("sf-dispatch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-dispatch-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Sockets(dir)

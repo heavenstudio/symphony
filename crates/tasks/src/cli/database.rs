@@ -28,9 +28,9 @@ the board, so none of it ever starts the database.
                                start, stop or replay under way does; and
                                the snapshots that hold a log, kept until
                                the owner removes them
-  just tasks database hold WHY write the hold (sf-tasks/hold in the git
-                               common dir), then stop every server on the
-                               data cleanly: asked to end, and waited for
+  just tasks database hold WHY write the hold (symphony/tasks/hold in the
+                               git common dir), then stop every server on
+                               the data cleanly: asked to end, and waited for
                                while it writes its memtable out and closes
                                its store, never killed; one still starting
                                is waited for until it answers. While it is
@@ -44,17 +44,17 @@ the board, so none of it ever starts the database.
                                Only its holder releases it, or another
                                handle naming the holder with --of HOLDER
 
-Each hold and release is a line of sf-tasks/hold.log. It acts on the board of
-the repository it runs in, never on a server TASKS_SERVER names or for a
-scratch database, which shares the board's server. Only builds that carry it
-honour the hold (docs/TASKS.md). It reads no record of the schema the board
-was seen at, so it holds a board that went back as any other: that is step 2
-of its recovery. A clean stop removes the log segments the store's manifest
-counts as written: on a store that went back, whose manifest counts a segment
-it never applied, keep the log first: the snapshot taken before the start on
-the older state (`just tasks snapshot --list`), else a clone of the data
-(`cp -c -R`) while its server still runs. A start that replays the log takes
-such a snapshot itself.
+Each hold and release is a line of symphony/tasks/hold.log. It acts on the
+board of the repository it runs in, never on a server TASKS_SERVER names or
+for a scratch database, which shares the board's server. Only builds that
+carry it honour the hold (docs/TASKS.md). It reads no record of the schema the
+board was seen at, so it holds a board that went back as any other: that is
+step 2 of its recovery. A clean stop removes the log segments the store's
+manifest counts as written: on a store that went back, whose manifest counts a
+segment it never applied, keep the log first: the snapshot taken before the
+start on the older state (`just tasks snapshot --list`), else a clone of the
+data (`cp -c -R`) while its server still runs. A start that replays the log
+takes such a snapshot itself.
 
 options:
   -h, --help     show this help message and exit
@@ -139,8 +139,9 @@ fn usage(err: &mut dyn Write, said: &str) -> i32 {
 }
 
 /// The board of the project `env`'s working directory is in, as [`super::reach_board`] finds it,
-/// refused for a server `TASKS_SERVER` names, a scratch database, and a process Cargo runs from
-/// that board's repository ([`crate::live::cargo_refusal`]).
+/// refused for a server `TASKS_SERVER` names, a scratch database, a process Cargo runs from that
+/// board's repository ([`crate::live::cargo_refusal`]), and a repository whose board an older build
+/// keeps in its old folder ([`crate::unmoved`]): what it would say or hold there is no board.
 fn home(env: &Env) -> Result<Home, String> {
     if env.var("TASKS_SERVER").is_some() {
         return Err(
@@ -165,9 +166,12 @@ fn home(env: &Env) -> Result<Home, String> {
     if let Some(why) = crate::live::cargo_refusal(&live, crate::live::cargo_here()) {
         return Err(why);
     }
+    if let Some(why) = crate::unmoved::refusal(&project.place.common, crate::server::FOLDER) {
+        return Err(why);
+    }
     Ok(Home::in_common(
         &project.place.common,
-        env.var("SF_SURREAL").map(Path::new),
+        env.read(symphony_env::SURREAL).map(Path::new),
     ))
 }
 
@@ -217,8 +221,8 @@ fn said(home: &Home) -> String {
         {
             said.push_str(&format!(
                 ". Its server is pid {} at {}, which the private replay's record \
-                 (sf-tasks/replay.json) does not name: while that record stands every server on \
-                 the data is taken for the replay's, never the board's, so the board's next \
+                 (symphony/tasks/replay.json) does not name: while that record stands every server \
+                 on the data is taken for the replay's, never the board's, so the board's next \
                  command stops it cleanly once it answers (never before), then starts the \
                  board's own",
                 running.pid, running.addr
@@ -359,7 +363,7 @@ fn release(
                 let _ = writeln!(
                     err,
                     "· {by} released the hold {holder} set at {since} ({why}), as \
-                     sf-tasks/hold.log records"
+                     symphony/tasks/hold.log records"
                 );
             }
             let _ = writeln!(

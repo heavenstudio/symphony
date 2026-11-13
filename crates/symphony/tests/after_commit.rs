@@ -118,9 +118,10 @@ fn the_scratch_cli_is_run_once_bare_before_any_case_runs_it() {
     let env: Vec<_> = lines.collect();
     assert!(env.contains(&"PATH=/usr/bin:/bin"), "{said}");
     assert!(
-        !env.iter().any(|line| ["HOME=", "TASKS_", "SF_", "GIT_"]
-            .iter()
-            .any(|prefix| line.starts_with(prefix))),
+        !env.iter()
+            .any(|line| ["HOME=", "TASKS_", "SYMPHONY_", "GIT_"]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))),
         "{said}"
     );
 
@@ -2093,7 +2094,7 @@ fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
             prepared_script(
                 &wrapper,
                 &format!(
-                    "printf '%s\\n' \"$*\" >> {}\n\"$SF_AFTER_COMMIT_TASKS\" \"$@\"",
+                    "printf '%s\\n' \"$*\" >> {}\n\"$SYMPHONY_AFTER_COMMIT_TASKS\" \"$@\"",
                     quote(&ran)
                 ),
             );
@@ -2110,8 +2111,8 @@ fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
             let mut child = OwnedChild::logged(
                 sys::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "verdict_saves_case", "--nocapture"])
-                    .env("SF_TASKS_CLI", &wrapper)
-                    .env("SF_AFTER_COMMIT_VERDICT_SAVES", "1")
+                    .env("SYMPHONY_TASKS_CLI", &wrapper)
+                    .env("SYMPHONY_AFTER_COMMIT_VERDICT_SAVES", "1")
                     .stdin(sys::Stdio::Null),
                 &log_path,
             );
@@ -2150,7 +2151,7 @@ fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
 
 #[test]
 fn verdict_saves_case() {
-    if std::env::var_os("SF_AFTER_COMMIT_VERDICT_SAVES").is_none() {
+    if std::env::var_os("SYMPHONY_AFTER_COMMIT_VERDICT_SAVES").is_none() {
         return;
     }
     let f = Fixture {

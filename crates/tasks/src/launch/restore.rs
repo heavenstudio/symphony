@@ -216,7 +216,7 @@ fn live_addresses(hc: &dyn Hc) -> Result<HashSet<String>, LaunchError> {
         .collect())
 }
 
-/// The live terminal `handle` still runs in, by its name or its `sf.handle` label, if any.
+/// The live terminal `handle` still runs in, by its name or its `symphony.handle` label, if any.
 fn running_as(hc: &dyn Hc, handle: &str) -> Result<Option<String>, LaunchError> {
     let labelled = hc.listed(&[format!("{}={handle}", hc::HANDLE_LABEL)], false)?;
     let named = hc.live()?;

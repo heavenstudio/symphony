@@ -640,7 +640,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     let mut page = look_parity::responses()["/api/task-page"].clone();
     page["task"]["updated"] = json!(2.0);
     site.set_json("/api/task-page", &page);
-    assert!(super::wait_for_feed(&site), "the page follows no feed");
+    super::wait_for_feed(&site).expect("the page follows no feed");
     site.push(
         4183,
         &json!({"version":4183,"changes":[{"region":"task","data":{"key":SLUG,"value":page["task"]}}]}).to_string(),
@@ -775,12 +775,20 @@ fn reads_of(site: &Site, slug: &str) -> usize {
 }
 
 /// Wait until the page has read the timeline of `slug` `count` times.
+#[track_caller]
 fn wait_reads(chrome: &mut super::chrome::Chrome, site: &Site, slug: &str, count: usize) {
-    for _ in 0..400 {
-        if reads_of(site, slug) >= count {
-            break;
-        }
-        chrome.eval("new Promise(resolve => setTimeout(resolve, 25))");
+    let read = test_time::until_true(
+        format!("{slug}'s timeline read {count} times"),
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || {
+            reads_of(site, slug) >= count || {
+                chrome.eval("new Promise(resolve => setTimeout(resolve, 25))");
+                false
+            }
+        },
+    );
+    if let Err(stall) = read {
+        panic!("{stall}: {:?}", site.targets());
     }
     assert_eq!(reads_of(site, slug), count, "{slug}: {:?}", site.targets());
 }
@@ -882,15 +890,16 @@ fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_another
 /// (docs/analysis/reports-timeline-*.svg): `symphony shot`, the workspace's build run as an agent
 /// runs it, of the pictures' task and of a week-long task of fifty steps on its page from the
 /// stand-in server, at a phone's width and wide, light and dark, and of a phone off its network
-/// failing to read it, into the folder `SF_TIMELINE_SHOTS` names. Without it the case takes none.
+/// failing to read it, into the folder `SYMPHONY_TIMELINE_SHOTS` names. Without it the case takes
+/// none.
 #[test]
 fn pictures_of_the_timeline_when_a_folder_is_named() {
-    let Some(out) = std::env::var_os("SF_TIMELINE_SHOTS").map(PathBuf::from) else {
-        eprintln!("SF_TIMELINE_SHOTS names no folder: no pictures taken");
+    let Some(out) = std::env::var_os("SYMPHONY_TIMELINE_SHOTS").map(PathBuf::from) else {
+        eprintln!("SYMPHONY_TIMELINE_SHOTS names no folder: no pictures taken");
         return;
     };
     let Some(browser) = super::chrome::find() else {
-        eprintln!("no Chrome on this machine (SF_CHROME names one): no pictures taken");
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): no pictures taken");
         return;
     };
     std::fs::create_dir_all(&out).unwrap();
@@ -910,7 +919,7 @@ fn pictures_of_the_timeline_when_a_folder_is_named() {
                 "--out",
             ])
             .arg(&picture)
-            .env("SF_CHROME", &browser)
+            .env("SYMPHONY_CHROME", &browser)
             .output()
             .expect("run symphony shot");
         assert!(

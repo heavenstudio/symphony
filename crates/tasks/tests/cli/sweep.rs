@@ -142,13 +142,13 @@ fn clean_runs_cleanup_then_one_sweep_and_says_why_each_terminal_it_leaves_open_s
             "address": address, "name": handle, "state": "live", "status": status,
             "agent": "claude-code", "pid": NO_PID, "cwd": "/somewhere", "turn": 3,
             "argv": ["claude", "--session-id", format!("c-{address}"), "-n", handle, "go"],
-            "labels": {"sf.board": board_of(&p.env), "sf.handle": handle},
+            "labels": {"symphony.board": board_of(&p.env), "symphony.handle": handle},
         })
     };
     let ended = json!({
         "address": "t7", "name": null, "state": "finished", "status": null, "agent": null,
         "pid": NO_PID, "cwd": "/somewhere", "turn": 0, "argv": ["zsh"],
-        "labels": {"sf.board": board_of(&p.env)},
+        "labels": {"symphony.board": board_of(&p.env)},
     });
     p.set_state(json!({"terminals": [
         agent("t1", &done, "idle"),
@@ -222,7 +222,9 @@ fn clean_says_why_an_ended_terminal_on_screen_stays_once_cleanup_closed_its_reco
         "terminals": [{
             "address": "t1", "name": worker, "state": "finished", "status": null, "agent": null,
             "pid": NO_PID, "cwd": "/somewhere", "turn": 3, "argv": ["claude"],
-            "labels": {"sf.board": board_of(&p.env), "sf.handle": worker, "herdr.tab": "tb-code"},
+            "labels": {
+                "symphony.board": board_of(&p.env), "symphony.handle": worker, "herdr.tab": "tb-code",
+            },
         }],
         "layout": {"spaces": []},
         "screen": {"tab": "tb-code", "agent": null, "overlays": [], "floats": {}, "errors": []},

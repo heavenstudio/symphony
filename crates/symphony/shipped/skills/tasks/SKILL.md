@@ -145,7 +145,7 @@ when the result belongs on a task, post it on that task's thread instead.
 One dispatch combines role and status changes for the same task and handle:
 `ROLE SLUG HANDLE ROLE[, ROLE], STATUS`; `none` means the handle released all roles.
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
-can enable active-turn `turn/steer` with `git config sf.codexSteer true`;
+can enable active-turn `turn/steer` with `git config symphony.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
 idle threads still use the queue. Native delivery never types into a terminal.
 Only a legacy upgrade baselines its observation at the current board;
@@ -179,7 +179,10 @@ Act on requests without an acknowledgement post.
 2. `just tasks claim SLUG`, then `just tasks show SLUG` for the brief, links and
    thread. Read the linked spec sections.
 3. Work in the assigned checkout and follow the task's scope and the destination
-   project's implementation and testing rules. Run its required targeted checks
+   project's implementation and testing rules. A test you write never fails because
+   the machine is loaded: a cost is bounded by CPU or a count, and a wait waits on
+   its condition, failing only at a backstop that names the stall and the load.
+   Run its required targeted checks
    before review and post exact results. Verification selection, certificates,
    automated review hooks and landing are project policy, not generic board rules.
 4. When a teammate needs something, tell them on the thread. When you are
@@ -208,7 +211,8 @@ is not executing it. Run the targeted
 tests of what changed yourself, never the full suite; do not take the executor's
 word for them being green. Judge whether the evidence is good enough for the
 change's risk: an approve is the task's stamp, a changes verdict names the
-evidence missing. Follow the destination project's requirements for review
+evidence missing. A test that a loaded machine could fail (a wall-clock bound
+where a CPU bound, a count or a wait on its condition belongs) is a changes. Follow the destination project's requirements for review
 evidence and any additional verification. Do not assume a certificate or landing system exists.
 Read any review checklist the project provides for the changed languages or domains.
 

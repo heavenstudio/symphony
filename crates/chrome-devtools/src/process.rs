@@ -216,8 +216,8 @@ fn kernel_snapshot_tracks_only_the_owned_group_and_cpu_advances_twice() {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let mut child = super::BrowserGroup(
-        Command::new("/bin/sh")
+    let mut child = super::BrowserGroup {
+        child: Command::new("/bin/sh")
             .args([
                 "-c",
                 r#"printf 'ready\n'
@@ -232,9 +232,10 @@ done"#,
             .process_group(0)
             .spawn()
             .unwrap(),
-    );
-    let group = child.0.id();
-    let mut reader = std::io::BufReader::new(child.0.stdout.take().unwrap());
+        done: false,
+    };
+    let group = child.child.id();
+    let mut reader = std::io::BufReader::new(child.child.stdout.take().unwrap());
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
     assert_eq!(line, "ready\n");
@@ -247,7 +248,7 @@ done"#,
     };
     let mut previous = sample();
     for _ in 0..2 {
-        writeln!(child.0.stdin.as_mut().unwrap(), "spin").unwrap();
+        writeln!(child.child.stdin.as_mut().unwrap(), "spin").unwrap();
         line.clear();
         reader.read_line(&mut line).unwrap();
         assert_eq!(line, "done\n");
@@ -259,7 +260,7 @@ done"#,
         eprintln!("owned group={group} CPU {previous:?} -> {now:?}");
         previous = now;
     }
-    drop(child.0.stdin.take());
-    assert!(child.0.wait().unwrap().success());
+    drop(child.child.stdin.take());
+    assert!(child.reap().unwrap().success());
     assert!(members(group).unwrap().is_empty());
 }

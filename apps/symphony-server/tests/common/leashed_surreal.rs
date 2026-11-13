@@ -17,9 +17,9 @@ const LEASHED: &str = concat!(
     r#"exit $status"#,
 );
 
-/// The pinned SurrealDB: `SF_SURREAL`, else the one `tools/surreal.sh` names.
+/// The pinned SurrealDB: `SYMPHONY_SURREAL`, else the one `tools/surreal.sh` names.
 pub fn binary() -> PathBuf {
-    std::env::var_os("SF_SURREAL").map_or_else(
+    std::env::var_os("SYMPHONY_SURREAL").map_or_else(
         || {
             let found = symphony_board::sys::output(
                 Command::new("bash")

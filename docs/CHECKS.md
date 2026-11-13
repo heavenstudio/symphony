@@ -248,7 +248,10 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. It is the one place every test runs
+stops short of deciding is the red `tests/release-red-run`. A run red in a check holds its commit
+as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
+reruns what was red and what the fixes changed, and releases that commit and its fixes alone
+([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
 often than daily, and its schedule is the owner's to install. It also runs every 20 landings:
 a land starts `--due` on the main checkout's linked build of `symphony`, which counts with git
@@ -267,7 +270,7 @@ under (over 1, 5 and 15 minutes, with the processor count). Its own output says 
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
 red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
-the client check built in the same verify (`SF_SYMPHONY_UI_DIST`), and the check's folder
+the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
 when it built none, or did not run, the browser tests build the client themselves, red if that
@@ -278,6 +281,52 @@ that no task's focused tests reach stays unseen until 20 landings have gathered:
 price of focused gates without their full run, and narrows once it also runs each day. The
 first landing with no release and no run on record counts the line's whole history, and starts
 the first run at once.
+
+## Time in tests
+
+The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
+for cpu wall clock time usage - not total time spent or be removed from nightly" (RULES.md
+`tests/no-test-fails-on-load`). The machine the release run runs on also runs every agent's builds,
+at load averages of 50 to 700, so a test reads time in one of three ways, through the workspace's
+one helper, `crates/test-time` (a development dependency only):
+
+- **A cost** is the CPU the work took, or a count of the work, never its wall.
+  `test_time::cpu::spent(|| work)` bills a closure the CPU of its thread; `thread()` and `process()`
+  read this thread's and this process's CPU; `of(pid)` reads a live process's
+  (`proc_pid_rusage` on macOS, `/proc/PID/stat` on Linux) and `reap(pid)` what a child took in all
+  at its reap. The board's `perf` target bills its server this way (`crates/tasks/tests/perf/cpu.rs`).
+- **A wait** looks at its condition until it holds:
+  `test_time::until(WHAT, test_time::backstop(ALLOWANCE), || condition)`, or `until_true` for a
+  condition that holds or does not. Its only time is a wall-clock backstop, six times the wait's
+  allowance and never under two minutes. The Chrome driver's own waits keep the same rule
+  (`crates/chrome-devtools`). Past it, the wait fails with a `Stall`: `WHAT: stalled: still not so
+  after N looks, and the wait's wall-clock backstop of B ran out after W; load average a b c over 1,
+  5 and 15 minutes`. A loop of `sleep`s with a count, or an `Instant` deadline asserted, is a wait
+  written by hand: rewrite it. A sleep followed by a check that something did not happen proves
+  nothing on a loaded machine, where the sleep may end before the thing would have. It waits on a
+  positive barrier instead.
+- **Real time** stays only where the product's promise is elapsed time: a deadline, a backoff, a
+  page's two seconds on a phone. Its clock is injected where it can be: an environment variable,
+  a setting the test passes, or a page clock the test drives. A test that cannot inject it stays
+  and runs in `just verify` until the owner says otherwise.
+
+**Who takes a test out of the release run: the owner, and no one else.** An executor who finds a test
+that none of the three ways can hold proposes it on its task's thread: the promise the test guards
+and why no CPU bound, count, wait or injected clock stands in for it. The orchestrator puts it to
+the owner, and the test leaves `just verify` only on the owner's word. A real-time promise is never
+dropped, only moved: to a recipe a quiet machine runs, which still runs the test. No such recipe
+exists yet, so nothing is `#[ignore]`d for a quiet machine; a test the owner lets go waits in the
+release run until that recipe lands, and is then listed below with its promise and the owner's word.
+
+No budget, allowance or tolerance is widened to make a loaded run pass. Evidence for a test
+rewritten under this rule is the test run alone five times on the loaded machine, the load average
+stated with each result, and once more under a load of the agent's own (a few busy loops in its own
+process group, started and stopped by their PIDs).
+
+**Out of the release run for a quiet machine:** none. Proposed and waiting for the owner's word:
+`phone::the_board_is_interactive_within_two_seconds_on_a_mid_phone` (the board interactive within
+2 s on a mid phone, which a loaded machine's wall cannot stand in for); it runs in the release run
+until then.
 
 ## Size budgets
 
@@ -300,15 +349,14 @@ with no line, or a line for any other, is an error, not a pass. So is a server b
 client files beside it last changed (a hand run after `just client-update`), whose own bytes the
 check cannot tell; it says to rebuild.
 
-A binary links what it may run, and a test holds two libraries out of the two that never run
-them (`tests/links.rs` of `symphony` and of `symphony-server`): SQLite, which a board command alone
-reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src/cli/mod.rs` is the
-one place that names that check), and the loopback that measures a compiled plugin's calls through
-the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
-installs none links none of it; a plugin answering from its process needs only the host's side of
-the protocol). The same test of `symphony` holds the JSON Schema validator out of it, which would
-add a fifth to its size: a schema check is a library call a consumer's code makes
-(`symphony::schema::validate`), and `symphony serve` answers `validate` as a function it lacks.
+A binary links what it may run, and a test holds a library out of the two that never run it
+(`tests/links.rs` of `symphony` and of `symphony-server`): the loopback that measures a compiled
+plugin's calls through the protocol's JSON (installed with the plugins,
+`symphony::plugins::install`, so a binary that installs none links none of it; a plugin answering
+from its process needs only the host's side of the protocol). The same test of `symphony` holds
+the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
+library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
+`validate` as a function it lacks.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
@@ -403,7 +451,11 @@ as one commit. A branch commits no distribution: the land keeps main's side of e
 distribution file a branch changed, in a conflict or not, its approved tip unchanged; a conflict
 in any other file still goes back to its executor. Between a land and the regenerator's commit
 main's committed client is behind its sources: `just tasks regenerate --status` says how far,
-and the release run waits for it and releases nothing of a main still behind.
+and the release run waits for it and releases nothing of a main still behind. The one exception
+is a release candidate's fix that changes what the client is built from: no regenerator builds
+the candidate, so it commits the distribution its own sources make (`just client-update`), which
+its rerun's client check proves, and the land still keeps main's side of it
+([RELEASES](RELEASES.md#the-release-candidate)).
 
 ## After main moves
 
@@ -419,6 +471,16 @@ targets [steps 1 to 3](#picking-the-focused-set) pick at the new tip, where `mai
 lists the branch's own files alone; a package only main's commits touched is main's evidence, not
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
 evidence names, and a branch that merges main during its review runs them again first.
+
+**A release candidate's fix merges `release-candidate`, never main, before its approve.** A red's
+own task while the release run holds a candidate ([RELEASES](RELEASES.md#the-release-candidate))
+starts at the local branch `release-candidate` and merges it again before review, as that branch
+moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
+main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
+the red check's failures run alone at its tip, the commands its task names. Main is merged only
+when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
+the candidate on the commit approved before the merge. One that merges main before any approve
+gives the candidate nothing it can take, and drops it.
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

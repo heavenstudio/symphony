@@ -1,12 +1,10 @@
 //! Every refusal of the live-board rule names only what its own program takes: each flag and
-//! variable a refusal of `tasks`, `agent-send`, `tasks-copy` or `tasks-cutover` names in backticks
-//! is in that program's `--help`.
+//! variable a refusal of `tasks`, `agent-send` or `tasks-copy` names in backticks is in that
+//! program's `--help`.
 
 use super::{COPY, Held, Live, SEND, TASKS};
 use crate::Ran;
 use std::path::Path;
-
-const CUTOVER: &str = env!("CARGO_BIN_EXE_tasks-cutover");
 
 /// The flags (`--database`) and variables (`TASKS_DATABASE`) `said` names in backticks.
 fn named(said: &str) -> Vec<String> {
@@ -69,11 +67,11 @@ fn refusal(program: &str, ran: Ran) -> (String, String) {
 }
 
 /// The refusal of each program to the board `live`, reached from the worktree with `vars`: `tasks`,
-/// `agent-send`, `tasks-copy` by its board and by its server's address from outside the
-/// repository, and `tasks-cutover`, given an SQLite board to move for the run.
+/// `agent-send`, and `tasks-copy` by its board and by its server's address from outside the
+/// repository.
 fn refusals(live: &Live, vars: &[(&str, &str)]) -> Vec<(String, String)> {
     let addr = live.addr();
-    let mut said = vec![
+    vec![
         refusal(
             TASKS,
             live.run(Path::new(TASKS), &live.wt, vars, &["list"], ""),
@@ -96,17 +94,7 @@ fn refusals(live: &Live, vars: &[(&str, &str)]) -> Vec<(String, String)> {
             COPY,
             live.run(Path::new(COPY), &live.outside, vars, &[&addr], "{}"),
         ),
-    ];
-    let board = live.main.join(".git/live-tasks.db");
-    crate::sqlite::make(&board, &crate::sqlite::sample());
-    said.push(refusal(
-        CUTOVER,
-        live.run(Path::new(CUTOVER), &live.wt, vars, &[], ""),
-    ));
-    for end in ["", "-wal", "-shm", ".cutover"] {
-        let _ = std::fs::remove_file(live.main.join(format!(".git/live-tasks.db{end}")));
-    }
-    said
+    ]
 }
 
 #[test]

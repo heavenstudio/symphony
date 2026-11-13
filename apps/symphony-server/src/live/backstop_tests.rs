@@ -5,7 +5,7 @@ use crate::testing::{Tree, board, git, repository};
 use std::time::{Duration, Instant};
 use symphony_board::sys::Command;
 
-const CHILD: &str = "SF_HUB_BACKSTOP_CHILD";
+const CHILD: &str = "SYMPHONY_HUB_BACKSTOP_CHILD";
 const TEST: &str =
     "live::backstop_tests::a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period";
 
@@ -21,7 +21,7 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
                 .env("TASKS_DATABASE", board.database())
                 .env_remove("ASKS_DB")
                 .env_remove("TASKS_SESSION")
-                .env_remove("SF_SYMPHONY_UI_DIST")
+                .env_remove("SYMPHONY_UI_DIST")
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")

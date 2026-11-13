@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
 <title id="title">Proposed: what a document shows is committed; working evidence stays in the local store</title>
-<desc id="desc">F, the split. A picture a document or a decision card shows is committed beside it, as card pictures are today, so a plain git clone, GitHub and every past decision show it: 4.3 MiB on main here, about 2.5 MiB a day, never removed; Star Foundry's documents show 2.47 GiB still in its ignored folder. Working evidence no document shows is attached to the main checkout's store by content, outside git, read on every page, branch view and the phone on this machine, kept while something actively references it: a task not done or cancelled, a post on an open task's thread, a card not resolved, a document on main or on an open task's branch, an open ask. Past the sweep's cap, 5 GB unless the project sets its own, an agent removes what nothing references, closed tasks' files first; never a timer. Nothing that reaches GitHub through main comes back off: an LFS object only by deleting the repository or through support, a commit only by rewriting main, which is never done.</desc>
+<desc id="desc">F, the split. A picture a document or a decision card shows is committed beside it, as card pictures are today, so a plain git clone, GitHub and every past decision show it: 4.3 MiB on main here, about 2.5 MiB a day, never removed; the consuming project's documents show 2.47 GiB still in its ignored folder. Working evidence no document shows is attached to the main checkout's store by content, outside git, read on every page, branch view and the phone on this machine, kept while something actively references it: a task not done or cancelled, a post on an open task's thread, a card not resolved, a document on main or on an open task's branch, an open ask. Past the sweep's cap, 5 GB unless the project sets its own, an agent removes what nothing references, closed tasks' files first; never a timer. Nothing that reaches GitHub through main comes back off: an LFS object only by deleting the repository or through support, a commit only by rewriting main, which is never done.</desc>
 <style>
 :root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
 @media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
@@ -32,7 +32,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <rect class="good" x="40" y="114" width="434" height="44" rx="5"/>
 <text class="green" x="40" y="182">a plain git clone, GitHub, every past decision: shown</text>
 <text x="40" y="204">here: 4.3 MiB on main, about 2.5 MiB a day</text>
-<text x="40" y="224">Star Foundry: 2.47 GiB its documents show, still ignored</text>
+<text x="40" y="224">The consuming project: 2.47 GiB its documents show, still ignored</text>
 <text class="m" x="40" y="248" font-size="12">never removed: every clone and consumer copy keeps it</text>
 
 <rect class="card" x="510" y="74" width="466" height="200" rx="8"/>

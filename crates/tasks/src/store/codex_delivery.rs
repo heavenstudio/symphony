@@ -1,6 +1,7 @@
 //! Installed Codex protocol (generated offline): inspect runtime state and steer only an active
-//! turn, using its id as a precondition. Disabled unless sf.codexSteer is explicitly true;
-//! idle/unavailable threads and the default configuration retain the CLI queue path.
+//! turn, using its id as a precondition. Disabled unless [`STEER`] (`symphony.codexSteer`) is
+//! explicitly true; idle/unavailable threads and the default configuration retain the CLI queue
+//! path.
 
 use super::DeliveryError;
 use crate::sys::{self, Child, Stdio};
@@ -95,13 +96,27 @@ impl Drop for Proxy {
     }
 }
 
+/// The git setting that turns active-turn steering on.
+const STEER: &str = "symphony.codexSteer";
+
+/// Whether steering is on: [`STEER`] is true, as `git config --bool` reads it. `key` asks git for
+/// one key's value; none when it has none.
+fn steering(key: impl FnOnce(&'static str) -> Option<bool>) -> bool {
+    key(STEER).unwrap_or(false)
+}
+
+/// One git setting as `git config --bool --get` answers it in this process's repository.
+fn git_bool(key: &str) -> Option<bool> {
+    sys::output(sys::command("git").args(["config", "--bool", "--get", key]))
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout == b"true\n")
+}
+
 /// False means no input was attempted, so the caller can safely use `codex queue`.
 /// Once steering is attempted, an ambiguous failure stays retryable in the durable outbox.
 pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
-    let enabled =
-        sys::output(sys::command("git").args(["config", "--bool", "--get", "sf.codexSteer"]))
-            .is_ok_and(|output| output.status.success() && output.stdout == b"true\n");
-    if !enabled {
+    if !steering(git_bool) {
         return Ok(false);
     }
     let Ok(mut proxy) = Proxy::connect() else {
@@ -167,4 +182,24 @@ pub(super) fn steer(thread: &str, text: &str) -> Result<bool, DeliveryError> {
         return Err(DeliveryError::retry("codex turn/steer returned no result"));
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::steering;
+
+    /// A repository whose git has `value` under the setting.
+    fn keys(value: Option<bool>) -> impl FnOnce(&'static str) -> Option<bool> {
+        move |key| match key {
+            "symphony.codexSteer" => value,
+            other => panic!("asked git for {other}"),
+        }
+    }
+
+    #[test]
+    fn steering_is_the_setting_else_off() {
+        assert!(!steering(keys(None)));
+        assert!(steering(keys(Some(true))));
+        assert!(!steering(keys(Some(false))));
+    }
 }

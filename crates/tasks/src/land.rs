@@ -23,27 +23,28 @@
 //!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded, the line
 //!    saying how a land whose record was lost is finished by hand.
 //! 2. **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
-//!    worktrees`, else `sf-tasks/land/worktree` in the git common dir), never the main checkout:
-//!    one `--no-ff` merge commit, "Merge branch 'SLUG'", of the tip into the default branch, which
-//!    keeps the default branch's side of every path inside the project's `[land] generators`'
-//!    outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]): what they make
-//!    is the regenerator's, of the default branch's own sources, so no branch's build of it lands.
-//!    The tip merged stays the one approved. Any other conflict refuses. Then `[verdicts] check`,
-//!    unless `[land] check = false`, must pass on the merge; with it off, a project's regenerator
-//!    runs it on the default branch's tip after the land ([`Settings::main_check`]). A land runs
-//!    no generator. This merge is one step, [`Landing::integrate`] with [`Merging::Tip`], the one
-//!    seam a hosted pull-request merge would replace.
+//!    worktrees`, else `symphony/tasks/land/worktree` in the git common dir), never the main
+//!    checkout: one `--no-ff` merge commit, "Merge branch 'SLUG'", of the tip into the default
+//!    branch, which keeps the default branch's side of every path inside the project's `[land]
+//!    generators`' outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]):
+//!    what they make is the regenerator's, of the default branch's own sources, so no branch's
+//!    build of it lands. The tip merged stays the one approved. Any other conflict refuses. Then
+//!    `[verdicts] check`, unless `[land] check = false`, must pass on the merge; with it off, a
+//!    project's regenerator runs it on the default branch's tip after the land
+//!    ([`Settings::main_check`]). A land runs no generator. This merge is one step,
+//!    [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted pull-request merge would
+//!    replace.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
-//!    `sf-tasks/land/` and on the thread; then the main checkout, with no staged or tracked edit
-//!    and on the default branch, fast-forwards to what passed, so the default branch's new tree is
-//!    the tree the check passed on. The fast-forward runs in a process group of its own, which no
-//!    terminal's signal reaches and the land forwards none to, so nothing but its timeout stops it
-//!    part way; where the default branch is once it ends says whether it moved, and only a move
-//!    that did not happen drops the record, restoring what it half-wrote in the main checkout
-//!    ([`Landing::fast_forward`], [`Landing::restore`]). [`MOVING`] names the move meanwhile, so
-//!    the next land restores what one killed outright left ([`Landing::recover`]). When the
-//!    default branch moved meanwhile, the merge and the check run again on its new tip, at most
-//!    [`TRIES`] times; a red then is said on the thread to the orchestrator.
+//!    `symphony/tasks/land/` and on the thread; then the main checkout, with no staged or tracked
+//!    edit and on the default branch, fast-forwards to what passed, so the default branch's new
+//!    tree is the tree the check passed on. The fast-forward runs in a process group of its own,
+//!    which no terminal's signal reaches and the land forwards none to, so nothing but its timeout
+//!    stops it part way; where the default branch is once it ends says whether it moved, and only
+//!    a move that did not happen drops the record, restoring what it half-wrote in the main
+//!    checkout ([`Landing::fast_forward`], [`Landing::restore`]). [`MOVING`] names the move
+//!    meanwhile, so the next land restores what one killed outright left ([`Landing::recover`]).
+//!    When the default branch moved meanwhile, the merge and the check run again on its new tip,
+//!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator.
 //! 4. **Pushed.** Unless `[land] push = false` or there is no `origin`: the default branch is
 //!    fetched from `origin`; what it gained there is merged in the same way and checked again,
 //!    never forced, its generated paths kept but where they conflict; then the default branch
@@ -56,11 +57,11 @@
 //!    ([`regenerate::start`]), neither under the land's lock; then, last, the project's
 //!    `[board] on_land` ([`crate::on_land`]), which so finds the regenerator started.
 //!
-//! Two lands of one repository wait for each other ([`LOCK`] in `sf-tasks/` of the common dir),
-//! with no timeout: the lock guards a merge, a check and a push, and is freed when its holder's
-//! process ends however it ends. The check runs in a process group of its own, ended whole past
-//! `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or a push within
-//! [`NETWORK`]; what is left of a group once its first process ends is ended too.
+//! Two lands of one repository wait for each other ([`LOCK`] in `symphony/tasks/` of the common
+//! dir), with no timeout: the lock guards a merge, a check and a push, and is freed when its
+//! holder's process ends however it ends. The check runs in a process group of its own, ended
+//! whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or a push
+//! within [`NETWORK`]; what is left of a group once its first process ends is ended too.
 //! A hang-up, an interrupt or a terminate signal (a terminal's Ctrl-C, `kill`) ends the group
 //! running, or a land waiting for the lock, but the fast-forward, which it waits for, removes the
 //! land's worktree and ends the land by that signal: before the default branch moved nothing
@@ -68,9 +69,9 @@
 //! meanwhile, with when its first process started, so a land killed outright leaves its name: the
 //! next land refuses while that group lives, or while any process works in the worktree it left,
 //! and tells how to end the group only while its first process is the one the land started
-//! ([`Landing::leftover_group`]). What the check prints goes to `sf-tasks/land/SLUG.log`, the
-//! slug's `/` as `%2F` ([`file_stem`]). The settings are read from the default branch as the main
-//! checkout has it committed, never from the branch landing, so a branch cannot change its own
+//! ([`Landing::leftover_group`]). What the check prints goes to `symphony/tasks/land/SLUG.log`,
+//! the slug's `/` as `%2F` ([`file_stem`]). The settings are read from the default branch as the
+//! main checkout has it committed, never from the branch landing, so a branch cannot change its own
 //! check.
 
 use crate::cli::Env;
@@ -1851,7 +1852,8 @@ impl Landing<'_> {
         ) {
             self.say(&format!(
                 "land {slug}: its finished worktrees are swept in the background (its log \
-                 sf-tasks/{})",
+                 {}/{})",
+                crate::server::FOLDER,
                 trigger::LOG
             ));
         }

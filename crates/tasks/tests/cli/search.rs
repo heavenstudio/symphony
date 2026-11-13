@@ -52,7 +52,7 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
     let root = crate::scratch("embedding-maintenance");
     c.env.cwd = crate::repository(&root);
     // A regression that loads the runtime fails its checksum before it can use the network.
-    let cache = root.join(".git/sf-task-models").join(REVISION);
+    let cache = root.join(".git/symphony/models").join(REVISION);
     std::fs::create_dir_all(&cache).unwrap();
     std::fs::write(
         cache.join("model.onnx"),
@@ -88,7 +88,7 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
         .read(true)
         .write(true)
         .open(
-            root.join(".git/sf-task-models")
+            root.join(".git/symphony/models")
                 .join(format!("maintenance-{key}.lock")),
         )
         .unwrap();

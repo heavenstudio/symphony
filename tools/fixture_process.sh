@@ -15,7 +15,6 @@ fixture_close_fds() {
         esac
         eval "exec $fixture_fd>&-"
     done
-    unset SF_TEST_SLOT_HELD
 }
 
 # Read lifetime input in the watchdog process.

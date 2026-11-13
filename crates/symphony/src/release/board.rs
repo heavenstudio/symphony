@@ -9,7 +9,9 @@
 //! the project's tests and checks, a fresh reviewer's any other). A stop the owner clears is filed
 //! with no fast-fix mark, since nothing lands for it. Its text says what failed, the commands that
 //! rerun each failure alone ([`super::rerun`]: each failed test, else its own command, a step's
-//! included), its log and the machine's load when it ended, a step's as the step's list says it. A
+//! included), its log and the machine's load when it ended, a step's as the step's list says it,
+//! and, when files its own build had made went while it ran, that those failures are the
+//! environment's ([`super::gone`]: while which target, and what its build folder holds now). A
 //! red step filed while its check's own red is open names that one, which hears of it. A check
 //! red again while its task is open gets a line on that task; a green one closes it, when the
 //! candidate holds the commit it was red on (an out-of-cycle release of an older commit leaves it
@@ -23,7 +25,7 @@ use serde_json::{Value, json};
 
 use super::checks::{Ran, tail};
 use super::git::short;
-use super::record::Board;
+use super::record::{Board, Held};
 use crate::taskcli::CliBoard;
 
 /// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
@@ -166,6 +168,11 @@ pub(crate) struct Night<'a> {
     /// Whether the run checked a candidate (a run or a release), so its getting through closes the
     /// red [`RUN`]; a `--refresh` checks none, and answers for its refresh steps alone.
     pub(crate) whole: bool,
+    /// The release candidate's tip, when the run's reds are a release candidate's
+    /// ([`super::candidate`]): their tasks say how a fix of one starts, merges and lands.
+    pub(crate) candidate: Option<&'a str>,
+    /// Whether the run reran the release candidate, whose tip it checked, rather than main's.
+    pub(crate) rerun: bool,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -201,6 +208,12 @@ fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
         return Ok((old, true));
     }
     first(board, SERIES, key)
+}
+
+/// The open red task of `key`, as a run would tell it ([`generation`]): none when it has none.
+pub(crate) fn open(board: &dyn Reds, key: &str) -> Result<Option<String>, String> {
+    let (slug, open) = generation(board, key)?;
+    Ok(open.then_some(slug))
 }
 
 /// The first of `key`'s generations in `series` that is open (true) or not on the board (false).
@@ -320,17 +333,31 @@ for a package's own tests), the one its last lines name, never the whole run aga
 fn alone(ran: &Ran, night: &Night<'_>) -> String {
     let verify = ran.command == super::VERIFY.1;
     let listed = !ran.steps.is_empty();
-    let log = if listed {
-        super::rerun::Log::default()
-    } else {
-        super::rerun::read(&ran.log)
-    };
+    let log = log_of(ran);
     let each = super::rerun::arguments(&log.targets);
     let place = if conciliates(ran) {
         "in its scratch copy".to_string()
     } else {
         format!("in a checkout of {}", short(night.commit))
     };
+    if each.is_empty() && log.targets.iter().any(|failed| !failed.gone.is_empty()) {
+        let went = match &log.went {
+            Some(super::rerun::Went::While(header, selected)) => format!(
+                "the target they went while, {}",
+                selected.as_ref().map_or_else(
+                    || format!("which `{header}` names"),
+                    |args| format!("`{args}`")
+                )
+            ),
+            _ => "its build".into(),
+        };
+        return format!(
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+             test's to rerun, as each failed target found files of its build gone (above). What \
+             removes them shows in a run of {went}, {place}, with a look at its build folder \
+             after it."
+        );
+    }
     if each.is_empty() {
         let named = (verify && !listed)
             .then(|| super::rerun::step(&log.recipes))
@@ -416,23 +443,96 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
-/// A red task's body: what is red, how it ended, its log, the load it ended under, the commands
-/// that rerun its failures alone, the commits since the last green run, who fixes it, how its fix
-/// is approved, the open red `beside` it ([`beside`]) and what closes it.
+/// What a red check's own log says failed: none for a check that listed its steps, whose log is
+/// its own lines and its steps' tails, each step being read from its own.
+fn log_of(ran: &Ran) -> super::rerun::Log {
+    if ran.steps.is_empty() {
+        super::rerun::read(&ran.log)
+    } else {
+        super::rerun::Log::default()
+    }
+}
+
+/// What a red task says of the files of its build its targets found gone ([`super::gone`]), a
+/// paragraph of its own; nothing when none did.
+fn environment(ran: &Ran) -> String {
+    super::gone::said(&log_of(ran))
+        .map(|said| format!("{said}\n\n"))
+        .unwrap_or_default()
+}
+
+/// What a red task of the release candidate held at `tip` says of its fix ([`super::candidate`]):
+/// where its branch starts and what it merges, when it commits the client, how its approve and its
+/// land move the candidate, and what reruns it.
+fn held(tip: &str) -> String {
+    let branch = super::candidate::BRANCH;
+    format!(
+        "The release candidate: this run holds {tip} as the commit to release, the local branch \
+         `{branch}` (never pushed), so the release is that commit and its reds' fixes alone, however \
+         fast main moves. Fix it there, not on main: start this task's branch, named for its slug, \
+         at `{branch}`, never at main; merge `{branch}` again before review, as it moves when \
+         another red's fix lands; and never merge main before the approve. When the fix changes \
+         what the client is built from, commit the distribution its own sources make (`just \
+         client-update`): the one kind of branch that commits it, as no regenerator builds the \
+         candidate, and the land keeps main's side of it. Its approve names the full tip it read. It \
+         lands by `just land` like any task, and its land advances the candidate to the newest \
+         approved commit of this branch that holds the candidate and the fix alone. A land that \
+         conflicts comes back to its executor: merge main then and ask for a fresh approve, and the \
+         candidate takes the commit approved before that merge. A fix that merges main before any \
+         approve leaves the candidate nothing to take, and drops it. A fix that landed with another \
+         red's task answers this red by the task closed as covered by that landing (`just tasks \
+         done SLUG NOTE --covered-by OTHER`), once that land advances the candidate; closed as \
+         covered by any other landing, its fix is on main and not in the candidate, which is \
+         dropped. A fix made outside this repository answers this red by the task cancelled, \
+         saying where. Once every red of the \
+         candidate is answered, its tip is rerun (the next landing starts it, or `just release \
+         --rerun`): each step that was red, did not run or whose inputs a fix changed, and the \
+         conciliation.\n\n",
+        tip = short(tip)
+    )
+}
+
+/// What closes a red task of the check `name`: a run green in it, and, for a red of the release
+/// candidate, its own land.
+fn closed_by(name: &str, night: &Night<'_>) -> String {
+    if night.candidate.is_some() {
+        return format!(
+            "Its own land closes this task and answers it for the release candidate; a rerun of \
+             the candidate green in `{name}` closes it too."
+        );
+    }
+    format!(
+        "The next run of `just release` closes this task once `{name}` is green; a fix released out \
+         of cycle (`just release --commit COMMIT`) closes it too."
+    )
+}
+
+/// A red task's body: what is red, how it ended, its log, the load it ended under, what of it is
+/// the environment's (files of its build gone while it ran), the commands that rerun its failures
+/// alone, the commits since the last green run, how a release candidate's red is fixed ([`held`]),
+/// who fixes it, how its fix is approved, the open red `beside` it ([`beside`]) and what closes it.
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
-        "The Symphony release run is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
+        "The Symphony release run is red in `{name}` on {on} at {commit} (run {id}, {when}).\n\n\
          Command: `{command}`, in the release run's clean checkout of that commit: {ended}.\n\
          Log: {log}\n\
          {load}\n\n\
          {tail}\n\n\
+         {environment}\
          {alone}\n\n\
          {since}\n\n\
+         {held}\
          Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
          {beside}\
-         The next run of `just release` closes this task once `{name}` is green; a fix released \
-         out of cycle (`just release --commit COMMIT`) closes it too.\n\n\
+         {closed}\n\n\
          key: {key}\ncheck: {name}",
+        held = night.candidate.map(held).unwrap_or_default(),
+        on = if night.rerun {
+            "the release candidate"
+        } else {
+            "main"
+        },
+        closed = closed_by(&ran.name, night),
         beside = beside.unwrap_or_default(),
         name = ran.name,
         commit = short(night.commit),
@@ -443,22 +543,33 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
         log = ran.log.display(),
         load = load(ran),
         tail = quoted_tail(ran),
+        environment = environment(ran),
         alone = alone(ran, night),
         since = since(night),
         key = key(&ran.name),
     )
 }
 
-/// The line a red task that is still open gets on a later red run.
+/// The line a red task that is still open gets on a later red run: for a release candidate's, its
+/// tip, which its fix starts from or merges.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
+    let held = night.candidate.map_or_else(String::new, |tip| {
+        format!(
+            "\n\nThe release candidate is {}, the branch `{}`: a fix of this red starts from it, or \
+             merges it before review, and never merges main before the approve.",
+            short(tip),
+            super::candidate::BRANCH
+        )
+    });
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}{}\n\n{}{held}",
         short(night.commit),
         night.id,
         night.when,
         ran.ended(),
         ran.log.display(),
         load(ran),
+        environment(ran),
         alone(ran, night),
         quoted_tail(ran)
     )
@@ -589,11 +700,62 @@ struct Red {
 /// What a run does to one key's task.
 enum Act {
     /// File the red `slug`; its later line goes on it instead in case another run filed it.
-    File { slug: String, red: Red },
+    File {
+        slug: String,
+        red: Red,
+        of: Option<Of>,
+    },
     /// Add a line to the open red `slug`.
-    Say { slug: String, text: String },
+    Say {
+        slug: String,
+        text: String,
+        of: Option<Of>,
+    },
     /// Close the open red `slug`, saying why.
     Close { slug: String, why: String },
+}
+
+/// The red check or step an act files or tells: its key and name.
+struct Of {
+    key: String,
+    name: String,
+}
+
+impl Of {
+    /// The red [`Held`] on the task `slug`.
+    fn on(&self, slug: &str) -> Held {
+        Held {
+            key: self.key.clone(),
+            name: self.name.clone(),
+            slug: slug.to_string(),
+        }
+    }
+}
+
+/// `act` as the red of the check or step `ran` when it files or tells one, so the run knows each
+/// red's task ([`Board::reds`]).
+fn as_red(act: Result<Option<Act>, String>, ran: &Ran) -> Result<Option<Act>, String> {
+    let of = || {
+        Some(Of {
+            key: key(&ran.name),
+            name: ran.name.clone(),
+        })
+    };
+    act.map(|act| {
+        act.map(|act| match act {
+            Act::File { slug, red, .. } => Act::File {
+                slug,
+                red,
+                of: of(),
+            },
+            Act::Say { slug, text, .. } => Act::Say {
+                slug,
+                text,
+                of: of(),
+            },
+            close @ Act::Close { .. } => close,
+        })
+    })
 }
 
 /// The act on the key `key`'s task: red with what it files, else green with the name of what
@@ -621,8 +783,13 @@ fn act(
         (Some(red), true) => Some(Act::Say {
             slug,
             text: red.again,
+            of: None,
         }),
-        (Some(red), false) => Some(Act::File { slug, red }),
+        (Some(red), false) => Some(Act::File {
+            slug,
+            red,
+            of: None,
+        }),
     })
 }
 
@@ -699,7 +866,10 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
     for step in &ran.steps {
         let near = open.as_deref().map(|slug| beside(slug, &ran.name));
         let red = red_of(step, night, near.as_deref());
-        let act = act(board, night, &key(&step.name), red, &passed(step));
+        let act = as_red(
+            act(board, night, &key(&step.name), red, &passed(step)),
+            step,
+        );
         if let Ok(Some(Act::File { slug, .. } | Act::Say { slug, .. })) = &act {
             held.push(format!("`{}` ({}) in {slug}", step.name, step.ended()));
         }
@@ -707,11 +877,15 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
     }
     if told {
         let red = red_of(ran, night, None);
-        found.push(act(board, night, &key(&ran.name), red, &passed(ran)));
+        found.push(as_red(
+            act(board, night, &key(&ran.name), red, &passed(ran)),
+            ran,
+        ));
     } else if let Some(slug) = open {
         found.push(Ok(Some(Act::Say {
             slug,
             text: in_steps(ran, night, &held),
+            of: None,
         })));
     }
     found
@@ -784,11 +958,12 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             Act::Close { slug, why } => board
                 .close(slug, &handle, why)
                 .map(|()| done.closed.push(slug.clone())),
-            Act::Say { slug, text } => board
-                .say(slug, &handle, text)
-                .map(|()| done.updated.push(slug.clone())),
-            Act::File { slug, red } => {
-                match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
+            Act::Say { slug, text, of } => board.say(slug, &handle, text).map(|()| {
+                done.updated.push(slug.clone());
+                done.reds.extend(of.as_ref().map(|of| of.on(slug)));
+            }),
+            Act::File { slug, red, of } => {
+                let wrote = match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
                     Ok(()) => {
                         done.filed.push(slug.clone());
                         Ok(())
@@ -800,7 +975,11 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                             .map(|()| done.updated.push(slug.clone())),
                         _ => Err(error),
                     },
+                };
+                if wrote.is_ok() {
+                    done.reds.extend(of.as_ref().map(|of| of.on(slug)));
                 }
+                wrote
             }
         };
         if let Err(error) = wrote {
@@ -958,6 +1137,8 @@ mod tests {
             cleared: &[],
             closes: &|_| true,
             whole: true,
+            candidate: None,
+            rerun: false,
         }
     }
 
@@ -1424,7 +1605,7 @@ mod tests {
     #[test]
     fn a_checks_key_is_its_name_in_lower_case_words() {
         assert_eq!(key("verify"), "verify");
-        assert_eq!(key("Conciliate star_foundry!"), "conciliate-star-foundry");
+        assert_eq!(key("Conciliate lamp_shop!"), "conciliate-lamp-shop");
         assert_eq!(key("--a--b--"), "a-b");
         assert_eq!(
             key("tests/perf"),
@@ -1483,6 +1664,98 @@ mod tests {
             ),
             "{thread:?}"
         );
+    }
+
+    #[test]
+    fn a_release_candidates_red_says_how_its_fix_starts_merges_and_lands() {
+        let board = Fake::with(&[("tests/release-red-lint", "in_progress")]);
+        let mut held = night(&[]);
+        held.candidate = Some("cafe0123456789abcdef");
+        let checks = [ran("verify", 101), ran("lint", 1), ran("docs", 0)];
+        let done = report(&board, &held, &checks);
+        assert_eq!(done.filed, ["tests/release-red-verify"]);
+        assert_eq!(done.updated, ["tests/release-red-lint"]);
+        let red = |key: &str| Held {
+            key: key.into(),
+            name: key.into(),
+            slug: format!("tests/release-red-{key}"),
+        };
+        assert_eq!(
+            done.reds,
+            vec![red("verify"), red("lint")],
+            "each red's task"
+        );
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        for said in [
+            "The release candidate: this run holds cafe01234567 as the commit to release, the local \
+             branch `release-candidate` (never pushed), so the release is that commit and its \
+             reds' fixes alone",
+            "start this task's branch, named for its slug, at `release-candidate`, never at main; \
+             merge `release-candidate` again before review",
+            "never merge main before the approve",
+            "commit the distribution its own sources make (`just client-update`)",
+            "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
+             approve, and the candidate takes the commit approved before that merge.",
+            "A fix that landed with another red's task answers this red by the task closed as \
+             covered by that landing (`just tasks done SLUG NOTE --covered-by OTHER`), once that \
+             land advances the candidate; closed as covered by any other landing, its fix is on \
+             main and not in the candidate, which is dropped.",
+            "A fix made outside this repository answers this red by the task cancelled, saying \
+             where.",
+            "(the next landing starts it, or `just release --rerun`)",
+            "Its own land closes this task and answers it for the release candidate; a rerun of \
+             the candidate green in `verify` closes it too.",
+        ] {
+            assert!(filed.contains(said), "{said}\n\n{filed}");
+        }
+        assert!(
+            !filed.contains("The next run of `just release` closes"),
+            "{filed}"
+        );
+        let again = &board.thread("tests/release-red-lint")[0];
+        assert!(
+            again.ends_with(
+                "\n\nThe release candidate is cafe01234567, the branch `release-candidate`: a fix \
+                 of this red starts from it, or merges it before review, and never merges main \
+                 before the approve."
+            ),
+            "{again}"
+        );
+        assert!(
+            filed.contains("\nThe Symphony release run is red in `verify` on main at cafe01234567"),
+            "the run that first holds it ran main's tip: {filed}"
+        );
+
+        // A rerun of the candidate red again says what it checked: the candidate, not main.
+        let board = Fake::default();
+        let rerun = Night {
+            rerun: true,
+            ..held
+        };
+        report(&board, &rerun, &checks);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        assert!(
+            filed.contains(
+                "\nThe Symphony release run is red in `verify` on the release candidate at \
+                 cafe01234567 (run "
+            ),
+            "{filed}"
+        );
+
+        // A red run that holds no candidate says none of it.
+        let board = Fake::default();
+        let done = report(&board, &night(&[]), &checks);
+        assert_eq!(done.reds.len(), 2);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        assert!(!filed.contains("release candidate"), "{filed}");
+        assert!(
+            filed.contains(
+                "The next run of `just release` closes this task once `verify` is green; a fix \
+                 released out of cycle (`just release --commit COMMIT`) closes it too."
+            ),
+            "{filed}"
+        );
+        assert!(!board.thread("tests/release-red-lint")[0].contains("candidate"));
     }
 
     #[test]
@@ -1816,7 +2089,7 @@ mod tests {
         // A test run whose log names no failed target (it did not build): a target at a time,
         // never the whole suite again.
         let unbuilt = Ran {
-            command: "SF_SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh \
+            command: "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh \
                       test --workspace --locked --no-fail-fast"
                 .into(),
             log: tree.write("unbuilt.log", "error[E0425]: cannot find value `x`\n"),
@@ -1906,7 +2179,7 @@ mod tests {
             command: "cargo --config 'patch…' test --no-fail-fast -p game (in /copies/sf at 1a2b)"
                 .into(),
             log: cargo_log(&tree, 1),
-            ..ran("conciliate-star-foundry", 101)
+            ..ran("conciliate-consumer", 101)
         };
         let said = alone(&conciliation, &night(&[]));
         assert!(
@@ -1931,6 +2204,142 @@ mod tests {
             !conciliates(&ran(CONCILIATE, 1)),
             "the registry's read is no project's"
         );
+    }
+
+    /// A conciliation's log, cut, whose project's own test (`dependency_boundary`) emptied its
+    /// build folder `target` while it ran: the targets after it found their executable gone, or a
+    /// build script's output. When `failed`, one before it failed in a test of its own; else that
+    /// one ran after it and found its executable gone too.
+    fn emptied_log(
+        tree: &crate::test_tree::Tree,
+        target: &std::path::Path,
+        failed: bool,
+    ) -> PathBuf {
+        let target = target.display();
+        let unexecuted = |name: &str| {
+            format!(
+                "     Running tests/{name}.rs (.target/debug/deps/{name}-c2)\n\
+                 error: test failed, to rerun pass `-p art --test {name}`\n\n\
+                 Caused by:\n  could not execute process `{target}/debug/deps/{name}-c2` (never \
+                 executed)\n\nCaused by:\n  No such file or directory (os error 2)\n"
+            )
+        };
+        let boundary = "     Running tests/dependency_boundary.rs \
+                        (.target/debug/deps/dependency_boundary-c5)\n\
+                        test wrappers_build_without_the_symphony_app_or_board ... ok\n";
+        let (before, after) = if failed {
+            (
+                "     Running tests/golden_card.rs (.target/debug/deps/golden_card-87ae)\n\
+                 test shared_app_discovers_branch_card ... FAILED\n\
+                 error: test failed, to rerun pass `-p art --test golden_card`\n"
+                    .to_string(),
+                String::new(),
+            )
+        } else {
+            (String::new(), unexecuted("golden_card"))
+        };
+        tree.write(
+            "conciliate-consumer.log",
+            &format!(
+                "{before}{boundary}{after}{failure_capture}   Doc-tests content_index\n\
+                 error: couldn't find file `{target}/debug/build/content-index-c3/out/index.rs`\n\
+                 error: doctest failed, to rerun pass `-p art --doc`\n",
+                failure_capture = unexecuted("failure_capture"),
+            ),
+        )
+    }
+
+    #[test]
+    fn a_conciliation_whose_build_lost_files_is_filed_as_the_environment_failure_it_is() {
+        let tree = crate::test_tree::Tree::new();
+        let target = tree.path("copies/consumer/.target");
+        tree.write("copies/consumer/.target/tree", "the tree that emptied it");
+        let conciliation = Ran {
+            command: "cargo test --no-fail-fast --target-dir /copies/consumer/.git/t -p art (in \
+                      /copies/consumer at 1a2b)"
+                .into(),
+            log: emptied_log(&tree, &target, true),
+            ..ran("conciliate-consumer", 101)
+        };
+        let board = Fake::default();
+        report(&board, &night(&[]), std::slice::from_ref(&conciliation));
+        let filed = board
+            .thread("tests/release-red-conciliate-consumer")
+            .join("\n");
+        let paragraph = format!(
+            "\n\nAn environment failure, not a failed test: 2 of its failed targets found files \
+             its own build had made gone, and never ran or never compiled for that (`-p art --test \
+             failure_capture` and `-p art --doc`): `{target}/debug/deps/failure_capture-c2` and \
+             `{target}/debug/build/content-index-c3/out/index.rs`. They went while `Running \
+             tests/dependency_boundary.rs (.target/debug/deps/dependency_boundary-c5)` (`-p art \
+             --test dependency_boundary`) ran, the last target cargo started before the first \
+             that found one gone: what removed them ran then, that target or something it \
+             started, or something outside the run. Its build folder, {target}, holds now: \
+             `tree` (made ",
+            target = target.display()
+        );
+        assert!(filed.contains(&paragraph), "{paragraph:?} in:\n{filed}");
+        assert!(
+            filed.contains(
+                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`), the \
+                 command above, in its scratch copy, with each of these in place of its `-p` \
+                 packages, as its log names each failure (1):\n- `-p art --test golden_card -- \
+                 shared_app_discovers_branch_card --exact`\n\n"
+            ),
+            "the targets that found files gone are no failures to rerun:\n{filed}"
+        );
+
+        // Red again with every target failed so: the environment's again, and no rerun but the
+        // target they went while, with a look at the build folder; with no failure before it the
+        // log says no package for it, so its line names it.
+        let gone = Ran {
+            log: emptied_log(&tree, &target, false),
+            ..conciliation
+        };
+        report(&board, &night(&[]), std::slice::from_ref(&gone));
+        let again = &board.thread("tests/release-red-conciliate-consumer")[1];
+        assert!(
+            again.contains(
+                "\n\nAn environment failure, not a failed test: 3 of its failed targets found"
+            ),
+            "{again}"
+        );
+        assert!(
+            again.contains(
+                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`): none \
+                 of its failures is a test's to rerun, as each failed target found files of its \
+                 build gone (above). What removes them shows in a run of the target they went \
+                 while, which `Running tests/dependency_boundary.rs \
+                 (.target/debug/deps/dependency_boundary-c5)` names, in its scratch copy, with a \
+                 look at its build folder after it.\n\n"
+            ),
+            "{again}"
+        );
+
+        // Gone before any target ran, in a check of main's own: its build is what to rerun.
+        let unbuilt = Ran {
+            command: "tools/cargo.sh test --workspace --locked --no-fail-fast".into(),
+            log: tree.write(
+                "unbuilt.log",
+                "error: extern location for a does not exist: /t/debug/deps/liba-1.rlib\n\
+                 error: test failed, to rerun pass `-p symphony --lib`\n",
+            ),
+            ..ran("verify/tests", 101)
+        };
+        assert_eq!(
+            alone(&unbuilt, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+             test's to rerun, as each failed target found files of its build gone (above). What \
+             removes them shows in a run of its build, in a checkout of cafe01234567, with a look \
+             at its build folder after it."
+        );
+        assert!(
+            environment(&unbuilt).ends_with("Its build folder, /t, is gone.\n\n"),
+            "{}",
+            environment(&unbuilt)
+        );
+        // A check whose targets failed by themselves says nothing of the environment.
+        assert_eq!(environment(&ran("verify", 101)), "");
     }
 
     #[test]

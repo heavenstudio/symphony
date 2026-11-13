@@ -5,9 +5,12 @@
 //! stopped short of deciding, is a task on the board ([`board`]); when every check is green it tags
 //! the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`])
 //! and pushes that one tag. `--commit COMMIT` does the same out of cycle for a commit already on
-//! the remote's main and past the newest release. Each run is recorded in the git common dir
-//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each day
-//! ([`schedule`]), which the owner installs.
+//! the remote's main and past the newest release. A run of main's tip red in a check holds that
+//! commit as the release candidate ([`candidate`]) while its reds are fixed: until each is answered
+//! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
+//! released or held again. Each run is recorded in the git common dir ([`record`]), which
+//! `--status` reads; `--schedule` prints the entry that runs it each day ([`schedule`]), which the
+//! owner installs.
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
@@ -26,9 +29,11 @@
 
 mod board;
 mod cadence;
+mod candidate;
 mod checks;
 mod conciliate;
 mod git;
+mod gone;
 mod group;
 mod notes;
 mod pin;
@@ -59,14 +64,16 @@ use crate::project::Project;
 
 const USAGE: &str = "usage: symphony release [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
 [--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] [--timeout SECONDS] \
-[--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh]";
+[--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] [--rerun] [--drop]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder and conciliated with the projects this machine serves; \
 each red check filed on the board as tests/release-red-NAME, and a green commit tagged \
 release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
 branch through its own commit gate, its main fast-forwarded to it in its main checkout when that \
-is on its main and clean, and its board moved to the schema of the pin its main locks \
+is on its main and clean, and its board moved to the schema of the pin its main locks. A run red \
+in a check holds its commit as the release candidate, the local branch release-candidate, until \
+its reds' own lands answer them; then it is rerun, and main's tip is run only once none is held \
 (docs/RELEASES.md).
 
 options:
@@ -85,9 +92,9 @@ options:
   --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
                         check not yet started are red (default: 36000, ten hours; at most
                         86400)
-  --status              print the newest release, the last run and its age, the landings since
-                        the last release and what the next run waits for, and the last refresh;
-                        run nothing
+  --status              print the newest release, the last run and its age, the release
+                        candidate, the landings since the last release and what the next run
+                        waits for, and the last refresh; run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)
   --due [SLUG COMMIT]   start a run only when [releases] every_landings tasks have landed since
@@ -97,7 +104,12 @@ options:
                         in the run's own checkout. A landing's on_land command runs it, naming
                         the task and its merge
   --refresh             refresh the machine to the newest release here again, checking nothing:
-                        an orchestrator's retry of a red or interrupted refresh";
+                        an orchestrator's retry of a red or interrupted refresh
+  --rerun               rerun the release candidate now, once every red of it is answered: each
+                        check or step that was red, did not run or whose inputs changed, and the
+                        conciliation; refused while none is held or a red waits
+  --drop                drop the release candidate, so the next run checks main's tip: an
+                        orchestrator's act";
 
 /// The checks a run runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
@@ -153,6 +165,8 @@ struct Options {
     cause: Option<String>,
     /// Whether it refreshes the machine to the newest release alone, checking nothing.
     refresh: bool,
+    /// Whether it was asked to rerun the release candidate (`--rerun`).
+    rerun: bool,
 }
 
 /// The repository a run releases.
@@ -197,6 +211,8 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         flag("--at", true),
         flag("--due", false),
         flag("--refresh", false),
+        flag("--rerun", false),
+        flag("--drop", false),
     ];
     if names_legacy_commit(args, &flags) {
         let _ = writeln!(err, "`{LEGACY_COMMIT} COMMIT` is now `--commit COMMIT`");
@@ -250,16 +266,24 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         },
     };
-    let modes = ["--status", "--schedule", "--commit", "--due", "--refresh"]
-        .into_iter()
-        .filter(|mode| parsed.flag(mode))
-        .count();
+    let modes = [
+        "--status",
+        "--schedule",
+        "--commit",
+        "--due",
+        "--refresh",
+        "--rerun",
+        "--drop",
+    ]
+    .into_iter()
+    .filter(|mode| parsed.flag(mode))
+    .count();
     if modes > 1 {
         return refuse(
             err,
             USAGE,
             "release",
-            "--status, --schedule, --commit, --due and --refresh are one each",
+            "--status, --schedule, --commit, --due, --refresh, --rerun and --drop are one each",
         );
     }
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
@@ -303,27 +327,47 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Some(path) => normal(&std::env::current_dir().unwrap_or_default().join(path)),
         None => default_worktree(&repo),
     };
+    if parsed.flag("--drop") {
+        return drop_candidate(&repo, now, out, err);
+    }
     let mut cause = None;
     if parsed.flag("--due") {
         if let [slug, landed] = &parsed.positionals[..] {
             let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
         }
-        let cadence = match cadence_of(&repo, &remote, &branch) {
-            Ok(cadence) => cadence,
+        // The release candidate settled first, so a land that answers its red is heard at once.
+        let held = match settled(&repo, &remote, &branch, now, out) {
+            Ok(held) => held.as_ref().and_then(candidate::Candidate::hold),
+            Err(problem) if repo.project.releases.every_landings > 0 => {
+                // A record this build cannot read may be a newer build's: the run goes on from a
+                // build of the tip ([`hand_off`]), which reads it, or records why it cannot.
+                let _ = writeln!(out, "release: the release candidate: {problem}");
+                cause = Some(format!("the release candidate's record: {problem}"));
+                None
+            }
             Err(problem) => {
-                let _ = writeln!(
-                    err,
-                    "symphony release: the landings cannot be counted: {problem}"
-                );
-                return 1;
+                let _ = writeln!(out, "release: the release candidate: {problem}");
+                None
             }
         };
-        let _ = write!(out, "{}", cadence.lines());
-        if !cadence.due() {
-            return 0;
+        if cause.is_none() {
+            let cadence = match cadence_of(&repo, &remote, &branch, held) {
+                Ok(cadence) => cadence,
+                Err(problem) => {
+                    let _ = writeln!(
+                        err,
+                        "symphony release: the landings cannot be counted: {problem}"
+                    );
+                    return 1;
+                }
+            };
+            let _ = write!(out, "{}", cadence.lines());
+            if !cadence.due() {
+                return 0;
+            }
+            cause = Some(cadence.cause());
+            let _ = write!(out, "{}", cadence.starts());
         }
-        cause = Some(cadence.cause());
-        let _ = write!(out, "{}", cadence.starts());
     }
     let options = Options {
         remote,
@@ -337,6 +381,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         timeout,
         cause,
         refresh: parsed.flag("--refresh"),
+        rerun: parsed.flag("--rerun"),
     };
     if options.push
         && std::env::var_os(CLOCK).is_some()
@@ -628,10 +673,10 @@ fn default_worktree(repo: &Repo) -> PathBuf {
     normal(&folder.join("release"))
 }
 
-/// `--status`: the newest release, the last run and the last green run, the landings on
-/// `remote`'s `branch` since the last release and what the next run waits for, and the last
-/// refresh, read from the record, the local tags and the refs as last fetched; nothing is written
-/// or fetched.
+/// `--status`: the newest release, the last run and the last green run, the release candidate, the
+/// landings on `remote`'s `branch` since the last release and what the next run waits for, and the
+/// last refresh, read from the record, the local tags and the refs as last fetched; nothing is
+/// written or fetched.
 fn status(
     repo: &Repo,
     remote: &str,
@@ -656,8 +701,33 @@ fn status(
     if generates && let Ok(standing) = symphony_board::land::regenerate::status(&at_main(repo)) {
         let _ = writeln!(out, "regenerator: {}", standing.line);
     }
+    // The release candidate as last settled: `--status` writes nothing, so a land not settled yet
+    // is the next run's or count's to hear.
+    let held = match candidate::read(&folder) {
+        Ok(Some(held)) => {
+            let bounds = candidate::Bounds::of(&repo.project.releases);
+            let _ = write!(out, "{}", held.status(now, bounds));
+            held.hold()
+        }
+        Ok(None) if repo.project.releases.holds_candidates() => {
+            let _ = writeln!(out, "release candidate: none held");
+            None
+        }
+        Ok(None) => {
+            let _ = writeln!(
+                out,
+                "release candidate: off ([releases] candidate_reruns or candidate_hours is 0): a \
+                 red run holds none"
+            );
+            None
+        }
+        Err(problem) => {
+            let _ = writeln!(out, "release candidate: {problem}");
+            None
+        }
+    };
     let every = repo.project.releases.every_landings;
-    match cadence::of(&repo.root, &folder, &ordered, every, remote, branch) {
+    match cadence::of(&repo.root, &folder, &ordered, every, remote, branch, held) {
         Ok(cadence) => {
             let _ = write!(out, "{}", cadence.lines());
         }
@@ -682,8 +752,14 @@ fn ordered_releases(root: &Path) -> Result<Vec<(Release, String)>, String> {
     Ok(ordered)
 }
 
-/// Where the cadence of `repo` stands on `remote`'s `branch`.
-fn cadence_of(repo: &Repo, remote: &str, branch: &str) -> Result<cadence::Cadence, String> {
+/// Where the cadence of `repo` stands on `remote`'s `branch`, with what a release candidate `held`
+/// of it.
+fn cadence_of(
+    repo: &Repo,
+    remote: &str,
+    branch: &str,
+    held: Option<cadence::Hold>,
+) -> Result<cadence::Cadence, String> {
     let ordered = ordered_releases(&repo.root)?;
     cadence::of(
         &repo.root,
@@ -692,7 +768,113 @@ fn cadence_of(repo: &Repo, remote: &str, branch: &str) -> Result<cadence::Cadenc
         repo.project.releases.every_landings,
         remote,
         branch,
+        held,
     )
+}
+
+/// Settle the open release candidate `held` of `repo` at `now` against `remote`'s `branch` as last fetched or
+/// pushed, the main checkout's own branch, the newest release tagged here and the board
+/// ([`candidate::settle`]), then bring its branch to it ([`candidate::steer`]): what it did, each
+/// said. The caller holds the run's lock and writes the record.
+fn settle_held(
+    repo: &Repo,
+    remote: &str,
+    branch: &str,
+    held: &mut candidate::Candidate,
+    now: f64,
+) -> Vec<String> {
+    let mut noted = Vec::new();
+    let (remote_name, remote_tip) = match cadence::line_of(&repo.root, remote, branch) {
+        Ok(line) => line,
+        Err(problem) => {
+            noted.push(format!(
+                "the release candidate is left as it was: {problem}"
+            ));
+            return noted;
+        }
+    };
+    let local = commit(&repo.root, &format!("refs/heads/{branch}")).ok();
+    let newest = (ordered_releases(&repo.root).unwrap_or_default().first())
+        .map(|(release, commit)| (release.name(), commit.clone()));
+    let line = candidate::Line {
+        root: &repo.root,
+        branch,
+        remote_name: &remote_name,
+        remote: &remote_tip,
+        local: local.as_deref(),
+        newest: (newest.as_ref()).map(|(name, commit)| (name.as_str(), commit.as_str())),
+    };
+    let board = crate::taskcli::CliBoard::new(&repo.main);
+    let bounds = candidate::Bounds::of(&repo.project.releases);
+    noted.extend(candidate::settle(held, &line, &board, now, bounds));
+    noted.extend(candidate::steer(&repo.root, held));
+    noted
+}
+
+/// The release candidate of `repo`, settled at `now` ([`settle_held`]) and written back while the
+/// run's lock is free to take, else as it was last written: a run holds the lock then, and it
+/// settles the candidate itself. None when none was ever held; an error when its record does not
+/// read.
+fn settled(
+    repo: &Repo,
+    remote: &str,
+    branch: &str,
+    now: f64,
+    out: &mut dyn Write,
+) -> Result<Option<candidate::Candidate>, String> {
+    let lock = record::lock(&repo.common)?;
+    if lock.taken.is_err() {
+        return candidate::read(&lock.folder);
+    }
+    note(out, lock.moved.as_slice());
+    let mut found = candidate::read(&lock.folder)?;
+    if let Some(held) = found.as_mut().filter(|held| held.open()) {
+        note(out, &settle_held(repo, remote, branch, held, now));
+        candidate::write(&lock.folder, held)?;
+    }
+    Ok(found)
+}
+
+/// `--drop`: the open release candidate dropped at `now`, its branch gone, so the next run checks
+/// main's tip: its exit code. Refused while a run holds the lock or none is held.
+fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let refused = |err: &mut dyn Write, why: &str| {
+        let _ = writeln!(err, "symphony release: {why}");
+        1
+    };
+    let lock = match record::lock(&repo.common) {
+        Ok(lock) => lock,
+        Err(problem) => return refused(err, &problem),
+    };
+    if lock.taken.is_err() {
+        return refused(
+            err,
+            "a release run holds the lock: drop the release candidate once it ends",
+        );
+    }
+    note(out, lock.moved.as_slice());
+    let mut held = match candidate::read(&lock.folder) {
+        Ok(Some(held)) if held.open() => held,
+        Ok(_) => {
+            return refused(
+                err,
+                "no release candidate is held, so there is none to drop",
+            );
+        }
+        Err(problem) => return refused(err, &problem),
+    };
+    held.drop(now, "dropped by `just release --drop`".into());
+    note(out, candidate::steer(&repo.root, &mut held).as_slice());
+    if let Err(problem) = candidate::write(&lock.folder, &held) {
+        return refused(err, &problem);
+    }
+    let _ = writeln!(
+        out,
+        "release: dropped the release candidate {}: the next landing starts a run of main's tip, \
+         or `just release`",
+        short(&held.commit)
+    );
+    0
 }
 
 /// This repository's release tags, each with the commit it tags.
@@ -772,6 +954,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         unpushed: None,
         cause: options.cause.clone(),
         refreshed: None,
+        rerun: None,
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -838,10 +1021,33 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         started,
         heard: &heard,
     };
-    let ran = if options.refresh {
-        refresh_only(&refreshing, &mut record, out)
+    // The release candidate, when this run is one of main's line: none or ended runs main's tip, an
+    // open one is rerun once every red of it is answered, and before that nothing runs.
+    let mut held: Option<candidate::Candidate> = None;
+    let turn = if options.refresh || options.out_of_cycle.is_some() {
+        Ok(Turn::Main)
     } else {
-        night(repo, options, &folder, &mut record, out, within)
+        turn(repo, options, &folder, &mut held, within.bound, out)
+    };
+    let rerun = matches!(turn, Ok(Turn::Rerun));
+    let ran = match turn {
+        Ok(Turn::Wait(why)) => {
+            let _ = writeln!(out, "release: {why}: nothing runs");
+            record::release(&folder, &record.id);
+            return 0;
+        }
+        Err(stop) => Err(stop),
+        Ok(Turn::Main) if options.refresh => refresh_only(&refreshing, &mut record, out),
+        Ok(Turn::Main) => night(repo, options, &folder, &mut record, None, out, within),
+        Ok(Turn::Rerun) => night(
+            repo,
+            options,
+            &folder,
+            &mut record,
+            held.as_ref(),
+            out,
+            within,
+        ),
     };
     // A green release, tagged and pushed, refreshes the machine (docs/RELEASES.md).
     if ran.is_ok()
@@ -862,6 +1068,49 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         }
     }
     record.ended_at = options.now + started.elapsed().as_secs_f64();
+    // What the run makes of the release candidate, known before the board is told, whose red
+    // tasks say the candidate they are fixed on.
+    let decided_red = ran.is_ok() && record.result == "red";
+    let mut followed = None;
+    let mut next = match held {
+        Some(mut held) if rerun => {
+            if let Some(tag) = &record.tag {
+                held.release(record.ended_at, tag);
+            } else if decided_red {
+                held.decided(&record);
+                held.after_red(
+                    record.ended_at,
+                    candidate::Bounds::of(&repo.project.releases),
+                );
+            }
+            Some(held)
+        }
+        earlier
+            if decided_red
+                && options.out_of_cycle.is_none()
+                && !options.refresh
+                && repo.project.releases.holds_candidates() =>
+        {
+            let mut new = candidate::Candidate::of(&record);
+            // The branch the run last set, so the new candidate's move starts from it.
+            new.branch = earlier.and_then(|earlier| earlier.branch);
+            Some(new)
+        }
+        // The run of main's tip a drop made due reached its checks, or found that tip released
+        // already, so the drop is followed; one stopped before them leaves it due, and the next
+        // landing asks for it again.
+        Some(mut ended)
+            if ended.due() && (cadence::attempted(&record) || record.result == "unchanged") =>
+        {
+            ended.followed();
+            followed = Some(ended);
+            None
+        }
+        _ => None,
+    };
+    let holding = (next.as_ref())
+        .filter(|next| decided_red && next.open())
+        .map(|next| next.commit.clone());
     let mut for_owner = false;
     let cleared = match ran {
         Err(Stop::Refused(why)) => {
@@ -897,16 +1146,132 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     {
         code = 1;
     }
-    record.board = tell(repo, options, &folder, &record, &cleared, for_owner);
+    record.board = tell(
+        repo,
+        options,
+        &folder,
+        &record,
+        &cleared,
+        for_owner,
+        holding.as_deref(),
+    );
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
         let _ = writeln!(err, "symphony release: cannot record the run: {problem}");
+        code = 1;
+    }
+    if let Some(next) = next.as_mut() {
+        next.named(&record.board.reds);
+        note(out, candidate::steer(&repo.root, next).as_slice());
+        note(out, &[candidate_said(next)]);
+        if let Err(problem) = candidate::write(&folder, next) {
+            let _ = writeln!(
+                err,
+                "symphony release: cannot record the release candidate: {problem}"
+            );
+            code = 1;
+        }
+    }
+    if let Some(ended) = &followed
+        && let Err(problem) = candidate::write(&folder, ended)
+    {
+        let _ = writeln!(
+            err,
+            "symphony release: cannot record the release candidate: {problem}"
+        );
         code = 1;
     }
     record::prune(&folder, record::KEPT_RUNS, record::KEPT_LOGS);
     record::release(&folder, &record.id);
     drop(lock);
     code
+}
+
+/// What a run makes of the release candidate.
+enum Turn {
+    /// Run main's tip, or what was asked: no candidate is open.
+    Main,
+    /// Rerun the open candidate: every red of it is answered.
+    Rerun,
+    /// Nothing, for this reason: the candidate's reds wait.
+    Wait(String),
+}
+
+/// What the run of `repo` in `folder` makes of its release candidate, read into `held`: an open
+/// one is settled, within `until`, against the remote's main fetched again ([`settle_held`]), and
+/// then is rerun once every red of it is answered, or else waits, which `--rerun` refuses. A
+/// dropped one whose drop made a run due is followed by this run of main's tip, once it reaches its
+/// checks ([`candidate::Candidate::followed`]). A record that does not read stops the run.
+fn turn(
+    repo: &Repo,
+    options: &Options,
+    folder: &Path,
+    held: &mut Option<candidate::Candidate>,
+    until: Bound<'_>,
+    out: &mut dyn Write,
+) -> Result<Turn, Stop> {
+    *held = candidate::read(folder).map_err(Stop::Error)?;
+    let (remote, branch) = (options.remote.as_str(), options.branch.as_str());
+    if let Some(open) = held.as_mut().filter(|held| held.open()) {
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        let refspec = format!("+refs/heads/{branch}:{tracking}");
+        let fetch = ["fetch", "--quiet", "--no-tags", remote, &refspec];
+        git_until(&repo.root, &fetch, until).map_err(Stop::Error)?;
+        note(out, &settle_held(repo, remote, branch, open, options.now));
+        candidate::write(folder, open).map_err(Stop::Error)?;
+    }
+    match held.as_mut() {
+        Some(open) if open.open() => {
+            let waiting: Vec<&candidate::Red> = open.waiting();
+            if waiting.is_empty() {
+                return Ok(Turn::Rerun);
+            }
+            let reds: Vec<String> = waiting.iter().map(|red| red.said()).collect();
+            let why = format!(
+                "the release candidate {} waits for {}",
+                short(&open.commit),
+                reds.join(", ")
+            );
+            if options.rerun {
+                return Err(Stop::Refused(format!(
+                    "{why}: --rerun reruns it once every red of it is answered"
+                )));
+            }
+            Ok(Turn::Wait(why))
+        }
+        _ if options.rerun => Err(Stop::Refused(
+            "no release candidate is held, so there is none to rerun: `just release` runs main's \
+             tip"
+            .into(),
+        )),
+        // A dropped one whose drop made a run of main's tip due stays due until that run reaches
+        // its checks ([`candidate::Candidate::followed`]), so one stopped short is asked for again.
+        _ => Ok(Turn::Main),
+    }
+}
+
+/// What the run says of the release candidate it leaves: held, released or dropped.
+fn candidate_said(held: &candidate::Candidate) -> String {
+    match &held.ended {
+        None => format!(
+            "holds the release candidate {} (first judged at {}, {} run{} of it): its reds' fixes \
+             start from the branch {}",
+            short(&held.commit),
+            short(&held.first),
+            held.rounds,
+            if held.rounds == 1 { "" } else { "s" },
+            candidate::BRANCH
+        ),
+        Some(ended) => format!(
+            "the release candidate {} is {}",
+            short(&held.commit),
+            if ended.tag.is_some() {
+                ended.why.clone()
+            } else {
+                format!("dropped: {}; the next run checks main's tip", ended.why)
+            }
+        ),
+    }
 }
 
 /// What a release's refresh runs in: the run's repository, options and record folder, what its
@@ -1064,7 +1429,7 @@ fn held(
     };
     let _ = writeln!(err, "symphony release: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[], false);
+    record.board = tell(repo, options, folder, &record, &[], false, None);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -1132,7 +1497,7 @@ fn outlived(
     );
     let _ = writeln!(err, "symphony release: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[], false);
+    record.board = tell(repo, options, folder, &record, &[], false, None);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -1165,7 +1530,8 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
 
 /// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
 /// red [`board::RUN`] when it stopped short, with the keys it `cleared` beyond its checks; that red
-/// is the owner's to clear when it is `for_owner` (a process in the run's folders).
+/// is the owner's to clear when it is `for_owner` (a process in the run's folders). Its reds are a
+/// release candidate's when it holds one, at the tip `holding` ([`candidate`]).
 fn tell(
     repo: &Repo,
     options: &Options,
@@ -1173,6 +1539,7 @@ fn tell(
     record: &Run,
     cleared: &[&str],
     for_owner: bool,
+    holding: Option<&str>,
 ) -> record::Board {
     let earlier = record::read(folder);
     let green_at = record::last_green(&earlier)
@@ -1200,6 +1567,8 @@ fn tell(
         cleared,
         closes: &closing,
         whole: !options.refresh,
+        candidate: holding,
+        rerun: record.rerun.is_some(),
     };
     let board = crate::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
@@ -1243,7 +1612,9 @@ fn releases(repo: &Repo, remote: &str, until: Bound<'_>) -> Result<Vec<Known>, S
 }
 
 /// The run itself, into `record`, `within` the run's bound: the keys it cleared beyond its
-/// checks.
+/// checks. With `held`, a rerun of that release candidate: its tip is checked, with no wait for
+/// the regenerator (a fix commits the client its own sources make), each check as the candidate
+/// plans it ([`candidate::Candidate::plan`]), and the conciliation.
 #[expect(
     clippy::too_many_lines,
     reason = "one run, step by step, reads best in one place"
@@ -1253,6 +1624,7 @@ fn night(
     options: &Options,
     folder: &Path,
     record: &mut Run,
+    held: Option<&candidate::Candidate>,
     out: &mut dyn Write,
     within: Within<'_>,
 ) -> Result<Vec<&'static str>, Stop> {
@@ -1290,9 +1662,19 @@ fn night(
     .map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
     let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
-    let mut candidate = match &options.out_of_cycle {
-        None => tip.clone(),
-        Some(rev) => {
+    let mut candidate = match (&options.out_of_cycle, held) {
+        (_, Some(held)) => {
+            if !is_ancestor(&repo.root, &held.commit, &tip).map_err(Stop::Error)? {
+                return Err(Stop::Error(format!(
+                    "the release candidate {} is not on {main_line}: only a commit on it is \
+                     released",
+                    short(&held.commit)
+                )));
+            }
+            held.commit.clone()
+        }
+        (None, None) => tip.clone(),
+        (Some(rev), None) => {
             let named = commit(&repo.root, rev).map_err(Stop::Refused)?;
             if !is_ancestor(&repo.root, &named, &tip).map_err(Stop::Error)? {
                 return Err(Stop::Refused(format!(
@@ -1373,13 +1755,16 @@ fn night(
         commit: newest.commit.clone(),
     });
     record.previous = previous.as_ref().map(|p| p.tag.clone());
-    if options.out_of_cycle.is_none() {
+    if options.out_of_cycle.is_none() && held.is_none() {
         regenerated(repo, options, &mut candidate, record, until, out)?;
     }
+    let what = match held {
+        Some(held) => format!("round {} of the release candidate", held.next_round()),
+        None => record.kind.clone(),
+    };
     let _ = writeln!(
         out,
-        "release: {} of {} ({main_line} at {}) in {}",
-        record.kind,
+        "release: {what} of {} ({main_line} at {}) in {}",
         short(&candidate),
         short(&record.tip),
         place.checkout.display()
@@ -1395,8 +1780,40 @@ fn night(
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
     record::so_far(&logs, record);
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
+    let mut carried: Vec<record::Carried> = Vec::new();
     for step in &options.checks {
         told_to_stop(until, &format!("before `{}` started", step.name))?;
+        let planned = match held {
+            Some(held) => {
+                let same = |commit: &str| candidate::same_tree(&repo.root, commit, &candidate);
+                let (planned, kept) = held.plan(&step.name, &same);
+                carried.extend(kept);
+                planned
+            }
+            None => candidate::Planned::Whole,
+        };
+        let only;
+        let step = match &planned {
+            candidate::Planned::Whole => step,
+            candidate::Planned::Carried => {
+                let _ = writeln!(
+                    out,
+                    "release: `{}` carried green: the commit it was green on holds this tree",
+                    step.name
+                );
+                continue;
+            }
+            candidate::Planned::Steps(names) => {
+                let _ = writeln!(
+                    out,
+                    "release: `{}` reruns {}, the rest carried green from this tree",
+                    step.name,
+                    names.join(", ")
+                );
+                only = step.only(names);
+                &only
+            }
+        };
         // What the run's time leaves out is red, never passed over: a release is checked whole.
         let ran = if Instant::now() >= until.until {
             Ran::never(step, &log(step), NOT_STARTED.into())
@@ -1417,7 +1834,16 @@ fn night(
     for skipped in &record.skipped {
         let _ = writeln!(out, "release: left out: {skipped}");
     }
-    let green = record.checks.iter().all(Ran::green) && !record.checks.is_empty();
+    if let Some(held) = held {
+        record.rerun = Some(record::Rerun {
+            first: held.first.clone(),
+            round: held.next_round(),
+            carried: carried.clone(),
+        });
+        record::so_far(&logs, record);
+    }
+    let green =
+        record.checks.iter().all(Ran::green) && !(record.checks.is_empty() && carried.is_empty());
     record.result = if green { "green" } else { "red" }.into();
     if !green {
         let red: Vec<&str> = (record.checks.iter())
@@ -1454,7 +1880,20 @@ fn night(
         "before it tagged",
         false,
     )?;
-    let checked: Vec<String> = record.checks.iter().map(|ran| ran.name.clone()).collect();
+    // A check carried whole is green as much as one run, in the order the checks are named, the
+    // conciliation after them: the notes say which were carried.
+    let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
+    let named = |name: &str| options.checks.iter().any(|step| step.name == name);
+    let checked: Vec<String> = (options.checks.iter())
+        .map(|step| step.name.clone())
+        .filter(|name| ran(name) || carried.iter().any(|kept| kept.name == *name))
+        .chain(
+            (record.checks.iter())
+                .filter(|ran| !named(&ran.name))
+                .map(|ran| ran.name.clone()),
+        )
+        .collect();
+    let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
     let message = notes::message(
         &name,
         &candidate,
@@ -1462,6 +1901,7 @@ fn night(
         previous.as_ref(),
         &checked,
         &record.skipped,
+        &held_notes,
         &changes,
     );
     if let Err(problem) = git_until(
@@ -2359,6 +2799,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            rerun: None,
         }
     }
 

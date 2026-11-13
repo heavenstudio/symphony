@@ -64,7 +64,7 @@ stays covered, fails the step (naming what covers it), and nothing is pressed. T
 element by script and types with no pointer, so what covers the element takes none of it. A
 click, typing, a key or a hover then waits for the page to settle again, as a capture does,
 bringing the page back in front if the step left it hidden (an Escape the page does not take).
-Chrome is SF_CHROME, else the first Chrome found on this machine.
+Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
 
@@ -200,14 +200,15 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     let Some(binary) = chrome_devtools::find() else {
         let _ = writeln!(
             err,
-            "symphony shot: no Chrome on this machine: name its executable with SF_CHROME"
+            "symphony shot: no Chrome on this machine: name its executable with SYMPHONY_CHROME"
         );
         return 1;
     };
     if !Path::new(&binary).is_file() {
         let _ = writeln!(
             err,
-            "symphony shot: Chrome at {binary} is not a file: name its executable with SF_CHROME"
+            "symphony shot: Chrome at {binary} is not a file: name its executable with \
+             SYMPHONY_CHROME"
         );
         return 1;
     }

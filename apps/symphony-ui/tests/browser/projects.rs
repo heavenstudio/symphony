@@ -63,7 +63,7 @@ impl OneServer {
         static STARTED: AtomicUsize = AtomicUsize::new(0);
         let binary = binaries::shelf_server();
         let scratch = fresh(&std::env::temp_dir().join(format!(
-            "sf-browser-projects-{}-{}",
+            "symphony-browser-projects-{}-{}",
             std::process::id(),
             STARTED.fetch_add(1, Ordering::Relaxed)
         )));
@@ -121,7 +121,7 @@ impl OneServer {
             .env("TASKS_DATABASE", DATABASE)
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", scratch.join("asks.db"))
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -146,9 +146,9 @@ impl OneServer {
             base: String::new(),
             scratch,
         };
-        server.base = recv.recv_timeout(SHOWN).unwrap_or_else(|e| {
+        server.base = super::announced("the one server", &recv).unwrap_or_else(|why| {
             panic!(
-                "the one server's readiness: {e}; {}",
+                "{why}; {}",
                 std::fs::read_to_string(server.scratch.join("server.log")).unwrap()
             )
         });

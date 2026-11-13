@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use symphony_board::sys::Command;
 
-const CHILD: &str = "SF_OWNER_SAVE_PROBE";
+const CHILD: &str = "SYMPHONY_OWNER_SAVE_PROBE";
 const CASE: &str = "owner_save::reports_each_private_database_timeout_phase";
 const LIMIT: Duration = Duration::from_secs(30);
 
@@ -103,7 +103,7 @@ fn refusals(saves: &symphony::save::Saves, payload: &Value, slug: &Value) {
 
 fn child(root: &str) {
     let root = std::path::Path::new(root);
-    let phase = std::env::var("SF_OWNER_SAVE_PHASE").unwrap();
+    let phase = std::env::var("SYMPHONY_OWNER_SAVE_PHASE").unwrap();
     if phase == "concurrent" {
         concurrent::saves(root);
         println!(
@@ -285,7 +285,7 @@ fn phase(phase: &'static str) {
         command
             .args(["--exact", CASE, "--nocapture"])
             .env(CHILD, &root)
-            .env("SF_OWNER_SAVE_PHASE", phase)
+            .env("SYMPHONY_OWNER_SAVE_PHASE", phase)
             .env("TASKS_SERVER", delay.address.to_string())
             .env("TASKS_DATABASE", client.database())
             .env("TASKS_SWEEP", "off")

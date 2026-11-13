@@ -17,7 +17,7 @@ Commands shown use the consuming project's recipes and board connection.
 ## Where it lives
 
 A SurrealDB database (namespace `sf`, database `tasks`) whose server keeps its
-data, its address and its log in the git common dir, `.git/sf-tasks/`, so every
+data, its address and its log in the git common dir, `.git/symphony/tasks/`, so every
 worktree reaches the same board, a claim is one transaction, and none of it
 shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
@@ -75,9 +75,9 @@ migrate` included, and the refusal says why.
 Every other writer, a branch's build by its path, through the launcher, its
 `tasks api`, sweep, `agent-send` or `tasks-copy`, is refused before it writes,
 naming `just tasks migrate` in the main checkout and a scratch board as that
-program takes one: `tasks` and `agent-send` by `--database NAME`, `tasks-copy` by
-`TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, and
-`tasks-cutover` by `TASKS_DATABASE=NAME`, each of which its `--help` names. Any
+program takes one: `tasks` and `agent-send` by `--database NAME`, and `tasks-copy`
+by `TASKS_DATABASE=NAME` with `--board` or its own `tasks-copy ADDR NAME`, each of
+which its `--help` names. Any
 writer moves a scratch board. A test, an example or `cargo run` (a process Cargo runs),
 is refused the live board of the repository it runs from before anything is read
 or its server started, and so is every process under a test whatever environment
@@ -87,7 +87,7 @@ parent, started with a cleared environment, is not: nothing then says Cargo runs
 it. Builds of commits from before this rule move a live
 board as they always did.
 
-A live board's highest schema is also kept outside its database, in `sf-tasks/schema-seen.log`
+A live board's highest schema is also kept outside its database, in `symphony/tasks/schema-seen.log`
 beside its data (`crates/tasks/src/live/seen.rs`), so a store that loses its newest writes cannot
 take the record with it: a line `VERSION SECONDS seen DATE` for each version the board is first
 seen at, and the record is the highest line since the last `accepted` one. A line that does not
@@ -101,8 +101,8 @@ that `just tasks migrate` must not be run, and where the recovery is described
 
 - every store that opens it as its project's, which reads the record before it decides anything by
   the board's schema: the `tasks` commands and `tasks api`, `agent-send`, the Symphony's readers,
-  `tasks-copy --board` into the board and `--board --out` out of it, `tasks-copy ADDR` when the
-  server at ADDR is a project's board server, and `tasks-cutover`;
+  `tasks-copy --board` into the board and `--board --out` out of it, and `tasks-copy ADDR` when
+  the server at ADDR is a project's board server;
 - `tasks migrate`, before it asks where it runs, so a worktree's refusal never sends anyone to
   migrate in the main checkout;
 - the recorder (`tasks run`) and the detached dispatcher (`tasks dispatch`), which take the
@@ -145,13 +145,13 @@ when. It is kept as any snapshot is: until the owner removes it while its write-
 writes (a store no server ran on that ended uncleanly or went back, whose log the reclaim's own
 server would replay and its clean stop remove), else among the newest three whose log is empty;
 the room the old store takes comes back only once it is removed. The exports stay in
-`sf-tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `sf-tasks/` (`cp -c`, a clone).
+`symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
 
-**Snapshots.** `just tasks snapshot` clones the board's store, `sf-tasks/data`, into
-`sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
+**Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
+`symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
 in the same second); `--list` names those kept, the newest first
 (`crates/tasks/src/server/snapshot.rs`). It takes the lock every start of the board's server
-takes, so no start begins while it clones, and it holds the store's own lock, `sf-tasks/data/LOCK`,
+takes, so no start begins while it clones, and it holds the store's own lock, `symphony/tasks/data/LOCK`,
 the one SurrealKV holds while a server has the store open, whatever path that server was given (a
 trailing slash, a link, a relative path): it is refused while the recorded server or any other
 process has the store open, and no server opens it while the clone is made. A snapshot is never a
@@ -167,7 +167,7 @@ board, once it has stopped the board's server and before its own servers start o
 Each is the store as the last server left it, its write-ahead log not yet replayed, which a start
 that loses its log, and a later clean stop on the older state, take with them. A start that finds
 the store as a snapshot already holds it, its log and manifest file for file (an earlier start that
-failed left it so), takes none more. The server's log, `sf-tasks/server.log`, says the snapshot
+failed left it so), takes none more. The server's log, `symphony/tasks/server.log`, says the snapshot
 each start took, or why it took none; a snapshot that cannot be taken keeps no start from going on
 but a replay's. A board `TASKS_SERVER` names has no store here to snapshot, and the command opens
 no board.
@@ -182,13 +182,13 @@ the store when it is taken and keeps the old blocks as the store's server rewrit
 value log, so each grows towards the size of the whole store as it was then: `df` shows what they
 cost, while `du` counts a clone's shared blocks as its own. A `tasks-reclaim` frees nothing while
 snapshots of the old store are kept: the room comes back once they are removed. The owner removes
-one with `rm -rf sf-tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
+one with `rm -rf symphony/tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
 
 The server is never killed. Whatever stops it asks it once to end and waits
 while it writes what it holds to disk and closes its store. It is never asked
 twice, by any command: SurrealDB takes a second signal for an immediate
 shutdown, before its store is closed, so the board writes each ask down first
-(`sf-tasks/ending/PID`) and a later command only waits for it. One that has not
+(`symphony/tasks/ending/PID`) and a later command only waits for it. One that has not
 answered yet is still starting, replaying its log, and is never signalled, ended
 or joined by a second: a command that waited a minute for it says so, and the
 next one waits again. A write the board answered for is on disk, and survives a
@@ -202,7 +202,7 @@ flush, as an older build's kill of a starting server does) holds a log segment
 its manifest counts as written: every server on it skips that segment, and its
 clean stop removes it. So a replay never runs without a snapshot of the store as
 it is, taken before the private replay's server starts, on every board, scratch
-or not: a clone in `sf-tasks/snapshots/`; a plain copy, said as one, on a volume
+or not: a clone in `symphony/tasks/snapshots/`; a plain copy, said as one, on a volume
 that cannot clone; neither, and the start is refused and nothing replayed. Its
 write-ahead log holds the log the replay applies, so it is kept until the owner
 removes it once the board reads as it should. The start says where on its stderr
@@ -216,7 +216,7 @@ recover from a clone of that snapshot, never from the snapshot itself nor the
 board's own data ([A board that went back](#a-board-that-went-back)).
 
 A replay's server is never the board's server. The start records the replay in
-`sf-tasks/replay.json`, with its server's pid and address as soon as it has
+`symphony/tasks/replay.json`, with its server's pid and address as soon as it has
 them, until that server has closed the store cleanly. A starter that ends in the
 middle of a replay (a Symphony stopped while its start replays, a command
 killed) leaves the replay's server running, detached, to finish alone under the
@@ -248,9 +248,9 @@ servers](#stuck-servers)). A build from before the record takes such a server
 for the board's.
 
 A command that waits on another's start, stop, hold or snapshot (the starters'
-lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
+lock, `symphony/tasks/lock`) says on stderr, after a second and then every 30 s, what
 it waits on: the holder's pid, since when, and what it does, a private replay
-with its log's size among them (`sf-tasks/lock.json`, while it holds the lock).
+with its log's size among them (`symphony/tasks/lock.json`, while it holds the lock).
 The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
 longer for a server on the data that runs and does not answer (a replay whose
 starter has gone, as a Symphony restarted in the middle of one leaves, which the
@@ -275,13 +275,13 @@ Nobody else signals, starts or restarts the board's server by hand.
 
 Work on the data itself, a snapshot, a replay on a clone or a swap, holds the
 database stopped: `just tasks database hold "WHY" --as HANDLE` stops the server
-cleanly and writes `sf-tasks/hold`, and until its release every board command
+cleanly and writes `symphony/tasks/hold`, and until its release every board command
 and the Symphony are refused, naming who holds it, since when and why. Only its
 holder releases it (`just tasks database release --as HANDLE`), or another
 handle naming the holder (`--of HOLDER`), which it says: a release by mistake in
 the middle of a swap is what the hold is there to stop. No role decides it, as
 the board, which holds the roles, is not read while it is held. Each hold and
-release is a line of `sf-tasks/hold.log`. The hold reads no record of the
+release is a line of `symphony/tasks/hold.log`. The hold reads no record of the
 schema the board was seen at, so it stops a board that went back as any other:
 it is step 2 of that recovery. A clean stop removes the log segments the store's
 manifest counts as written, the hold's included: on a store that went back, keep
@@ -326,8 +326,8 @@ is told. The mark is the one command's: no child the board starts keeps it
 where the project says.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
 (`crates/tasks/src/launch/`); the board calls no `herdr`. The server is the pinned
-SurrealDB at `sf-surreal/VERSION/surreal` in the git common dir, or the binary
-`SF_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
+SurrealDB at `symphony/surreal/VERSION/surreal` in the git common dir, or the binary
+`SYMPHONY_SURREAL` names. In this repository `bash tools/surreal.sh` fetches it there,
 checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
@@ -359,7 +359,7 @@ there.
 The board asks a server once to end and kills none, so two things can outlast
 its commands, and both are the owner's.
 
-A server still running ten minutes after its one ask (`sf-tasks/ending/PID`
+A server still running ten minutes after its one ask (`symphony/tasks/ending/PID`
 names it, with when it was asked and when its process started) is left to
 finish, and the stop says so, naming its pid, that file and its log; every later
 stop only waits on it again. A server writing a large memtable takes minutes. One
@@ -372,7 +372,7 @@ and releases the hold. The ask is forgotten by the next stop or start once its
 process has ended, or once another process, which started at another time, has
 its pid.
 
-A private replay's record (`sf-tasks/replay.json`) whose server cannot be told
+A private replay's record (`symphony/tasks/replay.json`) whose server cannot be told
 to run or not (a `ps` that keeps failing, a kernel that does not say when the
 process with its pid started, or the server it names running while neither it
 nor any other process is a server on the data) refuses every command
@@ -394,11 +394,11 @@ When the older board is meant, a fresh store or a restore the owner chose, the o
 `just tasks schema --accept VERSION`, `none` for a store with no board, is refused unless the
 board holds exactly that version, and adds an `accepted` line to the record, which counts from
 there. The board is then read, and moved forward, as any board behind its build is. A restore
-from a snapshot puts a clone of it in place with the database held (below), `sf-tasks/data`
-renamed aside first: `cp -c -R sf-tasks/snapshots/NAME sf-tasks/data`, never the snapshot itself.
+from a snapshot puts a clone of it in place with the database held (below), `symphony/tasks/data`
+renamed aside first: `cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data`, never the snapshot itself.
 
 **Recovering what was lost** is the owner's, or done on the owner's word, by hand, in the board's
-folder (`sf-tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
+folder (`symphony/tasks/` in the git common dir). `CLONE` below is a clone of the copy step 1 keeps, and
 every server started is one of your own, on a clone, on a port of your own.
 
 1. **Keep the log before anything stops the server.** A server on the older state that stops
@@ -408,7 +408,7 @@ every server started is one of your own, on a clone, on a port of your own.
    writes among those taken since the board's server last stopped cleanly: the launcher took it
    before the first start after the unclean end, with the log the server before it left, not yet
    replayed. `just tasks snapshot --list` marks those snapshots (`kept until the owner removes
-   it`), and `sf-tasks/server.log` names the snapshot taken before each start, in order, with a
+   it`), and `symphony/tasks/server.log` names the snapshot taken before each start, in order, with a
    clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
    copy, whether the store had gone back before it or the replay itself was cut off: in
    `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
@@ -429,9 +429,9 @@ every server started is one of your own, on a clone, on a port of your own.
    within a second of the first's last, with no snapshot line between. A clean stop and then a
    start by a build that writes no snapshot line show the same lines, the start's first line
    dated when that start came; one that came within a second of the stop reads as a replay, and
-   `sf-tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
+   `symphony/tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
    it out of `snapshots/` at once
-   (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
+   (`cp -c -R symphony/tasks/snapshots/NAME symphony/tasks/data.evidence-DATE`; `cp -R --reflink=always` on
    Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
    none (no build that takes snapshots made that start), clone the data folder the same way at
    once, while the server on the older state still runs: it keeps the segments below
@@ -439,7 +439,7 @@ every server started is one of your own, on a clone, on a port of your own.
    ([the record](#where-it-lives) says which do). Never start anything on that copy: each step
    below works on a clone of it (`cp -c -R`), so each try starts again from it.
 2. **Hold the database.** `just tasks database hold "WHY" --as HANDLE` stops the recorded server
-   cleanly and writes `sf-tasks/hold`, and no start of the database happens until `just tasks
+   cleanly and writes `symphony/tasks/hold`, and no start of the database happens until `just tasks
    database release --as HANDLE`, so no board command starts it on the old path between the
    swap's two renames (step 8).
 3. **Read the log number.** `CLONE/manifest/00000000000000000000.manifest` records it: the first
@@ -470,7 +470,7 @@ every server started is one of your own, on a clone, on a port of your own.
    so its replay never splits it (a replay that splits a segment records the next one's number at
    its first flush, and an end before it flushes the rest loses that rest):
    `SURREAL_SURREALKV_VLOG_THRESHOLD=67108864 SURREAL_SURREALKV_MAX_MEMTABLE_SIZE=BYTES
-   "$SF_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
+   "$SYMPHONY_SURREAL" start --unauthenticated --log info --bind 127.0.0.1:PORT surrealkv://CLONE`,
    `BYTES` twice the largest segment's size in `ls -l CLONE/wal`, at most 4294967295 (SurrealKV's
    largest memtable): a memtable takes more of each write than the log holds of it, which is why
    the board's own replay takes twice its log, so one just above a segment's size can still split
@@ -478,7 +478,7 @@ every server started is one of your own, on a clone, on a port of your own.
    end it while it replays.
 6. **Verify by schema, counts and newest change.** `TASKS_SERVER=127.0.0.1:PORT just tasks
    schema` reads the clone's schema and writes nothing; the counts and the newest message by
-   `"$SF_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
+   `"$SYMPHONY_SURREAL" sql --endpoint http://127.0.0.1:PORT --namespace sf --database tasks` with
    `RETURN [array::len(SELECT VALUE id FROM task), array::len(SELECT VALUE id FROM message),
    math::max(SELECT VALUE ts FROM message)];`. The schema is the one the record says, and the
    counts and the newest message are above what the store that went back holds, read the same way
@@ -488,8 +488,8 @@ every server started is one of your own, on a clone, on a port of your own.
    memtables flushed successfully on shutdown` (the warning `No runtime available for closing the
    store correctly` is printed by every shutdown, clean ones too); its log is then in sstables, and
    the next start replays nothing.
-8. **Swap, under the hold.** With the database still held, rename `sf-tasks/data` aside
-   (`data.rolled-back-DATE`) and the recovered clone to `sf-tasks/data`, then `just tasks
+8. **Swap, under the hold.** With the database still held, rename `symphony/tasks/data` aside
+   (`data.rolled-back-DATE`) and the recovered clone to `symphony/tasks/data`, then `just tasks
    database release --as HANDLE`: the next board command starts the database on it.
    `just tasks schema` then says the board is at the schema it was seen at, and the record needs
    no acceptance. The copies kept in steps 1 and 8 and the snapshots that hold a log are the
@@ -497,6 +497,43 @@ every server started is one of your own, on a clone, on a port of your own.
 
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
+
+### The folder move
+
+An older build keeps a repository's state in folders of the git common dir under the old names,
+and a build of this code refuses to start a board, a server or a recorder there until
+`tools/move-state.sh` has moved them into `symphony/` (its header lists each move). It is run once
+per repository, from any of its checkouts, `--dry-run` first, with the board held and the shared
+server stopped. Every move is a rename, and nothing moves while anything of the repository runs:
+a process whose command line names the old folders, one with a file of the board's, the server's
+or the old client tools open or working there, by whatever path (lsof finds the ones named
+relatively), a server either record names, a land, a fetch of SurrealDB, or a program of the
+board or the server in a checkout. Each refusal names the pid and says what to end.
+
+A SurrealDB server whose data folder and working folder both lie outside the repository is passed
+instead, and named on stdout with both: a test's private board an older build left running on the
+pinned program from the old folder, which it keeps running once that moves. Its data is the last
+word of its command line (`memory`, or a path after `surrealkv://` or another engine's scheme),
+made absolute against its working folder. A folder lies in the repository when the common dir
+holds it or git, asked there, finds this repository, or, where git finds none, when a checkout
+holds it; a repository nested in a checkout's ignored files is another, and a working folder since
+removed lies in none. One that also has a file of the board's or the server's open is refused. The
+move signals no process, passed or refused.
+
+The board's records of processes move with its folder, byte for byte, and the new build reads
+them as its own: the hold the move was made under, a private replay's record and each ask to end
+a server. The hold still holds the board after the move, so the script's closing line then says
+to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
+otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
+
+The board's, SurrealDB's, the server's and the model's old folders, once moved, each leave a
+one-line file of their name saying where they went, so a build from before the move fails there
+instead of starting an empty board or fetching SurrealDB beside the moved state. Such
+a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
+setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
+20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,
+a sweep or `tasks-reclaim`. Both mean the state moved: merge main and rebuild. `just tasks
+database release` run by such a build does nothing to it, as the file is no hold.
 
 ## Sessions
 
@@ -568,7 +605,7 @@ sweeps, the same way; every request any client in the process sent the board, th
 the line of code that sent it (its tracked caller), the slow ones (a second or more) and the
 unanswered ones; and the p50 and p90 latency of the requests that may write. Counting adds no
 request. `/api/health` (`/<id>/api/health` on the one server) answers it from that memory,
-without a board read. The machine's one server also writes it to `sf-tasks/health.json` in the
+without a board read. The machine's one server also writes it to `symphony/tasks/health.json` in the
 git common dir (`health.<database>.json` for a scratch database; `TASKS_HEALTH` names another
 file) every ten seconds, and at once when the dispatch or the sweep starts or stops failing; a
 private server keeps it in memory alone. Its clock's thread and its sweep's write it one at a
@@ -582,11 +619,11 @@ pass that failed more than ten minutes ago, with none since, is warned of no mor
 every page of the project says so on the server's notice (beside a failed server update, when
 there is one), told when it starts and when it ends, and the project picker says so under the
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
-A project with no board, its server answering that none is made yet or no store (`sf-tasks/data`)
+A project with no board, its server answering that none is made yet or no store (`symphony/tasks/data`)
 and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
 pass of it is counted, and the picker says plainly that it has no task board. A board whose store
 is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
-new binary is fetched, `SF_SURREAL` naming a file that is not there), or its server answers with an
+new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
@@ -636,7 +673,7 @@ which `tasks status` says with the refusal; a reach that finds no replay, the bo
 any other refusal, ends it.
 
 **A disk running full** is warned of in the same two places: `tasks status` when the disk holding
-the record has less free than `SF_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
+the record has less free than `SYMPHONY_LOW_DISK_GB` gigabytes (20 when unset; `0` turns it off, and a
 value that is no number is said and 20 taken), and every page of a project while the disk
 holding its checkout has, read by the server each time it tells the pages of its health; the page
 says under how many gigabytes, not how many, so it is told when the disk goes low and when it is
@@ -711,7 +748,7 @@ defaults to false, `max_sessions` to 8 and `min_free_memory_gib` to 4. `only` is
 optional list of task slugs whose subtrees may be staffed; an empty list allows all
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
-`sf-tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
+`symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
 goes to an idle reviewer only when the board would take its verdict, by the rule the
 verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
 reviewer takes the role before its job is reserved; a review job no agent was handed is
@@ -751,10 +788,10 @@ disabled and creates no task, session or terminal.
 
 **Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
-Symphony's process (`just symphony`) runs every five minutes. A lock in `sf-tasks/`,
+Symphony's process (`just symphony`) runs every five minutes. A lock in `symphony/tasks/`,
 beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
 hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
-then `hc rm`) one of this board's terminals (label `sf.board`) whose named agent was
+then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
 an executor role on an in-progress, blocked or review task, a reviewer role on a task in
@@ -793,7 +830,7 @@ the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `
 inbox`, by a stamp. The command that finished the work never waits on it and says nothing of
 it; each sweep runs from the main checkout, by the main checkout's build of `tasks` (never
 the caller's, whose sweep may not have landed; with none built it says so and sweeps nothing),
-and appends what it did to `sf-tasks/sweep.log` in the git common dir. Status writes through
+and appends what it did to `symphony/tasks/sweep.log` in the git common dir. Status writes through
 `tasks api` (for example, a release run or reap caller writing status) do not start this CLI
 trigger; the next hourly sweep covers them. The Symphony's explicit finish action starts its own
 sweep.
@@ -843,7 +880,7 @@ a lock it lifts goes back if the removal is refused. A detached agent's merged
 In-process agents work only in their own `agent-ID` worktree; a different directory they create
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
 says what the worktree held on disk, and the summary what the sweep freed; a sweep started
-detached (a land's, work finishing's) writes them to `sf-tasks/sweep.log` under a line saying when
+detached (a land's, work finishing's) writes them to `symphony/tasks/sweep.log` under a line saying when
 and why.
 A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
@@ -866,7 +903,7 @@ never set aside and goes with the worktree. Nothing removes what
 was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
 unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
 sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
-and keeps the measure in `sf-tasks/swept.json` in the git common dir, beside the tasks tied to each
+and keeps the measure in `symphony/tasks/swept.json` in the git common dir, beside the tasks tied to each
 folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
 sweep a land starts) and a dry run's say so in one line, `set aside in PATH: SIZE, over its CAP GB
 cap ([board] swept_cap_gb): …`,
@@ -927,7 +964,7 @@ of the whole folder (`tools/seed-clone.rs`, compiled by rustc on the spot), else
 cloning each file. A clone takes disk only as a build replaces what it holds; `du` counts each
 clone in full, `df` says what the disk holds. It is staged as `.target.seed.PID`, which a signal
 removes with the clone and a later seed or sweep removes once its process is gone.
-`SF_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
+`SYMPHONY_SEED_TARGET=off` turns it off. Worktrees never share one build folder: Cargo names the same
 package of two worktrees the same, so each would run the other's build of it. What it costs and
 saves, measured: [the analysis](analysis/worktree-build-folders.md).
 
@@ -1004,7 +1041,8 @@ see only what is committed.
 The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
 [--json] [--all]` return the same document (`crates/tasks/src/cli/agents.rs`; these keys are a contract, pinned by
 `crates/tasks/tests/cli/agents.rs`). The board (sessions, roles, `task_sessions`) is the record; hc's
-live terminals (`hc ls`) and the test-slot locks are probes that say what each agent is doing now, and `probes` names
+live terminals (`hc ls`) and the test-slot locks in the folder the project's `[board] slot_locks` names
+(none when unset) are probes that say what each agent is doing now, and `probes` names
 either as `unavailable` when it cannot be asked, the rest being built from the board alone. The hc probe keeps the
 key `herdr` and an agent's terminal the key `pane`: names the wire keeps. The Symphony's `/api/agents` also names
 that probe `panes`, with the same answer under both keys, and its client reads `panes`, else `herdr`
@@ -1201,7 +1239,7 @@ ambiguous, since an older dispatcher's own PULL told it the whole board and read
 withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
 for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
 whoever held the role then.
-Codex callbacks use the queue by default; `git config sf.codexSteer true` opts in to
+Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 
 ### Going to a session
@@ -1343,7 +1381,7 @@ refuses work in progress, but finishes a task taken back to `in_progress`
 after its last read of it, as main moved: that branch is on main, so the
 landing tells its executor that further changes go in a new task. No other
 command closes work in progress but a subtask's `done` and a close as covered by another
-task's landing ([below](#a-task-another-landing-covers)). `landed` takes the statuses this landing
+task's landing ([above](#a-task-another-landing-covers)). `landed` takes the statuses this landing
 closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
@@ -1362,7 +1400,7 @@ posted no card, stays in its own column however its documents stand.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
-task's landing ([below](#a-task-another-landing-covers)).** A session
+task's landing ([above](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
 role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
@@ -1467,7 +1505,7 @@ may seem low, but the issue is that it becomes a “blocking 5 mins”. Every ne
 gets merged could invalidate the 5 min run, making it have to run it again and again
 and again, spiraling the 5 minute forever. A solution like a lock or queue would
 directly bottleneck the pipeline which isn’t acceptable either." One land of a
-repository runs at a time (`land.lock` in `sf-tasks/`), the lock held for those
+repository runs at a time (`land.lock` in `symphony/tasks/`), the lock held for those
 seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
 stops the wait. The settings are read from the default branch as the main checkout
@@ -1568,10 +1606,24 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   closed, and with no live executor `@orchestrator` hears it, which restaffs the
   executor or reviewer the task needs. Either move, the land's or the command line's,
   starts `[board] on_review` as a move to review does.
+- **A release candidate's red.** While the release run holds a candidate
+  ([RELEASES](RELEASES.md#the-release-candidate)), a red of it is fixed on a branch started
+  at the local branch `release-candidate`, which merges that branch again before review and
+  never merges main before its approve, its approve naming the full tip, and it lands by this
+  same land. Nothing in the land changes for it: its `[board] on_land`, the release run's
+  `--due`, reads the land afterwards and moves the candidate to the newest commit of the
+  branch an approve named that holds the candidate and the fix alone. A conflict goes back to
+  `@executor` as above, who merges the default branch then and asks for a fresh approve; the
+  candidate keeps the commit approved before that merge. A red whose fix landed with another
+  red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
+  which answers it once that land advanced the candidate; one covered by any other landing has
+  its fix on main and not in the candidate, which is dropped. A red fixed outside this
+  repository is answered by its task cancelled, saying where; one done otherwise waits for its
+  land.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
-  worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
+  worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
-  check = false`, its output in `sf-tasks/land/SLUG.log` (the slug's `/` written `%2F`,
+  check = false`, its output in `symphony/tasks/land/SLUG.log` (the slug's `/` written `%2F`,
   its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
   the docs audit, is evidence at a document change's tip, run on main's tip by the
   regenerator a land starts ([below](#the-regenerator)), and part of the release run's full
@@ -1590,11 +1642,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
 - **Moved.** The main checkout, on the default branch with no staged or tracked edit,
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
   Before it moves, the land records the landing (the task, the tip, the merge, the
-  commit checked and the generated paths it took) in `sf-tasks/land/SLUG.merged` and on
+  commit checked and the generated paths it took) in `symphony/tasks/land/SLUG.merged` and on
   the thread (`land SLUG: merged TIP as MERGE, checked at SHA; moving main there`). The
   fast-forward runs in a process group of its own, which no terminal's signal reaches
   and the land forwards none to, within the land's timeout, so it is never stopped part
-  way but by that; `sf-tasks/land/moving` names the move while it runs. Where the
+  way but by that; `symphony/tasks/land/moving` names the move while it runs. Where the
   default branch is once git ends says what happened, whatever git answered: at what
   passed, the move happened and the record stays; still where it was, the move did not
   happen, the record is dropped and the land restores what git half-wrote in the main
@@ -1615,7 +1667,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   generated paths it took from main and whether it pushed, and closes the approved
   task, which stays done; a task sent back to review since stays there. The land then
   starts the sweep detached, which removes the task's finished worktrees after it, its
-  output in `sf-tasks/sweep.log` (`land SLUG: its finished worktrees are swept in the
+  output in `symphony/tasks/sweep.log` (`land SLUG: its finished worktrees are swept in the
   background`), and a project with `[land] generators` has the regenerator started
   ([below](#the-regenerator)). The land waits for neither, and neither runs under its
   lock; while a regenerator runs, the land starts none and signals none.
@@ -1628,8 +1680,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   and the `tasks` recipe's `SYMPHONY_UNASKED`: what it starts, a release run among them, is
   no command an agent ran unasked, and lands nothing. The land listens to it for 3 seconds at most
   and shows what it said by then, then goes on, never waiting on it longer. Its output goes to a
-  file of its own, `sf-tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
-  names, and a line naming that file to `sf-tasks/on-land.log` (set aside as `on-land.log.1` past
+  file of its own, `symphony/tasks/on-land/STAMP-SLUG.log` (the newest 40 kept), which the land's output
+  names, and a line naming that file to `symphony/tasks/on-land.log` (set aside as `on-land.log.1` past
   256 KiB). A command that cannot be read or started is said there and on the land's output, and
   the land still stands.
   A board that `TASKS_SERVER` names (a test's) starts it only under `TASKS_ON_LAND=on`;
@@ -1650,7 +1702,7 @@ started S)`), and a later land replaces one left behind once that pid no longer 
 the process of that start (a land killed outright, its number since another's) and
 `lsof` says no process works in it; when `lsof` cannot say, the refusal names
 `lsof +D PATH` to look and the command that removes it once nothing works there. The
-group a land runs is named in `sf-tasks/land/running` while it runs, with when its
+group a land runs is named in `symphony/tasks/land/running` while it runs, with when its
 first process started. While that group has any process alive, a later land refuses
 and rebuilds nothing; it says to end the group (`kill -TERM -N`) only while its first
 process is the one the land started, by its start, and for the fast-forward it says
@@ -1738,10 +1790,10 @@ could then build the next most recent one. It should not cancel a previous in pr
 build and let it finish. This way there's no queue, just a limit of 1 per time that
 possibly skips some merges from building entirely". A land that closed its task starts
 `tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
-build, its output appended to `sf-tasks/land/regenerate.log`, and waits for nothing it
+build, its output appended to `symphony/tasks/land/regenerate.log`, and waits for nothing it
 does.
 
-- **One build of main at a time.** It holds `sf-tasks/land/regenerate.lock`, taken
+- **One build of main at a time.** It holds `symphony/tasks/land/regenerate.lock`, taken
   without waiting and naming its process and that process's start, as the land's lock
   names its land. A land that finds it held starts nothing and signals nothing: main's
   ref is all it leaves, and no list of builds to make is kept anywhere. One started
@@ -1757,13 +1809,13 @@ does.
   naming it, and the next land's start takes it over and builds main's tip.
 - **A worktree it keeps.** Each round checks main's tip out in a worktree of its own
   that stays between rounds (`regenerate` in `[agents] worktrees`, else
-  `sf-tasks/land/regenerate-worktree`, locked from the sweep), so what its builds leave
+  `symphony/tasks/land/regenerate-worktree`, locked from the sweep), so what its builds leave
   there stays warm, and runs the generators there in order, a `when_changed` one only
   after an earlier one changed something.
 - **A key it passed on before.** A generator with a key (`[land] keys`, by its name, beside
   the generators so a Symphony older than keys still reads the file), a command whose last
   line names everything it reads, runs it first: a key and committed outputs it passed on
-  before (`sf-tasks/land/regenerated.json`) need nothing made. This repository's key
+  before (`symphony/tasks/land/regenerated.json`) need nothing made. This repository's key
   is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
   client input builds no client. A key names one generator, so the file is refused when
   two `[land] generators` share a name, keyed or not.
@@ -1803,12 +1855,12 @@ does.
   regenerator runs none.
 
 `just tasks regenerate --status` says where it stands, from
-`sf-tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
+`symphony/tasks/land/regenerate.json`: current on main at SHA; making them of main at SHA
 since when, by which process, how far main is past it, and how far behind the outputs
 main holds are (the commit they were last found current at, and how many commits ago);
 behind, how far main is past what they were last made of; red; or stopped. Where the
 regenerator runs the check, the line ends with what it last came to, from
-`sf-tasks/land/regenerate-check.json` (`the check CMD passed on main at SHA (HH:MM)`, or
+`symphony/tasks/land/regenerate-check.json` (`the check CMD passed on main at SHA (HH:MM)`, or
 `is red on main at SHA (HH:MM, tests/main-red-check)`), or that it runs (`checking main at
 SHA since HH:MM (pid N)`), or that one begun ended unjudged. It exits nonzero but when current,
 by the outputs alone: a red check holds back no pin or release. With `--wait` it first
@@ -1828,7 +1880,11 @@ same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
-commits no distribution of its own: the land keeps main's.
+commits no distribution of its own: the land keeps main's. The one that does is a release
+candidate's fix that changes what the client is built from, since no regenerator builds the
+candidate: it commits the distribution its own sources make (`just client-update`), which the
+candidate's rerun checks, and the land keeps main's side of it all the same
+([RELEASES](RELEASES.md#the-release-candidate)).
 
 ## Gates
 
@@ -2183,9 +2239,10 @@ in progress is.
   It checks the current branch and task state, evaluates stamps and merge
   conflicts, and records `changes` only for an effective reviewer veto. A
   superseded interrupted verification supplies no completed assessment.
-  Local submissions and receipts live under `sf-land/assessments/` in the
-  common directory; the delivery child is stopped and reaped after 30 seconds
-  or checkout removal. A delayed board, an older API or an unconfirmed reply
+  Local submissions and receipts live in the folder the project's `[board]
+  assessments` names (a `.git/` prefix names the common directory; none when
+  unset, and an assessment is then refused); the delivery child is stopped and
+  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
   leaves pending evidence; `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.

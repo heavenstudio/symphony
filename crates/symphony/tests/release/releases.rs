@@ -470,6 +470,8 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     assert_eq!(
         out,
         "newest release: none yet\nlast run: none yet\nlast green: none recorded\n\
+         release candidate: off ([releases] candidate_reruns or candidate_hours is 0): a red run \
+         holds none\n\
          landings: 0 on origin/main since the line's start: no release and no run on record, so \
          every landing counts\n\
          next run: after 20 more landings (0 of 20), or the scheduled run\n\
@@ -514,6 +516,8 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     assert_eq!(
         lines[3..],
         [
+            "release candidate: off ([releases] candidate_reruns or candidate_hours is 0): a red \
+             run holds none",
             format!(
                 "landings: 0 on origin/main since the run {} on {} (red)",
                 red["id"].as_str().unwrap(),

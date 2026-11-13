@@ -2,14 +2,14 @@
 //! finished the work never waits on it. A task going to done or cancelled (`done`, `move`, `verdict`),
 //! a session leaving (`leave`) and a reap (`reap`) each start one; `inbox`, which every session runs
 //! between steps, starts one at most once an hour, by a stamp file. Each runs from the main checkout
-//! as `tasks sweep --background=WHY`, its lines appended to `sf-tasks/sweep.log` in the git common
-//! dir, one sweep at a time (`sf-tasks/sweep.lock`). The build that runs it is the main checkout's
-//! ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on `PATH`), never the
-//! caller's: a worktree holding sweep code that has not landed would run it for real. When the main
-//! checkout has no build, the log says so and nothing sweeps; a test's `TASKS_BIN` stands in for it
-//! on a test's board. A board
-//! `TASKS_SERVER` names (a test's) starts none, unless `TASKS_SWEEP=on`: such a board does not know
-//! who works in this repository's worktrees. `TASKS_SWEEP=off` starts none anywhere.
+//! as `tasks sweep --background=WHY`, its lines appended to `symphony/tasks/sweep.log` in the git
+//! common dir, one sweep at a time (`symphony/tasks/sweep.lock`). The build that runs it is the main
+//! checkout's ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on `PATH`),
+//! never the caller's: a worktree holding sweep code that has not landed would run it for real.
+//! When the main checkout has no build, the log says so and nothing sweeps; a test's `TASKS_BIN`
+//! stands in for it on a test's board. A board `TASKS_SERVER` names (a test's) starts none, unless
+//! `TASKS_SWEEP=on`: such a board does not know who works in this repository's worktrees.
+//! `TASKS_SWEEP=off` starts none anywhere.
 
 use crate::cli::Env;
 use crate::git::common_dir;
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn of_two_claims_on_an_old_stamp_one_wins() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-stamp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-sweep-stamp-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let stamp = dir.join(STAMP);
         assert!(claim(&stamp, 1000.0).unwrap()); // none yet: old
@@ -377,7 +377,7 @@ mod tests {
     /// file description, two descriptors.
     #[test]
     fn a_claim_lets_go_of_the_stamp_whatever_copy_of_its_descriptor_a_fork_still_holds() {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-fork-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-sweep-fork-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let stamp = dir.join(STAMP);
         let held = lock_stamp(&stamp).unwrap().unwrap();
@@ -393,7 +393,8 @@ mod tests {
 
     /// A folder of its own under the temporary one, for test `name`.
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-sweep-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-sweep-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

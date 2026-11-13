@@ -21,7 +21,7 @@ impl Dist {
     fn new(script: &str, files: &[(&str, &[u8])]) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-browser-site-{}-{}",
+            "symphony-browser-site-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -212,11 +212,12 @@ fn a_failure_or_a_hold_names_a_route_or_one_of_its_targets() {
     site.hold_route(column, true);
     let addr = site.addr;
     let held = std::thread::spawn(move || get(addr, column, "").0[9..12].to_string());
-    let arrived = std::time::Instant::now();
-    while asked(&site) == sent {
-        assert!(arrived.elapsed().as_secs() < 10, "the held request arrives");
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    test_time::until_true(
+        "the held request arriving",
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || asked(&site) != sent,
+    )
+    .expect("the held request never arrived");
     assert_eq!(status(counts), "200", "another query of the route answers");
     assert_eq!(answered(&site), before, "the held target waits");
     site.hold_route(column, false);

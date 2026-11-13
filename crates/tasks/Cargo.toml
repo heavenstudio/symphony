@@ -14,6 +14,8 @@ authors.workspace = true
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
 process-cwd = { path = "../process-cwd" }
+# Its variables, each by its one SYMPHONY_ name.
+symphony-env = { path = "../symphony-env" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.
 symphony-args = { path = "../symphony-args" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
@@ -26,13 +28,8 @@ serde = { version = "1", features = ["derive"] }
 # (docs/CHECKS.md), and a worktree's board tests reuse the dependencies the main checkout's build of
 # `tasks` compiled.
 serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
-# The SQLite board the move reads and freezes (src/cutover.rs). The owner, 2026-10-08: "No python code
-# should be ran at this point, complete the migration first", and "all python code needs migrated to be
-# migrated to rust". Bundled, so the SQLite it links is the one pinned here on every machine, not the
-# system's; no default features (the statement cache and the wasm build).
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
-# The project file: `[project] id`, which names the SQLite board the move reads (src/cutover.rs), and
-# `[board] on_review`, the command a task moving to review starts (src/on_review.rs).
+# The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
+# moving to review starts (src/on_review.rs).
 toml.workspace = true
 # Local meaning search, approved by tasks-search-embedding-model (A, 2026-10-29).
 tokenizers.workspace = true
@@ -43,3 +40,7 @@ sha2.workspace = true
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
+
+[dev-dependencies]
+# The CPU a test bills and its waits on a condition (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

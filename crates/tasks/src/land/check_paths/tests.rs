@@ -464,7 +464,7 @@ struct Repo(PathBuf);
 impl Repo {
     fn new(name: &str) -> Repo {
         let dir = std::env::temp_dir().join(format!(
-            "sf-check-paths-{name}-{}-{}",
+            "symphony-check-paths-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

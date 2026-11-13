@@ -253,7 +253,7 @@ fn a_hung_call_answers_at_the_deadline_though_what_it_started_holds_its_output()
 
 /// Names the folder of the stand-ins the re-run of
 /// [`a_caller_killed_through_its_group_takes_its_hung_call_with_it`] asks.
-const CALLER: &str = "SF_GO_CALLER_STAND_INS";
+const CALLER: &str = "SYMPHONY_GO_CALLER_STAND_INS";
 
 /// A hung call stays in its caller's process group: a caller killed through it, as the server
 /// ends a `tasks reap` it runs or a terminal's Ctrl-C reaches a command, takes the call's process

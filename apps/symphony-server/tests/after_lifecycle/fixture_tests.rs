@@ -154,11 +154,11 @@ fn the_recipe_observer_uses_the_interpreter_from_the_original_path() {
 fn ordinary_starts_and_traced_stop_and_serve_commands_have_no_startup_trace() {
     let repo = Repo::new("quiet-startup");
     let mut command = repo.command(&repo.main);
-    command.env_remove("SF_SYMPHONY_STARTUP_TRACE");
+    command.env_remove("SYMPHONY_STARTUP_TRACE");
     let mut starter = repo.run(command);
     starter.success();
     repo.remember();
-    repo.check_server();
+    let running = repo.check_server();
     assert_eq!(fs::read_to_string(&starter.stderr).unwrap(), "");
     let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
     assert!(!log.contains("· Symphony startup "), "{log}");
@@ -167,7 +167,14 @@ fn ordinary_starts_and_traced_stop_and_serve_commands_have_no_startup_trace() {
     command.arg("--stop");
     let mut stop = repo.run(command);
     stop.success();
-    assert_eq!(fs::read_to_string(&stop.stderr).unwrap(), "");
+    // The stop says the one signal it sends, and nothing of a startup.
+    assert_eq!(
+        fs::read_to_string(&stop.stderr).unwrap(),
+        format!(
+            "· Symphony: SIGTERM to the server, pid {}: asked to stop (`--stop`)\n",
+            running.pid
+        )
+    );
 
     // Pass the trace variable to serve directly, rather than relying on Home's filter.
     let mut command = repo.command(&repo.main);

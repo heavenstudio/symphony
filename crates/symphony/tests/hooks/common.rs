@@ -65,7 +65,7 @@ impl TempDir {
         let base = std::env::temp_dir()
             .canonicalize()
             .expect("the temporary folder");
-        let path = base.join(format!("sf-hooks-{tag}-{}-{n}", std::process::id()));
+        let path = base.join(format!("symphony-hooks-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("a temporary folder");
         Self(path)

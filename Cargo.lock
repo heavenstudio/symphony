@@ -417,6 +417,8 @@ dependencies = [
  "libc",
  "serde_json",
  "symphony-api",
+ "symphony-env",
+ "test-time",
  "tungstenite 0.30.0",
 ]
 
@@ -1597,18 +1599,6 @@ checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
 ]
-
-[[package]]
-name = "fallible-iterator"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
-
-[[package]]
-name = "fallible-streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fancy-regex"
@@ -3392,17 +3382,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
-name = "libsqlite3-sys"
-version = "0.38.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
-dependencies = [
- "cc",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4195,12 +4174,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pkg-config"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
-
-[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4635,6 +4608,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "repository-read"
 version = "0.1.0"
+dependencies = [
+ "symphony-env",
+]
 
 [[package]]
 name = "reqwest"
@@ -4692,19 +4668,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rusqlite"
-version = "0.40.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
-dependencies = [
- "bitflags 2.13.2",
- "fallible-iterator",
- "fallible-streaming-iterator",
- "libsqlite3-sys",
- "smallvec",
 ]
 
 [[package]]
@@ -5234,8 +5197,10 @@ dependencies = [
  "symphony-args",
  "symphony-board",
  "symphony-docs",
+ "symphony-env",
  "symphony-plugin",
  "symphony-schema",
+ "test-time",
  "toml",
  "unicode-normalization",
 ]
@@ -5259,12 +5224,13 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "process-cwd",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "symphony-api",
  "symphony-args",
+ "symphony-env",
+ "test-time",
  "tokenizers",
  "toml",
  "tract-linalg",
@@ -5273,6 +5239,10 @@ dependencies = [
 
 [[package]]
 name = "symphony-docs"
+version = "0.1.0"
+
+[[package]]
+name = "symphony-env"
 version = "0.1.0"
 
 [[package]]
@@ -5308,7 +5278,9 @@ dependencies = [
  "symphony",
  "symphony-api",
  "symphony-board",
+ "symphony-env",
  "symphony-plugin",
+ "test-time",
  "tokio",
  "tower",
  "tower-http",
@@ -5332,6 +5304,8 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "symphony-api",
+ "symphony-env",
+ "test-time",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -5413,6 +5387,13 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "test-time"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -6092,12 +6073,6 @@ dependencies = [
  "outref",
  "vsimd",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

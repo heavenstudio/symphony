@@ -56,8 +56,9 @@
 //! on that board took 15 s; and the `perf` tests' board of 50k messages copied in 41 and 44 s with
 //! `message_sender`, 60 and 53 s without it, alternating on one server at load 65 to 85.
 //!
-//! `moved:sqlite` is the move from SQLite (`Store::move_in`): the board it moved, when, and a hash of
-//! every row the move left, so a move into a board written since is refused.
+//! `moved:sqlite` is the record the move from SQLite wrote, a one-time move older builds made and
+//! this one no longer does: the board it moved, when, and a hash of every row the move left. The
+//! table stays defined, so a board that holds the record keeps it and every board keeps its shape.
 //!
 //! `meta:schema` names the version defined, so opening a board already in this shape writes nothing.
 //!

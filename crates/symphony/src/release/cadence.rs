@@ -159,6 +159,18 @@ pub(crate) fn since(root: &Path, releases: &[(Release, String)], runs: &[Run], t
     best.map_or(Since::Start, |(_, since)| since)
 }
 
+/// What a release candidate holds of the cadence ([`super::candidate`]): while one is open, main's
+/// tip is not run, whatever the count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Hold {
+    /// Open at `tip`, its rerun waiting for these reds to be answered.
+    Waiting { tip: String, reds: Vec<String> },
+    /// Open at `tip`, every red answered: its rerun is due.
+    Answered { tip: String },
+    /// Dropped for `why`: a run of main's tip is due.
+    Dropped { why: String },
+}
+
 /// Where the cadence stands.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Cadence {
@@ -172,15 +184,21 @@ pub(crate) struct Cadence {
     pub(crate) landings: Vec<Landing>,
     /// The run holding the lock, when its process lives.
     pub(crate) running: Option<Running>,
+    /// What a release candidate holds, when one does.
+    pub(crate) held: Option<Hold>,
 }
 
 impl Cadence {
-    /// Whether a run on main's tip starts now: the cadence is on, enough have landed, and no run
-    /// holds the lock.
+    /// Whether a run starts now: the cadence is on, no run holds the lock, and a release
+    /// candidate's rerun is due, or one was dropped, or none is open and enough have landed.
     pub(crate) fn due(&self) -> bool {
         self.every > 0
             && self.running.is_none()
-            && self.landings.len() >= usize::try_from(self.every).unwrap_or(usize::MAX)
+            && match &self.held {
+                Some(Hold::Waiting { .. }) => false,
+                Some(Hold::Answered { .. } | Hold::Dropped { .. }) => true,
+                None => self.landings.len() >= usize::try_from(self.every).unwrap_or(usize::MAX),
+            }
     }
 
     /// What starts a run it makes due, as its record keeps it.
@@ -190,16 +208,37 @@ impl Cadence {
             .first()
             .map(|landing| format!(", the last {}", landing.slug))
             .unwrap_or_default();
-        format!(
-            "{} landings since {}{last}",
-            self.landings.len(),
-            self.since.said()
-        )
+        match &self.held {
+            Some(Hold::Answered { tip }) => {
+                format!("the release candidate {}'s reds answered{last}", short(tip))
+            }
+            Some(Hold::Dropped { why }) => format!("the release candidate dropped: {why}"),
+            _ => format!(
+                "{} landings since {}{last}",
+                self.landings.len(),
+                self.since.said()
+            ),
+        }
     }
 
     /// What `--due` says as the run it makes due starts: the first count's, from the line's start,
     /// in words of its own, since it takes the line's whole history at once.
     pub(crate) fn starts(&self) -> String {
+        match &self.held {
+            Some(Hold::Answered { tip }) => {
+                return format!(
+                    "release: due: the rerun of the release candidate {} starts\n",
+                    short(tip)
+                );
+            }
+            Some(Hold::Dropped { .. }) => {
+                return format!(
+                    "release: due: the release candidate was dropped, so a run on {}'s tip starts\n",
+                    self.line
+                );
+            }
+            _ => {}
+        }
         match self.since {
             Since::Start => format!(
                 "release: due: the first count, {} landings from {}'s start with no release and no \
@@ -236,6 +275,25 @@ impl Cadence {
                 running.pid,
                 local(running.started_at)
             ),
+            None if self.held.is_some() => match &self.held {
+                Some(Hold::Waiting { tip, reds }) => format!(
+                    "held for the release candidate {}: its rerun waits for {}, and main's tip is \
+                     not run while it is open",
+                    short(tip),
+                    reds.join(", ")
+                ),
+                Some(Hold::Answered { tip }) => format!(
+                    "due: the release candidate {}'s reds are answered: the next landing starts \
+                     its rerun, or `just release --rerun`",
+                    short(tip)
+                ),
+                Some(Hold::Dropped { why }) => format!(
+                    "due: the release candidate was dropped ({why}): the next landing starts a \
+                     run of {}'s tip, or `just release --due`",
+                    self.line
+                ),
+                None => String::new(),
+            },
             None if count >= every => format!(
                 "due: {count} of {} landed; the next landing starts it, or `just release --due`",
                 self.every
@@ -267,7 +325,8 @@ pub(crate) fn line_of(root: &Path, remote: &str, branch: &str) -> Result<(String
 }
 
 /// The cadence of the repository at `root`, whose release run records are in `folder`, with `releases`
-/// here newest first, counting every `every` landings on `remote`'s `branch`.
+/// here newest first, counting every `every` landings on `remote`'s `branch`, and what a release
+/// candidate `held` of it.
 pub(crate) fn of(
     root: &Path,
     folder: &Path,
@@ -275,6 +334,7 @@ pub(crate) fn of(
     every: u32,
     remote: &str,
     branch: &str,
+    held: Option<Hold>,
 ) -> Result<Cadence, String> {
     let (line, tip) = line_of(root, remote, branch)?;
     let runs = record::read(folder);
@@ -288,6 +348,7 @@ pub(crate) fn of(
         since,
         landings,
         running,
+        held,
     })
 }
 
@@ -447,6 +508,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            rerun: None,
         }
     }
 
@@ -541,6 +603,7 @@ mod tests {
                 })
                 .collect(),
             running,
+            held: None,
         }
     }
 
@@ -607,6 +670,71 @@ mod tests {
         assert!(start.lines().contains(
             "since the line's start: no release and no run on record, so every landing counts;"
         ));
+    }
+
+    #[test]
+    fn a_release_candidate_holds_main_while_its_reds_wait_and_its_rerun_or_drop_is_due() {
+        let held = |hold: Hold, every: u32, count: usize| Cadence {
+            held: Some(hold),
+            ..cadence(every, count, None)
+        };
+        let waiting = || Hold::Waiting {
+            tip: "c".repeat(40),
+            reds: vec!["tests/release-red-verify".into()],
+        };
+        let answered = || Hold::Answered {
+            tip: "c".repeat(40),
+        };
+        let dropped = || Hold::Dropped {
+            why: "dropped by `just release --drop`".into(),
+        };
+        assert!(!held(waiting(), 20, 40).due(), "however many landed");
+        assert!(held(answered(), 20, 0).due(), "whatever the count");
+        assert!(held(dropped(), 20, 0).due());
+        assert!(!held(answered(), 0, 0).due(), "the cadence off starts none");
+        let running = Running {
+            version: record::VERSION,
+            id: "r1".into(),
+            kind: "release".into(),
+            pid: 7,
+            started_at: 1_800_000_000.0,
+            until: 1_800_003_600.0,
+            check: None,
+        };
+        let busy = Cadence {
+            held: Some(answered()),
+            ..cadence(20, 0, Some(running))
+        };
+        assert!(!busy.due(), "never doubled");
+
+        assert!(held(waiting(), 20, 40).lines().ends_with(
+            "next run: held for the release candidate cccccccccccc: its rerun waits for \
+             tests/release-red-verify, and main's tip is not run while it is open\n"
+        ));
+        assert!(held(answered(), 20, 1).lines().ends_with(
+            "next run: due: the release candidate cccccccccccc's reds are answered: the next \
+             landing starts its rerun, or `just release --rerun`\n"
+        ));
+        assert!(held(dropped(), 20, 1).lines().ends_with(
+            "next run: due: the release candidate was dropped (dropped by `just release --drop`): \
+             the next landing starts a run of origin/main's tip, or `just release --due`\n"
+        ));
+        assert_eq!(
+            held(answered(), 20, 1).cause(),
+            "the release candidate cccccccccccc's reds answered, the last tools/task-0"
+        );
+        assert_eq!(
+            held(dropped(), 20, 1).cause(),
+            "the release candidate dropped: dropped by `just release --drop`"
+        );
+        assert_eq!(
+            held(answered(), 20, 1).starts(),
+            "release: due: the rerun of the release candidate cccccccccccc starts\n"
+        );
+        assert_eq!(
+            held(dropped(), 20, 1).starts(),
+            "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
+        );
     }
 
     #[test]

@@ -37,9 +37,9 @@ fn bash_env_does_not_add_output_to_build_fixtures() {
         let mut command = Command::new(repo.main.join("tools/fixture-build"));
         command
             .current_dir(&repo.tree)
-            .env("SF_LIFECYCLE_BINARY", fixture::APP)
-            .env("SF_LIFECYCLE_LOG", &repo.builds)
-            .args(["sf-slots", "cargo", "build"]);
+            .env("SYMPHONY_LIFECYCLE_BINARY", fixture::APP)
+            .env("SYMPHONY_LIFECYCLE_LOG", &repo.builds)
+            .args(["slots", "cargo", "build"]);
         let mut process = repo.run(command);
         process.success();
         assert_eq!(process.output(), "");
@@ -84,9 +84,9 @@ fn build_fixtures_reuse_the_built_image_and_replace_old_outputs_without_writing_
             let mut command = Command::new(repo.main.join("tools/fixture-build"));
             command
                 .current_dir(&repo.tree)
-                .env("SF_LIFECYCLE_BINARY", fixture::APP)
-                .env("SF_LIFECYCLE_LOG", &repo.builds)
-                .args(["sf-slots", "cargo"]);
+                .env("SYMPHONY_LIFECYCLE_BINARY", fixture::APP)
+                .env("SYMPHONY_LIFECYCLE_LOG", &repo.builds)
+                .args(["slots", "cargo"]);
             if install {
                 command.arg("install").arg("--root").arg(&repo.install);
             } else {
@@ -121,7 +121,7 @@ fn a_start_beside_a_server_on_loopback_alone_fails_at_once_and_leaves_nothing() 
             // The default server binds IPv4 first. An independently occupied IPv4 port must not
             // prevent this case from exercising the IPv6 listener we actually own. A server of its
             // own is refused the one server's port, so the one server is on a port of its pick.
-            command.env("SF_SYMPHONY_PORT", "0").args([
+            command.env("SYMPHONY_PORT", "0").args([
                 "--port",
                 &repo.port().to_string(),
                 "--host",
@@ -281,7 +281,11 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
     if observed == 0 {
         // Preserve the failed observation before cleanup so a broken drop cannot leak a child
         // or be hidden by this fallback. A positive waitpid result already reaped the child.
-        symphony_server::sys::signal(i64::from(pid), libc::SIGKILL);
+        fixture::killed::send(
+            i64::from(pid),
+            libc::SIGKILL,
+            "the case ends the child a Process drop left",
+        );
         // SAFETY: the nonblocking observation proved this exact owned child is still running.
         while unsafe { libc::waitpid(pid, &mut status, 0) } == -1
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
@@ -331,13 +335,40 @@ fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     };
     check_progress(repo.start(&repo.main, false));
     let first = repo.record().unwrap();
-    symphony_server::sys::signal(first.pid, libc::SIGKILL);
+    fixture::killed::send(first.pid, libc::SIGKILL, "the case kills the shared server");
     until("killed shared server", || {
         (!symphony_server::sys::pid_alive(first.pid)).then_some(())
     });
     check_progress(repo.start(&repo.tree, false));
     let second = repo.check_server();
     assert_ne!(second.pid, first.pid);
+}
+
+#[test]
+fn a_start_where_an_older_builds_state_was_not_moved_refuses_and_registers_nothing() {
+    let repo = Repo::new("unmoved-start");
+    let common = symphony_server::repo::checkout(&repo.main).unwrap().common;
+    // The shared server's old install folder, which `tools/move-state.sh` moves into
+    // `symphony/server`.
+    let (new, old) = symphony_board::unmoved::OLD[1];
+    assert_eq!(new, symphony_server::home::FOLDER);
+    fs::create_dir_all(common.join(old)).unwrap();
+    let refusal = symphony_board::unmoved::refusal(&common, new).expect("unmoved");
+    for dir in [&repo.main, &repo.tree] {
+        let mut start = repo.run(repo.command(dir));
+        assert_eq!(start.wait().code(), Some(2), "{}", start.output());
+        assert!(
+            start.output().contains(&format!("✖ Symphony: {refusal}\n")),
+            "{}",
+            start.output()
+        );
+    }
+    assert!(repo.record().is_none(), "no server started");
+    assert!(
+        !repo.home.join("projects.json").exists(),
+        "the project was registered"
+    );
+    assert!(!common.join("symphony").exists(), "symphony/ was made");
 }
 
 #[test]
@@ -508,7 +539,7 @@ fn a_profiled_server_times_each_stage_of_its_warm_start() {
     let mut command = repo.command(&repo.tree);
     command
         .args(["--port", "0", "--host", "127.0.0.1"])
-        .env("SF_SYMPHONY_PROFILE", "1");
+        .env("SYMPHONY_PROFILE", "1");
     let mut server = repo.run(command);
     let actual = server.ready();
     // Only the card the branch added is its own: had a register read come back empty, the

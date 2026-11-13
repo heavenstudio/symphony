@@ -78,7 +78,10 @@ fn restore_resumes_the_recorded_conversation_in_a_new_terminal_in_the_recorded_w
     let t = w.terminal(&again.row.pane);
     assert_eq!(t["cwd"].as_str(), Some(s.worktree.as_str()));
     assert_eq!(t["name"].as_str(), Some(s.handle.as_str()));
-    assert_eq!(t["labels"]["sf.handle"].as_str(), Some(s.handle.as_str()));
+    assert_eq!(
+        t["labels"]["symphony.handle"].as_str(),
+        Some(s.handle.as_str())
+    );
     let [read] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert_eq!(
         (read.closed, read.pane.as_str()),

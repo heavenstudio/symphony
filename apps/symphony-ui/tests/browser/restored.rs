@@ -56,7 +56,7 @@ impl Native {
         let binary = binaries::shelf_server();
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "sf-browser-{}-{}",
+            "symphony-browser-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -190,12 +190,12 @@ impl Native {
             .args(["serve", "--root"])
             .arg(&root)
             .args(["--port", "0", "--host", "127.0.0.1"])
-            .env("SF_SYMPHONY_UI_DIST", dist())
+            .env("SYMPHONY_UI_DIST", dist())
             .env("TASKS_SERVER", board.unwrap_or("127.0.0.1:1"))
             .env("TASKS_DATABASE", "browser_owner_controls")
             .env("TASKS_SWEEP", "off")
             .env("ASKS_DB", root.join("artifacts/asks.db"))
-            .env("SF_SYMPHONY_TEST_PID", std::process::id().to_string())
+            .env("SYMPHONY_TEST_PID", std::process::id().to_string())
             .envs(vars.iter().copied())
             .env_remove("TASKS_SESSION")
             .stdin(Stdio::null())
@@ -221,9 +221,9 @@ impl Native {
                 }
             }
         });
-        native.base = recv.recv_timeout(SHOWN).unwrap_or_else(|e| {
+        native.base = super::announced("the native server", &recv).unwrap_or_else(|why| {
             panic!(
-                "native server readiness: {e}; {}",
+                "{why}; {}",
                 std::fs::read_to_string(native.root.join("artifacts/server.log")).unwrap()
             )
         });
@@ -242,7 +242,9 @@ impl Native {
     pub(super) fn raw_status(&self, target: &str) -> u16 {
         let address = self.base.strip_prefix("http://").unwrap();
         let mut stream = TcpStream::connect(address).unwrap();
-        stream.set_read_timeout(Some(SHOWN)).unwrap();
+        // The answer's one wait: a quiet machine has it within SHOWN, and only a stall reaches
+        // its backstop (RULES.md `tests/no-test-fails-on-load`).
+        stream.set_read_timeout(Some(super::STALL)).unwrap();
         stream
             .write_all(
                 format!("GET {target} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
@@ -250,7 +252,14 @@ impl Native {
             )
             .unwrap();
         let mut status = String::new();
-        BufReader::new(stream).read_line(&mut status).unwrap();
+        if let Err(error) = BufReader::new(stream).read_line(&mut status) {
+            panic!(
+                "{target}: stalled: no status line by the read's wall-clock backstop of {:?} \
+                 ({error}); {}",
+                super::STALL,
+                test_time::Load::now()
+            );
+        }
         status.split_whitespace().nth(1).unwrap().parse().unwrap()
     }
 }

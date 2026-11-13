@@ -289,20 +289,21 @@ mod tests {
     /// arguments added: what it lists is the answer, and nothing of this process's own lsof.
     #[test]
     fn a_scan_runs_the_lsof_its_caller_built() {
-        let mut listing = stand_in("printf 'p1\\nn%s|%s\\n' \"$*\" \"${SF_CWD_GIVEN-unset}\"");
-        listing.env("SF_CWD_GIVEN", "given");
+        let mut listing =
+            stand_in("printf 'p1\\nn%s|%s\\n' \"$*\" \"${SYMPHONY_CWD_GIVEN-unset}\"");
+        listing.env("SYMPHONY_CWD_GIVEN", "given");
         assert_eq!(
             process_cwds_with(listing),
             Some(vec![PathBuf::from("-Fn -d cwd|given")])
         );
         assert_eq!(process_cwds_with(Command::new("/no/such/lsof")), None);
-        let search = "[ \"$*|${SF_CWD_GIVEN-unset}\" = '-a -d cwd -Fp -x f +D /work/a b|given' ] \
+        let search = "[ \"$*|${SYMPHONY_CWD_GIVEN-unset}\" = '-a -d cwd -Fp -x f +D /work/a b|given' ] \
                       && printf 'p7\\n'; exit 1";
         let mut given = stand_in(search);
-        given.env("SF_CWD_GIVEN", "given");
+        given.env("SYMPHONY_CWD_GIVEN", "given");
         assert_eq!(occupied_with(given, Path::new("/work/a b")), Some(true));
         let mut elsewhere = stand_in(search);
-        elsewhere.env("SF_CWD_GIVEN", "given");
+        elsewhere.env("SYMPHONY_CWD_GIVEN", "given");
         assert_eq!(occupied_with(elsewhere, Path::new("/work/c")), Some(false));
         assert_eq!(
             occupied_with(stand_in(search), Path::new("/work/a b")),
@@ -350,7 +351,7 @@ mod tests {
                 let _ = self.0.wait();
             }
         }
-        let root = std::env::temp_dir().join(format!("sf-cwd-scoped-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("symphony-cwd-scoped-{}", std::process::id()));
         let empty = root.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         for name in ["tab\tname", "café", "literal\\t^A"] {

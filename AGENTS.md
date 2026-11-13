@@ -1,7 +1,8 @@
 # Symphony
 
 The app's workspace owns its server and Dioxus client under `apps/`, and the review
-library, wire types, task board, working-directory scanner and headless Chrome driver
+library, wire types, task board, working-directory scanner, headless Chrome driver and
+the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
 under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
@@ -57,7 +58,7 @@ It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
 workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
-on macOS; `SF_SEED_TARGET=off`), so worktrees
+on macOS; `SYMPHONY_SEED_TARGET=off`), so worktrees
 share compiled dependencies on disk; never one target folder, where Cargo names two
 worktrees' packages alike and each runs the other's build. The board's sweep clears a
 finished worktree's build output ([TASKS](docs/TASKS.md)). It supplies no project gate
@@ -83,8 +84,11 @@ under `apps/symphony-server/client/public/`. A branch commits no distribution, w
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
 as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the
 client for its tests and pictures and puts the distribution back (`git checkout --
-apps/symphony-server/client/public`). Release snapshots use stable paths under /private/tmp,
-copy the locked component source without changing its version or features, and
+apps/symphony-server/client/public`). The one exception is a release candidate's fix that
+changes what the client is built from: no regenerator builds the candidate, so that branch
+commits the distribution its own sources make, and the land keeps main's side of it
+([RELEASES](docs/RELEASES.md#the-release-candidate)). Release snapshots use stable paths
+under /private/tmp, copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
 A snapshot holds only what the client's build reads (`release-inputs`,
@@ -96,7 +100,7 @@ anywhere else needs no new distribution.
 The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
 A source kit's local preview build wins over the embedded default. Explicit source-kit
-install directories and `SF_SYMPHONY_UI_DIST` retain their own missing-file errors.
+install directories and `SYMPHONY_UI_DIST` retain their own missing-file errors.
 A consuming host uses its pinned embedded client for installed and foreground defaults;
 retired implicit bundles cannot replace it. A foreground preview override remains explicit.
 
@@ -115,7 +119,7 @@ Chrome executable; the consuming project's game, display and gate binaries are n
 This repository has no hosted GitHub CI requirement.
 
 Native board fixtures use the fixture source-root function to find
-`tools/surreal.sh`, or the explicit `SF_SURREAL` executable. Resolution and
+`tools/surreal.sh`, or the explicit `SYMPHONY_SURREAL` executable. Resolution and
 downloads finish before server readiness is measured. `tools/fixture_process.sh`
 closes inherited descriptors and supplies the owned EOF watchdog. These helpers
 do not start the shared board or Symphony server.
@@ -131,6 +135,21 @@ board are served under `/symphony/` by the machine's one server, and its board i
 repository's own, in its git common dir. Symphony work is filed, staffed and reviewed
 on that board, never on a consuming project's. Every agent working here follows the
 standing rules in [RULES.md](RULES.md).
+
+**Its own names.** Symphony names only its own variables (`SYMPHONY_`), state folders
+(`symphony/` in the git common dir), formats and settings, never a consuming project's
+tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
+outside the fences it lists, each with its reason (the move command `tools/move-state.sh`
+and its tests, `crates/tasks/src/unmoved.rs`, the launcher's read of an older build's board
+record, and the client's tools script, which runs an older build's copies where they stand),
+and on the first consuming project's name, in any spelling or identifier built from it, in a
+tracked file's text or path: say "the consuming project". The state folders are named once, in
+`crates/tasks/src/folders.rs`. Until the move, a build of this code starts no board, server
+or recorder on a repository whose old folders still hold its state, and makes no verdict
+journal there, refusing with the line naming `tools/move-state.sh` (`unmoved.rs`). It
+installs no client tools beside an older build's either, and no build removes those: another
+worktree's build may be running them. Only the move takes them away, on a quiet machine,
+refusing while a process has a file open under them.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
@@ -298,8 +317,10 @@ checkout, its documents but the records, what it delivers and its guides, and
 ([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)).
 
 `symphony hook tasks-beat` reads the tool event from stdin and finds its board through
-the board's project lookup. Keys and live-build records belong to that repository's
-common directory; scratch overrides remain explicit. It starts no server, builds or
+the board's project lookup. Its bound keys belong to that repository's common directory;
+scratch overrides remain explicit. It runs `TASKS_BIN`, else the checkout's
+`.target/bin/tasks`, else, from a linked worktree, its main checkout's, and makes no link.
+It starts no server, builds or
 hashes no sources, prints nothing and never refuses a tool call. Settings run the
 project's `symphony` as the recipes find it: the session's `.target/bin/symphony` link,
 else its main checkout's (a session in a linked worktree with none of its own), else
@@ -359,10 +380,14 @@ standalone workspace requires no project gate or landing executable.
 `just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder and conciliated with the projects the
 machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed, then the machine refreshed to it; `--commit COMMIT` releases a commit of
-main out of cycle, `--due` starts a run only once `[releases] every_landings` tasks have landed
+that tag alone pushed, then the machine refreshed to it. A red tip is held as the release
+candidate, the local branch `release-candidate` that is never pushed, until its reds' own tasks,
+started there, land; then it is rerun and released, and main's tip is not run meanwhile.
+`--commit COMMIT` releases a commit of main out of cycle, `--due` starts a run only once
+`[releases] every_landings` tasks have landed or the release candidate's rerun or drop is due
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest
-release again (an orchestrator's retry), and `--status` runs nothing. Running a release run or
+release again, `--rerun` reruns the release candidate and `--drop` drops it (each an
+orchestrator's retry), and `--status` runs nothing. Running a release run or
 `--commit` by hand and installing its schedule (`--schedule` prints it) are the owner's call. It
 is Symphony's own release command, not a recipe `symphony init` installs.
 

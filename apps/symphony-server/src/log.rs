@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn both_streams_and_inherited_child_output_are_dated_and_drained() {
-        const CHILD: &str = "SF_LOG_TEST_HOME";
+        const CHILD: &str = "SYMPHONY_LOG_TEST_HOME";
         const TEST: &str =
             "log::tests::both_streams_and_inherited_child_output_are_dated_and_drained";
         // Descriptor replacement is process-wide. Exercise it only in an owned test process,
@@ -331,7 +331,8 @@ mod tests {
             redirect(original[1].as_raw_fd(), 2).unwrap();
             return;
         }
-        let home = std::env::temp_dir().join(format!("sf-log-process-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("symphony-log-process-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let child = symphony_board::sys::output(
             symphony_board::sys::Command::new(std::env::current_exe().unwrap())
@@ -369,7 +370,7 @@ mod tests {
 
     #[test]
     fn multiline_fragmented_output_and_an_unterminated_tail_all_get_dated() {
-        let path = std::env::temp_dir().join(format!("sf-log-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("symphony-log-{}", std::process::id()));
         let (input, mut writer) = symphony_board::sys::pipe().unwrap();
         let sender = std::thread::spawn(move || {
             writer.write_all(b"one\n").unwrap();
@@ -398,7 +399,7 @@ mod tests {
 
     #[test]
     fn shutdown_does_not_wait_for_an_inherited_writer_to_close() {
-        let path = std::env::temp_dir().join(format!("sf-log-held-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("symphony-log-held-{}", std::process::id()));
         let (input, held_writer) = UnixStream::pair().unwrap();
         input
             .set_read_timeout(Some(Duration::from_millis(10)))

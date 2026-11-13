@@ -927,7 +927,7 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
 }
 
 /// What the machine tells [`steps`]: its Symphony's folder (the registry's), the search path, the
-/// SurrealDB `SF_SURREAL` names and the folder of the `symphony` build running init, where a
+/// SurrealDB `SYMPHONY_SURREAL` names and the folder of the `symphony` build running init, where a
 /// Symphony checkout's build of the others is too.
 pub struct Machine<'a> {
     /// None when the machine has no Symphony folder to read.
@@ -938,7 +938,7 @@ pub struct Machine<'a> {
 }
 
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
-/// `named` (`SF_SURREAL`), else the pinned one in the repository's common dir. None outside a
+/// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
 /// checkout.
 fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     let common = symphony_board::git::checkout_common_dir(root)?;
@@ -1178,22 +1178,23 @@ fn build_steps(unfound: &[&str], own: &[&str], beside: Option<&Path>) -> Vec<Str
 }
 
 /// The step for the SurrealDB the board's server runs from `surreal`, which is not there: `named`
-/// when `SF_SURREAL` names it, else the pinned one, with `fetch` the shell that fetches it for this
-/// machine ([`symphony_board::server::surreal_fetch`]).
+/// when `SYMPHONY_SURREAL` names it, else the pinned one, with `fetch` the shell that fetches it for
+/// this machine ([`symphony_board::server::surreal_fetch`]).
 fn surreal_step(surreal: &Path, named: bool, fetch: Option<String>) -> String {
     let version = symphony_board::server::SURREAL_VERSION;
     let at = surreal.display();
     match (named, fetch) {
         (true, _) => format!(
-            "put SurrealDB {version} at {at}, where SF_SURREAL names it: the board's server runs it"
+            "put SurrealDB {version} at {at}, where SYMPHONY_SURREAL names it: the board's server \
+             runs it"
         ),
         (false, Some(fetch)) => format!(
             "fetch SurrealDB {version}, which the board's server runs from {at}: `{fetch}` (or name \
-             another with SF_SURREAL)"
+             another with SYMPHONY_SURREAL)"
         ),
         (false, None) => format!(
             "put SurrealDB {version}'s release binary for this machine at {at}, where the board's \
-             server runs it, or name one with SF_SURREAL"
+             server runs it, or name one with SYMPHONY_SURREAL"
         ),
     }
 }
@@ -1305,7 +1306,7 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
             }
             let folder = crate::machine::dir().ok();
             let path = std::env::var_os("PATH");
-            let surreal = std::env::var_os("SF_SURREAL").filter(|named| !named.is_empty());
+            let surreal = symphony_env::SURREAL.os();
             let running = std::env::current_exe().and_then(|exe| exe.canonicalize());
             let machine = Machine {
                 folder: folder.as_deref(),

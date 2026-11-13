@@ -51,7 +51,7 @@ fn placeholder(kind: &str, n: usize) -> String {
 }
 
 /// `blocks` of the component or renderer `name` as the fragment holds them: written as HTML, in a
-/// typed render inside the `<sf-component>` the parser reads back as [`Block::Component`].
+/// typed render inside the `<symphony-component>` the parser reads back as [`Block::Component`].
 pub(super) fn blocks_html(ctx: &Ctx<'_>, name: &str, blocks: Vec<Block>) -> String {
     let mut media = |item| ctx.add_media(item);
     if ctx.typed {

@@ -336,7 +336,7 @@ fn redeploy_waits_for_a_focused_select_and_its_open_popup_then_reloads_when_dise
     page.open(&site.url("/"));
     open_panel(&mut page);
     task_tab(&mut page);
-    assert!(crate::wait_for_feed(&site));
+    crate::wait_for_feed(&site).expect("the page never followed the feed");
     page.eval("window.keptSelectVisit=true;document.querySelector('#quick-sheet button[aria-haspopup=listbox]').focus()");
     for phase in 0..3 {
         if phase == 1 {
