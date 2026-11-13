@@ -162,9 +162,10 @@ pub(crate) struct Hub {
     /// The agents' health changes and hourly counts, appended to their day files by the machine's
     /// one server alone ([`agent_activity`]); none on a private server.
     pub(crate) agent_activity: Mutex<Option<agent_activity::Recorder>>,
-    /// When they are recorded: its server generation's gate ([`agent_activity::Gate`]), given as the
-    /// hub starts; none records nothing.
-    agents_gate: OnceLock<Arc<agent_activity::Gate>>,
+    /// When they are recorded: its server generation's gate ([`symphony_board::recording`]), the
+    /// one `health` keeps to as well, given as the hub starts ([`Hub::gate_recorders`]); none
+    /// records nothing.
+    agents_gate: OnceLock<Arc<symphony_board::recording::Gate>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
@@ -1764,7 +1765,6 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
 }
 
 mod agent_activity;
-pub(crate) use agent_activity::Gate as AgentsGate;
 mod asks;
 mod board_status;
 mod health;
