@@ -886,10 +886,16 @@ fn a_day_file_that_is_a_fifo_or_a_folder_is_neither_written_nor_read_and_nothing
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
     let mut recorder = Recorder::new(folder.path().to_path_buf());
     recorder.record(&executing(Health::Live), H, None);
-    assert!(recorder.unwritten.is_some(), "no reader: refused, not waited on");
+    assert!(
+        recorder.unwritten.is_some(),
+        "no reader: refused, not waited on"
+    );
     assert!(read_day(folder.path(), &day(H)).is_empty());
     let refused = regular(&fifo, OpenOptions::new().read(true)).unwrap_err();
-    assert!(refused.to_string().ends_with("not a regular file"), "{refused}");
+    assert!(
+        refused.to_string().ends_with("not a regular file"),
+        "{refused}"
+    );
 
     let folder = Scratch::new("folder");
     let named = folder.path().join(format!("{}.jsonl", day(H)));
