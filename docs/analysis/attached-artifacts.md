@@ -140,8 +140,8 @@ Measured with `du`, `find` and `stat` over every checkout's artifacts folder, re
   - No document here links a picture in the artifacts folder.
 - **The consuming project's documents by path into its ignored folder.** Its 143 Markdown documents
   show 1,533 pictures.
-  - 1,491 of them point into `artifacts/`, at 1,340 distinct paths. Most are in its ship documents
-    (`docs/ships/coalition.md` alone shows 290), and 23 are in its register.
+  - 1,491 of them point into `artifacts/`, at 1,340 distinct paths. Most are in its design documents
+    (one of them alone shows 290), and 23 are in its register.
   - 1,310 of those paths are in its main checkout: 2.47 GiB, all distinct, 1,276 of them PNG.
   - The other 30 are already broken, on this machine.
   - None of these pictures shows on any other machine or in any clone.

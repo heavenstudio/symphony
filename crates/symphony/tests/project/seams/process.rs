@@ -38,7 +38,7 @@ fn project(tree: &Tree, settings: &str) -> Project {
 
 /// The cards each card kind test reads.
 const CARDS: [&str; 3] = [
-    "Pick every hull.\n*Slot:* North · cover",
+    "Pick every widget.\n*Slot:* North · cover",
     "hold every broken one",
     "",
 ];

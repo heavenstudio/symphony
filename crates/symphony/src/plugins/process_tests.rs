@@ -131,9 +131,9 @@ fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
         },
     ];
     read(&Card {
-        slug: "pick-a-hull",
-        doc: "docs/SHIPS.md",
-        topic: "Hulls",
+        slug: "pick-a-widget",
+        doc: "docs/WIDGETS.md",
+        topic: "Widgets",
         text,
         thread: &thread,
     })
@@ -141,7 +141,7 @@ fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
 
 /// The cards each card kind test reads.
 const CARDS: [&str; 3] = [
-    "Pick a tiny hull.\n*Slot:* North",
+    "Pick a tiny widget.\n*Slot:* North",
     "hold the broken one",
     "",
 ];
@@ -599,8 +599,8 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
     let wider = Declaration {
         routes: vec!["/x".into()],
         commands: vec![DeclaredCommand {
-            name: "ship".into(),
-            summary: "ships".into(),
+            name: "report".into(),
+            summary: "reports".into(),
         }],
         theme: Some(symphony_plugin::Theme::default()),
         ..tiny_declared()

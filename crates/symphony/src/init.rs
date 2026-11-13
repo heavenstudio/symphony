@@ -649,7 +649,7 @@ fn install_justfile(root: &Path, report: &mut Report) -> io::Result<()> {
     Ok(())
 }
 
-/// The recipes the Symphony no longer ships: a stamped `symphony.just` goes, and then the
+/// The recipes the Symphony no longer delivers: a stamped `symphony.just` goes, and then the
 /// justfile's stamped import of it, the whole file when it is still the one init wrote. A copy of
 /// the recipes the project made its own stays, imported as it is.
 fn retire_recipes(root: &Path, report: &mut Report) -> io::Result<()> {
@@ -947,8 +947,8 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
-/// then the other ones [`RUNS`] names. These are the binaries the workspace ships, each held to a
-/// size budget (`symphony size-budget`, docs/CHECKS.md "Size budgets").
+/// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
+/// a size budget (`symphony size-budget`, docs/CHECKS.md "Size budgets").
 pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
