@@ -107,7 +107,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    - HEAD must be the candidate (in a copy, the project's commit it was made ready at);
    - `git status --porcelain` must name nothing outside `.target/`, and in a copy, whose
      `.target/` is the project's tooling's to write, nothing outside it but its `Cargo.lock`, which
-     the patched build rewrites;
+     the conciliation moves to the candidate;
    - no process may be in it, as at the start (step 2). The check's own killed group and the
      board's recorder writing down how the check ended are on their way out, so they are not
      counted.
@@ -146,9 +146,17 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    Symphony moved to the candidate. That runs in a scratch copy at
    `../symphony-wt/release-conciliate/ID`, a repository the release run made (marked
    `symphony-release-copy`, borrowing the project's objects) at the project's default branch as
-   committed, never in its checkout or on its board. Every package of the candidate's
-   workspace is patched in over each git source the project takes one from
-   (`cargo --config 'patch."URL".NAME.path=…'`, so no file of the project changes), and
+   committed, never in its checkout or on its board. The copy's lock is moved to the candidate's
+   commit over each git source the project takes one of the candidate's packages from
+   (`cargo update -p 'URL#NAME' --precise COMMIT`, NAME one package it takes from there, which
+   moves every package it locks from that source), so no file of the project but its `Cargo.lock`
+   changes, and the copy takes the candidate's commit from the source the project fetches the
+   Symphony from, as a refresh takes the release's. A source that does not hold the candidate's
+   commit cannot be moved, and that project's check is red, having run nothing. Every cargo the
+   project's tests start in the copy, `--locked` and `--offline` or not, reads that lock and builds
+   the candidate too, as a consumer's tests build its own tools. A patch on the command line
+   (`cargo --config 'patch…'`) would reach only the cargo it is given, and leave those a lock they
+   resolve again, to whatever commit cargo's cache last knew the source's branch at. Then
    `cargo test --no-fail-fast` runs its packages that depend on one, under its own toolchain pin,
    as the check `conciliate-ID`, with `SYMPHONY_MACHINE_DIR` naming a folder that holds a copy of
    the registry (in the run's logs), not the machine's own. It builds in the copy's own build

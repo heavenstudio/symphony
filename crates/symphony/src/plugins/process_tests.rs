@@ -156,10 +156,12 @@ fn process_in(tree: &Tree, name: &str) -> PluginProcess {
     }
 }
 
-/// The limits with `wait` and `pause` for each call's wait and the pause before a restart.
+/// The limits with `wait` for each call's wait and for the wait after its cancel, and `pause` for
+/// the pause before a restart.
 fn limits(wait: Duration, pause: Duration) -> Limits {
     Limits {
         wait,
+        cancel: wait,
         pause,
         ..Limits::default()
     }
@@ -863,12 +865,14 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
     let tree = Tree::new();
     let seen = Seen::default();
     let wait = Duration::from_secs(1);
-    // The first render is answered late, past its wait and before a wait after its cancel; the
+    // The first render is answered only once the test lets it, after its call was given up; the
     // others at once, an answer to no call before each.
-    let late = Arc::new(AtomicBool::new(true));
+    let (let_go, held) = mpsc::channel::<()>();
+    let held = Mutex::new(Some(held));
     let respond: Respond = Arc::new(move |id, _| {
-        if late.swap(false, Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(1500));
+        if let Some(held) = lock(&held).take() {
+            // Until the test lets it go, or lets go of its end.
+            let _ = held.recv();
             return Said::Lines(vec![answering(id, &rendered("late"))]);
         }
         Said::Lines(vec![
@@ -876,28 +880,43 @@ fn an_answer_after_its_call_was_given_up_is_logged_and_dropped_and_the_process_k
             answering(id, &rendered("on time")),
         ])
     });
+    // A call given up may still be answered for as long as only a stall outlasts, so the late
+    // answer comes inside that however loaded the machine.
     let remote = Remote::leaked(
         "tiny",
         process_in(&tree, "tiny"),
         hand_made(tiny_declared(), respond, seen.clone(), "exited with code 0"),
-        limits(wait, PAUSE),
+        Limits {
+            cancel: test_time::backstop(wait),
+            ..limits(wait, PAUSE)
+        },
     );
     let (component, _) = seams(remote);
+    let connection = remote.connection().unwrap();
     let page = Page::new(&tree.root, "docs/A.md");
     assert_eq!(
         component.render(&page, "a", None),
         Err("plugin tiny: no answer in 1s".into())
     );
+    let_go.send(()).unwrap();
     until("the late answer was read", || {
         tree.read("artifacts/plugins/tiny.log")
             .contains("was answered after it was given up: dropped")
     });
-    // Past the wait after the cancel, the process that answered is kept.
-    std::thread::sleep(wait);
+    let render: Raw = serde_json::from_str(&seen.heard()[1]).unwrap();
+    // Once the wait after its cancel has run out, the process that answered is kept.
+    remote.after_cancel(&connection, render.id);
     assert!(remote.down().is_none(), "{:?}", remote.down());
     assert_eq!(text(component.render(&page, "b", None)), "on time");
     assert_eq!(seen.kills(), 0);
     let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains(&format!(
+            "symphony: call {} was answered after it was given up: dropped",
+            render.id
+        )),
+        "{log}"
+    );
     assert!(
         log.contains("symphony: a line that answers no call (no call 999 waits): {\"id\":999,"),
         "{log}"
@@ -1230,16 +1249,19 @@ fn a_queue_its_stdin_takes_nothing_of_ends_the_process() {
 #[test]
 fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_call_past_it() {
     let tree = Tree::new();
-    // It answers the declaration, then reads nothing more.
+    // It answers the declaration, then reads nothing more, and lives on past what only a stall
+    // outlasts: only the host ends it, and a call it held would be held as long.
     let declares = tiny_declaring(1);
     let wait = Duration::from_secs(1);
+    let lives = test_time::backstop(wait).as_secs().to_string();
     let process = PluginProcess {
         command: [
             "sh",
             "-c",
-            "read line; printf '%s\\n' \"$1\"; exec sleep 30",
+            "read line; printf '%s\\n' \"$1\"; exec sleep \"$2\"",
             "sh",
             &declares,
+            &lives,
         ]
         .map(String::from)
         .to_vec(),
@@ -1254,26 +1276,27 @@ fn a_real_process_that_stops_reading_is_ended_in_the_wait_and_holds_no_other_cal
     );
     let (component, _) = seams(remote);
     let pid = remote.pid().unwrap();
+    let connection = remote.connection().unwrap();
     let page = Page::new(&tree.root, "docs/A.md");
-    // A request larger than a pipe holds, and a small one behind it.
-    let big = "x".repeat(1 << 20);
-    let timed = |argument: &str| {
-        let asked = Instant::now();
-        let failed = component.render(&page, argument, None).unwrap_err();
-        (failed, asked.elapsed())
-    };
-    let ((big_failed, big_took), (small_failed, small_took)) = std::thread::scope(|scope| {
-        let big = scope.spawn(|| timed(&big));
-        std::thread::sleep(Duration::from_millis(50));
-        let small = scope.spawn(|| timed("small"));
-        (big.join().unwrap(), small.join().unwrap())
+    // Two requests, each larger than a pipe holds: the one queued first sticks part written, and
+    // the other waits behind it, whichever goes first.
+    let (x, y) = ("x".repeat(1 << 20), "y".repeat(1 << 20));
+    let failed = |argument: &str| component.render(&page, argument, None).unwrap_err();
+    let (x_failed, y_failed) = std::thread::scope(|scope| {
+        // Neither call's wait begins before both calls wait: each queues its line, which begins
+        // its wait, only once the test lets go of the queue.
+        let queue = lock(&connection.queue);
+        let xs = scope.spawn(|| failed(&x));
+        let ys = scope.spawn(|| failed(&y));
+        until("both calls wait", || {
+            lock(&connection.waiting).calls.len() == 2
+        });
+        drop(queue);
+        (xs.join().unwrap(), ys.join().unwrap())
     });
     let stuck = format!("plugin tiny: its process {pid} was ended: its stdin took no line in 1s");
-    assert_eq!(big_failed, stuck);
-    assert_eq!(small_failed, stuck);
-    for took in [big_took, small_took] {
-        assert!(took < wait + Duration::from_secs(2), "{took:?}");
-    }
+    assert_eq!(x_failed, stuck);
+    assert_eq!(y_failed, stuck);
     assert!(!alive(pid), "{pid} still runs");
 }
 

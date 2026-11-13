@@ -4,14 +4,19 @@
 //! project's default branch as committed, never in its checkout or on its board: a repository
 //! sharing the checkout's objects, at `RELEASE-conciliate/ID` beside the release run's own
 //! checkout, marked as the release run's when it is made ([`place::copy_at`]) and refreshed each
-//! run. Every package of the candidate's workspace is patched in over each git source the project
-//! takes one from (`cargo --config patch…`, so no file of the project changes), and its packages
-//! that depend on one are tested with `cargo test`, with a machine folder of the run's own holding
-//! a copy of the registry, so no test of the project's reaches the machine's. It builds in a folder
-//! of the release run's own in the copy's `.git` ([`place::COPY_TARGET`], kept from run to run),
-//! named to cargo alone (`--target-dir`): the project's own build folder is its tooling's, which
-//! its tests run, and which may empty it while a test runs from it, as a folder no run of that
-//! tooling made.
+//! run. Its lock is moved to the candidate's commit over each git source the project takes a
+//! candidate package from (`cargo update -p 'URL#NAME' --precise COMMIT`, so no file of the project
+//! but its `Cargo.lock` changes), from the source the project fetches the Symphony from, as a
+//! refresh takes the release's, and its packages that depend on one are tested with `cargo test`,
+//! with a machine folder of the run's own holding a copy of the registry, so no test of the
+//! project's reaches the machine's. Every cargo the project's tests start in the copy, `--locked`
+//! and `--offline` or not, reads that lock and so builds the candidate too. A patch on the command
+//! line (`cargo --config patch…`) would reach only the cargo it is given, and leave those a lock
+//! they resolve again, to whatever commit cargo's cache last knew the source's branch at. It builds
+//! in a folder of the release run's own in the copy's `.git` ([`place::COPY_TARGET`], kept from run
+//! to run), named to cargo alone (`--target-dir`): the project's own build folder is its
+//! tooling's, which its tests run, and which may empty it while a test runs from it, as a folder no
+//! run of that tooling made.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -143,37 +148,48 @@ pub(crate) fn prepare(
     Ok((at, noted))
 }
 
-/// `cargo metadata --no-deps` of the workspace at `dir`, with the toolchain its own pin names, by
-/// `until`.
-pub(crate) fn metadata(dir: &Path, until: Bound<'_>) -> Result<Value, String> {
-    let done = output_until(
-        command("cargo")
-            .args(["metadata", "--no-deps", "--format-version", "1"])
-            .current_dir(dir)
-            .env_remove("RUSTUP_TOOLCHAIN"),
-        until,
-    )
-    .map_err(|failed| match failed {
+/// `cargo ARGS` in the workspace at `dir`, with the toolchain its own pin names and no build folder
+/// the run inherited ([`UNSET`]), by `until`: its standard output, or why it failed, said as
+/// `cargo WHAT` (its first argument).
+fn cargo(dir: &Path, args: &[&str], until: Bound<'_>) -> Result<Vec<u8>, String> {
+    let what = args.first().copied().unwrap_or_default();
+    let mut cargo = command("cargo");
+    cargo.args(args).current_dir(dir);
+    for name in UNSET {
+        cargo.env_remove(name);
+    }
+    let done = output_until(&mut cargo, until).map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run cargo in {}: {e}", dir.display()),
         Failed::Late(took) => format!(
-            "cargo metadata in {} did not end within {} s and was stopped",
+            "cargo {what} in {} did not end within {} s and was stopped",
             dir.display(),
             took.as_secs()
         ),
         Failed::Interrupted(took) => format!(
-            "cargo metadata in {} was stopped after {} s: the run was told to stop",
+            "cargo {what} in {} was stopped after {} s: the run was told to stop",
             dir.display(),
             took.as_secs()
         ),
     })?;
     if !done.status.success() {
         return Err(format!(
-            "cargo metadata failed in {}: {}",
+            "cargo {what} failed in {}: {}",
             dir.display(),
             String::from_utf8_lossy(&done.stderr).trim()
         ));
     }
-    serde_json::from_slice(&done.stdout)
+    Ok(done.stdout)
+}
+
+/// `cargo metadata --no-deps` of the workspace at `dir`, with the toolchain its own pin names, by
+/// `until`.
+pub(crate) fn metadata(dir: &Path, until: Bound<'_>) -> Result<Value, String> {
+    let out = cargo(
+        dir,
+        &["metadata", "--no-deps", "--format-version", "1"],
+        until,
+    )?;
+    serde_json::from_slice(&out)
         .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", dir.display()))
 }
 
@@ -191,12 +207,20 @@ pub(crate) fn packages(metadata: &Value) -> Vec<(String, PathBuf)> {
     found
 }
 
-/// What a project takes from the Symphony: the git sources it names a candidate package from, and
-/// its own packages that depend on one.
+/// What a project takes from the Symphony: each git source it names a candidate package from, with
+/// the first such package its members name (by which `cargo update` moves every package it locks
+/// from that source), and its own packages that depend on one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Plan {
-    pub(crate) sources: Vec<String>,
+    pub(crate) sources: Vec<(String, String)>,
     pub(crate) packages: Vec<String>,
+}
+
+impl Plan {
+    /// The URL of each of its sources.
+    pub(crate) fn urls(&self) -> Vec<String> {
+        self.sources.iter().map(|(url, _)| url.clone()).collect()
+    }
 }
 
 /// The URL a dependency's git source names, without the branch, tag or commit it asks for.
@@ -228,8 +252,8 @@ pub(crate) fn plan(metadata: &Value, candidate: &[(String, PathBuf)]) -> Plan {
             };
             if candidate.iter().any(|(name, _)| name == named) {
                 takes = true;
-                if !plan.sources.iter().any(|source| source == url) {
-                    plan.sources.push(url.to_string());
+                if !plan.sources.iter().any(|(source, _)| source == url) {
+                    plan.sources.push((url.to_string(), named.to_string()));
                 }
             }
         }
@@ -242,29 +266,52 @@ pub(crate) fn plan(metadata: &Value, candidate: &[(String, PathBuf)]) -> Plan {
     plan
 }
 
-/// `text` as a TOML basic string.
-fn toml_string(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+/// The command moving every package a project locks from the git source `url` to the candidate's
+/// `commit`, by `name`, one package it takes from there: the source's packages share one commit.
+pub(crate) fn update_argv(url: &str, name: &str, commit: &str) -> Vec<String> {
+    [
+        "cargo",
+        "update",
+        "-p",
+        &format!("{url}#{name}"),
+        "--precise",
+        commit,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
-/// The command testing `plan`'s packages in the build folder `target` with every package of
-/// `candidate` patched in over each of its sources.
-pub(crate) fn argv(plan: &Plan, candidate: &[(String, PathBuf)], target: &Path) -> Vec<String> {
+/// The copy at `scratch`'s lock moved to the candidate's `commit` over each source of `plan`, by
+/// `until`: the commands that moved it, or why one could not (the candidate's commit is not in
+/// that source, say), which leaves nothing to test.
+fn move_lock(
+    scratch: &Path,
+    plan: &Plan,
+    commit: &str,
+    until: Bound<'_>,
+) -> Result<Vec<String>, String> {
+    let mut moved = Vec::new();
+    for (url, name) in &plan.sources {
+        let argv = update_argv(url, name, commit);
+        let words: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+        cargo(scratch, &words, until).map_err(|problem| {
+            format!(
+                "its Cargo.lock could not be moved to the candidate {commit} by `{}`: {problem}",
+                line(&argv)
+            )
+        })?;
+        moved.push(line(&argv));
+    }
+    Ok(moved)
+}
+
+/// The command testing `plan`'s packages in the build folder `target`, against the lock
+/// [`move_lock`] moved to the candidate.
+pub(crate) fn argv(plan: &Plan, target: &Path) -> Vec<String> {
     let mut argv: Vec<String> = ["cargo", "test", "--no-fail-fast", "--target-dir"]
         .map(String::from)
         .to_vec();
     argv.push(target.to_string_lossy().into_owned());
-    for source in &plan.sources {
-        for (name, folder) in candidate {
-            argv.push("--config".into());
-            argv.push(format!(
-                "patch.{}.{}.path={}",
-                toml_string(source),
-                toml_string(name),
-                toml_string(&folder.to_string_lossy())
-            ));
-        }
-    }
     for package in &plan.packages {
         argv.push("-p".into());
         argv.push(package.clone());
@@ -302,9 +349,8 @@ pub(crate) struct Against<'a> {
     pub(crate) now: f64,
 }
 
-/// The files of a scratch copy that its patched build rewrites by design, which the look at the
-/// copy after it passes over: its lock, which takes the candidate's packages in place of the git
-/// source's.
+/// The files of a scratch copy that its conciliation rewrites by design, which the look at the
+/// copy after it passes over: its lock, which [`move_lock`] moves to the candidate's commit.
 pub(crate) const REWRITTEN: [&str; 1] = ["Cargo.lock"];
 
 /// What a conciliation's cargo, and so the tests it runs, never inherit from the run: the toolchain
@@ -326,7 +372,8 @@ pub(crate) struct Prepared {
     pub(crate) noted: Vec<String>,
 }
 
-/// `consumer`'s copy made ready to conciliate `against` the candidate.
+/// `consumer`'s copy made ready to conciliate `against` the candidate: at the project's commit, its
+/// lock moved to the candidate's ([`move_lock`]).
 pub(crate) fn step(consumer: &Consumer, against: &Against<'_>) -> Result<Prepared, String> {
     let scratch = against.scratch;
     let (at, noted) = prepare(consumer, scratch, against.until, against.now)?;
@@ -343,29 +390,36 @@ pub(crate) fn step(consumer: &Consumer, against: &Against<'_>) -> Result<Prepare
             noted,
         });
     }
+    let commit = commit(against.checkout, "HEAD")?;
+    let moved = move_lock(scratch, &plan, &commit, against.until)?;
     Ok(Prepared {
-        step: Ok(check(consumer, against, &at, &plan, &candidate)),
+        step: Ok(check(consumer, against, &at, &plan, &moved)),
         at,
         noted,
     })
 }
 
-/// The check conciliating `consumer`'s copy, at the commit `at`, by `plan` against the candidate's
-/// packages `candidate`: in the copy, building in its own folder ([`target`]), which is named to
-/// cargo alone, so what the project's tests start builds where the project's own runs build and
-/// never in the conciliation's folder; with the run's machine folder.
+/// The check conciliating `consumer`'s copy, at the commit `at`, by `plan`, its lock moved to the
+/// candidate by the commands `moved`: in the copy, building in its own folder ([`target`]), which
+/// is named to cargo alone, so what the project's tests start builds where the project's own runs
+/// build and never in the conciliation's folder; with the run's machine folder.
 fn check(
     consumer: &Consumer,
     against: &Against<'_>,
     at: &str,
     plan: &Plan,
-    candidate: &[(String, PathBuf)],
+    moved: &[String],
 ) -> Step {
     let scratch = against.scratch;
-    let argv = argv(plan, candidate, &target(scratch));
+    let argv = argv(plan, &target(scratch));
     Step {
         name: format!("conciliate-{}", consumer.id),
-        command: format!("{} (in {} at {at})", line(&argv), scratch.display()),
+        command: format!(
+            "{} (in {} at {at}, its Cargo.lock moved to the candidate by {})",
+            line(&argv),
+            scratch.display(),
+            moved.join(" and ")
+        ),
         argv,
         cwd: Some(scratch.to_path_buf()),
         set: vec![(
@@ -657,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_patches_each_symphony_source_and_tests_the_packages_that_take_one() {
+    fn the_plan_moves_each_symphony_source_and_tests_the_packages_that_take_one() {
         let candidate = vec![
             ("symphony".to_string(), PathBuf::from("/c/crates/symphony")),
             (
@@ -686,40 +740,54 @@ mod tests {
             &["host 0.1", "tasks 0.1", "game 0.1"],
         );
         let planned = plan(&metadata, &candidate);
+        // Each source by the first candidate package a member names from it: `symphony` for the
+        // https one (host's), `symphony-board` for the ssh one (only tasks names it there).
         assert_eq!(
             planned,
             Plan {
                 sources: vec![
-                    "https://github.com/o/symphony".into(),
-                    "ssh://git@github.com/o/symphony.git".into()
+                    ("https://github.com/o/symphony".into(), "symphony".into()),
+                    (
+                        "ssh://git@github.com/o/symphony.git".into(),
+                        "symphony-board".into()
+                    ),
                 ],
                 packages: vec!["host".into(), "tasks".into()],
             }
         );
+        // What the refresh reads its pins from: the sources alone.
         assert_eq!(
-            argv(
-                &planned,
-                &candidate,
-                Path::new("/copy/.git/symphony-release-target")
-            ),
+            planned.urls(),
+            [
+                "https://github.com/o/symphony",
+                "ssh://git@github.com/o/symphony.git"
+            ]
+        );
+        // No patch: the tests read the lock moved to the candidate, as what they start does.
+        assert_eq!(
+            argv(&planned, Path::new("/copy/.git/symphony-release-target")),
             [
                 "cargo",
                 "test",
                 "--no-fail-fast",
                 "--target-dir",
                 "/copy/.git/symphony-release-target",
-                "--config",
-                r#"patch."https://github.com/o/symphony"."symphony".path="/c/crates/symphony""#,
-                "--config",
-                r#"patch."https://github.com/o/symphony"."symphony-board".path="/c/crates/tasks""#,
-                "--config",
-                r#"patch."ssh://git@github.com/o/symphony.git"."symphony".path="/c/crates/symphony""#,
-                "--config",
-                r#"patch."ssh://git@github.com/o/symphony.git"."symphony-board".path="/c/crates/tasks""#,
                 "-p",
                 "host",
                 "-p",
                 "tasks",
+            ]
+        );
+        assert_eq!(
+            planned
+                .sources
+                .iter()
+                .map(|(url, name)| line(&update_argv(url, name, "c0ffee")))
+                .collect::<Vec<_>>(),
+            [
+                "cargo update -p 'https://github.com/o/symphony#symphony' --precise c0ffee",
+                "cargo update -p 'ssh://git@github.com/o/symphony.git#symphony-board' --precise \
+                 c0ffee",
             ]
         );
         assert_eq!(
@@ -744,35 +812,32 @@ mod tests {
             now: NOW,
         };
         let plan = Plan {
-            sources: vec!["https://h/o/symphony".into()],
+            sources: vec![("https://h/o/symphony".into(), "symphony".into())],
             packages: vec!["host".into()],
         };
-        let candidate = vec![(
-            "symphony".to_string(),
-            PathBuf::from("/wt/release/crates/s"),
-        )];
-        let step = check(&consumer, &against, "1a2b", &plan, &candidate);
+        let moved =
+            ["cargo update -p 'https://h/o/symphony#symphony' --precise c0ffee".to_string()];
+        let step = check(&consumer, &against, "1a2b", &plan, &moved);
         assert_eq!(step.name, "conciliate-lamp-shop");
         assert_eq!(step.cwd.as_deref(), Some(scratch));
         assert_eq!(
-            step.argv[..5],
+            step.argv,
             [
                 "cargo",
                 "test",
                 "--no-fail-fast",
                 "--target-dir",
-                "/wt/release-conciliate/lamp-shop/.git/symphony-release-target"
+                "/wt/release-conciliate/lamp-shop/.git/symphony-release-target",
+                "-p",
+                "host"
             ]
         );
-        assert!(
-            step.command.starts_with(
-                "cargo test --no-fail-fast --target-dir \
-                 /wt/release-conciliate/lamp-shop/.git/symphony-release-target --config "
-            ) && step
-                .command
-                .ends_with(" -p host (in /wt/release-conciliate/lamp-shop at 1a2b)"),
-            "{}",
-            step.command
+        assert_eq!(
+            step.command,
+            "cargo test --no-fail-fast --target-dir \
+             /wt/release-conciliate/lamp-shop/.git/symphony-release-target -p host (in \
+             /wt/release-conciliate/lamp-shop at 1a2b, its Cargo.lock moved to the candidate by \
+             cargo update -p 'https://h/o/symphony#symphony' --precise c0ffee)"
         );
         // No variable names a build folder to what its tests start, whatever the run inherited:
         // those build where the project's own runs build.
@@ -825,7 +890,6 @@ mod tests {
             ]),
             r"cargo -p 'a b' 'it'\''s' ''"
         );
-        assert_eq!(toml_string(r#"a"b\c"#), r#""a\"b\\c""#);
     }
 
     #[test]

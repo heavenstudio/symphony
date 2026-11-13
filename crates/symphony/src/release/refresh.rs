@@ -314,15 +314,15 @@ fn refresh(
         .map(|name| (name.clone(), PathBuf::new()))
         .collect();
     let metadata = conciliate::metadata(&consumer.root, against.until)?;
-    let plan = conciliate::plan(&metadata, &candidate);
-    if plan.sources.is_empty() {
+    let sources = conciliate::plan(&metadata, &candidate).urls();
+    if sources.is_empty() {
         return Ok(Done::Skipped(format!(
             "{id}: none of its packages takes one of the Symphony's from git"
         )));
     }
     let lock = git(&consumer.root, &["show", &format!("{tip}:Cargo.lock")])
         .map_err(|_| format!("its {branch} ({}) commits no Cargo.lock", short(&tip)))?;
-    let locked = pin::locked(&lock, &plan.sources, names)?;
+    let locked = pin::locked(&lock, &sources, names)?;
     if locked.is_empty() {
         return Ok(Done::Skipped(format!(
             "{id}: its Cargo.lock takes none of the Symphony's packages from git"
@@ -379,7 +379,7 @@ fn refresh(
         tip: &tip,
         lock: &lock,
         locked: &locked,
-        sources: &plan.sources,
+        sources: &sources,
         names,
         manifests: &manifests(&metadata, &consumer.root),
     };
