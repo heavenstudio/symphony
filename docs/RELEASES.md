@@ -187,8 +187,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    task on this repository's board, `tests/release-red-NAME`, filed at p0 and marked red, so it
    takes no orchestrator slot and is offered before other work of its priority
    ([TASKS](TASKS.md#slots)). It is staffed before anything else (RULES.md
-   `workflow/release-reds-first`), fixed in the code and never by a loosened test or check, and
-   filed as a fast fix whose recorded risk is the bound the land holds a red's fix to
+   `workflow/release-reds-first`), fixed in the code and never by a loosened test or check (a test
+   red on load is discarded instead, below), and filed as a fast fix whose recorded risk is the
+   bound the land holds a red's fix to
    (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that changes none of
    the project's tests and checks (`[land] check_paths`), the failing tests unchanged and green at
    its tip, and a fix that changes a test, a check, a budget or a run step lands only on a fresh
@@ -223,6 +224,20 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      a target at a time, else says its last lines name the step. A conciliation's are its own
      command in its scratch copy, and any other check's its own command;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+
+   **A test red on load** is discarded. The owner, 2026-11-13:
+   "A rerun should not fail or pass based on machine load. If it does, discard the tests and move on"
+   (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
+   rerun, because of load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered
+   step or a timeout under load) is removed from the tree in its red's own fix, with one line on
+   the red's thread naming the test, the evidence it is load (its runs alone and the failing line)
+   and what it proved. That word is the approval: no card is put to the owner to discard it. If
+   what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
+   time or an injected clock; the release does not wait for that. No rerun is spent on it, no
+   rewrite of it is waited for, and nobody lowers the machine's load to help a run pass: an
+   orchestrator holds no other work back to keep the load down for a run. A test that fails alone
+   on what its code did, or fails the same way without load, is not this case and is fixed in the
+   code.
 
    A check red again while its task is open adds a line to that task, with that run's load and
    reruns; a run green in it closes the task (`cancelled`, saying the check passed) when its
@@ -325,7 +340,9 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
   lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
-  repository (a consumer's) answers its red by the task cancelled, saying where.
+  repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
+  is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
+  it, and no rerun is spent to see it pass.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
   approve on that task named that is the landed branch's tip or behind it, descends from the
