@@ -63,7 +63,21 @@ impl Scratch {
 }
 
 impl Drop for Scratch {
+    /// A test that failed keeps its folder, its server's log in it, and says whether its guard had
+    /// closed before the test ended: a guard closed early refuses every start without a word.
     fn drop(&mut self) {
+        let failed = std::thread::panicking();
+        if failed {
+            eprintln!(
+                "{} is kept; its guard {} closed before its test ended",
+                self.dir.display(),
+                if self.dir.join("surreal-processes/closed").exists() {
+                    "had"
+                } else {
+                    "had not"
+                }
+            );
+        }
         self.surreal.shutdown();
         let recorded = std::fs::read_to_string(self.dir.join("server.json"))
             .ok()
@@ -71,7 +85,9 @@ impl Drop for Scratch {
         if let Some(running) = recorded {
             self.stop_if_ours(running.pid);
         }
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if !failed {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
