@@ -473,15 +473,22 @@ fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
         .open(dir.join("lock"))
         .unwrap();
     lock.lock().unwrap();
+    // Held until the read is refused, or for the backstop of the 30 s the read was once bounded by,
+    // when it is let go: a read that waited on the holder for as long as it held on would then go on
+    // to the board, not be refused.
+    let (refusal, heard) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _ = heard.recv_timeout(test_time::backstop(std::time::Duration::from_secs(30)));
+        lock.unlock().unwrap();
+    });
     let began = std::time::Instant::now();
     let refused = symphony_board::cli::board(&alpha.env())
         .err()
         .expect("the lock is held");
     let waited = began.elapsed();
-    assert!(
-        waited >= std::time::Duration::from_secs(5) && waited < std::time::Duration::from_secs(30),
-        "{waited:?}"
-    );
+    let _ = refusal.send(());
+    holder.join().unwrap();
+    assert!(waited >= std::time::Duration::from_secs(5), "{waited:?}");
     assert_eq!(
         refused,
         format!(
@@ -491,7 +498,6 @@ fn the_symphonys_read_waits_on_anothers_start_at_most_its_bound() {
             dir.join("lock").display()
         )
     );
-    lock.unlock().unwrap();
     assert_eq!(
         alpha.home().recorded(),
         None,

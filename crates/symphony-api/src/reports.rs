@@ -370,7 +370,8 @@ pub struct Answer {
     pub at: f64,
     /// The verdict word of that line (the owner's `approved`, `rejected`, `question`,
     /// `dismissed`; an agent's `auto-approved`, `dismissed`, `resolved`), or `commented` for the
-    /// owner's line with none and `answered` for an agent's.
+    /// owner's line with none and `replied` for an agent's (never `answered`, the name of the
+    /// owner's own leavings, [`Decisions::answered`]).
     pub how: String,
 }
 

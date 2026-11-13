@@ -15,9 +15,10 @@ use symphony_board::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_o
 use symphony_board::sys;
 use symphony_board::sys::{Child, Command, Stdio};
 
-/// The deadline of a case whose starts are all quick: one it never comes near.
+/// The deadline of a case whose starts are all quick: one it never comes near, however loaded the
+/// machine, the backstop of the 20 s it once had.
 fn later() -> Instant {
-    Instant::now() + Duration::from_secs(20)
+    Instant::now() + test_time::backstop(Duration::from_secs(20))
 }
 
 /// What one fake child does.
@@ -342,7 +343,7 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let probed = dir.join("probed");
-    let until = Instant::now() + Duration::from_secs(20);
+    let until = Instant::now() + test_time::backstop(Duration::from_secs(20));
     let mut endings = Vec::new();
     let taken = match occupier {
         Occupier::Closes => {

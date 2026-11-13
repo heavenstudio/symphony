@@ -351,7 +351,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                 // are that branch's.
                 nav { class: "app-pages", "aria-label": "Pages",
                     for link in links {
-                        a { href: crate::project::href(&if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) }),
+                        a { href: crate::project::href(&if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/reports" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) }),
                             class: if link.active { "active" } else { "" }, "aria-current": if link.active { "page" }, "{link.label}" }
                     }
                 }

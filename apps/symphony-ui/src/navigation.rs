@@ -56,6 +56,7 @@ impl Route {
         (path.is_empty()
             || path == "tasks"
             || path == "queue"
+            || path == "reports"
             || path == "agents"
             || path.starts_with("task/")
             || document)

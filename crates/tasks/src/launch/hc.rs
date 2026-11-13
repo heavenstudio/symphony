@@ -24,6 +24,9 @@ const PATIENCE: Duration = Duration::from_secs(120);
 /// ([`Hc::end`]), and how often hc is asked whether it has in that time.
 const ENDING: Duration = Duration::from_secs(10);
 const ENDING_LOOK: Duration = Duration::from_millis(100);
+/// What sets, in seconds, how long a [`Binary`] gives a killed terminal in place of [`ENDING`]: a
+/// test's, whose stand-in hc takes a loaded machine's time to answer each look.
+pub const ENDING_VAR: &str = "TASKS_HC_ENDING";
 
 /// The label naming the board a terminal was started for.
 pub const BOARD_LABEL: &str = "symphony.board";
@@ -306,15 +309,16 @@ impl Binary {
 
     /// What `command` printed, fed `input`, within [`PATIENCE`] or what is left of the deadline:
     /// a call that does not end in that time is killed, and its error, as every error here, names
-    /// it (`named`).
+    /// it (`named`), and the limit that ran out: the deadline's time given only when what was left
+    /// of it was the shorter.
     fn answered(
         &self,
         command: &mut Command,
         input: &[u8],
         named: impl FnOnce() -> String,
     ) -> Result<std::process::Output, LaunchError> {
-        let limit = match self.deadline {
-            None => PATIENCE,
+        let (limit, by_deadline) = match self.deadline {
+            None => (PATIENCE, None),
             Some(deadline) => {
                 let left = deadline.at.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -324,11 +328,12 @@ impl Binary {
                         deadline.given.as_secs()
                     )));
                 }
-                left.min(PATIENCE)
+                let limit = left.min(PATIENCE);
+                (limit, (limit == left).then_some(deadline))
             }
         };
         probes::within_fed(command, input, limit).map_err(|why| {
-            let why = match self.deadline {
+            let why = match by_deadline {
                 Some(deadline) if why.starts_with("no answer in ") => {
                     format!(
                         "no answer within the {} s it is given",
@@ -363,7 +368,8 @@ impl Hc for Binary {
     fn queue_codex(&self, thread: &str, text: &str) -> Result<(), LaunchError> {
         let mut command = sys::command_with("codex", &self.env.vars);
         command.current_dir(&self.env.cwd);
-        crate::codex_queue::queue(command, thread, text).map_err(LaunchError)
+        let patience = crate::codex_queue::patience(&self.env);
+        crate::codex_queue::queue(command, thread, text, patience).map_err(LaunchError)
     }
 
     fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
@@ -384,6 +390,11 @@ impl Hc for Binary {
         let mut command = self.command(&self.app, "HERDR_APP_BIN", args)?;
         let done = self.answered(&mut command, &[], || format!("herdr-app {}", words(args)))?;
         answer("herdr-app", args, done)
+    }
+
+    /// [`ENDING`], unless [`ENDING_VAR`] says.
+    fn ending(&self) -> Duration {
+        self.env.seconds(ENDING_VAR, ENDING)
     }
 
     /// `open -a BUNDLE`, which brings a running app forward without starting another: the macOS

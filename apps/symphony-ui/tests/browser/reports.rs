@@ -1,0 +1,260 @@
+//! The Reports page (src/reports.rs, in the task pages' module), the release client against the
+//! stand-in server answering `/api/reports` with a fortnight by the day: a phone's width held, one tap
+//! showing a period's every value on every chart, a day no file recorded told apart from a zero,
+//! the arrow keys moving between periods, two columns on a wide screen, the dark scheme's own
+//! colours, and the empty state saying when the first roll-up comes.
+use super::{SHOWN, chrome, chrome::Chrome, common, site, site::Site, texts};
+use serde_json::{Value, json};
+
+const DAY: f64 = 86_400.0;
+/// The fixture's first day, the window's thirteenth.
+const RECORDED: f64 = 1_799_884_800.0;
+const FROM: f64 = RECORDED - 12.0 * DAY;
+/// The days no file recorded: hatched, never drawn as zeros.
+const MISSING: [usize; 2] = [3, 8];
+
+/// A fortnight by the day, as the server answers the page's first read: the wire fixture's
+/// recorded day on most days, each with its own count of tasks done, its agents-only last day
+/// as today, and two days with no file at all.
+fn fortnight() -> Value {
+    let fixture: Value =
+        serde_json::from_str(&common::fixture("reports-page.json")).expect("the reports fixture");
+    let buckets: Vec<Value> = (0..14_u32)
+        .map(|day| {
+            let start = FROM + f64::from(day) * DAY;
+            let at = usize::try_from(day).unwrap();
+            let mut bucket = if day == 13 {
+                fixture["buckets"][1].clone()
+            } else if MISSING.contains(&at) {
+                json!({"rolled": 0, "flow": null, "decisions": null, "git": null, "waits": null,
+                    "lead": null, "verdicts": null, "red_fix": null, "agents": null, "health": null})
+            } else {
+                let mut recorded = fixture["buckets"][0].clone();
+                recorded["flow"]["entered"]["done"] = json!(day % 5 + 1);
+                recorded
+            };
+            bucket["start"] = json!(start);
+            bucket["end"] = json!(if day == 13 {
+                fixture["to"].clone()
+            } else {
+                json!(start + DAY)
+            });
+            bucket
+        })
+        .collect();
+    let mut page = fixture;
+    page["days"] = json!(14);
+    page["from"] = json!(FROM);
+    page["buckets"] = json!(buckets);
+    page["first"] = json!(FROM);
+    page["marks"] = json!([{"at": FROM + 6.0 * DAY + 3600.0, "commit": "4f1c0a9b2d3e",
+        "subject": "settings: land without the check"}]);
+    page["unread"] = json!([]);
+    page
+}
+
+fn served(page: &Value) -> Site {
+    let site = site();
+    site.set_json(symphony_api::REPORTS_PATH, page);
+    site
+}
+
+fn screen(chrome: &mut Chrome, width: u32, height: u32, mobile: bool) {
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":width,"height":height,"deviceScaleFactor":if mobile { 3 } else { 1 },"mobile":mobile}),
+    );
+}
+
+fn open(chrome: &mut Chrome, site: &Site, drawn: &str) {
+    chrome.open(&site.url("/reports"));
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                json!(drawn)
+            ),
+            SHOWN
+        ),
+        "the reports page did not draw {drawn}: {:?}",
+        chrome.eval("document.body ? document.body.innerText.slice(0, 1500) : '(no body)'")
+    );
+}
+
+/// A person's tap on the `at`th period of the first chart: brought to the middle of the screen,
+/// pressed and released at its centre, where it is the column on top.
+fn tap(chrome: &mut Chrome, at: usize) {
+    let point = chrome.eval(&format!(
+        "(() => {{ const e = document.querySelectorAll('.chart')[0].querySelectorAll('.chart-col')[{at}]; e.scrollIntoView({{block: 'center'}}); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {{x, y, hit: document.elementFromPoint(x, y)?.closest('.chart-col') === e}}; }})()"
+    ));
+    assert_eq!(point["hit"], json!(true), "period {at} is covered: {point}");
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1}),
+        );
+    }
+}
+
+/// The period each drawn chart shows (`null` where none is lit), and the first chart's readout.
+fn shown(chrome: &mut Chrome) -> Value {
+    chrome.eval(
+        "(() => { const charts = [...document.querySelectorAll('.chart')]; return {lit: charts.map(c => [...c.querySelectorAll('.chart-col')].findIndex(col => col.classList.contains('on'))), readout: charts[0].querySelector('.chart-readout').innerText.replace(/\\s+/g, ' ').trim()}; })()",
+    )
+}
+
+#[test]
+fn the_reports_page_fits_a_phone_and_a_tap_shows_a_period_s_every_value_on_every_chart() {
+    let site = served(&fortnight());
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 390, 844, true);
+    open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
+    assert_eq!(texts(&mut chrome, ".app-pages a.active"), ["Reports"]);
+    assert_eq!(
+        chrome.eval(
+            "({overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, figures: document.querySelectorAll('.reports-figure').length, columns: getComputedStyle(document.querySelector('.reports-charts')).gridTemplateColumns.split(' ').length, periods: document.querySelector('.chart').querySelectorAll('.chart-col').length, gaps: [...document.querySelector('.chart').querySelectorAll('.chart-col')].flatMap((c, n) => c.classList.contains('gap') ? [n] : [])})"
+        ),
+        json!({"overflow": 0, "figures": 4, "columns": 1, "periods": 14, "gaps": [MISSING[0], MISSING[1], 13]}),
+        "one column of charts within the phone's width, a column a day, the days with no roll-up \
+         hatched: the two with no file and today, which has the agents' lines alone"
+    );
+    assert_eq!(
+        texts(&mut chrome, ".reports-figure dt"),
+        ["Done", "Lead time", "Agents at work", "Open decisions"]
+    );
+    // Before any tap the charts show the last period they hold.
+    let before = shown(&mut chrome);
+    assert!(
+        before["lit"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|at| at == 12 || at == 13),
+        "{before}"
+    );
+    tap(&mut chrome, 5);
+    assert!(
+        chrome.wait_for(
+            "[...document.querySelectorAll('.chart')].every(c => c.querySelectorAll('.chart-col')[5].classList.contains('on'))",
+            SHOWN
+        ),
+        "every drawn chart shows the period tapped: {}",
+        shown(&mut chrome)
+    );
+    let after = shown(&mut chrome);
+    assert!(
+        after["readout"].as_str().unwrap().starts_with("Thu 7 Jan"),
+        "{after}"
+    );
+    assert!(
+        after["readout"].as_str().unwrap().contains("Done 1"),
+        "the tapped day's value, as text: {after}"
+    );
+    tap(&mut chrome, MISSING[0]);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.chart .chart-readout').innerText.includes('no data recorded')",
+            SHOWN
+        ),
+        "a day no file recorded says so: {}",
+        shown(&mut chrome)
+    );
+    // The arrow keys move between periods on the plot that has the focus.
+    chrome.eval("document.querySelector('.chart .chart-plot').focus()");
+    for kind in ["keyDown", "keyUp"] {
+        chrome.call(
+            "Input.dispatchKeyEvent",
+            json!({"type": kind, "key": "ArrowLeft", "code": "ArrowLeft", "windowsVirtualKeyCode": 37, "nativeVirtualKeyCode": 37}),
+        );
+    }
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.querySelector('.chart').querySelectorAll('.chart-col')[{}].classList.contains('on')",
+                MISSING[0] - 1
+            ),
+            SHOWN
+        ),
+        "ArrowLeft shows the day before: {}",
+        shown(&mut chrome)
+    );
+    // A chart's table holds what it draws, a row a day.
+    chrome.eval("document.querySelector('.chart .chart-table-toggle').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelectorAll('.chart .chart-table tbody tr').length === 14",
+            SHOWN
+        ),
+        "the table's rows: {:?}",
+        chrome.eval("document.querySelector('.chart .chart-table')?.innerText")
+    );
+    assert_eq!(
+        chrome.eval("document.documentElement.scrollWidth - document.documentElement.clientWidth"),
+        json!(0),
+        "the open table scrolls within its chart"
+    );
+}
+
+#[test]
+fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() {
+    let site = served(&fortnight());
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
+    assert_eq!(
+        chrome.eval(
+            "(() => { const [a, b] = [...document.querySelectorAll('.reports-section')[0].querySelectorAll('.chart')].map(c => c.getBoundingClientRect()); return {columns: getComputedStyle(document.querySelector('.reports-charts')).gridTemplateColumns.split(' ').length, sideBySide: Math.abs(a.top - b.top) < 1 && b.left > a.right, figuresOnOneRow: new Set([...document.querySelectorAll('.reports-figure')].map(f => Math.round(f.getBoundingClientRect().top))).size, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()"
+        ),
+        json!({"columns": 2, "sideBySide": true, "figuresOnOneRow": 1, "overflow": 0})
+    );
+    let colours = "['--chart-1', '--chart-5'].map(name => getComputedStyle(document.documentElement).getPropertyValue(name).trim())";
+    for (scheme, expected) in [
+        ("light", ["#2a78d6", "#e87ba4"]),
+        ("dark", ["#3987e5", "#d55181"]),
+    ] {
+        chrome.call(
+            "Emulation.setEmulatedMedia",
+            json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
+        );
+        assert_eq!(chrome.eval(colours), json!(expected), "{scheme}");
+    }
+}
+
+#[test]
+fn with_no_roll_up_yet_the_reports_page_says_when_the_first_comes() {
+    let mut empty = fortnight();
+    empty["first"] = Value::Null;
+    for bucket in empty["buckets"].as_array_mut().unwrap() {
+        for part in [
+            "flow",
+            "decisions",
+            "git",
+            "waits",
+            "lead",
+            "verdicts",
+            "red_fix",
+            "agents",
+            "health",
+        ] {
+            bucket[part] = Value::Null;
+        }
+        bucket["rolled"] = json!(0);
+    }
+    empty["marks"] = json!([]);
+    let site = served(&empty);
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 390, 844, true);
+    open(&mut chrome, &site, "[data-ready=reports] .reports-empty");
+    let said = chrome.eval("document.querySelector('.reports-empty').innerText");
+    assert!(
+        said.as_str()
+            .unwrap()
+            .contains("the next is due by 09:00 UTC"),
+        "{said}"
+    );
+    assert_eq!(
+        chrome.eval("document.querySelectorAll('.chart-plot').length"),
+        json!(0),
+        "no chart of nothing"
+    );
+}

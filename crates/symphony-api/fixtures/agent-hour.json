@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "at": 1800003600.5,
+  "pid": 48213,
+  "generation": 1800001500.5,
+  "start": 1800000000.0,
+  "from": 1800000000.0,
+  "to": 1800003600.0,
+  "observed_s": 3540.0,
+  "samples": 59,
+  "sessions": [
+    {
+      "kind": "claude",
+      "model": "opus",
+      "started": 2,
+      "went_stale": 1,
+      "went_lost": 0,
+      "stale_s": 120.0,
+      "lost_s": 0.0
+    }
+  ],
+  "running": [
+    { "role": "executor", "model": "opus", "peak": 3, "mean": 2.25 },
+    { "role": "reviewer", "model": "opus", "peak": 1, "mean": 0.5 }
+  ],
+  "running_roles": [
+    { "role": "executor", "peak": 3, "mean": 2.25 },
+    { "role": "reviewer", "peak": 1, "mean": 0.5 }
+  ],
+  "running_agents": { "peak": 4, "mean": 2.75 },
+  "holding": [
+    { "role": "executor", "model": "opus", "peak": 4, "mean": 3.0 }
+  ],
+  "holding_roles": [
+    { "role": "executor", "peak": 4, "mean": 3.0 }
+  ],
+  "holding_agents": { "peak": 4, "mean": 3.0 },
+  "live": [
+    { "kind": "claude", "peak": 5, "mean": 4.5 }
+  ],
+  "load_1m": { "peak": 12.5, "mean": 6.25 },
+  "load_15m": null
+}

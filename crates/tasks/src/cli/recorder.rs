@@ -57,12 +57,14 @@
 //! As its child, the CPU is what the reap reads, and whether that misses a process that left the
 //! command's tree is not watched; on macOS, where it becomes its command, the kernel's count of that
 //! process and of every process under it, read every [`SAMPLE`] and once more as it ends, the most
-//! read, with whether a reading knew it missed some (`supervised::cpu::Tree`).
+//! read, with whether a reading knew it missed some (`supervised::cpu::Tree`). There each beat also
+//! writes the latest reading into the running record ([`recorded::CpuReading`]): what a reader, or a
+//! test, waits on to know the processes it holds were read.
 //!
-//! The three bounds the machine's speed meets ([`READY`], [`WAIT`], [`GIT_WAIT`]) are a test's to
-//! scale, on a scratch board's database alone ([`SCALE_VAR`], [`Waits`]), so a loaded machine never
-//! decides what a test's run records; a run on the live board's database keeps them whatever it
-//! names.
+//! The bounds the machine's speed meets ([`READY`], [`WAIT`], [`GIT_WAIT`], [`RERUN_WAIT`] and
+//! [`crate::runs::LOCK_WAIT`]) are a test's to scale, on a scratch board's database alone
+//! ([`SCALE_VAR`], [`Waits`]), so a loaded machine never decides what a test's run records; a run
+//! on the live board's database keeps them whatever it names.
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
@@ -109,6 +111,10 @@ const RERUN_WAIT: Duration = Duration::from_secs(5);
 pub const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
 /// The largest scale [`SCALE_VAR`] takes: a minute for a bound of a second.
 const MOST_SCALE: u32 = 60;
+/// Names a file a run's recorder makes once it has stamped its command's end, whether or not the
+/// board has answered which task the run is for: a test's mark of that moment, read only when set
+/// ([`end_mark`]). It is made only where no file is, so it never replaces one.
+pub const END_MARK_VAR: &str = "TASKS_RUN_END_MARK";
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]\n                 [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
 /// `tasks run --help`, `just tasks help run`: its usage and what it does.
@@ -287,14 +293,15 @@ fn trigger(env: &Env, handle: Option<&str>) -> String {
 }
 
 /// How long a run waits on what the machine's speed decides: its recorder's word that it watches
-/// its command ([`READY`]), the board's answer ([`WAIT`]) and git's ([`GIT_WAIT`]), each its own
-/// bound times a scale. The scale is 1 but where a test names one ([`SCALE_VAR`]) and the board the
-/// run reaches is on a database other than the live one's ([`crate::DATABASE`]: a test's
-/// `TASKS_DATABASE`, or a `--database`), which the board never takes for a live board either
-/// ([`super::Reached::live`]), so a loaded machine never decides what a test's run records. A run
-/// on the live one's database, by whatever server or folder it reaches it and whether or not that
-/// server is up, or one that reaches no board, keeps its own bounds whatever it names, and one that
-/// names none asks nothing more.
+/// its command ([`READY`]), the board's answer ([`WAIT`]), git's ([`GIT_WAIT`]) and, apart from its
+/// command, another recorder's end line ([`RERUN_WAIT`]) and its hold on the day files' lock
+/// ([`crate::runs::LOCK_WAIT`]), each its own bound times a scale. The scale is 1 but where a test
+/// names one ([`SCALE_VAR`]) and the board the run reaches is on a database other than the live
+/// one's ([`crate::DATABASE`]: a test's `TASKS_DATABASE`, or a `--database`), which the board never
+/// takes for a live board either ([`super::Reached::live`]), so a loaded machine never decides
+/// what a test's run records. A run on the live one's database, by whatever server or folder it
+/// reaches it and whether or not that server is up, or one that reaches no board, keeps its own
+/// bounds whatever it names, and one that names none asks nothing more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Waits(u32);
 
@@ -335,6 +342,16 @@ impl Waits {
     #[cfg(target_os = "macos")]
     fn ready(self) -> Duration {
         READY * self.0
+    }
+
+    /// How long a recorder apart from its command waits for an earlier run it may repeat to end.
+    fn rerun(self) -> Duration {
+        RERUN_WAIT * self.0
+    }
+
+    /// How long a recorder apart from its command waits for the day files' lock before each line.
+    fn lock(self) -> Duration {
+        crate::runs::LOCK_WAIT * self.0
     }
 }
 
@@ -496,9 +513,11 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     // and left unreaped: its pid stays its own while its signals are passed to it. It is reaped
     // here, once they no longer are.
     let (end, ends) = mpsc::channel();
+    let mark = end_mark(env);
     let waiter = std::thread::spawn(move || {
         let seen = ended_unreaped(started.0);
         let _ = end.send((seen, crate::store::now()));
+        stamped(mark.as_deref());
     });
     let recording = begin(Some(started));
     let (seen, at) = loop {
@@ -506,7 +525,8 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             Ok(end) => break end,
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(recording) = &recording {
-                    recording.beat();
+                    // It reads its command's CPU only once it reaped it: no reading to say.
+                    recording.beat(None);
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -556,6 +576,21 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             128 + signal
         }
         (None, None) => 1,
+    }
+}
+
+/// The file a run in `env` makes once its command's end is stamped ([`END_MARK_VAR`]), a relative
+/// name read from the run's folder; none where it names none.
+fn end_mark(env: &Env) -> Option<PathBuf> {
+    (env.var(END_MARK_VAR))
+        .filter(|named| !named.is_empty())
+        .map(|named| env.cwd.join(named))
+}
+
+/// Makes `mark` ([`end_mark`]), the end of a run's command having been stamped, where no file is.
+fn stamped(mark: Option<&Path>) {
+    if let Some(mark) = mark {
+        let _ = OpenOptions::new().write(true).create_new(true).open(mark);
     }
 }
 
@@ -828,7 +863,7 @@ impl Recording {
                         tree,
                     };
                     if apart {
-                        settled(&folder, &id, same, queued_at);
+                        settled(&folder, &id, same, queued_at, waits.rerun());
                     }
                     crate::runs::rerun_of(runs, same, queued_at)
                 }
@@ -883,13 +918,14 @@ impl Recording {
             signal: None,
             reason: String::new(),
             run,
+            reading: None,
         };
         recorded::write(&path, &record)?;
         let recording = Recording {
             folder,
             runs,
             wait: if apart {
-                crate::runs::LOCK_WAIT
+                waits.lock()
             } else {
                 crate::runs::BRIEF_WAIT
             },
@@ -947,9 +983,13 @@ impl Recording {
         self.line(&record);
     }
 
-    /// It still runs.
-    fn beat(&self) {
-        self.update(|_, _| {});
+    /// It still runs, its processes as `reading` last read them when there is one.
+    fn beat(&self, reading: Option<recorded::CpuReading>) {
+        self.update(|record, _| {
+            if reading.is_some() {
+                record.reading = reading;
+            }
+        });
     }
 
     /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known), its command
@@ -987,10 +1027,10 @@ impl Recording {
 }
 
 /// Once no operation in the work folder `folder` but `ours`, asked for by `before`, may still end as
-/// the run `same` repeats (`recorded::pending`), or [`RERUN_WAIT`] has passed: its end line is then
-/// in the day files, when it is to be.
-fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64) {
-    let deadline = std::time::Instant::now() + RERUN_WAIT;
+/// the run `same` repeats (`recorded::pending`), or `within` ([`RERUN_WAIT`], or a test's scale of
+/// it) has passed: its end line is then in the day files, when it is to be.
+fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, within: Duration) {
+    let deadline = std::time::Instant::now() + within;
     let earlier = |record: &Record| {
         record.run.as_ref().is_some_and(|run| {
             run.dirty == Some(false)
@@ -1010,7 +1050,9 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64) {
 /// The `tasks` process become its command, watched by a recorder it forks first.
 #[cfg(target_os = "macos")]
 mod supervised {
-    use super::{Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, role, unstarted};
+    use super::{
+        Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, cpu_seconds, role, unstarted,
+    };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
     use std::ffi::CString;
@@ -1018,11 +1060,16 @@ mod supervised {
     use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
     use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::{Duration, Instant};
 
     /// What the recorder's watch saw of its command, when it saw it, and the most CPU it read the
     /// command's processes had taken by then.
     type Heard = io::Result<(Seen, f64, Option<Cpu>)>;
+
+    /// The watch's latest reading of the command's processes, which each beat writes into the
+    /// running record.
+    type Latest = Arc<Mutex<Option<recorded::CpuReading>>>;
 
     /// Become `asked`'s command, recorded by a recorder that watches this process, in `env`; what
     /// returns is the code of a command that could not start, said on `err`.
@@ -1189,10 +1236,15 @@ mod supervised {
             // Read on a thread of its own, so what it sees is stamped as it comes while the board
             // is asked which task this is for.
             let (tell, heard) = mpsc::channel();
-            std::thread::spawn(move || watching(&watch, &tell, (target, caller)));
+            let latest = Latest::default();
+            let read = Arc::clone(&latest);
+            let mark = super::end_mark(env);
+            std::thread::spawn(move || {
+                watching(&watch, &tell, (target, caller), &read, mark.as_deref());
+            });
             if let Ok(recording) = Recording::begin(prepared, asked, env, (queued_at, None), true) {
                 recording.sweep();
-                follow(&heard, recording, start);
+                follow(&heard, recording, start, &latest);
             }
         }
         // SAFETY: ends the recorder without the runtime's exit, which is the caller's.
@@ -1204,11 +1256,14 @@ mod supervised {
     /// fails, or nothing listens. That is read every [`SAMPLE`] and as soon as each event comes,
     /// its exit's first: a process that ended is read until its parent reaps it, and a last reading
     /// that comes after misses what ran since the one before, which the tree weighs
-    /// ([`cpu::Tree::reaped_first`]).
+    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`, and
+    /// once the exit is stamped, `mark` is made ([`super::END_MARK_VAR`]).
     fn watching(
         watch: &Watch,
         tell: &mpsc::Sender<Heard>,
         (target, caller): (libc::pid_t, libc::pid_t),
+        latest: &Latest,
+        mark: Option<&std::path::Path>,
     ) {
         let mut tree = cpu::Tree::new(cpu::Machine, target).reaped_by(caller);
         let mut most = None;
@@ -1217,6 +1272,9 @@ mod supervised {
             let at = Instant::now();
             let read = tree.read(at);
             most = most.max(read);
+            if let Some(reading) = read.and(most).and_then(|ticks| reading(&tree, ticks)) {
+                *latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(reading);
+            }
             match next {
                 Ok(Some(seen)) => {
                     let exited = seen.exit.is_some();
@@ -1227,7 +1285,11 @@ mod supervised {
                         seconds: cpu::seconds(ticks, tree.tick),
                         partial: Some(tree.partial),
                     });
-                    if tell.send(Ok((seen, crate::store::now(), cpu))).is_err() || exited {
+                    let told = tell.send(Ok((seen, crate::store::now(), cpu)));
+                    if exited {
+                        super::stamped(mark);
+                    }
+                    if told.is_err() || exited {
                         return;
                     }
                 }
@@ -1239,6 +1301,20 @@ mod supervised {
                 }
             }
         }
+    }
+
+    /// What `tree` read last, its readings having found `most` ticks at most: none for CPU no
+    /// clock says.
+    pub(super) fn reading<K: cpu::Kernel>(
+        tree: &cpu::Tree<K>,
+        most: u64,
+    ) -> Option<recorded::CpuReading> {
+        Some(recorded::CpuReading {
+            at: crate::store::now(),
+            cpu_s: cpu_seconds(cpu::seconds(most, tree.tick))?,
+            partial: tree.partial,
+            processes: u32::try_from(tree.processes()).unwrap_or(u32::MAX),
+        })
     }
 
     /// No stream of the caller's held open: `/dev/null` in, out and err, and every other
@@ -1270,8 +1346,14 @@ mod supervised {
     }
 
     /// Record its command as its watch was `heard`: started at `start` once it exec'd, said again
-    /// every [`BEAT`] while it runs, finished with its status when its exit was seen.
-    fn follow(heard: &mpsc::Receiver<Heard>, recording: Recording, start: super::Start) {
+    /// every [`BEAT`] while it runs with the `latest` reading of its processes, finished with its
+    /// status when its exit was seen.
+    fn follow(
+        heard: &mpsc::Receiver<Heard>,
+        recording: Recording,
+        start: super::Start,
+        latest: &Latest,
+    ) {
         let mut started = false;
         loop {
             match heard.recv_timeout(BEAT) {
@@ -1293,7 +1375,7 @@ mod supervised {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if started {
-                        recording.beat();
+                        recording.beat(*latest.lock().unwrap_or_else(PoisonError::into_inner));
                     }
                 }
                 Ok(Err(error)) => {
@@ -1673,6 +1755,12 @@ mod supervised {
                 }
             }
 
+            /// How many processes the last reading the root answered read: the root and each one
+            /// under it.
+            pub(in super::super) fn processes(&self) -> usize {
+                self.under.len() + 1
+            }
+
             /// The children of `pid`; as many as there is room for is too many to know all.
             fn listed(&mut self, pid: libc::pid_t) -> Vec<libc::pid_t> {
                 let children = self.kernel.children(pid, self.room);
@@ -1924,6 +2012,39 @@ mod tests {
     }
 
     #[test]
+    fn a_runs_end_mark_is_named_only_when_set_from_its_folder_and_never_replaces_a_file() {
+        assert_eq!(end_mark(&env(&[])), None);
+        assert_eq!(end_mark(&env(&[(END_MARK_VAR, "")])), None);
+        let dir =
+            std::env::temp_dir().join(format!("symphony-run-end-mark-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let in_dir = |named: &str| Env {
+            cwd: dir.clone(),
+            ..env(&[(END_MARK_VAR, named)])
+        };
+        let mark = end_mark(&in_dir("stamped")).unwrap();
+        assert_eq!(
+            mark,
+            dir.join("stamped"),
+            "a relative name is the run's folder's"
+        );
+        let kept = dir.join("kept");
+        assert_eq!(
+            end_mark(&in_dir(kept.to_str().unwrap())),
+            Some(kept.clone())
+        );
+        stamped(None);
+        assert!(!mark.exists(), "no mark named, none made");
+        stamped(Some(&mark));
+        assert_eq!(fs::read(&mark).unwrap(), b"");
+        fs::write(&kept, "a file of its own").unwrap();
+        stamped(Some(&kept));
+        assert_eq!(fs::read_to_string(&kept).unwrap(), "a file of its own");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_step_inside_a_run_is_its_pipelines_and_a_pipeline_named_at_top_level_a_run() {
         let parent = "0123456789abcdef0123456789abcdef";
         let inside = [
@@ -2027,23 +2148,22 @@ mod tests {
     #[test]
     fn a_watcher_reads_the_cpu_of_a_process_and_of_those_under_it() {
         use supervised::cpu::{Machine, Tree};
-        let mut shell = burning("exec sleep 30");
+        // It runs until the kill below, however slowly a loaded machine reads it before.
+        let mut shell = burning("exec sleep 600");
         let pid = libc::pid_t::try_from(shell.id()).unwrap();
         let tick = supervised::cpu::tick_ns();
         assert!(tick > 0.0);
         let mut tree = Tree::new(Machine, pid);
-        let began = std::time::Instant::now();
-        let mut most = 0.0;
         // The shell's child burns, then is reaped: its time is the shell's, read the same.
-        while began.elapsed() < Duration::from_secs(20) {
-            let read = tree.read(std::time::Instant::now()).unwrap();
-            most = supervised::cpu::seconds(read, tick);
-            if most > 0.05 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(most > 0.05, "{most}");
+        test_time::until_true(
+            "the shell's tree read more than 0.05 s of CPU",
+            test_time::backstop(Duration::from_secs(20)),
+            || {
+                let read = tree.read(std::time::Instant::now()).unwrap();
+                supervised::cpu::seconds(read, tick) > 0.05
+            },
+        )
+        .unwrap();
         assert!(!tree.partial, "a child reaped by its parent is no loss");
         shell.kill().unwrap();
         let _ = shell.wait();
@@ -2155,6 +2275,38 @@ mod tests {
         table.0.borrow_mut().insert(1, (0, 10, false));
         assert_eq!(Tree::new(&table, 1).read(now), None);
         assert_eq!(Tree::new(&Table::default(), 1).read(now), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_beats_reading_says_the_most_cpu_read_whether_a_reading_missed_some_and_what_it_read() {
+        use supervised::cpu::Tree;
+        let now = std::time::Instant::now();
+        // 1 runs 2, and 2 runs 3; a tick is a millisecond.
+        let table = Table::with(&[(1, 0, 10), (2, 1, 20), (3, 2, 30)]);
+        let mut tree = Tree::new(&table, 1);
+        tree.tick = 1e6;
+        let before = crate::store::now();
+        let most = tree.read(now).unwrap();
+        let reading = supervised::reading(&tree, most).unwrap();
+        assert!(reading.at >= before, "{reading:?}");
+        assert_eq!(
+            (reading.cpu_s, reading.partial, reading.processes),
+            (0.06, false, 3)
+        );
+        // 2 ends unreaped, leaving 3 to the system: the next reading reads the root alone and knows
+        // it missed one, and the most read stays.
+        table.0.borrow_mut().remove(&2);
+        table.0.borrow_mut().insert(3, (0, 35, true));
+        let read = tree.read(now).unwrap();
+        let reading = supervised::reading(&tree, most.max(read)).unwrap();
+        assert_eq!(
+            (reading.cpu_s, reading.partial, reading.processes),
+            (0.06, true, 1)
+        );
+        // CPU no clock says is no reading.
+        tree.tick = f64::NAN;
+        assert_eq!(supervised::reading(&tree, most), None);
     }
 
     /// Whether a root read at each `(ms, ticks)` of `readings`, then reaped by its caller before
@@ -2370,14 +2522,22 @@ mod tests {
         let own = Waits::OWN;
         #[cfg(target_os = "macos")]
         assert_eq!(own.ready(), READY);
-        assert_eq!((own.board(), own.git()), (WAIT, GIT_WAIT));
+        assert_eq!(
+            (own.board(), own.git(), own.rerun(), own.lock()),
+            (WAIT, GIT_WAIT, RERUN_WAIT, crate::runs::LOCK_WAIT)
+        );
         let scaled = at("20");
         assert_eq!(scaled, Waits(20));
         #[cfg(target_os = "macos")]
         assert_eq!(scaled.ready(), Duration::from_secs(20));
         assert_eq!(
-            (scaled.board(), scaled.git()),
-            (Duration::from_secs(20), Duration::from_secs(12))
+            (scaled.board(), scaled.git(), scaled.rerun(), scaled.lock()),
+            (
+                Duration::from_secs(20),
+                Duration::from_secs(12),
+                Duration::from_secs(100),
+                Duration::from_secs(40)
+            )
         );
         assert_eq!((at("1"), at("60")), (Waits(1), Waits(60)));
         for named in ["0", "61", "-2", "2.5", "twenty", "", " 20", "20 "] {

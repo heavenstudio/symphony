@@ -8,6 +8,11 @@ use std::time::{Duration, Instant};
 
 mod in_process;
 
+/// How long a [`Listener`] waits for a frame to close, or for the next frame: the backstop of the
+/// 3 s it once had. Every frame it waits for was delivered within the write that sent it
+/// ([`Listener::drain`] checks so), so these waits only read what its socket holds already.
+const LISTENING: Duration = test_time::backstop(Duration::from_secs(3));
+
 pub(super) struct Listener {
     pub(super) path: PathBuf,
     stop: mpsc::Sender<()>,
@@ -30,7 +35,7 @@ impl Listener {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(true).unwrap();
-                        let deadline = Instant::now() + Duration::from_secs(3);
+                        let deadline = Instant::now() + LISTENING;
                         let mut bytes = Vec::new();
                         let mut buffer = [0; 4096];
                         loop {
@@ -72,7 +77,7 @@ impl Listener {
     }
 
     fn receive(&self, marker: &str) {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + LISTENING;
         loop {
             let text = self
                 .messages
@@ -92,18 +97,26 @@ impl Listener {
     }
 
     pub(super) fn text(&self) -> String {
-        let frame = self.messages.recv_timeout(Duration::from_secs(3)).unwrap();
+        let frame = self.messages.recv_timeout(LISTENING).unwrap();
         let value: Value = serde_json::from_str(&frame).unwrap();
         assert_eq!(value["type"], "user");
         assert_eq!(value["message"]["role"], "user");
         value["message"]["content"].as_str().unwrap().to_string()
     }
 
-    /// A real delivery barrier proves absence without a timing-based empty receive.
+    /// A real delivery barrier proves absence without a timing-based empty receive. The barrier is
+    /// delivered within the write that sends it, as `send_agent` answers: the guard on how fast a
+    /// post reaches its recipient, a count and not a time, so the listener's own waits on what is
+    /// in its socket already can be backstops without letting a slower delivery pass.
     pub(super) fn drain(&self, f: &Fixture, sender: &str, handle: &str) -> Vec<String> {
-        f.store
+        let delivered = f
+            .store
             .send_agent(sender, handle, "delivery-barrier")
             .unwrap();
+        assert!(
+            delivered,
+            "the barrier to {handle} was left undelivered by its write"
+        );
         let barrier = format!("AGENT from {sender} to {handle} — delivery-barrier");
         let mut lines = Vec::new();
         loop {

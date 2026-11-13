@@ -152,7 +152,7 @@ mod tests {
             })
             .collect();
         for _ in 0..10 {
-            told.recv_timeout(std::time::Duration::from_secs(10))
+            told.recv_timeout(test_time::backstop(std::time::Duration::from_secs(10)))
                 .expect("each contender returns while the first pass still holds the lock");
         }
         for thread in threads {

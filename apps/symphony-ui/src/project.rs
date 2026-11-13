@@ -36,6 +36,7 @@ pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<Heade
         path == "queue",
         document && plugin.is_none(),
         path == "tasks" || path.starts_with("task/"),
+        path == "reports",
         path == "agents",
     ];
     view.own_pages()
@@ -57,8 +58,8 @@ pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<Heade
 /// The crumbs after the header's links on the page at `path` (as [`header_links`] reads it):
 /// what the lit link does not already say. A document or folder shows each folder of its route,
 /// the last its page ([`crate::docs::crumbs`]); a task's page, under the lit Board, its slug alone.
-/// None where the route is a header link's own page (the home, the queue, the board, the agents,
-/// the documents' folder page, a plugin's page).
+/// None where the route is a header link's own page (the home, the queue, the board, the reports,
+/// the agents, the documents' folder page, a plugin's page).
 pub fn crumbs<'a>(view: &ProjectView, path: &'a str) -> Vec<&'a str> {
     let (mut trail, under_tasks) = crate::docs::crumbs(path);
     if under_tasks {
@@ -226,6 +227,7 @@ mod tests {
                 "Queue /queue",
                 "Docs /docs/",
                 "Board /tasks",
+                "Reports /reports",
                 "Agents /agents",
                 "▤ shelf /shelf",
                 "◇ maps /maps/"
@@ -244,6 +246,7 @@ mod tests {
             ("docs/DECISIONS.md", true, "Docs"),
             ("tasks", false, "Board"),
             ("task/app/header-names", false, "Board"),
+            ("reports", false, "Reports"),
             ("agents", false, "Agents"),
             // A plugin's page shows a document, yet it is the plugin's link that is lit.
             ("docs/SHELF.md", true, "▤ shelf"),
@@ -263,6 +266,7 @@ mod tests {
             "",
             "queue",
             "tasks",
+            "reports",
             "agents",
             "docs",
             "docs/",

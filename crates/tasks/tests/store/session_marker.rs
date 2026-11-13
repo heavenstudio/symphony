@@ -1,9 +1,8 @@
 //! Heartbeats invalidate cached health without writing the structural change counter.
 
 use super::common::{Fixture, GONE, Seed, refused};
+use super::gate::Gate;
 use serde_json::json;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 use symphony_board::{Beat, Health, Store, schema};
 
 fn markers(f: &Fixture) -> (u64, u64) {
@@ -172,32 +171,37 @@ fn an_upgraded_legacy_actor_can_write_before_its_first_sharded_beat() {
     );
 }
 
-/// As the session-hold race in closing.rs: the server pauses the real write after its guards,
-/// while a second client commits. Checking elapsed time proves that the write reached the pause.
+/// The event that pauses a write past its guards at `gate`: `paused` on `table` when `when` holds.
+fn paused_at(f: &Fixture, gate: &Gate, table: &str, when: &str) {
+    let pause = format!(
+        "DEFINE EVENT paused ON {table} WHEN {when} THEN {{ {} }};",
+        gate.wait_here()
+    );
+    f.store.client().query(&pause, json!({})).unwrap();
+}
+
+/// As the session-hold race in closing.rs: the server pauses the real write after its guards, at
+/// `gate`, while a second client commits; the write goes on once that has. The gate reached proves
+/// the guard preceded the competing commit.
 fn while_paused<T: Send>(
     f: &Fixture,
+    gate: &Gate,
     act: impl FnOnce(&Store) -> T + Send,
     meanwhile: impl FnOnce(),
 ) -> T {
-    let (sending, sent) = mpsc::channel();
-    let writer = f.late(move || {
-        sending.send(()).unwrap();
-    });
-    let (result, elapsed) = std::thread::scope(|scope| {
-        let running = scope.spawn(|| {
-            let began = Instant::now();
-            (act(&writer), began.elapsed())
-        });
-        sent.recv_timeout(Duration::from_secs(30)).unwrap();
-        std::thread::sleep(Duration::from_millis(500));
+    let writer = f.other();
+    std::thread::scope(|scope| {
+        let opening = gate.opening();
+        let running = scope.spawn(|| act(&writer));
+        gate.reached();
         meanwhile();
+        assert!(
+            !running.is_finished(),
+            "the write went on before the gate opened"
+        );
+        drop(opening);
         running.join().unwrap()
-    });
-    assert!(
-        elapsed >= Duration::from_secs(2),
-        "the guard must precede the competing commit: {elapsed:?}"
-    );
-    result
+    })
 }
 
 #[test]
@@ -212,12 +216,16 @@ fn a_beat_committing_after_the_lost_holder_guard_prevents_takeover() {
     assert!(bound, "old-agent binding: {bound}");
     f.advance(GONE);
     let actor = f.session("worker");
-    f.store.client().query(
-        "DEFINE EVENT paused ON role WHEN $event = 'DELETE' AND $before.handle = 'old' THEN { sleep(2s) };",
-        json!({}),
-    ).unwrap();
+    let gate = Gate::new();
+    paused_at(
+        &f,
+        &gate,
+        "role",
+        "$event = 'DELETE' AND $before.handle = 'old'",
+    );
     let result = while_paused(
         &f,
+        &gate,
         |s| s.claim("tools/held", &actor),
         || {
             assert_eq!(
@@ -250,12 +258,16 @@ fn a_departure_committing_after_the_incoming_holder_guard_prevents_handover() {
             .task("tools/held", "ready")
             .role("tools/held", "from", "orchestrator"),
     );
-    f.store.client().query(
-        "DEFINE EVENT paused ON role WHEN $event = 'CREATE' AND $after.handle = 'target' THEN { sleep(2s) };",
-        json!({}),
-    ).unwrap();
+    let gate = Gate::new();
+    paused_at(
+        &f,
+        &gate,
+        "role",
+        "$event = 'CREATE' AND $after.handle = 'target'",
+    );
     let result = while_paused(
         &f,
+        &gate,
         |s| s.hand_over("tools/held", "from", "target"),
         || {
             f.store.leave("target").unwrap();
@@ -279,12 +291,11 @@ fn a_departure_committing_after_the_incoming_holder_guard_prevents_handover() {
 #[test]
 fn a_departure_committing_after_the_actor_guard_prevents_a_field_write() {
     let f = Fixture::new(Seed::default().session("actor").task("tools/held", "ready"));
-    f.store.client().query(
-        "DEFINE EVENT paused ON task WHEN $after.fields.game.race = 'started' THEN { sleep(2s) };",
-        json!({}),
-    ).unwrap();
+    let gate = Gate::new();
+    paused_at(&f, &gate, "task", "$after.fields.game.race = 'started'");
     let result = while_paused(
         &f,
+        &gate,
         |s| s.set_field("tools/held", "game", "race", &json!("started"), "actor"),
         || {
             f.store.leave("actor").unwrap();
@@ -326,12 +337,11 @@ fn a_notification_fences_its_actor_without_fabricating_a_heartbeat() {
     );
     let before = f.store.thread("tools/held").unwrap();
     assert_eq!(before.len(), 1);
-    f.store.client().query(
-        "DEFINE EVENT paused ON message WHEN $after.text = 'notification-race' THEN { sleep(2s) };",
-        json!({}),
-    ).unwrap();
+    let gate = Gate::new();
+    paused_at(&f, &gate, "message", "$after.text = 'notification-race'");
     let result = while_paused(
         &f,
+        &gate,
         |s| s.notify("tools/held", "actor", "recipient", "notification-race"),
         || {
             f.store.leave("actor").unwrap();
@@ -349,13 +359,15 @@ fn a_notification_fences_its_actor_without_fabricating_a_heartbeat() {
 fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
     let f = Fixture::new(Seed::default().session("actor").session("recipient"));
     f.store.client().query(
-        "CREATE callback_state:recipient CONTENT { handle: 'recipient', address: 'codex:recipient-probe' };
-         DEFINE EVENT paused ON callback_event WHEN $event = 'CREATE' THEN { sleep(2s) };",
+        "CREATE callback_state:recipient CONTENT { handle: 'recipient', address: 'codex:recipient-probe' };",
         json!({}),
     ).unwrap();
+    let gate = Gate::new();
+    paused_at(&f, &gate, "callback_event", "$event = 'CREATE'");
     f.advance(1.0);
     let result = while_paused(
         &f,
+        &gate,
         |s| s.send_agent("actor", "recipient", "recipient-race"),
         || {
             f.store.leave("recipient").unwrap();
@@ -372,15 +384,25 @@ fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
 #[test]
 fn same_key_classification_rechecks_a_concurrently_remapped_target() {
     let f = Fixture::new(Seed::default().session("target"));
-    f.store.client().query(
-        "UPDATE session:target SET agent = 'old-key';
-         CREATE callback_state:['binding', 'new-key'] CONTENT { in_process: false };
-         DEFINE EVENT paused ON counter WHEN $after.id = counter:['agent', 'old-key'] THEN { sleep(2s) };",
-        json!({}),
-    ).unwrap();
+    f.store
+        .client()
+        .query(
+            "UPDATE session:target SET agent = 'old-key';
+         CREATE callback_state:['binding', 'new-key'] CONTENT { in_process: false };",
+            json!({}),
+        )
+        .unwrap();
+    let gate = Gate::new();
+    paused_at(
+        &f,
+        &gate,
+        "counter",
+        "$after.id = counter:['agent', 'old-key']",
+    );
     let before = markers(&f);
     let result = while_paused(
         &f,
+        &gate,
         |s| {
             s.session("target").unwrap();
             s.bind_agent("old-key", "target", false)

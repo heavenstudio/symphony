@@ -173,6 +173,7 @@ fn run(
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     }
 }
 

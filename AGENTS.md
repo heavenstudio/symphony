@@ -96,7 +96,9 @@ A snapshot holds only what the client's build reads (`release-inputs`,
 packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
 pin and the server's notice styles, and the other members' manifests over empty
 targets. Its path, and so the asset names, follow those bytes alone: a change
-anywhere else needs no new distribution.
+anywhere else needs no new distribution. dx runs from one path in every checkout and common
+dir as well (`apps/symphony-ui/dx-path.sh`), since Cargo mixes its path, as the workspace's
+rustc wrapper, into every byte of the client's wasm.
 The server package embeds those bytes at build time, so an
 installed binary serves them without dx, a source checkout or a runtime extraction.
 A source kit's local preview build wins over the embedded default. Explicit source-kit
