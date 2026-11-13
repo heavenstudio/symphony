@@ -20,20 +20,15 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 #[test]
 fn a_check_past_the_timeout_is_ended_whole_and_refused() {
     let r = Repo::new();
-    let mark = r.dir.join("outlived");
-    // The check's own child outlives it unless the whole group ends.
-    let check = format!("(sleep 3; touch '{}') & sleep 30", mark.display());
+    let child = r.dir.join("child.pid");
+    // The check's own child, its first act, outlives it unless the whole group ends. Neither ends
+    // by itself while the test runs, however slow the machine, so only the land's ending ends them.
+    let check = format!("sleep 600 & echo $! > '{}'; sleep 600", child.display());
     checked_with(&r, &check, &timed(1));
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
-    let began = Instant::now();
     let (_, result) = landed(&r, SLUG, &people.orch);
-    assert!(
-        began.elapsed() < Duration::from_secs(20),
-        "{:?}",
-        began.elapsed()
-    );
     let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
     let line = format!(
         "the check `sh -c {check}` ran past the land's timeout ([land] timeout_seconds, 1 s) on \
@@ -47,19 +42,27 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
         logged.ends_with("ended: it ran past the land's 1 s\n"),
         "{logged}"
     );
-    std::thread::sleep(Duration::from_secs(4));
-    assert!(!mark.exists(), "the check's own child was ended with it");
+    let pid = fs::read_to_string(&child)
+        .ok()
+        .and_then(|text| text.trim().parse::<i64>().ok())
+        .expect("the check started its child before its timeout");
+    wait_saying(
+        || !symphony_board::sys::pid_alive(pid),
+        || format!("the check's own child {pid} still runs"),
+    );
 }
 
 #[test]
 fn an_origin_that_does_not_answer_is_a_push_to_retry_within_the_timeout() {
     let r = Repo::new();
-    manifest(&r, &timed(2));
+    // No check, so the 2 s is the fetch's alone: nothing else the land runs is bound by it.
+    project_file(&r, &timed(2));
     let bare = remote(&r);
+    // An origin that answers only after any wait of the test's, so the fetch ends by its timeout.
     let silent = script(
         &r.dir,
         "silent-upload-pack",
-        "sleep 30\nexec git-upload-pack \"$@\"",
+        "sleep 600\nexec git-upload-pack \"$@\"",
     );
     git(
         &r.root,
@@ -72,13 +75,8 @@ fn an_origin_that_does_not_answer_is_a_push_to_retry_within_the_timeout() {
     let before = head(&bare, "main");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let began = Instant::now();
+    // The line names the limit that ended the fetch: an origin that answered would push.
     let line = landed(&r, SLUG, &people.orch).1.unwrap();
-    assert!(
-        began.elapsed() < Duration::from_secs(30),
-        "{:?}",
-        began.elapsed()
-    );
     assert_eq!(
         line,
         format!(

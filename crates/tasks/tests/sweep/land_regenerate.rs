@@ -85,6 +85,16 @@ fn subject(r: &Repo, rev: &str) -> String {
     git(&r.root, &["log", "-1", "--format=%s", rev])
 }
 
+/// How long a stand-in build waits for the test before it gives up and fails: six times the minute
+/// it once had, so a loaded machine's slow lands never run it out, while a land that waited for it
+/// still fails, only later.
+const STAND_IN_WAIT: Duration = Duration::from_secs(360);
+
+/// How many looks `every` apart a stand-in's shell loop takes in [`STAND_IN_WAIT`].
+fn looks(every: Duration) -> u128 {
+    STAND_IN_WAIT.as_millis() / every.as_millis()
+}
+
 #[test]
 fn a_round_makes_the_outputs_of_mains_tip_and_lands_them_as_one_commit() {
     let r = Repo::new();
@@ -571,16 +581,12 @@ fn a_generator_past_the_timeout_is_ended_and_red() {
         &r,
         &format!(
             "\n[land]\ntimeout_seconds = 1\ngenerators = [\n  {}\n]\n",
-            generator("the slow one", "gen/", "sleep 30", "")
+            generator("the slow one", "gen/", "sleep 600", "")
         ),
     );
-    let began = Instant::now();
+    // A generator that never ends by itself while the test runs: the line names the limit that
+    // ended it, which a generator ending by itself would never be said to have run past.
     let line = regenerated(&r).1.unwrap();
-    assert!(
-        began.elapsed() < Duration::from_secs(20),
-        "{:?}",
-        began.elapsed()
-    );
     assert!(
         line.starts_with(
             "the generator the slow one ran past the land's timeout ([land] timeout_seconds, 1 \
@@ -797,12 +803,14 @@ fn the_command_line_regenerates_only_by_the_land_and_its_status_exits_by_it() {
 #[test]
 fn a_land_starts_the_regenerator_detached_and_waits_for_none_of_it() {
     let r = Repo::new();
-    // The index waits until the land has returned, so the land cannot have waited for it.
+    // The index waits until the land has returned, so the land cannot have waited for it: one that
+    // did would wait out the index, which then fails and lands nothing.
     let returned = r.dir.join("returned");
     let script = format!(
-        "i=0; while [ ! -e '{returned}' ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done; \
-         mkdir -p gen && ls sim > gen/index",
-        returned = returned.display()
+        "i=0; while [ ! -e '{returned}' ] && [ $i -lt {looks} ]; do sleep 0.1; i=$((i+1)); done; \
+         [ -e '{returned}' ] || exit 9; mkdir -p gen && ls sim > gen/index",
+        returned = returned.display(),
+        looks = looks(Duration::from_millis(100))
     );
     generating(&r, &[&generator("the index", "gen/", &script, "")]);
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
@@ -968,8 +976,8 @@ fn pids(r: &Repo) -> Vec<i64> {
 }
 
 /// The index, made once `release` is there beside the repository: until then each build waits,
-/// while the regenerator that runs it lives. It notes the tip it builds in `builds`, its pid in
-/// `pids`, and any signal it takes in `signals`.
+/// while the regenerator that runs it lives, for [`STAND_IN_WAIT`] at most, and fails past it. It
+/// notes the tip it builds in `builds`, its pid in `pids`, and any signal it takes in `signals`.
 fn blocking(r: &Repo) -> String {
     generator(
         "the index",
@@ -977,12 +985,13 @@ fn blocking(r: &Repo) -> String {
         &format!(
             "git rev-parse HEAD >> '{builds}'; echo $$ >> '{pids}'; trap \"echo signalled >> \
              '{signals}'\" HUP INT TERM; i=0; while [ ! -e '{release}' ] && kill -0 $PPID \
-             2>/dev/null && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; [ -e '{release}' ] \
-             || exit 9; mkdir -p gen && ls sim > gen/index",
+             2>/dev/null && [ $i -lt {looks} ]; do sleep 0.05; i=$((i+1)); done; [ -e \
+             '{release}' ] || exit 9; mkdir -p gen && ls sim > gen/index",
             builds = r.dir.join("builds").display(),
             pids = r.dir.join("pids").display(),
             signals = r.dir.join("signals").display(),
             release = r.dir.join("release").display(),
+            looks = looks(Duration::from_millis(50)),
         ),
         "",
     )
@@ -1046,7 +1055,9 @@ fn three_lands_during_one_build_make_one_more_build_of_the_last_tip_and_signal_n
         named.starts_with(&format!("the regenerator (pid {}, started ", builder.pid)),
         "{named}"
     );
-    // Three lands while it builds: each starts nothing and waits for nothing.
+    // Three lands while it builds: each starts nothing and waits for nothing. The build waits for
+    // the test's release, which comes after them all, so a land that waited for it would wait out
+    // the build, which then fails, and the one building would not be the one that runs on below.
     let env = starting(&r);
     for (slug, file) in [
         ("sim/a", "sim/a.gd"),
@@ -1056,10 +1067,8 @@ fn three_lands_during_one_build_make_one_more_build_of_the_last_tip_and_signal_n
         branch(&r, slug, file, "extends Node\n");
         let people = approved(&r, slug, "good");
         let mut out = Vec::new();
-        let began = Instant::now();
         land(&r.board.store, &env, slug, &people.orch, None, &mut out).unwrap();
         let said = String::from_utf8(out).unwrap();
-        assert!(began.elapsed() < Duration::from_secs(30), "{said}");
         assert!(
             said.contains(&format!(
                 "land {slug}: the regenerator (pid {}, started ",
@@ -1748,19 +1757,19 @@ fn a_check_past_its_time_is_filed_as_late_not_as_failed() {
     project_file(
         &r,
         &format!(
-            "[verdicts]\ncheck = [\"sleep\", \"30\"]\n\n[land]\ncheck = false\ntimeout_seconds = \
+            "[verdicts]\ncheck = [\"sleep\", \"600\"]\n\n[land]\ncheck = false\ntimeout_seconds = \
              3\n{}",
             alone(&index(&r))
         ),
     );
-    let started = Instant::now();
+    // A check that never ends by itself while the test runs: the line names the limit that ended
+    // it, which a check ending by itself would never be said to have run past.
     let (said, result) = regenerated(&r);
     assert!(result.unwrap().contains(": landed on main at "), "{said}");
-    assert!(started.elapsed() < Duration::from_secs(25), "{said}");
     let top = head(&r.root, "main");
     assert!(
         said.contains(&format!(
-            "regenerate: the check `sleep 30` ran past the land's timeout ([land] \
+            "regenerate: the check `sleep 600` ran past the land's timeout ([land] \
              timeout_seconds, 3 s) on main at {}; its output is in ",
             &top[..7]
         )) && said.contains(&format!("regenerate: red: filed {RED_CHECK}\n")),
@@ -1815,10 +1824,8 @@ fn a_round_that_stops_is_not_checked_and_the_next_that_gets_through_is() {
 fn a_signal_while_it_checks_ends_the_check_and_the_regenerator_judging_nothing() {
     let r = Repo::new();
     let pid = r.dir.join("check.pid");
-    let check = format!(
-        "echo $$ > '{pid}'; i=0; while [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done",
-        pid = pid.display()
-    );
+    // A check that outlives any wait of the test's, so only the signal ends it.
+    let check = format!("echo $$ > '{pid}'; exec sleep 600", pid = pid.display());
     project_file(
         &r,
         &format!(

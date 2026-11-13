@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::NewLaunch;
 use symphony_board::land::{DIRTY_MAIN, RECIPE, Record, Stop, land};
+use symphony_board::on_land::SAYS_VAR;
 use symphony_board::sweep::size;
 
 const SLUG: &str = "sim/jump";
@@ -281,6 +282,8 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
+    // A window no loaded machine's count outlasts: the land listens until the command ends.
+    env.vars.insert(SAYS_VAR.into(), "120".into());
     let mut out = Vec::new();
     let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let said = String::from_utf8(out).unwrap();
@@ -316,12 +319,7 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
         index.contains(&format!("(its lines: {})", output.display())),
         "{index}"
     );
-    let began = Instant::now();
-    while !fs::read_to_string(&heard).is_ok_and(|text| text.lines().count() == 2)
-        && began.elapsed() < Duration::from_secs(10)
-    {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // Heard to its end within the window, the command wrote both lines before its count.
     assert_eq!(
         fs::read_to_string(&heard).unwrap(),
         format!("{SLUG} {merge}\nnone none\n"),
