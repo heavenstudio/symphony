@@ -67,7 +67,7 @@ fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
         std::thread::sleep(Duration::from_millis(500));
         listener.accept().is_ok()
     });
-    let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+    let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
     sevens(&client, 3);
     let failed = client.query(WRITE, json!({}));
     let Err(DbError::Failed(said)) = failed else {
@@ -139,7 +139,7 @@ fn a_kept_requests_read_timeout_never_resends_a_write_or_keeps_its_socket() {
 #[test]
 fn a_fresh_sockets_eof_names_read_and_zero_completed_requests() {
     let (addr, served) = one_reply(b"");
-    let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+    let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
     assert_eq!(
         client.query(WRITE, json!({})),
         Err(DbError::Failed(format!(

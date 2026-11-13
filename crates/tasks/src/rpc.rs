@@ -778,8 +778,9 @@ mod tests {
     use serde_json::json;
 
     /// The wait of a sending whose answer is to come in time, where a short wait is what a test is
-    /// of: the wall-clock backstop a test's wait is given (`test_time::FLOOR`), which no loaded
-    /// machine runs out before the test's server answers.
+    /// of, or where the wait is no part of what it tests (the 5 s those tests once gave): the
+    /// wall-clock backstop a test's wait is given (`test_time::FLOOR`), which no loaded machine runs
+    /// out before the test's server answers.
     const PATIENT: Duration = Duration::from_secs(120);
 
     fn ok(result: Value) -> Value {
@@ -1039,7 +1040,7 @@ mod tests {
     fn a_drained_kept_connection_is_dropped_and_the_request_goes_once_on_a_new_one() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         let (drained, mut kept_peer) = kept_connection(&listener, 14);
         client.kept.lock().unwrap().push(drained);
         let served = std::thread::spawn(move || {
@@ -1121,7 +1122,7 @@ mod tests {
     fn a_drained_fresh_connection_is_dropped_and_the_request_goes_once_on_one_more() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         let served = std::thread::spawn(move || {
             let (drained, _) = listener.accept().unwrap();
             let (mut more, _) = listener.accept().unwrap();
@@ -1158,7 +1159,7 @@ mod tests {
     fn a_second_drained_fresh_connection_fails_the_request_unsent_with_both_evidence_lines() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         let mut checks = 0;
         let error = client
             .send_checked(b"must not be sent", Kind::Write, |_| {
@@ -1195,7 +1196,7 @@ mod tests {
     fn a_fresh_connection_whose_check_fails_otherwise_fails_the_request_unsent_at_once() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         let mut checks = 0;
         let error = client
             .send_checked(b"must not be sent", Kind::Write, |_| {
@@ -1226,7 +1227,7 @@ mod tests {
         use std::os::fd::AsRawFd;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         let elsewhere = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let other = TcpStream::connect(elsewhere.local_addr().unwrap()).unwrap();
         let mut checks = 0;
@@ -1282,7 +1283,7 @@ mod tests {
             }
         };
         let (addr, served) = serving(vec![(vec![SEVEN], false)]);
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         sevens(&client, 1);
         let kept = client.kept.lock().unwrap()[0].stream.as_raw_fd();
         assert!(!found(kept), "a forked child holds the kept connection");
@@ -1505,17 +1506,14 @@ mod tests {
     #[test]
     fn a_clients_requests_go_over_one_connection_the_server_keeps_open() {
         let (addr, served) = serving(vec![(vec![SEVEN, SEVEN, SEVEN], false)]);
-        sevens(
-            &Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5)),
-            3,
-        );
+        sevens(&Client::new(&addr, "sf", "t").waiting(PATIENT), 3);
         assert_eq!(served.join().unwrap(), vec![3]);
     }
 
     #[test]
     fn a_kept_connection_the_server_has_since_closed_is_replaced_by_a_new_one() {
         let (addr, served) = serving(vec![(vec![SEVEN], true), (vec![SEVEN], false)]);
-        let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+        let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
         sevens(&client, 1);
         {
             let kept = client.kept.lock().unwrap();
@@ -1537,20 +1535,14 @@ mod tests {
     #[test]
     fn a_reply_that_says_it_closes_its_connection_is_the_last_on_it() {
         let (addr, served) = serving(vec![(vec![SEVEN_THEN_CLOSE], false), (vec![SEVEN], false)]);
-        sevens(
-            &Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5)),
-            2,
-        );
+        sevens(&Client::new(&addr, "sf", "t").waiting(PATIENT), 2);
         assert_eq!(served.join().unwrap(), vec![1, 1]);
     }
 
     #[test]
     fn a_chunked_reply_on_a_kept_connection_is_read_to_its_last_chunk() {
         let (addr, served) = serving(vec![(vec![SEVEN_CHUNKED, SEVEN], false)]);
-        sevens(
-            &Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5)),
-            2,
-        );
+        sevens(&Client::new(&addr, "sf", "t").waiting(PATIENT), 2);
         assert_eq!(served.join().unwrap(), vec![2]);
     }
 

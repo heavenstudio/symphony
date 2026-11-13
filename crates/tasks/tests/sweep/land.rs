@@ -1228,9 +1228,11 @@ fn two_lands_at_once_go_one_after_the_other() {
     let r = Repo::new();
     let started = r.dir.join("started");
     let go = r.dir.join("go");
+    // The check waits for the test's word, for six minutes of its looks at most (the backstop of
+    // the minute it once had), and fails past them.
     let check = format!(
         "echo \"$TASKS_TASK\" >> '{runs}'; touch '{started}'; i=0; while [ ! -e '{go}' ] && \
-         [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done; test -e '{go}'",
+         [ $i -lt 3600 ]; do sleep 0.1; i=$((i+1)); done; test -e '{go}'",
         runs = r.dir.join("runs").display(),
         started = started.display(),
         go = go.display()

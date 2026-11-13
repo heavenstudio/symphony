@@ -15,9 +15,10 @@ use symphony_board::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_o
 use symphony_board::sys;
 use symphony_board::sys::{Child, Command, Stdio};
 
-/// The deadline of a case whose starts are all quick: one it never comes near.
+/// The deadline of a case whose starts are all quick: one it never comes near, however loaded the
+/// machine, the backstop of the 20 s it once had, six times over.
 fn later() -> Instant {
-    Instant::now() + Duration::from_secs(20)
+    Instant::now() + Duration::from_secs(120)
 }
 
 /// What one fake child does.
