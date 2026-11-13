@@ -631,8 +631,8 @@ executor is never reused. Otherwise it launches what a bare `just tasks launch` 
 would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
 separate worktree: the task's own branch, or detached main for an instruction or review. Live
 agent terminals and live board agent sessions without a terminal count toward the cap, the
-lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
-deferral and failure prints one line. Only a successful ping or launch is posted on
+lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the
+floor defers work. Every proposal, dispatch, deferral and failure prints one line. Only a successful ping or launch is posted on
 the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
@@ -1868,14 +1868,14 @@ reviewer = "opus"
   project and `just symphony-status --lint` refuse it in the same words, as they refuse a key
   the Symphony does not know, by name and line (`[limits] wip (line 4) is not a setting the
   Symphony knows`).
-- **Staging a new key.** A build older than a key does not know it: its lint and its docs audit
-  refuse the file, naming the key, its server reads the rest and says the key is left out, and
-  its board never reads it. So a project writes a new key only once every build that reads its
-  file knows it: the shared server, the build a land runs and each consuming project's pin.
-  Until then the setting stays where those builds read it (a cap in `[board]
-  orchestrator_slots` holds for all of them); once they all know the key, the value moves, and
-  while builds are mixed it can be written in both tables with one value, the older key dropped
-  after.
+- **Staging a new key.** A build older than a key does not know it: its `just symphony-status
+  --lint` and its load of the project refuse the file, naming the key, its server reads the rest
+  and says the key is left out, and its board never reads it. So a project writes a new key only
+  once every build that reads its file knows it: the shared server, the build a land runs and
+  each consuming project's pin. Until then the setting stays where those builds read it (a cap
+  in `[board] orchestrator_slots` holds for all of them); once they all know the key, the value
+  moves, and while builds are mixed it can be written in both tables with one value, the older
+  key dropped after.
 
 ## Slots
 
