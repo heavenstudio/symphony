@@ -812,6 +812,14 @@ and keep a thread's evidence reachable.
      itself, it warns.
    - It warns, "not in a clone", of an owner's line naming an upload git does not track.
    - It warns of any other document's picture that points into the ignored artifacts folder.
+   - As built, a document's own pictures (outside its cards and the owner's callouts) are judged
+     as a card's are: refused on a branch's own lines, warned of on main, on disk or not. The
+     picture reader takes every form: a title, a reference to a definition, raw `<img src>`, and
+     this server's own URL for a file of the project. On main as it stood when this was built,
+     nothing was refused or warned of.
+   - As built, the verdict commits an upload only when the store holds a regular file there of at
+     most the cap, whose SHA-256 is its name. Anything else is left out with a note, and the
+     verdict is saved.
    - The server commits an owner's verdict itself (`crates/symphony/src/commit.rs`). That commit
      adds each upload the owner's new line names, at the path its link names from the repository
      root, whatever the artifacts folder is called.

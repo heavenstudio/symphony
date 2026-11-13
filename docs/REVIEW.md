@@ -326,11 +326,17 @@ call in a clear and concise manner"".
   clone and GitHub show it: never a path into the ignored artifacts folder, and
   never an owner's upload, which is for a thread. Every picture is on disk and
   added to git before the card is committed: `just symphony-cli docs-audit
-  --check` refuses an open card whose picture does not load or is not a file git
-  tracks, judged on what the checkout wrote (the card's text and lines its fork
-  from main did not hold, so an answer to main's card is never refused for main's
-  pictures, nor a verdict's branch for an agent's), and on main itself, which has
-  no fork of its own, only warns of a picture git does not track. The app holds a
+  --check` refuses an open card whose picture does not load, and any card's
+  picture that is not a file git tracks, judged on what the checkout wrote (the
+  card's text and lines its fork from main did not hold, so an answer to main's
+  card is never refused for main's pictures, nor a verdict's branch for an
+  agent's). On main itself, which has no fork of its own, it only warns of a
+  picture git does not track, on disk or not. A document's own pictures are
+  judged the same way, line by line: a branch's line showing one git does not
+  track is refused, the owner's callouts aside. The audit reads every form a
+  picture takes: `![alt](path "title")`, a reference `![alt][label]` to its
+  `[label]: path`, raw `<img src="path">`, and this server's own URL
+  (`http://127.0.0.1:8765/<project>/…`) for a file of the project. The app holds a
   branch's card asking the owner back until its pictures are there.
 - A results or comparison card says how each option looks and how well it
   performs, one plain line each, such as "all three cost the same on the GPU,
@@ -455,10 +461,13 @@ checkout, and a chat callback names the full paths.
   the owner saved on main, a card's line or note or a document's callout, each
   upload that line names goes into the same commit, at the path its link names
   (`artifacts/uploads/<sha256>.<ext>`, whatever the project's artifacts folder
-  is called), so a clone and GitHub show the owner's words as written. Uploads
-  on an ask, a thread message or a new task are working evidence and stay in
-  the store alone. The docs audit warns, "not in a clone", of a line naming an
-  upload git does not track.
+  is called), so a clone and GitHub show the owner's words as written. It
+  commits only the upload itself: a regular file in the store, of at most the
+  upload cap, whose SHA-256 is its name. Anything else under that name (a link,
+  other bytes, a larger file) is left out with a note, and the verdict is saved
+  without it. Uploads on an ask, a thread message or a new task are working
+  evidence and stay in the store alone. The docs audit warns, "not in a clone",
+  of a line naming an upload git does not track.
 - **How they are served.** `GET /artifacts/uploads/<sha256>.<ext>`, also under
   `/@<tree>/`, answers a stored name only, with its fixed type, `nosniff` and
   a script-free sandboxing `Content-Security-Policy`; pictures and text open
@@ -490,8 +499,10 @@ The owner reviews on a phone over a mobile link, so the app is built to cost lit
 - **Working evidence lives in `artifacts/`, which is gitignored.** The app
   shows it on this machine and nowhere else, and the docs audit warns of a
   document's link there that this machine or a clone lacks. What a document or
-  a card shows is committed beside it ([Writing a card](#writing-a-card)), and
-  the uploads a verdict names with the verdict ([Attaching files](#attaching-files)).
+  a card shows is committed beside it, and the audit refuses a picture a branch
+  shows that git does not track ([Writing a card](#writing-a-card)); the
+  uploads a verdict names are committed with the verdict
+  ([Attaching files](#attaching-files)).
 - **The board sees `docs/` only**, and skips `docs/history/`.
 
 ## HTML mockups in cards

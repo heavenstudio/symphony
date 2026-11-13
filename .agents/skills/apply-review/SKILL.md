@@ -2,7 +2,7 @@
 name: apply-review
 description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
-<!-- symphony-stamp: 7b7720468a564f7b files=SKILL.md,rewrite-brief.md -->
+<!-- symphony-stamp: 0794dc5576f8ba3f files=SKILL.md,rewrite-brief.md -->
 
 # Apply the owner's review
 
