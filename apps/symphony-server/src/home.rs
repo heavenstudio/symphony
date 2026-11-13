@@ -201,7 +201,7 @@ impl Home {
             .and_then(|recorded| self.running_of(recorded.pid))
             .or_else(|| self.unrecorded());
         if let Some(running) = &found {
-            self.end(running.pid)?;
+            self.end(running.pid, "asked to stop (`--stop`)")?;
         }
         let address = self.dir.join(ADDRESS);
         if address.exists() {
@@ -316,9 +316,12 @@ impl Home {
         }
     }
 
-    /// Ask `pid` to end, then make it; it is gone when this returns.
-    fn end(&self, pid: i64) -> Result<(), ServerError> {
+    /// Ask `pid` to end, then make it; it is gone when this returns. Each signal is said on stderr
+    /// before it is sent, with its pid and `why`, so a log kept of a process that ended by one
+    /// shows this sent it.
+    fn end(&self, pid: i64, why: &str) -> Result<(), ServerError> {
         for (how, wait) in [(libc::SIGTERM, GRACE), (libc::SIGKILL, GRACE)] {
+            crate::front::tell(format_args!("{}", ending(pid, how, why)));
             signal(pid, how);
             let began = Instant::now();
             while began.elapsed() < wait {
@@ -331,6 +334,17 @@ impl Home {
         Err(ServerError::NotUp(format!(
             "the Symphony server (pid {pid}) did not end when told to"
         )))
+    }
+
+    /// Why a start ends the server `pid` it just started: `what` it did not do within the patience.
+    fn end_started(&self, pid: i64, what: &str) -> Result<(), ServerError> {
+        self.end(
+            pid,
+            &format!(
+                "this start's server did not {what} within {} s",
+                self.patience.as_secs()
+            ),
+        )
     }
 
     /// Start the server, detached, wait until it and its app answer, and record it. Under the lock.
@@ -388,7 +402,7 @@ impl Home {
                 Some(port) => port,
                 None => {
                     if child.try_wait().ok().flatten().is_none() {
-                        self.end(pid)?;
+                        self.end_started(pid, "announce its port")?;
                         let _ = child.wait();
                     }
                     return Err(ServerError::NotUp(format!(
@@ -410,7 +424,7 @@ impl Home {
             self.came_up(&running, &mut child)
         }) {
             if child.try_wait().ok().flatten().is_none() {
-                self.end(running.pid)?;
+                self.end_started(running.pid, "answer")?;
                 let _ = child.wait();
                 return Err(ServerError::NotUp(format!(
                     "the Symphony server (pid {}, port {}) did not answer within {} s; its log is {}",
@@ -478,6 +492,20 @@ impl Home {
             let _ = fs::remove_file(&next);
         }
         result
+    }
+}
+
+/// What [`Home::end`] says before it sends `how`, SIGTERM or the SIGKILL after it, to the server
+/// `pid`, which it ends for `why`.
+fn ending(pid: i64, how: libc::c_int, why: &str) -> String {
+    if how == libc::SIGKILL {
+        format!(
+            "· Symphony: SIGKILL to the server, pid {pid}: it did not end within {} s of SIGTERM \
+             ({why})",
+            GRACE.as_secs()
+        )
+    } else {
+        format!("· Symphony: SIGTERM to the server, pid {pid}: {why}")
     }
 }
 

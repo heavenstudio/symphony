@@ -207,6 +207,19 @@ fn the_announced_port_is_the_last_line_of_that_pid() {
 }
 
 #[test]
+fn an_end_says_each_signal_its_pid_and_why() {
+    assert_eq!(
+        ending(42, libc::SIGTERM, "asked to stop (`--stop`)"),
+        "· Symphony: SIGTERM to the server, pid 42: asked to stop (`--stop`)"
+    );
+    assert_eq!(
+        ending(42, libc::SIGKILL, "asked to stop (`--stop`)"),
+        "· Symphony: SIGKILL to the server, pid 42: it did not end within 20 s of SIGTERM \
+         (asked to stop (`--stop`))"
+    );
+}
+
+#[test]
 fn a_port_is_held_unless_a_connection_to_it_is_refused() {
     let listening = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listening.local_addr().unwrap().port();
