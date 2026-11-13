@@ -246,6 +246,15 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
          around it clips there",
         "a link wrapped over two lines is aimed at its first line, and one taller than its \
          scrolling box at a line the box shows",
+        // In view is on the screen, a phone's included.
+        "In view is in what the screen shows of the page, where the pointer goes (its visual \
+         viewport: on a phone, a page wider than the screen or zoomed in shows a part of its \
+         layout)",
+        // The point pressed is the point tested, or nothing is pressed.
+        "Once aimed, the pointer moves to that middle and the page's hover is read: should the \
+         pointer be anywhere but where the aim tested, or, for a click, anything but the element \
+         (or its label) be on top there by then (a menu its hover opened), the step fails naming \
+         what the press would reach, and nothing is pressed",
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
         "but on a link, an object or another control inside it (in a component's open shadow root \
          too, and on what is slotted into one there)",
@@ -520,8 +529,12 @@ fn a_probe_tests_what_is_on_top_at_the_middle_of_the_box_it_read() {
                 "return {x: box.x",
             ],
         );
+        // The view is what the screen shows, the visual viewport, by its edges in the page's
+        // coordinates; the scroll, the page's own.
         assert!(
-            probe.contains("view: [innerWidth, innerHeight], scroll: [scrollX, scrollY], hit}"),
+            probe.contains(
+                "view: [vv.offsetLeft, vv.offsetTop, vv.width, vv.height], scroll: [scrollX, scrollY], hit}"
+            ),
             "{probe}"
         );
     }
@@ -535,13 +548,17 @@ fn a_probe_aims_at_the_first_line_box_in_view_that_takes_the_press_then_one_noth
         probe.contains("[...element.getClientRects()].filter(r => r.width > 0 && r.height > 0)"),
         "{probe}"
     );
-    // In view as the aim reads it: the middle within the viewport, its far edges excluded.
-    assert!(
-        probe.contains(
-            "const seen = ([x, y]) => x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;"
-        ),
-        "{probe}"
+    // In view as the aim reads it: the middle within what the screen shows, the visual viewport,
+    // its far edges excluded; without its interface, the window.
+    in_order(
+        &probe,
+        &[
+            "const vv = window.visualViewport ?? {offsetLeft: 0, offsetTop: 0, width: innerWidth, height: innerHeight};",
+            "const seen = ([x, y]) => x >= vv.offsetLeft && x < vv.offsetLeft + vv.width && y >= vv.offsetTop && y < vv.offsetTop + vv.height;",
+            "const viewed = rects.filter(r => seen(middle(r)));",
+        ],
     );
+    assert!(!probe.contains("innerWidth && "), "{probe}");
     // The first in view that takes the press, else the first no box around it clips there, else
     // the first in view, its first, its whole box.
     assert!(
@@ -774,6 +791,203 @@ fn a_press_through_a_label_is_confirmed_by_the_node_the_browser_finds_there() {
 }
 
 #[test]
+fn what_a_press_reaches_is_read_alike_by_the_probe_and_once_the_pointer_has_moved() {
+    let probe = probe("#a", Look::Now);
+    let arrived = arrival("#a", (60.0, 2615.5));
+    // One reach for both, its names and walks the probe's own.
+    for script in [&probe, &arrived] {
+        assert!(script.contains(NAMES) && script.contains(REACH), "{script}");
+    }
+    for part in ["const reach = ", "const takes = ", "const flat = "] {
+        assert!(!AIM.contains(part) && !ARRIVED.contains(part), "{part}");
+    }
+    // A point's hit finds a pair, the pointer's hover another, and either goes through one walk to
+    // the control a label clicks.
+    in_order(
+        REACH,
+        &[
+            "const reach = (x, y) => {",
+            "return reached(at, deep);",
+            "const reached = (at, deep) => {",
+            "const takes = p => ",
+        ],
+    );
+    // The element and the point go in as JSON, the point in the page's coordinates.
+    assert!(
+        arrived.starts_with(
+            "(() => { const element = document.querySelector(\"#a\"); const [x, y] = [60.0, 2615.5]; "
+        ),
+        "{arrived}"
+    );
+    assert!(
+        arrived.contains(&format!("const INTERACTIVE = {};", json!(INTERACTIVE))),
+        "{arrived}"
+    );
+    assert!(arrival("a[href=\"x\"]", (1.0, 2.0)).contains(r#"querySelector("a[href=\"x\"]")"#));
+}
+
+#[test]
+fn the_pointer_is_found_by_the_pages_hover_and_set_beside_the_hit_where_the_aim_tested() {
+    // The pointer: the last element the hover matches, then the same down each open shadow root,
+    // the document's element there its outermost host; then the hit at the point aimed at, now.
+    in_order(
+        ARRIVED,
+        &[
+            "const all = root.querySelectorAll(':hover');",
+            "deep = all[all.length - 1];",
+            "root = deep.shadowRoot;",
+            "while (at && at.getRootNode() instanceof ShadowRoot) at = at.getRootNode().host;",
+            "const hit = reach(x, y);",
+        ],
+    );
+    for part in [
+        // Taken, else what is there by its name, else nothing; the element gone takes nothing.
+        "const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);",
+        // Agreeing when the pointer is over the very element the hit finds.
+        "return {gone: !element, pointer: said(reached(at, deep)), hit: said(hit), agree: !!deep && deep === hit.deep};",
+    ] {
+        assert!(ARRIVED.contains(part), "no {part:?} in {ARRIVED}");
+    }
+}
+
+/// An arrival with the element still in the page.
+fn arrived(pointer: Reached, hit: Reached, agree: bool) -> Arrival {
+    Arrival {
+        gone: false,
+        pointer,
+        hit,
+        agree,
+    }
+}
+
+#[test]
+fn an_arrival_reads_the_pointer_the_hit_and_whether_they_agree() {
+    assert_eq!(
+        Arrival::read(&json!({"gone": false, "pointer": true, "hit": "div#menu", "agree": false})),
+        arrived(Reached::Target, Reached::Other("div#menu".into()), false)
+    );
+    assert_eq!(
+        Arrival::read(&json!({"gone": true, "pointer": null, "hit": "main", "agree": true})),
+        Arrival {
+            gone: true,
+            ..arrived(Reached::Nothing, Reached::Other("main".into()), true)
+        }
+    );
+    // Anything short of an answer is nothing, never gone nor agreeing.
+    for unsaid in [
+        json!(null),
+        json!({"gone": "yes", "pointer": false, "hit": 3, "agree": 1}),
+    ] {
+        assert_eq!(
+            Arrival::read(&unsaid),
+            arrived(Reached::Nothing, Reached::Nothing, false),
+            "{unsaid}"
+        );
+    }
+}
+
+#[test]
+fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
+    use Reached::{Nothing, Other, Target};
+    // The pointer over the element, the element on top there: either goes on.
+    for clicking in [true, false] {
+        for agree in [true, false] {
+            assert_eq!(arrived(Target, Target, agree).refused(clicking), None);
+        }
+    }
+    // The pointer past the page's edge, where main put it on a phone: the point pressed is not the
+    // point tested, whatever the hit test says there.
+    let past = arrived(Nothing, Target, false);
+    assert_eq!(
+        past.refused(true).as_deref(),
+        Some(
+            ": the press would have landed on nothing in the page, not on it: the pointer, moved to \
+             its middle, is not where the aim tested; nothing was pressed"
+        )
+    );
+    assert_eq!(
+        past.refused(false).as_deref(),
+        Some(
+            ": the pointer landed on nothing in the page, not on it: moved to its middle, it is not \
+             where the aim tested"
+        )
+    );
+    // Over another element than the one the hit test finds there, the element or anything else.
+    for hit in [Target, Other("div#veil".into()), Nothing] {
+        let elsewhere = arrived(Other("html".into()), hit, false);
+        assert_eq!(
+            elsewhere.refused(true).as_deref(),
+            Some(
+                ": the press would have landed on html, not on it: the pointer, moved to its \
+                 middle, is not where the aim tested; nothing was pressed"
+            ),
+            "{elsewhere:?}"
+        );
+        assert_eq!(
+            elsewhere.refused(false).as_deref(),
+            Some(
+                ": the pointer landed on html, not on it: moved to its middle, it is not where the \
+                 aim tested"
+            )
+        );
+    }
+    // As the pointer came, the page put a menu on top where the aim tested (its hover opened it),
+    // the page's hover still on the element or on the menu already: the pointer is where the aim
+    // tested, so a hover has done what it does, but a click would press the menu.
+    for menu in [
+        arrived(Target, Other("div#menu".into()), false),
+        arrived(Other("div#menu".into()), Other("div#menu".into()), true),
+    ] {
+        assert_eq!(menu.refused(false), None, "{menu:?}");
+        assert_eq!(
+            menu.refused(true).as_deref(),
+            Some(
+                ": the press would have landed on div#menu, not on it: that was on top at its \
+                 middle once the pointer reached it; nothing was pressed"
+            ),
+            "{menu:?}"
+        );
+    }
+    // Nothing there any more, or the hit test taking the element where the hover agreeing with it
+    // does not (no such page): a click goes on only with both on the element.
+    assert_eq!(
+        arrived(Target, Nothing, false).refused(true).as_deref(),
+        Some(
+            ": the press would have landed on nothing in the page, not on it: that was on top at \
+             its middle once the pointer reached it; nothing was pressed"
+        )
+    );
+    assert!(
+        arrived(Other("span#x".into()), Target, true)
+            .refused(true)
+            .is_some_and(
+                |why| why.starts_with(": the press would have landed on span#x, not on it")
+            )
+    );
+    // The element gone as the pointer came: a hover has done what it does, a click presses
+    // nothing; a pointer elsewhere than the hit is said first.
+    let gone = Arrival {
+        gone: true,
+        ..arrived(Other("main".into()), Other("main".into()), true)
+    };
+    assert_eq!(gone.refused(false), None);
+    assert_eq!(
+        gone.refused(true).as_deref(),
+        Some(" left the page as the pointer reached it; nothing was pressed")
+    );
+    let strayed = Arrival {
+        gone: true,
+        ..arrived(Other("main".into()), Other("div".into()), false)
+    };
+    assert!(
+        strayed
+            .refused(true)
+            .is_some_and(|why| why.starts_with(": the press would have landed on main, not on it"))
+    );
+    assert!(strayed.refused(false).is_some());
+}
+
+#[test]
 fn a_probe_names_an_element_by_a_selector_that_finds_it_alone() {
     let probe = probe("#a", Look::Now);
     // Its name when that finds it alone, else a path of names up from it, each step pinned by
@@ -801,10 +1015,28 @@ fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
         y,
         width,
         height,
-        view: (1440.0, 900.0),
+        view: view(0.0, 0.0, 1440.0, 900.0),
         scroll: (0.0, 0.0),
         hit: Hit::Target,
     }
+}
+
+/// A visual viewport at `left`, `top`, `width` by `height` in the page's coordinates.
+fn view(left: f64, top: f64, width: f64, height: f64) -> Viewport {
+    Viewport {
+        left,
+        top,
+        width,
+        height,
+    }
+}
+
+/// The aim taken at `(x, y)`, on a desktop, where the screen's point is the page's.
+fn aimed(x: f64, y: f64) -> Next {
+    Next::At(Press {
+        screen: (x, y),
+        page: (x, y),
+    })
 }
 
 /// [`place`], missing the press at its middle for `miss`.
@@ -832,15 +1064,21 @@ fn holder(name: &str, why: Why) -> Holder {
 
 #[test]
 fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
-    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844], "scroll": [0, 640.5], "hit": true});
+    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [0, 2193.5, 390, 844], "scroll": [0, 640.5], "hit": true});
     assert_eq!(
         Place::read("#a", &found),
         Ok(Some(Place {
-            view: (390.0, 844.0),
+            view: view(0.0, 2193.5, 390.0, 844.0),
             scroll: (0.0, 640.5),
             ..place(10.5, 20.0, 100.0, 22.0)
         }))
     );
+    // A view short of its four edges is no place: the old two-number view among them.
+    for short in [json!([390, 844]), json!([0, 0, 390]), json!(null)] {
+        let mut read = found.clone();
+        read["view"] = short;
+        assert_eq!(Place::read("#a", &read), Ok(None));
+    }
     let hit = |said: Value| {
         let mut read = found.clone();
         read["hit"] = said;
@@ -949,12 +1187,132 @@ fn a_place_is_drawn_with_a_box_and_in_view_by_its_middle() {
     assert!(place(100.0, 888.0, 200.0, 22.0).in_view(), "middle at 899");
 }
 
+/// [`place`] as a phone shows it: on a screen `view`, the page scrolled by `scroll`.
+fn shown(place: Place, view: Viewport, scroll: (f64, f64)) -> Place {
+    Place {
+        view,
+        scroll,
+        ..place
+    }
+}
+
+#[test]
+fn a_place_on_a_phone_is_in_view_and_pressed_where_the_screen_shows_it() {
+    // The page wider than the phone, at its own scale (initial-scale=1): the layout viewport grows
+    // to 1560x3376, a quarter's zoom, and the screen shows 390x844 of it. A button far down,
+    // scrolled to the middle of the screen, which moved within the layout viewport, not the page:
+    // its middle at 2615 in the page is 422 down the screen. Main pressed it at 2615 down the screen,
+    // past the page's edge, and the press landed on the page's root.
+    let down = shown(
+        place(20.0, 2600.0, 80.0, 30.0),
+        view(0.0, 2193.0, 390.0, 844.0),
+        (0.0, 0.0),
+    );
+    assert!(down.in_view());
+    assert_eq!(down.middle(), (60.0, 2615.0));
+    assert_eq!(down.on_screen(), (60.0, 422.0));
+    assert_eq!(
+        down.press(),
+        Press {
+            screen: (60.0, 422.0),
+            page: (60.0, 2615.0)
+        }
+    );
+    // The browser's own hit takes the document's point, by the page's scroll alone: the screen's
+    // move within the layout viewport is no scroll of the page.
+    assert_eq!(down.in_document(), (60.0, 2615.0));
+    // Main read the window (the layout viewport) as the view: there the button was in view where
+    // the screen does not show it.
+    let main = shown(down.clone(), view(0.0, 0.0, 1560.0, 3376.0), (0.0, 0.0));
+    assert!(main.in_view());
+    assert!(!shown(down.clone(), view(0.0, 0.0, 390.0, 844.0), (0.0, 0.0)).in_view());
+    // A button far right: the screen moved right.
+    let right = shown(
+        place(1200.0, 300.0, 80.0, 30.0),
+        view(1045.0, 0.0, 390.0, 844.0),
+        (0.0, 0.0),
+    );
+    assert!(right.in_view());
+    assert_eq!(right.on_screen(), (195.0, 315.0));
+    // Zoomed in (initial-scale=2): the screen shows 195x422 of the page, from (243, 404). The pointer
+    // takes CSS pixels from the screen's corner and Chrome scales them by the zoom itself.
+    let zoomed = shown(
+        place(300.0, 600.0, 80.0, 30.0),
+        view(243.0, 404.0, 195.0, 422.0),
+        (0.0, 0.0),
+    );
+    assert!(zoomed.in_view());
+    assert_eq!(zoomed.on_screen(), (97.0, 211.0));
+    // Its far edges are out, its near ones in.
+    for (x, y, seen) in [
+        (243.0, 404.0, true),
+        (437.5, 825.5, true),
+        (438.0, 615.0, false),
+        (340.0, 826.0, false),
+        (242.5, 615.0, false),
+        (340.0, 403.5, false),
+    ] {
+        let at = shown(place(x - 1.0, y - 1.0, 2.0, 2.0), zoomed.view, (0.0, 0.0));
+        assert_eq!(at.in_view(), seen, "({x}, {y})");
+    }
+    // A scrolled page moves the document's point, never the screen's.
+    let scrolled = shown(zoomed.clone(), zoomed.view, (30.0, 1200.0));
+    assert_eq!(scrolled.on_screen(), (97.0, 211.0));
+    assert_eq!(scrolled.in_document(), (370.0, 1815.0));
+    // No meta viewport, or one without a scale, on a page that wide: zoomed out to a quarter, the
+    // screen shows the whole layout viewport, so the screen's point is the page's.
+    let out = shown(
+        place(300.0, 600.0, 80.0, 30.0),
+        view(0.0, 0.0, 1560.0, 3376.0),
+        (0.0, 0.0),
+    );
+    assert_eq!(out.on_screen(), out.middle());
+    // A desktop's: the window less its scrollbar, scrolled as a page is.
+    let desktop = shown(
+        place(20.0, 427.0, 80.0, 30.0),
+        view(0.0, 0.0, 1425.0, 885.0),
+        (0.0, 2173.0),
+    );
+    assert_eq!(desktop.on_screen(), (60.0, 442.0));
+    assert_eq!(desktop.in_document(), (60.0, 2615.0));
+    // Under the scrollbar is out of view.
+    assert!(!shown(place(1420.0, 427.0, 20.0, 30.0), desktop.view, (0.0, 0.0)).in_view());
+}
+
+#[test]
+fn an_aim_on_a_phone_is_taken_at_the_screens_point_and_tested_at_the_pages() {
+    let down = shown(
+        place(20.0, 2600.0, 80.0, 30.0),
+        view(0.0, 2193.0, 390.0, 844.0),
+        (0.0, 0.0),
+    );
+    let mut aim = Aim::default();
+    assert_eq!(aim.read(Some(down.clone())), Next::Again);
+    assert_eq!(
+        aim.read(Some(down.clone())),
+        Next::At(Press {
+            screen: (60.0, 422.0),
+            page: (60.0, 2615.0)
+        })
+    );
+    // The screen moving between two reads, the box held still in the page, is a move.
+    let mut aim = Aim::default();
+    aim.read(Some(down.clone()));
+    let moved = shown(down.clone(), view(0.0, 2000.0, 390.0, 844.0), (0.0, 0.0));
+    assert_eq!(aim.read(Some(moved.clone())), Next::Again);
+    assert_eq!(aim.latest, Latest::Moving);
+    // Out of the screen's view, though in the layout viewport, it is scrolled to again.
+    let unseen = shown(down, view(0.0, 0.0, 390.0, 844.0), (0.0, 0.0));
+    assert_eq!(aim.read(Some(unseen)), Next::Scroll);
+    assert_eq!(aim.latest, Latest::OutOfView);
+}
+
 #[test]
 fn the_aim_is_taken_once_two_reads_in_a_row_find_the_box_in_one_place() {
     let summary = place(100.0, 449.0, 200.0, 22.0);
     let mut aim = Aim::default();
     assert_eq!(aim.read(Some(summary.clone())), Next::Again);
-    assert_eq!(aim.read(Some(summary)), Next::At((200.0, 460.0)));
+    assert_eq!(aim.read(Some(summary)), aimed(200.0, 460.0));
 }
 
 #[test]
@@ -968,7 +1326,7 @@ fn a_box_that_moved_is_aimed_at_where_it_then_held() {
     assert_eq!(aim.read(Some(before.clone())), Next::Again);
     assert_eq!(aim.read(Some(after.clone())), Next::Again);
     assert_eq!(aim.latest, Latest::Moving);
-    assert_eq!(aim.read(Some(after)), Next::At((200.0, 555.0)));
+    assert_eq!(aim.read(Some(after)), aimed(200.0, 555.0));
     // A box that grew or shrank where it stands moved too.
     let mut aim = Aim::default();
     aim.read(Some(before));
@@ -998,7 +1356,7 @@ fn a_box_held_still_under_something_else_is_scrolled_again_not_aimed_at() {
         // Scrolled again, clear of the cover: two reads in a row on top in one place.
         let clear = place(100.0, 440.0, 80.0, 20.0);
         assert_eq!(aim.read(Some(clear.clone())), Next::Again, "{cover}");
-        assert_eq!(aim.read(Some(clear)), Next::At((140.0, 450.0)), "{cover}");
+        assert_eq!(aim.read(Some(clear)), aimed(140.0, 450.0), "{cover}");
     }
 }
 
@@ -1010,7 +1368,7 @@ fn a_covered_read_between_two_agreeing_ones_starts_the_reads_over() {
     // A toast passing over it for one frame: the read before it no longer counts.
     assert_eq!(aim.read(Some(covered(&target, "div.toast"))), Next::Scroll);
     assert_eq!(aim.read(Some(target.clone())), Next::Again);
-    assert_eq!(aim.read(Some(target)), Next::At((200.0, 460.0)));
+    assert_eq!(aim.read(Some(target)), aimed(200.0, 460.0));
 }
 
 /// [`place`], with its own ancestor `name` on top at its middle, missing the press for `why`.
@@ -1040,7 +1398,7 @@ fn a_target_whose_ancestor_takes_the_pointer_at_its_middle_is_scrolled_again_nev
         }
         // Scrolled again, it is on top and aimed at.
         assert_eq!(aim.read(Some(icon.clone())), Next::Again, "{name}");
-        assert_eq!(aim.read(Some(icon.clone())), Next::At((112.0, 461.0)));
+        assert_eq!(aim.read(Some(icon.clone())), aimed(112.0, 461.0));
     }
     // Between two agreeing reads, an ancestor's read starts them over, as a cover's does.
     let mut aim = Aim::default();
@@ -1071,7 +1429,7 @@ fn a_target_a_box_around_it_clips_away_is_scrolled_again_and_one_its_visibility_
         assert_eq!(aim.latest, Latest::Missed(Miss::Clipped("div#list".into())));
     }
     assert_eq!(aim.read(Some(target.clone())), Next::Again);
-    assert_eq!(aim.read(Some(target.clone())), Next::At((140.0, 459.0)));
+    assert_eq!(aim.read(Some(target.clone())), aimed(140.0, 459.0));
     // Hidden by its visibility: no scroll shows it, so it is read again until the page shows it.
     let hidden = missing(&target, Miss::Hidden("hidden".into()));
     let mut aim = Aim::default();
@@ -1082,7 +1440,7 @@ fn a_target_a_box_around_it_clips_away_is_scrolled_again_and_one_its_visibility_
     }
     // The read before it does not count: two shown reads in a row are.
     assert_eq!(aim.read(Some(target.clone())), Next::Again);
-    assert_eq!(aim.read(Some(target)), Next::At((140.0, 459.0)));
+    assert_eq!(aim.read(Some(target)), aimed(140.0, 459.0));
 }
 
 #[test]
@@ -1135,7 +1493,7 @@ fn a_box_gone_without_one_or_out_of_view_starts_the_reads_over() {
         assert_eq!(aim.latest, latest);
         // The read before it is not one the box held still since.
         assert_eq!(aim.read(Some(summary.clone())), Next::Again, "{between:?}");
-        assert_eq!(aim.read(Some(summary.clone())), Next::At((200.0, 460.0)));
+        assert_eq!(aim.read(Some(summary.clone())), aimed(200.0, 460.0));
     }
 }
 

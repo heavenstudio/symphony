@@ -1464,6 +1464,216 @@ fn a_click_on_a_link_taller_than_its_scrolling_box_aims_at_a_line_the_box_shows_
     );
 }
 
+/// A page 3200 px wide and tall, its meta viewport `meta` (none when empty): a button far right, one
+/// far down, a checkbox hidden in its label far right and down (pressed on its styled track), a
+/// button in the middle, and one far down to hover, which records the pointer coming over it. On
+/// a phone at its own scale (`initial-scale=1`) the page widens the layout viewport to 1560x3376, a
+/// quarter's zoom, and the screen shows 390x844 of it, scrolled within it apart from the page; at
+/// `initial-scale=2` it shows 195x422. With no meta viewport, or one without a scale, the phone
+/// shows the whole layout viewport, zoomed out to a quarter.
+fn wide(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; width: 3200px; height: 3200px; position: relative; }}
+  .spot {{ position: absolute; }}
+  button {{ width: 80px; height: 30px; }}
+  .toggle {{ position: relative; display: inline-flex; gap: 8px; align-items: center; }}
+  .hidden {{ position: absolute; left: 12px; top: 8px; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }}
+  .track {{ display: inline-block; width: 40px; height: 24px; background: #ccc; }}
+</style>
+<div class="spot" style="left: 1200px; top: 300px"><button id="right" type="button">far right</button></div>
+<div class="spot" style="left: 20px; top: 2600px"><button id="down" type="button">far down</button></div>
+<div class="spot" style="left: 2600px; top: 1800px"><label class="toggle"><input type="checkbox" id="toggle" class="hidden"><span class="track" id="track"></span> far right and down</label></div>
+<div class="spot" style="left: 300px; top: 600px"><button id="mid" type="button">mid</button></div>
+<div class="spot" style="left: 900px; top: 2900px"><button id="hovered" type="button">hover me</button></div>
+<script>
+  window.came = [];
+  document.getElementById('hovered').addEventListener('pointerover', event => came.push(event.target.id));
+  window.view = () => {{ const v = visualViewport; return {{inner: [innerWidth, innerHeight], screen: [v.offsetLeft, v.offsetTop, v.width, v.height], scale: v.scale}}; }};
+</script>
+{POINTED}"##
+    )
+    .into_bytes()
+}
+
+/// `symphony shot` on [`wide`] with `meta` and `steps`, then its one evaluation: the presses and
+/// clicks the page recorded, whether the checkbox is checked, what the hover recorded and the
+/// view as the last step left it. `None` without a Chrome.
+fn on_wide(name: &str, meta: &str, steps: &[&str]) -> Option<Value> {
+    let eval = "[landed, document.getElementById('toggle').checked, came, view()]";
+    let (output, out, _requests, _scratch) =
+        on_page(name, &wide(meta), &[steps, &["--eval", eval][..]].concat())?;
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    assert!(Picture::read(&out).width > 0);
+    Some(after.clone())
+}
+
+/// Each press and click [`wide`] records for its far right button, its far down button and its
+/// checkbox's label, clicked in that order.
+fn far_presses() -> Value {
+    json!([
+        ["pointerdown", "right"],
+        ["click", "right"],
+        ["pointerdown", "down"],
+        ["click", "down"],
+        ["pointerdown", "track"],
+        ["click", "track"],
+        ["click", "toggle"]
+    ])
+}
+
+#[test]
+fn a_phone_click_on_a_page_wider_than_its_screen_lands_where_the_screen_shows_its_target() {
+    let Some(after) = on_wide(
+        "wide-phone",
+        "width=device-width, initial-scale=1",
+        &[
+            "--phone", "--click", "#right", "--click", "#down", "--click", "#toggle", "--hover",
+            "#hovered",
+        ],
+    ) else {
+        return;
+    };
+    // The case at all: the screen shows a part of a larger layout viewport (1560x3376 on this
+    // Chrome), scrolled within it.
+    assert_eq!(after[3]["scale"], json!(1), "{after}");
+    let screen = rect(&after[3]["screen"]);
+    assert_eq!(screen[2..], [390.0, 844.0], "{after}");
+    let inner = &after[3]["inner"];
+    assert!(
+        inner[0].as_f64().unwrap() > 390.0 && inner[1].as_f64().unwrap() > 844.0,
+        "{after}"
+    );
+    assert!(
+        screen[1] > 0.0,
+        "the screen moved down within the layout viewport: {after}"
+    );
+    // Each press landed on its target, far right, far down and on the label's track, which checked
+    // the box; the hover came over its button. Main pressed each on the page's root, exit 0.
+    assert_eq!(after[0], far_presses(), "{after}");
+    assert_eq!(after[1], json!(true), "{after}");
+    assert_eq!(after[2], json!(["hovered"]), "{after}");
+}
+
+#[test]
+fn a_phone_click_on_a_page_zoomed_in_lands_on_its_target_on_the_screen_moved_within_the_page() {
+    let Some(after) = on_wide(
+        "wide-zoomed",
+        "width=device-width, initial-scale=2",
+        &["--phone", "--click", "#mid", "--click", "#down"],
+    ) else {
+        return;
+    };
+    // Zoomed in twice: the screen shows 195x422 of the page, scrolled away from its corner.
+    assert_eq!(after[3]["scale"], json!(2), "{after}");
+    let screen = rect(&after[3]["screen"]);
+    assert_eq!(screen[2..], [195.0, 422.0], "{after}");
+    assert!(screen[1] > 0.0, "{after}");
+    assert_eq!(
+        after[0],
+        json!([
+            ["pointerdown", "mid"],
+            ["click", "mid"],
+            ["pointerdown", "down"],
+            ["click", "down"]
+        ]),
+        "{after}"
+    );
+}
+
+#[test]
+fn a_phone_with_no_meta_viewport_and_a_desktop_still_click_where_they_did() {
+    for (name, view) in [
+        ("wide-bare-phone", &["--phone"][..]),
+        ("wide-desktop", &["--size", "800x600"][..]),
+    ] {
+        let steps = [
+            "--click", "#right", "--click", "#down", "--click", "#toggle", "--hover", "#hovered",
+        ];
+        let Some(after) = on_wide(name, "", &[view, &steps[..]].concat()) else {
+            return;
+        };
+        // No part of the layout viewport off the screen: the phone zoomed out to show it whole, the
+        // desktop's window being it.
+        let screen = rect(&after[3]["screen"]);
+        assert_eq!(screen[..2], [0.0, 0.0], "{name}: {after}");
+        assert_eq!(after[0], far_presses(), "{name}: {after}");
+        assert_eq!(after[1], json!(true), "{name}: {after}");
+        assert_eq!(after[2], json!(["hovered"]), "{name}: {after}");
+    }
+}
+
+/// A button whose hover opens a menu over the whole page, and a record of the pointer moving
+/// (`/moved`, which a settle waits on) and pressing (`/pressed`).
+const OPENS_ON_HOVER: &[u8] = br#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  #menu { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.3); }
+  #menu.open { display: block; }
+</style>
+<button id="opener" type="button">opens on hover</button>
+<div id="menu"></div>
+<script>
+  document.getElementById('opener').addEventListener('pointerenter', () => document.getElementById('menu').classList.add('open'));
+  addEventListener('pointermove', () => fetch('/moved'), true);
+  addEventListener('pointerdown', () => fetch('/pressed'), true);
+</script>"#;
+
+#[test]
+fn a_click_whose_hover_opens_a_menu_over_its_target_fails_naming_it_and_presses_nothing() {
+    // The aim finds the button on top; the pointer reaching it opens the menu over it, so a press
+    // there would reach the menu.
+    let Some((output, out, requests, _scratch)) = on_page(
+        "opens-on-hover",
+        OPENS_ON_HOVER,
+        &["--timeout", "10", "--click", "#opener"],
+    ) else {
+        return;
+    };
+    assert_eq!(output.status.code(), Some(1), "{}", said(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        "symphony shot: --click #opener: the press would have landed on div#menu.open, not on it: \
+         that was on top at its middle once the pointer reached it; nothing was pressed",
+        "{}",
+        said(&output)
+    );
+    assert!(
+        !requests.iter().any(|path| path == "/pressed"),
+        "pressed: {requests:?}"
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+    // A hover there has done what it does: the pointer reached the button and opened the menu.
+    let Some((output, out, _requests, _scratch)) = on_page(
+        "opens-on-hover-hovered",
+        OPENS_ON_HOVER,
+        &[
+            "--hover",
+            "#opener",
+            "--eval",
+            "document.getElementById('menu').className",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), [json!("open")]);
+    assert_eq!(Picture::read(&out).width, 1440);
+}
+
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
 /// per launch named by its id, then becomes the real Chrome (`SHOT_REAL_CHROME`) in place.
 fn recording_chrome(scratch: &Scratch) -> (PathBuf, PathBuf) {

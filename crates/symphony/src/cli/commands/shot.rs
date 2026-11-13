@@ -58,8 +58,10 @@ steps, run in order before the final capture, each as often as needed:
 A step on an element waits for it. A click or a hover aims at the middle of one of the element's
 line boxes: the first whose middle is in view and takes the press, else the first in view that no
 box around it clips there, so a link wrapped over two lines is aimed at its first line, and one
-taller than its scrolling box at a line the box shows. It aims only once the page has settled
-after the scroll, as a capture waits, and two reads in a row, each in an animation frame, find
+taller than its scrolling box at a line the box shows. In view is in what the screen shows of the
+page, where the pointer goes (its visual viewport: on a phone, a page wider than the screen or
+zoomed in shows a part of its layout). It aims only once the page has settled after the scroll,
+as a capture waits, and two reads in a row, each in an animation frame, find
 that box in one place with its middle in view and taking the press: on top there is the element,
 something inside it, or the label of the control it is (a checkbox hidden in its label or under
 the label's styled track), pressed anywhere in the label but on a link, an object or another
@@ -81,10 +83,13 @@ middle out, or a cause it does not name, as an SVG ring's unpainted middle): a p
 the ancestor, which may not be what was meant, so the failure names it. For pointer-events: none,
 which lets a press through to the ancestor, it adds a selector that finds the ancestor alone to
 target instead (or says none does), unless the ancestor is the page's body or a press there clicks
-another control through a label. Typing focuses its element by script and types with no pointer,
-so what covers the element takes none of it. A click, typing, a key or a hover then waits for the
-page to settle again, as a capture does, bringing the page back in front if the step left it
-hidden (an Escape the page does not take).
+another control through a label. Once aimed, the pointer moves to that middle and the page's hover
+is read: should the pointer be anywhere but where the aim tested, or, for a click, anything but the
+element (or its label) be on top there by then (a menu its hover opened), the step fails naming
+what the press would reach, and nothing is pressed. Typing focuses its element by script and types
+with no pointer, so what covers the element takes none of it. A click, typing, a key or a hover
+then waits for the page to settle again, as a capture does, bringing the page back in front if the
+step left it hidden (an Escape the page does not take).
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -609,11 +614,19 @@ impl Step {
             Step::Click(css) | Step::Hover(css) => {
                 let clicking = matches!(self, Step::Click(_));
                 let flag = if clicking { "--click" } else { "--hover" };
-                let point = aim(chrome, css, wait, flag)?;
+                let press = aim(chrome, css, wait, flag)?;
                 let step = format!("{flag} {css}");
-                said(pointer(chrome, point, clicking), &step, || {
-                    format!("{step}: the browser did not answer within {}", wait.said())
-                })?;
+                let late = || format!("{step}: the browser did not answer within {}", wait.said());
+                // The pointer goes to the point aimed at, and only once the page agrees it is
+                // there, on the element, is anything pressed.
+                said(move_to(chrome, press.screen), &step, late)?;
+                let arrived = said(chrome.eval(&arrival(css, press.page)), &step, late)?;
+                if let Some(why) = Arrival::read(&arrived).refused(clicking) {
+                    return Err(format!("{step}{why}"));
+                }
+                if clicking {
+                    said(press_at(chrome, press.screen), &step, late)?;
+                }
                 settle(chrome, wait, &step)?;
             }
             Step::Type(css, text) => {
@@ -681,18 +694,7 @@ enum Look {
 }
 
 /// What a [`probe`] aims at, `box`, and what is on top at its middle, where the pointer would
-/// land, `hit`.
-///
-/// What is under a point is `reach`ed as Chrome's pointer finds it: the document's element there
-/// (`at`, a shadow host for what its shadow root draws, as a selector can name), then through every
-/// open shadow root to the element really there (`deep`), and the first interactive element
-/// ([`INTERACTIVE`]) from that one up the flat tree, as the press travels (a slotted node's slot
-/// first, a shadow root's host), as a label's activation looks for one: when it is a label, `via`
-/// is the control it clicks. A custom element on the way without an open shadow root ends the walk
-/// with no label: the page cannot see into a closed shadow root, where a control may take the
-/// press, so a press there is never taken as the label's. A closed root attached to a built-in
-/// element, such as a span, the page cannot tell from no root, so a press the page takes as the
-/// label's is confirmed with the browser's own hit ([`confirm`]).
+/// land, `hit`, what is under a point [`REACH`]ed as Chrome's pointer finds it.
 ///
 /// What clips the element is `clips`: its own `clip`, then each box around it that can clip it
 /// (the boxes its containing blocks are in, so an absolute or a fixed one escapes the boxes it
@@ -700,11 +702,16 @@ enum Look {
 /// among them) or its paint containment, to the box's padding edge. The page and its body are the
 /// view's.
 ///
+/// In view is in the visual viewport, `vv`, what the screen shows of the page: its edges in the
+/// coordinates of the page's client rects and hit tests, the layout viewport's, which on a phone
+/// can be far larger (a page wider than the screen widens it, to a quarter's zoom) and is scrolled
+/// apart from it, as one zoomed in is. Without the visual viewport's interface, the window is it.
+///
 /// `box` is the first of the element's line boxes (its client rects with an area) whose middle is
-/// in the viewport and takes the press there, else the first in view clipped by nothing there,
-/// else the first in view, else its first, else its bounding box: a link wrapped over two lines
-/// is aimed at its first line, not at the middle of its bounding box, which may hold none of it,
-/// and one taller than the view, or than the scrolling box it is in, at a line that box shows.
+/// in view and takes the press there, else the first in view clipped by nothing there, else the
+/// first in view, else its first, else its bounding box: a link wrapped over two lines is aimed at
+/// its first line, not at the middle of its bounding box, which may hold none of it, and one taller
+/// than the view, or than the scrolling box it is in, at a line that box shows.
 ///
 /// `hit`, at the box's middle, is `true` when the element takes the press: what is there is the
 /// element or inside it. It is `{label}` when what is there is a label whose control the element
@@ -753,20 +760,6 @@ const alone = e => {
   }
   return null;
 };
-const unseen = e => e instanceof HTMLElement && e.localName.includes('-') && !e.shadowRoot;
-const reach = (x, y) => {
-  const at = document.elementFromPoint(x, y);
-  let deep = at;
-  for (let depth = 0; deep && deep.shadowRoot && depth < 32; depth++) {
-    const inner = deep.shadowRoot.elementFromPoint(x, y);
-    if (!inner || inner === deep) break;
-    deep = inner;
-  }
-  let first = deep;
-  while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);
-  return {at, deep, via: first && first.localName === 'label' ? first.control : null};
-};
-const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
 const style = getComputedStyle(element);
 const cuts = (e, t) => {
   if (!/absolute|fixed/.test(t.position) || !t.clip.startsWith('rect(')) return null;
@@ -830,7 +823,8 @@ const excludes = (e, x, y) => {
   return false;
 };
 const middle = r => [r.x + r.width / 2, r.y + r.height / 2];
-const seen = ([x, y]) => x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;
+const vv = window.visualViewport ?? {offsetLeft: 0, offsetTop: 0, width: innerWidth, height: innerHeight};
+const seen = ([x, y]) => x >= vv.offsetLeft && x < vv.offsetLeft + vv.width && y >= vv.offsetTop && y < vv.offsetTop + vv.height;
 const rects = [...element.getClientRects()].filter(r => r.width > 0 && r.height > 0);
 const viewed = rects.filter(r => seen(middle(r)));
 const box = viewed.find(r => takes(reach(...middle(r)))) ?? viewed.find(r => !clips.some(c => away(c, ...middle(r)))) ?? viewed[0] ?? rects[0] ?? element.getBoundingClientRect();
@@ -865,6 +859,77 @@ const flat = e => e.assignedSlot || up(e);
 const inside = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host === e ? named(e) : named(e) + ' in ' + named(host) + "'s shadow root"; };
 "#;
 
+/// How a [`probe`] and [`ARRIVED`] tell what a press reaches, given `element`, the element aimed at,
+/// and [`INTERACTIVE`].
+///
+/// What is under a point is `reach`ed as Chrome's pointer finds it: the document's element there
+/// (`at`, a shadow host for what its shadow root draws, as a selector can name), then through every
+/// open shadow root to the element really there (`deep`), and that pair is `reached`: the first
+/// interactive element ([`INTERACTIVE`]) from `deep` up the flat tree, as the press travels (a
+/// slotted node's slot first, a shadow root's host), as a label's activation looks for one: when it
+/// is a label, `via` is the control it clicks. A custom element on the way without an open shadow
+/// root ends the walk with no label: the page cannot see into a closed shadow root, where a control
+/// may take the press, so a press there is never taken as the label's. A closed root attached to a
+/// built-in element, such as a span, the page cannot tell from no root, so a press the page takes
+/// as the label's is confirmed with the browser's own hit ([`confirm`]). The element `takes` the
+/// press when what is there is it, inside it, or a label whose activation clicks it.
+const REACH: &str = r#"
+const unseen = e => e instanceof HTMLElement && e.localName.includes('-') && !e.shadowRoot;
+const reach = (x, y) => {
+  const at = document.elementFromPoint(x, y);
+  let deep = at;
+  for (let depth = 0; deep && deep.shadowRoot && depth < 32; depth++) {
+    const inner = deep.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === deep) break;
+    deep = inner;
+  }
+  return reached(at, deep);
+};
+const reached = (at, deep) => {
+  let first = deep;
+  while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);
+  return {at, deep, via: first && first.localName === 'label' ? first.control : null};
+};
+const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
+"#;
+
+/// What the pointer reached once moved to the point aimed at, `[x, y]` in the page's coordinates,
+/// for the element aimed at, `element` (`null` once it has left the page): what the pointer itself
+/// is over, by the page's hover (the last element `:hover` matches, then the same in each open
+/// shadow root down, as [`REACH`] goes through them: the hover is the pointer's own hit test, made
+/// where the pointer really is), and what the page's hit test finds at the point aimed at, now.
+/// Each is `true` when the element takes the press there ([`REACH`]), else the name of what is
+/// there, or `null` for nothing (no element is hovered once the pointer is past the page's edge).
+/// `agree` is whether the two are one element: then the pointer is where the aim tested, whatever
+/// the page put there as it came.
+const ARRIVED: &str = r#"
+let deep = null;
+for (let root = document, depth = 0; root && depth < 32; depth++) {
+  const all = root.querySelectorAll(':hover');
+  if (!all.length) break;
+  deep = all[all.length - 1];
+  root = deep.shadowRoot;
+}
+let at = deep;
+while (at && at.getRootNode() instanceof ShadowRoot) at = at.getRootNode().host;
+const hit = reach(x, y);
+const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);
+return {gone: !element, pointer: said(reached(at, deep)), hit: said(hit), agree: !!deep && deep === hit.deep};
+"#;
+
+/// A script reading what the pointer reached once moved to `(x, y)` in the page's coordinates, for
+/// the first element `css` matches ([`ARRIVED`]).
+fn arrival(css: &str, (x, y): (f64, f64)) -> String {
+    format!(
+        "(() => {{ const element = document.querySelector({}); const [x, y] = [{}, {}]; \
+         const INTERACTIVE = {}; {NAMES}{REACH}{ARRIVED} }})()",
+        json!(css),
+        json!(x),
+        json!(y),
+        json!(INTERACTIVE)
+    )
+}
+
 /// The function [`confirm`] calls on the node the browser itself finds at a point (`this`, inside a
 /// closed shadow root too), with the selector of the element aimed at and [`INTERACTIVE`]: `true`
 /// when, up the flat tree from it, the element comes, or a label whose control the element is,
@@ -887,14 +952,14 @@ return found ? inside(found) : null;
 const INTERACTIVE: &str = "a[href], audio[controls], button, details, embed, iframe, img[usemap], input, label, object, select, textarea, video[controls]";
 
 /// A script reading the box a click or a hover aims at in the first element `css` matches, the
-/// viewport's size and what is on top at the box's middle ([`AIM`]), as `look` says: `null` while
-/// nothing matches, `{invalid}` for what is no selector.
+/// visual viewport's edges and how far the page is scrolled, and what is on top at the box's middle
+/// ([`AIM`]), as `look` says: `null` while nothing matches, `{invalid}` for what is no selector.
 fn probe(css: &str, look: Look) -> String {
     let read = format!(
         "(() => {{ let element; try {{ element = document.querySelector({}); }} catch (error) {{ return {{invalid: String(error.message)}}; }} \
          if (!element) return null; {} \
-         const INTERACTIVE = {}; {NAMES}{AIM} \
-         return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [innerWidth, innerHeight], scroll: [scrollX, scrollY], hit}}; }})()",
+         const INTERACTIVE = {}; {NAMES}{REACH}{AIM} \
+         return {{x: box.x, y: box.y, width: box.width, height: box.height, view: [vv.offsetLeft, vv.offsetTop, vv.width, vv.height], scroll: [scrollX, scrollY], hit}}; }})()",
         json!(css),
         if look == Look::Scrolled {
             "element.scrollIntoView({block: 'center', inline: 'center'});"
@@ -1062,17 +1127,38 @@ fn pixel(coordinate: f64) -> i64 {
 }
 
 /// The box a click or a hover aims at in an element (its first line box in view that takes the
-/// press, [`AIM`]), the viewport's size and how far the page is scrolled, in CSS pixels, and what
-/// is on top at the box's middle, as a [`probe`] read them in one frame.
+/// press, [`AIM`]), in the page's coordinates (the layout viewport's, those of its client rects and
+/// hit tests), what the screen shows of the page, how far the page is scrolled, in CSS pixels, and
+/// what is on top at the box's middle, as a [`probe`] read them in one frame.
 #[derive(Clone, Debug, PartialEq)]
 struct Place {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
-    view: (f64, f64),
+    view: Viewport,
     scroll: (f64, f64),
     hit: Hit,
+}
+
+/// What the screen shows of the page, the visual viewport, in the page's coordinates: its left and
+/// top edges and its width and height, in CSS pixels. Where the page is wider than a phone's screen,
+/// or zoomed in, it is a part of the layout viewport and moves within it ([`AIM`]); on a desktop,
+/// it is the window less its scrollbars.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Viewport {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+}
+
+/// Where a click or a hover presses: one point, as the pointer takes it (`screen`, from the visual
+/// viewport's corner) and as the page's hit tests take it (`page`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Press {
+    screen: (f64, f64),
+    page: (f64, f64),
 }
 
 impl Place {
@@ -1088,7 +1174,12 @@ impl Place {
                 y: found["y"].as_f64()?,
                 width: found["width"].as_f64()?,
                 height: found["height"].as_f64()?,
-                view: (found["view"][0].as_f64()?, found["view"][1].as_f64()?),
+                view: Viewport {
+                    left: found["view"][0].as_f64()?,
+                    top: found["view"][1].as_f64()?,
+                    width: found["view"][2].as_f64()?,
+                    height: found["view"][3].as_f64()?,
+                },
                 scroll: (found["scroll"][0].as_f64()?, found["scroll"][1].as_f64()?),
                 hit: Hit::read(&found["hit"]),
             })
@@ -1104,18 +1195,39 @@ impl Place {
         (self.x + self.width / 2.0, self.y + self.height / 2.0)
     }
 
-    /// Its middle in the document's coordinates, the viewport's moved by the page's scroll: where
-    /// `DOM.getNodeForLocation` hit-tests ([`confirm`]), unlike a pointer event, which takes the
-    /// viewport's.
+    /// Its middle in the document's coordinates, the page's (the layout viewport's) moved by the
+    /// page's scroll, which moves the layout viewport: where `DOM.getNodeForLocation` hit-tests
+    /// ([`confirm`]), unlike a pointer event, which takes the visual viewport's
+    /// ([`Place::on_screen`]).
     fn in_document(&self) -> (f64, f64) {
         let (x, y) = self.middle();
         (x + self.scroll.0, y + self.scroll.1)
     }
 
-    /// Whether its middle is in the viewport, where the pointer reaches it.
+    /// Its middle from the visual viewport's corner: where `Input.dispatchMouseEvent` puts the
+    /// pointer for it, in CSS pixels of the view as the screen shows it (Chrome scales them by the
+    /// zoom itself). Where the visual viewport is the layout viewport, as on a desktop, it is the
+    /// middle itself.
+    fn on_screen(&self) -> (f64, f64) {
+        let (x, y) = self.middle();
+        (x - self.view.left, y - self.view.top)
+    }
+
+    /// Where a press on it goes ([`Press`]).
+    fn press(&self) -> Press {
+        Press {
+            screen: self.on_screen(),
+            page: self.middle(),
+        }
+    }
+
+    /// Whether its middle is in the visual viewport, on the screen, where the pointer reaches it;
+    /// the far edges are out.
     fn in_view(&self) -> bool {
         let (x, y) = self.middle();
-        (0.0..self.view.0).contains(&x) && (0.0..self.view.1).contains(&y)
+        let view = &self.view;
+        (view.left..view.left + view.width).contains(&x)
+            && (view.top..view.top + view.height).contains(&y)
     }
 }
 
@@ -1145,7 +1257,7 @@ enum Next {
     Scroll,
     /// Aim here: two reads in a row found its box in one place, its middle here, in view and the
     /// element on top there.
-    At((f64, f64)),
+    At(Press),
 }
 
 /// The reads of the element a click or a hover aims at, each in an animation frame, one after
@@ -1186,7 +1298,7 @@ impl Aim {
         }
         self.latest = Latest::Moving;
         let next = match before {
-            Some(before) if before == place => Next::At(place.middle()),
+            Some(before) if before == place => Next::At(place.press()),
             _ => Next::Again,
         };
         self.held = Some(place);
@@ -1285,6 +1397,103 @@ fn missed(miss: &Miss) -> (String, String) {
     }
 }
 
+/// What the pointer reached once moved to the point a click or a hover aimed at, as [`ARRIVED`]
+/// read it.
+#[derive(Clone, Debug, PartialEq)]
+struct Arrival {
+    /// The element has left the page.
+    gone: bool,
+    /// What the pointer is over, by the page's hover: where it really is.
+    pointer: Reached,
+    /// What the page's hit test finds at the point aimed at, now.
+    hit: Reached,
+    /// Whether those two are one element: the pointer is where the aim tested.
+    agree: bool,
+}
+
+/// What is at a point, for the element aimed at ([`ARRIVED`]).
+#[derive(Clone, Debug, PartialEq)]
+enum Reached {
+    /// The element, something inside it or a label whose activation clicks it: a press there
+    /// reaches it.
+    Target,
+    /// Another element, by its name.
+    Other(String),
+    /// No element (past the page's edge).
+    Nothing,
+}
+
+impl Reached {
+    fn read(value: &Value) -> Reached {
+        match value {
+            Value::Bool(true) => Reached::Target,
+            Value::String(name) => Reached::Other(name.clone()),
+            _ => Reached::Nothing,
+        }
+    }
+
+    /// Where a press there lands, as a failure says it.
+    fn said(&self) -> &str {
+        match self {
+            Reached::Target => "it",
+            Reached::Other(name) => name,
+            Reached::Nothing => "nothing in the page",
+        }
+    }
+}
+
+impl Arrival {
+    /// What [`ARRIVED`] answered.
+    fn read(value: &Value) -> Arrival {
+        Arrival {
+            gone: value["gone"] == true,
+            pointer: Reached::read(&value["pointer"]),
+            hit: Reached::read(&value["hit"]),
+            agree: value["agree"] == true,
+        }
+    }
+
+    /// Why a click (`clicking`) or a hover fails with the pointer at the point aimed at, after its
+    /// flag and selector, or `None` to go on. A pointer anywhere but where the aim tested fails
+    /// either: the point pressed was not the point tested, so what the press reaches is unknown to
+    /// the aim (the pointer over the element, or over what the page put where the aim tested, as
+    /// it came, is where it tested). A click then fails unless the element is still what a press
+    /// there reaches, by the pointer and by the hit test at that point both, as a menu its hover
+    /// opened over it is not; a hover has done what it does.
+    fn refused(&self, clicking: bool) -> Option<String> {
+        if self.pointer != Reached::Target && !self.agree {
+            let landed = self.pointer.said();
+            return Some(if clicking {
+                format!(
+                    ": the press would have landed on {landed}, not on it: the pointer, moved to its \
+                     middle, is not where the aim tested; nothing was pressed"
+                )
+            } else {
+                format!(
+                    ": the pointer landed on {landed}, not on it: moved to its middle, it is not \
+                     where the aim tested"
+                )
+            });
+        }
+        if !clicking || (self.pointer == Reached::Target && self.hit == Reached::Target) {
+            return None;
+        }
+        if self.gone {
+            return Some(" left the page as the pointer reached it; nothing was pressed".into());
+        }
+        let on_top = if self.hit == Reached::Target {
+            &self.pointer
+        } else {
+            &self.hit
+        };
+        Some(format!(
+            ": the press would have landed on {}, not on it: that was on top at its middle once \
+             the pointer reached it; nothing was pressed",
+            on_top.said()
+        ))
+    }
+}
+
 /// Wait until an element matches `css` and, when `drawn`, has a box; the page is not scrolled. Or
 /// why not within the wait.
 fn locate(chrome: &mut Chrome, css: &str, wait: Wait, drawn: bool) -> Result<(), String> {
@@ -1322,7 +1531,7 @@ fn locate(chrome: &mut Chrome, css: &str, wait: Wait, drawn: bool) -> Result<(),
 /// misses the press any other way but its visibility ([`Miss`]) is scrolled to the middle again,
 /// its containers and the page, and the page settled again. Or why not within the wait, the step
 /// named, and after a re-scroll the element's latest read.
-fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f64), String> {
+fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<Press, String> {
     locate(chrome, css, wait, true).map_err(|why| format!("{flag} {why}"))?;
     let step = format!("{flag} {css}");
     let mut aim = Aim::default();
@@ -1355,8 +1564,8 @@ fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f
             })?;
         }
         next = aim.read(place);
-        if let Next::At(point) = next {
-            return Ok(point);
+        if let Next::At(press) = next {
+            return Ok(press);
         }
         if wait.over() {
             return Err(format!("{flag} {}", aim.late(css, wait)));
@@ -1364,19 +1573,22 @@ fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<(f64, f
     }
 }
 
-/// Move the mouse to `point`, and click there when `click`.
-fn pointer(chrome: &mut Chrome, (x, y): (f64, f64), click: bool) -> chrome_devtools::Result<()> {
+/// Move the mouse to `point` on the screen ([`Press`]).
+fn move_to(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<()> {
     chrome.call(
         "Input.dispatchMouseEvent",
         json!({"type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0}),
     )?;
-    if click {
-        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
-            chrome.call(
-                "Input.dispatchMouseEvent",
-                json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
-            )?;
-        }
+    Ok(())
+}
+
+/// Press the left button at `point` on the screen and release it there: a click.
+fn press_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<()> {
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
+        )?;
     }
     Ok(())
 }
