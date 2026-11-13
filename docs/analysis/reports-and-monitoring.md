@@ -539,6 +539,11 @@ cards still waiting with since when, each card that left the queue in the day wi
 the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it
 left out.
 
+Three choices hold for every figure: a close as covered by another task is a move to `done` like a
+landing's and counts in the lead time; a review's instruction subtasks count among the subtasks
+beside the work's slices; and a card that leaves the queue twice in a day counts twice, as each
+leaving is an event: the owner comments on it, an agent's answer puts it back, the owner approves.
+
 **The decision cards.** Each card's dated lines are replayed one at a time, and after each the card
 is grouped as the register groups it (`crates/symphony/src/register.rs`, `Decision::thread`) over
 the lines so far and the mark they leave. It waits on the owner while it sits in *Needs your
