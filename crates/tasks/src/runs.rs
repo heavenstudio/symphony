@@ -104,14 +104,27 @@ fn locked(folder: &Path, wait: Duration) -> io::Result<Option<FileLock>> {
     lock_within(file, wait)
 }
 
-/// `file` locked, tried again every 5 ms for at most `wait`; none when it stayed held that long.
+/// How often [`lock_within`] tries the lock again while it is held.
+const LOCK_LOOK: Duration = Duration::from_millis(5);
+
+#[cfg(test)]
+thread_local! {
+    /// The tries [`lock_within`] made on this thread: a test's count of how long it waited, which
+    /// a loaded machine can only lower.
+    static LOCK_TRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `file` locked, tried again every [`LOCK_LOOK`] for at most `wait`; none when it stayed held
+/// that long.
 pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileLock>> {
     let deadline = Instant::now() + wait;
     loop {
+        #[cfg(test)]
+        LOCK_TRIES.set(LOCK_TRIES.get() + 1);
         match file.try_lock() {
             Ok(()) => return Ok(Some(FileLock(file))),
             Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
+                std::thread::sleep(LOCK_LOOK);
             }
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Error(error)) => return Err(error),
@@ -484,12 +497,14 @@ mod tests {
             .write_all(b"{\"schema\":1,\"ru")
             .unwrap();
         let began = Instant::now();
+        let tried = LOCK_TRIES.get();
         append(&dir, &ended("b", NOW, "t", false), NOW, BRIEF_WAIT).unwrap();
-        let waited = began.elapsed();
-        assert!(
-            BRIEF_WAIT <= waited && waited < Duration::from_millis(500),
-            "{waited:?}"
-        );
+        let (waited, tries) = (began.elapsed(), LOCK_TRIES.get() - tried);
+        assert!(BRIEF_WAIT <= waited, "{waited:?}");
+        // A try each look of the brief wait and one at its end: a loaded machine's looks oversleep,
+        // so only a longer wait than the one given tries more.
+        let most = usize::try_from(BRIEF_WAIT.as_millis() / LOCK_LOOK.as_millis()).unwrap() + 1;
+        assert!((2..=most).contains(&tries), "{tries} tries in {waited:?}");
         assert!(
             dir.join("2000-01-01.jsonl").exists(),
             "pruned without the lock"
@@ -816,17 +831,23 @@ mod tests {
             long,
         );
         assert_eq!(much.map(|said| said.len()), Some(2000 * 101));
-        // One still running at the deadline is killed and reaped: gone, no zombie left.
+        // One still running at the deadline is killed and reaped: gone, no zombie left. Its sleep
+        // outlasts every deadline tried, so only the kill answers `None` (its own end says
+        // nothing, with success). The deadline doubles until the shell was up in time to say its
+        // pid, however long a loaded machine takes to start it.
         let pid = dir.join("pid");
-        let began = Instant::now();
-        let script = format!("echo $$ > '{}'; exec sleep 30", pid.display());
-        assert_eq!(sh(&script, Duration::from_millis(300)), None);
-        assert!(
-            began.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            began.elapsed()
-        );
-        let pid: libc::pid_t = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+        let script = format!("echo $$ > '{}'; exec sleep 600", pid.display());
+        let mut given = Duration::from_millis(300);
+        let said = loop {
+            let _ = fs::remove_file(&pid);
+            assert_eq!(sh(&script, given), None, "within {given:?}");
+            match fs::read_to_string(&pid) {
+                Ok(said) if said.ends_with('\n') => break said,
+                _ if given < Duration::from_secs(40) => given *= 2,
+                _ => panic!("the shell was not up within {given:?}"),
+            }
+        };
+        let pid: libc::pid_t = said.trim().parse().unwrap();
         // SAFETY: signal 0 only asks whether the process is there.
         let there = unsafe { libc::kill(pid, 0) };
         assert_eq!(

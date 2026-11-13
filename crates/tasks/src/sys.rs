@@ -570,9 +570,10 @@ mod tests {
     #[test]
     fn a_group_is_alive_while_any_process_of_it_lives_even_once_its_first_ended() {
         let started = std::time::Instant::now();
-        // The shell ends at once, leaving the sleep it started in the background in its group.
+        // The shell ends at once, leaving the sleep it started in the background in its group, one
+        // no slow look at the group outlives: only the kill below ends it.
         let mut child = Command::new("sh")
-            .args(["-c", "sleep 30 &"])
+            .args(["-c", "sleep 600 &"])
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

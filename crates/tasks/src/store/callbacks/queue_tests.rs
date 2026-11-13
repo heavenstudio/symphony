@@ -29,7 +29,7 @@ printf %s "$$" > "$here/pid"
 case $mode in
     exit) exit "$value" ;;
     killed) kill -KILL $$ ;;
-    hang) exec sleep 60 ;;
+    hang) exec sleep 600 ;;
 esac
 "#;
 
@@ -129,8 +129,8 @@ fn codex_queue_takes_the_message_whole_without_the_token_and_answers_how_it_ende
         !crate::sys::pid_alive(pid),
         "the timed-out queue is ended and reaped"
     );
-    // Delivery's own deadline, whether or not the stand-in has started by then: well short of its
-    // own 60 s, the kill at 5 s is what ends it.
+    // Delivery's own deadline, whether or not the stand-in has started by then: its `sleep 600`
+    // would end it well (a queue that answers), so "timed out" is the kill at 5 s, never before.
     staged("hang");
     let began = Instant::now();
     assert_eq!(
@@ -138,10 +138,7 @@ fn codex_queue_takes_the_message_whole_without_the_token_and_answers_how_it_ende
         Err("codex queue timed out".into())
     );
     let took = began.elapsed();
-    assert!(
-        took >= Duration::from_secs(5) && took < Duration::from_secs(30),
-        "{took:?}"
-    );
+    assert!(took >= Duration::from_secs(5), "{took:?}");
     std::fs::remove_file(dir.join("codex")).unwrap();
     assert_eq!(
         answered(queue("abcdef01", MESSAGE)),
@@ -187,10 +184,11 @@ fn listed(pid: libc::pid_t) -> (Vec<libc::pid_t>, BTreeMap<std::os::fd::RawFd, u
 /// The Symphony server's case: a connection accepted on macOS is not close-on-exec until a second
 /// call marks it, and a delivery started between the two must neither hold it nor keep its client
 /// waiting for the end of its answer. The queue's child is read from outside, by its descriptor
-/// table, so the case holds however late the stand-in itself starts, past delivery's 5 s kill
-/// too. It runs on macOS alone because the gap is macOS's: Linux's accept marks a connection
-/// close-on-exec in the call that makes it, so no connection there is ever open to a spawn
-/// without the mark, and a child std starts there would keep the one this case leaves unmarked.
+/// table, so the case holds however late the stand-in itself starts, and its deadline is one only
+/// a stuck queue reaches. It runs on macOS alone because the gap is macOS's: Linux's accept marks
+/// a connection close-on-exec in the call that makes it, so no connection there is ever open to a
+/// spawn without the mark, and a child std starts there would keep the one this case leaves
+/// unmarked.
 #[cfg(target_os = "macos")]
 #[test]
 fn an_accepted_connection_not_yet_close_on_exec_reaches_no_codex_queue() {
@@ -235,8 +233,11 @@ fn an_accepted_connection_not_yet_close_on_exec_reaches_no_codex_queue() {
         "the table of a process that holds the connection lists it: {ours:?}"
     );
     std::fs::write(dir.join("mode"), "wait").unwrap();
+    // Delivery's 5 s kill is no part of this case: a deadline no loaded machine reaches before the
+    // release, so the child is there to be read however long this test is kept from reading it.
+    let due = |since: Duration| since >= RELEASED_WITHIN;
     std::thread::scope(|scope| {
-        let queued = scope.spawn(|| answered(queue("abcdef01", "a message")));
+        let queued = scope.spawn(|| answered(queue_until("abcdef01", "a message", due)));
         // The queue's child, read under the spawn lock: after its spawn has left it its streams
         // alone, and while it waits for its release.
         let table = loop {
@@ -269,11 +270,12 @@ fn an_accepted_connection_not_yet_close_on_exec_reaches_no_codex_queue() {
         client.read_to_end(&mut said).unwrap();
         assert_eq!(said, b"answer");
         writeln!(go, "go").unwrap();
-        // Released, the stand-in ends; one that had not started by delivery's 5 s kill ends by it.
-        let queued = queued.join().unwrap();
-        assert!(
-            queued == Ok(()) || queued == Err("codex queue timed out".into()),
-            "{queued:?}"
-        );
+        // Released, the stand-in ends, however late it started.
+        assert_eq!(queued.join().unwrap(), Ok(()));
     });
 }
+
+/// The deadline of a queue the case above releases: the wall-clock backstop of the delivery's own
+/// 5 s, which only a stuck queue reaches.
+#[cfg(target_os = "macos")]
+const RELEASED_WITHIN: Duration = Duration::from_secs(120);

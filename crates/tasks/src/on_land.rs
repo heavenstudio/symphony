@@ -2,7 +2,8 @@
 //! default is none), and `tasks land` runs it once the task is closed, last, after the regenerator
 //! is started, detached from the main checkout with the task's slug and the commit that landed it
 //! appended, with none of git's repository variables. The land listens to it for
-//! [`SAYS`] at most and shows what it said by then (a count says all it has to well within it),
+//! [`SAYS`] at most ([`SAYS_VAR`] sets another window) and shows what it said by then (a count
+//! says all it has to well within it),
 //! then goes on, never waiting on it longer. Each start's output goes to a file of its own,
 //! `sf-tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept), and a
 //! line naming that file, or why nothing started, to `sf-tasks/on-land.log` (set aside as
@@ -34,6 +35,9 @@ pub const STARTS: &str = "on-land";
 pub const SWITCH: &str = "TASKS_ON_LAND";
 /// The longest a landing listens to its command before it goes on.
 pub const SAYS: Duration = Duration::from_secs(3);
+/// What sets, in seconds, how long a landing listens in place of [`SAYS`]: a test's, which gives a
+/// loaded machine's command the time it needs to say what it says at once.
+pub const SAYS_VAR: &str = "TASKS_ON_LAND_SAYS";
 /// The starts' outputs kept: the oldest goes when a landing starts another past them.
 pub const KEPT_STARTS: usize = 40;
 /// The size [`LOG`] may reach before a start sets it aside as `on-land.log.1`, which replaces an
@@ -49,6 +53,11 @@ pub struct Heard {
     pub lines: Vec<String>,
     pub ended: bool,
     pub output: PathBuf,
+}
+
+/// How long a landing in `env` listens to its command: [`SAYS`], unless [`SAYS_VAR`] says.
+pub fn says(env: &Env) -> Duration {
+    env.seconds(SAYS_VAR, SAYS)
 }
 
 /// Whether a landing in `env` may start the command: [`SWITCH`] says `on` or `off`; else only on
@@ -94,13 +103,30 @@ pub fn command(root: &Path) -> Result<Option<Vec<String>>, String> {
 
 /// The task `slug` has landed at `commit` on the default branch of the main checkout `main`, whose
 /// git common dir is `common`: start the manifest's command, detached, when `env` lets a landing
-/// start one, and hear what it says within [`SAYS`]. Nothing waits on it longer.
+/// start one, and hear what it says within [`says`]. Nothing waits on it longer.
 pub fn trigger(
     env: &Env,
     main: &Path,
     common: &Path,
     slug: &str,
     commit: &str,
+) -> (Started, Heard) {
+    let window = says(env);
+    let mut until = None;
+    // The window opens at the first look, once the command has started.
+    let listening = move |_: &Path| *until.get_or_insert_with(|| Instant::now() + window) > Instant::now();
+    trigger_listening(env, main, common, slug, commit, listening)
+}
+
+/// [`trigger`], listening to the command for as long as `listening`, asked at each look with the
+/// file its output goes to, says: a test's clock, which the command's own words move.
+fn trigger_listening(
+    env: &Env,
+    main: &Path,
+    common: &Path,
+    slug: &str,
+    commit: &str,
+    listening: impl FnMut(&Path) -> bool,
 ) -> (Started, Heard) {
     if !enabled(env) {
         return (Started::None, Heard::default());
@@ -112,7 +138,7 @@ pub fn trigger(
     };
     let mut args = command;
     args.extend([slug.to_string(), commit.to_string()]);
-    match spawn(env, main, common, slug, commit, &args) {
+    match spawn(env, main, common, (slug, commit), &args, listening) {
         Ok(heard) => (Started::Command(args), heard),
         Err(error) => (
             refuse(common, slug, &format!("cannot start {}: {error}", args[0])),
@@ -175,15 +201,15 @@ fn output(starts: &Path, slug: &str, at: f64) -> std::io::Result<PathBuf> {
 /// lander's session ([`sys::SESSION_VARS`]), the marks of how the land was asked for
 /// ([`sys::MARKS`]: a release run's checks are no command an agent ran unasked, and it lands
 /// nothing), the task the land recorded its builds for and any recorded run it ran in, its output
-/// to a file of its own the log names: what it said within [`SAYS`]. A thread reaps it when it
-/// ends later. A program that cannot start starts nothing.
+/// to a file of its own the log names: what it said while `listening` said to listen. A thread
+/// reaps it when it ends later. A program that cannot start starts nothing.
 fn spawn(
     env: &Env,
     main: &Path,
     common: &Path,
-    slug: &str,
-    commit: &str,
+    (slug, commit): (&str, &str),
     args: &[String],
+    mut listening: impl FnMut(&Path) -> bool,
 ) -> std::io::Result<Heard> {
     let at = now();
     let output = output(&folder(common).join(STARTS), slug, at)?;
@@ -215,9 +241,8 @@ fn spawn(
         .stderr(file)
         .new_session();
     let mut child = command.spawn()?;
-    let until = Instant::now() + SAYS;
     let mut ended = false;
-    while Instant::now() < until {
+    while listening(&output) {
         if !matches!(child.try_wait(), Ok(None)) {
             ended = true;
             break;
@@ -250,6 +275,9 @@ mod tests {
             cwd: std::env::temp_dir(),
         }
     }
+
+    /// Looks enough for any loaded machine's `echo` to end within: two minutes of them.
+    const LONG_WINDOW_LOOKS: u32 = 4800;
 
     /// A folder of the test's own, emptied.
     fn scratch(name: &str) -> PathBuf {
@@ -331,19 +359,22 @@ mod tests {
             ("TASKS_SESSION", "lander"),
             ("TASKS_TASK", "tools/x"),
         ]);
-        let began = Instant::now();
-        let (Started::Command(args), heard) = trigger(&with, &main, &common, "tools/x", "abc123")
+        // A window no loaded machine's `echo` outlasts, counted in looks: only the command's end
+        // ends this listening short of it.
+        let mut looks = 0;
+        let (Started::Command(args), heard) =
+            trigger_listening(&with, &main, &common, "tools/x", "abc123", |_| {
+                looks += 1;
+                looks <= LONG_WINDOW_LOOKS
+            })
         else {
             panic!("the command starts");
         };
-        assert!(
-            began.elapsed() < SAYS,
-            "it ended, so the land went on at once"
-        );
+        assert!(heard.ended, "it ended, so the land went on at once");
+        assert!(looks <= LONG_WINDOW_LOOKS, "{looks} looks");
         assert_eq!(args[..2], ["sh", "-c"]);
         assert_eq!(args[3..], ["hook", "tools/x", "abc123"], "{args:?}");
         let main_seen = main.canonicalize().unwrap();
-        assert!(heard.ended);
         assert_eq!(
             heard.lines,
             [format!(
@@ -408,40 +439,81 @@ mod tests {
         fs::remove_dir_all(&main).unwrap();
     }
 
-    #[test]
-    fn a_command_that_runs_on_is_heard_for_a_while_and_left_running() {
-        let main = scratch("runs-on");
-        let common = main.join(".git");
-        let done = main.join("done");
+    /// A command that says its first line, then runs until `gate` exists (or a backstop of its own
+    /// runs out, so a test that never opens it leaves nothing running), then says `later` and makes
+    /// `done`.
+    fn held_at(main: &Path, gate: &Path, done: &Path) {
         fs::write(
             main.join(MANIFEST),
             format!(
-                "[board]\non_land = [\"sh\", \"-c\", \"echo started; sleep 5; echo later; touch '{}'\"]\n",
+                "[board]\non_land = [\"sh\", \"-c\", \"echo started; i=0; while [ ! -e '{}' ] && \
+                 [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done; echo later; touch '{}'\"]\n",
+                gate.display(),
                 done.display()
             ),
         )
         .unwrap();
-        let began = Instant::now();
-        let (Started::Command(_), heard) = trigger(
+    }
+
+    #[test]
+    fn a_command_that_runs_on_is_heard_for_a_while_and_left_running() {
+        let main = scratch("runs-on");
+        let common = main.join(".git");
+        let (gate, done) = (main.join("gate"), main.join("done"));
+        held_at(&main, &gate, &done);
+        // The window runs out once the command has said its first line, however long a loaded
+        // machine took to say it, while the command is held at its gate.
+        let (Started::Command(_), heard) = trigger_listening(
             &env(&[("PATH", "/usr/bin:/bin")]),
             &main,
             &common,
             "tools/long",
             "abc",
+            |output| !fs::read_to_string(output).is_ok_and(|text| text.contains("started\n")),
         ) else {
             panic!("the command starts");
         };
-        let waited = began.elapsed();
-        assert!(waited >= SAYS && waited < SAYS * 2, "{waited:?}");
         assert!(!heard.ended);
         assert_eq!(heard.lines, ["started"]);
         // It runs on past the land, into its own file.
+        fs::write(&gate, "").unwrap();
         assert!(holding(&heard.output, "later").contains("started\nlater\n"));
         let began = Instant::now();
         while !done.exists() && began.elapsed() < Duration::from_secs(10) {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(done.exists());
+        fs::remove_dir_all(&main).unwrap();
+    }
+
+    /// The window a landing listens for is [`SAYS`], or what [`SAYS_VAR`] sets, and never shorter:
+    /// a command still held when it runs out is left running.
+    #[test]
+    fn a_landing_listens_its_whole_window_to_a_command_that_runs_on() {
+        let main = scratch("window");
+        let common = main.join(".git");
+        let (gate, done) = (main.join("gate"), main.join("done"));
+        held_at(&main, &gate, &done);
+        for (set, window) in [
+            (None, SAYS),
+            (Some("0.2"), Duration::from_millis(200)),
+        ] {
+            let _ = fs::remove_file(&gate);
+            let mut pairs = vec![("PATH", "/usr/bin:/bin")];
+            pairs.extend(set.map(|value| (SAYS_VAR, value)));
+            let began = Instant::now();
+            let (Started::Command(_), heard) = trigger(&env(&pairs), &main, &common, "tools/w", "a")
+            else {
+                panic!("the command starts");
+            };
+            let waited = began.elapsed();
+            assert!(waited >= window, "{waited:?} of {window:?}");
+            assert!(!heard.ended, "held at its gate, it runs on");
+            fs::write(&gate, "").unwrap();
+            assert!(holding(&heard.output, "later").contains("later\n"));
+        }
+        assert_eq!(says(&env(&[(SAYS_VAR, "45")])), Duration::from_secs(45));
+        assert_eq!(says(&env(&[])), SAYS);
         fs::remove_dir_all(&main).unwrap();
     }
 

@@ -1946,7 +1946,8 @@ mod tests {
     #[test]
     fn a_watcher_reads_the_cpu_of_a_process_and_of_those_under_it() {
         use supervised::cpu::{Machine, Tree};
-        let mut shell = burning("exec sleep 30");
+        // It runs until the kill below, however slowly a loaded machine reads it before.
+        let mut shell = burning("exec sleep 600");
         let pid = libc::pid_t::try_from(shell.id()).unwrap();
         let tick = supervised::cpu::tick_ns();
         assert!(tick > 0.0);

@@ -66,6 +66,16 @@ impl Env {
             .map(String::as_str)
             .filter(|v| !v.is_empty())
     }
+
+    /// The deadline `name` sets in seconds (a fraction or none), else `fallback`: how a test gives
+    /// a product's deadline the time a loaded machine needs, or makes it run out at once, without
+    /// changing it for anyone else. A value that is no such number leaves `fallback`.
+    pub(crate) fn seconds(&self, name: &str, fallback: Duration) -> Duration {
+        self.var(name)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+            .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+            .unwrap_or(fallback)
+    }
 }
 
 /// Board-state writes, including JSON calls, act as agents. Derived-cache maintenance has no
@@ -732,6 +742,26 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deadline_a_setting_names_replaces_the_products_and_no_number_leaves_it() {
+        let fallback = Duration::from_secs(3);
+        let read = |value: &str| {
+            Env {
+                vars: [("TASKS_SOME_WAIT".to_string(), value.to_string())].into(),
+                cwd: std::env::temp_dir(),
+            }
+            .seconds("TASKS_SOME_WAIT", fallback)
+        };
+        assert_eq!(read("120"), Duration::from_secs(120));
+        assert_eq!(read("0.25"), Duration::from_millis(250));
+        assert_eq!(read(" 7 "), Duration::from_secs(7));
+        assert_eq!(read("0"), Duration::ZERO);
+        for nothing in ["", "soon", "-1", "NaN", "inf", "1e400", "3 s"] {
+            assert_eq!(read(nothing), fallback, "{nothing:?}");
+        }
+        assert_eq!(Env::default().seconds("TASKS_SOME_WAIT", fallback), fallback);
+    }
 
     #[test]
     fn the_board_an_environment_names_is_the_command_its_refusals_name() {
