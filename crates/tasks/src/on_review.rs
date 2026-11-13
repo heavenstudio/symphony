@@ -224,10 +224,11 @@ pub(crate) fn startable(root: &Path, program: &Path, env: &Env) -> std::io::Resu
 }
 
 /// `args` in a session of its own, from the main checkout, with `env`'s environment but the
-/// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own) and any
-/// recorded command the mover ran in (it is a run of its own, started by [`TRIGGER`]), recorded as
-/// `started` says, its output appended to the log; a thread reaps it when it ends. A program that
-/// cannot start starts nothing, recorded or not.
+/// mover's session ([`sys::SESSION_VARS`]: the review acts as a board session of its own), the
+/// marks of how the move was asked for ([`sys::MARKS`]: the review is the project's command) and
+/// any recorded command the mover ran in (it is a run of its own, started by [`TRIGGER`]),
+/// recorded as `started` says, its output appended to the log; a thread reaps it when it ends. A
+/// program that cannot start starts nothing, recorded or not.
 fn spawn(env: &Env, common: &Path, started: &Start, args: &[String]) -> std::io::Result<()> {
     let Start {
         root,

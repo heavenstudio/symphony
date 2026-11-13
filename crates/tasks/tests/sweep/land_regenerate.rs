@@ -878,6 +878,42 @@ fn a_land_starts_the_regenerator_detached_and_waits_for_none_of_it() {
     assert_eq!(git(&r.root, &["status", "--porcelain"]), "");
 }
 
+/// A land runs under the `land` recipe's mark and, as `just land` runs `just tasks land`, the
+/// unasked recipes' mark as well. The regenerator it starts keeps the land's, by which alone it
+/// lands what it makes, and not the unasked recipes' (`sys::MARKS`), under which its generators
+/// and its check would be confined to the checkout as one command an agent ran is.
+#[test]
+fn the_regenerator_keeps_the_lands_mark_and_not_the_unasked_recipes() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Repo::new();
+    generating(&r, &[&index(&r)]);
+    let record = r.dir.join("record");
+    let heard = r.dir.join("tasks-heard");
+    fs::write(
+        &heard,
+        format!(
+            "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"${{SYMPHONY_LAND-unset}}\" \
+             \"${{SYMPHONY_UNASKED-unset}}\" > '{record}.part'\nmv '{record}.part' '{record}'\n",
+            record = record.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&heard, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = starting(&r);
+    env.vars
+        .insert("TASKS_BIN".into(), heard.display().to_string());
+    env.vars
+        .insert(symphony_board::confine::MARKER.into(), "1".into());
+    let settings = symphony_board::land::Settings::of(&r.root).unwrap();
+    let line = regenerate::start(&env, &r.root, &settings).unwrap();
+    assert!(
+        line.starts_with("the regenerator makes the index in the background"),
+        "{line}"
+    );
+    wait_for(|| record.exists());
+    assert_eq!(fs::read_to_string(&record).unwrap(), "regenerate|1|unset\n");
+}
+
 // -- one build of main at a time --------------------------------------------------------------------
 
 /// The environment a land starts the regenerator from: the land's recipe, on a test's board that
