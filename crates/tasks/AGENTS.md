@@ -382,8 +382,20 @@ identities in `callback_state.pull_unanswered`, separate from main's whole-board
 withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
 defines pending work for the digest, restore selection and sweep: a post since that handle took
 its role, without a later message, status move or verdict by it on that task or a descendant.
-The descendant lookup reads only that recipient's eligible records after the post through
-`message_sender`, then checks actual task parents. Direct `land-approve` approvals journal a
+`Store::pending_posts` reads in proportion to what it is asked (`unanswered::Asked`), never the
+board: PULL and recovery ask for the posts overdue on open tasks and read only the threads and
+launches of tasks `in_progress`, `blocked` or in `review`; the reap asks for the posts its judged
+handle and the sessions under it owe, on the threads that address one of them, hold a system
+record one made (`message_recipient`, `message_sender`) or name one in a role. Threads, launches
+and the threads below a task are record ranges (`message:[slug, ..]`, `task_session:[slug, ..]`),
+and only the posts still asked after the in-memory filters read the threads below their task after
+the post (the own thread's answer is the thread check). Each of its reads (four at most) waits
+at most `unanswered::LOOKUP_WAIT` (10 s), sent once (`rpc::Client::bounded`): a PULL then skips its
+unanswered posts and says why, and the reap keeps the terminal it could not judge. The plans
+inside its closures are pinned by `store/unanswered_reads.rs`, its cost on the generated board by
+the perf target's `unanswered`. Recovery's final check reads only that recipient's eligible
+records after the post through `message_sender`, then checks actual task parents. Direct
+`land-approve` approvals journal a
 message through the existing board API. The final recovery reservation rechecks the recipient's
 records and the parent edges used in its answer decision before reserving the attempt. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.

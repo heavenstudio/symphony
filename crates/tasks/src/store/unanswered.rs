@@ -1,10 +1,16 @@
-//! One definition of pending addressed work for PULL, conversation recovery and pane retention.
+//! One definition of pending addressed work for PULL, conversation recovery and pane retention,
+//! read in proportion to what it is asked about ([`Asked`]): the threads of the tasks or handles
+//! asked, by record range or index, never every thread of the board nor a recipient's every record
+//! after each of its posts.
 
-use super::{Error, Failure, Health, Message, Store, Task};
+use super::work::{Tree, above};
+use super::{Board, Error, Failure, Health, Message, Store, Task};
 use crate::rows::MessageRow;
 use crate::rows::TaskSessionRow;
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 #[path = "unanswered_answers.rs"]
 mod answers;
@@ -12,6 +18,27 @@ mod answers;
 mod recipients;
 
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
+
+/// The longest one read of the lookup waits for the board, sent once
+/// ([`crate::rpc::Client::bounded`]). Each caller does without the answer: PULL leaves its
+/// unanswered posts out and says why, recovery tries again at its next sweep, and the reap keeps a
+/// pane it cannot judge.
+pub(crate) const LOOKUP_WAIT: Duration = Duration::from_secs(10);
+
+/// The statuses an executor's post can be overdue in; a reviewer's only in review.
+const OPEN: [&str; 3] = ["in_progress", "blocked", "review"];
+
+/// What a lookup of pending posts asks about, which is all it reads.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Asked<'a> {
+    /// The posts on these tasks overdue at this time ([`Pending::overdue`]), for PULL and
+    /// recovery: only the threads of open ones are read, and the threads below a task only for a
+    /// post overdue on it.
+    Overdue(&'a [Task], f64),
+    /// Every post these handles owe on any task, for the reap: the threads that address one of
+    /// them, hold a system record of one (its role history) or name one in a role.
+    Handles(&'a BTreeSet<String>),
+}
 
 // Deliberate state changes answer work too. Automatic departure, launch and delivery records do
 // not. Role acquisition also puts older role-addressed posts before the new holder's work.
@@ -36,15 +63,20 @@ pub(crate) struct Pending {
 
 impl Pending {
     pub fn overdue(&self, now: f64) -> bool {
+        self.due(now)
+            && (matches!(self.health, Health::Lost | Health::Left)
+                || self.launch.as_ref().is_some_and(|s| s.closed.is_some()))
+    }
+
+    /// Its role answers for its task in this status and its post is half an hour old: overdue
+    /// once its agent is gone or its launch closed as well.
+    fn due(&self, now: f64) -> bool {
         let applicable = match self.role.as_str() {
-            "executor" => matches!(self.status.as_str(), "in_progress" | "blocked" | "review"),
+            "executor" => OPEN.contains(&self.status.as_str()),
             "reviewer" => self.status == "review",
             _ => false,
         };
-        applicable
-            && now - self.post.ts >= UNANSWERED_SECONDS
-            && (matches!(self.health, Health::Lost | Health::Left)
-                || self.launch.as_ref().is_some_and(|s| s.closed.is_some()))
+        applicable && now - self.post.ts >= UNANSWERED_SECONDS
     }
 
     pub fn command(&self) -> String {
@@ -106,151 +138,345 @@ pub(crate) fn unanswered_post(
         })
 }
 
+// Each read below puts `then` after every SELECT it makes inside its closures: nothing for the
+// lookup, ` EXPLAIN` for the test of the plans those closures get (the legacy planner's, which
+// leaves an index or a range for a table scan where a top-level statement would not).
+
+/// Each handle's threads that address it or hold a system record it made, by the recipient and
+/// sender indexes: one equality on each index's first columns.
+pub(super) fn naming_sql(then: &str) -> String {
+    format!(
+        "RETURN $handles.map(|$handle| array::union(
+(SELECT VALUE slug FROM message WITH INDEX message_recipient WHERE recipient = $handle{then}),
+(SELECT VALUE slug FROM message WITH INDEX message_sender WHERE sender = $handle AND kind = 'system'{then})));"
+    )
+}
+
+/// These handles' reviewer launches, as the board lists launches. Launches have no handle index:
+/// this reads the launch table, for the rare reviewer post no launch on its task explains.
+const REVIEWER_LAUNCHES: &str = "RETURN SELECT * OMIT id FROM task_session
+WHERE handle IN $handles AND role = 'reviewer' ORDER BY started, slug, handle;";
+
+/// The asked threads and launches ([`Threads`]), by record range: a thread's messages are
+/// `message:[slug, sid]` and its launches `task_session:[slug, handle]`.
+pub(super) fn threads_sql(then: &str) -> String {
+    format!(
+        "RETURN {{
+threads: $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts,
+IF kind = 'system' {{ text }} ELSE {{ '' }} AS text
+FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}
+OR (kind = 'system' AND string::starts_with(text, sender + ' released ')){then})),
+launches: array::flatten($launched.map(|$slug| (SELECT * OMIT id FROM task_session:[$slug, NONE]..[$slug, ..]{then})))
+}};"
+    )
+}
+
+/// For each ask (a recipient, the sequence it asks after and the threads below a task), the
+/// sequence ids of the recipient's answers there after it, by record range from that sequence on.
+pub(super) fn below_sql(then: &str) -> String {
+    format!(
+        "RETURN $asks.map(|$ask| {{ LET $handle = $ask.handle; LET $after = $ask.after;
+RETURN array::flatten($ask.below.map(|$slug| (SELECT VALUE sid FROM message:[$slug, $after]..[$slug, ..]
+WHERE sender = $handle AND sid > $after AND {ANSWER_SQL}{then}))); }});"
+    )
+}
+
+/// The asked tasks' threads (only the metadata of their posts, answers and releases), and the
+/// launches on those tasks and on the instructions under them, by when they started.
+#[derive(Deserialize)]
+struct Threads {
+    threads: Vec<Vec<MessageRow>>,
+    launches: Vec<TaskSessionRow>,
+}
+
+/// Each handle's health on the board and when it was last seen.
+type Seen<'a> = BTreeMap<&'a str, (Health, f64)>;
+
+/// The posts on `task`'s thread (`rows`, as [`Store::threads_and_launches`] reads it) that its
+/// holders owe, each recipient's once: its holders are its executors and reviewers, the launches on
+/// it or under it (`launches`), its role history and the sessions it addresses.
+fn owed(
+    task: &Task,
+    rows: Vec<MessageRow>,
+    launches: &[TaskSessionRow],
+    by_slug: &BTreeMap<&str, &Task>,
+    sessions: &Seen<'_>,
+    pending: &mut Vec<Pending>,
+) {
+    let mut thread: Vec<_> = rows.into_iter().map(super::message).collect();
+    let recipients = recipients::resolve(&thread, &task.roles);
+    for post in &mut thread {
+        if post.kind == "system"
+            && (!post.text.starts_with(&format!("{} released ", post.sender))
+                || post.text.contains(" (released)"))
+        {
+            post.kind = "activity".into();
+        }
+    }
+    let mut holders: BTreeSet<(String, String)> = task
+        .roles
+        .iter()
+        .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer"))
+        .map(|r| (r.handle.clone(), r.role.clone()))
+        .collect();
+    for launch in launches {
+        if let Some(role) = recorded_role(launch, task, by_slug) {
+            holders.insert((launch.handle.clone(), role.into()));
+        }
+    }
+    // Role history remains evidence after departure even without a launch to restore.
+    for receivers in recipients.values() {
+        holders.extend(
+            receivers
+                .iter()
+                .map(|(handle, role)| (handle.clone(), role.clone())),
+        );
+    }
+    for to in thread.iter().filter_map(|m| m.recipient.as_ref()) {
+        if sessions.contains_key(to.as_str()) && !holders.iter().any(|(h, _)| h == to) {
+            holders.insert((to.clone(), String::new()));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for (handle, role) in holders {
+        let since = task
+            .roles
+            .iter()
+            .find(|r| r.handle == handle && r.role == role)
+            .map_or(f64::NEG_INFINITY, |r| r.since);
+        let last_reply = thread
+            .iter()
+            .filter(|post| {
+                post.sender == handle
+                    && matches!(post.kind.as_str(), "msg" | "verdict" | "activity")
+            })
+            .max_by_key(|post| post.id)
+            .cloned();
+        for post in &thread {
+            let addressed_role = recipients.get(&post.id).and_then(|to| to.get(&handle));
+            if addressed_role.is_some_and(|assigned| assigned != &role) {
+                continue;
+            }
+            let alias = addressed_role.map_or("", String::as_str);
+            if unanswered_post(post, last_reply.as_slice(), &handle, alias, since)
+                && seen.insert((handle.clone(), post.id))
+            {
+                let session = sessions.get(handle.as_str());
+                pending.push(Pending {
+                    slug: task.slug.clone(),
+                    handle: handle.clone(),
+                    role: role.clone(),
+                    post: post.clone(),
+                    // A reviewer launched elsewhere is found later, for the posts still asked.
+                    launch: launches
+                        .iter()
+                        .rev()
+                        .find(|s| s.handle == handle && recorded_role(s, task, by_slug).is_some())
+                        .cloned(),
+                    health: session.map_or(Health::Left, |s| s.0),
+                    seen: session.map_or(0.0, |s| s.1),
+                    status: task.status.clone(),
+                });
+            }
+        }
+    }
+}
+
 impl Store {
-    /// Pending posts, including direct handle posts on finished tasks (which still keep a pane).
-    /// Role aliases retain their recipients from the post's thread prefix, including departed
-    /// agents. A later release or replacement cannot assign an old post to another conversation.
-    pub(crate) fn pending_posts(&self, tasks: &[Task]) -> Result<Vec<Pending>, Error> {
-        let launches = self.all_task_sessions()?;
-        let confirmed = self.confirmed_callbacks()?;
-        let board = self.board()?;
+    /// Pending posts of what `asked` names, including direct handle posts on finished tasks (which
+    /// still keep a pane). `board` is the caller's look at the board: its tasks' tree and its
+    /// sessions' health. Role aliases retain their recipients from the post's thread prefix,
+    /// including departed agents. A later release or replacement cannot assign an old post to
+    /// another conversation. Every read is bounded ([`LOOKUP_WAIT`]).
+    pub(crate) fn pending_posts(
+        &self,
+        board: &Board,
+        asked: Asked<'_>,
+    ) -> Result<Vec<Pending>, Error> {
         let by_slug: BTreeMap<_, _> = board.tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
+        let tasks: Vec<&Task> = match asked {
+            Asked::Overdue(tasks, _) => tasks
+                .iter()
+                .filter(|t| OPEN.contains(&t.status.as_str()))
+                .collect(),
+            Asked::Handles(handles) => {
+                let named = self.threads_naming(handles)?;
+                board
+                    .tasks
+                    .iter()
+                    .filter(|t| {
+                        named.contains(&t.slug)
+                            || t.roles.iter().any(|r| handles.contains(&r.handle))
+                    })
+                    .collect()
+            }
+        };
+        if tasks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let confirmed = self.confirmed_callbacks()?;
         // The raw session list has heartbeat health only. Board health also applies native
         // presence and its Unknown grace, so a quiet but confirmed agent is never recovered.
-        let sessions: BTreeMap<_, _> = board
+        let sessions: Seen<'_> = board
             .sessions
-            .into_iter()
+            .iter()
             .map(|s| {
                 let health = if confirmed.contains(&s.row.handle) {
                     Health::Live
                 } else {
                     s.health
                 };
-                (s.row.handle, (health, s.row.last_seen))
+                (s.row.handle.as_str(), (health, s.row.last_seen))
             })
             .collect();
-        // Only metadata crosses the boundary, including the actor-authored state actions above.
-        let rows: Vec<Vec<MessageRow>> = self
-            .transact(
-                &format!(
-                    "RETURN $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts,
-IF kind = 'system' {{ text }} ELSE {{ '' }} AS text
-FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}
-OR (kind = 'system' AND string::starts_with(text, sender + ' released '))));"
-                ),
-                json!({"slugs": tasks.iter().map(|t| &t.slug).collect::<Vec<_>>()}),
+        let read = self.threads_and_launches(&tasks, board)?;
+        let mut pending = Vec::new();
+        for (task, rows) in tasks.iter().zip(read.threads) {
+            owed(
+                task,
+                rows,
+                &read.launches,
+                &by_slug,
+                &sessions,
+                &mut pending,
+            );
+        }
+        pending.retain(|p| match asked {
+            Asked::Overdue(_, now) => p.due(now),
+            Asked::Handles(handles) => handles.contains(&p.handle),
+        });
+        self.reviewer_launches(&mut pending)?;
+        if let Asked::Overdue(_, now) = asked {
+            pending.retain(|p| p.overdue(now));
+        }
+        self.unanswered_below(pending, board)
+    }
+
+    /// The threads that address one of `handles` or hold a system record one of them made (its
+    /// claims, joins and releases: its role history), by the recipient and sender indexes.
+    fn threads_naming(&self, handles: &BTreeSet<String>) -> Result<BTreeSet<String>, Error> {
+        let named: Vec<Vec<String>> = self
+            .bounded_read(&naming_sql(""), json!({"handles": handles}))
+            .map_err(recovery_error)?;
+        Ok(named.into_iter().flatten().collect())
+    }
+
+    /// `tasks`' threads and the launches on them and on the instructions under them, in one read
+    /// of their record ranges: only the metadata of posts, deliberate actions and releases crosses
+    /// the boundary.
+    fn threads_and_launches(&self, tasks: &[&Task], board: &Board) -> Result<Threads, Error> {
+        let slugs: BTreeSet<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
+        let mut launched = slugs.clone();
+        launched.extend(
+            board
+                .tasks
+                .iter()
+                .filter(|t| t.instruction && t.parent.as_deref().is_some_and(|p| slugs.contains(p)))
+                .map(|t| t.slug.as_str()),
+        );
+        let in_order: Vec<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
+        let mut read: Threads = self
+            .bounded_read(
+                &threads_sql(""),
+                json!({"slugs": in_order, "launched": launched}),
             )
             .map_err(recovery_error)?;
-        let mut pending = Vec::new();
-        for (task, rows) in tasks.iter().zip(rows) {
-            let mut thread: Vec<_> = rows.into_iter().map(super::message).collect();
-            let recipients = recipients::resolve(&thread, &task.roles);
-            for post in &mut thread {
-                if post.kind == "system"
-                    && (!post.text.starts_with(&format!("{} released ", post.sender))
-                        || post.text.contains(" (released)"))
-                {
-                    post.kind = "activity".into();
-                }
-            }
-            let mut holders: BTreeSet<(String, String)> = task
-                .roles
+        // As the board lists them, so the latest launch of a handle is its last.
+        read.launches.sort_by(|a, b| {
+            (a.started.total_cmp(&b.started))
+                .then_with(|| a.slug.cmp(&b.slug))
+                .then_with(|| a.handle.cmp(&b.handle))
+        });
+        Ok(read)
+    }
+
+    /// A review instruction can name a target other than its parent: a reviewer's post with no
+    /// launch on its task or under it takes that handle's latest reviewer launch anywhere, read
+    /// for those handles alone.
+    fn reviewer_launches(&self, pending: &mut [Pending]) -> Result<(), Error> {
+        let wants = |p: &Pending| p.role == "reviewer" && p.launch.is_none();
+        let handles: BTreeSet<&str> = pending
+            .iter()
+            .filter(|p| wants(p))
+            .map(|p| p.handle.as_str())
+            .collect();
+        if handles.is_empty() {
+            return Ok(());
+        }
+        let launches: Vec<TaskSessionRow> = self
+            .bounded_read(REVIEWER_LAUNCHES, json!({"handles": handles}))
+            .map_err(recovery_error)?;
+        for p in pending.iter_mut().filter(|p| wants(p)) {
+            p.launch = launches
                 .iter()
-                .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer"))
-                .map(|r| (r.handle.clone(), r.role.clone()))
-                .collect();
-            for launch in &launches {
-                if let Some(role) = recorded_role(launch, task, &by_slug) {
-                    holders.insert((launch.handle.clone(), role.into()));
-                }
-            }
-            // Role history remains evidence after departure even without a launch to restore.
-            for receivers in recipients.values() {
-                holders.extend(
-                    receivers
-                        .iter()
-                        .map(|(handle, role)| (handle.clone(), role.clone())),
-                );
-            }
-            for to in thread.iter().filter_map(|m| m.recipient.as_ref()) {
-                if sessions.contains_key(to) && !holders.iter().any(|(h, _)| h == to) {
-                    holders.insert((to.clone(), String::new()));
-                }
-            }
-            let mut seen = BTreeSet::new();
-            for (handle, role) in holders {
-                let since = task
-                    .roles
-                    .iter()
-                    .find(|r| r.handle == handle && r.role == role)
-                    .map_or(f64::NEG_INFINITY, |r| r.since);
-                let last_reply = thread
-                    .iter()
-                    .filter(|post| {
-                        post.sender == handle
-                            && matches!(post.kind.as_str(), "msg" | "verdict" | "activity")
-                    })
-                    .max_by_key(|post| post.id)
-                    .cloned();
-                for post in &thread {
-                    let addressed_role = recipients.get(&post.id).and_then(|to| to.get(&handle));
-                    if addressed_role.is_some_and(|assigned| assigned != &role) {
-                        continue;
-                    }
-                    let alias = addressed_role.map_or("", String::as_str);
-                    if unanswered_post(post, last_reply.as_slice(), &handle, alias, since)
-                        && seen.insert((handle.clone(), post.id))
-                    {
-                        pending.push(Pending {
-                            slug: task.slug.clone(),
-                            handle: handle.clone(),
-                            role: role.clone(),
-                            post: post.clone(),
-                            launch: launches
-                                .iter()
-                                .rev()
-                                .find(|s| {
-                                    s.handle == handle && recorded_role(s, task, &by_slug).is_some()
-                                })
-                                .or_else(|| {
-                                    // A review instruction can name a target other than its parent.
-                                    if role == "reviewer" {
-                                        launches
-                                            .iter()
-                                            .rev()
-                                            .find(|s| s.handle == handle && s.role == "reviewer")
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .cloned(),
-                            health: sessions.get(&handle).map_or(Health::Left, |s| s.0),
-                            seen: sessions.get(&handle).map_or(0.0, |s| s.1),
-                            status: task.status.clone(),
-                        });
-                    }
+                .rev()
+                .find(|s| s.handle == p.handle)
+                .cloned();
+        }
+        Ok(())
+    }
+
+    /// The posts of `pending` their recipient has not answered on a task under the post's own,
+    /// after it (an answer on its own thread is the thread check already made): the threads below
+    /// each asked task read from its earliest post's sequence on, for its recipients alone.
+    fn unanswered_below(
+        &self,
+        pending: Vec<Pending>,
+        board: &Board,
+    ) -> Result<Vec<Pending>, Error> {
+        let tree: Tree = board
+            .tasks
+            .iter()
+            .map(|t| (t.slug.clone(), t.parent.clone()))
+            .collect();
+        let asked: BTreeSet<&str> = pending.iter().map(|p| p.slug.as_str()).collect();
+        let mut below: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for task in &board.tasks {
+            for over in above(&tree, &task.slug) {
+                if let Some(over) = asked.get(over).filter(|over| **over != task.slug) {
+                    below.entry(over).or_default().push(&task.slug);
                 }
             }
         }
-        if pending.is_empty() {
+        let mut after: BTreeMap<(&str, &str), i64> = BTreeMap::new();
+        for p in pending
+            .iter()
+            .filter(|p| below.contains_key(p.slug.as_str()))
+        {
+            let first = after
+                .entry((p.handle.as_str(), p.slug.as_str()))
+                .or_insert(p.post.id);
+            *first = (*first).min(p.post.id);
+        }
+        if after.is_empty() {
             return Ok(pending);
         }
-        // Resolve recipients on their original thread first. Only then read that recipient's
-        // eligible records after each still-pending post, never the descendant threads.
-        let activity: Vec<Vec<answers::Answer>> = self
-            .read(
-                &answers::batch(),
-                json!({"posts": pending.iter().map(|p| (&p.handle, p.post.id)).collect::<Vec<_>>()}),
-            )
+        let asks: Vec<Value> = after
+            .iter()
+            .map(|((handle, slug), after)| {
+                json!({"handle": handle, "after": after, "below": below[slug]})
+            })
+            .collect();
+        let found: Vec<Vec<i64>> = self
+            .bounded_read(&below_sql(""), json!({"asks": asks}))
             .map_err(recovery_error)?;
-        let tree = by_slug
-            .values()
-            .map(|t| (t.slug.clone(), t.parent.clone()))
+        let latest: BTreeMap<(String, String), i64> = after
+            .keys()
+            .zip(found)
+            .filter_map(|((handle, slug), sids)| {
+                Some((
+                    (handle.to_string(), slug.to_string()),
+                    sids.into_iter().max()?,
+                ))
+            })
             .collect();
         Ok(pending
             .into_iter()
-            .zip(activity)
-            .filter_map(|(p, rows)| (!answers::answered(&rows, &p.slug, &tree)).then_some(p))
+            .filter(|p| {
+                latest
+                    .get(&(p.handle.clone(), p.slug.clone()))
+                    .is_none_or(|last| *last <= p.post.id)
+            })
             .collect())
     }
 

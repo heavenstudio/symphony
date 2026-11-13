@@ -192,6 +192,9 @@ pub struct Board {
 
 pub struct Store {
     client: Client,
+    /// The client the unanswered-post lookup reads through: this one's board, waited on at most
+    /// [`unanswered::LOOKUP_WAIT`], a read that ran that out not sent again ([`Client::bounded`]).
+    lookup: Client,
     clock: Clock,
     pid_alive: Probe,
     host: String,

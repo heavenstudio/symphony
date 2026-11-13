@@ -300,8 +300,15 @@ fn looks(board: &Board, waiter: &str) -> Vec<String> {
 /// FROM role WHERE role = 'orchestrator')`, the role scan again for each session, take 3.7 s of
 /// the server's CPU on this board, where fetched by id they take 5 ms: 370 s for a say or a claim,
 /// 3.7 s for an inbox.
+///
+/// A claim's write builds the PULL of the orchestrator it makes due, and that PULL's unanswered
+/// lookup read every thread of the board, then each pending post's recipient suffix: 86% of the
+/// claim's server CPU. Reading the open tasks' threads alone (`store/unanswered.rs`), measured on
+/// 2026-11-13 at load 12 to 29 at main's tip and on the branch, the claim's median CPU fell from
+/// 12.1 s (server 7.8 to 10.7 s) to 6.8 s (server 1.6 to 2.1 s); its bound is 3.5 times that.
+/// It cannot tell that lookup's return alone, which its own test bounds (`unanswered`).
 const SAY: Duration = Duration::from_secs(20);
-const CLAIM: Duration = Duration::from_secs(60);
+const CLAIM: Duration = Duration::from_secs(24);
 const INBOX: Duration = Duration::from_secs(1);
 const API: Duration = Duration::from_millis(500);
 /// The median of three looks of `tasks wait` by an orchestrator without a channel, each after a

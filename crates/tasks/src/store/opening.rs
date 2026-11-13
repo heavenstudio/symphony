@@ -209,6 +209,7 @@ impl Store {
         how: &Opening,
     ) -> Store {
         Store {
+            lookup: client.bounded(super::unanswered::LOOKUP_WAIT),
             client,
             clock,
             pid_alive,

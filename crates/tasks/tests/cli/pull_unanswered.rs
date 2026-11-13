@@ -327,14 +327,38 @@ fn descendant_answers_keep_sender_sequence_ancestry_and_role_handoff_fences() {
     }
 }
 
-/// A launch record no reader decodes: the unanswered scan reads every launch record and fails,
-/// while the board and the digest's other reads answer.
+/// A launch record no reader decodes, on the open task the post waits on: the unanswered scan
+/// reads that task's launch records and fails, while the board and the digest's other reads answer.
 const UNREADABLE_LAUNCH: &str = "DEFINE FIELD OVERWRITE started ON task_session TYPE any;
-UPSERT task_session:['unreadable', 'nobody'] CONTENT { slug: 'unreadable', handle: 'nobody',
+UPSERT task_session:['sim/a', 'nobody'] CONTENT { slug: 'sim/a', handle: 'nobody',
     role: 'executor', claude_session: '', worktree: '', branch: '', pane: '', model: '',
     started: 'unreadable', closed: 1.0, closed_why: '', restore: '' } RETURN NONE;";
-const READABLE_LAUNCHES: &str = "DELETE task_session:['unreadable', 'nobody'] RETURN NONE;
+const READABLE_LAUNCHES: &str = "DELETE task_session:['sim/a', 'nobody'] RETURN NONE;
 DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
+
+/// The scan reads the launches of the open tasks it asks about alone: one no reader decodes, on a
+/// finished task, is never read, and the post stays in the digest.
+#[test]
+fn a_launch_on_a_task_the_scan_does_not_ask_about_is_never_read() {
+    let c = Case::new();
+    c.task("sim/a", "in_progress");
+    c.task("sim/b", "done");
+    c.f.store
+        .say("sim/a", "owner", "continue", Some("@executor"))
+        .unwrap();
+    c.f.advance(31.0 * 60.0);
+    use crate::common::RawWrite as _;
+    let write = |sql: &str| {
+        (c.f.store.client())
+            .write(sql, serde_json::json!({}))
+            .unwrap();
+    };
+    write(&UNREADABLE_LAUNCH.replace("sim/a", "sim/b"));
+    assert!(c.f.store.all_task_sessions().is_err());
+    assert_eq!(slugs(&c.digest(), "unanswered"), ["sim/a"]);
+    write(&READABLE_LAUNCHES.replace("sim/a", "sim/b"));
+    assert!(c.f.store.all_task_sessions().is_ok());
+}
 
 #[test]
 fn a_failed_scan_leaves_every_other_list_and_the_post_returns_with_the_scan() {

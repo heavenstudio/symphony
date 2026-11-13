@@ -1176,7 +1176,8 @@ A channel registered anew starts again from the whole digest: `--off`, a registr
 session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
 Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
 stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
-A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+The scan reads only the open tasks' threads, and each of its reads waits at most ten seconds and is sent once, so a
+board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
 those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
 next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.

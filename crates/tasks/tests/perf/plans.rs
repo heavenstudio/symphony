@@ -31,7 +31,8 @@ pub fn bound(name: &str) -> Option<Value> {
         "slugs" | "open" | "waiting" => open,
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
-        "sid" | "same" | "last" | "post" => json!(1),
+        // The unanswered lookup's answers below a task: the sequence its ask reads after.
+        "sid" | "same" | "last" | "post" | "after" => json!(1),
         "ts" => json!(NOW),
         "counted" => json!({"last": 1, "ts": NOW}),
         "agent" | "binding" | "old" | "other" | "had" | "made" | "was" => Value::Null,
@@ -322,12 +323,18 @@ fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
     plan_all(client, &[request(sql)])
 }
 
-/// Exercise the actual pending-post read and its closure bindings on a small owned board. This
-/// uses the existing recording/planning check without replaying the generated board's commands.
+/// Exercise the actual unanswered-post lookup a digest runs and its closure bindings on a small
+/// owned board: its thread and the thread below it read by record range, and no recipient's suffix
+/// of records across the board. This uses the existing recording/planning check without replaying
+/// the generated board's commands.
 #[test]
-fn pending_answers_plan_the_actual_recipient_suffix_on_a_small_board() {
+fn pending_posts_plan_their_threads_by_range_on_a_small_board() {
     let f = store::Fixture::empty();
     f.task("work");
+    f.task_with(symphony_board::NewTask {
+        parent: Some("work".into()),
+        ..symphony_board::NewTask::new("work-child", "child", "owner")
+    });
     let worker = f.session("worker");
     f.store.claim("work", &worker).unwrap();
     f.store
@@ -346,19 +353,24 @@ fn pending_answers_plan_the_actual_recipient_suffix_on_a_small_board() {
     let digest = symphony_board::cli::pull::digest(&reader, &[], None, at, &[]).unwrap();
     assert_eq!(digest.count("unanswered"), 1);
     let planned = plan_all(f.store.client(), &proxy.take());
-    let suffix: Vec<_> = planned
-        .iter()
-        .filter(|(sql, _)| sql.contains("WITH INDEX message_sender"))
+    let ranged: Vec<_> = (planned.keys())
+        .filter(|sql| sql.contains("FROM message:[$slug,"))
         .collect();
     assert_eq!(
-        suffix.len(),
-        1,
-        "the actual recipient suffix is planned: {planned:#?}"
+        ranged.len(),
+        2,
+        "the thread and the one below it, each by its range: {planned:#?}"
     );
     assert!(
-        suffix[0].1.plan.contains("message_sender") && suffix[0].1.plan.contains("MoreThan 1"),
-        "{suffix:#?}"
+        ranged
+            .iter()
+            .any(|sql| sql.contains("message:[$slug, $after]")),
+        "{ranged:#?}"
     );
+    let suffix: Vec<_> = (planned.keys())
+        .filter(|sql| sql.contains("WITH INDEX message_sender") && sql.contains("sid >"))
+        .collect();
+    assert!(suffix.is_empty(), "no recipient suffix: {suffix:#?}");
     let failed = failures(&planned);
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }

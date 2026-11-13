@@ -3,7 +3,7 @@
 //! again), the record on its task thread first ([`record`]), and the sessions opened again when
 //! the close does not happen.
 
-use super::work::{HOUR, Hold, holds};
+use super::work::{HOUR, Hold, Holds};
 use super::{CHANGED, Closed, Due, NOT_REAPED_KINDS, Reap, Round, TOOL_CALL, WHY, name, ready};
 use crate::launch::cleanup::{restore_line, stored_session};
 use crate::launch::hc::{self, Hc, Object, text_of};
@@ -166,7 +166,7 @@ fn board_still(store: &Store, judged: &Judged<'_>) -> Result<Result<(), String>,
     if session.row.last_tool != judged.beat {
         return Ok(Err(TOOL_CALL.into()));
     }
-    Ok(match holds(store)?.get(judged.handle) {
+    Ok(match Holds::read(store)?.of(judged.handle)?.as_ref() {
         now if now == judged.hold => Ok(()),
         Some(post) if post.is_post() => Err(post.why()),
         _ => Err(CHANGED.into()),

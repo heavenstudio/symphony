@@ -694,7 +694,8 @@ pub(crate) fn digest_on(
     // already told keeps its identity (`pull_unanswered`), so its return is not told again.
     // A PULL diffed against an earlier one says nothing of them ([`Digest::said_after`]).
     let mut unanswered_scanned = true;
-    let pending = store.pending_posts(tasks).unwrap_or_else(|error| {
+    let overdue = crate::store::unanswered::Asked::Overdue(tasks, now);
+    let pending = store.pending_posts(board, overdue).unwrap_or_else(|error| {
         let reason = error.to_string().replace('\n', " ");
         eprintln!("PULL unanswered scan skipped: {reason}");
         unanswered_scanned = false;
@@ -702,7 +703,7 @@ pub(crate) fn digest_on(
     });
     let unanswered: Vec<_> = pending
         .into_iter()
-        .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
+        .filter(|p| !busy.contains(p.handle.as_str()))
         .collect();
     for t in tasks {
         if unanswered.iter().any(|p| p.slug == t.slug) {

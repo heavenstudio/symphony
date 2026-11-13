@@ -79,7 +79,7 @@ mod state;
 mod work;
 use state::{lock, read_said, read_seen, read_state, write_state};
 pub use state::{lock_path, state_path};
-use work::{Hold, holds};
+use work::{Hold, Holds};
 
 use super::hc::{self, Hc, Object, text_of};
 use super::screen;
@@ -223,7 +223,7 @@ pub fn sweep(
         current: hc.caller(),
         sessions,
         callbacks: store.callbacks()?,
-        holds: holds(store)?,
+        holds: Holds::read(store)?,
         open: store.open_task_sessions()?,
         now,
         seen: read_seen(&saved, now),
@@ -252,7 +252,8 @@ struct Round<'a> {
     /// Handle -> its session's kind, and when a tool call of its agent last beat.
     sessions: HashMap<String, (String, Option<f64>)>,
     callbacks: BTreeMap<String, Callback>,
-    holds: BTreeMap<String, Hold>,
+    /// What holds the terminals it judges, read for each as it comes.
+    holds: Holds<'a>,
     /// The board's open launch records.
     open: Vec<TaskSessionRow>,
     now: f64,
@@ -369,7 +370,13 @@ impl Round<'_> {
             Some((_, beat)) => *beat,
         };
         let beat = last_tool.unwrap_or(0.0);
-        let hold = self.holds.get(&handle).cloned();
+        let hold = match self.holds.of(&handle) {
+            Ok(hold) => hold,
+            Err(problem) => {
+                let problem = super::LaunchError(problem.to_string());
+                return stays(&handle, screen::no_information(&problem));
+            }
+        };
         if let Some(post) = hold.as_ref().filter(|hold| hold.is_post()) {
             return stays(&handle, post.why());
         }
