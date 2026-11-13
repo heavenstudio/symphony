@@ -445,8 +445,13 @@ fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
 #[test]
 fn a_failed_replacement_is_killed_and_said_unless_it_ended_already() {
     use std::os::unix::process::ExitStatusExt;
-    use symphony_board::sys::Command;
-    let mut running = Command::new("/bin/sleep").arg("86400").spawn().unwrap();
+    use symphony_board::sys::{Command, Stdio};
+    // It lives until killed, or until its input closes: a wait on one never killed ends at once,
+    // as `wait` closes that input first.
+    let mut running = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     let pid = running.id();
     let why = "replacement did not become ready: it ended";
     let ((), told) = crate::front::told::during(|| super::end_replacement(&mut running, why));

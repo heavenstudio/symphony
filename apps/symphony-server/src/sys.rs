@@ -417,8 +417,12 @@ mod tests {
 
     #[test]
     fn a_taken_process_is_signalled_only_while_its_pid_names_it() {
-        // It sleeps a day: it lives until the case kills it.
-        let mut child = Command::new("/bin/sleep").arg("86400").spawn().unwrap();
+        // It lives until the case kills it, or until its input closes: a wait on one never killed
+        // ends at once, as `wait` closes that input first.
+        let mut child = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         let pid = i64::from(child.id());
         let taken = Taken::of(pid);
         assert!(taken.alive());
