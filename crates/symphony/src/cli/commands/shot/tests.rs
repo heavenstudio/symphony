@@ -251,10 +251,13 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
          viewport: on a phone, a page wider than the screen or zoomed in shows a part of its \
          layout)",
         // The point pressed is the point tested, or nothing is pressed.
-        "Once aimed, the pointer moves to that middle and the page's hover is read: should the \
-         pointer be anywhere but where the aim tested, or, for a click, anything but the element \
+        "Once aimed, the pointer moves to that middle, and the browser's own report of the move, \
+         its pointermove or mousemove, says where it landed and on what (where none reaches the \
+         page, as over a frame, whether the element found there is hovered): should it land \
+         anywhere but where the aim tested, or where is unknown (over a frame of another site, \
+         whose move the page neither hears nor hovers), or, for a click, anything but the element \
          (or its label) be on top there by then (a menu its hover opened), the step fails naming \
-         what the press would reach, and nothing is pressed",
+         where the pointer landed or what the press would reach, and nothing is pressed",
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
         "but on a link, an object or another control inside it (in a component's open shadow root \
          too, and on what is slotted into one there)",
@@ -801,7 +804,7 @@ fn what_a_press_reaches_is_read_alike_by_the_probe_and_once_the_pointer_has_move
     for part in ["const reach = ", "const takes = ", "const flat = "] {
         assert!(!AIM.contains(part) && !ARRIVED.contains(part), "{part}");
     }
-    // A point's hit finds a pair, the pointer's hover another, and either goes through one walk to
+    // A point's hit finds a pair, the move's report another, and either goes through one walk to
     // the control a label clicks.
     in_order(
         REACH,
@@ -815,7 +818,7 @@ fn what_a_press_reaches_is_read_alike_by_the_probe_and_once_the_pointer_has_move
     // The element and the point go in as JSON, the point in the page's coordinates.
     assert!(
         arrived.starts_with(
-            "(() => { const element = document.querySelector(\"#a\"); const [x, y] = [60.0, 2615.5]; "
+            "(async () => { const element = document.querySelector(\"#a\"); const [x, y] = [60.0, 2615.5]; "
         ),
         "{arrived}"
     );
@@ -827,60 +830,104 @@ fn what_a_press_reaches_is_read_alike_by_the_probe_and_once_the_pointer_has_move
 }
 
 #[test]
-fn the_pointer_is_found_by_the_pages_hover_and_set_beside_the_hit_where_the_aim_tested() {
-    // The pointer: the last element the hover matches, then the same down each open shadow root,
-    // the document's element there its outermost host; then the hit at the point aimed at, now.
+fn the_pointer_is_found_by_the_moves_own_report_and_set_beside_the_hit_where_the_aim_tested() {
+    // Before the move: one report kept, the browser's own move (no page script's), its point and
+    // its target, the first heard taken and the listening ended.
+    in_order(
+        WATCH,
+        &[
+            "const key = 'symphony-shot-pointer'; window[key] = null;",
+            "const kinds = ['pointermove', 'mousemove'];",
+            "if (!event.isTrusted) return;",
+            "const node = event.composedPath()[0];",
+            "window[key] = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null};",
+            "for (const kind of kinds) removeEventListener(kind, take, true);",
+            "for (const kind of kinds) addEventListener(kind, take, true);",
+        ],
+    );
+    // After it: that report, waited for over two frames at most, then the hit at the point aimed
+    // at, now; the report's target read from the document's element there, its outermost host.
     in_order(
         ARRIVED,
         &[
-            "const all = root.querySelectorAll(':hover');",
-            "deep = all[all.length - 1];",
-            "root = deep.shadowRoot;",
-            "while (at && at.getRootNode() instanceof ShadowRoot) at = at.getRootNode().host;",
+            "for (let frame = 0; frame < 2 && !window['symphony-shot-pointer']; frame++) await new \
+             Promise(resolve => requestAnimationFrame(resolve));",
+            "const record = window['symphony-shot-pointer'];",
+            "while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host;",
             "const hit = reach(x, y);",
         ],
     );
     for part in [
         // Taken, else what is there by its name, else nothing; the element gone takes nothing.
         "const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);",
-        // Agreeing when the pointer is over the very element the hit finds.
-        "return {gone: !element, pointer: said(reached(at, deep)), hit: said(hit), agree: !!deep && deep === hit.deep};",
+        "return {gone: !element || !element.isConnected,",
+        "pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), \
+         record.at)) : null} : null,",
+        // The hover asked of one element, the one the hit test finds, never searched for.
+        "hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover')};",
     ] {
         assert!(ARRIVED.contains(part), "no {part:?} in {ARRIVED}");
     }
+    assert!(!ARRIVED.contains("querySelectorAll(':hover')"), "{ARRIVED}");
+}
+
+/// Where the move's report put the pointer, and on what.
+fn landed(x: f64, y: f64, on: Reached) -> Option<Pointer> {
+    Some(Pointer { at: (x, y), on })
 }
 
 /// An arrival with the element still in the page.
-fn arrived(pointer: Reached, hit: Reached, agree: bool) -> Arrival {
+fn arrived(pointer: Option<Pointer>, hit: Reached, hovered: bool) -> Arrival {
     Arrival {
         gone: false,
         pointer,
         hit,
-        agree,
+        hovered,
     }
 }
 
 #[test]
-fn an_arrival_reads_the_pointer_the_hit_and_whether_they_agree() {
+fn an_arrival_reads_the_moves_report_the_hit_and_its_hover() {
+    use Reached::{Nothing, Other, Target};
     assert_eq!(
-        Arrival::read(&json!({"gone": false, "pointer": true, "hit": "div#menu", "agree": false})),
-        arrived(Reached::Target, Reached::Other("div#menu".into()), false)
+        Arrival::read(&json!({
+            "gone": false,
+            "pointer": {"x": 60.25, "y": 2615, "on": true},
+            "hit": "div#menu",
+            "hovered": true
+        })),
+        arrived(
+            landed(60.25, 2615.0, Target),
+            Other("div#menu".into()),
+            true
+        )
     );
+    for (on, read) in [
+        (json!("html"), Other("html".into())),
+        (json!(null), Nothing),
+    ] {
+        assert_eq!(
+            Arrival::read(&json!({"pointer": {"x": 1, "y": 2, "on": on}})).pointer,
+            landed(1.0, 2.0, read)
+        );
+    }
     assert_eq!(
-        Arrival::read(&json!({"gone": true, "pointer": null, "hit": "main", "agree": true})),
+        Arrival::read(&json!({"gone": true, "pointer": null, "hit": null, "hovered": false})),
         Arrival {
             gone: true,
-            ..arrived(Reached::Nothing, Reached::Other("main".into()), true)
+            ..arrived(None, Nothing, false)
         }
     );
-    // Anything short of an answer is nothing, never gone nor agreeing.
+    // Anything short of an answer is nothing: no report, never gone nor hovered.
     for unsaid in [
         json!(null),
-        json!({"gone": "yes", "pointer": false, "hit": 3, "agree": 1}),
+        json!({"gone": "yes", "pointer": {"x": "1", "y": 2}, "hit": 3, "hovered": 1}),
+        json!({"pointer": {"x": 1, "on": true}}),
+        json!({"pointer": true}),
     ] {
         assert_eq!(
             Arrival::read(&unsaid),
-            arrived(Reached::Nothing, Reached::Nothing, false),
+            arrived(None, Nothing, false),
             "{unsaid}"
         );
     }
@@ -889,102 +936,143 @@ fn an_arrival_reads_the_pointer_the_hit_and_whether_they_agree() {
 #[test]
 fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
     use Reached::{Nothing, Other, Target};
-    // The pointer over the element, the element on top there: either goes on.
-    for clicking in [true, false] {
-        for agree in [true, false] {
-            assert_eq!(arrived(Target, Target, agree).refused(clicking), None);
+    let aimed = (1240.796875, 2616.1875);
+    // The report at the point aimed at, a pointer event's exactly or a mouse event's whole pixels
+    // (a pixel off on either axis at most), the element on top there: either goes on, whatever the
+    // report's target (the hit, now, says what a press there reaches).
+    for at in [
+        aimed,
+        (1240.0, 2616.0),
+        (1241.796875, 2615.1875),
+        (1239.796875, 2617.1875),
+    ] {
+        for on in [Target, Other("input#email".into())] {
+            let there = arrived(landed(at.0, at.1, on), Target, false);
+            for clicking in [true, false] {
+                assert_eq!(there.refused(aimed, clicking), None, "{there:?}");
+            }
         }
     }
-    // The pointer past the page's edge, where main put it on a phone: the point pressed is not the
-    // point tested, whatever the hit test says there.
-    let past = arrived(Nothing, Target, false);
-    assert_eq!(
-        past.refused(true).as_deref(),
-        Some(
-            ": the press would have landed on nothing in the page, not on it: the pointer, moved to \
-             its middle, is not where the aim tested; nothing was pressed"
-        )
-    );
-    assert_eq!(
-        past.refused(false).as_deref(),
-        Some(
-            ": the pointer landed on nothing in the page, not on it: moved to its middle, it is not \
-             where the aim tested"
-        )
-    );
-    // Over another element than the one the hit test finds there, the element or anything else.
-    for hit in [Target, Other("div#veil".into()), Nothing] {
-        let elsewhere = arrived(Other("html".into()), hit, false);
-        assert_eq!(
-            elsewhere.refused(true).as_deref(),
-            Some(
-                ": the press would have landed on html, not on it: the pointer, moved to its \
-                 middle, is not where the aim tested; nothing was pressed"
-            ),
-            "{elsewhere:?}"
+    // Any farther, on either axis: the point pressed is not the point tested, whatever the hit test
+    // says there, and what the report hit is named.
+    for (at, on, said) in [
+        (
+            (450.0, 2616.0),
+            Other("html".into()),
+            "(450, 2616) in the page, on html",
+        ),
+        ((1240.0, 2617.5), Target, "(1240, 2618) in the page, on it"),
+        (
+            (1242.0, 2616.0),
+            Nothing,
+            "(1242, 2616) in the page, on no element",
+        ),
+    ] {
+        for hit in [Target, Other("div#veil".into())] {
+            let strayed = arrived(landed(at.0, at.1, on.clone()), hit, true);
+            assert_eq!(
+                strayed.refused(aimed, true),
+                Some(format!(
+                    ": the pointer landed at {said}, not at its middle (1241, 2616), where the aim \
+                     tested; nothing was pressed"
+                )),
+                "{strayed:?}"
+            );
+            assert_eq!(
+                strayed.refused(aimed, false),
+                Some(format!(
+                    ": the pointer landed at {said}, not at its middle (1241, 2616), where the aim \
+                     tested"
+                ))
+            );
+        }
+    }
+    // No report (over a frame, whose document takes the move): the element found there hovered
+    // has the pointer over it; not hovered (a frame of another site), where it is is unknown.
+    for clicking in [true, false] {
+        assert_eq!(arrived(None, Target, true).refused(aimed, clicking), None);
+    }
+    for (hit, found) in [
+        (Target, "it, found there, is not hovered"),
+        (
+            Other("iframe#pay".into()),
+            "iframe#pay, found there, is not hovered",
+        ),
+        (Nothing, "the hit test finds no element there"),
+    ] {
+        let unseen = arrived(None, hit, false);
+        let why = format!(
+            ": where the pointer landed, moved to its middle (1241, 2616), is unknown: no report \
+             of the move reached the page, and {found}"
         );
+        assert_eq!(unseen.refused(aimed, false), Some(why.clone()));
         assert_eq!(
-            elsewhere.refused(false).as_deref(),
-            Some(
-                ": the pointer landed on html, not on it: moved to its middle, it is not where the \
-                 aim tested"
-            )
+            unseen.refused(aimed, true),
+            Some(format!("{why}; nothing was pressed"))
         );
     }
-    // As the pointer came, the page put a menu on top where the aim tested (its hover opened it),
-    // the page's hover still on the element or on the menu already: the pointer is where the aim
-    // tested, so a hover has done what it does, but a click would press the menu.
+    // The pointer where the aim tested, the page put a menu on top there as it came (its hover
+    // opened it): a hover has done what it does, a click would press the menu, and the failure says
+    // what to do instead.
     for menu in [
-        arrived(Target, Other("div#menu".into()), false),
-        arrived(Other("div#menu".into()), Other("div#menu".into()), true),
+        arrived(
+            landed(aimed.0, aimed.1, Target),
+            Other("div#menu".into()),
+            false,
+        ),
+        arrived(None, Other("div#menu".into()), true),
     ] {
-        assert_eq!(menu.refused(false), None, "{menu:?}");
+        assert_eq!(menu.refused(aimed, false), None, "{menu:?}");
         assert_eq!(
-            menu.refused(true).as_deref(),
+            menu.refused(aimed, true).as_deref(),
             Some(
-                ": the press would have landed on div#menu, not on it: that was on top at its \
-                 middle once the pointer reached it; nothing was pressed"
+                ": the press would have landed on div#menu, on top at its middle once the pointer \
+                 reached it; nothing was pressed (for a menu its hover opens, --hover it, then \
+                 --click the item meant)"
             ),
             "{menu:?}"
         );
     }
-    // Nothing there any more, or the hit test taking the element where the hover agreeing with it
-    // does not (no such page): a click goes on only with both on the element.
+    // No element there at all any more: said so, never where the press would land.
+    let empty = arrived(landed(aimed.0, aimed.1, Nothing), Nothing, false);
+    assert_eq!(empty.refused(aimed, false), None);
     assert_eq!(
-        arrived(Target, Nothing, false).refused(true).as_deref(),
+        empty.refused(aimed, true).as_deref(),
         Some(
-            ": the press would have landed on nothing in the page, not on it: that was on top at \
-             its middle once the pointer reached it; nothing was pressed"
+            ": the hit test finds no element at its middle once the pointer reached it; nothing \
+             was pressed"
         )
     );
-    assert!(
-        arrived(Other("span#x".into()), Target, true)
-            .refused(true)
-            .is_some_and(
-                |why| why.starts_with(": the press would have landed on span#x, not on it")
-            )
-    );
     // The element gone as the pointer came: a hover has done what it does, a click presses
-    // nothing; a pointer elsewhere than the hit is said first.
+    // nothing; a pointer elsewhere is said first.
     let gone = Arrival {
         gone: true,
-        ..arrived(Other("main".into()), Other("main".into()), true)
+        ..arrived(
+            landed(aimed.0, aimed.1, Other("main".into())),
+            Other("main".into()),
+            true,
+        )
     };
-    assert_eq!(gone.refused(false), None);
+    assert_eq!(gone.refused(aimed, false), None);
     assert_eq!(
-        gone.refused(true).as_deref(),
+        gone.refused(aimed, true).as_deref(),
         Some(" left the page as the pointer reached it; nothing was pressed")
     );
     let strayed = Arrival {
-        gone: true,
-        ..arrived(Other("main".into()), Other("div".into()), false)
+        pointer: landed(10.0, 10.0, Other("main".into())),
+        ..gone
     };
     assert!(
         strayed
-            .refused(true)
-            .is_some_and(|why| why.starts_with(": the press would have landed on main, not on it"))
+            .refused(aimed, true)
+            .is_some_and(|why| why.starts_with(": the pointer landed at (10, 10) in the page"))
     );
-    assert!(strayed.refused(false).is_some());
+}
+
+#[test]
+fn a_point_is_said_in_whole_css_pixels() {
+    assert_eq!(point_said((60.25, 2615.75)), "(60, 2616)");
+    assert_eq!(point_said((0.0, -3.4)), "(0, -3)");
 }
 
 #[test]

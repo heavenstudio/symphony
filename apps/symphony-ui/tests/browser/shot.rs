@@ -1615,8 +1615,118 @@ fn a_phone_with_no_meta_viewport_and_a_desktop_still_click_where_they_did() {
     }
 }
 
-/// A button whose hover opens a menu over the whole page, and a record of the pointer moving
-/// (`/moved`, which a settle waits on) and pressing (`/pressed`).
+/// Labels whose control comes after them in the document, which Chrome hovers with its hovered
+/// label: a label naming a text field by `for`, a span inside a label around its checkbox, a link
+/// inside a label naming a checkbox by `for`, and far right, past a phone's screen on a page as wide
+/// as [`wide`], a label naming a checkbox by `for`. Then a frame of the page's own, a button filling
+/// it, whose document takes the move over it. With `meta` as the page's meta viewport.
+fn followed(meta: &str) -> Vec<u8> {
+    let meta = if meta.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta name="viewport" content="{meta}">"#)
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+{meta}
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; width: 3200px; height: 3200px; position: relative; }}
+  .spot {{ position: absolute; }}
+  iframe {{ border: 0; }}
+</style>
+<div class="spot" style="left: 20px; top: 40px"><label for="email" id="lfor">Email</label> <input id="email"></div>
+<div class="spot" style="left: 20px; top: 120px"><label><span id="lspan">Accept the terms</span> <input type="checkbox" id="accept"></label></div>
+<div class="spot" style="left: 20px; top: 200px"><label for="agree">I accept the <a id="terms" href="#terms">terms</a></label> <input type="checkbox" id="agree"></div>
+<div class="spot" style="left: 1200px; top: 300px"><label for="far" id="lfar">far right</label> <input type="checkbox" id="far"></div>
+<div class="spot" style="left: 20px; top: 280px"><iframe id="frame" width="200" height="60" srcdoc="<style>body {{ margin: 0 }} button {{ width: 100%; height: 100vh }}</style><button type='button' onclick='parent.framed = true'>in a frame</button>"></iframe></div>
+<script>window.framed = false;</script>
+{POINTED}"##
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_a_desktop_and_a_phone()
+ {
+    // The frame clicked first; then each label's target hovered, then clicked: hovered once the
+    // hover is done, and the click landing on the label, which clicks its control, or on the link,
+    // which a label's activation leaves alone. A pointer read as the last element the page's hover
+    // matches was on the control each label hovers, and each step was refused.
+    let hovered = |id: &str| format!("document.getElementById('{id}').matches(':hover')");
+    let ids = ["lfor", "lspan", "terms", "lfar"];
+    let checks = ids.map(hovered);
+    let mut steps = ["--click", "#frame"].map(String::from).to_vec();
+    for (id, check) in ids.iter().zip(&checks) {
+        let css = format!("#{id}");
+        steps.extend(
+            ["--hover", &css, "--eval", check, "--click", &css].map(|step| step.to_string()),
+        );
+    }
+    let after = "[landed, ['accept', 'agree', 'far'].map(id => document.getElementById(id).checked), \
+                 location.hash, framed, visualViewport.offsetLeft]";
+    for (name, meta, view) in [
+        ("followed-desktop", "", &[][..]),
+        (
+            "followed-phone",
+            "width=device-width, initial-scale=1",
+            &["--phone"][..],
+        ),
+    ] {
+        let steps: Vec<&str> = view
+            .iter()
+            .copied()
+            .chain(steps.iter().map(String::as_str))
+            .chain(["--eval", after])
+            .collect();
+        let Some((output, out, _requests, _scratch)) = on_page(name, &followed(meta), &steps)
+        else {
+            return;
+        };
+        assert!(output.status.success(), "{name}: {}", said(&output));
+        let lines = printed(&output);
+        let [lfor, lspan, terms, lfar, after] = lines.as_slice() else {
+            panic!("{name}: five evaluations: {}", said(&output));
+        };
+        assert_eq!(
+            [lfor, lspan, terms, lfar],
+            [&json!(true); 4],
+            "{name}: {}",
+            said(&output)
+        );
+        assert_eq!(
+            after[0],
+            json!([
+                ["pointerdown", "lfor"],
+                ["click", "lfor"],
+                ["click", "email"],
+                ["pointerdown", "lspan"],
+                ["click", "lspan"],
+                ["click", "accept"],
+                ["pointerdown", "terms"],
+                ["click", "terms"],
+                ["pointerdown", "lfar"],
+                ["click", "lfar"],
+                ["click", "far"]
+            ]),
+            "{name}: {after}"
+        );
+        // The checkbox inside the label and the one far right checked, the one whose label holds
+        // the link left alone, the link followed; and the frame's button pressed, no report of the
+        // move reaching the page there but the frame hovered.
+        assert_eq!(after[1], json!([true, false, true]), "{name}: {after}");
+        assert_eq!(after[2], json!("#terms"), "{name}: {after}");
+        assert_eq!(after[3], json!(true), "{name}: {after}");
+        assert!(Picture::read(&out).width > 0);
+        if name == "followed-phone" {
+            // The far label was pressed with the screen moved right within the page, to show it.
+            assert!(after[4].as_f64().unwrap() > 0.0, "{name}: {after}");
+        }
+    }
+}
+
+/// A button whose hover opens a menu over the whole page, a record of the pointer moving (`/moved`,
+/// which a settle waits on) and pressing (`/pressed`), and each press's target (`pressed`).
 const OPENS_ON_HOVER: &[u8] = br#"<!doctype html>
 <meta charset="utf-8">
 <style>
@@ -1627,27 +1737,27 @@ const OPENS_ON_HOVER: &[u8] = br#"<!doctype html>
 <button id="opener" type="button">opens on hover</button>
 <div id="menu"></div>
 <script>
+  window.pressed = [];
   document.getElementById('opener').addEventListener('pointerenter', () => document.getElementById('menu').classList.add('open'));
   addEventListener('pointermove', () => fetch('/moved'), true);
-  addEventListener('pointerdown', () => fetch('/pressed'), true);
+  addEventListener('pointerdown', event => { pressed.push(event.target.id); fetch('/pressed'); }, true);
 </script>"#;
 
 #[test]
 fn a_click_whose_hover_opens_a_menu_over_its_target_fails_naming_it_and_presses_nothing() {
     // The aim finds the button on top; the pointer reaching it opens the menu over it, so a press
     // there would reach the menu.
-    let Some((output, out, requests, _scratch)) = on_page(
-        "opens-on-hover",
-        OPENS_ON_HOVER,
-        &["--timeout", "10", "--click", "#opener"],
-    ) else {
+    let Some((output, out, requests, _scratch)) =
+        on_page("opens-on-hover", OPENS_ON_HOVER, &["--click", "#opener"])
+    else {
         return;
     };
     assert_eq!(output.status.code(), Some(1), "{}", said(&output));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim_end(),
-        "symphony shot: --click #opener: the press would have landed on div#menu.open, not on it: \
-         that was on top at its middle once the pointer reached it; nothing was pressed",
+        "symphony shot: --click #opener: the press would have landed on div#menu.open, on top at \
+         its middle once the pointer reached it; nothing was pressed (for a menu its hover opens, \
+         --hover it, then --click the item meant)",
         "{}",
         said(&output)
     );
@@ -1656,7 +1766,8 @@ fn a_click_whose_hover_opens_a_menu_over_its_target_fails_naming_it_and_presses_
         "pressed: {requests:?}"
     );
     assert!(!out.exists(), "a failed shot left a picture");
-    // A hover there has done what it does: the pointer reached the button and opened the menu.
+    // A hover there has done what it does: the pointer reached the button and opened the menu,
+    // whose item then takes the click, as the failure says.
     let Some((output, out, _requests, _scratch)) = on_page(
         "opens-on-hover-hovered",
         OPENS_ON_HOVER,
@@ -1665,12 +1776,16 @@ fn a_click_whose_hover_opens_a_menu_over_its_target_fails_naming_it_and_presses_
             "#opener",
             "--eval",
             "document.getElementById('menu').className",
+            "--click",
+            "#menu",
+            "--eval",
+            "pressed",
         ],
     ) else {
         return;
     };
     assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(printed(&output), [json!("open")]);
+    assert_eq!(printed(&output), [json!("open"), json!(["menu"])]);
     assert_eq!(Picture::read(&out).width, 1440);
 }
 

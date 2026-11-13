@@ -83,9 +83,12 @@ middle out, or a cause it does not name, as an SVG ring's unpainted middle): a p
 the ancestor, which may not be what was meant, so the failure names it. For pointer-events: none,
 which lets a press through to the ancestor, it adds a selector that finds the ancestor alone to
 target instead (or says none does), unless the ancestor is the page's body or a press there clicks
-another control through a label. Once aimed, the pointer moves to that middle and the page's hover
-is read: should the pointer be anywhere but where the aim tested, or, for a click, anything but the
-element (or its label) be on top there by then (a menu its hover opened), the step fails naming
+another control through a label. Once aimed, the pointer moves to that middle, and the browser's
+own report of the move, its pointermove or mousemove, says where it landed and on what (where none
+reaches the page, as over a frame, whether the element found there is hovered): should it land
+anywhere but where the aim tested, or where is unknown (over a frame of another site, whose move
+the page neither hears nor hovers), or, for a click, anything but the element (or its label) be
+on top there by then (a menu its hover opened), the step fails naming where the pointer landed or
 what the press would reach, and nothing is pressed. Typing focuses its element by script and types
 with no pointer, so what covers the element takes none of it. A click, typing, a key or a hover
 then waits for the page to settle again, as a capture does, bringing the page back in front if the
@@ -617,11 +620,12 @@ impl Step {
                 let press = aim(chrome, css, wait, flag)?;
                 let step = format!("{flag} {css}");
                 let late = || format!("{step}: the browser did not answer within {}", wait.said());
-                // The pointer goes to the point aimed at, and only once the page agrees it is
-                // there, on the element, is anything pressed.
+                // The pointer goes to the point aimed at, the page listening for where it lands,
+                // and only once it is there, on the element, is anything pressed.
+                said(chrome.eval(WATCH), &step, late)?;
                 said(move_to(chrome, press.screen), &step, late)?;
                 let arrived = said(chrome.eval(&arrival(css, press.page)), &step, late)?;
-                if let Some(why) = Arrival::read(&arrived).refused(clicking) {
+                if let Some(why) = Arrival::read(&arrived).refused(press.page, clicking) {
                     return Err(format!("{step}{why}"));
                 }
                 if clicking {
@@ -893,35 +897,47 @@ const reached = (at, deep) => {
 const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
 "#;
 
+/// Set before the pointer moves: the move's own report, kept on the window under one name, the
+/// first `pointermove` or `mousemove` the browser sent (`isTrusted`, not one a page script made)
+/// that reaches it, in the capture phase, where the window hears an event first: the pointer's
+/// point in the page's coordinates (the event's `clientX` and `clientY`, a mouse event's in whole
+/// pixels) and what it is over (the event's target, the browser's own hit where the pointer really
+/// is: through open shadow roots, a closed root's host for what that root holds; `null` for
+/// anything but an element). Chrome sends both on every move, to the same point too. A frame's
+/// document takes the move over a frame, and a page listening first can stop it: then none is kept.
+const WATCH: &str = "(() => { const key = 'symphony-shot-pointer'; window[key] = null; \
+const kinds = ['pointermove', 'mousemove']; \
+const take = event => { if (!event.isTrusted) return; const node = event.composedPath()[0]; \
+window[key] = {x: event.clientX, y: event.clientY, at: node instanceof Element ? node : null}; \
+for (const kind of kinds) removeEventListener(kind, take, true); }; \
+for (const kind of kinds) addEventListener(kind, take, true); \
+return true; })()";
+
 /// What the pointer reached once moved to the point aimed at, `[x, y]` in the page's coordinates,
-/// for the element aimed at, `element` (`null` once it has left the page): what the pointer itself
-/// is over, by the page's hover (the last element `:hover` matches, then the same in each open
-/// shadow root down, as [`REACH`] goes through them: the hover is the pointer's own hit test, made
-/// where the pointer really is), and what the page's hit test finds at the point aimed at, now.
-/// Each is `true` when the element takes the press there ([`REACH`]), else the name of what is
-/// there, or `null` for nothing (no element is hovered once the pointer is past the page's edge).
-/// `agree` is whether the two are one element: then the pointer is where the aim tested, whatever
-/// the page put there as it came.
+/// for the element aimed at, `element` (`null` once it has left the page): the move's report as
+/// [`WATCH`] kept it, the pointer's point and what it is over, or `null` when none came; what the
+/// page's hit test finds at the point aimed at, now; and whether the element found there is
+/// hovered, which says the pointer is over it where no report came (a frame's, whose document
+/// takes the move, is hovered with the pointer inside it). What is over or found there is `true`
+/// when the element takes the press there ([`REACH`]), else its name, or `null` for no element.
+/// With no report yet it waits up to two animation frames for one, in case the browser dispatches
+/// the move with the next frame.
 const ARRIVED: &str = r#"
-let deep = null;
-for (let root = document, depth = 0; root && depth < 32; depth++) {
-  const all = root.querySelectorAll(':hover');
-  if (!all.length) break;
-  deep = all[all.length - 1];
-  root = deep.shadowRoot;
-}
-let at = deep;
-while (at && at.getRootNode() instanceof ShadowRoot) at = at.getRootNode().host;
+for (let frame = 0; frame < 2 && !window['symphony-shot-pointer']; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
+const record = window['symphony-shot-pointer'];
+const outer = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host; };
 const hit = reach(x, y);
 const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);
-return {gone: !element, pointer: said(reached(at, deep)), hit: said(hit), agree: !!deep && deep === hit.deep};
+return {gone: !element || !element.isConnected,
+  pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), record.at)) : null} : null,
+  hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover')};
 "#;
 
 /// A script reading what the pointer reached once moved to `(x, y)` in the page's coordinates, for
 /// the first element `css` matches ([`ARRIVED`]).
 fn arrival(css: &str, (x, y): (f64, f64)) -> String {
     format!(
-        "(() => {{ const element = document.querySelector({}); const [x, y] = [{}, {}]; \
+        "(async () => {{ const element = document.querySelector({}); const [x, y] = [{}, {}]; \
          const INTERACTIVE = {}; {NAMES}{REACH}{ARRIVED} }})()",
         json!(css),
         json!(x),
@@ -1397,18 +1413,31 @@ fn missed(miss: &Miss) -> (String, String) {
     }
 }
 
+/// How far from the point aimed at, in CSS pixels on either axis, the move's report may put the
+/// pointer and still have it there: a mouse event's whole pixels (a pointer event's own point is
+/// the aimed one exactly).
+const STRAY: f64 = 1.0;
+
 /// What the pointer reached once moved to the point a click or a hover aimed at, as [`ARRIVED`]
 /// read it.
 #[derive(Clone, Debug, PartialEq)]
 struct Arrival {
     /// The element has left the page.
     gone: bool,
-    /// What the pointer is over, by the page's hover: where it really is.
-    pointer: Reached,
+    /// Where the move's own report put the pointer, when one came ([`WATCH`]).
+    pointer: Option<Pointer>,
     /// What the page's hit test finds at the point aimed at, now.
     hit: Reached,
-    /// Whether those two are one element: the pointer is where the aim tested.
-    agree: bool,
+    /// Whether the element found there is hovered: the pointer is over it.
+    hovered: bool,
+}
+
+/// Where the pointer landed, by the move's own report: its point in the page's coordinates and
+/// what it is over.
+#[derive(Clone, Debug, PartialEq)]
+struct Pointer {
+    at: (f64, f64),
+    on: Reached,
 }
 
 /// What is at a point, for the element aimed at ([`ARRIVED`]).
@@ -1419,7 +1448,7 @@ enum Reached {
     Target,
     /// Another element, by its name.
     Other(String),
-    /// No element (past the page's edge).
+    /// No element, as the browser reported it.
     Nothing,
 }
 
@@ -1432,65 +1461,97 @@ impl Reached {
         }
     }
 
-    /// Where a press there lands, as a failure says it.
+    /// What it is, as a failure names it.
     fn said(&self) -> &str {
         match self {
             Reached::Target => "it",
             Reached::Other(name) => name,
-            Reached::Nothing => "nothing in the page",
+            Reached::Nothing => "no element",
         }
     }
+}
+
+/// A point as a failure says it, in whole CSS pixels: `(60, 2615)`.
+fn point_said((x, y): (f64, f64)) -> String {
+    format!("({x:.0}, {y:.0})")
 }
 
 impl Arrival {
     /// What [`ARRIVED`] answered.
     fn read(value: &Value) -> Arrival {
+        let pointer = &value["pointer"];
         Arrival {
             gone: value["gone"] == true,
-            pointer: Reached::read(&value["pointer"]),
+            pointer: match (pointer["x"].as_f64(), pointer["y"].as_f64()) {
+                (Some(x), Some(y)) => Some(Pointer {
+                    at: (x, y),
+                    on: Reached::read(&pointer["on"]),
+                }),
+                _ => None,
+            },
             hit: Reached::read(&value["hit"]),
-            agree: value["agree"] == true,
+            hovered: value["hovered"] == true,
         }
     }
 
-    /// Why a click (`clicking`) or a hover fails with the pointer at the point aimed at, after its
-    /// flag and selector, or `None` to go on. A pointer anywhere but where the aim tested fails
-    /// either: the point pressed was not the point tested, so what the press reaches is unknown to
-    /// the aim (the pointer over the element, or over what the page put where the aim tested, as
-    /// it came, is where it tested). A click then fails unless the element is still what a press
-    /// there reaches, by the pointer and by the hit test at that point both, as a menu its hover
-    /// opened over it is not; a hover has done what it does.
-    fn refused(&self, clicking: bool) -> Option<String> {
-        if self.pointer != Reached::Target && !self.agree {
-            let landed = self.pointer.said();
-            return Some(if clicking {
-                format!(
-                    ": the press would have landed on {landed}, not on it: the pointer, moved to its \
-                     middle, is not where the aim tested; nothing was pressed"
-                )
-            } else {
-                format!(
-                    ": the pointer landed on {landed}, not on it: moved to its middle, it is not \
-                     where the aim tested"
-                )
-            });
+    /// Why a click (`clicking`) or a hover fails once the pointer has moved to `aimed`, the point
+    /// aimed at in the page's coordinates, after its flag and selector, or `None` to go on.
+    ///
+    /// A pointer anywhere but where the aim tested fails either: the move's report putting it more
+    /// than [`STRAY`] from `aimed`, the point pressed would not be the point tested, so what the
+    /// press reaches is unknown to the aim. So does a pointer whose place is unknown: no report, and
+    /// the element found there not hovered (a frame of another site, whose document takes the move
+    /// apart from the page and leaves its element unhovered in it). With the pointer there, a hover has done what it does, and a click fails unless the
+    /// element is what the hit test finds there now (or its label): a menu its hover opened over it
+    /// would take the press.
+    fn refused(&self, aimed: (f64, f64), clicking: bool) -> Option<String> {
+        let pressed = if clicking {
+            "; nothing was pressed"
+        } else {
+            ""
+        };
+        match &self.pointer {
+            Some(pointer)
+                if (pointer.at.0 - aimed.0).abs() > STRAY
+                    || (pointer.at.1 - aimed.1).abs() > STRAY =>
+            {
+                return Some(format!(
+                    ": the pointer landed at {} in the page, on {}, not at its middle {}, where \
+                     the aim tested{pressed}",
+                    point_said(pointer.at),
+                    pointer.on.said(),
+                    point_said(aimed)
+                ));
+            }
+            None if !self.hovered => {
+                let found = match &self.hit {
+                    Reached::Nothing => "the hit test finds no element there".to_string(),
+                    hit => format!("{}, found there, is not hovered", hit.said()),
+                };
+                return Some(format!(
+                    ": where the pointer landed, moved to its middle {}, is unknown: no report of \
+                     the move reached the page, and {found}{pressed}",
+                    point_said(aimed)
+                ));
+            }
+            _ => {}
         }
-        if !clicking || (self.pointer == Reached::Target && self.hit == Reached::Target) {
+        if !clicking || self.hit == Reached::Target {
             return None;
         }
         if self.gone {
             return Some(" left the page as the pointer reached it; nothing was pressed".into());
         }
-        let on_top = if self.hit == Reached::Target {
-            &self.pointer
-        } else {
-            &self.hit
-        };
-        Some(format!(
-            ": the press would have landed on {}, not on it: that was on top at its middle once \
-             the pointer reached it; nothing was pressed",
-            on_top.said()
-        ))
+        Some(match &self.hit {
+            Reached::Other(name) => format!(
+                ": the press would have landed on {name}, on top at its middle once the pointer \
+                 reached it; nothing was pressed (for a menu its hover opens, --hover it, then \
+                 --click the item meant)"
+            ),
+            _ => ": the hit test finds no element at its middle once the pointer reached it; \
+                  nothing was pressed"
+                .into(),
+        })
     }
 }
 
