@@ -5,12 +5,9 @@ verification runs. A consuming project keeps its own gates
 ([command ownership](../AGENTS.md#command-ownership)); the rule is RULES.md
 `workflow/evidence-is-the-gate`.
 
-The owner, 2026-11-11: "Do they need to run a full test suite? Why? If tests are so time
-consuming why are they being required to run every time, instead of running tests more closely
-associated with the tasks at hand, leaving a nighly run for a full verify?" And on what a task's
-gate is for: "So the executors need to 'prove that the work they did work'. That is the concept
-of the stamp based gating. As long as evidence is good enough, a full verification can be left to
-be done later".
+A task does not run the whole suite: it proves that the work it did works, with the tests closest
+to it, and the evidence good enough for its risk is its stamp. The full verification is left to
+the release run, on main.
 
 ## The gate is evidence
 
@@ -72,9 +69,7 @@ a measurement before and after.
   (`TASKS_DATABASE=NAME just symphony --port 0`,
   [the server guide](../apps/symphony-server/README.md)), so a branch's build never opens the
   live board.
-- **A client page.** The owner, 2026-11-11: "for UI based work for example, this might entail
-  screenshots of before and after, as well as some new added tests or updated tests that would
-  likely break due to changes". So: before and after screenshots of each changed view, dark and
+- **A client page.** Before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
   (`just symphony-cli shot URL --out FILE.png`, with `--phone` and `--scheme dark`;
   `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
@@ -286,9 +281,8 @@ the first run at once.
 
 ## Time in tests
 
-The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
-for cpu wall clock time usage - not total time spent or be removed from nightly" (RULES.md
-`tests/no-test-fails-on-load`). The machine the release run runs on also runs every agent's builds,
+A test passes or fails on what the code did, never on how long a loaded machine took to let it
+(RULES.md `tests/no-test-fails-on-load`). The machine the release run runs on also runs every agent's builds,
 at load averages of 50 to 700, so a test reads time in one of three ways, through the workspace's
 one helper, `crates/test-time` (a development dependency only):
 
@@ -321,13 +315,12 @@ test. No such recipe exists yet, so nothing is `#[ignore]`d for a quiet machine;
 lets go so waits in the release run until that recipe lands, and is then listed below with its
 promise and the owner's word.
 
-**A test red on load in the release run is discarded.** The owner, 2026-11-13:
-"A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
-A test that fails a release run, or the release candidate's rerun, because of load (it passes
+**A test red on load in the release run is discarded.** A rerun neither fails nor passes on the
+machine's load, so a test that fails a release run, or the release candidate's rerun, because of load (it passes
 alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout under load) is
 answered by its red's own fix removing it from the tree, with one line on the red's thread naming
-the test, the evidence it is load (its runs alone and the failing line) and what it proved. That
-word is the owner's approval: no card is put to them to discard it. If what it proved matters, a
+the test, the evidence it is load (its runs alone and the failing line) and what it proved. This
+rule is the owner's approval: no card is put to them to discard it. If what it proved matters, a
 follow-up task may bring it back written on a condition, a count, CPU time or an injected clock;
 the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
 nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to
@@ -346,8 +339,8 @@ until then.
 
 ## Size budgets
 
-The owner, 2026-11-12: "We certainly need to have a check for total binary size and improve to
-reduce it further." Each binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
+What Symphony ships is checked for size, so it never grows unseen and can be brought down. Each
+binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `agent-send`) has a budget, and so does the client distribution the server embeds (every file
 under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s

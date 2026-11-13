@@ -261,6 +261,12 @@ did not: "I don't fully understand this issue. So pick whatever choice makes sen
 the decision does not need goes in a linked file, and pictures go where the thing judged is visual
 ([REVIEW](docs/REVIEW.md#writing-a-card)).
 
+### `docs/one-decision-per-card`
+
+A card asks one decision. A detail that carries choices of its own, its own A, B or C, is a card
+of its own that links the first, so no verdict has to decide several things at once
+([REVIEW](docs/REVIEW.md#writing-a-card)).
+
 ## Documents
 
 ### `history-is-not-reference`
@@ -269,6 +275,14 @@ Docs, guides, skills and code comments say how things are now, never what the co
 and a reviewer refuses a line that does. Evidence and superseded numbers go to `docs/history/`,
 which the Symphony passes over when it reads documents; a rejected approach keeps one line and a
 pointer.
+
+### `docs/no-ledger-in-documents`
+
+A document under `docs/` describes intent, behaviour and options. The owner's exact words and the
+dated history of who decided what, and when, live in the decision register (`docs/DECISIONS.md`,
+each card's dated lines) and on task threads; a document whose reason matters links its card,
+`[its card](DECISIONS.md#SLUG)` ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and
+`docs/history/` are the records that keep them.
 
 ### `docs/one-topic-per-doc`
 
