@@ -1,20 +1,28 @@
 //! The board's public names that consuming projects' code calls, each in the shape it calls it: a
 //! signature pinned by coercing the function to its pointer type, a struct its code builds by its
-//! fields built by them all, an enum it matches matched by its variants, a trait it implements
-//! implemented with the methods it writes, a struct it builds by the fields it names and fills from
-//! `Default` or a constructor built by those. Nothing here runs; it is compiled by the test build and
-//! by `just lint-rs` (clippy over every target), so a change that would break a consumer fails a
-//! task's gate rather than a run later. A field it reads or a method it calls on a value that is
-//! not named here the release run's conciliation (`crates/symphony/src/release/conciliate.rs`,
-//! which builds each project the machine serves on the candidate) alone catches; the other
-//! packages' guards are named in `crates/symphony/tests/consumer_api.rs`.
+//! fields built by them all, an enum whose variants it builds, compares or matches built by those
+//! and matched by every variant with no `_` arm, a trait it implements implemented with the methods
+//! it writes, a struct it builds by the fields it names and fills from `Default` or a constructor
+//! built by those.
+//! Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy over every
+//! target), so a change that would break a consumer fails a task's gate rather than a run later. A
+//! field it reads or a method it calls on a value that is not named here the release run's
+//! conciliation (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine
+//! serves on the candidate) alone catches; the other packages' guards are named in
+//! `crates/symphony/tests/consumer_api.rs`.
+//!
+//! A variant added to an enum held here fails this file, so whoever adds it reads what a consumer
+//! does with that enum: a consumer that matches it whole breaks, and the variant waits for a
+//! consumer release plan; one that only builds, compares or names some of its variants does not,
+//! and the match here takes the new one.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
 //! only with a consumer release plan (the consumer's code moved first, against a release that still
 //! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
-//! one. Names were read from the consuming projects' code on 2026-11-12 (every `symphony_board::` path
-//! and import); add one when a consumer starts calling it.
+//! one. A lint that asks for a signature held here to change is answered by an `#[expect]` on the
+//! item, never by the change (`clippy.toml`). Names were read from the consuming projects' code on
+//! 2026-11-12 (every `symphony_board::` path and import); add one when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -109,7 +117,30 @@ fn the_names_consumers_call_keep_their_shapes() {
         Error::Refused(why) | Error::Db(why) => why,
     };
     let _: fn(String) -> Error = Error::Db;
-    let _ = |e: DbError| e;
+    // A raw query's error, built by each of its variants and matched by them as a consumer's
+    // fixture does (it retries a conflict and takes the other two as final), and cloned and
+    // compared there.
+    let _: fn(
+        &Client,
+        &str,
+        serde_json::Value,
+    ) -> std::result::Result<Vec<serde_json::Value>, DbError> = Client::query;
+    let _ = |why: String| {
+        [
+            DbError::Conflict,
+            DbError::Thrown(why.clone()),
+            DbError::Failed(why),
+        ]
+    };
+    let _ = |e: &DbError| match e {
+        DbError::Conflict => None,
+        DbError::Thrown(why) | DbError::Failed(why) => Some(why.clone()),
+    };
+    let _ = |e: &DbError| e.clone();
+    // What a consumer's tests compare with `assert_eq!`.
+    fn compared<T: PartialEq + std::fmt::Debug>() {}
+    compared::<DbError>();
+    compared::<Health>();
     let _: Option<&AssessmentReceipt> = None;
 
     // What consumers build by its fields: every field named, so one added here breaks them, or
@@ -162,9 +193,21 @@ fn the_names_consumers_call_keep_their_shapes() {
         last_seen: now,
         ..Default::default()
     };
-    let _ = |slug: &str| NewTask {
+    // A task built both ways a consumer builds one: by its slug, title, author and body over
+    // `Default`, and over `NewTask::new` by every other field it names (its parent it also sets on
+    // one built by `new`).
+    let _ = |slug: String, by: String, body: String| NewTask {
+        slug: slug.clone(),
+        title: slug,
+        by,
+        body,
+        ..Default::default()
+    };
+    let _ = |slug: &str, status: String, parent: Option<String>| NewTask {
         body: String::new(),
         priority: 0,
+        status,
+        parent,
         red: None,
         links: Vec::new(),
         ..NewTask::new(slug, "title", "by")
@@ -222,7 +265,9 @@ fn the_names_consumers_call_keep_their_shapes() {
     }
     let _ = waits;
     let _: (f64, f64) = (health::LIVE_SECONDS, health::STALE_SECONDS);
-    let _ = Health::Left;
+    let _ = |health: Health| match health {
+        Health::Live | Health::Stale | Health::Unknown | Health::Lost | Health::Left => {}
+    };
     let _: &str = red::FILER;
     let _: fn(&str, &str) -> bool = red::filed_in;
     let _: fn(&str) -> bool = red::open;
@@ -251,6 +296,10 @@ fn the_names_consumers_call_keep_their_shapes() {
             })
         })
         .map_err(|_: port::NotStarted<String>| ())
+    };
+    let _ = |start: port::Start<u16>| match start {
+        port::Start::Up(port) => Some(port),
+        port::Start::Ended(_) => None,
     };
     let _ = |command: &mut Command| {
         command.stdin(Stdio::null()).stdout(Stdio::piped());

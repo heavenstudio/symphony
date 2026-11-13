@@ -1,11 +1,15 @@
 //! The public names of `symphony`, `symphony_plugin`, `symphony_api`, `symphony_docs`,
 //! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
 //! calls it: a signature pinned by coercing the function to its pointer type, a struct it builds by
-//! its fields built by them all (by those it names, where it fills the rest from `Default`), a
-//! variant it names named, a trait it implements implemented with the methods it writes, a type it
-//! names named. Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy
-//! over every target), so a change that would break a consumer fails a task's gate rather than a
-//! run later.
+//! its fields built by them all (by those it names, where it fills the rest from `Default`), an
+//! enum whose variants it builds, compares or matches built by those and matched by every variant
+//! with no `_` arm, a trait it implements implemented with the methods it writes, a type it names
+//! named. Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy over
+//! every target), so a change that would break a consumer fails a task's gate rather than a run
+//! later. A variant added to an enum held here fails this file, so whoever adds it reads what a
+//! consumer does with that enum: a consumer that matches it whole breaks, and the variant waits for
+//! a consumer release plan; one that only builds, compares or names some of its variants does not,
+//! and the match here takes the new one.
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
@@ -19,8 +23,9 @@
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
 //! only with a consumer release plan (the consumer's code moved first, against a release that still
 //! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
-//! one; a trait gains a method only with a default. Names were read from the consuming projects'
-//! code on 2026-11-12; add one when a consumer starts calling it.
+//! one; a trait gains a method only with a default. A lint that asks for a signature held here to
+//! change is answered by an `#[expect]` on the item, never by the change (`clippy.toml`). Names were
+//! read from the consuming projects' code on 2026-11-12; add one when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -123,14 +128,32 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&str, &str, &Plugins) -> (String, Vec<String>) = register::resolve;
     let _: fn(&Decision) -> Vec<Entry> = Decision::entries;
     let _: (&str, &str) = (register::REGION_START, register::REGION_END);
-    let _ = (Who::Owner, Who::Agent, Group::Agent, Group::Resolved);
+    // Named by their variants (compared, and a state built to mark a card with): matched whole.
+    let _ = |who: Who| match who {
+        Who::Owner | Who::Agent => {}
+    };
+    let _ = |group: Group| match group {
+        Group::Decide
+        | Group::Auto
+        | Group::Confirm
+        | Group::Agent
+        | Group::Rejected
+        | Group::Resolved => {}
+    };
+    let _ = |state: State| match state {
+        State::Pending
+        | State::AutoApproved
+        | State::Approved
+        | State::Rejected
+        | State::Question
+        | State::Resolved
+        | State::Dismissed => {}
+    };
     let _: Option<(&symphony::Decision, &symphony::Who, &symphony::Group)> = None;
-    let _: [State; 4] = [
-        State::Pending,
-        State::AutoApproved,
-        State::Dismissed,
-        State::Rejected,
-    ];
+    // What a consumer's code compares, `assert_eq!` among it.
+    fn compared<T: PartialEq + std::fmt::Debug>() {}
+    compared::<Who>();
+    compared::<Group>();
     let _: fn(State) -> &'static str = State::as_str;
     let _: fn(&str, &str, &str, &str, &str, &Plugins) -> Result<String, symphony::EditError> =
         edit::set_decision;
@@ -239,6 +262,18 @@ fn the_names_consumers_call_keep_their_shapes() {
         download: label.clone(),
         open_label: label.clone(),
         close_label: label,
+    };
+    // What its route and its renderer answer, built by the variants it builds and matched whole:
+    // its route's test matches a `Reply` by both variants.
+    let _ = |path: PathBuf, viewer: Viewer| (Reply::File(path), Drawing::Viewer(viewer));
+    let _ = |reply: Reply| -> (Option<PathBuf>, Option<String>) {
+        match reply {
+            Reply::File(path) => (Some(path), None),
+            Reply::Json(json) => (None, Some(json)),
+        }
+    };
+    let _ = |drawing: Drawing| match drawing {
+        Drawing::Blocks(_) | Drawing::Viewer(_) => {}
     };
     let _ = |text: &'static str| Card {
         slug: text,

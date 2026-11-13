@@ -179,7 +179,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    `symphony_plugin`, `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
    `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`. Each holds the
    functions and methods it names by signature, the structs a consumer builds by the fields it
-   builds them with, and the plugin traits by the methods a plugin writes. The blocks a consumer
+   builds them with, the enums whose variants a consumer names by a match of every variant (so a
+   variant added fails the guard, and waits for a consumer release plan where a consumer matches
+   that enum whole), and the plugin traits by the methods a plugin writes. The blocks a consumer
    builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`, `Image`, `Presentation` and
    `Fragment`), and a field read or a method called on a value that no guard names, are caught
    only here, by the conciliation.
