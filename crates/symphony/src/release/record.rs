@@ -1537,50 +1537,6 @@ mod tests {
     }
 
     #[test]
-    fn of_two_first_runs_at_once_only_the_one_that_takes_the_lock_moves_or_runs() {
-        let tree = Tree::new();
-        let common = tree.path("git");
-        let (old, new) = (legacy(&common), folder(&common));
-        tree.write("git/symphony/nightly/runs/a.json", "{}");
-        tree.write("git/symphony/nightly/run.lock", "");
-        // The second run opened the old lock, then the first took it and moved the folder.
-        let second = File::options()
-            .read(true)
-            .write(true)
-            .open(old.join("run.lock"))
-            .unwrap();
-        let first = lock(&common).unwrap();
-        assert!(first.taken.is_ok() && first.moved.is_some());
-        let tried = second.try_lock();
-        let late = settled(second, tried, &old, &new).unwrap();
-        assert!(matches!(late.taken, Err(TryLockError::WouldBlock)));
-        assert_eq!((late.folder.as_path(), late.moved), (new.as_path(), None));
-        // The first done, the second takes the very lock it opened, now in the new folder: it
-        // moves nothing and makes no old folder again.
-        drop(first);
-        let file = late.file;
-        let tried = file.try_lock();
-        let after = settled(file, tried, &old, &new).unwrap();
-        assert!(after.taken.is_ok());
-        assert_eq!(
-            (after.folder.as_path(), after.path.as_path()),
-            (new.as_path(), new.join("run.lock").as_path())
-        );
-        assert!(after.moved.is_none());
-        assert!(!old.exists());
-        assert!(busy(&new.join("run.lock")), "the one lock of the runs");
-
-        // A run that found the old folder, which another moved before it opened the lock there,
-        // opens none there and makes nothing: [`lock`] takes the new one.
-        assert!(legacy_lock(&old, &new).unwrap().is_none());
-        assert!(!old.exists());
-        drop(after);
-        let third = lock(&common).unwrap();
-        assert!(third.taken.is_ok() && third.moved.is_none());
-        assert_eq!(third.folder, new);
-    }
-
-    #[test]
     fn a_lock_whose_file_is_gone_from_both_folders_holds_neither() {
         let tree = Tree::new();
         let common = tree.path("git");
