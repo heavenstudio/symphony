@@ -3,9 +3,11 @@
 //! host holding its pin. A project whose plugins the running host lacks is registered and waits for
 //! its own `just symphony`, which replaces the host by the socket hand-off, every project kept
 //! registered. A host serves a project registered at its pin or an older one, and refuses one whose
-//! pin or board schema is newer than its own, naming the project that must bump.
+//! pin or board schema is newer than its own, naming the project that must bump. A start in a
+//! linked worktree never replaces the running host, whichever build it runs: only a start in a
+//! main checkout does.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{Entry, Registry};
 
@@ -18,6 +20,9 @@ pub struct Build {
     pub schema: i64,
     /// The main checkout of the project that started it, when known.
     pub by: String,
+    /// The linked worktree it was started in, when that is not a main checkout: a start there never
+    /// replaces the running server, whichever build it runs.
+    pub worktree: Option<PathBuf>,
 }
 
 impl Build {
@@ -31,6 +36,7 @@ impl Build {
             pin: super::PIN,
             schema: symphony_board::SCHEMA,
             by: by.display().to_string(),
+            worktree: None,
         }
     }
 
@@ -41,6 +47,16 @@ impl Build {
             pin: front.pin,
             schema: front.schema,
             by: front.root.clone(),
+            worktree: None,
+        }
+    }
+
+    /// This build as a start in the folder `dir` runs it, which may be a linked worktree
+    /// ([`worktree_of`]).
+    pub fn started_in(self, dir: &Path) -> Build {
+        Build {
+            worktree: worktree_of(dir),
+            ..self
         }
     }
 
@@ -132,14 +148,17 @@ pub fn judge(running: &Build, ours: &Build, entry: &Entry, registry: &Registry) 
     let unserved = projects
         .iter()
         .find_map(|project| ours.lacks(project).map(|lack| (project, lack)));
-    let replaces = !ours.plugins.is_empty() && unserved.is_none() && !ours.older_than(running);
+    let replaces = ours.worktree.is_none()
+        && !ours.plugins.is_empty()
+        && unserved.is_none()
+        && !ours.older_than(running);
     if replaces {
         return Verdict::Replace(format!(
             "the running Symphony {lacks}; this build serves every registered project and \
              replaces it"
         ));
     }
-    let why = match unserved {
+    let why = match (unserved, &ours.worktree) {
         _ if ours.plugins.is_empty() && !entry.plugins.is_empty() => {
             format!(
                 "run `just symphony` in {}, whose build holds them",
@@ -155,12 +174,22 @@ pub fn judge(running: &Build, ours: &Build, entry: &Entry, registry: &Registry) 
              Symphony, then run `just symphony` there",
             running.by
         ),
-        Some((project, lack)) => format!(
+        (_, Some(worktree)) => format!(
+            "this start runs in the linked worktree {}, and a start in a linked worktree never \
+             replaces the running Symphony: run `just symphony` in {}",
+            worktree.display(),
+            entry.root.display()
+        ),
+        (Some((project, lack)), None) => format!(
             "this build cannot replace it: it {}; one host must compile every registered \
              project's plugins",
             lack.said(ours, &project.id)
         ),
-        None => unreachable!("a build with plugins, not older, serving every project replaces"),
+        (None, None) => {
+            unreachable!(
+                "a main checkout's build with plugins, not older, serving every project replaces"
+            )
+        }
     };
     match lack {
         Lack::Plugins(_) => Verdict::Waits(format!("the running Symphony {lacks}: {why}")),
@@ -168,6 +197,19 @@ pub fn judge(running: &Build, ours: &Build, entry: &Entry, registry: &Registry) 
             Verdict::Refuse(format!("the running Symphony {lacks}: {why}"))
         }
     }
+}
+
+/// The top folder of the linked worktree `dir` is in, read from the `.git` files with no `git`
+/// process; none for a main checkout, or a folder in no checkout. A linked worktree's `.git` file
+/// names a gitdir of its own, whose `commondir` names the repository's; a submodule's or a
+/// `--separate-git-dir` checkout's names the repository's gitdir itself, which has no `commondir`,
+/// so each is its repository's main checkout ([`symphony_board::git::checkout_common_dir`]).
+pub fn worktree_of(dir: &Path) -> Option<PathBuf> {
+    let (top, _) = symphony_board::git::checkout(dir)?;
+    let common = symphony_board::git::checkout_common_dir(&top)?;
+    let marker = std::fs::read_to_string(top.join(".git")).ok()?;
+    let gitdir = top.join(marker.trim().strip_prefix("gitdir:")?.trim());
+    (gitdir.canonicalize().ok()? != common).then_some(top)
 }
 
 #[cfg(test)]

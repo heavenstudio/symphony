@@ -2,7 +2,9 @@
 //! its start registers): the project of DIR's checkout written into the machine folder's registry
 //! (its main checkout, its id and its `symphony.toml`), and what the host rule says of the running
 //! server ([`super::host`]): it serves the project, or it lacks the project's plugins and that
-//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump.
+//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump. Run
+//! in a linked worktree, it registers no project of that worktree's own repository, naming the main
+//! checkout; another repository's project it registers as it would from anywhere else.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -28,9 +30,10 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         [add, dir] if add == "add" && !dir.starts_with('-') => dir.as_str(),
         _ => return crate::cli::refuse(err, USAGE, "project", &misnamed(args)),
     };
+    let here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let added = super::dir().and_then(|machine| {
         let front = running(&machine, older_record_folder(Path::new(dir)).as_deref());
-        add(Path::new(dir), &machine, front.as_ref())
+        add(Path::new(dir), &here, &machine, front.as_ref())
     });
     match added {
         Ok(said) => {
@@ -73,20 +76,26 @@ pub fn main_checkout(dir: &Path) -> PathBuf {
         .unwrap_or_else(|| dir.to_path_buf())
 }
 
-/// Register the project at `dir` (its checkout's main) in `machine`, judged by the host rule
-/// against `front`, the running server's status: what to say. A server from before pins is never
-/// judged; with none running the project is registered for the next start.
+/// Register the project at `dir` (its checkout's main) in `machine`, by the build run in the folder
+/// `from`, judged by the host rule against `front`, the running server's status: what to say. A
+/// server from before pins is never judged; with none running the project is registered for the
+/// next start.
 ///
 /// # Errors
 ///
-/// When the project does not load, the registry cannot be read or written, or the host rule
-/// refuses it (its pin or board schema is newer than the running server's, which this build cannot
-/// replace): a refused project is not registered.
+/// When `from` is in a linked worktree of the repository `dir` is in ([`own_worktree`]), the
+/// project does not load, the registry
+/// cannot be read or written, or the host rule refuses it (its pin or board schema is newer than the
+/// running server's, which this build cannot replace): a refused project is not registered.
 pub fn add(
     dir: &Path,
+    from: &Path,
     machine: &Path,
     front: Option<&symphony_api::Front>,
 ) -> Result<String, String> {
+    if let Some(refusal) = own_worktree(dir, from) {
+        return Err(refusal);
+    }
     let entry = Entry::of(&main_checkout(dir))?;
     let ours = Build::this(&entry.root);
     let verdict = match front.filter(|front| front.pin > 0) {
@@ -128,6 +137,40 @@ pub fn add(
         ),
         None => format!("{said}; `just symphony` starts the Symphony"),
     })
+}
+
+/// Why `project add` of `dir` run in the folder `from` registers nothing: `from` is in a linked
+/// worktree of the repository `dir` is in, where a branch is checked out, and its project would be
+/// registered by that worktree's build, its pin and board schema standing for the project's on the
+/// machine. None for any other pair: from a linked worktree, another repository's project is
+/// registered as from anywhere else.
+fn own_worktree(dir: &Path, from: &Path) -> Option<String> {
+    let worktree = super::host::worktree_of(from)?;
+    let common = symphony_board::git::checkout_common_dir(&worktree)?;
+    let theirs = symphony_board::git::common_dir(dir)
+        .ok()?
+        .canonicalize()
+        .ok()?;
+    if theirs != common {
+        return None;
+    }
+    let main = main_checkout(&worktree);
+    let instead = if main == worktree {
+        // A bare repository's, or one whose git dir lies apart from its main checkout, which git
+        // cannot find from the git dir.
+        format!(
+            "its repository's git dir {} names no main checkout: run `project add` in that \
+             repository's main checkout, if it has one",
+            common.display()
+        )
+    } else {
+        format!("run `project add` in {}, the main checkout", main.display())
+    };
+    Some(format!(
+        "this runs in the linked worktree {}, and a linked worktree registers no project of its own \
+         repository with the machine's Symphony: {instead}",
+        worktree.display()
+    ))
 }
 
 /// Where a server started before the machine folder recorded itself, for the project at `dir`:
