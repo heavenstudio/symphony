@@ -5,11 +5,13 @@ fn a_bundle_after_another_trees_wasm32_builds_cleans_this_workspaces_crates_from
     let target = another_trees_build(&common);
     let ran = scratch.0.join("dx-ran");
     stand_in_tools(&common, &ran);
+    let stand = client_tools(&scratch);
     let done = Command::new("bash")
         .arg(crate_dir().join("bundle.sh"))
         .arg(scratch.0.join("out"))
         .env("SYMPHONY_GIT_COMMON_DIR", &common)
         .env("CARGO_TARGET_DIR", &target)
+        .env("SYMPHONY_CLIENT_TOOLS", &stand)
         .output()
         .expect("run bundle.sh");
     assert!(
@@ -18,6 +20,14 @@ fn a_bundle_after_another_trees_wasm32_builds_cleans_this_workspaces_crates_from
         String::from_utf8_lossy(&done.stderr)
     );
     assert!(ran.exists(), "bundle.sh never ran dx");
+    // Its own path is in every workspace crate's Cargo hash: it ran from the stand, a hard link of
+    // the installed one, never where tools.sh put it.
+    ran_from(&ran, &stand);
+    let installed = common.join("symphony/tools/dx-0.7.10/bin/dx");
+    assert_eq!(
+        fs::metadata(stand.join("dx-0.7.10/bin/dx")).unwrap().ino(),
+        fs::metadata(&installed).unwrap().ino()
+    );
     for profile in ["debug", "wasm-release"] {
         assert_eq!(
             left_in(&target, profile),

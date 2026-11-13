@@ -116,8 +116,27 @@ fn left_in(target: &Path, profile: &str) -> Vec<String> {
     names
 }
 
-/// Stand-ins for dx, which writes the arguments it was given to `said`, and for wasm-bindgen, where
-/// bundle.sh looks for them under `common`.
+/// The folder a case's bundle.sh runs dx from (`SYMPHONY_CLIENT_TOOLS`), in place of the machine's
+/// `/private/tmp/symphony-client-tools`, where a stand-in would take the real dx's place: private,
+/// as `dx-path.sh` asks.
+fn client_tools(scratch: &Scratch) -> PathBuf {
+    let stand = scratch.0.join("client-tools");
+    fs::create_dir(&stand).unwrap();
+    fs::set_permissions(&stand, fs::Permissions::from_mode(0o700)).unwrap();
+    stand
+}
+
+/// Each page kind's dx ran as the stand's, by its canonical path, never from the tools' folder.
+fn ran_from(said: &Path, stand: &Path) {
+    let dx = stand.canonicalize().unwrap().join("dx-0.7.10/bin/dx");
+    for kind in KINDS {
+        let ran = fs::read_to_string(said.join(format!("{kind}.dx"))).expect("dx never ran");
+        assert_eq!(Path::new(ran.trim_end()), dx, "{kind}");
+    }
+}
+
+/// Stand-ins for dx, which writes the arguments it was given to `said` (and the path it ran as),
+/// and for wasm-bindgen, where bundle.sh looks for them under `common`.
 fn stand_in_tools(common: &Path, said: &Path) {
     // Publication and snapshot capture use the actual declared native member. Clone only its
     // native Cargo products into this private fixture; every adapter still runs Cargo itself.
@@ -171,6 +190,7 @@ kind="${kind%%,*}"
 if [ "$bin" != symphony-ui ]; then kind="$bin"; fi
 mkdir -p "$capture" "$out/public/assets"
 printf '%s\n' "${args[@]}" > "$capture/$kind"
+printf '%s\n' "$0" > "$capture/$kind.dx"
 printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind" > "$out/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/%s_bg-%s.wasm"}).then(()=>{});\n' "$bin" "$kind" > "$out/public/assets/$bin-$kind.js"
 printf '\0asm\1\0\0\0' > "$out/public/assets/${bin}_bg-$kind.wasm"
@@ -218,13 +238,16 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     let common = scratch.0.join("common");
     let said = scratch.0.join("dx-said");
     stand_in_tools(&common, &said);
+    let stand = client_tools(&scratch);
     let done = cargo_symphony_ui(&["dist", "build/ui"])
         .current_dir(&scratch.0)
         .env("SYMPHONY_GIT_COMMON_DIR", &common)
         .env("CARGO_TARGET_DIR", common.join("symphony/tools/target"))
+        .env("SYMPHONY_CLIENT_TOOLS", &stand)
         .output()
         .expect("run cargo-symphony-ui");
     succeeded(&done, "cargo symphony-ui dist");
+    ran_from(&said, &stand);
     let out = scratch.0.join("build/ui");
     for kind in KINDS {
         let said = fs::read_to_string(said.join(kind)).expect("dx never built this kind");
