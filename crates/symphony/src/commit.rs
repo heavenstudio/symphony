@@ -1,5 +1,7 @@
 //! Owner edits on main, over a private index. Generated inputs travel with the verdict on a
-//! separate branch; neither path ever stages the server checkout's other work.
+//! separate branch; neither path ever stages the server checkout's other work. The uploads an
+//! owner's new line names go into the same commit, at the path their link names
+//! (`saved_uploads`), so a clone shows them.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -530,7 +532,7 @@ pub struct Outcome {
 fn run(
     root: &Path,
     args: &[&str],
-    input: Option<&str>,
+    input: Option<&[u8]>,
     index: Option<&Path>,
 ) -> Result<Output, String> {
     let mut command = command("git");
@@ -551,7 +553,7 @@ fn run(
     if let Some(input) = input {
         let _stage = PublicationStage::start(format_args!("write git input pid={}", child.id()));
         written = match child.stdin.take() {
-            Some(mut pipe) => pipe.write_all(input.as_bytes()),
+            Some(mut pipe) => pipe.write_all(input),
             None => Err(std::io::Error::other("no command input")),
         };
     }
@@ -1285,6 +1287,120 @@ fn sync(root: &Path, rel: &str, old: &str, new: &str) -> Result<(), String> {
     problem.map_or(Ok(()), Err)
 }
 
+/// The uploads an owner's save names that its base did not: each [`crate::uploads::reference`] on
+/// a line `new` holds more often than `base` (the line the owner wrote: a register line, a note
+/// under it, a callout's), whose stored bytes in the checkout at `root` are what its name promises
+/// ([`upload_bytes`]). Asks, thread messages and new tasks never come here, so their uploads stay
+/// working evidence in the store. Each comes as the path its link names from the repository root,
+/// `artifacts/uploads/<sha256>.<ext>` whatever the project's artifacts folder is called (so a clone
+/// and GitHub resolve the owner's words as written), with those bytes; beside them, a note for
+/// each one left out, as the verdict is saved without it.
+fn saved_uploads(root: &Path, edits: &[Edit]) -> (BTreeMap<String, Vec<u8>>, Vec<String>) {
+    static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(&format!(
+            r"!?\[[^\]]*\]\({}[^)\s]*\)",
+            regex::escape(crate::uploads::ROUTE)
+        ))
+        .expect("an upload link pattern")
+    });
+    let mut found = BTreeMap::new();
+    let mut refused = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for edit in edits {
+        let mut held: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for line in edit.base.lines() {
+            *held.entry(line).or_default() += 1;
+        }
+        for line in edit.new.lines() {
+            if let Some(count) = held.get_mut(line).filter(|count| **count > 0) {
+                *count -= 1;
+                continue;
+            }
+            for link in LINK.find_iter(line) {
+                let Some(reference) = crate::uploads::reference(link.as_str()) else {
+                    continue;
+                };
+                let name = &reference.url[crate::uploads::ROUTE.len()..];
+                let path = &reference.url[1..];
+                if !seen.insert(path.to_string()) {
+                    continue;
+                }
+                let Some((stored, _)) = crate::uploads::path(root, name) else {
+                    continue;
+                };
+                match upload_bytes(&stored, name) {
+                    Ok(bytes) => {
+                        found.insert(path.to_string(), bytes);
+                    }
+                    Err(why) => refused.push(format!(
+                        "{path}: not committed with the verdict, which is saved without it: {why}"
+                    )),
+                }
+            }
+        }
+    }
+    (found, refused)
+}
+
+/// The bytes the store holds at `stored` for the upload `name` (`<sha256>.<ext>`), when they are
+/// what the name promises: a regular file, never a link or anything else, of at most
+/// [`crate::uploads::MAX_BYTES`], whose SHA-256 is the name's. Anything else in the ignored store (a
+/// link to another file, a file planted or grown there) is not what the owner attached, and is never
+/// committed in their name; these bytes, read once, are what the commit holds.
+fn upload_bytes(stored: &Path, name: &str) -> Result<Vec<u8>, String> {
+    use sha2::Digest;
+    use std::io::Read;
+    let max = crate::uploads::MAX_BYTES;
+    let over = |bytes: u64| format!("{bytes} bytes, over the {max} an upload holds");
+    let kind = std::fs::symlink_metadata(stored)
+        .map_err(|e| format!("not in the store ({e})"))?
+        .file_type();
+    if !kind.is_file() {
+        return Err("the store holds a link or another kind of file there, not the upload".into());
+    }
+    let mut bytes = Vec::new();
+    File::open(stored)
+        .and_then(|file| file.take(max as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("unreadable ({e})"))?;
+    if bytes.len() > max {
+        return Err(over(bytes.len() as u64));
+    }
+    let sha: String = sha2::Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if name.split('.').next() != Some(sha.as_str()) {
+        return Err("its bytes are not the ones its name was made from".into());
+    }
+    Ok(bytes)
+}
+
+/// Of `uploads` ([`saved_uploads`]), those a text of `texts` still names: what the commit shows.
+fn shown_uploads<T: Clone>(uploads: &BTreeMap<String, T>, texts: &[&str]) -> BTreeMap<String, T> {
+    uploads
+        .iter()
+        .filter(|(path, _)| {
+            let link = format!("/{path}");
+            texts.iter().any(|text| text.contains(&link))
+        })
+        .map(|(path, bytes)| (path.clone(), bytes.clone()))
+        .collect()
+}
+
+/// After main gained the upload `path`, the main checkout `root` takes it: its index entry from
+/// HEAD, and its file where none is (a project whose artifacts folder has another name stores it
+/// elsewhere). The file named by its content is the committed one, so the checkout stays clean and
+/// nothing else of it is touched.
+fn sync_upload(root: &Path, path: &str) -> Result<(), String> {
+    let _stage = PublicationStage::start(format_args!("sync upload {} {path}", root.display()));
+    if root.join(path).is_file() {
+        git(root, &["reset", "-q", "HEAD", "--", path])?;
+    } else {
+        git(root, &["checkout", "-q", "HEAD", "--", path])?;
+    }
+    Ok(())
+}
+
 /// Marks `commit` as the owner's verdict where the project's landing hook reads it
 /// (`[verdicts] record`); a project without a record writes none.
 fn record(root: &Path, commit: &str) -> Result<(), String> {
@@ -1297,26 +1413,45 @@ fn record(root: &Path, commit: &str) -> Result<(), String> {
 
 fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, CommitError> {
     let source = root.canonicalize().map_err(|e| e.to_string())?;
+    let (saved, refused) = saved_uploads(root, edits);
     let mut last = String::new();
     for _ in 0..5 {
         let parent = git(root, &["rev-parse", "--verify", "-q", &main_ref(root)])?;
         let (blobs, before) = apply(root, &parent, edits)?;
+        let texts: Vec<&str> = blobs.values().map(String::as_str).collect();
+        let uploads = shown_uploads(&saved, &texts);
         let scratch = Scratch::new()?;
         let index = scratch.0.join("index");
         checked(run(root, &["read-tree", &parent], None, Some(&index))?)?;
+        let mut entries = Vec::new();
         for (rel, text) in &blobs {
             let blob = checked(run(
                 root,
                 &["hash-object", "-w", "--stdin"],
-                Some(text),
+                Some(text.as_bytes()),
                 None,
             )?)?;
+            entries.push((rel, blob));
+        }
+        for (path, bytes) in &uploads {
+            // The bytes checked against the name, hashed as `git add` would store them at that
+            // path, past the ignore.
+            let blob = checked(run(
+                root,
+                &["hash-object", "-w", "--stdin", &format!("--path={path}")],
+                Some(bytes),
+                None,
+            )?)?;
+            entries.push((path, blob));
+        }
+        for (path, blob) in entries {
             checked(run(
                 root,
                 &[
                     "update-index",
+                    "--add",
                     "--cacheinfo",
-                    &format!("100644,{},{}", blob.trim(), rel),
+                    &format!("100644,{},{}", blob.trim(), path),
                 ],
                 None,
                 Some(&index),
@@ -1352,7 +1487,7 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
             }
             continue;
         }
-        let mut notes = Vec::new();
+        let mut notes = refused.clone();
         for wt in trees {
             let written = wt == source || wt.canonicalize().is_ok_and(|path| path == source);
             for (rel, text) in &blobs {
@@ -1370,6 +1505,14 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
                 };
                 if let Err(e) = sync(&wt, rel, old, text) {
                     notes.push(e);
+                }
+            }
+            for path in uploads.keys() {
+                if let Err(e) = sync_upload(&wt, path) {
+                    notes.push(format!(
+                        "{path} in {}: the verdict committed it, but the checkout did not take it: {e}",
+                        wt.display()
+                    ));
                 }
             }
         }
@@ -1666,10 +1809,38 @@ fn output_branch(
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     git(&wt.path, &["checkout", "-q", "-b", &branch])?;
-    let files = changed(&wt.path)?;
+    let mut files = changed(&wt.path)?;
     let mut args = vec!["add", "--"];
     args.extend(files.iter().map(String::as_str));
     git(&wt.path, &args)?;
+    // The uploads the owner's line names travel with it, past the ignore. Copied after the outputs
+    // were read, so an upload alone never makes a generated branch.
+    let edited = std::fs::read_to_string(wt.path.join(&edit.rel)).map_err(|e| e.to_string())?;
+    let (saved, refused) = saved_uploads(root, std::slice::from_ref(edit));
+    for note in &refused {
+        report(root, note);
+    }
+    let uploads = shown_uploads(&saved, &[edited.as_str()]);
+    if !uploads.is_empty() {
+        for (path, bytes) in &uploads {
+            let copy = wt.path.join(path);
+            if let Some(folder) = copy.parent() {
+                std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+            }
+            // Whatever stood there (a link main tracks, say) is replaced, never written through.
+            match std::fs::remove_file(&copy) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(format!("{}: {e}", copy.display()).into());
+                }
+                _ => {}
+            }
+            std::fs::write(&copy, bytes).map_err(|e| format!("{}: {e}", copy.display()))?;
+        }
+        let mut args = vec!["add", "-f", "--"];
+        args.extend(uploads.keys().map(String::as_str));
+        git(&wt.path, &args)?;
+        files.extend(uploads.into_keys());
+    }
     git(
         &wt.path,
         &[
@@ -2426,3 +2597,6 @@ mod publication_tests;
 
 #[cfg(test)]
 mod history_tests;
+
+#[cfg(test)]
+mod uploads_tests;
