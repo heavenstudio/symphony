@@ -46,16 +46,7 @@ none, or none naming an id, the machine registry (`projects.json` in
 entry for the repository's main checkout, else that checkout's folder name
 does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
-and the staffing lock stay there too. While an older build's state is still in
-the old folders there, which `tools/move-state.sh` moves into `symphony/`
-(`src/unmoved.rs`), a command reaching the board, a start or stop of its server
-(`Home::in_common`'s), a sweep's request and a model's fetch refuse with the line
-naming the move, and the heartbeat's keys, recorded work and runs are kept
-nowhere, and the board's health record (`board_health::file`) only in the memory of
-the one server, which serves such a project when another build registered it, so no
-empty board or folder is made beside the old one
-(`tests/cli/unmoved.rs`); `just symphony` refuses the same before it registers
-the project. A fixture repository under a checkout's
+and the staffing lock stay there too. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
@@ -99,9 +90,7 @@ with an empty registry, or in a copy of the repository that kept the original's
 original's default branch. Only where the machine cannot say who listens there
 (nothing does, or no `lsof` or `ps` answers) is it known by the record of the
 working directory's repository, then of a registered project, that names its
-port. Until `tools/move-state.sh` moves a repository's state, an older build's
-board in the board's old folder is its live one, by the data it serves and the
-record there (`unmoved::board_record`). Only a build
+port. Only a build
 the repository's default branch says is its own moves one behind it, judged by
 what that branch commits (`live::committed`, which `git` reads from the common
 dir), never by what a checkout holds, the branch the main checkout has out or the

@@ -1,8 +1,7 @@
 //! `tools.sh`, which installs the client's build tools into `symphony/tools/` in the git common dir
-//! and names the folder a build runs them from: until `tools/move-state.sh` moves a repository's
-//! state, an older build's copies in `sf-cargo/`, where they stand, never installed beside nor
-//! removed. Each case is a folder of its own under the temp folder, its common dir named by
-//! `SYMPHONY_GIT_COMMON_DIR`, so nothing here reads a real repository's.
+//! and names the folder a build runs them from. Each case is a folder of its own under the temp
+//! folder, its common dir named by `SYMPHONY_GIT_COMMON_DIR`, so nothing here reads a real
+//! repository's.
 //!
 //! `dx-path.sh` keeps the installed dx at the one path every release build runs it from, a folder
 //! of each case's own standing for `/private/tmp/symphony-client-tools` (`SYMPHONY_CLIENT_TOOLS`).
@@ -115,11 +114,9 @@ impl Drop for Fixture {
 
 const DX: &str = "symphony/tools/dx-0.7.10/bin/dx";
 const BINDGEN: &str = "symphony/tools/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen";
-const OLD_DX: &str = "sf-cargo/dx-0.7.10/bin/dx";
-const OLD_BINDGEN: &str = "sf-cargo/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen";
 
 #[test]
-fn a_repository_whose_state_moved_runs_its_own_tools_and_installs_what_they_lack() {
+fn a_repository_runs_its_own_tools_and_installs_what_they_lack() {
     // Both tools in symphony/tools: named, and nothing to do.
     let f = Fixture::new("own");
     f.put(DX, true);
@@ -131,7 +128,7 @@ fn a_repository_whose_state_moved_runs_its_own_tools_and_installs_what_they_lack
     assert_eq!(String::from_utf8(done.stderr).unwrap(), "");
     assert_eq!(f.tree(), before);
 
-    // wasm-bindgen missing, and nothing of an older build's: its install starts, and fails here.
+    // wasm-bindgen missing: its install starts, and fails here.
     let f = Fixture::new("own-partial");
     f.put(DX, true);
     assert_eq!(f.folder(), "symphony/tools");
@@ -160,83 +157,6 @@ fn a_repository_whose_state_moved_runs_its_own_tools_and_installs_what_they_lack
         )),
         "{err}"
     );
-}
-
-#[test]
-fn an_older_builds_copies_run_where_they_stand_and_nothing_installs_beside_or_removes_them() {
-    let f = Fixture::new("older");
-    f.put(OLD_DX, true);
-    f.put(OLD_BINDGEN, true);
-    f.put("sf-cargo/dx-home/tools/esbuild-fixture/esbuild", true);
-    f.put("sf-cargo/target/debug/keep", false);
-    assert_eq!(f.folder(), "sf-cargo");
-    let before = f.tree();
-    let done = f.run(&[]);
-    assert!(done.status.success(), "{done:?}");
-    assert_eq!(String::from_utf8(done.stderr).unwrap(), "");
-    assert_eq!(f.tree(), before, "nothing installed, nothing removed");
-
-    // A whole install of the new code's beside them (made before this rule) is the one run; the
-    // older copies stay for the move to settle.
-    let f = Fixture::new("older-beside");
-    f.put(OLD_DX, true);
-    f.put(OLD_BINDGEN, true);
-    f.put(DX, true);
-    f.put(BINDGEN, true);
-    assert_eq!(f.folder(), "symphony/tools");
-    let before = f.tree();
-    assert!(f.run(&[]).status.success());
-    assert_eq!(f.tree(), before);
-}
-
-#[test]
-fn beside_an_older_builds_copies_that_lack_a_tool_nothing_installs_and_the_move_is_named() {
-    let refusal = |f: &Fixture, missing: &str| {
-        format!(
-            "symphony-ui tools: {}/sf-cargo holds an older build's copies of the client's build \
-             tools, without {missing}, and a build of this code installs none beside them: move \
-             this repository's state (tools/move-state.sh, while nothing builds) and build again\n",
-            f.common().display()
-        )
-    };
-    // wasm-bindgen at another version than the lock's, and dx not executable: each is lacking.
-    for (case, dx, missing) in [
-        ("older-bindgen", true, "wasm-bindgen fixture"),
-        ("older-dx", false, "dx 0.7.10"),
-    ] {
-        let f = Fixture::new(case);
-        f.put(OLD_DX, dx);
-        f.put(
-            "sf-cargo/dx-home/tools/wasm-bindgen-0.2.1/wasm-bindgen",
-            true,
-        );
-        assert_eq!(f.folder(), "symphony/tools", "{case}");
-        let before = f.tree();
-        let done = f.run(&[]);
-        assert_eq!(
-            (done.status.code(), String::from_utf8(done.stderr).unwrap()),
-            (Some(1), refusal(&f, missing)),
-            "{case}"
-        );
-        assert_eq!(
-            f.tree(),
-            before,
-            "{case}: nothing installed, nothing removed"
-        );
-    }
-
-    // Either older folder alone says the state has not moved; a new install part way is not
-    // finished beside it.
-    let f = Fixture::new("older-home");
-    f.put("sf-cargo/dx-home/tools/esbuild-fixture/esbuild", true);
-    f.put(DX, true);
-    let before = f.tree();
-    let done = f.run(&[]);
-    assert_eq!(
-        (done.status.code(), String::from_utf8(done.stderr).unwrap()),
-        (Some(1), refusal(&f, "dx 0.7.10"))
-    );
-    assert_eq!(f.tree(), before);
 }
 
 #[test]
