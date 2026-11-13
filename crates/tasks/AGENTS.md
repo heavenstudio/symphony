@@ -55,7 +55,8 @@ ends, however it ends, when the watchdog reads the end of that process's
 lifeline pipe (`src/server/scratch.rs`). A test that starts a fixture board
 leaves no database running under init. The supervisor's command line holds the
 server's words (`start`, `--bind`, the data) among its own arguments, so a
-server the record does not name, which `ensure` adopts and a reclaim ends, is
+server the record does not name, which `ensure` adopts (never a private
+replay's, below) and a reclaim ends, is
 read from the process table only as the board's `surreal` itself, binding an
 address, on the data as its last argument (`server_on`); a recorded pid counts
 only with the data as its last argument too.
@@ -352,13 +353,14 @@ perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost p
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
-An orchestrator below four canonical open slots receives a recipient-scoped `low_volume`
-PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
-slot cap still governs starts. Each attach or callback pass shares one successful
-`slot_holdings` observation across scheduling, recipient scoping and idle checks. A changed
-canonical count invalidates an otherwise unchanged observation; a failed read reports the
-error and preserves pending delivery. The condition uses the ordinary durable acknowledgement
-account, so a count change within the low band does not repeat an acknowledged warning.
+An orchestrator below `[limits] low_volume` canonical open slots (4 unwritten, 0 says it to
+none: `limits.rs`) receives a recipient-scoped `low_volume` PULL condition, advising disjoint
+ready work or resolution of owned blockers. The existing slot cap still governs starts. Each
+attach or callback pass shares one successful `slot_holdings` observation across scheduling,
+recipient scoping and idle checks. A changed canonical count invalidates an otherwise
+unchanged observation; a failed read reports the error and preserves pending delivery. The
+condition uses the ordinary durable acknowledgement account, so a count change within the low
+band does not repeat an acknowledged warning.
 
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
@@ -722,9 +724,14 @@ Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `sf-tasks/`. Its idle reviewer pick (`idle_for`)
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
 board would refuse. A launch, the CLI's and staffing's, starts
-the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
-(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
-and the project's model and effort go with its agent only. The legacy `claude_session` storage
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
+the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`),
+else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's models and effort go with its agent only. `src/launch/running.rs` counts the
+agents the machine runs, as staffing's cap always has: `launch` refuses at `[limits]
+machine_agents`, `next` warns past it, and staffing holds to the lower of it and `max_sessions`.
+`tasks limits` (`src/cli/commands/limits.rs`) prints each limit and role's model with where it
+came from. The legacy `claude_session` storage
 column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
@@ -956,11 +963,19 @@ tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a
 of their own: through a land that starts it detached, three lands during one build, a
 builder killed and replaced, two starts at once, and the check on landed, red, dropped,
 stopped and signalled rounds, a land during the build, one late and one that cannot run.
-`slots.rs` owns the cap on an orchestrator's open tasks: `[board]
-orchestrator_slots`, read from the main checkout's `symphony.toml` from the
-`.git` files alone (no `git` process: every command reads it) when the CLI or
-the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
-without it caps nothing. A rule that may start work reads, in its view's
+`limits.rs` reads the project's limits: `[limits] orchestrator_slots` (else `[board]`'s,
+which builds before `[limits]` read), `low_volume` and `machine_agents`, and the alarm's
+`[board]` thresholds, from the main checkout's `symphony.toml` found from the `.git` files
+alone (no `git` process: every command reads it) when the CLI or the Symphony opens its store
+(`cli::capped`, `Store::watching`). The store holds a `limits::Watched` that reads the file
+again whenever its length or time changes, so a store kept open (the server's) follows an
+edit at its next read; a value it cannot read is said with its line and takes its default, and
+a key of `[limits]` it does not know is left out, named by `tasks limits` (the Symphony's own
+reading refuses both). A write reads the cap once (`Store::ruling`), so an edit mid-write
+cannot split a decision. A store opened without a file, or held by `Store::limiting`, keeps
+what it was given.
+`slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
+A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
 tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
 tasks, and their roles through `role_slug`; then the tasks above them and the
@@ -1006,7 +1021,7 @@ dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
-(`cli::capped`, `Store::alarming`). It writes only where rework ended (below):
+(`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):
 each digest reads the
 status lines of the lookback window through `message_ts` (`store/history.rs`),
 walks each task's back from its status now and replays the counts
@@ -1165,7 +1180,23 @@ removes each such folder whose process has ended.
 reclaim's halt, an older version's replacement) waits until the server answers,
 sends one SIGTERM, and waits up to ten minutes (`CLOSING`) while SurrealDB writes
 its memtable to an sstable and empties its write-ahead log; one still running
-then is left to finish and the stop refused, naming it. A server that has not
+then is left to finish and the stop refused, naming it, the ask's file, what the
+owner does (hold, `kill -9 PID`, release) and docs/TASKS.md's "Stuck servers". It
+never sends a second: SurrealDB 3.3 takes one for an immediate shutdown ("A
+second signal will force an immediate shutdown"), before its store is closed.
+`Home::end` (`src/server/ending.rs`) writes the ask down first, whole (a temporary
+file renamed), `sf-tasks/ending/PID` holding `{"at", "started"}`: when, and when
+the process asked started (`Home::process_start`, the kernel's stamp that
+`sys::process_starts` reads: libproc's to the microsecond on macOS, `/proc`'s
+ticks after boot on Linux); it makes none it cannot write down. A later `end` of that pid, from any process,
+only waits (saying when it was asked), and a scratch board's supervisor
+(`OWNED_START`, given that folder as `$4`) sends no SIGTERM of its own on its
+lifeline's end to a server that folder names. A file goes when its server is
+seen to end, when any `end` finds its pid gone or held by a process that started
+at another time (a pid reused: an ask left behind never holds up a later
+server, so no start waits ten minutes on one), and when a start makes a new
+process of that pid (`Home::started`); one that does not read, or whose process's
+start the kernel does not say, stays. A server that has not
 answered is never signalled: until its handlers are set a SIGTERM ends it as a
 kill would, in the middle of its replay. A start that does not answer within the
 patience (60 s) is left running and its caller refused, saying so; each later
@@ -1213,7 +1244,11 @@ another's; its pages answer 503 and its dispatch passes fail, and while a reach
 is refused for a replay (`server::replaying_in`, the words of `starters::REPLAYING`
 and its size) every page's notice and the picker say the board is starting
 (`apps/symphony-server/src/live/health.rs`). `just tasks database` says the note
-while a holder runs, and names a private replay's server as such.
+while a holder runs, and names a private replay's server as such, one its starter
+left running too, and says of a server on the data while a replay's record stands
+whether the record names it (`Home::left_replay_told`); while what runs cannot be
+told it says why, that the next command is refused, and what the owner does
+(`Home::untold_rule`), never that the next command starts a server.
 
 A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
 after a clean close). When twice it is more than the memtable of the board's
@@ -1232,7 +1267,12 @@ Before the private replay's server starts, the start keeps the store
 (`Home::keep`, `src/server/snapshot.rs`): the snapshot every start takes, on
 every board, scratch or not, in `sf-tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` as
 below; where the volume cannot clone it is a plain copy (`cp -R -p`), said as
-one; where neither works the start is refused and nothing replayed. A store that
+one, which needs free room equal to the whole store, as the refusal says with its
+size; where neither works the start is refused and nothing replayed. The library's
+tests run the plain copy by a clone made to fail on their own thread
+(`snapshot::CLONE_FAILS`), and a test that expects a clone or a copy asks the
+volume (`snapshot::clones`, one clone of a probe folder), never the system: APFS,
+btrfs and XFS clone, HFS+ and ext4 do not. A store that
 went back (a split replay ended before its next flush: an older build's kill, or
 a crash in a replay of a log over 2 GiB, which the replay's `u32::MAX` memtable
 splits too) holds a segment below its manifest's log number: every server skips
@@ -1251,6 +1291,60 @@ snapshot's, file for file (path, length, time written, which a clone and a copy
 keep), takes none more (`Kept::Already`), so a replay that keeps failing does
 not pile them up. A start whose `surreal` is not there is refused before
 anything is kept.
+
+A replay's server is never the board's (`src/server/left.rs`). Once the store is
+kept and before the private server starts, `Home::replay` writes
+`sf-tasks/replay.json` (`{"by", "at", "logged", "memtable", "server",
+"started"}`, whole), again with that server's pid and address, and when its
+process started (`Home::process_start`), as soon as each start of it says them
+(`spawn_as`'s `on_start`, whose error refuses the start, the server left
+running), and removes it once that server has closed the store. A replay whose
+start failed removes it only once none of the servers it started runs and the
+record is settled as gone (`Home::settle_failed_replay`). A record still
+there is a starter that did not see its replay through, killed in the middle of
+it (a Symphony stopped while its start ran apart) or given up after ten
+patiences. Its server, detached, finishes alone under the replay's memtable on a
+port no record names, and `ensure` once adopted it (`Home::unrecorded`) as soon
+as it answered: the board then ran under a memtable no build starts it with
+(883 MB for a 421 MiB log), and its log could grow past what a start under the
+board's memtable replays whole. Every `ensure`, whose fast path takes no recorded
+server while the record stands, and every `stop_serving` (the hold's, a reclaim's
+halt) settles the record first, under the starters' lock
+(`Home::left_replay_through`). While it stands every server on the data is the
+replay's (`Home::left_server`, a `LeftReplay` saying whether the record names
+it): the pid the record names while it runs (`Home::named_runs`: its process
+started at the second the record wrote down, or the record wrote none) and serves
+the data, else whichever server
+on the data `Home::listed` (`ps -axo`) finds first, the one `server.json` names
+included, as a start retried on another port whose starter ended before the
+record named the retry, or a name that could not be written, leaves the record
+naming a pid that is not it. One still starting is never signalled, and the
+caller is refused in `starters::REPLAYING`'s words, so the Symphony's pages say
+starting; one that answers is stopped cleanly, once (`Home::stop_left_replay`),
+between a line of its own in `server.log` (`LEFT_STOPS`, then which server: the
+one the record names or another, and whether `server.json` names it) and
+`REPLAY_THROUGH`'s (`REPLAY_ENDS` at a start), and the start goes on to the
+board's own server under the board's memtable, the log empty. A caller starting
+apart has that stop and start run apart (`Home::start_apart`). The record is
+removed only once the server it names has ended (no process has its pid, or the
+one that has it started at another time: a pid since reused) or it names none,
+and every `ps -axo` for a second (`GONE_FOR`, or the caller's shorter bound) ran
+and listed no server on the data, so a server seen between two programs (the
+tests' wrappers run `surreal` by `exec`, and no listing names a process a server
+in between) is found at the next look; `server.log` then says the replay was not
+said through (`left::GONE`). A `ps` that fails (`serves` says no then too, so a
+no is never taken for an end), a named pid's process whose start the kernel does
+not say, and a named server that runs while nothing is on the data (between
+programs) cannot be told: asked again for up to two seconds (`TELLING`,
+or the caller's shorter bound), then the caller is refused (`cannot_tell`, with
+`Home::untold_rule`: the rule, and the hand removal should it last), nothing
+adopted, started or removed. The library's tests make `ps` fail on their own
+thread (`server::PS_FAILS`, a countdown).
+`tests/server/left_replay.rs` kills a starter process in the middle of its replay
+on a scratch store and holds a command's start, the Symphony's apart read and the
+hold, a start that gave up, a replay whose server ended at once, a record naming
+an ended pid while the replay's server runs unnamed, and one naming the board's
+recorded server.
 
 The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
 `sf-tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
@@ -1297,9 +1391,10 @@ set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
 cannot read them. `tasks-reclaim` (the owner's) is
 `Home::reclaim`. Under the starters' lock it ends the board's server, keeps the
 store (`Home::keep` with `Before::Reclaim`, on every board: a clone in
-`snapshots/`, a plain copy where the volume cannot clone, else the reclaim
-refused, `ServerError::Reclaim` in the keep's words, nothing exported and the old
-store served again), and only then starts an unrecorded one on the store, so a
+`snapshots/`, a plain copy where the volume cannot clone, which needs free room
+equal to the whole store beside the exports and the new store, else the reclaim
+refused, `ServerError::Reclaim` in the keep's words with the store's size, nothing
+exported and the old store served again), and only then starts an unrecorded one on the store, so a
 store no server ran on, which ended uncleanly or went back, keeps the log that
 server's replay and clean stop would remove. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each

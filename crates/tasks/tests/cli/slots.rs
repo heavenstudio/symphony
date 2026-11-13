@@ -1,5 +1,6 @@
 //! The cap on an orchestrator's open tasks as the command line holds to it: the number is the
-//! project's (`[board] orchestrator_slots` in the main checkout's `symphony.toml`), and claims,
+//! project's (`[board] orchestrator_slots` in the main checkout's `symphony.toml`, where builds
+//! before `[limits]` read it; `tests/cli/limits.rs` has the `[limits]` table's), and claims,
 //! moves into in_progress, the orchestrator role and `tasks api` are refused past it; the api's
 //! `hold`, a landing's move to blocked, keeps the task's slot.
 
@@ -8,13 +9,13 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// A capped project's file.
-fn cap(slots: i64) -> String {
+pub(crate) fn cap(slots: i64) -> String {
     format!("[project]\nname = \"slots\"\n\n[board]\norchestrator_slots = {slots}\n")
 }
 
 /// A board of its own, run from the main checkout of a repository whose `symphony.toml` is
 /// `manifest`, committed on main.
-fn in_project(name: &str, manifest: &str) -> (Case, PathBuf) {
+pub(crate) fn in_project(name: &str, manifest: &str) -> (Case, PathBuf) {
     let root = repository(&scratch(name));
     std::fs::write(root.join("symphony.toml"), manifest).unwrap();
     git(&root, &["add", "symphony.toml"]);
@@ -26,7 +27,7 @@ fn in_project(name: &str, manifest: &str) -> (Case, PathBuf) {
 
 /// An orchestrator orchestrating `work/0` … `work/{open}`, the first `open` claimed by a worker:
 /// the orchestrator's and the worker's handles.
-fn holding(c: &Case, open: usize) -> (String, String) {
+pub(crate) fn holding(c: &Case, open: usize) -> (String, String) {
     let orch = c.register("orchestrator");
     let worker = c.register("worker");
     for i in 0..=open {
@@ -41,10 +42,10 @@ fn holding(c: &Case, open: usize) -> (String, String) {
 }
 
 /// What a claim refused at the cap adds: the way on under the reservation.
-const RESERVE_HINT: &str = "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve work/2` within each hour and retry the claim after each renewal";
+pub(crate) const RESERVE_HINT: &str = "; if the task is reserved for you, start work under the reservation now, renew it with `just tasks reserve work/2` within each hour and retry the claim after each renewal";
 
 /// What the orchestrator holding `work/0` and `work/1` in progress, at a cap of two, is said as.
-fn holds_two(orch: &str) -> String {
+pub(crate) fn holds_two(orch: &str) -> String {
     format!(
         "{orch} holds 2 open tasks, the cap of 2 an orchestrator holds: work/0 (in_progress), work/1 (in_progress); a slot frees when one of them is done or cancelled"
     )
@@ -203,7 +204,7 @@ fn a_cap_that_cannot_be_read_is_said_and_caps_nothing() {
     assert_eq!(
         ran.err,
         format!(
-            "⚠ {}: [board] orchestrator_slots is 0; an orchestrator needs at least one slot; no cap on an orchestrator's open tasks applies\n",
+            "⚠ {}: [board] orchestrator_slots (line 5) is 0; an orchestrator needs at least one slot; no cap on an orchestrator's open tasks applies\n",
             file.display()
         )
     );
@@ -222,7 +223,7 @@ fn pipeline_alarm_thresholds_that_cannot_be_read_are_said_and_the_cap_beside_the
     assert_eq!(
         ran.err,
         format!(
-            "⚠ {}: [board] review_alarm_hours is 0; it is at least 1; the pipeline alarm takes its default thresholds\n✖ work/2 cannot start: {}{}\n",
+            "⚠ {}: [board] review_alarm_hours (line 6) is 0; it is at least 1; the pipeline alarm takes its default thresholds\n✖ work/2 cannot start: {}{}\n",
             file.display(),
             holds_two(&orch),
             RESERVE_HINT

@@ -24,7 +24,7 @@ pub fn common_dir(cwd: &Path) -> Result<PathBuf, NotARepository> {
 
 /// The nearest `.git` above `cwd`: a folder is the common dir, a worktree's file names its gitdir,
 /// whose `commondir` names the common dir. None for anything else, or anything unreadable: what a
-/// caller that may start no `git` process reads ([`crate::slots::of_env`], on every command).
+/// caller that may start no `git` process reads ([`crate::limits::file_of`], on every command).
 pub(crate) fn read(cwd: &Path) -> Option<PathBuf> {
     let here = resolve_existing(cwd)?;
     for folder in here.ancestors() {

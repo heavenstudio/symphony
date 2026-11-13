@@ -295,12 +295,19 @@ fn a_server_that_does_not_end_when_asked_is_left_closing_never_killed() {
     let began = Instant::now();
     let error = home.stop().unwrap_err();
     assert!(began.elapsed() >= closing, "waited {:?}", began.elapsed());
+    let pid = running.pid;
     assert_eq!(
         error,
         ServerError::NotUp(format!(
-            "the board's server (pid {}) is still closing its store 0 s after it was asked to \
-             end: it is left to finish, never killed; its log is {}",
-            running.pid,
+            "the board's server (pid {pid}) is still closing its store 0 s after it was asked to \
+             end: it is left to finish, never asked again (a second signal ends SurrealDB before \
+             its store is closed) nor killed. One writing a large memtable takes minutes; one \
+             whose CPU time stands still across a minute (`ps -o time= -p {pid}`) has hung. The \
+             owner then holds the board (`just tasks database hold WHY --as HANDLE`, a hold that \
+             stands while it says the server still closes), ends it by hand (`kill -9 {pid}`, its \
+             log then replayed at the next start) and releases the hold; its ask, {}, is \
+             forgotten once it has ended (docs/TASKS.md, Stuck servers). Its log is {}",
+            s.dir.join("ending").join(pid.to_string()).display(),
             s.dir.join("server.log").display()
         ))
     );
