@@ -4,11 +4,11 @@
 //! took; and whether the board went back below the highest schema it was seen at
 //! ([`crate::live::seen`]). None of it is on the board, so a board too slow to answer still has it
 //! said. The Symphony server keeps it in memory ([`Recorder`]) and serves it at `/api/health`; the
-//! machine's one server also writes it to `sf-tasks/health.json` in the git common dir ([`file`]),
-//! which `tasks status` reads ([`Report::read`]), and appends each hour of it to a day file in
-//! `symphony/health/` there ([`hours`]). Every request a [`crate::rpc::Client`] sends is counted in
-//! the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request of its
-//! own.
+//! machine's one server also writes it to `symphony/tasks/health.json` in the git common dir
+//! ([`file`]), which `tasks status` reads ([`Report::read`]), and appends each hour of it to a day
+//! file in `symphony/health/` there ([`hours`]). Every request a [`crate::rpc::Client`] sends is
+//! counted in the [`QueryLog`] of its board ([`queries_of`]), on the client's side, with no request
+//! of its own.
 
 use crate::cli::Env;
 use crate::recording::Gate;
@@ -38,7 +38,7 @@ pub const SLOW_MS: f64 = 1000.0;
 pub const STALE: f64 = 60.0;
 /// How often the one server writes the record while what it warns of stays the same, in seconds.
 pub const PERSIST_EVERY: f64 = 10.0;
-/// The record's name in `sf-tasks/` for the live database; another database's is
+/// The record's name in `symphony/tasks/` for the live database; another database's is
 /// `health.<database>.json`.
 pub const FILE: &str = "health.json";
 /// The setting naming the record's file outright: a test's, or a scratch board's.
@@ -638,9 +638,13 @@ pub(crate) fn write_whole(path: &Path, text: &[u8]) -> Result<(), String> {
 }
 
 /// Where the board `env` reaches keeps its record: the file `TASKS_HEALTH` names, else `FILE` in
-/// `sf-tasks/` in the git common dir of its working directory, `health.<database>.json` for a
+/// `symphony/tasks/` in the git common dir of its working directory, `health.<database>.json` for a
 /// database other than the live one. A board `TASKS_SERVER` names keeps none unless
-/// `TASKS_HEALTH` names it.
+/// `TASKS_HEALTH` names it, and neither does a repository whose board an older build still keeps
+/// in its old folder ([`crate::unmoved::refusal`]): a record made in `symphony/tasks/` beside it
+/// would make the move refuse to put that board in its place. Every writer of the record takes
+/// its path from here, the one server's hub for each project it serves among them, however and
+/// whenever that project was registered.
 pub fn file(env: &Env) -> Result<PathBuf, String> {
     if let Some(path) = env.var(FILE_VAR) {
         return Ok(PathBuf::from(path));
@@ -651,6 +655,9 @@ pub fn file(env: &Env) -> Result<PathBuf, String> {
         ));
     }
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
+    if let Some(why) = crate::unmoved::refusal(&common, crate::server::FOLDER) {
+        return Err(why);
+    }
     let name = match env.var("TASKS_DATABASE") {
         Some(database) if database != crate::DATABASE => format!("health.{database}.json"),
         _ => FILE.to_string(),

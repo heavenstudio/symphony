@@ -33,6 +33,7 @@ mod candidate;
 mod checks;
 mod conciliate;
 mod git;
+mod gone;
 mod group;
 mod notes;
 mod pin;

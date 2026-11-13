@@ -18,7 +18,7 @@ fn regenerated(r: &Repo) -> (String, Result<String, String>) {
 
 /// The lands' folder.
 fn lands(r: &Repo) -> PathBuf {
-    r.root.join(".git/sf-tasks/land")
+    r.root.join(".git/symphony/tasks/land")
 }
 
 /// Where the regenerator stands, and whether main's outputs are current.
@@ -661,6 +661,27 @@ fn a_project_with_no_generators_has_nothing_to_regenerate() {
         status(&r),
         ("no [land] generators: nothing to regenerate".into(), true)
     );
+}
+
+#[test]
+fn a_repository_whose_board_an_older_build_keeps_is_neither_regenerated_nor_said() {
+    let r = Repo::new();
+    generating(&r, &[&index(&r)]);
+    assert!(!lands(&r).exists());
+    // The board's state as an older build keeps it, its regenerator's among it, in the old folder
+    // the move renames.
+    let common = r.root.join(".git");
+    let (new, old) = symphony_board::unmoved::OLD[0];
+    fs::create_dir_all(common.join(old).join("land")).unwrap();
+    let refusal = symphony_board::unmoved::refusal(&common, new).unwrap();
+    assert_eq!(
+        trigger(&r),
+        format!("the regenerator of the index did not start: {refusal}")
+    );
+    assert_eq!(regenerated(&r).1, Err(refusal.clone()));
+    assert_eq!(regenerate::status(&r.env(&r.root)).err(), Some(refusal));
+    assert!(!lands(&r).exists(), "nothing made beside the old folder");
+    assert_eq!(made(&r), 0);
 }
 
 #[test]

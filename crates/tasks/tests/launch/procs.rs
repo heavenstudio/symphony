@@ -238,10 +238,9 @@ fn a_helper_and_a_board_command_are_named_as_they_run() {
         "just tasks inbox",
         "just  tasks",
         "/x/just tasks-attach --kind worker",
-        "python3 -B tools/tasks.py",
-        "/repo/.git/sf-cargo/bin/tasks-0123456789abcdef attach --kind worker",
-        "/repo/.target/sf-bin/tasks-0123456789abcdef",
-        "sf-bin/tasks-0123456789abcdef",
+        "/repo/.git/builds/tasks-0123456789abcdef attach --kind worker",
+        "/repo/.target/rs-bin/tasks-0123456789abcdef",
+        "tasks-0123456789abcdef",
         "/w/.target/bin/tasks beat",
     ] {
         assert!(board(yes), "{yes:?}");
@@ -250,13 +249,15 @@ fn a_helper_and_a_board_command_are_named_as_they_run() {
         "just tasksx",
         "justtasks",
         "just tasks-attachx",
-        "tools/tasks.pyc",
-        "/repo/.git/sf-cargo/bin/tasks-0123456789abcde",
-        "/repo/.git/sf-cargo/bin/tasks-0123456789ABCDEF",
-        "/repo/.git/sf-cargo/bin/tasks-0123456789abcdefg",
+        "python3 -B tools/tasks.py",
+        "/repo/.git/builds/tasks-0123456789abcde",
+        "/repo/.git/builds/tasks-0123456789ABCDEF",
+        "/repo/.git/builds/tasks-0123456789abcdefg",
+        "/repo/.git/builds/xtasks-0123456789abcdef",
+        "run tasks-0123456789abcdef",
         "x.target/bin/tasks",
         "/w/.target/bin/tasks-x",
-        "sf-cargo/bin/tasks-é123456789abcdef",
+        "builds/tasks-é123456789abcdef",
     ] {
         assert!(!board(no), "{no:?}");
     }

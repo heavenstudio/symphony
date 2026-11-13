@@ -122,7 +122,11 @@ impl Drop for Project {
 /// What a caller in `root` reads: the project's own board, its server started if it is down.
 fn env(root: &Path) -> Env {
     Env {
-        vars: [("SF_SURREAL".to_string(), surreal().display().to_string())].into(),
+        vars: [(
+            "SYMPHONY_SURREAL".to_string(),
+            surreal().display().to_string(),
+        )]
+        .into(),
         cwd: root.to_path_buf(),
     }
 }

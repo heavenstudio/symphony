@@ -22,8 +22,10 @@ pub(super) struct Listener {
 
 impl Listener {
     pub(super) fn new(database: &str) -> Self {
-        let path =
-            PathBuf::from("/tmp").join(format!("sf-idle-{}-{database}.sock", std::process::id()));
+        let path = PathBuf::from("/tmp").join(format!(
+            "symphony-idle-{}-{database}.sock",
+            std::process::id()
+        ));
         let listener = UnixListener::bind(&path).unwrap();
         listener.set_nonblocking(true).unwrap();
         let (send, messages) = mpsc::channel();

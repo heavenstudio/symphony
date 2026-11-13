@@ -3,9 +3,10 @@
 //! caller's environment but its session ([`Binary`]) and its working directory. Every call the launcher, the cleanup and the idle
 //! sweep make goes through [`Hc`]; the tests point both at the crate's `fake-hc`.
 //!
-//! A terminal the board starts carries the labels `sf.board` ([`Hc::board`]: the project and the
-//! board's database, so a scratch board's cleanup never reaches the live board's terminals) and
-//! `sf.handle`, beside the Herdr app's `herdr.space` and `herdr.tab`, which place it in a tab.
+//! A terminal the board starts carries the labels `symphony.board` ([`Hc::board`]: the project and
+//! the board's database, so a scratch board's cleanup never reaches the live board's terminals) and
+//! `symphony.handle`, beside the Herdr app's `herdr.space` and `herdr.tab`, which place it in a
+//! tab.
 
 use super::LaunchError;
 use crate::cli::{Env, probes};
@@ -28,9 +29,9 @@ const ENDING_LOOK: Duration = Duration::from_millis(100);
 pub const ENDING_VAR: &str = "TASKS_HC_ENDING";
 
 /// The label naming the board a terminal was started for.
-pub const BOARD_LABEL: &str = "sf.board";
+pub const BOARD_LABEL: &str = "symphony.board";
 /// The label naming the board session a terminal was started for.
-pub const HANDLE_LABEL: &str = "sf.handle";
+pub const HANDLE_LABEL: &str = "symphony.handle";
 
 /// hc's and the Herdr app's calls. [`Hc::run`], [`Hc::feed`] and [`Hc::app`] reach them; the rest
 /// read what they answer.

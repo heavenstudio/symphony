@@ -12,19 +12,19 @@
 //! make anywhere. One that finds the lock held ends at once, and a lock its holder died with is
 //! free for the next. Each round ([`run`]) takes the default branch's newest tip into a worktree
 //! of its own that it keeps between rounds (`regenerate` in the project's `[agents] worktrees`,
-//! else `sf-tasks/land/regenerate-worktree`), so what its builds leave there stays warm, and runs
-//! the generators there in order, a `when_changed` one only after an earlier one changed
-//! something. A generator with a key (`[land] keys`) prints it first: a key and outputs it passed on before
-//! ([`Passed`], in `sf-tasks/land/`) need nothing made. A round is never cut short or begun again
-//! because the default branch moved. What the generators change, inside their outputs alone, is
-//! one commit, `Regenerate NAMES for BRANCH at TIP`, landed in seconds under the land's lock: the
-//! default branch's tree as it is then with those outputs replaced, made only when what the
-//! generators are made of is the same there as at the tip (each one's key, else every path
+//! else `symphony/tasks/land/regenerate-worktree`), so what its builds leave there stays warm, and
+//! runs the generators there in order, a `when_changed` one only after an earlier one changed
+//! something. A generator with a key (`[land] keys`) prints it first: a key and outputs it passed
+//! on before ([`Passed`], in `symphony/tasks/land/`) need nothing made. A round is never cut short
+//! or begun again because the default branch moved. What the generators change, inside their
+//! outputs alone, is one commit, `Regenerate NAMES for BRANCH at TIP`, landed in seconds under the
+//! land's lock: the default branch's tree as it is then with those outputs replaced, made only when
+//! what the generators are made of is the same there as at the tip (each one's key, else every path
 //! outside their outputs), else discarded as stale and said; then the fast-forward of the main
 //! checkout and the push, as a land makes them. It needs no reviewer's approve: it changes the
-//! generators' outputs alone, made by them of what the default branch holds. Once it lets go of
-//! its lock it reads the default branch once: on another tip than the one it finished with, it
-//! makes that tip, the newest, whatever lands came in between, else it ends.
+//! generators' outputs alone, made by them of what the default branch holds. Once it lets go of its
+//! lock it reads the default branch once: on another tip than the one it finished with, it makes
+//! that tip, the newest, whatever lands came in between, else it ends.
 //!
 //! A red round (a generator failed, or wrote outside its outputs) files the task [`RED`] on the
 //! board, marked red (`tests/main-red-regenerate-2` and on once one was closed), or adds a line
@@ -299,7 +299,7 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     let default = &settings.default_branch;
     let started = (|| -> Result<Started, String> {
         let common = crate::git::common_dir(main).map_err(|e| e.to_string())?;
-        let folder = trigger::folder(&common).join(FOLDER);
+        let folder = lands(&common)?;
         fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
         if let Some(running) = holder(&folder)? {
             return Ok(Started::Running(running));
@@ -353,6 +353,17 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
         }
         Err(why) => format!("the regenerator of {what} did not start: {why}"),
     })
+}
+
+/// The lands' folder in the git common dir `common`, where the regenerator keeps its lock, log and
+/// state: refused while an older build keeps the board's folder in its old place there
+/// ([`crate::unmoved`]), where that build's regenerator keeps them, so none is made or read
+/// beside it.
+fn lands(common: &Path) -> Result<PathBuf, String> {
+    match crate::unmoved::refusal(common, crate::server::FOLDER) {
+        Some(why) => Err(why),
+        None => Ok(trigger::folder(common).join(FOLDER)),
+    }
 }
 
 /// The regenerator's lock file in the lands' `folder`, opened.
@@ -450,7 +461,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| format!("{} has no main checkout to regenerate on", common.display()))?
         .to_path_buf();
-    let folder = trigger::folder(&common).join(FOLDER);
+    let folder = lands(&common)?;
     fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
     let interrupts = sys::Interrupts::listen().ok();
     let mut said: Option<String> = None;
@@ -1499,7 +1510,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
     let default = &settings.default_branch;
     let tip = rev(main, &format!("refs/heads/{default}"))
         .ok_or_else(|| format!("no branch {default} in {}", main.display()))?;
-    let folder = trigger::folder(&common).join(FOLDER);
+    let folder = lands(&common)?;
     let Some(state) = State::read(&folder) else {
         return Ok(standing(
             format!(

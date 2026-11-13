@@ -15,7 +15,7 @@ struct StartupTrace(bool);
 
 impl StartupTrace {
     fn enter() -> Self {
-        let enabled = std::env::var_os("SF_SYMPHONY_STARTUP_TRACE").is_some_and(|v| v == "1");
+        let enabled = symphony_env::STARTUP_TRACE.os().is_some_and(|v| v == "1");
         Self(STARTUP_TRACE.with(|trace| trace.replace(enabled)))
     }
 }
@@ -105,7 +105,7 @@ pub struct Serve {
     pub root: PathBuf,
     pub port: u16,
     pub hosts: Vec<String>,
-    /// The folder holding its build and its client (`sf-symphony/` in the starter's git common
+    /// The folder holding its build and its client (`symphony/server/` in the starter's git common
     /// dir); the home when none is named.
     pub install: Option<PathBuf>,
 }
@@ -263,10 +263,10 @@ fn hosts(named: Vec<String>) -> Vec<String> {
     }
 }
 
-/// The one server's port: `SF_SYMPHONY_PORT` (a test's own), else the app's.
+/// The one server's port: `SYMPHONY_PORT` (a test's own), else the app's.
 pub(crate) fn one_port() -> u16 {
-    std::env::var("SF_SYMPHONY_PORT")
-        .ok()
+    symphony_env::PORT
+        .text()
         .and_then(|v| v.parse().ok())
         .unwrap_or(crate::home::DEFAULT_PORT)
 }

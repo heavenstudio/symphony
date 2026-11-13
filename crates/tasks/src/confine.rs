@@ -451,8 +451,8 @@ mod tests {
             ),
             ("../shop/.git/config".to_string(), main.join(".git/config")),
             (
-                "../shop/.git/sf-tasks/x".to_string(),
-                main.join(".git/sf-tasks/x"),
+                "../shop/.git/symphony/tasks/x".to_string(),
+                main.join(".git/symphony/tasks/x"),
             ),
             (
                 "../shop/.git/worktrees/tree/HEAD".to_string(),

@@ -60,7 +60,9 @@ fn config(env: &Env) -> Result<Config, Error> {
 
 /// A held lock lives until the pass ends, including launches and their prompt confirmation.
 fn lock(env: &Env) -> Result<Option<FileLock>, Error> {
-    let dir = git::common_dir(&env.cwd).map_err(refused)?.join("sf-tasks");
+    let dir = git::common_dir(&env.cwd)
+        .map_err(refused)?
+        .join(crate::folders::TASKS);
     std::fs::create_dir_all(&dir).map_err(refused)?;
     let file = File::options()
         .read(true)

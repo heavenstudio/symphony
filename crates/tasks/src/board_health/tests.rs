@@ -10,7 +10,7 @@ const SLOW: &str = "RPC query at crates/tasks/src/store/callbacks.rs:590, elapse
 
 /// A folder of its own under the temporary one, for test `name`.
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sf-health-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-health-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -137,7 +137,8 @@ fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failu
         Opened::Refused(why) => why,
         other => panic!("{other:?}"),
     };
-    let pinned = std::path::Path::new("/repo/.git/sf-surreal")
+    let pinned = std::path::Path::new("/repo/.git")
+        .join(crate::folders::SURREAL)
         .join(crate::server::SURREAL_VERSION)
         .join("surreal");
     for error in [
@@ -150,7 +151,9 @@ fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failu
         assert!(absent(&wrapped), "its wrapper keeps its words: {wrapped}");
     }
     // The same missing SurrealDB with the board's store there is a board that cannot be served.
-    let data = PathBuf::from("/repo/.git/sf-tasks/data");
+    let data = PathBuf::from("/repo/.git")
+        .join(crate::folders::TASKS)
+        .join("data");
     for error in [
         ServerError::Unserved {
             surreal: pinned,
@@ -626,7 +629,7 @@ fn a_reader_warns_when_the_record_stopped_and_whether_its_server_runs() {
 #[test]
 fn a_record_is_written_whole_and_read_back() {
     let dir = scratch("record");
-    let path = dir.join("sf-tasks").join(FILE);
+    let path = dir.join("symphony/tasks").join(FILE);
     assert_eq!(Report::read(&path), Ok(None));
     let (recorder, _) = failing_recorder();
     let report = recorder.report(T0 + 5.0);
@@ -775,12 +778,52 @@ fn the_record_of_a_board_is_in_its_common_dir_named_by_its_database() {
                 .into()
         )
     );
-    let live = common.join("sf-tasks").join("health.json");
+    let live = common.join("symphony/tasks").join("health.json");
     assert_eq!(file(&env(&[], &dir)), Ok(live.clone()));
     assert_eq!(file(&env(&[("TASKS_DATABASE", "tasks")], &dir)), Ok(live));
     assert_eq!(
         file(&env(&[("TASKS_DATABASE", "scratch_1")], &dir)),
-        Ok(common.join("sf-tasks").join("health.scratch_1.json"))
+        Ok(common.join("symphony/tasks").join("health.scratch_1.json"))
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A repository whose board an older build keeps in its old folder has no record here: one made
+/// beside that board would make the move refuse. Its fence, once it moved, is no board.
+#[test]
+fn a_repository_whose_board_has_not_moved_keeps_no_record_and_one_that_moved_does() {
+    let dir = scratch("unmoved");
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    let common = crate::git::common_dir(&dir).unwrap();
+    let old = common.join(crate::unmoved::OLD[0].1);
+    fs::create_dir_all(old.join("data")).unwrap();
+    let refused = crate::unmoved::refusal(&common, crate::folders::TASKS).unwrap();
+    for database in [None, Some("scratch_1")] {
+        let vars: Vec<(&str, &str)> = database
+            .map(|db| ("TASKS_DATABASE", db))
+            .into_iter()
+            .collect();
+        assert_eq!(
+            file(&env(&vars, &dir)),
+            Err(refused.clone()),
+            "{database:?}"
+        );
+    }
+    assert!(
+        !common.join("symphony").exists(),
+        "nothing made beside the old board"
+    );
+    // A record the caller names is its own to place.
+    let named = dir.join("named.json");
+    assert_eq!(
+        file(&env(&[(FILE_VAR, named.to_str().unwrap())], &dir)),
+        Ok(named)
+    );
+    fs::remove_dir_all(&old).unwrap();
+    fs::write(&old, "moved by tools/move-state.sh to symphony/tasks\n").unwrap();
+    assert_eq!(
+        file(&env(&[], &dir)),
+        Ok(common.join("symphony/tasks/health.json"))
     );
     fs::remove_dir_all(&dir).unwrap();
 }

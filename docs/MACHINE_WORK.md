@@ -54,10 +54,11 @@ reassign it.
 Each server scans its local repository's native records once per existing board
 tick; HTTP pages and the feed share the cached result. It reads the board recorder's
 work folder (below) directly, and beside it a project's own reader when there is
-one: an already compiled `sf-slots` at the project's prepared `.target/bin/sf-slots`
-path, or the absolute `SF_MACHINE_WORK_READER` a direct host process supplies. Both
-are one inventory of one machine. The project's normal tool commands prepare its
-default link. The selected path is retained; sampling never
+one: the already compiled executable its `symphony.toml` names (`[board]
+machine_work_reader`, a project-relative path; none when unset), or the absolute
+`SYMPHONY_MACHINE_WORK_READER` a direct host process supplies. Both are one
+inventory of one machine. The project's own tool commands prepare the executable
+it names. The selected path is retained; sampling never
 searches caches or invokes a build or source hash. A named reader must answer; the
 prepared path may hold none. An unsupported reader, an invalid response or an
 unreadable record leaves observations unknown. A machine is first claimed (its ID
@@ -109,7 +110,7 @@ to the project's day files when it starts and when it ends ([RUNS](RUNS.md)):
 `--pipeline` names a run's, `--step` a step's inside a run. `--commit` and `--branch`
 name the commit it checks when that is not its checkout's (a review command's tip).
 
-**Where.** The work folder is `sf-tasks/work/` in the git common dir of the working
+**Where.** The work folder is `symphony/tasks/work/` in the git common dir of the working
 directory, so every worktree of a repository records where its Symphony reads;
 `work.<database>/` for a board database other than the live one. `TASKS_WORK` names
 another folder. A board named by `TASKS_SERVER` without `TASKS_WORK` (a test's board)

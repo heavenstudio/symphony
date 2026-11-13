@@ -630,7 +630,7 @@ fn a_project_names_its_own_check_paths_or_has_the_default() {
 
 #[test]
 fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
-    let folder = std::env::temp_dir().join(format!("sf-land-record-{}", std::process::id()));
+    let folder = std::env::temp_dir().join(format!("symphony-land-record-{}", std::process::id()));
     let _ = fs::remove_dir_all(&folder);
     fs::create_dir_all(&folder).unwrap();
     let record = Record {
@@ -670,7 +670,7 @@ fn a_record_of_a_land_is_read_back_only_as_its_own_tasks() {
 
 #[test]
 fn two_slugs_a_dash_apart_keep_two_records_and_an_earlier_lands_is_read_as_its_own() {
-    let folder = std::env::temp_dir().join(format!("sf-land-stems-{}", std::process::id()));
+    let folder = std::env::temp_dir().join(format!("symphony-land-stems-{}", std::process::id()));
     let _ = fs::remove_dir_all(&folder);
     fs::create_dir_all(&folder).unwrap();
     let of = |slug: &str, tip: char| Record {
@@ -918,7 +918,7 @@ fn until_gone(group: u32, what: &str) {
 fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
     // The shell ends at once; what it left in the background, in its group, would run on, and
     // marks it ran to its end: only a wait for it to end by itself finds the mark.
-    let dir = std::env::temp_dir().join(format!("sf-land-leftover-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-land-leftover-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let mark = dir.join("ran-to-its-end");
@@ -952,7 +952,7 @@ const RECIPES: &str = "set allow-duplicate-recipes\n\nland *ARGS:\n    @echo sym
 
 #[test]
 fn a_projects_own_land_is_the_one_its_justfile_runs_when_not_the_symphonys() {
-    let root = std::env::temp_dir().join(format!("sf-land-own-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("symphony-land-own-{}", std::process::id()));
     let env = Env::of_process();
     let own = "import 'symphony.just'\n\nland *ARGS:\n    @echo own land\n";
     for (files, case, owned) in [
@@ -1087,7 +1087,7 @@ fn counts_and_names_read_as_words() {
 
 #[test]
 fn two_names_of_one_place_are_the_same_and_others_are_not() {
-    let dir = std::env::temp_dir().join(format!("sf-land-same-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-land-same-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("real/inner")).unwrap();
     std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
@@ -1153,7 +1153,7 @@ fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
         ..pair(30)
     }));
     // Kept whole in a folder, and read back; a folder with none or a file unread holds none.
-    let dir = std::env::temp_dir().join(format!("sf-land-passed-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-land-passed-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     assert_eq!(Passed::read(&dir), Passed::default());
     passed.write(&dir).unwrap();

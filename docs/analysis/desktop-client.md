@@ -184,8 +184,8 @@ run that server's scripts.
 
 - **A server** is a base URL: this Mac's (`http://127.0.0.1:8765`), another machine's over the
   tailnet (`http://studio.tailnet-name.ts.net:8765`), later a hosted one (`https://…`). It serves
-  one or more projects under `/<id>/` (read 2026-11-11: this Mac's serves `symphony` and
-  `star-foundry`).
+  one or more projects under `/<id>/` (read 2026-11-11: this Mac's serves `symphony` and the
+  consuming project).
 - **Its identity** is the server's installation id (`crates/symphony/src/machine/identity.rs`,
   `installation_id`), which `/api/projects` carries, so the same server reached by loopback and by
   its tailnet name is listed once.

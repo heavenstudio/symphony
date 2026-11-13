@@ -9,7 +9,7 @@ use std::process::Command;
 
 /// A folder of its own under the temporary one, for test `name`.
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sf-fetch-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("symphony-fetch-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -49,7 +49,7 @@ fn the_pins_are_the_ones_tools_surreal_sh_fetches_by() {
 
 #[test]
 fn each_pinned_machine_gets_its_own_tarball_and_checker_and_any_other_none() {
-    let surreal = Path::new("/r/.git/sf-surreal/3.3.0/surreal");
+    let surreal = Path::new("/r/.git/symphony/surreal/3.3.0/surreal");
     let mac = surreal_fetch(surreal, "macos", "aarch64").unwrap();
     assert!(
         mac.contains(&format!(
@@ -122,7 +122,7 @@ fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothi
         .map(|byte| format!("{byte:02x}"))
         .collect();
     // A folder with a quote in its name, as a checkout's may have.
-    let surreal = dir.join("it's common/sf-surreal/3.3.0/surreal");
+    let surreal = dir.join("it's common/symphony/surreal/3.3.0/surreal");
     let wrong = fetched(&dir, &surreal, &tarball, &"0".repeat(64));
     assert!(!wrong.status.success(), "{wrong:?}");
     assert!(

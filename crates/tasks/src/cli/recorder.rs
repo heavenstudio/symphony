@@ -2582,7 +2582,7 @@ mod tests {
 
     #[test]
     fn a_commit_is_read_from_a_loose_or_packed_ref_or_a_detached_head() {
-        let dir = std::env::temp_dir().join(format!("sf-run-commit-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-run-commit-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let git = dir.join(".git");
         fs::create_dir_all(git.join("refs/heads")).unwrap();

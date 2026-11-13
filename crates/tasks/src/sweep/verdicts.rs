@@ -140,7 +140,7 @@ impl Verdicts {
             .as_ref();
         let inputs = policy
             .and_then(|policy| Inputs::read(entry, finished, self.artifacts.as_deref(), policy));
-        let path = git::admin(&entry.path).map(|dir| dir.join("sf-sweep-verdict.json"));
+        let path = git::admin(&entry.path).map(|dir| dir.join("symphony-sweep-verdict.json"));
         if let (Some(inputs), Some(path), Some(policy)) = (&inputs, &path, policy)
             && let Some(saved) = fs::read(path)
                 .ok()
@@ -237,7 +237,7 @@ impl Verdicts {
                 .all(|value| value.predates(began))
         {
             saved.policy = current;
-            saved.publish(&admin.join("sf-sweep-verdict.json"));
+            saved.publish(&admin.join("symphony-sweep-verdict.json"));
         } else if saved.inventory.is_some() && proof == CleanProof::Collect {
             return self.fresh(entry, finished, Some(policy), CleanProof::Skip);
         }

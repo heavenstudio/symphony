@@ -7,13 +7,13 @@ use super::manifest::{parsed, refused};
 #[test]
 fn the_board_table_names_its_guide_and_what_a_review_starts() {
     let project = parsed(
-        "[board]\nguide = \"docs/TASKS.md\"\non_review = [\"tools/rs-bin.sh\", \"sf-land\", \"review\"]\n",
+        "[board]\nguide = \"docs/TASKS.md\"\non_review = [\"tools/rs-bin.sh\", \"land\", \"review\"]\n",
     )
     .unwrap();
     assert_eq!(project.board.guide(), "docs/TASKS.md");
     assert_eq!(
         project.board.on_review,
-        ["tools/rs-bin.sh", "sf-land", "review"]
+        ["tools/rs-bin.sh", "land", "review"]
     );
     let plain = parsed("").unwrap();
     assert_eq!(plain.board.guide(), symphony::project::Board::GUIDE);
@@ -93,7 +93,7 @@ fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads
     ] {
         assert!(parsed(text).is_ok(), "{text}");
         let root = std::env::temp_dir().join(format!(
-            "sf-swept-cap-{}-{}",
+            "symphony-swept-cap-{}-{}",
             std::process::id(),
             text.len()
         ));

@@ -30,7 +30,7 @@ fn ls_lists_live_terminals_and_the_boards_own_with_finished_ones() {
     let other = w.add_terminal(
         true,
         None,
-        json!({"labels": {"sf.board": "web-bench/tasks"}}),
+        json!({"labels": {"symphony.board": "web-bench/tasks"}}),
     );
     assert_eq!(addresses(&w.hc().live().unwrap()), [ours.clone(), other]);
     assert_eq!(addresses(&w.hc().terminals().unwrap()), [ours, ended]);
@@ -42,7 +42,7 @@ fn ls_lists_live_terminals_and_the_boards_own_with_finished_ones() {
                 "ls",
                 "--all",
                 "--label",
-                "sf.board=lamp-works/tasks",
+                "symphony.board=lamp-works/tasks",
                 "--json"
             ],
         ]

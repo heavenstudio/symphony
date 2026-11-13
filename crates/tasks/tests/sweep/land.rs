@@ -124,11 +124,11 @@ fn landed_and_swept(r: &Repo, slug: &str, actor: &str) -> (String, String, Strin
     assert!(
         said.contains(&format!(
             "land {slug}: its finished worktrees are swept in the background (its log \
-             sf-tasks/sweep.log)"
+             symphony/tasks/sweep.log)"
         )),
         "{said}"
     );
-    let log = r.root.join(".git/sf-tasks/sweep.log");
+    let log = r.root.join(".git/symphony/tasks/sweep.log");
     let why = format!("] the land of {slug}\n");
     let swept = || {
         let text = fs::read_to_string(&log).ok()?;
@@ -174,10 +174,10 @@ fn assert_refused(r: &Repo, result: &Result<String, String>, line: &str, before:
         r.board.said(SLUG)
     );
     // Its worktree went with it: nothing is left registered or in the way.
-    let land_tree = r.root.join(".git/sf-tasks/land/worktree");
+    let land_tree = r.root.join(".git/symphony/tasks/land/worktree");
     assert!(!land_tree.exists(), "{}", land_tree.display());
     assert!(
-        !git(&r.root, &["worktree", "list"]).contains("sf-tasks"),
+        !git(&r.root, &["worktree", "list"]).contains("symphony/tasks"),
         "{}",
         git(&r.root, &["worktree", "list"])
     );
@@ -230,8 +230,8 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
     assert_eq!(task.status, "done");
     assert_eq!(last(&r, SLUG), line);
     // The land's worktree is gone, and the log holds what the check printed.
-    assert!(!r.root.join(".git/sf-tasks/land/worktree").exists());
-    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim%2Fjump.log")).unwrap();
+    assert!(!r.root.join(".git/symphony/tasks/land/worktree").exists());
+    let log = fs::read_to_string(r.root.join(".git/symphony/tasks/land/sim%2Fjump.log")).unwrap();
     assert!(log.contains("$ sh -c "), "{log}");
     assert!(log.ends_with("exit 0\n"), "{log}");
 }
@@ -254,7 +254,7 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     let (said, result) = landed(&r, "sim/quiet", &people.orch);
     result.unwrap();
     assert!(!said.contains("on_land"), "{said}");
-    assert!(!r.root.join(".git/sf-tasks/on-land.log").exists());
+    assert!(!r.root.join(".git/symphony/tasks/on-land.log").exists());
 
     // With a generator, so the land starts the regenerator, and git's repository variables in its
     // caller's environment, which the command never sees.
@@ -301,7 +301,7 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
         .unwrap_or_else(|| panic!("{said}"));
     assert!(regenerator < started, "{said}");
     // The land shows what its command said at once, and names the file of its own it says it in.
-    let starts = r.root.join(".git/sf-tasks/on-land");
+    let starts = r.root.join(".git/symphony/tasks/on-land");
     let output = fs::read_dir(&starts)
         .unwrap()
         .next()
@@ -317,7 +317,7 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
         "{said}"
     );
     assert!(!said.contains("it runs on"), "{said}");
-    let index = fs::read_to_string(r.root.join(".git/sf-tasks/on-land.log")).unwrap();
+    let index = fs::read_to_string(r.root.join(".git/symphony/tasks/on-land.log")).unwrap();
     assert!(
         index.contains(&format!("(its lines: {})", output.display())),
         "{index}"
@@ -382,12 +382,12 @@ fn the_land_sweeps_the_tasks_finished_worktrees() {
     assert!(
         said.contains(&format!(
             "land {SLUG}: its finished worktrees are swept in the background (its log \
-             sf-tasks/sweep.log)"
+             symphony/tasks/sweep.log)"
         )),
         "{said}"
     );
     // The sweep writes its lines once it has swept, after the worktree is gone.
-    let log = r.root.join(".git/sf-tasks/sweep.log");
+    let log = r.root.join(".git/symphony/tasks/sweep.log");
     let why = format!("] the land of {SLUG}\n");
     wait_for(|| fs::read_to_string(&log).is_ok_and(|text| text.contains(&why)));
     let text = fs::read_to_string(&log).unwrap();
@@ -599,7 +599,10 @@ fn the_check_runs_without_the_callers_repository_variables() {
     let seen = fs::read_to_string(&seen).unwrap();
     let lines: Vec<&str> = seen.lines().collect();
     assert_eq!(lines[1], "none");
-    assert!(lines[0].ends_with(".git/sf-tasks/land/worktree"), "{seen}");
+    assert!(
+        lines[0].ends_with(".git/symphony/tasks/land/worktree"),
+        "{seen}"
+    );
 }
 
 #[test]
@@ -775,7 +778,7 @@ fn a_red_check_is_refused_with_its_log_and_main_stays() {
     let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &people.orch);
-    let log = r.root.join(".git/sf-tasks/land/sim%2Fjump.log");
+    let log = r.root.join(".git/symphony/tasks/land/sim%2Fjump.log");
     let line = format!(
         "the check `sh -c echo \"$TASKS_TASK $TASKS_SESSION\" >> '{}'; test ! -e red` is red on \
          {SLUG} merged into main at {}; its output is in {}",
@@ -953,7 +956,7 @@ fn outside(r: &Repo, tip: &str, merge: &str) -> String {
          (`just tasks say {SLUG} \"landed {SLUG} on main at {}\"`) and sweep its worktrees (`just \
          tasks sweep`)",
         &tip[..7],
-        Record::path(&r.root.join(".git/sf-tasks/land"), SLUG).display(),
+        Record::path(&r.root.join(".git/symphony/tasks/land"), SLUG).display(),
         &merge[..12]
     )
 }
@@ -1001,7 +1004,7 @@ fn a_folder_in_the_way_of_the_land_worktree_is_never_touched() {
     manifest(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let in_way = r.root.join(".git/sf-tasks/land/worktree");
+    let in_way = r.root.join(".git/symphony/tasks/land/worktree");
     write(&in_way, "keep.txt", "mine\n");
     let (_, result) = landed(&r, SLUG, &people.orch);
     assert_eq!(
@@ -1212,7 +1215,10 @@ fn a_check_named_by_a_path_runs_the_merges_own_script_and_one_missing_is_refused
     let people = approved(&r, SLUG, "good");
     landed(&r, SLUG, &people.orch).1.unwrap();
     let ran = fs::read_to_string(r.dir.join("ran")).unwrap();
-    assert!(ran.trim().ends_with(".git/sf-tasks/land/worktree"), "{ran}");
+    assert!(
+        ran.trim().ends_with(".git/symphony/tasks/land/worktree"),
+        "{ran}"
+    );
 
     project_file(&r, "[verdicts]\ncheck = [\"no-such-check-anywhere\"]\n");
     branch(&r, "sim/fall", "sim/fall.gd", "extends Node\n");

@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600" viewBox="0 0 1000 600" role="img" aria-labelledby="title desc">
 <title id="title">The workspace's crates, what each links and what a change rebuilds</title>
-<desc id="desc">A graph of Symphony's packages and Star Foundry's host and plugin. Each box names how many crates it links. The server links 357, the symphony library 322, the board 189 of which 159 come from the embedding model and the SQLite reader, the plugin seams 10. Star Foundry's plugin links the whole symphony library, so any change under it rebuilds the plugin and the host.</desc>
+<desc id="desc">A graph of Symphony's packages and the consuming project's host and plugin. Each box names how many crates it links. The server links 357, the symphony library 322, the board 189 of which 159 come from the embedding model and the SQLite reader, the plugin seams 10. The consuming project's plugin links the whole symphony library, so any change under it rebuilds the plugin and the host.</desc>
 <style>
 :root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--card:#ffffff;--muted:rgba(127,127,127,.07)}
 @media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
 text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
 .page{fill:var(--background)}
 .node{fill:var(--card);stroke:var(--border)}
-.sf{fill:var(--card);stroke:var(--primary);stroke-width:1.5}
+.project{fill:var(--card);stroke:var(--primary);stroke-width:1.5}
 .hot{fill:var(--card);stroke:var(--dislike);stroke-width:1.5}
 .name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-weight:600;text-anchor:middle}
 .n{font-size:12px;text-anchor:middle;fill:var(--muted-foreground)}
@@ -61,16 +61,16 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <!-- row 1 -->
 <rect class="node" x="330" y="72" width="180" height="52" rx="7"/>
 <text class="name" x="420" y="94">symphony-server</text><text class="n" x="420" y="112">357 crates · the server</text>
-<rect class="sf" x="720" y="72" width="180" height="52" rx="7"/>
-<text class="name" x="810" y="94">symphony-host</text><text class="n" x="810" y="112">Star Foundry's binaries</text>
+<rect class="project" x="720" y="72" width="180" height="52" rx="7"/>
+<text class="name" x="810" y="94">symphony-host</text><text class="n" x="810" y="112">the consumer's binaries</text>
 
 <!-- row 2 -->
 <rect class="node" x="40" y="176" width="180" height="50" rx="7"/>
 <text class="name" x="130" y="197">symphony-ui</text><text class="n" x="130" y="214">148 · the client, in wasm</text>
 <rect class="node" x="330" y="176" width="180" height="50" rx="7"/>
 <text class="name" x="420" y="197">symphony</text><text class="n" x="420" y="214">322 · library and docs CLI</text>
-<rect class="sf" x="720" y="176" width="180" height="50" rx="7"/>
-<text class="name" x="810" y="197">star-foundry-symphony</text><text class="n" x="810" y="214">its plugin</text>
+<rect class="project" x="720" y="176" width="180" height="50" rx="7"/>
+<text class="name" x="810" y="197">PROJECT-symphony</text><text class="n" x="810" y="214">its plugin</text>
 
 <!-- row 3 -->
 <rect class="node" x="40" y="296" width="200" height="50" rx="7"/>

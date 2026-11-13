@@ -262,8 +262,9 @@ impl Monitor {
         self.starting(&["PULL "])
     }
 
-    /// A test run in `worktree` this process holds, as `sf-slots` writes one: a locked slot file
-    /// (`holding`) or a place in the line (`waiting`). Dropping what is returned ends it.
+    /// A test run in `worktree` this process holds, as a project's slot tool writes one in the
+    /// folder its `[board] slot_locks` names: a locked slot file (`holding`) or a place in the line
+    /// (`waiting`). Dropping what is returned ends it.
     fn slot(
         &self,
         worktree: &str,
@@ -272,7 +273,12 @@ impl Monitor {
         handle: Option<&str>,
         recipe: &str,
     ) -> File {
-        let slots = self.repo.join(".git").join("sf-test-slots");
+        fs::write(
+            self.repo.join("symphony.toml"),
+            "[board]\nslot_locks = \".git/test-slots\"\n",
+        )
+        .unwrap();
+        let slots = self.repo.join(".git").join("test-slots");
         fs::create_dir_all(&slots).unwrap();
         let n = self.slots.get() + 1;
         self.slots.set(n);

@@ -4,11 +4,11 @@
 #     bash tools/surreal.sh     prints the path of the pinned `surreal`, fetching it first if needed
 #
 # SurrealDB's own release binary, never built here: version VERSION, fetched once per machine into
-# `sf-surreal/` in the git common dir (every worktree shares it, as `sf-cargo/`; outside a repository
-# it goes beside the workspace's own build) and installed only when the tarball matches the SHA-256
+# `symphony/surreal/` in the git common dir (every worktree shares it; outside a repository it goes
+# beside the workspace's own build) and installed only when the tarball matches the SHA-256
 # SurrealDB publishes for this platform, pinned below in `pinned` (`<URL without .tgz>.txt` beside
-# each tarball). The Rust tests start it (`crates/tasks/tests/store/common.rs`), unless `SF_SURREAL`
-# names another. Of callers at once, one fetches (`lock.d` in the folder, naming its holder; one
+# each tarball). The Rust tests start it (`crates/tasks/tests/store/common.rs`), unless
+# `SYMPHONY_SURREAL` names another. Of callers at once, one fetches (`lock.d` in the folder, naming its holder; one
 # whose holder is gone, or that names none a minute after it was made, is taken over); nothing but
 # the checked binary is ever left in the folder.
 # A refusal is one line on stderr, `❌ surreal: …`, and exit 2.
@@ -17,7 +17,7 @@
 # at the same function boundary. Bash 3.2 is supported.
 
 VERSION=3.3.0
-FOLDER=sf-surreal
+FOLDER=symphony/surreal
 
 # SurrealDB's name for a build, the tarball's URL.
 url() {
@@ -67,23 +67,23 @@ resolved() {
     (cd "$1" 2>/dev/null && pwd -P)
 }
 
-# `SF_GIT_COMMON_DIR`, by the rule the test slots take it by (an absolute path git takes as
+# `SYMPHONY_GIT_COMMON_DIR`, by the rule the test slots take it by (an absolute path git takes as
 # --git-dir, else refused), else the git common dir of the repository holding workspace $1, else
 # nothing: as Cargo finds its build folder.
 common_dir() {
-    local common=""
-    if [ -n "${SF_GIT_COMMON_DIR:-}" ]; then
-        case "$SF_GIT_COMMON_DIR" in
+    local common="" name=SYMPHONY_GIT_COMMON_DIR named="${SYMPHONY_GIT_COMMON_DIR:-}"
+    if [ -n "$named" ]; then
+        case "$named" in
         /*)
-            if [ -d "$SF_GIT_COMMON_DIR" ]; then
-                common="$(git --git-dir="$SF_GIT_COMMON_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
+            if [ -d "$named" ]; then
+                common="$(git --git-dir="$named" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
             fi
             ;;
         esac
         case "$common" in
         /*) resolved "$common" ;;
         *)
-            refuse "SF_GIT_COMMON_DIR=$SF_GIT_COMMON_DIR is not a git dir (an absolute path git takes as --git-dir)"
+            refuse "$name=$named is not a git dir (an absolute path git takes as --git-dir)"
             return 1
             ;;
         esac
@@ -94,7 +94,7 @@ common_dir() {
     fi
 }
 
-# `sf-surreal/` in the common dir every worktree of workspace $1 shares, else beside its own build.
+# `symphony/surreal/` in the common dir every worktree of workspace $1 shares, else beside its own build.
 folder() {
     local common
     common="$(common_dir "$1")" || return 1

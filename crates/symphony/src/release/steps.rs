@@ -217,7 +217,7 @@ mod tests {
             FILE,
             "lint\t0\t12\t/abs/lint.log\tjust lint-rs\n\
              size-check\t1\t3\tsize-check.log\tjust size-check\n\
-             tests\t101\t2.5\t/abs/tests.log\tSF_X=\"$PWD/a b\" tools/cargo.sh test\n",
+             tests\t101\t2.5\t/abs/tests.log\tSYMPHONY_X=\"$PWD/a b\" tools/cargo.sh test\n",
         );
         let steps = read(&tree.root, "verify").unwrap();
         let said: Vec<_> = (steps.iter())
@@ -256,7 +256,7 @@ mod tests {
                     Some(101),
                     2.5,
                     PathBuf::from("/abs/tests.log"),
-                    "SF_X=\"$PWD/a b\" tools/cargo.sh test",
+                    "SYMPHONY_X=\"$PWD/a b\" tools/cargo.sh test",
                     false
                 ),
             ]

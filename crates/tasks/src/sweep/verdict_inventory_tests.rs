@@ -13,7 +13,7 @@ struct Tree(PathBuf);
 impl Tree {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "sf-inv-{}-{}",
+            "symphony-inv-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -183,7 +183,7 @@ fn collection_changes_unsupported_admin_and_entry_bounds_decline_proof() {
         Unproven::Changed
     );
     let proof = tree.capture(&[], &[]).unwrap();
-    for marker in ["sharedindex.probe", ".sf-sweep-lock-probe"] {
+    for marker in ["sharedindex.probe", ".symphony-sweep-lock-probe"] {
         let path = tree.0.parent().unwrap().join("admin").join(marker);
         fs::write(&path, "private marker").unwrap();
         assert!(!proof.matches(&tree.0), "{marker}");

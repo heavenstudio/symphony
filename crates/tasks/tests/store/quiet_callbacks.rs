@@ -61,9 +61,9 @@ mod pull_updates;
 #[test]
 fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
     // Run in a private repository so the real machine probe sees only this test's slot.
-    const CHILD: &str = "SF_STALE_CHILD_FIXTURE";
+    const CHILD: &str = "SYMPHONY_STALE_CHILD_FIXTURE";
     if std::env::var_os(CHILD).is_none() {
-        let dir = std::env::temp_dir().join(format!("sf-stale-child-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-stale-child-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
@@ -104,7 +104,12 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
             .task("tools/child", "in_progress")
             .role("tools/child", "child", "executor"),
     );
-    let slots = std::path::Path::new(".git/sf-test-slots");
+    std::fs::write(
+        "symphony.toml",
+        "[board]\nslot_locks = \".git/test-slots\"\n",
+    )
+    .unwrap();
+    let slots = std::path::Path::new(".git/test-slots");
     std::fs::create_dir_all(slots).unwrap();
     let path = slots.join("slot-0.lock");
     std::fs::write(
@@ -573,7 +578,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         .unwrap();
     let o = listen_orchestrator(&f, &orch, BUSY_PULL);
     let dir = std::env::temp_dir().join(format!(
-        "sf-callback-probes-{}-{}",
+        "symphony-callback-probes-{}-{}",
         std::process::id(),
         f.store.client().database()
     ));
@@ -1263,7 +1268,7 @@ fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_d
     let worker = f.session("worker");
     let sender = f.session("worker");
     let dir = std::env::temp_dir().join(format!(
-        "sf-codex-{}-{}",
+        "symphony-codex-{}-{}",
         std::process::id(),
         f.store.client().database()
     ));
@@ -1430,7 +1435,7 @@ done
     let plain = format!("AGENT from {sender} to {worker} — idle message");
     for value in [None, Some("false"), Some("invalid")] {
         if let Some(value) = value {
-            config(&["config", "--local", "sf.codexSteer", value]);
+            config(&["config", "--local", "symphony.codexSteer", value]);
         }
         let calls = send("active", "mid-turn with steering disabled");
         assert_eq!(
@@ -1446,7 +1451,7 @@ done
         );
         assert!(f.store.callback_inbox(&worker).unwrap().is_empty());
     }
-    config(&["config", "--local", "sf.codexSteer", "true"]);
+    config(&["config", "--local", "symphony.codexSteer", "true"]);
     let calls = send("idle", "idle message");
     assert_eq!(
         calls

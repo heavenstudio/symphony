@@ -70,13 +70,13 @@ fn bindgen_version() -> String {
 /// Where the guard records the tree that last built for wasm32 in the build folder `target`: inside it,
 /// beside the wrapper's own records, so it goes when the wrapper empties the folder.
 fn record_in(target: &Path) -> PathBuf {
-    target.join(format!("sf-tree-{WASM32}"))
+    target.join(format!("symphony-tree-{WASM32}"))
 }
 
 /// A build folder as another tree left it: its record naming that tree, and fingerprints of this
 /// workspace's crates and of a dependency in both wasm32 profiles.
 fn another_trees_build(common: &Path) -> PathBuf {
-    let target = common.join("sf-cargo").join("target");
+    let target = common.join("symphony/tools").join("target");
     for profile in ["debug", "wasm-release"] {
         let prints = target.join(WASM32).join(profile).join(".fingerprint");
         for name in OURS.iter().chain([&A_DEPENDENCY]) {
@@ -135,9 +135,9 @@ fn stand_in_tools(common: &Path, said: &Path) {
         succeeded(&done, "owned native publication member");
         target
     });
-    fs::create_dir_all(common.join("sf-cargo")).unwrap();
+    fs::create_dir_all(common.join("symphony/tools")).unwrap();
     git(common, &["init", "--bare", "-q"]);
-    let target = common.join("sf-cargo/target");
+    let target = common.join("symphony/tools/target");
     fs::create_dir_all(&target).unwrap();
     let copied = Command::new("cp")
         .arg(if cfg!(target_os = "macos") {
@@ -152,7 +152,7 @@ fn stand_in_tools(common: &Path, said: &Path) {
     succeeded(&copied, "private native dependency copy");
     let capture = format!("'{}'", said.to_string_lossy().replace('\'', "'\\''"));
     executable(
-        &common.join("sf-cargo/dx-0.7.10/bin/dx"),
+        &common.join("symphony/tools/dx-0.7.10/bin/dx"),
         &r#"#!/bin/bash
 set -euo pipefail
 capture=__CAPTURE__
@@ -183,14 +183,14 @@ if [ "$kind" != timeline ]; then printf '.z{}\n' > "$out/public/assets/z-shared.
     );
     executable(
         &common.join(format!(
-            "sf-cargo/dx-home/tools/wasm-bindgen-{}/wasm-bindgen",
+            "symphony/tools/dx-home/tools/wasm-bindgen-{}/wasm-bindgen",
             bindgen_version()
         )),
         "#!/bin/bash\n",
     );
     // The shell's minifier: it names its arguments, then passes the script through.
     executable(
-        &common.join("sf-cargo/dx-home/tools/esbuild-fixture/esbuild"),
+        &common.join("symphony/tools/dx-home/tools/esbuild-fixture/esbuild"),
         "#!/bin/bash\nprintf '/*esbuild %s*/\\n' \"$*\"\ncat\n",
     );
 }
@@ -220,8 +220,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     stand_in_tools(&common, &said);
     let done = cargo_symphony_ui(&["dist", "build/ui"])
         .current_dir(&scratch.0)
-        .env("SF_GIT_COMMON_DIR", &common)
-        .env("CARGO_TARGET_DIR", common.join("sf-cargo/target"))
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
+        .env("CARGO_TARGET_DIR", common.join("symphony/tools/target"))
         .output()
         .expect("run cargo-symphony-ui");
     succeeded(&done, "cargo symphony-ui dist");
@@ -319,14 +319,14 @@ fn calls(said: &Path) -> Vec<String> {
 fn cargo_symphony_ui_size_bundles_a_probe_and_a_kind_and_names_their_linked_modules() {
     let scratch = Scratch::new("wasm-build-size");
     let common = scratch.0.join("common");
-    let target = common.join("sf-cargo/target");
+    let target = common.join("symphony/tools/target");
     let dx_said = scratch.0.join("dx-said");
     stand_in_tools(&common, &dx_said);
     let quoted = |path: &Path| format!("'{}'", path.display());
     let bindgen_said = scratch.0.join("bindgen-said");
     executable(
         &common.join(format!(
-            "sf-cargo/dx-home/tools/wasm-bindgen-{}/wasm-bindgen",
+            "symphony/tools/dx-home/tools/wasm-bindgen-{}/wasm-bindgen",
             bindgen_version()
         )),
         &format!(
@@ -347,7 +347,7 @@ printf 'bound' > "$dir/${{name}}_bg.wasm"
     );
     let opt_said = scratch.0.join("opt-said");
     executable(
-        &common.join("sf-cargo/dx-home/tools/binaryen-129/bin/wasm-opt"),
+        &common.join("symphony/tools/dx-home/tools/binaryen-129/bin/wasm-opt"),
         &format!(
             r#"#!/bin/bash
 echo "$*" >> {}
@@ -379,7 +379,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let size = |names: &[&str]| {
         cargo_symphony_ui(&[&["size", "sizes"], names].concat())
             .current_dir(&scratch.0)
-            .env("SF_GIT_COMMON_DIR", &common)
+            .env("SYMPHONY_GIT_COMMON_DIR", &common)
             .env("CARGO_TARGET_DIR", &target)
             .env("CARGO", &cargo)
             .output()

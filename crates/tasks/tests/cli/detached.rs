@@ -22,7 +22,7 @@ struct Listener {
 impl Listener {
     fn new(name: &str) -> Listener {
         let path = PathBuf::from(format!(
-            "/tmp/sf-detached-{}-{name}.sock",
+            "/tmp/symphony-detached-{}-{name}.sock",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);

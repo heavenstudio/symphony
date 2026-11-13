@@ -1,5 +1,6 @@
 //! The driver's own cases: its leash, cleanup, waits and protocol bounds, against stand-in browsers
-//! and transports, and against the real Chrome when this machine has one (`SF_CHROME` names it).
+//! and transports, and against the real Chrome when this machine has one (`SYMPHONY_CHROME` names
+//! it).
 
 use std::io::ErrorKind;
 use std::net::TcpStream;
@@ -277,8 +278,8 @@ fn profile_cleanup_rechecks_after_helpers_and_reports_other_errors() {
     std::fs::write(profile.join("nested/data"), "profile").unwrap();
     // Announce readiness before cleanup starts. Recreate the profile only after its first
     // removal, so returning on that removal instead of waiting for helpers always leaks it.
-    let mut browser = BrowserGroup(
-        Command::new("/bin/sh")
+    let mut browser = BrowserGroup {
+        child: Command::new("/bin/sh")
             .args([
                 "-c",
                 r#"printf 'ready\n'
@@ -292,14 +293,15 @@ mkdir "$1"
             .process_group(0)
             .spawn()
             .unwrap(),
-    );
+        done: false,
+    };
     let mut ready = String::new();
-    std::io::BufReader::new(browser.0.stdout.take().unwrap())
+    std::io::BufReader::new(browser.child.stdout.take().unwrap())
         .read_line(&mut ready)
         .unwrap();
     assert_eq!(ready, "ready\n");
-    let group = browser.0.id();
-    let reaper = std::thread::spawn(move || browser.0.wait().unwrap());
+    let group = browser.child.id();
+    let reaper = std::thread::spawn(move || browser.reap().unwrap());
     let cleanup = cleanup_profile(&profile, group);
     if cleanup.is_err() {
         // A regression must also stop this owned helper instead of stranding its waiter.
@@ -316,6 +318,90 @@ mkdir "$1"
     let error = cleanup_profile(&profile, group).unwrap_err();
     std::fs::remove_file(&profile).unwrap();
     assert_eq!(error.kind(), ErrorKind::NotADirectory);
+}
+
+/// The browser ending on its own is left unreaped, its pid and group id its own, while its group
+/// is killed, helpers and all; it is reaped after, and a second end sends nothing.
+#[test]
+fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
+    let child = Command::new("/bin/sh")
+        .args(["-c", "/bin/sleep 30 & exit 0"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let group = child.id();
+    let mut browser = BrowserGroup { child, done: false };
+    let began = Instant::now();
+    while !crate::exited(group).unwrap() {
+        assert!(
+            began.elapsed() < Duration::from_secs(30),
+            "the browser ran on"
+        );
+        std::thread::sleep(POLL);
+    }
+    // SAFETY: signal 0 to this test's own unreaped child sends nothing.
+    assert_eq!(
+        unsafe { libc::kill(pid(group), 0) },
+        0,
+        "its pid is its own"
+    );
+    assert!(signal_group(group, 0).is_ok(), "its helper runs");
+    assert!(browser.end().unwrap().success());
+    let killed = Instant::now();
+    while signal_group(group, 0).is_ok() {
+        assert!(
+            killed.elapsed() < Duration::from_secs(10),
+            "its helper lives"
+        );
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        browser.end().unwrap().success(),
+        "a second end answers the same"
+    );
+}
+
+/// A browser stopped (SIGSTOP, as a test stalls one) has not ended: the leash leaves it and its
+/// group alone, and it is taken for ended only once it exits.
+#[test]
+fn a_stopped_browser_has_not_ended() {
+    let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+    let id = child.id();
+    // SAFETY: stops this test's own unreaped child.
+    let stop = unsafe { libc::kill(pid(id), libc::SIGSTOP) };
+    // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: waits for this test's own child to stop, reaping none.
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            libc::id_t::from(id),
+            &raw mut info,
+            libc::WSTOPPED | libc::WNOWAIT,
+        )
+    };
+    let stopped = crate::exited(id).unwrap();
+    // SAFETY: continues this test's own unreaped child.
+    let resume = unsafe { libc::kill(pid(id), libc::SIGCONT) };
+    let resumed = crate::exited(id).unwrap();
+    // Killed before any assertion, so a failing one leaves no stopped process behind.
+    child.kill().unwrap();
+    let began = Instant::now();
+    let mut killed = false;
+    while !killed && began.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(POLL);
+        killed = crate::exited(id).unwrap();
+    }
+    let status = child.wait().unwrap();
+    assert_eq!((stop, waited, resume), (0, 0, 0));
+    assert_eq!(info.si_code, libc::CLD_STOPPED);
+    assert!(!stopped, "a stopped child was taken for ended");
+    assert!(!resumed, "a continued child was taken for ended");
+    assert!(killed, "the kill was not seen before the reap");
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGKILL)
+    );
 }
 
 /// Keep a removed CPU guard from hanging its regression: end the owned group
@@ -471,7 +557,7 @@ fn a_browser_that_cannot_start_fails_the_launch_promptly_with_why() {
 }
 
 /// Set on the run of [`a_quiet_leash_keeps_its_reports_off_the_launchers_stderr`] that launches.
-const QUIET: &str = "SF_CHROME_QUIET_LEASH";
+const QUIET: &str = "SYMPHONY_CHROME_QUIET_LEASH";
 
 #[test]
 fn a_quiet_leash_keeps_its_reports_off_the_launchers_stderr() {
@@ -551,10 +637,10 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
 
 #[test]
 fn cleanup_profile_rejects_a_spinning_helper_missed_by_the_kill() {
-    if std::env::var_os("SF_CHROME_CLEANUP_SPINNER").is_none() {
+    if std::env::var_os("SYMPHONY_CHROME_CLEANUP_SPINNER").is_none() {
         let output =
             suite_child("tests::cleanup_profile_rejects_a_spinning_helper_missed_by_the_kill")
-                .env("SF_CHROME_CLEANUP_SPINNER", "1")
+                .env("SYMPHONY_CHROME_CLEANUP_SPINNER", "1")
                 .output()
                 .unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -778,7 +864,7 @@ pub(crate) fn suite_child(test: &str) -> Command {
 #[test]
 fn suite_child_resets_inherited_ignored_signals() {
     const TEST: &str = "tests::suite_child_resets_inherited_ignored_signals";
-    const MODE: &str = "SF_CHROME_SUITE_SIGNAL_MODE";
+    const MODE: &str = "SYMPHONY_CHROME_SUITE_SIGNAL_MODE";
     let mode = std::env::var(MODE).ok();
     if let Some(mode) = mode {
         let expected = match mode.as_str() {
@@ -822,8 +908,8 @@ fn suite_child_resets_inherited_ignored_signals() {
 fn chrome_dies_with_its_suite() {
     use std::io::{BufRead, Write};
     use std::os::unix::process::ExitStatusExt;
-    if std::env::var_os("SF_CHROME_SUITE_CHILD").is_some() {
-        let fake_binary = std::env::var("SF_SYMPHONY_FAKE_BROWSER").ok();
+    if std::env::var_os("SYMPHONY_CHROME_SUITE_CHILD").is_some() {
+        let fake_binary = std::env::var("SYMPHONY_FAKE_BROWSER").ok();
         let real = fake_binary
             .is_none()
             .then(|| Chrome::launch(&find().expect("real Chrome capability"), &leash()).unwrap());
@@ -942,13 +1028,13 @@ wait "$helper"
         ] {
             let mut command = suite_child("tests::chrome_dies_with_its_suite");
             if let Some(binary) = &fake_browser {
-                command.env("SF_SYMPHONY_FAKE_BROWSER", binary);
+                command.env("SYMPHONY_FAKE_BROWSER", binary);
             } else {
-                command.env_remove("SF_SYMPHONY_FAKE_BROWSER");
+                command.env_remove("SYMPHONY_FAKE_BROWSER");
             }
             let mut suite = Suite(
                 command
-                    .env("SF_CHROME_SUITE_CHILD", "1")
+                    .env("SYMPHONY_CHROME_SUITE_CHILD", "1")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(if closed_stderr {

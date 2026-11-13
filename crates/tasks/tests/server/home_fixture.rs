@@ -28,7 +28,7 @@ pub fn healthy_server(dir: &Path) -> PathBuf {
                 "    [ \"$last\" = --bind ] && bind=$word\n",
                 "    last=$word\n",
                 "done\n",
-                "export SF_HOME_FIXTURE_OWNER={owner}\n",
+                "export SYMPHONY_HOME_FIXTURE_OWNER={owner}\n",
                 "exec '{exe}' --ignored --exact home_fixture::helper_healthy --test-threads=1 \\\n",
                 "    start \"$bind\" \"$last\"",
             ),
@@ -60,7 +60,7 @@ impl Unresponsive {
                     data,
                 ])
                 .env(
-                    "SF_HOME_FIXTURE_EVENTS",
+                    "SYMPHONY_HOME_FIXTURE_EVENTS",
                     events.local_addr().unwrap().to_string(),
                 )
                 .stdout(Stdio::null())
@@ -147,7 +147,7 @@ fn dropping_the_fixture_reaps_its_live_child() {
 #[test]
 #[ignore = "owned helper process for the unresponsive Home test"]
 fn helper_unresponsive() {
-    let socket = std::env::var("SF_HOME_FIXTURE_EVENTS").expect("fixture event socket");
+    let socket = std::env::var("SYMPHONY_HOME_FIXTURE_EVENTS").expect("fixture event socket");
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
     events.connect(socket).unwrap();
     events.set_write_timeout(Some(BOUND)).unwrap();
@@ -182,7 +182,7 @@ fn helper_unresponsive() {
 #[test]
 #[ignore = "owned helper process: the board's server that healthy_server starts"]
 fn helper_healthy() {
-    let owner: i64 = std::env::var("SF_HOME_FIXTURE_OWNER")
+    let owner: i64 = std::env::var("SYMPHONY_HOME_FIXTURE_OWNER")
         .expect("the test process that started it")
         .parse()
         .unwrap();

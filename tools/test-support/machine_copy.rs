@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 fn machine_root() -> PathBuf {
     fs::canonicalize("/tmp")
         .unwrap()
-        .join(format!("sf-fixture-scripts-{}", uid()))
+        .join(format!("symphony-fixture-scripts-{}", uid()))
 }
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -31,7 +31,7 @@ pub(crate) fn uid() -> u32 {
     static UID: OnceLock<u32> = OnceLock::new();
     *UID.get_or_init(|| {
         let probe = std::env::temp_dir().join(format!(
-            ".sf-fixture-uid.{}.{}",
+            ".symphony-fixture-uid.{}.{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

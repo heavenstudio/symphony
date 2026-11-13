@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 use super::owner::{OWNER, PREPARED_APP_BY_PARENT, prepare_images};
 use super::*;
 
-const ROLE: &str = "SF_LIFECYCLE_SCRATCH_ROLE";
+const ROLE: &str = "SYMPHONY_LIFECYCLE_SCRATCH_ROLE";
 const ENTRY: &str = "fixture::scratch_tests::scratch_owner";
 
 /// An owner makes its whole repository inside this readiness wait. Every new image that
@@ -53,7 +53,7 @@ fn owner(role: &str, logs: &Scratch) -> (Process, PathBuf) {
         Instant::elapsed,
     );
     let output = process.output();
-    if std::env::var_os("SF_SYMPHONY_PROFILE").is_some() {
+    if symphony_env::PROFILE.os().is_some() {
         eprintln!("scratch owner {role} ready; {}: {output}", process.launch);
     }
     let used = output

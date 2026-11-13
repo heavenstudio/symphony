@@ -161,7 +161,7 @@ fn a_hold_that_does_not_read_still_holds() {
     assert!(!s.dir.join("hold").exists());
 }
 
-/// What `sf-tasks/hold.log` says, a JSON value a line.
+/// What `symphony/tasks/hold.log` says, a JSON value a line.
 fn history(s: &Scratch) -> Vec<serde_json::Value> {
     std::fs::read_to_string(s.dir.join("hold.log"))
         .unwrap()

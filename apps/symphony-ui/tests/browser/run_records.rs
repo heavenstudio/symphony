@@ -46,7 +46,7 @@ impl Run {
             .env("RELEASE", &release)
             .env("TASKS_SESSION", handle)
             .env("TASKS_RECORDER", binaries::tasks())
-            .env("TASKS_WORK", root.join(".git/sf-tasks/work"))
+            .env("TASKS_WORK", root.join(".git/symphony/tasks/work"))
             .env("TASKS_SERVER", fixture.board.address())
             .env("TASKS_DATABASE", DATABASE)
             .env("SYMPHONY_MACHINE_DIR", &fixture.machine.0)
@@ -310,7 +310,7 @@ impl Fixture {
             assert_eq!(call("get", json!({"slug":slug}))["status"], "in_progress");
         }
         let machine = Folder(std::env::temp_dir().join(format!(
-            "sf-run-columns-machine-{}-{}",
+            "symphony-run-columns-machine-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

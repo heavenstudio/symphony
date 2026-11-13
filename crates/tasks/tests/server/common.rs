@@ -1,9 +1,9 @@
 //! A folder of its own per test, for a board and its server, served by the guarded `surreal`; and,
-//! from [`crate::own_board`], that `surreal` and a repository of its own, its board in its git dir
-//! ([`Repository`]). A server a test leaves running is stopped when its folder goes, by the pid its
-//! address file records, and only if that process serves this folder. A pipe watchdog also ends
-//! every server if the test process is killed. A healthy occupier takes a port a server was told to
-//! bind, and answers there as a server would.
+//! from [`crate::own_board`], that `surreal` (a repository of its own, its board in its git dir, is
+//! that module's `Repository`). A server a test leaves running is stopped when its folder goes, by
+//! the pid its address file records, and only if that process serves this folder. A pipe watchdog
+//! also ends every server if the test process is killed. A healthy occupier takes a port a server
+//! was told to bind, and answers there as a server would.
 
 pub use crate::own_board::{
     GuardedSurreal, Repository, command_of, gone, parent_of, serves_data, signal, surreal,

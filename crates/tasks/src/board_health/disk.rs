@@ -1,27 +1,30 @@
 //! The machine's free disk, which the board warns of when it runs low: a full disk fails every build
 //! on the machine and can corrupt the board's database. `tasks status` reads it at its run, for the
 //! disk holding the board's record, and the Symphony server at each tick, for the disk holding the
-//! project, on the pages' notice ([`Low`]). The board warns under `SF_LOW_DISK_GB` gigabytes
-//! (10^9 bytes) free, else [`THRESHOLD_GB`]; 0 never warns.
+//! project, on the pages' notice ([`Low`]). The board warns under `SYMPHONY_LOW_DISK_GB`
+//! gigabytes (10^9 bytes) free, else [`THRESHOLD_GB`]; 0 never warns.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The setting naming the threshold, in gigabytes.
-pub const VAR: &str = "SF_LOW_DISK_GB";
-/// The threshold when `SF_LOW_DISK_GB` names none, in gigabytes.
+pub const VAR: &str = symphony_env::LOW_DISK_GB.name;
+/// The threshold when [`VAR`] names none, in gigabytes.
 pub const THRESHOLD_GB: f64 = 20.0;
 /// A gigabyte, as the threshold and the warnings count it.
 const GB: f64 = 1e9;
 
-/// The threshold `vars` names, in gigabytes: `SF_LOW_DISK_GB`, else [`THRESHOLD_GB`]; refused when it
-/// is not a number of gigabytes, 0 or more.
+/// The threshold `vars` names, in gigabytes: [`VAR`], else [`THRESHOLD_GB`], a blank value naming
+/// none; refused when it is not a number of gigabytes, 0 or more.
 pub fn threshold(vars: &BTreeMap<String, String>) -> Result<f64, String> {
-    let gb = match vars.get(VAR).map(|text| text.trim()) {
-        Some(text) if !text.is_empty() => text
+    let named = symphony_env::LOW_DISK_GB
+        .get(|name| vars.get(name).map(|text| text.trim()))
+        .filter(|text| !text.is_empty());
+    let gb = match named {
+        Some(text) => text
             .parse::<f64>()
             .map_err(|_| format!("{VAR}={text:?} is not a number of gigabytes"))?,
-        _ => THRESHOLD_GB,
+        None => THRESHOLD_GB,
     };
     if gb >= 0.0 && gb.is_finite() {
         Ok(gb)
@@ -125,7 +128,7 @@ mod tests {
         assert_eq!(threshold(&vars(Some("0"))), Ok(0.0));
         assert_eq!(
             threshold(&vars(Some("lots"))),
-            Err("SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes".into())
+            Err("SYMPHONY_LOW_DISK_GB=\"lots\" is not a number of gigabytes".into())
         );
         for wrong in ["-1", "NaN", "inf"] {
             assert!(threshold(&vars(Some(wrong))).is_err(), "{wrong}");
@@ -134,7 +137,7 @@ mod tests {
 
     #[test]
     fn a_disk_is_low_only_under_the_threshold() {
-        let at = Path::new("/repo/.git/sf-tasks");
+        let at = Path::new("/repo/.git/symphony/tasks");
         assert_eq!(
             Low::of(at, 20_000_000_000, 20.0),
             None,
@@ -152,11 +155,11 @@ mod tests {
         );
         assert_eq!(
             Low::of(at, 12_345_678_901, 20.0).unwrap().warning(),
-            "the disk holding /repo/.git/sf-tasks has 12.3 GB free, under the 20 GB the board warns at (SF_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
+            "the disk holding /repo/.git/symphony/tasks has 12.3 GB free, under the 20 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
         );
         assert_eq!(
             Low::of(at, 4_960_000_000, 7.5).unwrap().warning(),
-            "the disk holding /repo/.git/sf-tasks has 5.0 GB free, under the 7.5 GB the board warns at (SF_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
+            "the disk holding /repo/.git/symphony/tasks has 5.0 GB free, under the 7.5 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees"
         );
         let notice = "The disk has under 7.5 GB free: a full disk fails every build and can corrupt the task board. `just tasks status` says how much.";
         assert_eq!(Low::of(at, 4_960_000_000, 7.5).unwrap().notice(), notice);
@@ -170,7 +173,7 @@ mod tests {
     #[test]
     fn the_disk_is_read_at_the_nearest_folder_that_exists() {
         let dir = std::env::temp_dir();
-        let missing = dir.join(format!("sf-disk-missing-{}/a/b", std::process::id()));
+        let missing = dir.join(format!("symphony-disk-missing-{}/a/b", std::process::id()));
         let free = crate::sys::free_bytes(&dir).expect("the temporary folder's disk is read");
         assert!(free > 0, "{free}");
         // Over any disk there is: low; at 0: never.

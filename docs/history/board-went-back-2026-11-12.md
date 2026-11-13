@@ -4,10 +4,10 @@ Evidence, not reference: how [A board that went back](../TASKS.md#a-board-that-w
 done by hand, with the numbers of that day. The cause is on the board in
 `tools/board-database-lost-its-log`.
 
-On 2026-11-12 Star Foundry's board store came back three days old: at schema 13, where it had been
-16. Its data folder was cloned while the server on the older state still ran, as
-`sf-tasks/data.snapshot-2026-11-12-0845` in Star Foundry's git common dir; nothing was ever started
-on that folder, and every try below worked on a clone of it (`cp -c -R`).
+On 2026-11-12 the consuming project's board store came back three days old: at schema 13, where it
+had been 16. Its data folder was cloned while the server on the older state still ran, as
+`sf-tasks/data.snapshot-2026-11-12-0845` in the consuming project's git common dir; nothing was ever
+started on that folder, and every try below worked on a clone of it (`cp -c -R`).
 
 - **No hold.** The first swap failed: the launcher started the database again on the old path
   between the stop and the rename, and that server then wrote and deleted sstables by path inside

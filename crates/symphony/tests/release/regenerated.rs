@@ -31,7 +31,7 @@ fn regenerator(fixture: &Fixture, state: &str, tip: &str, pid: i64) {
 
 /// The same, the round having landed `landed` on `tip`.
 fn regenerator_landing(fixture: &Fixture, state: &str, tip: &str, landed: Option<&str>, pid: i64) {
-    let folder = fixture.main.join(".git/sf-tasks/land");
+    let folder = fixture.main.join(".git/symphony/tasks/land");
     fs::create_dir_all(&folder).unwrap();
     let state = State {
         state: state.into(),

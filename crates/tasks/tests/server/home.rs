@@ -600,7 +600,7 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
     assert_eq!(
         error.to_string(),
         format!(
-            "SurrealDB {SURREAL_VERSION} is not at {}, where `SF_SURREAL` names it",
+            "SurrealDB {SURREAL_VERSION} is not at {}, where `SYMPHONY_SURREAL` names it",
             missing.display()
         )
     );
@@ -610,7 +610,7 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
     std::fs::create_dir_all(&common).unwrap();
     let error = Home::in_common(&common, None).ensure().unwrap_err();
     let pinned = common
-        .join("sf-surreal")
+        .join("symphony/surreal")
         .join(SURREAL_VERSION)
         .join("surreal");
     assert_eq!(error, ServerError::NoSurreal(pinned.clone()));
@@ -624,7 +624,7 @@ fn no_pinned_surreal_is_refused_with_how_to_fetch_it() {
         error.to_string(),
         format!(
             "SurrealDB {SURREAL_VERSION} is not at {}: fetch it there (`{fetch}`), or name another \
-             with `SF_SURREAL`",
+             with `SYMPHONY_SURREAL`",
             pinned.display()
         )
     );
@@ -649,7 +649,7 @@ fn a_store_with_no_surreal_to_serve_it_is_refused_as_unserved_not_as_no_board() 
         error.to_string(),
         format!(
             "the board's store at {} cannot be served: SurrealDB {SURREAL_VERSION}, which serves \
-             it, is not at {}, where `SF_SURREAL` names it",
+             it, is not at {}, where `SYMPHONY_SURREAL` names it",
             data.display(),
             missing.display()
         )
@@ -664,10 +664,10 @@ fn a_store_with_no_surreal_to_serve_it_is_refused_as_unserved_not_as_no_board() 
     ));
     // The pinned binary's place says how to fetch it, as with no store.
     let common = s.dir.join("repo").join(".git");
-    std::fs::create_dir_all(common.join("sf-tasks").join("data")).unwrap();
+    std::fs::create_dir_all(common.join(FOLDER).join("data")).unwrap();
     let error = Home::in_common(&common, None).ensure().unwrap_err();
     let pinned = common
-        .join("sf-surreal")
+        .join(symphony_board::folders::SURREAL)
         .join(SURREAL_VERSION)
         .join("surreal");
     let fetch = symphony_board::server::surreal_fetch(
@@ -678,7 +678,7 @@ fn a_store_with_no_surreal_to_serve_it_is_refused_as_unserved_not_as_no_board() 
     .expect("a machine the tests run on has a pinned build");
     assert!(
         error.to_string().ends_with(&format!(
-            ": fetch it there (`{fetch}`), or name another with `SF_SURREAL`"
+            ": fetch it there (`{fetch}`), or name another with `SYMPHONY_SURREAL`"
         )),
         "{error}"
     );
@@ -720,7 +720,7 @@ fn the_board_lives_in_the_common_dir_served_by_the_pinned_surreal() {
     assert_eq!(
         home.surreal(),
         common
-            .join("sf-surreal")
+            .join("symphony/surreal")
             .join(SURREAL_VERSION)
             .join("surreal")
     );
@@ -741,11 +741,63 @@ fn the_version_is_the_one_tools_surreal_sh_fetches() {
     );
 }
 
+#[test]
+fn the_scripts_common_dir_is_its_variable_else_the_workspaces() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("server-{}-common-dir", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let init = sys::output(Command::new("git").args(["init", "-q"]).current_dir(&dir)).unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let common = dir.join(".git").canonicalize().unwrap();
+    let common_dir = |vars: &[(&str, &Path)]| {
+        let mut bash = Command::new("bash");
+        bash.args(["-c", "source \"$1\"; common_dir \"$2\"", "common_dir"])
+            .arg(&script)
+            .arg(&dir);
+        for name in ["SYMPHONY_GIT_COMMON_DIR", "GIT_DIR", "GIT_COMMON_DIR"] {
+            bash.env_remove(name);
+        }
+        for (name, value) in vars {
+            bash.env(name, value);
+        }
+        let done = sys::output(&mut bash).unwrap();
+        (
+            done.status.code(),
+            String::from_utf8(done.stdout).unwrap(),
+            String::from_utf8(done.stderr).unwrap(),
+        )
+    };
+    let found = format!("{}\n", common.display());
+    assert_eq!(
+        common_dir(&[("SYMPHONY_GIT_COMMON_DIR", &common)]),
+        (Some(0), found.clone(), String::new())
+    );
+    assert_eq!(common_dir(&[]), (Some(0), found.clone(), String::new()));
+    assert_eq!(
+        common_dir(&[("SYMPHONY_GIT_COMMON_DIR", Path::new(""))]),
+        (Some(0), found, String::new()),
+        "an empty value is unset"
+    );
+    // A value that is not a git dir is refused.
+    let (code, out, err) = common_dir(&[("SYMPHONY_GIT_COMMON_DIR", Path::new("relative"))]);
+    assert_eq!((code, out.as_str()), (Some(1), ""), "{err}");
+    assert!(
+        err.ends_with(
+            "❌ surreal: SYMPHONY_GIT_COMMON_DIR=relative is not a git dir (an absolute path git \
+             takes as --git-dir)\n"
+        ),
+        "{err}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Run as a process of its own by the next test: start the board's server and exit.
 #[test]
 #[ignore = "a helper the next test runs as a process"]
 fn helper_start_and_exit() {
-    if let Some(dir) = std::env::var_os("SF_TEST_SERVER_DIR") {
+    if let Some(dir) = std::env::var_os("SYMPHONY_TEST_SERVER_DIR") {
         let dir = Path::new(&dir);
         let home = Home::new(dir, &surreal());
         // A board outside a scratch place starts its server detached. A checkout kept under the
@@ -758,7 +810,7 @@ fn helper_start_and_exit() {
         };
         // A starter that blocks SIGTERM, as a signal-masking parent may start one: its server is
         // started with nothing blocked, else a stop's SIGTERM would wait in its mask for ever.
-        if std::env::var_os("SF_TEST_SERVER_MASKED").is_some() {
+        if std::env::var_os("SYMPHONY_TEST_SERVER_MASKED").is_some() {
             // SAFETY: the set is initialised by sigemptyset before it is read; the call changes
             // only this thread's mask, the one a spawn from it hands its child.
             unsafe {
@@ -800,9 +852,9 @@ fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
                 "home::helper_start_and_exit",
                 "--test-threads=1",
             ])
-            .env("SF_TEST_SERVER_DIR", &s.dir)
-            .env("SF_TEST_SERVER_MASKED", "1")
-            .env("SF_SURREAL", s.surreal()),
+            .env("SYMPHONY_TEST_SERVER_DIR", &s.dir)
+            .env("SYMPHONY_TEST_SERVER_MASKED", "1")
+            .env("SYMPHONY_SURREAL", s.surreal()),
     )
     .unwrap();
     assert!(
@@ -855,8 +907,8 @@ fn a_server_outlives_the_process_that_started_it_and_holds_none_of_its_pipes() {
                 "home::helper_start_and_exit",
                 "--test-threads=1",
             ])
-            .env("SF_TEST_SERVER_DIR", &s.dir)
-            .env("SF_SURREAL", s.surreal()),
+            .env("SYMPHONY_TEST_SERVER_DIR", &s.dir)
+            .env("SYMPHONY_SURREAL", s.surreal()),
     )
     .unwrap();
     assert!(

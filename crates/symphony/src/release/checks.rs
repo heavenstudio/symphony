@@ -583,7 +583,7 @@ mod tests {
     fn a_check_runs_without_the_marks_of_how_the_run_was_asked_for() {
         // The marks are this test's own process's, set when it is started: set here, they would
         // reach every other test's children too.
-        const CASE: &str = "SF_RELEASE_MARKS_CASE";
+        const CASE: &str = "SYMPHONY_RELEASE_MARKS_CASE";
         if std::env::var_os(CASE).is_some() {
             let tree = Tree::new();
             let log = tree.path("verify.log");
@@ -591,7 +591,7 @@ mod tests {
                 &Step::shell(
                     "verify",
                     "echo \"marks ${SYMPHONY_UNASKED-unset} ${SYMPHONY_LAND-unset} \
-                     ${SF_RELEASE_KEPT-unset}\"",
+                     ${SYMPHONY_RELEASE_KEPT-unset}\"",
                 ),
                 &tree.root,
                 &log,
@@ -609,7 +609,7 @@ mod tests {
                 .args(["--exact", name.as_str()])
                 .env(CASE, "1")
                 .envs(symphony_board::sys::MARKS.map(|name| (name, "1")))
-                .env("SF_RELEASE_KEPT", "kept"),
+                .env("SYMPHONY_RELEASE_KEPT", "kept"),
         )
         .unwrap();
         let said = String::from_utf8_lossy(&done.stdout);

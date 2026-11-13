@@ -343,10 +343,10 @@ fn codex_exec(lower: &str) -> bool {
     false
 }
 
-/// A board command or monitor, or the binary they run: `tools/rs-bin.sh`'s build of it, or the link
-/// the hook runs.
-/// `(?:^|[\s/])just\s+tasks(?:-attach)?(?:\s|$)|(?:^|[\s/])tools/tasks\.py(?:\s|$)`
-/// `|(?:^|/)(?:(?:sf-cargo/bin|sf-bin)/tasks-[0-9a-f]{16}|\.target/bin/tasks)(?:\s|$)`
+/// A board command or monitor, or the binary they run: a build of it named by its hash, wherever a
+/// project keeps it, or the link the hook runs.
+/// `(?:^|[\s/])just\s+tasks(?:-attach)?(?:\s|$)`
+/// `|(?:^|/)(?:tasks-[0-9a-f]{16}|\.target/bin/tasks)(?:\s|$)`
 pub fn board(command: &str) -> bool {
     let after_word = |at: usize| before(command, at).is_none_or(|c| space(c) || c == '/');
     let after_slash = |at: usize| before(command, at).is_none_or(|c| c == '/');
@@ -359,24 +359,19 @@ pub fn board(command: &str) -> bool {
         let end = command.len() - tasks.len() + 5;
         ends(command, end) || (command[end..].starts_with("-attach") && ends(command, end + 7))
     });
-    let script =
-        starts(command, "tools/tasks.py").any(|at| after_word(at) && ends(command, at + 14));
-    let built = ["sf-cargo/bin/tasks-", "sf-bin/tasks-"]
-        .iter()
-        .any(|prefix| {
-            starts(command, prefix).any(|at| {
-                let hash = &command.as_bytes()[at + prefix.len()..];
-                after_slash(at)
-                    && hash.len() >= 16
-                    && hash[..16]
-                        .iter()
-                        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                    && ends(command, at + prefix.len() + 16)
-            })
-        });
+    let prefix = "tasks-";
+    let built = starts(command, prefix).any(|at| {
+        let hash = &command.as_bytes()[at + prefix.len()..];
+        after_slash(at)
+            && hash.len() >= 16
+            && hash[..16]
+                .iter()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            && ends(command, at + prefix.len() + 16)
+    });
     let linked =
         starts(command, ".target/bin/tasks").any(|at| after_slash(at) && ends(command, at + 17));
-    just_tasks || script || built || linked
+    just_tasks || built || linked
 }
 
 /// The `-n HANDLE` (or `--name HANDLE`) a command line names first:

@@ -1,11 +1,11 @@
 //! `tasks status [--json]`: the board's health as the machine's Symphony server last recorded it
-//! ([`crate::board_health`]), read from its record in `sf-tasks/` and never from the board, so a
-//! board too slow to answer, or a server that stopped, is still said. Its warnings are the record's
-//! read at this run's time, and that the server stopped recording when it did, and the free disk
-//! where the record is kept, read now, when it is under `SF_LOW_DISK_GB` ([`board_health::disk`];
-//! a setting that is not a number is said, and the default taken), and the evidence the main
-//! checkout keeps of removed worktrees while the last sweep measured it past its cap
-//! ([`kept`]), with its largest folders and their tasks, so an agent checks it by hand.
+//! ([`crate::board_health`]), read from its record in `symphony/tasks/` and never from the board,
+//! so a board too slow to answer, or a server that stopped, is still said. Its warnings are the
+//! record's read at this run's time, and that the server stopped recording when it did, and the
+//! free disk where the record is kept, read now, when it is under `SYMPHONY_LOW_DISK_GB`
+//! ([`board_health::disk`]; a setting that is not a number is said, and the default taken), and
+//! the evidence the main checkout keeps of removed worktrees while the last sweep measured it past
+//! its cap ([`kept`]), with its largest folders and their tasks, so an agent checks it by hand.
 //! `--json` prints the record as `/api/health` answers it, beside the file, the disk, the evidence
 //! set aside and those warnings.
 
@@ -91,7 +91,8 @@ mod tests {
     const GONE: &str = "127.0.0.1:1";
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sf-status-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("symphony-status-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -273,7 +274,7 @@ mod tests {
         let (said, before) = lines.split_last().unwrap();
         assert_eq!(before.last(), Some(&dispatch), "{out}");
         let head = format!("⚠ the disk holding {} has ", dir.display());
-        let tail = " GB free, under the 1000000000000 GB the board warns at (SF_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees";
+        let tail = " GB free, under the 1000000000000 GB the board warns at (SYMPHONY_LOW_DISK_GB): a full disk fails every build on the machine and can corrupt the board's database; `just tasks sweep` clears the build output of finished worktrees";
         assert!(said.starts_with(&head) && said.ends_with(tail), "{said}");
         let gb: f64 = said[head.len()..said.len() - tail.len()].parse().unwrap();
         assert!(gb > 0.0, "{said}");
@@ -308,7 +309,7 @@ mod tests {
                 (code, err.as_str()),
                 (
                     0,
-                    "· SF_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
+                    "· SYMPHONY_LOW_DISK_GB=\"lots\" is not a number of gigabytes: it warns under 20 GB free\n"
                 ),
                 "{args:?}"
             );

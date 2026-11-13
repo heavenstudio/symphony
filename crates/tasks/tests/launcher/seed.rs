@@ -18,8 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 /// repository of its own and no compiler of the caller's choosing.
 const UNSET: [&str; 7] = [
     "CARGO_TARGET_DIR",
-    "SF_SEED_TARGET",
-    "SF_SEED_WAIT",
+    "SYMPHONY_SEED_TARGET",
+    "SYMPHONY_SEED_WAIT",
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -303,7 +303,7 @@ fn nothing_is_seeded_but_a_linked_worktrees_new_build_folder() {
     let f = Seeding::new("unseeded");
 
     // Turned off.
-    f.unseeded(f.cargo(&f.wt, &[("SF_SEED_TARGET", "off")]));
+    f.unseeded(f.cargo(&f.wt, &[("SYMPHONY_SEED_TARGET", "off")]));
 
     // The main checkout's own build, into a folder not made yet.
     let elsewhere = f.base.join("elsewhere");
@@ -349,25 +349,23 @@ fn a_build_holding_the_main_checkouts_lock_past_the_wait_leaves_the_worktree_to_
     // Cargo's build holds its folder's lock, alone, for as long as it builds.
     let lock = File::open(source.join(".cargo-lock")).unwrap();
     lock.lock().unwrap();
+    let refused = format!(
+        "symphony seed: no clone of {} (its build held the lock past 1s, or the volume refused); building from nothing\n",
+        source.display()
+    );
     let start = Instant::now();
-    let ran = f.cargo(&f.wt, &[("SF_SEED_WAIT", "1")]);
+    let ran = f.cargo(&f.wt, &[("SYMPHONY_SEED_WAIT", "1")]);
     assert!(
         start.elapsed() >= Duration::from_secs(1),
         "it waits its second"
     );
-    assert_eq!(
-        ran.err,
-        format!(
-            "symphony seed: no clone of {} (its build held the lock past 1s, or the volume refused); building from nothing\n",
-            source.display()
-        )
-    );
+    assert_eq!(ran.err, refused);
     assert_eq!(ran.ok(), Seeding::built(&target));
     assert!(!target.exists());
     f.no_staging_left();
 
     lock.unlock().unwrap();
-    let ran = f.cargo(&f.wt, &[("SF_SEED_WAIT", "1")]);
+    let ran = f.cargo(&f.wt, &[("SYMPHONY_SEED_WAIT", "1")]);
     assert!(ran.err.contains("starts as a clone of"), "{}", ran.err);
     assert_eq!(ran.ok(), Seeding::built(&target));
     assert!(target.join("SEEDED").is_file());
@@ -429,14 +427,14 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
             .arg(&target)
             .current_dir(&f.wt)
             .env("CARGO", standin())
-            .env("SF_SEED_WAIT", "600")
+            .env("SYMPHONY_SEED_WAIT", "600")
             .stdin(symphony_board::sys::Stdio::null())
             .stdout(symphony_board::sys::Stdio::null())
             .stderr(File::create(&said).unwrap())
             .spawn()
             .unwrap();
-        // Within the backstop of the 300 s it once had, which only the seed's own SF_SEED_WAIT,
-        // ending it, comes before.
+        // Within the backstop of the 300 s it once had, which only the seed's own
+        // SYMPHONY_SEED_WAIT, ending it, comes before.
         test_time::until_true(
             "the clone waited on the lock",
             test_time::backstop(Duration::from_secs(300)),
@@ -460,8 +458,8 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
         // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
         assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
         // Its end within the backstop of the minute it once had, never the lock's wait: a seed the
-        // signal did not end waits on with its clone for all of SF_SEED_WAIT, so it is killed and
-        // the test says so.
+        // signal did not end waits on with its clone for all of SYMPHONY_SEED_WAIT, so it is killed
+        // and the test says so.
         let ending = test_time::until(
             format!("signal {signal} ended the seed"),
             test_time::backstop(Duration::from_secs(60)),

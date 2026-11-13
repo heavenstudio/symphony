@@ -825,8 +825,8 @@ impl Plugin for Declaring {
     }
     fn theme(&self) -> Option<Theme> {
         Some(Theme {
-            package: "foundry".into(),
-            name: "Star Foundry".into(),
+            package: "lamp".into(),
+            name: "Lamp Works".into(),
             icon: Some("⬡".into()),
             tokens: BTreeMap::from([("accent".into(), "#ff8800".into())]),
             stylesheets: vec!["docs/theme.css".into()],

@@ -110,7 +110,7 @@ fn remove_ended_runs(temp: &Path) {
     let ended = entries.flatten().filter(|entry| {
         let name = entry.file_name();
         let pid = (name.to_str())
-            .and_then(|name| name.strip_prefix("sf-perf-"))
+            .and_then(|name| name.strip_prefix("symphony-perf-"))
             .and_then(|pid| pid.parse::<i64>().ok());
         pid.is_some_and(|pid| !sys::pid_alive(pid))
     });
@@ -119,10 +119,10 @@ fn remove_ended_runs(temp: &Path) {
     }
 }
 
-/// The `tasks` binary timed: `SF_PERF_TASKS` when it names one (another build's, to time it on the
+/// The `tasks` binary timed: `SYMPHONY_PERF_TASKS` when it names one (another build's, to time it on the
 /// same board), else this crate's.
 pub fn program() -> PathBuf {
-    std::env::var_os("SF_PERF_TASKS")
+    std::env::var_os("SYMPHONY_PERF_TASKS")
         .map_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_tasks")), PathBuf::from)
 }
 
@@ -131,7 +131,7 @@ impl Board {
         // Short: the recipients' sockets live here, and a socket's path has room for 104 bytes.
         let temp = std::env::temp_dir();
         remove_ended_runs(&temp);
-        let dir = temp.join(format!("sf-perf-{}", std::process::id()));
+        let dir = temp.join(format!("symphony-perf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // an ended run's, whose process had this one's id
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("ps"), "").unwrap();

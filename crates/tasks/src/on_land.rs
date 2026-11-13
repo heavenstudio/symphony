@@ -5,9 +5,9 @@
 //! [`SAYS`] at most ([`SAYS_VAR`] sets another window) and shows what it said by then (a count
 //! says all it has to well within it),
 //! then goes on, never waiting on it longer. Each start's output goes to a file of its own,
-//! `sf-tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept), and a
-//! line naming that file, or why nothing started, to `sf-tasks/on-land.log` (set aside as
-//! `on-land.log.1` past [`LOG_MOST`] bytes). The Symphony's own project names there the build of
+//! `symphony/tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept),
+//! and a line naming that file, or why nothing started, to `symphony/tasks/on-land.log` (set aside
+//! as `on-land.log.1` past [`LOG_MOST`] bytes). The Symphony's own project names there the build of
 //! `symphony` its main checkout links, as `nightly --due`: the release cadence counted in
 //! landings, which builds nothing unless a run is due. It is the command's name before the rename
 //! to `symphony release`, which a build older than the rename knows and a newer one runs as
@@ -418,7 +418,7 @@ mod tests {
             PARENT_VAR,
             PIPELINE_VAR,
             "GIT_DIR",
-            "SF_ON_LAND_KEPT",
+            "SYMPHONY_ON_LAND_KEPT",
         ];
         let said: Vec<String> = (names.iter())
             .map(|name| format!("{name}=${{{name}-unset}}"))
@@ -438,10 +438,10 @@ mod tests {
             panic!("the command starts");
         };
         assert_eq!(
-            holding(&heard.output, "SF_ON_LAND_KEPT="),
+            holding(&heard.output, "SYMPHONY_ON_LAND_KEPT="),
             format!(
                 "SYMPHONY_UNASKED=unset SYMPHONY_LAND=unset TASKS_SESSION=unset TASKS_TASK=unset \
-                 {PARENT_VAR}=unset {PIPELINE_VAR}=unset GIT_DIR=unset SF_ON_LAND_KEPT=1\n"
+                 {PARENT_VAR}=unset {PIPELINE_VAR}=unset GIT_DIR=unset SYMPHONY_ON_LAND_KEPT=1\n"
             )
         );
         fs::remove_dir_all(&main).unwrap();

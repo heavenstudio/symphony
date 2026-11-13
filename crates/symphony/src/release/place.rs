@@ -1,9 +1,10 @@
 //! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
 //! worktree of the repository that the release run made, locked with [`LOCK_REASON`] and marked in its
 //! admin folder with its real path ([`MARK`]); its conciliation copies are clones it made, marked in
-//! their `.git` with the project they copy ([`COPY_MARK`]). Each is outside the main checkout and
-//! every other worktree, and holds none. Anything else found in their place, a link included, is
-//! refused and left exactly as it is. A build folder it keeps is cleared once it is older than
+//! their `.git` with the project they copy ([`COPY_MARK`]), where each keeps the build folder its
+//! conciliation builds in ([`COPY_TARGET`]). Each is outside the main checkout and every other
+//! worktree, and holds none. Anything else found in their place, a link included, is refused and
+//! left exactly as it is. A build folder it keeps is cleared once it is older than
 //! [`BUILD_KEPT_DAYS`]. What a build older than the rename to `just release` made under its names
 //! (`nightly` and `nightly-conciliate` beside the checkout, [`LEGACY_LOCK_REASON`] and its marks) the
 //! first run of a build that knows the new names moves to them ([`legacy`]), once no process works
@@ -22,6 +23,11 @@ pub(crate) const LOCK_REASON: &str = "the Symphony release run's checkout (docs/
 const MARK: &str = "symphony-release";
 /// The marker in a copy's `.git`: the real path of the project it copies.
 pub(crate) const COPY_MARK: &str = "symphony-release-copy";
+/// The build folder a copy's conciliation builds in, in the copy's `.git`: the release run's own. A
+/// project's own build folder (its `.target/`) is its tooling's, which may empty it, seed it or
+/// build in it from what its tests start, and the board's sweep reaches no copy, which is no
+/// worktree; nothing but the conciliation's cargo builds here.
+pub(crate) const COPY_TARGET: &str = "symphony-release-target";
 /// When a build folder the release run keeps was last cleared, beside the folder's marker.
 pub(crate) const BUILT: &str = "symphony-release-built";
 /// The days a build folder the release run keeps is built on incrementally before it is cleared.

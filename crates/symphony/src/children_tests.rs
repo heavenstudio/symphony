@@ -17,7 +17,7 @@ fn saw(command: &mut Command) -> String {
 fn a_child_runs_without_the_session_and_terminal_of_its_starter_but_with_its_actor() {
     // The variables are this test's own process's, set when it is started: set here, they would
     // reach every other test's children too.
-    const CASE: &str = "SF_SYMPHONY_CHILDREN_CASE";
+    const CASE: &str = "SYMPHONY_CHILDREN_CASE";
     if std::env::var_os(CASE).is_some() {
         let all = "fixture-session|t7|/fixture/hc/t7.sock|fixture-core|fixture-scope";
         assert_eq!(saw(&mut Command::new("/bin/sh")), all, "the starter's own");

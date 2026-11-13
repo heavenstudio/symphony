@@ -94,10 +94,10 @@ fn gone(pid: i64) -> bool {
 
 /// The land's worktree and what names its group, left behind or not.
 fn left(r: &Repo) -> (bool, bool) {
-    let folder = r.root.join(".git/sf-tasks/land");
+    let folder = r.root.join(".git/symphony/tasks/land");
     (
         folder.join("worktree").exists()
-            || git(&r.root, &["worktree", "list"]).contains("sf-tasks"),
+            || git(&r.root, &["worktree", "list"]).contains("symphony/tasks"),
         folder.join(RUNNING).exists(),
     )
 }
@@ -155,7 +155,7 @@ fn an_interrupt_to_the_land_ends_its_hung_check_whole_and_removes_its_worktree()
     );
     assert_eq!(head(&r.root, "main"), before);
     assert_eq!(r.board.said(SLUG), thread, "nothing said or recorded");
-    let log = fs::read_to_string(r.root.join(".git/sf-tasks/land/sim%2Fjump.log")).unwrap();
+    let log = fs::read_to_string(r.root.join(".git/symphony/tasks/land/sim%2Fjump.log")).unwrap();
     assert!(log.ends_with("ended: the land took SIGINT\n"), "{log}");
     // Its lock and its folder free, the next land lands.
     fs::remove_file(r.dir.join("hang")).unwrap();
@@ -190,7 +190,7 @@ fn a_terminate_to_a_land_waiting_for_another_ends_its_wait_and_lands_nothing() {
     manifest(&r, "\n[land]\ntimeout_seconds = 1\n");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let path = r.root.join(".git/sf-tasks/land.lock");
+    let path = r.root.join(".git/symphony/tasks/land.lock");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut held = fs::File::create(&path).unwrap();
     held.lock().unwrap();
@@ -235,7 +235,7 @@ fn a_land_killed_outright_leaves_its_check_and_the_next_refuses_while_anything_w
     assert_eq!(ended(&mut land).signal(), Some(libc::SIGKILL));
     assert!(pid_alive(check));
     assert_eq!(left(&r), (true, true));
-    let tree = r.root.join(".git/sf-tasks/land/worktree");
+    let tree = r.root.join(".git/symphony/tasks/land/worktree");
     let held = head(&tree, "HEAD");
     // The next land refuses beside it, naming the group, and rebuilds nothing.
     let (_, result) = landed(&r, SLUG, &people.orch);
@@ -361,7 +361,7 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
     assert_eq!(head(&r.root, "main"), top, "nothing merged again");
     assert_eq!(runs(&r).len(), 1, "nothing checked again");
     assert_eq!(last(&r, SLUG), line);
-    assert!(!Record::path(&r.root.join(".git/sf-tasks/land"), SLUG).exists());
+    assert!(!Record::path(&r.root.join(".git/symphony/tasks/land"), SLUG).exists());
     // Finished, it is closed: a land again finds no approve standing.
     let again = landed(&r, SLUG, &people.orch).1.unwrap_err();
     assert!(
@@ -412,7 +412,7 @@ fn a_full_sweep_after_a_land_stopped_past_main_keeps_its_branch_and_the_land_fin
     assert!(gone(push), "the push {push} was ended");
     let merge = head(&r.root, "main");
     assert_eq!(head(&r.root, "main^2"), tip);
-    assert!(Record::read(&r.root.join(".git/sf-tasks/land"), SLUG).is_some());
+    assert!(Record::read(&r.root.join(".git/symphony/tasks/land"), SLUG).is_some());
     // A full pass, as any done, move or verdict starts, once the window has passed: the worktree,
     // merged and clean, goes; its branch, which the land's record names, stays.
     let said = r.sweep();
@@ -439,7 +439,7 @@ fn a_full_sweep_after_a_land_stopped_past_main_keeps_its_branch_and_the_land_fin
     assert_eq!(head(&bare, "main"), merge);
     assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
     assert_eq!(last(&r, SLUG), line);
-    assert!(!Record::path(&r.root.join(".git/sf-tasks/land"), SLUG).exists());
+    assert!(!Record::path(&r.root.join(".git/symphony/tasks/land"), SLUG).exists());
 }
 
 // -- whose a group or a worktree an earlier land left is -------------------------------------------
@@ -474,7 +474,7 @@ fn a_group_is_named_the_lands_only_while_its_first_process_is_the_one_the_land_s
     manifest(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let folder = r.root.join(".git/sf-tasks/land");
+    let folder = r.root.join(".git/symphony/tasks/land");
     fs::create_dir_all(&folder).unwrap();
     let left = |group: u32, start: Option<String>| {
         let named = Named {
@@ -556,7 +556,7 @@ fn a_worktree_whose_lock_names_a_number_another_process_took_since_is_replaced()
     manifest(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let tree = r.root.join(".git/sf-tasks/land/worktree");
+    let tree = r.root.join(".git/symphony/tasks/land/worktree");
     let shown = tree.to_string_lossy().into_owned();
     let stranger = Stranger::new();
     let pid = stranger.pid();
@@ -609,7 +609,7 @@ fn a_leftover_worktree_lsof_cannot_judge_is_kept_and_the_line_says_how_to_look()
     manifest(&r, "");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    let tree = r.root.join(".git/sf-tasks/land/worktree");
+    let tree = r.root.join(".git/symphony/tasks/land/worktree");
     let shown = tree.to_string_lossy().into_owned();
     let reason = format!("symphony land: x (pid {}, started 0.000000)", dead_pid());
     git(
@@ -721,7 +721,7 @@ fn stalling_move(r: &Repo) -> (People, String) {
 /// The group the land names in [`RUNNING`] while it moves the main checkout, and the move's
 /// command.
 fn moving_group(r: &Repo) -> (u32, String) {
-    let path = r.root.join(".git/sf-tasks/land").join(RUNNING);
+    let path = r.root.join(".git/symphony/tasks/land").join(RUNNING);
     let named = || {
         fs::read_to_string(&path)
             .ok()
@@ -788,7 +788,7 @@ fn a_terminals_interrupt_while_main_moves_lets_the_move_end_and_a_run_again_fini
         )
     );
     main_checkout_is(&r, true);
-    let folder = r.root.join(".git/sf-tasks/land");
+    let folder = r.root.join(".git/symphony/tasks/land");
     assert!(Record::path(&folder, SLUG).exists(), "its record is kept");
     assert!(!folder.join(symphony_board::land::MOVING).exists());
     assert!(!folder.join(RUNNING).exists());
@@ -833,7 +833,7 @@ fn a_move_ended_part_way_is_restored_its_record_dropped_and_said_and_the_next_la
         last(&r, SLUG)
     );
     main_checkout_is(&r, false);
-    let folder = r.root.join(".git/sf-tasks/land");
+    let folder = r.root.join(".git/symphony/tasks/land");
     assert!(!Record::path(&folder, SLUG).exists());
     assert!(!folder.join(symphony_board::land::MOVING).exists());
     // Nothing is left to refuse on: the next land lands.
