@@ -85,16 +85,17 @@ which lets a press through to the ancestor, it adds a selector that finds the an
 target instead (or says none does), unless the ancestor is the page's body or a press there clicks
 another control through a label. Once aimed, the pointer moves to that middle, and the browser's
 own report of the move, its pointermove or mousemove, says where it landed and on what. Over a
-frame (an iframe, frame, embed or object) its own document takes the move and none reaches the
-page, so the pointer's place inside the frame is not confirmed: the step goes on as aimed. Where
-none reaches the page over anything else (the page stopping it), the element found there must be
-hovered, or where the pointer landed is unknown. Should it land anywhere but where the aim tested,
-or where be unknown, or, for a click, anything but the element (or its label) be on top there by
-then (a menu its hover opened), the step fails naming where the pointer landed or what the press
-would reach, and nothing is pressed. Typing focuses its element by script and types
-with no pointer, so what covers the element takes none of it. A click, typing, a key or a hover
-then waits for the page to settle again, as a capture does, bringing the page back in front if the
-step left it hidden (an Escape the page does not take).
+frame (an iframe, frame, embed or object, in a closed shadow root too, which the browser's own hit
+finds there) its own document takes the move and none reaches the page, so the pointer's place
+inside the frame is not confirmed: the step goes on as aimed. Where none reaches the page over
+anything else (the page stopping it), the element found there must be hovered, or where the
+pointer landed is unknown. Should it land anywhere but where the aim tested, or where be unknown,
+or, for a click, anything but the element (or its label) be on top there by then (a menu its hover
+opened), the step fails naming where the pointer landed or what the press would reach, and nothing
+is pressed. Typing focuses its element by script and types with no pointer, so what covers the
+element takes none of it. A click, typing, a key or a hover then waits for the page to settle
+again, as a capture does, bringing the page back in front if the step left it hidden (an Escape
+the page does not take).
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -627,7 +628,13 @@ impl Step {
                 said(chrome.eval(WATCH), &step, late)?;
                 said(move_to(chrome, press.screen), &step, late)?;
                 let arrived = said(chrome.eval(&arrival(css, press.page)), &step, late)?;
-                if let Some(why) = Arrival::read(&arrived).refused(press.page, clicking) {
+                let mut arrival = Arrival::read(&arrived);
+                // No report, and nothing the page sees there hovered: the browser's own hit, which
+                // sees into a closed shadow root, says whether a frame took the move there.
+                if let (true, Some(point)) = (arrival.unseen(), arrival.document) {
+                    arrival.framed = said(frame_at(chrome, point), &step, late)?;
+                }
+                if let Some(why) = arrival.refused(press.page, clicking) {
                     return Err(format!("{step}{why}"));
                 }
                 if clicking {
@@ -932,10 +939,12 @@ const FRAMES: &str = "iframe, frame, embed, object";
 /// [`WATCH`] kept it, the pointer's point and what it is over, or `null` when none came (the watch
 /// removed from the page either way); what the page's hit test finds at the point aimed at, now;
 /// whether the element found there is hovered, which says the pointer is over it where no report
-/// came; and whether it is a frame ([`FRAMES`]), whose own document takes the move, unheard by the
-/// page, and hovers its element only when it shares the page's process. What is over or found
-/// there is `true` when the element takes the press there ([`REACH`]), else its name, or `null`
-/// for no element. With no report yet it waits up to two animation frames for one, in case the
+/// came; whether it is a frame ([`FRAMES`]), whose own document takes the move, unheard by the
+/// page, and hovers its element only when it shares the page's process; and the point aimed at in
+/// the document's coordinates, where the browser's own hit looks for a frame the page cannot see
+/// ([`frame_at`]). What is over or found there is `true` when the element takes the press there
+/// ([`REACH`]), else its name, or `null` for no element. With no report yet it waits up to two
+/// animation frames for one, in case the
 /// browser dispatches the move with the next frame; that also gives a page the move replaced (its
 /// hover loading another, which has no watch) the frames it takes to hover what is under the
 /// pointer.
@@ -951,7 +960,8 @@ const hit = reach(x, y);
 const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);
 return {gone: !element || !element.isConnected,
   pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), record.at)) : null} : null,
-  hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && hit.deep.matches(FRAMES)};
+  hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && hit.deep.matches(FRAMES),
+  document: [x + scrollX, y + scrollY]};
 "#;
 
 /// A script reading what the pointer reached once moved to `(x, y)` in the page's coordinates, for
@@ -1153,6 +1163,36 @@ fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtool
         }),
     )?;
     Ok(Hit::confirmed(&answer["result"]["value"]))
+}
+
+/// Whether the browser's own hit at `(x, y)`, in the document's coordinates as the protocol's hit
+/// test takes them, finds a frame ([`FRAMES`]): inside a closed shadow root too, where the page's
+/// own hit test stops at the host. Two calls, paid only where no report of a move reached the page
+/// and nothing the page sees there is hovered or a frame ([`Arrival::unseen`]). A hit the protocol
+/// cannot make (no node there) finds none.
+fn frame_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<bool> {
+    let found = chrome.call(
+        "DOM.getNodeForLocation",
+        json!({"x": pixel(x), "y": pixel(y)}),
+    );
+    let described = found.and_then(|found| {
+        chrome.call(
+            "DOM.describeNode",
+            json!({"backendNodeId": found["backendNodeId"]}),
+        )
+    });
+    match described {
+        Ok(node) => Ok(is_frame(&node["node"])),
+        Err(error) if error.past_deadline() => Err(error),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Whether a node as the protocol describes it is a frame ([`FRAMES`]), by its local name.
+fn is_frame(node: &Value) -> bool {
+    node["localName"]
+        .as_str()
+        .is_some_and(|name| FRAMES.split(", ").any(|frame| frame == name))
 }
 
 /// A coordinate as the protocol's integers take it: the whole CSS pixel it lies in.
@@ -1452,8 +1492,12 @@ struct Arrival {
     hit: Reached,
     /// Whether the element found there is hovered: the pointer is over it.
     hovered: bool,
-    /// Whether the element found there is a frame ([`FRAMES`]), whose own document takes the move.
+    /// Whether the element found there is a frame ([`FRAMES`]), whose own document takes the move:
+    /// by the page's hit test, or, where that stops at a closed shadow root's host, by the
+    /// browser's own ([`frame_at`]).
     framed: bool,
+    /// The point aimed at in the document's coordinates, as the browser's own hit test takes it.
+    document: Option<(f64, f64)>,
 }
 
 /// Where the pointer landed, by the move's own report: its point in the page's coordinates and
@@ -1516,7 +1560,16 @@ impl Arrival {
             hit: Reached::read(&value["hit"]),
             hovered: value["hovered"] == true,
             framed: value["framed"] == true,
+            document: value["document"][0]
+                .as_f64()
+                .zip(value["document"][1].as_f64()),
         }
+    }
+
+    /// Whether nothing the page can tell says where the pointer is: no report of the move, and
+    /// what the page's hit test finds there neither hovered nor a frame.
+    fn unseen(&self) -> bool {
+        self.pointer.is_none() && !self.hovered && !self.framed
     }
 
     /// Why a click (`clicking`) or a hover fails once the pointer has moved to `aimed`, the point
@@ -1524,9 +1577,10 @@ impl Arrival {
     ///
     /// A pointer anywhere but where the aim tested fails either: the move's report putting it more
     /// than [`STRAY`] from `aimed`, the point pressed would not be the point tested, so what the
-    /// press reaches is unknown to the aim. With no report, a frame found there goes on unconfirmed:
-    /// its own document took the move, which the page cannot hear, and one in a process of its own
-    /// (another site's, or a sandboxed one of the page's own) leaves its element unhovered. Anything
+    /// press reaches is unknown to the aim. With no report, a frame found there (in a closed shadow
+    /// root too, by the browser's own hit) goes on unconfirmed: its own document took the move,
+    /// which the page cannot hear, and one in a process of its own (another site's, or a sandboxed
+    /// one of the page's own) leaves its element unhovered. Anything
     /// else found there must be hovered (a page that stops the move before the window hears it),
     /// or the pointer's place is unknown and the step fails. With the pointer there, a hover has
     /// done what it does, and a click fails unless the element is what the hit test finds there
@@ -1550,7 +1604,7 @@ impl Arrival {
                     point_said(aimed)
                 ));
             }
-            None if !self.hovered && !self.framed => {
+            None if self.unseen() => {
                 let found = match &self.hit {
                     Reached::Nothing => "the hit test finds no element there".to_string(),
                     hit => format!("{}, found there, is not hovered", hit.said()),

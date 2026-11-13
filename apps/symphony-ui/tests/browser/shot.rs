@@ -1719,12 +1719,13 @@ fn a_click_or_a_hover_on_a_label_whose_control_follows_it_lands_on_the_label_on_
     }
 }
 
-/// Two frames, each a button filling it that tells the page of the pointer coming over it and of
-/// its click (`messages`): one of the page's own, which shares its process, and one sandboxed
-/// without the page's origin, as the client draws its document mockups, which Chrome runs in a
-/// process of its own. Either frame's document takes the move over it, so the page hears none;
-/// the sandboxed one leaves its element unhovered in the page too. With `meta` as the page's meta
-/// viewport.
+/// Three frames, each a button filling it that tells the page of the pointer coming over it and
+/// of its click (`messages`, which `heard` waits on): one of the page's own, which shares its
+/// process; one sandboxed without the page's origin, as the client draws its document mockups,
+/// which Chrome runs in a process of its own; and the same in a component's closed shadow root,
+/// which the page's hit test sees only as its host. Each frame's document takes the move over it,
+/// so the page hears none; the sandboxed ones leave their element and its host unhovered in the
+/// page too. With `meta` as the page's meta viewport.
 fn framed(meta: &str) -> Vec<u8> {
     let meta = if meta.is_empty() {
         String::new()
@@ -1744,42 +1745,70 @@ fn framed(meta: &str) -> Vec<u8> {
 {meta}
 <style>
   body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
-  iframe {{ display: block; border: 0; margin: 0 0 20px; }}
+  iframe, x-closed {{ display: block; border: 0; margin: 0 0 20px; width: 220px; }}
 </style>
 <iframe id="own" width="220" height="50" srcdoc="{own}"></iframe>
 <iframe id="sandboxed" sandbox="allow-scripts" width="220" height="50" srcdoc="{sandboxed}"></iframe>
+<x-closed id="closed" data-doc="{closed}"></x-closed>
 <script>
   window.messages = [];
   addEventListener('message', event => messages.push(event.data));
+  // Once every one of `notes` has come, the messages so far, sorted: frames in processes of their
+  // own post them in no order the page can rely on.
+  window.heard = (...notes) => new Promise(resolve => {{
+    const check = () => notes.every(note => messages.includes(note)) ? resolve(messages.slice().sort()) : setTimeout(check, 10);
+    check();
+  }});
+  customElements.define('x-closed', class extends HTMLElement {{
+    constructor() {{
+      super();
+      const frame = document.createElement('iframe');
+      frame.sandbox = 'allow-scripts';
+      frame.width = 220;
+      frame.height = 50;
+      frame.style.cssText = 'display: block; border: 0';
+      frame.srcdoc = this.dataset.doc;
+      this.attachShadow({{mode: 'closed'}}).append(frame);
+    }}
+  }});
 </script>
 {POINTED}"##,
         own = button("own"),
         sandboxed = button("sandboxed"),
+        closed = button("closed"),
     )
     .into_bytes()
 }
 
 #[test]
-fn a_click_or_a_hover_into_a_frame_sandboxed_or_the_pages_own_reaches_its_button_on_a_desktop_and_a_phone()
- {
+fn a_click_or_a_hover_into_a_frame_sandboxed_in_a_closed_root_or_the_pages_own_reaches_its_button()
+{
     // Each frame hovered, then clicked: the pointer came over its button, and the click pressed
-    // it. The page hears no move over either, and the sandboxed frame is not hovered in it: the
-    // pointer's place inside a frame goes unconfirmed, and the step goes on as aimed.
+    // it, on a desktop and a phone. The page hears no move over any, and the sandboxed frames are
+    // not hovered in it: the pointer's place inside a frame goes unconfirmed, the one in a closed
+    // root found by the browser's own hit, and the step goes on as aimed. Each read waits for the
+    // notes it expects, the frames posting them from processes of their own.
     let steps = [
         "--hover",
         "#own",
         "--eval",
-        "messages.slice()",
+        "heard('over own')",
         "--click",
         "#own",
         "--hover",
         "#sandboxed",
         "--eval",
-        "messages.slice()",
+        "heard('pressed own', 'over sandboxed')",
         "--click",
         "#sandboxed",
+        "--hover",
+        "#closed",
         "--eval",
-        "[messages, landed]",
+        "heard('pressed sandboxed', 'over closed')",
+        "--click",
+        "#closed",
+        "--eval",
+        "heard('pressed closed').then(notes => [notes, landed])",
     ];
     for (name, meta, view) in [
         ("framed-desktop", "", &[][..]),
@@ -1799,13 +1828,22 @@ fn a_click_or_a_hover_into_a_frame_sandboxed_or_the_pages_own_reaches_its_button
             printed(&output),
             [
                 json!(["over own"]),
-                json!(["over own", "pressed own", "over sandboxed"]),
+                json!(["over own", "over sandboxed", "pressed own"]),
+                json!([
+                    "over closed",
+                    "over own",
+                    "over sandboxed",
+                    "pressed own",
+                    "pressed sandboxed"
+                ]),
                 // The page itself saw no press: each went into its frame.
                 json!([
                     [
+                        "over closed",
                         "over own",
-                        "pressed own",
                         "over sandboxed",
+                        "pressed closed",
+                        "pressed own",
                         "pressed sandboxed"
                     ],
                     []

@@ -254,9 +254,9 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
         "Once aimed, the pointer moves to that middle, and the browser's own report of the move, \
          its pointermove or mousemove, says where it landed and on what",
         // A frame's document takes the move: unconfirmed there, and said so.
-        "Over a frame (an iframe, frame, embed or object) its own document takes the move and none \
-         reaches the page, so the pointer's place inside the frame is not confirmed: the step goes \
-         on as aimed",
+        "Over a frame (an iframe, frame, embed or object, in a closed shadow root too, which the \
+         browser's own hit finds there) its own document takes the move and none reaches the page, \
+         so the pointer's place inside the frame is not confirmed: the step goes on as aimed",
         "Where none reaches the page over anything else (the page stopping it), the element found \
          there must be hovered, or where the pointer landed is unknown",
         "Should it land anywhere but where the aim tested, or where be unknown, or, for a click, \
@@ -885,7 +885,9 @@ fn the_pointer_is_found_by_the_moves_own_report_and_set_beside_the_hit_where_the
         // The hover asked of one element, the one the hit test finds, never searched for, and
         // whether that one is a frame.
         "hit: said(hit), hovered: !!hit.deep && hit.deep.matches(':hover'), framed: !!hit.deep && \
-         hit.deep.matches(FRAMES)};",
+         hit.deep.matches(FRAMES),",
+        // The point aimed at in the document's coordinates, for the browser's own hit.
+        "document: [x + scrollX, y + scrollY]};",
     ] {
         assert!(ARRIVED.contains(part), "no {part:?} in {ARRIVED}");
     }
@@ -906,6 +908,7 @@ fn arrived(pointer: Option<Pointer>, hit: Reached, hovered: bool) -> Arrival {
         hit,
         hovered,
         framed: false,
+        document: None,
     }
 }
 
@@ -942,12 +945,32 @@ fn an_arrival_reads_the_moves_report_the_hit_and_its_hover() {
         }
     );
     assert_eq!(
-        Arrival::read(&json!({"pointer": null, "hit": true, "hovered": false, "framed": true})),
+        Arrival::read(&json!({
+            "pointer": null,
+            "hit": true,
+            "hovered": false,
+            "framed": true,
+            "document": [60.25, 3015]
+        })),
         Arrival {
             framed: true,
+            document: Some((60.25, 3015.0)),
             ..arrived(None, Target, false)
         }
     );
+    // A document point is two numbers, or none.
+    for unsaid in [
+        json!([1]),
+        json!(["1", 2]),
+        json!(null),
+        json!({"x": 1, "y": 2}),
+    ] {
+        assert_eq!(
+            Arrival::read(&json!({"document": unsaid})).document,
+            None,
+            "{unsaid}"
+        );
+    }
     // Anything short of an answer is nothing: no report, never gone, hovered nor a frame.
     for unsaid in [
         json!(null),
@@ -1121,6 +1144,59 @@ fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
             .refused(aimed, true)
             .is_some_and(|why| why.starts_with(": the pointer landed at (10, 10) in the page"))
     );
+}
+
+#[test]
+fn only_an_arrival_nothing_the_page_tells_of_asks_the_browsers_own_hit_for_a_frame() {
+    use Reached::{Other, Target};
+    // No report, nothing hovered, no frame the page sees: unseen, and so asked.
+    assert!(arrived(None, Other("x-closed#host".into()), false).unseen());
+    // A report, the element found there hovered, or a frame the page sees: not asked.
+    assert!(!arrived(landed(1.0, 2.0, Target), Target, false).unseen());
+    assert!(!arrived(None, Target, true).unseen());
+    assert!(
+        !Arrival {
+            framed: true,
+            ..arrived(None, Target, false)
+        }
+        .unseen()
+    );
+    // The browser's hit finding a frame there, in a closed root the page cannot see into, lets the
+    // step go on unconfirmed; finding none, the pointer's place stays unknown.
+    let host = arrived(None, Target, false);
+    let aimed = (130.0, 55.0);
+    assert_eq!(
+        Arrival {
+            framed: true,
+            ..host.clone()
+        }
+        .refused(aimed, true),
+        None
+    );
+    assert!(
+        host.refused(aimed, true)
+            .is_some_and(|why| why.starts_with(": where the pointer landed, moved to its middle"))
+    );
+}
+
+#[test]
+fn a_frame_is_known_by_the_local_name_the_protocol_describes() {
+    for name in ["iframe", "frame", "embed", "object"] {
+        assert!(
+            is_frame(&json!({"nodeName": name.to_uppercase(), "localName": name})),
+            "{name}"
+        );
+    }
+    for node in [
+        json!({"nodeName": "X-CLOSED", "localName": "x-closed"}),
+        json!({"nodeName": "BUTTON", "localName": "button"}),
+        json!({"nodeName": "IFRAME"}),
+        json!({"localName": "iframes"}),
+        json!({"localName": "iframe, frame"}),
+        json!(null),
+    ] {
+        assert!(!is_frame(&node), "{node}");
+    }
 }
 
 #[test]
