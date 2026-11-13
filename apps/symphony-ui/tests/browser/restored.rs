@@ -515,8 +515,8 @@ fn restored_document_pictures_load_near_the_viewport_and_stay_mounted_after_scro
         SHOWN
     ));
     assert_eq!(
-        browser.eval("document.querySelector('.doc-body img').hasAttribute('src')"),
-        json!(false)
+        browser.eval("document.querySelector('.doc-body img').getAttribute('src')"),
+        json!(symphony_ui::media::WAITING)
     );
     assert!(!site.requests().contains(&"/late.svg".into()));
     browser.eval("window.keptPicture=document.querySelector('.doc-body img');keptPicture.scrollIntoView({block:'center'})");
@@ -528,6 +528,125 @@ fn restored_document_pictures_load_near_the_viewport_and_stay_mounted_after_scro
         site.requests().iter().filter(|p| *p == "/late.svg").count(),
         1
     );
+}
+
+/// A picture waiting for its latch already holds its sized box, so its showing moves nothing
+/// after it; and focused before it shows (a keyboard reaching it scrolls it near), it keeps the
+/// focus as its src lands.
+#[test]
+fn restored_document_picture_holds_its_box_and_the_keyboard_focus_as_it_shows() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    document(
+        &site,
+        vec![
+            paragraph("Visible introduction"),
+            json!({"type":"image","image":{"src":"/held.svg","alt":"Held picture","presentation":{"attributes":{"width":"200","height":"200","style":"margin-top:20000px"}}}}),
+            paragraph("After the picture"),
+        ],
+    );
+    site.set_file(
+        "/held.svg",
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+        "image/svg+xml",
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/docs/PROBE.md"));
+    // Focusable once the picture viewer has marked it.
+    assert!(browser.wait_for(
+        "performance.getEntriesByName('document-ready').length>0 && document.querySelector('.doc-body img[alt=\"Held picture\"][tabindex=\"0\"]') !== null",
+        SHOWN
+    ));
+    let place = "(() => { const image = document.querySelector('.doc-body img'), box = image.getBoundingClientRect(); const after = [...document.querySelectorAll('.doc-body p')].find(p => p.textContent === 'After the picture'); return {src: image.getAttribute('src'), width: Math.round(box.width), height: Math.round(box.height), after: Math.round(after.getBoundingClientRect().top + scrollY)}; })()";
+    let waiting = browser.eval(place);
+    assert_eq!(
+        (&waiting["src"], &waiting["width"], &waiting["height"]),
+        (
+            &json!(symphony_ui::media::WAITING),
+            &json!(200),
+            &json!(200)
+        ),
+        "the waiting picture holds its sized box: {waiting}"
+    );
+    assert!(!site.requests().contains(&"/held.svg".into()));
+    browser.eval("window.heldPicture=document.querySelector('.doc-body img');heldPicture.focus()");
+    assert!(
+        browser.wait_for("heldPicture.naturalWidth===200", SHOWN),
+        "{}; {:?}",
+        browser.eval(place),
+        site.targets()
+    );
+    assert_eq!(
+        browser.eval("[document.querySelector('.doc-body img')===heldPicture, document.activeElement===heldPicture]"),
+        json!([true, true]),
+        "the shown picture is the node focused, and keeps the focus: {}",
+        browser.eval("document.activeElement.outerHTML")
+    );
+    let shown = browser.eval(place);
+    assert_eq!(
+        (
+            &shown["src"],
+            &shown["width"],
+            &shown["height"],
+            &shown["after"]
+        ),
+        (
+            &json!("/held.svg"),
+            &json!(200),
+            &json!(200),
+            &waiting["after"]
+        ),
+        "the picture's showing moves nothing after it: before {waiting}, after {shown}"
+    );
+}
+
+/// The picture viewer shows the document's pictures that are pictures: one still waiting for its
+/// latch, far down the page, is none of them.
+#[test]
+fn restored_picture_viewer_leaves_out_a_picture_still_waiting() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let image = |name: &str, style: &str| json!({"type":"image","image":{"src":format!("/{name}.svg"),"alt":name,"presentation":{"attributes":{"width":"200","height":"200","style":style}}}});
+    // A paragraph between them: pictures side by side share a line, as tall as the far one's margin.
+    document(
+        &site,
+        vec![
+            image("near", ""),
+            paragraph("Between the pictures"),
+            image("far", "margin-top:20000px"),
+        ],
+    );
+    for name in ["near", "far"] {
+        site.set_file(
+            &format!("/{name}.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+            "image/svg+xml",
+        );
+    }
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/docs/PROBE.md"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('.doc-body img[alt=near][data-zoom-ready]')?.naturalWidth===200 && document.querySelector('.doc-body img[alt=far][data-zoom-ready]') !== null",
+            SHOWN
+        ),
+        "{}; {:?}",
+        browser.eval("[...document.querySelectorAll('.doc-body img')].map(i => i.outerHTML + ' ' + i.naturalWidth)"),
+        site.targets()
+    );
+    assert_eq!(
+        browser.eval("document.querySelector('.doc-body img[alt=far]').getAttribute('src')"),
+        json!(symphony_ui::media::WAITING)
+    );
+    browser.eval("document.querySelector('.doc-body img[alt=near]').click()");
+    assert!(browser.wait_for(
+        "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src')==='/near.svg'",
+        SHOWN
+    ));
+    // One picture: its caption counts none, and no button steps to another.
+    assert_eq!(
+        browser.eval("[document.querySelector('#media-lightbox .lightbox-caption').textContent, document.querySelectorAll('#media-lightbox [aria-label=\"Next picture\"]').length]"),
+        json!(["near", 0])
+    );
+    assert!(!site.requests().contains(&"/far.svg".into()));
 }
 
 pub(super) fn document(site: &Site, blocks: Vec<Value>) {

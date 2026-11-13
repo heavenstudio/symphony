@@ -629,7 +629,7 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         ),
         (
             "/alpha/docs/NOTES.md",
-            "[data-ready=document]:has(.doc-tasks a[href$='/task/links/child']):has(p a[href$='DECISIONS.md']):has(img[src])",
+            "[data-ready=document]:has(.doc-tasks a[href$='/task/links/child']):has(p a[href$='DECISIONS.md']):has(img[src*='dot.svg'])",
             &[
                 "/alpha/",
                 "/alpha/docs/",
@@ -767,7 +767,7 @@ fn the_agents_activity_folder_plugin_and_missing_pages_name_their_links_under_th
         (
             "/pantry/docs/NOTES.md",
             "/pantry",
-            "[data-ready=document] img[src]",
+            "[data-ready=document] img[src*='dot.svg']",
             &["/pantry/docs/DECISIONS.md", "/pantry/docs/dot.svg"],
         ),
     ] {
@@ -778,7 +778,7 @@ fn the_agents_activity_folder_plugin_and_missing_pages_name_their_links_under_th
     // picture's own address names pantry.
     assert_eq!(
         browser.eval(
-            "fetch(document.querySelector('[data-ready=document] img[src]').getAttribute('src'), \
+            "fetch(document.querySelector(\"[data-ready=document] img[src*='dot.svg']\").getAttribute('src'), \
              {referrerPolicy: 'no-referrer', redirect: 'manual'}) \
              .then(r => [r.status, r.headers.get('content-type')])"
         ),
