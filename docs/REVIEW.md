@@ -249,8 +249,12 @@ register and the comments in the ledger.
 
 **Documents say what the design is, not how it was decided.** A card slug in a
 document's prose ("approved in *some-card*") is history, and history belongs
-on the card. `just symphony-status --lint` fails on a slug outside a register or
-code block, naming its file and line, and a project's checks can run it. The
+on the card. So do the owner's exact words and who decided what, and when: a
+document states intent, behaviour and options, and where the reason matters it
+links the card, `[its card](DECISIONS.md#SLUG)`, which the lint passes
+(`RULES.md` `docs/no-ledger-in-documents`). `just symphony-status --lint` fails
+on a slug outside a register or code block, naming its file and line, and a
+project's checks can run it. The
 exceptions are `docs/history/` and `docs/analysis/`, which are records. A
 project's own checks may also refuse the verdict words themselves (approved,
 rejected, superseded, dismissed) outside the register of the pages they name: such
@@ -281,10 +285,9 @@ ending "Approve and say A or B in the note, or comment."
 
 ### Before a card goes to the owner
 
-**Nothing an earlier verdict decides is asked.** The owner, 2026-11-12,
-approving cards a design had added after they approved its first: "A. this
-should had been auto approve/triaged, its basically what was decided in the
-other card." and "A. should also had been auto approved."
+**Nothing an earlier verdict decides is asked.** What a card the owner approved
+already decides, its consequences included, is never put to them again
+(`RULES.md` `review/decided-is-not-asked`).
 
 - Before a card is put to the owner, its agent checks the owner's earlier
   verdicts. A card the owner approved decides a later card only when the choice
@@ -308,16 +311,17 @@ other card." and "A. should also had been auto approved."
 
 ### Writing a card
 
-**All the judgement call needs, clear and concise.** The owner, 2026-10-06:
-"The card should encompass "all relevant information needed to make a judgment
-call in a clear and concise manner"".
+**All the judgement call needs, clear and concise.** A card holds all the
+information its judgement call needs, and nothing more (`RULES.md`
+`docs/cards-clear-and-concise`).
 
 - It opens with what changes for the owner, in one or two plain sentences,
-  before any option, written for someone who has not read the internals. The
-  owner, 2026-11-12, on a card that did not: "I don't fully understand this
-  issue. So pick whatever choice makes sense to you."
+  before any option, written for someone who has not read the internals.
 - It reads well: short paragraphs, bullets, plain words, no jargon, and one
   clear question. Not a wall of text.
+- It asks one decision. A detail that carries choices of its own, its own A, B
+  or C, is a card of its own, linking the first (`RULES.md`
+  `docs/one-decision-per-card`).
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
   numbers, gate thresholds) goes in a linked log or analysis file.
 - Pictures where the thing judged is visual (pictures, UI, models, renders), shown

@@ -4,6 +4,16 @@
 use super::*;
 use std::sync::atomic::AtomicUsize;
 
+/// The wall-clock backstop of every wait here: each waits on its condition, and only a stall
+/// reaches this (RULES.md `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(15));
+
+/// The time a stand-in sweep on the wall clock is given: the 3 s these stand-ins once had, as a
+/// backstop only a stall reaches, so a loaded machine's slow `sh` is never a sweep timed out. The
+/// sweep's own timeout is read on a clock the test moves
+/// (`the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout`).
+const SWEEP_WITHIN: Duration = test_time::backstop(Duration::from_secs(3));
+
 pub(super) struct SweepFixture {
     pub(super) root: PathBuf,
     pub(super) shared: Arc<Shared>,
@@ -73,18 +83,20 @@ impl SweepFixture {
             .push(worker);
     }
 
+    /// Wait until `file` holds `expected`; only a stall reaches the backstop, and its failure
+    /// says what the file held last and the load average.
     pub(super) fn wait_for(&self, file: &str, expected: &str) {
-        let began = Instant::now();
-        loop {
-            let read = std::fs::read_to_string(self.root.join(file)).ok();
-            if read.as_deref() == Some(expected) {
-                return;
-            }
-            assert!(
-                began.elapsed() < Duration::from_secs(15),
-                "sweep did not write {file}: it holds {read:?}"
-            );
-            std::thread::sleep(Duration::from_millis(10));
+        let mut read = None;
+        let waited = test_time::until_true(
+            format!("the sweep to write {expected:?} to {file}"),
+            BACKSTOP,
+            || {
+                read = std::fs::read_to_string(self.root.join(file)).ok();
+                read.as_deref() == Some(expected)
+            },
+        );
+        if let Err(stall) = waited {
+            panic!("{stall}; {file} holds {read:?}");
         }
     }
 }
@@ -135,12 +147,16 @@ impl TestClock {
             state.0 = elapsed;
         }
         let seen = state.1;
+        let backstop = test_time::backstop(Duration::from_secs(30));
         let (_state, waited) = read
-            .wait_timeout_while(state, Duration::from_secs(30), |state| {
-                state.1 < seen + more
-            })
+            .wait_timeout_while(state, backstop, |state| state.1 < seen + more)
             .unwrap();
-        assert!(!waited.timed_out(), "the sweep stopped reading its clock");
+        assert!(
+            !waited.timed_out(),
+            "the sweep to read its clock: stalled: the wait's wall-clock backstop of \
+             {backstop:?} ran out; {}",
+            test_time::Load::now()
+        );
     }
 
     /// Move the clock to `elapsed` past its start. The first read after decides on that time;
@@ -188,7 +204,9 @@ fn the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout() {
 
 #[test]
 fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
-    let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 30");
+    // The child never ends by itself, so only a cancellation ends the drop before the sweep's
+    // four-minute deadline, which is past the backstop below.
+    let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 86400");
     use std::os::unix::fs::MetadataExt;
     let other = SweepFixture::new("exit 0");
     let first = std::fs::metadata(fixture.board_build()).unwrap();
@@ -196,12 +214,15 @@ fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
     assert_eq!((first.dev(), first.ino()), (second.dev(), second.ino()));
     fixture.start(session_maintenance(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
     fixture.wait_for("started", "reap");
-    let stopping = Instant::now();
-    drop(fixture);
-    assert!(
-        stopping.elapsed() < Duration::from_secs(5),
-        "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
-    );
+    const { assert!(BACKSTOP.as_secs() < SWEEP_TIMEOUT.as_secs()) };
+    let stopping = std::thread::spawn(move || drop(fixture));
+    test_time::until_true(
+        "shutdown to cancel an active sweep instead of waiting for its four-minute deadline",
+        BACKSTOP,
+        || stopping.is_finished(),
+    )
+    .unwrap();
+    stopping.join().unwrap();
 }
 
 #[test]
@@ -405,7 +426,7 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -449,7 +470,7 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -482,7 +503,7 @@ fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -527,16 +548,10 @@ fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, Clock) {
     (hub, Clock(time))
 }
 
-/// What `seen` sees first, within fifteen seconds; `waiting` says what did not come.
-fn waited<T>(waiting: &str, mut seen: impl FnMut() -> Option<T>) -> T {
-    let began = Instant::now();
-    loop {
-        if let Some(seen) = seen() {
-            return seen;
-        }
-        assert!(began.elapsed() < Duration::from_secs(15), "{waiting}");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+/// What `seen` sees first; `waiting` says what did not come when only a stall reaches the
+/// backstop.
+fn waited<T>(waiting: &str, seen: impl FnMut() -> Option<T>) -> T {
+    test_time::until(waiting, BACKSTOP, seen).unwrap()
 }
 
 #[test]
@@ -546,7 +561,7 @@ fn a_failing_sweep_is_said_on_every_page_of_the_project() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     waited("no failed sweep was said", || {
@@ -566,7 +581,7 @@ fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no failed sweep was recorded", || {
@@ -605,7 +620,7 @@ fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let _hub_starting = fixture.shared.lifecycle.lock().unwrap();

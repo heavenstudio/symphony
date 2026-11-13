@@ -99,34 +99,31 @@ fn while_reading<T: Send>(
     render: impl FnOnce() -> T + Send,
 ) -> (bool, T) {
     fifo(picture);
-    let deadline = Instant::now() + Duration::from_secs(60);
+    // Each wait is on its event; only a stall reaches this backstop.
+    let backstop = test_time::backstop(Duration::from_secs(60));
     std::thread::scope(|scope| {
         let rendering = scope.spawn(render);
-        let mut opened = loop {
-            if let Some(opened) = writer(picture) {
-                break opened;
+        let opened = test_time::until("the render to read the picture", backstop, || {
+            match writer(picture) {
+                Some(opened) => Some(Some(opened)),
+                // It ended without reading it.
+                None if rendering.is_finished() => Some(None),
+                None => None,
             }
-            assert!(
-                !rendering.is_finished(),
-                "the render never read the picture"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "the render never read the picture"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        };
+        })
+        .unwrap();
+        let mut opened = opened.expect("the render never read the picture");
         // The render is in its read of the picture now, and waits there.
         let free = hub.pages.try_write().is_ok();
         opened.write_all(&PNG).unwrap();
         drop(opened);
-        while !rendering.is_finished() {
-            assert!(Instant::now() < deadline, "the render never ended");
+        test_time::until_true("the render to end", backstop, || {
             if let Some(mut again) = writer(picture) {
                 let _ = again.write_all(&PNG);
             }
-            std::thread::sleep(Duration::from_millis(5));
-        }
+            rendering.is_finished()
+        })
+        .unwrap();
         (free, rendering.join().unwrap())
     })
 }
@@ -334,11 +331,17 @@ pub(super) fn served_with(
     let send = move |path: &str, headers: &[(&str, &str)]| {
         let app = app.clone();
         runtime.block_on(async {
-            let response =
-                tokio::time::timeout(Duration::from_secs(60), app.oneshot(request(path, headers)))
-                    .await
-                    .unwrap_or_else(|_| panic!("{path} did not answer"))
-                    .unwrap();
+            let backstop = test_time::backstop(Duration::from_secs(60));
+            let response = tokio::time::timeout(backstop, app.oneshot(request(path, headers)))
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{path} to answer: stalled: the wait's wall-clock backstop of {backstop:?} \
+                         ran out; {}",
+                        test_time::Load::now()
+                    )
+                })
+                .unwrap();
             let status = response.status();
             let headers = response.headers().clone();
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();

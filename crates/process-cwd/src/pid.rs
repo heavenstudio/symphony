@@ -263,30 +263,47 @@ mod tests {
         assert_eq!(done.stdout, b"p1\nfcwd\nn/work\n");
         assert_eq!(read(done, deadline), None);
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // A deadline only a stall reaches: the reads end long before it.
+        let deadline = Instant::now() + test_time::backstop(Duration::from_secs(5));
         assert_eq!(read_before(deadline, || Ok::<_, &str>(7)), Some(Ok(7)));
         assert_eq!(
             read_before(deadline, || Err::<u8, _>("unreadable")),
             Some(Err("unreadable"))
         );
 
-        let (started, starts) = mpsc::channel();
-        let (release, released) = mpsc::channel();
-        let (finished, finishes) = mpsc::channel();
-        let deadline = Instant::now() + Duration::from_secs(1);
-        let result = read_before(deadline, move || {
-            let _ = started.send(());
-            // Dropping the test's sender also releases the worker on a test failure.
-            let _ = released.recv();
-            let _ = finished.send(());
-            9
-        });
-        let entered = starts.recv_timeout(Duration::from_secs(5));
-        let _ = release.send(());
-        let completed = finishes.recv_timeout(Duration::from_secs(5));
+        // A reader whose thread a loaded machine starts only after its deadline never reads, and
+        // stalls nothing: the case is tried again until its reader reached its barrier in time.
+        let stalled = test_time::until(
+            "a stalled reader that reached its barrier before its deadline",
+            test_time::backstop(Duration::from_secs(1)),
+            || {
+                let (started, starts) = mpsc::channel();
+                let (release, released) = mpsc::channel();
+                let (finished, finishes) = mpsc::channel();
+                let deadline = Instant::now() + Duration::from_secs(1);
+                let result = read_before(deadline, move || {
+                    let _ = started.send(());
+                    // Dropping the test's sender also releases the worker on a test failure.
+                    let _ = released.recv();
+                    let _ = finished.send(());
+                    9
+                });
+                // The reader's thread has sent, or has ended without sending, or is yet to start
+                // and will find its deadline gone: no wait tells the first from the last.
+                let entered = starts.try_recv();
+                let _ = release.send(());
+                entered.is_ok().then_some((result, finishes))
+            },
+        );
+        let (result, finishes) = stalled.unwrap_or_else(|stall| panic!("{stall}"));
         assert_eq!(result, None, "a stalled reader cannot establish a scan");
-        assert_eq!(entered, Ok(()), "the reader really reached its barrier");
-        assert_eq!(completed, Ok(()), "the owned stalled worker was released");
+        let completed = finishes.recv_timeout(test_time::backstop(Duration::from_secs(5)));
+        assert_eq!(
+            completed,
+            Ok(()),
+            "the owned stalled worker was released; {}",
+            test_time::Load::now()
+        );
     }
 
     #[test]

@@ -397,6 +397,11 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// The startup deadline a case gives a child it means to come up, or a check it means to
+    /// reach: a backstop only a stall reaches (RULES.md `tests/no-test-fails-on-load`), as no case
+    /// here is about that deadline but the one that gives an expired one.
+    pub(super) const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(10));
+
     thread_local! {
         /// The child [`start_child`] last spawned on this thread, recorded as it is spawned, before
         /// any deadline is looked at.
@@ -453,7 +458,7 @@ mod tests {
             ("compile failed", false, 1),
             ("startup deadline", true, 1),
         ] {
-            let until = Instant::now() + Duration::from_secs(if expired { 0 } else { 10 });
+            let until = Instant::now() + if expired { Duration::ZERO } else { BACKSTOP };
             let mut ports = Vec::new();
             let pid = ChildPid::new();
             let result = start_child(
@@ -467,7 +472,7 @@ mod tests {
                     command.args([
                         "-c",
                         if expired {
-                            "exec sleep 30"
+                            "exec sleep 86400"
                         } else if message.ends_with("(os error 48)") {
                             "echo \"$1\"; exit 1"
                         } else if message == "AddrInUse" {
@@ -509,7 +514,7 @@ mod tests {
                 |_| {
                     starts += 1;
                     let mut command = Command::new(executable);
-                    command.args(["-c", "exec sleep 30"]);
+                    command.args(["-c", "exec sleep 86400"]);
                     command
                 },
             );
@@ -542,18 +547,13 @@ mod tests {
             let cancelled = AtomicBool::new(before_start);
             let mut starts = 0;
             let pid = ChildPid::new();
-            let result = start_child(
-                Instant::now() + Duration::from_secs(10),
-                parent,
-                &cancelled,
-                |_| {
-                    starts += 1;
-                    cancelled.store(true, Ordering::Relaxed);
-                    let mut command = Command::new("/bin/sh");
-                    command.args(["-c", "exec sleep 30"]);
-                    command
-                },
-            );
+            let result = start_child(Instant::now() + BACKSTOP, parent, &cancelled, |_| {
+                starts += 1;
+                cancelled.store(true, Ordering::Relaxed);
+                let mut command = Command::new("/bin/sh");
+                command.args(["-c", "exec sleep 86400"]);
+                command
+            });
             assert!(result.unwrap_err().contains("cancelled"));
             assert_eq!(
                 starts,
@@ -594,7 +594,7 @@ mod tests {
         let mut starts = 0;
         let mut tried = Vec::new();
         let (child, addr) = start_child(
-            Instant::now() + Duration::from_secs(10),
+            Instant::now() + BACKSTOP,
             crate::sys::parent(),
             &AtomicBool::new(false),
             |addr| {
@@ -634,17 +634,14 @@ mod tests {
     #[test]
     fn a_stop_signals_a_group_whose_leader_ended_before_it_reaps_the_leader() {
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "/bin/sleep 30 </dev/null >/dev/null 2>&1 & exit 3"]);
+        // The sleep lives until its group is signalled.
+        command.args(["-c", "/bin/sleep 86400 </dev/null >/dev/null 2>&1 & exit 3"]);
         let child = sessionless(&mut command).process_group(0).spawn().unwrap();
         let pid = child.id();
-        let began = Instant::now();
-        while !crate::sys::exited(&child) {
-            assert!(
-                began.elapsed() < Duration::from_secs(30),
-                "the leader ran on"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true("the leader to exit", BACKSTOP, || {
+            crate::sys::exited(&child)
+        })
+        .unwrap();
         // The leader is a zombie its group still names, the sleep it left still running.
         assert!(crate::sys::pid_alive(i64::from(pid)));
         assert!(crate::sys::group_runs(i64::from(pid)));

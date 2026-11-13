@@ -2,7 +2,7 @@
 
 use super::Hub;
 use crate::testing::{Tree, board, git, repository};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::Command;
 
 const CHILD: &str = "SYMPHONY_HUB_BACKSTOP_CHILD";
@@ -72,7 +72,6 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
     assert_eq!(cached(""), ["initial-card"]);
     assert_eq!(cached("served"), ["initial-card"]);
 
-    let edited = Instant::now();
     tree.write(
         "main/docs/TOPIC.md",
         "# Topic\n\n- [ ] **main-new** — Missed by the watcher.\n",
@@ -81,14 +80,15 @@ fn a_hub_whose_watcher_delivers_nothing_still_refreshes_within_a_period() {
         "served/docs/TOPIC.md",
         "# Topic\n\n- [ ] **served-new** — Missed by the watcher.\n",
     );
-    while cached("") != ["main-new"] || cached("served") != ["served-new"] {
-        assert!(
-            edited.elapsed() < period + Duration::from_secs(30),
-            "no refresh after a period: {:?} {:?}",
-            cached(""),
-            cached("served")
-        );
-        std::thread::sleep(Duration::from_millis(20));
+    // The watcher sends nothing, so only the period's own look can refresh them; the period
+    // itself is counted on an injected clock in `crate::backstop`'s tests.
+    let refreshed = test_time::until_true(
+        "a refresh after a period",
+        test_time::backstop(period + Duration::from_secs(30)),
+        || cached("") == ["main-new"] && cached("served") == ["served-new"],
+    );
+    if let Err(stall) = refreshed {
+        panic!("{stall}; {:?} {:?}", cached(""), cached("served"));
     }
     hub.stop();
 }

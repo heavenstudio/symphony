@@ -2,15 +2,10 @@
 
 Whether Symphony's packages can be released and versioned one by one, so that a consuming project
 takes each when it is ready, and what that asks of Cargo, of the one machine every project shares
-and of the release. This is an investigation: nothing here is built, and the choice is the owner's,
-on its card in [DECISIONS](../DECISIONS.md).
-
-The owner, 2026-11-13, commenting on the conciliation card in that register: "There should be
-proper isolation against a contract, so that each package/crate of symphony can be released and
-versioned on its own. Consumers could list an outdated package u til they are ready to update,
-allowing a phased update approach. Thoughts?"
-
-> [!comment] there should be no mention of exact words in docs. That is what decision register and tasks are for. A document should only describe intent/behavior/options etc. Not historical ledger
+and of the release. This is an investigation: nothing here is built. The direction is B, the
+process boundary and a few packages with version numbers of their own
+([its card](../DECISIONS.md#consumer-contract-versioning)); each further choice B leaves open is a
+decision of its own, on a card of its own.
 
 - **Today there is one version of everything.** The consuming project names ten Symphony packages
   from one Git pin, and its lock binds them all to one commit. The machine's one server is built
@@ -31,7 +26,7 @@ allowing a phased update approach. Thoughts?"
   an older server or board than the machine's without new work that costs more than it gives
   ([below](#what-one-machine-shares)).
 - **Three options:** A, the process boundary only; B, A plus a small set of packages with their
-  own version numbers; C, every package versioned on its own. Recommended: **B**
+  own version numbers; C, every package versioned on its own. The direction: **B**
   ([below](#the-options)).
 
 How facts are marked: a fact about the code names the file and the item it was read in; a
@@ -493,8 +488,8 @@ it links today, each at the version it names.
 
 A project keeping an older server, older board commands or an older board schema than the
 machine's. Under each option those are one per machine and move together for every project at
-the machine's update, as the owner chose for the board (2026-11-12: "C makes sense to improve upon
-A. while we don't have a dedicated build service."). What a contract can phase is a project's own
+the machine's update, as each board's schema does
+([its card](../DECISIONS.md#board-schema-at-update)). What a contract can phase is a project's own
 code: its plugin, its tools and the helpers it links.
 
 ## Why B
@@ -504,10 +499,10 @@ code: its plugin, its tools and the helpers it links.
 - **It promises little, where little changes.** The sources of the kit's parts and the helpers
   were touched by 0 to 13 commits last week; those of the library and the board, which it leaves
   free, by 198 and 270 (commits, not counted changes to public names).
-- **It builds on what was chosen.** The owner, 2026-11-12, on plugin delivery: "Let's go with B
-  first, measure results against the current approach for a post change comparison." B finishes
-  that path (every seam from a process, the release installed on the machine) and adds the version
-  lines the comment asks for. That design's target split already has the plugin SDK as a crate
+- **It builds on what was chosen.** Plugin delivery goes the process way first, measured against
+  today's ([its card](../DECISIONS.md#plugin-delivery-choice)). B finishes that path (every seam
+  from a process, the release installed on the machine) and adds the version lines a phased update
+  needs. That design's target split already has the plugin SDK as a crate
   rebuilt when "a seam changes, by semver"
   ([the plugin delivery analysis](plugin-delivery.md#the-target-split)); B gives it the version
   line and the check.
@@ -516,9 +511,10 @@ code: its plugin, its tools and the helpers it links.
 - **C** promises compatibility on the packages that change most, needs a registry, and still cannot
   phase the server or the board's schema.
 
-The release gets what the owner asked of it on 2026-11-11, "a full verification cycle and
-conciliation", with the conciliation become checks of what Symphony promises, so a project's own
-reds stay on its own board and no longer hold Symphony's release.
+The release keeps its full verification and its conciliation
+([its card](../DECISIONS.md#symphony-update-command)), with the conciliation become checks of what
+Symphony promises, so a project's own reds stay on its own board and no longer hold Symphony's
+release.
 
 ## What stands of the tasks in flight
 
