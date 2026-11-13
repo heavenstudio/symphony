@@ -85,10 +85,10 @@ fn subject(r: &Repo, rev: &str) -> String {
     git(&r.root, &["log", "-1", "--format=%s", rev])
 }
 
-/// How long a stand-in build waits for the test before it gives up and fails: six times the minute
-/// it once had, so a loaded machine's slow lands never run it out, while a land that waited for it
-/// still fails, only later.
-const STAND_IN_WAIT: Duration = Duration::from_secs(360);
+/// How long a stand-in build waits for the test before it gives up and fails: the backstop of the
+/// minute it once had, so a loaded machine's slow lands never run it out, while a land that waited
+/// for it still fails, only later.
+const STAND_IN_WAIT: Duration = test_time::backstop(Duration::from_secs(60));
 
 /// How many looks `every` apart a stand-in's shell loop takes in [`STAND_IN_WAIT`].
 fn looks(every: Duration) -> u128 {
@@ -1851,11 +1851,12 @@ fn a_signal_while_it_checks_ends_the_check_and_the_regenerator_judging_nothing()
     let target = i32::try_from(regenerator.id()).unwrap();
     // SAFETY: a signal to the process this test started.
     assert_eq!(unsafe { libc::kill(target, libc::SIGTERM) }, 0);
-    let until = Instant::now() + Duration::from_secs(60);
-    while regenerator.try_wait().unwrap().is_none() {
-        assert!(Instant::now() < until, "the regenerator never ended");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the regenerator ended at its SIGTERM",
+        test_time::backstop(Duration::from_secs(60)),
+        || regenerator.try_wait().unwrap().is_some(),
+    )
+    .unwrap();
     assert!(!symphony_board::sys::pid_alive(checking));
     let log = logged(&r);
     assert!(

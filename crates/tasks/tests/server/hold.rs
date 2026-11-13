@@ -289,7 +289,7 @@ fn a_server_that_does_not_end_when_asked_is_left_closing_never_killed() {
     let s = Scratch::new("closing");
     let closing = Duration::from_millis(600);
     let home = Home::new(&s.dir, &deaf(&s))
-        .patience(Duration::from_secs(20))
+        .patience(test_time::backstop(Duration::from_secs(20)))
         .closing(closing);
     let running = home.ensure().unwrap();
     let began = Instant::now();
@@ -338,20 +338,19 @@ fn starting(s: &Scratch) -> PathBuf {
 }
 
 /// The pid a stand-in wrote to `path` as its first act, once it has: a whole line, however long a
-/// loaded machine took to run it (the wait's backstop is the old minute's, six times over).
+/// loaded machine took to run it (the wait's backstop is the old minute's).
 fn pid_in(path: &Path) -> i64 {
-    let until = Instant::now() + Duration::from_secs(360);
-    loop {
-        let written = std::fs::read_to_string(path).unwrap_or_default();
-        if let Some(pid) = written
-            .strip_suffix('\n')
-            .and_then(|line| line.trim().parse().ok())
-        {
-            return pid;
-        }
-        assert!(Instant::now() < until, "no pid in {}", path.display());
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until(
+        format!("a pid in {}", path.display()),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let written = std::fs::read_to_string(path).unwrap_or_default();
+            written
+                .strip_suffix('\n')
+                .and_then(|line| line.trim().parse().ok())
+        },
+    )
+    .unwrap()
 }
 
 /// A start that does not come up within the patience is left running, never signalled, and no
@@ -515,7 +514,7 @@ impl Older {
     /// Started, and up once it answers from its own listener: its address.
     fn start(s: &Scratch, memtable: u64) -> (Older, String) {
         let log = s.dir.join("older.log");
-        let until = Instant::now() + Duration::from_secs(120);
+        let until = Instant::now() + test_time::backstop(Duration::from_secs(120));
         let ((older, addr), _) = port::start_on_free_port(port::ATTEMPTS, until, |reserved| {
             let addr = reserved.to_string();
             let out = File::create(&log).unwrap();
@@ -725,16 +724,7 @@ fn a_wait_on_a_replay_says_what_it_waits_on_and_a_bounded_one_is_refused_naming_
         let starting = home().telling(starter_told.sink());
         std::thread::spawn(move || starting.ensure())
     };
-    let began = Instant::now();
-    let replaying = loop {
-        if let Some(doing) = home().under_way()
-            && doing.contains("a private replay")
-        {
-            break doing;
-        }
-        assert!(began.elapsed() < Duration::from_secs(30), "no replay began");
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let replaying = until_replaying(|| home().under_way());
     let by = format!("pid {}, since ", std::process::id());
     let what = format!(
         ": a private replay of the store's log of 3.0 MiB before the board's server starts: a log \
@@ -824,13 +814,37 @@ fn let_the_replay_through(s: &Scratch) {
     std::fs::write(s.dir.join(THROUGH), "").unwrap();
 }
 
-/// Once `told` has been told a line: the backstop is the old minute's, six times over.
+/// Once `told` has been told a line: the backstop is the old minute's.
 fn until_told(told: &Told) {
-    let until = Instant::now() + Duration::from_secs(360);
-    while told.lines().is_empty() {
-        assert!(Instant::now() < until, "nothing told");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    test_time::until_true(
+        "a line was told",
+        test_time::backstop(Duration::from_secs(60)),
+        || !told.lines().is_empty(),
+    )
+    .unwrap();
+}
+
+/// What the board says is under way (`under_way`) once it is a private replay: the backstop is the
+/// 30 s these cases once gave it.
+fn until_replaying(under_way: impl Fn() -> Option<String>) -> String {
+    test_time::until(
+        "a private replay began",
+        test_time::backstop(Duration::from_secs(30)),
+        || under_way().filter(|doing| doing.contains("a private replay")),
+    )
+    .unwrap()
+}
+
+/// The board's server once a read (`read`) finds it: the backstop is the minute these cases once
+/// gave it, and a stall says what the last read was refused with.
+fn until_found(read: impl Fn() -> Result<Running, ServerError>) -> Running {
+    let mut refused = None;
+    let found = test_time::until(
+        "a read found the board's server",
+        test_time::backstop(Duration::from_secs(60)),
+        || read().map_err(|problem| refused = Some(problem)).ok(),
+    );
+    found.unwrap_or_else(|stall| panic!("{stall}: {refused:?}"))
 }
 
 /// A caller starting apart (the Symphony's read) whose start would replay the store's log is not
@@ -872,7 +886,6 @@ fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of
             told.lines()
         );
     };
-    let began = Instant::now();
     let refused = read().ensure().unwrap_err();
     not_through("the read");
     let by = format!("pid {}, since ", std::process::id());
@@ -904,15 +917,7 @@ fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of
     not_through("the next read");
 
     // The thread takes the lock and replays: a command waits on it, told what it waits on.
-    let replaying = loop {
-        if let Some(doing) = home().under_way()
-            && doing.contains("a private replay")
-        {
-            break doing;
-        }
-        assert!(began.elapsed() < Duration::from_secs(30), "no replay began");
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let replaying = until_replaying(|| home().under_way());
     assert!(
         replaying.starts_with(&by) && replaying.ends_with(&what),
         "{replaying}"
@@ -930,15 +935,7 @@ fn a_read_starting_apart_is_refused_at_once_while_its_replay_runs_on_a_thread_of
         "{:?}",
         waiter.lines()
     );
-    let found = loop {
-        match read().ensure() {
-            Ok(running) => break running,
-            Err(problem) => {
-                assert!(began.elapsed() < Duration::from_secs(60), "{problem}");
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    };
+    let found = until_found(|| read().ensure());
     assert_eq!(found, waited);
     assert_eq!(home().recorded(), Some(found));
     let (kept, _) = home().kept();
@@ -979,15 +976,12 @@ fn a_start_run_apart_that_fails_is_told_to_the_next_read_once_and_the_one_after_
     let apart = "the board's server is started apart from this read, by ";
     let first = read().ensure().unwrap_err().to_string();
     assert!(first.starts_with(apart), "{first}");
-    let began = Instant::now();
-    let failed = loop {
-        let said = read().ensure().unwrap_err().to_string();
-        if !said.starts_with(apart) {
-            break said;
-        }
-        assert!(began.elapsed() < Duration::from_secs(30), "{said}");
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let failed = test_time::until(
+        "a read was told the start apart failed",
+        test_time::backstop(Duration::from_secs(30)),
+        || Some(read().ensure().unwrap_err().to_string()).filter(|said| !said.starts_with(apart)),
+    )
+    .unwrap();
     let data = s.dir.join("data");
     assert!(
         failed.starts_with(&format!(
@@ -1009,15 +1003,7 @@ fn a_start_run_apart_that_fails_is_told_to_the_next_read_once_and_the_one_after_
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
     let again = read().ensure().unwrap_err().to_string();
     assert!(again.starts_with(apart), "started again: {again}");
-    let found = loop {
-        match read().ensure() {
-            Ok(running) => break running,
-            Err(problem) => {
-                assert!(began.elapsed() < Duration::from_secs(60), "{problem}");
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    };
+    let found = until_found(|| read().ensure());
     assert_eq!(home().recorded(), Some(found));
     assert_eq!(home().kept().0.len(), 1);
 }

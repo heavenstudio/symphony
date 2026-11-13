@@ -778,10 +778,13 @@ mod tests {
     use serde_json::json;
 
     /// The wait of a sending whose answer is to come in time, where a short wait is what a test is
-    /// of, or where the wait is no part of what it tests (the 5 s those tests once gave): the
-    /// wall-clock backstop a test's wait is given (`test_time::FLOOR`), which no loaded machine runs
-    /// out before the test's server answers.
-    const PATIENT: Duration = Duration::from_secs(120);
+    /// of, or where the wait is no part of what it tests: the wall-clock backstop of the 5 s those
+    /// tests once gave, which no loaded machine runs out before the test's server answers.
+    const PATIENT: Duration = test_time::backstop(Duration::from_secs(5));
+
+    /// How long a test's socket read waits for what its peer writes or for the peer to close: the
+    /// backstop of the 2 s these tests once gave it.
+    const READ_PATIENCE: Duration = test_time::backstop(Duration::from_secs(2));
 
     fn ok(result: Value) -> Value {
         json!({"result": result, "status": "OK", "time": "1ms"})
@@ -1110,10 +1113,13 @@ mod tests {
         matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
     }
 
-    /// Whether the server's end `peer` was closed with nothing written on it.
+    /// Whether the server's end `peer` was closed with nothing written on it: the read waits for
+    /// either, up to [`READ_PATIENCE`].
     fn closed_unwritten(peer: &mut std::net::TcpStream) -> bool {
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        peer.read(&mut [0]).unwrap() == 0
+        peer.set_read_timeout(Some(READ_PATIENCE)).unwrap();
+        let read = peer.read(&mut [0]);
+        let read = read.unwrap_or_else(|error| panic!("neither closed nor written: {error}"));
+        read == 0
     }
 
     /// A fresh connection is checked before its first request too, and one the check finds drained
@@ -1379,7 +1385,7 @@ mod tests {
         spoken_peer.write_all(b"x").unwrap();
         spoken
             .stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
+            .set_read_timeout(Some(READ_PATIENCE))
             .unwrap();
         assert_eq!(spoken.stream.peek(&mut [0]).unwrap(), 1);
         let failure = check(&spoken.stream).unwrap_err();
@@ -1388,7 +1394,7 @@ mod tests {
         drop(closed_peer);
         closed
             .stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
+            .set_read_timeout(Some(READ_PATIENCE))
             .unwrap();
         assert_eq!(closed.stream.peek(&mut [0]).unwrap(), 0);
         let failure = check(&closed.stream).unwrap_err();

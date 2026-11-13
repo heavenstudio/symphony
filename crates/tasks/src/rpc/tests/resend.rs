@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The client's wait in these tests, which a held answer runs out.
 const WAIT: Duration = Duration::from_millis(300);
@@ -143,20 +143,18 @@ fn request_on(stream: &mut TcpStream) -> Option<Vec<u8>> {
     }
 }
 
-/// A connection `listener` is offered within [`PATIENT`], or None.
+/// A connection `listener` is offered within the backstop of the second this test once gave it,
+/// or None.
 fn another(listener: &TcpListener) -> Option<TcpStream> {
     listener.set_nonblocking(true).unwrap();
-    let deadline = Instant::now() + PATIENT;
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false).unwrap();
-                return Some(stream);
-            }
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Err(_) => return None,
-        }
-    }
+    let offered = test_time::until(
+        "another connection is offered",
+        test_time::backstop(Duration::from_secs(1)),
+        || listener.accept().ok().map(|(stream, _)| stream),
+    );
+    let stream = offered.ok()?;
+    stream.set_nonblocking(false).unwrap();
+    Some(stream)
 }
 
 fn failed(client: &Client, sql: &str) -> String {

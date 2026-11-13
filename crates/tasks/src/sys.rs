@@ -569,7 +569,6 @@ mod tests {
 
     #[test]
     fn a_group_is_alive_while_any_process_of_it_lives_even_once_its_first_ended() {
-        let started = std::time::Instant::now();
         // The shell ends at once, leaving the sleep it started in the background in its group, one
         // no slow look at the group outlives: only the kill below ends it.
         let mut child = Command::new("sh")
@@ -584,13 +583,12 @@ mod tests {
         let group = child.id();
         assert!(group_alive(group), "the sleep still holds the group");
         assert!(end_group(group, true));
-        while group_alive(group) {
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(10),
-                "the group never ended"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        test_time::until_true(
+            "the killed group is gone",
+            test_time::backstop(std::time::Duration::from_secs(10)),
+            || !group_alive(group),
+        )
+        .unwrap();
         for group in [0, 1, u32::MAX] {
             assert!(!group_alive(group), "{group}");
         }

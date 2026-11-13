@@ -386,14 +386,12 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     cargo_said(&setup, done, &["test"]);
     assert!(!ended.exists(), "cargo waited for the probe to end");
     fs::write(&release, "").unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !ended.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the probe never ended"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the probe ended once released",
+        test_time::backstop(std::time::Duration::from_secs(30)),
+        || ended.exists(),
+    )
+    .unwrap();
     // It was asked, and never asked to record: its one run was the probe.
     assert_eq!(setup.logged(), "run --probe\n");
 }
@@ -1134,14 +1132,12 @@ fn an_interrupt_stops_a_verify_once_the_step_it_reached_ends() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while !held.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the lint never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the verify's lint started",
+        test_time::backstop(std::time::Duration::from_secs(120)),
+        || held.exists(),
+    )
+    .unwrap();
     // Ctrl-C: the interrupt a terminal sends the whole foreground group.
     let group = i32::try_from(child.id()).unwrap();
     // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.

@@ -12,8 +12,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 /// How long a statement waits at a gate the test never opens, and the test for one never reached:
-/// the wall-clock backstop a test's wait is given (`test_time::FLOOR`).
-const BACKSTOP: Duration = Duration::from_secs(120);
+/// the wall-clock backstop a test's wait is given when it has no allowance of its own.
+const BACKSTOP: Duration = test_time::FLOOR;
 /// The pause between two of the statement's questions.
 const LOOK_MS: u64 = 5;
 

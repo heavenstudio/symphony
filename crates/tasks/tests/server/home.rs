@@ -18,6 +18,13 @@ use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError
 use symphony_board::sys::{self, Command, pid_alive};
 use symphony_board::{NewTask, Store};
 
+/// How long a case's `Home` waits for a server to answer, where that wait is no part of the case:
+/// the backstop of the 20 s these cases once gave it.
+const PATIENCE: Duration = test_time::backstop(Duration::from_secs(20));
+
+/// How long a case's `Home` gives a server it stops to end: the backstop of the 30 s it once gave.
+const CLOSING: Duration = test_time::backstop(Duration::from_secs(30));
+
 fn board(running: &Running) -> Store {
     Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap()
 }
@@ -126,7 +133,7 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
     let log = s.dir.join("orphan.log");
     // Started again on another port only if its port was taken before it bound it, every start
     // within the production patience; up once the server itself listens there.
-    let until = Instant::now() + Duration::from_secs(60);
+    let until = Instant::now() + test_time::backstop(Duration::from_secs(60));
     let (mut orphan, addr) = start_on_free_port(ATTEMPTS, until, |reserved| {
         let addr = reserved.to_string();
         let out = std::fs::File::create(&log).unwrap();
@@ -161,7 +168,7 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
     })
     .unwrap_or_else(|why| panic!("the server ended: {why}"));
     let addr = addr.to_string();
-    let found = s.home().patience(Duration::from_secs(20)).ensure();
+    let found = s.home().patience(PATIENCE).ensure();
     let _ = orphan.kill();
     let _ = orphan.wait();
     let found = found.unwrap();
@@ -305,7 +312,7 @@ fn a_server_that_cannot_start_says_why_from_its_log() {
         "echo 'There was a problem with the datastore: the disk is full' >&2\nexit 1",
     );
     let error = Home::new(&s.dir, &failing)
-        .patience(Duration::from_secs(20))
+        .patience(PATIENCE)
         .ensure()
         .unwrap_err();
     assert!(
@@ -374,7 +381,7 @@ fn a_server_whose_port_was_taken_before_it_bound_it_is_started_on_another() {
 fn a_server_whose_port_is_taken_on_every_start_is_given_up_on_saying_so() {
     let s = Scratch::new("port-always-taken");
     let error = Home::new(&s.dir, &taken_then_real(&s, ATTEMPTS))
-        .patience(Duration::from_secs(20))
+        .patience(PATIENCE)
         .ensure()
         .unwrap_err();
     assert_eq!(starts(&s), ATTEMPTS);
@@ -422,18 +429,16 @@ fn a_server_whose_taken_port_answers_is_still_started_on_another() {
             server = healthy_server(&s.dir).display()
         ),
     );
-    let home = Home::new(&s.dir, &surreal).patience(Duration::from_secs(20));
+    let home = Home::new(&s.dir, &surreal).patience(PATIENCE);
     let (running, taken) = std::thread::scope(|scope| {
-        // Every script the case runs has run once already, so this clock times the start alone.
         let started = scope.spawn(|| home.ensure());
-        let began = Instant::now();
-        while !exists(&bind) {
-            assert!(
-                began.elapsed() < Duration::from_secs(20) && !started.is_finished(),
-                "the first start never said its port"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true(
+            "the first start said its port, or the start ended",
+            PATIENCE,
+            || exists(&bind) || started.is_finished(),
+        )
+        .unwrap();
+        assert!(exists(&bind), "the first start never said its port");
         let taken: SocketAddr = std::fs::read_to_string(&bind)
             .unwrap()
             .trim()
@@ -517,7 +522,7 @@ impl Held {
 
     /// The board's home, started by the held process's `surreal`.
     fn home(&self, s: &Scratch) -> Home {
-        Home::new(&s.dir, &self.surreal).patience(Duration::from_secs(20))
+        Home::new(&s.dir, &self.surreal).patience(PATIENCE)
     }
 
     /// It ended finding its port taken once the occupier had answered as often as it waited for,
@@ -832,7 +837,7 @@ fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
     );
     // Stopped is ended within its closing: a server that did not end in that time is an error.
     assert_eq!(
-        s.home().closing(Duration::from_secs(30)).stop().unwrap(),
+        s.home().closing(CLOSING).stop().unwrap(),
         Some(running.clone())
     );
     assert!(!pid_alive(running.pid));

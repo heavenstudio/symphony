@@ -416,7 +416,7 @@ fn sh_ps(script: &str) -> symphony_board::sys::Command {
 /// What the stand-in reads of the table under `pid`, given the backstop of `ps`'s own 30 s, so a
 /// loaded machine's slow start never reads as a `ps` that gave no table.
 fn descendants_by(ps: symphony_board::sys::Command, pid: i64) -> Result<Vec<String>, LaunchError> {
-    procs::descendants_by(ps, pid, PS_PATIENCE * 6)
+    procs::descendants_by(ps, pid, test_time::backstop(PS_PATIENCE))
 }
 
 #[test]

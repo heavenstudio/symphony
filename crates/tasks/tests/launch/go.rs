@@ -116,14 +116,12 @@ fn reaped(dir: &Path, file: &str) {
         .flat_map(|line| line.split_whitespace())
     {
         let pid: i64 = pid.parse().unwrap();
-        let until = Instant::now() + Duration::from_secs(30);
-        while pid_alive(pid) {
-            assert!(
-                Instant::now() < until,
-                "{file}: {pid} was never killed and reaped"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        test_time::until_true(
+            format!("{file}: {pid} was killed and reaped"),
+            test_time::backstop(Duration::from_secs(30)),
+            || !pid_alive(pid),
+        )
+        .unwrap();
     }
 }
 
@@ -278,12 +276,19 @@ fn a_caller_killed_through_its_group_takes_its_hung_call_with_it() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    // The stand-in is up once it has written its pid, however long a loaded machine takes.
-    let until = Instant::now() + Duration::from_secs(110);
-    while lines(&folder.0, "hc.pids").is_empty() {
-        assert!(Instant::now() < until, "the caller never asked hc");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // The stand-in is up once it has written its pid, however long a loaded machine takes. A
+    // caller that ended first gave its call up (the 120 s every call has) before it was up.
+    test_time::until_true(
+        "the caller asked hc, or ended",
+        test_time::backstop(Duration::from_secs(110)),
+        || !lines(&folder.0, "hc.pids").is_empty() || caller.try_wait().unwrap().is_some(),
+    )
+    .unwrap();
+    assert!(
+        !lines(&folder.0, "hc.pids").is_empty(),
+        "the caller ended without asking hc: {:?}",
+        caller.try_wait()
+    );
     let group = libc::pid_t::try_from(caller.id()).unwrap();
     // SAFETY: killpg only sends a signal, to the group this test's own unreaped caller leads.
     assert_eq!(unsafe { libc::killpg(group, libc::SIGKILL) }, 0);

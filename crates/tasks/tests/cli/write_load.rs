@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use symphony_board::{Beat, NewSession, Store};
 
 const WRITERS: usize = 32;
-const PATIENCE: Duration = Duration::from_secs(30);
+/// How long every writer has to make its first two beats: the backstop of the 30 s it once had, a
+/// wait for the beats, which a loaded machine slows and never stops.
+const PATIENCE: Duration = test_time::backstop(Duration::from_secs(30));
 
 struct Stop<'a>(&'a AtomicBool);
 impl Drop for Stop<'_> {

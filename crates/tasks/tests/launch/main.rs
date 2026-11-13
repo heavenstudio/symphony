@@ -144,9 +144,9 @@ impl Hc for Hooked<'_> {
     }
 }
 
-/// How long a world's hc gives a killed terminal to end, in seconds: the backstop of hc's own ten,
+/// How long a world's hc gives a killed terminal to end: the backstop of hc's own ten seconds,
 /// so a loaded machine's slow looks never run it out before the terminal ends by its count of them.
-const ENDING_SECONDS: &str = "120";
+const ENDING: std::time::Duration = test_time::backstop(std::time::Duration::from_secs(10));
 
 /// The id of the project's space in a new world's Herdr app.
 pub const SPACE: &str = "sp-lamp";
@@ -194,7 +194,7 @@ impl World {
                 folder.0.join("hc.json").display().to_string(),
             ),
             ("FAKE_HC_LOG", folder.0.join("hc.log").display().to_string()),
-            (ENDING_VAR, ENDING_SECONDS.to_string()),
+            (ENDING_VAR, ENDING.as_secs().to_string()),
         ] {
             env.vars.insert(key.into(), value);
         }

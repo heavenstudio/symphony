@@ -2091,18 +2091,16 @@ mod tests {
         let tick = supervised::cpu::tick_ns();
         assert!(tick > 0.0);
         let mut tree = Tree::new(Machine, pid);
-        let began = std::time::Instant::now();
-        let mut most = 0.0;
         // The shell's child burns, then is reaped: its time is the shell's, read the same.
-        while began.elapsed() < Duration::from_secs(20) {
-            let read = tree.read(std::time::Instant::now()).unwrap();
-            most = supervised::cpu::seconds(read, tick);
-            if most > 0.05 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(most > 0.05, "{most}");
+        test_time::until_true(
+            "the shell's tree read more than 0.05 s of CPU",
+            test_time::backstop(Duration::from_secs(20)),
+            || {
+                let read = tree.read(std::time::Instant::now()).unwrap();
+                supervised::cpu::seconds(read, tick) > 0.05
+            },
+        )
+        .unwrap();
         assert!(!tree.partial, "a child reaped by its parent is no loss");
         shell.kill().unwrap();
         let _ = shell.wait();

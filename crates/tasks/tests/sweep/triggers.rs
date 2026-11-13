@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::NewTask;
 use symphony_board::cli::Env;
 use symphony_board::sweep::trigger::{HOURLY_SECONDS, LOG, STAMP, folder};
@@ -68,20 +68,16 @@ fn log(r: &Repo) -> PathBuf {
     home(r).join(LOG)
 }
 
-/// The log once `count` of its lines start with `start`.
+/// The log once `count` of its lines start with `start`, waited for up to the backstop of the
+/// minute it once had.
 fn logged(r: &Repo, start: &str, count: usize) -> String {
-    let began = Instant::now();
-    loop {
-        let text = std::fs::read_to_string(log(r)).unwrap_or_default();
-        if text.lines().filter(|l| l.starts_with(start)).count() >= count {
-            return text;
-        }
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "no {start:?} line within a minute; the log:\n{text}"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    let read = || std::fs::read_to_string(log(r)).unwrap_or_default();
+    let found = test_time::until(
+        format!("{count} {start:?} lines in the log"),
+        test_time::backstop(Duration::from_secs(60)),
+        || Some(read()).filter(|text| text.lines().filter(|l| l.starts_with(start)).count() >= count),
+    );
+    found.unwrap_or_else(|stall| panic!("{stall}; the log:\n{}", read()))
 }
 
 /// The log once it holds `count` sweeps' summaries.

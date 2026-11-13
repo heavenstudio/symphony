@@ -278,4 +278,4 @@ fn an_accepted_connection_not_yet_close_on_exec_reaches_no_codex_queue() {
 /// The deadline of a queue the case above releases: the wall-clock backstop of the delivery's own
 /// 5 s, which only a stuck queue reaches.
 #[cfg(target_os = "macos")]
-const RELEASED_WITHIN: Duration = Duration::from_secs(120);
+const RELEASED_WITHIN: Duration = test_time::backstop(Duration::from_secs(5));

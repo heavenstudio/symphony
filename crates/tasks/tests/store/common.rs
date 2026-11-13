@@ -49,7 +49,8 @@ pub const GONE: f64 = LIVE_SECONDS + STALE_SECONDS + 1.0;
 pub const HOST: &str = "this-host";
 
 /// Raw fixture writes can meet SurrealDB's deferred HNSW compaction even after a store call
-/// commits. Retry conflicts with the store's 30 s patience and capped, jittered backoff.
+/// commits. Retry conflicts, with capped, jittered backoff, until the backstop of the store's 30 s
+/// patience: a loaded machine slows the compaction, never ends it.
 /// Multi-statement callers must be idempotent or supply their own transaction.
 pub trait RawWrite {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError>;
@@ -57,9 +58,8 @@ pub trait RawWrite {
 
 impl RawWrite for Client {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError> {
-        retry_conflicts(Instant::now() + Duration::from_secs(30), || {
-            self.query(sql, vars.clone())
-        })
+        let until = Instant::now() + test_time::backstop(Duration::from_secs(30));
+        retry_conflicts(until, || self.query(sql, vars.clone()))
     }
 }
 

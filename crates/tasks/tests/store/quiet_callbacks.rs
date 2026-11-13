@@ -1371,7 +1371,8 @@ done
         // machine's slow jq never reads as a Codex that did not answer. The stall, which never
         // answers its steer, is the deadline's own case: it keeps the delivery's 5 s.
         if state != "stall" {
-            command.env(PATIENCE_VAR, "120");
+            let patience = test_time::backstop(std::time::Duration::from_secs(5));
+            command.env(PATIENCE_VAR, patience.as_secs().to_string());
         }
         command
     };

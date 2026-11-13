@@ -212,8 +212,9 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
         let writer = s.surreal.watchdog.stdin.as_ref().unwrap().as_raw_fd();
         let log = s.dir.join(format!("server-{index}.log"));
         // Started again on another port only if its port was taken before it bound it, every
-        // start within the one readiness bound; up once the server itself listens there.
-        let until = Instant::now() + Duration::from_secs(20);
+        // start within the one readiness bound, the backstop of the 20 s it once had; up once the
+        // server itself listens there.
+        let until = Instant::now() + test_time::backstop(Duration::from_secs(20));
         symphony_board::port::start_on_free_port(
             symphony_board::port::ATTEMPTS,
             until,
@@ -286,14 +287,12 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
         "the watchdog must be reaped"
     );
     for server in &mut servers.0 {
-        let began = Instant::now();
-        while server.try_wait().unwrap().is_none() {
-            assert!(
-                began.elapsed() < Duration::from_secs(5),
-                "a server survived EOF"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true(
+            "each server ended at its watchdog's EOF",
+            test_time::backstop(Duration::from_secs(5)),
+            || server.try_wait().unwrap().is_some(),
+        )
+        .unwrap();
     }
     // A wrapper already forked when shutdown scans may register late. The closed marker must
     // refuse it, rather than let it start a server after its watchdog has gone. The wrapper ends
@@ -322,17 +321,12 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
             .unwrap(),
     );
     let late = servers.0.last_mut().unwrap();
-    let began = Instant::now();
-    let status = loop {
-        if let Some(status) = late.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "a late server started after shutdown"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let status = test_time::until(
+        "the late wrapper ended, starting no server after shutdown",
+        test_time::backstop(Duration::from_secs(5)),
+        || late.try_wait().unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         status.code(),
         Some(1),

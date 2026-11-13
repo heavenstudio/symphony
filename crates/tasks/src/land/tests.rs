@@ -896,23 +896,22 @@ fn a_command_past_its_limit_is_ended_with_its_whole_group() {
     assert!(status.unwrap().success());
 }
 
-/// The limit a command given no limit to reach is watched with: the backstop of a test's wait,
-/// which no loaded machine keeps a quick command from ending within.
-const PATIENT: Duration = Duration::from_secs(120);
+/// The limit a command given no limit to reach is watched with: the backstop of the 30 s these
+/// tests once gave it, which no loaded machine keeps a quick command from ending within.
+const PATIENT: Duration = test_time::backstop(Duration::from_secs(30));
 
 /// Once the process group `group` is gone: what a watchdog ended goes once whoever took it on
 /// reaps it, as soon as a loaded machine lets them, which a look at once can find not done yet.
-/// What it left runs ten minutes, so a group still there past the backstop was never ended.
+/// What it left runs ten minutes, so a group still there past the backstop of the 10 s these
+/// tests once allowed was never ended.
 #[track_caller]
 fn until_gone(group: u32, what: &str) {
-    let deadline = Instant::now() + PATIENT;
-    while sys::group_alive(group) {
-        assert!(
-            Instant::now() < deadline,
-            "{what}: its group still runs {PATIENT:?} on"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        format!("{what}: its group is gone"),
+        test_time::backstop(Duration::from_secs(10)),
+        || !sys::group_alive(group),
+    )
+    .unwrap();
 }
 
 #[test]

@@ -288,16 +288,19 @@ mod tests {
         dir
     }
 
-    /// The file `path` once it holds `wanted`, waited for up to ten seconds.
+    /// The file `path` once it holds `wanted`, waited for up to the backstop of the ten seconds
+    /// these tests once gave it.
+    #[track_caller]
     fn holding(path: &Path, wanted: &str) -> String {
-        let began = Instant::now();
-        loop {
+        test_time::until(
+            format!("{} holds {wanted:?}", path.display()),
+            test_time::backstop(Duration::from_secs(10)),
+            || fs::read_to_string(path).ok().filter(|text| text.contains(wanted)),
+        )
+        .unwrap_or_else(|stall| {
             let text = fs::read_to_string(path).unwrap_or_default();
-            if text.contains(wanted) || began.elapsed() > Duration::from_secs(10) {
-                return text;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+            panic!("{stall}: it holds {text:?}")
+        })
     }
 
     #[test]
@@ -479,11 +482,12 @@ mod tests {
         // It runs on past the land, into its own file.
         fs::write(&gate, "").unwrap();
         assert!(holding(&heard.output, "later").contains("started\nlater\n"));
-        let began = Instant::now();
-        while !done.exists() && began.elapsed() < Duration::from_secs(10) {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert!(done.exists());
+        test_time::until_true(
+            "the command made its done file",
+            test_time::backstop(Duration::from_secs(10)),
+            || done.exists(),
+        )
+        .unwrap();
         fs::remove_dir_all(&main).unwrap();
     }
 

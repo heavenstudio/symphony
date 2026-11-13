@@ -12,7 +12,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::{Child, Command, Stdio};
 
 /// A `surreal` for `Home` whose server is up as soon as it listens: given a server's arguments
@@ -38,7 +38,8 @@ pub fn healthy_server(dir: &Path) -> PathBuf {
     )
 }
 
-const BOUND: Duration = Duration::from_secs(5);
+/// How long the helper is given to end, or to send an event: the backstop of the 5 s it once had.
+const BOUND: Duration = test_time::backstop(Duration::from_secs(5));
 
 pub struct Unresponsive {
     child: Child,
@@ -112,15 +113,14 @@ impl Unresponsive {
     /// if it misses that deadline. A killed helper's status fails the caller's normal-exit assertion.
     pub fn shutdown(&mut self) -> ExitStatus {
         drop(self.child.stdin.take());
-        let began = Instant::now();
-        while began.elapsed() < BOUND {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                return status;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        self.child.kill().unwrap();
-        self.child.wait().unwrap()
+        let child = &mut self.child;
+        let ended = test_time::until("the helper ended once its pipe closed", BOUND, || {
+            child.try_wait().unwrap()
+        });
+        ended.unwrap_or_else(|_| {
+            self.child.kill().unwrap();
+            self.child.wait().unwrap()
+        })
     }
 }
 

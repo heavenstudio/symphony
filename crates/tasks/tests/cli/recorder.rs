@@ -6,10 +6,12 @@
 //!
 //! Every run here is on a scratch board, and takes [`SCALE`] but one that bounds its own time by a
 //! wait it rules out: each wait of the recorder's a machine's speed meets (its word that it watches
-//! its command, the board's answer, git's) is that many times its own, so a loaded machine never
-//! decides what a run records. What the scale would hide, a recorder grown slow, the quickest of a
-//! test's several runs shows ([`QUICKEST_START`]). A wait of the tests' own that gives up says what
-//! the work folder holds ([`holds`]): never recorded, or recorded and never finished.
+//! its command, the board's answer, git's, and apart from its command another run's end and the day
+//! files' lock) is that many times its own, so a loaded machine never decides what a run records.
+//! What the scale would hide, a recorder grown slow, the quickest of a test's several runs shows
+//! ([`QUICKEST_START`]). A wait of the tests' own is on its condition, with a backstop only a stall
+//! reaches ([`patience`]), and one that gives up says what the work folder holds ([`holds`]): never
+//! recorded, or recorded and never finished.
 
 use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
@@ -31,8 +33,9 @@ const TASK_VAR: &str = "TASKS_TASK";
 pub(crate) const RUNS_VAR: &str = "SYMPHONY_RUNS";
 /// Names a scale of the recorder's waits, which it takes on a scratch board alone.
 pub(crate) const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
-/// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, far past
-/// what a loaded machine takes, and inside the 30 s each test waits for a record.
+/// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, 100 s for
+/// an earlier run's end and 40 s for the day files' lock, far past what a loaded machine takes, and
+/// inside the backstop each test waits for a record with ([`patience`]).
 pub(crate) const SCALE: &str = "20";
 /// A board that cannot be reached, which refuses at once, on a database of its own: a scratch
 /// board, for a test that has none to give its runs [`SCALE`].
@@ -112,8 +115,8 @@ fn held(path: &Path) -> Option<bool> {
 /// folder `work` holds.
 #[track_caller]
 pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let mut last = Vec::new();
+    let found = test_time::until(format!("{ends} runs ended"), patience(), || {
         let mut days: Vec<PathBuf> = fs::read_dir(runs)
             .map(|entries| {
                 entries
@@ -138,16 +141,22 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
             .collect();
         let ended = lines.iter().filter(|line| line.end.is_some()).count();
         if ended >= ends {
-            assert_eq!(ended, ends, "{lines:#?}");
-            return lines;
+            return Some(lines);
         }
-        assert!(
-            Instant::now() < deadline,
-            "{ends} runs not ended within 30 s: {lines:#?}; the work folder: {}",
-            holds(work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        last = lines;
+        None
+    });
+    let lines = found
+        .unwrap_or_else(|stall| panic!("{stall}: {last:#?}; the work folder: {}", holds(work)));
+    let ended = lines.iter().filter(|line| line.end.is_some()).count();
+    assert_eq!(ended, ends, "{lines:#?}");
+    lines
+}
+
+/// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
+/// `test_time::backstop` makes it (RULES.md `tests/no-test-fails-on-load`).
+pub(crate) fn patience() -> Duration {
+    test_time::backstop(Duration::from_secs(30))
 }
 
 /// What `git ARGS` in `dir` prints, trimmed.
@@ -160,20 +169,19 @@ pub(crate) fn git_says(dir: &Path, args: &[&str]) -> String {
 /// The history of the work folder `work` once it keeps `count` operations.
 #[track_caller]
 pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let found = test_time::until(format!("{count} operations kept"), patience(), || {
         let history = recorded::history(work).unwrap_or_default();
-        if history.len() >= count {
-            assert_eq!(history.len(), count, "{history:?}");
-            return history;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{count} operations not kept within 30 s: {history:?}; the work folder: {}",
+        (history.len() >= count).then_some(history)
+    });
+    let history = found.unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: {:?}; the work folder: {}",
+            recorded::history(work),
             holds(work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        )
+    });
+    assert_eq!(history.len(), count, "{history:?}");
+    history
 }
 
 /// A work folder and a machine folder of the test's own, under `name`.
@@ -209,21 +217,19 @@ impl Folders {
     /// reader found and what the work folder holds.
     #[track_caller]
     fn once(&self, state: Step) -> Record {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if let [one] = self.records().as_slice()
-                && one.state == state
-            {
-                return one.clone();
+        let found = test_time::until(format!("one operation {state:?}"), patience(), || {
+            match self.records().as_slice() {
+                [one] if one.state == state => Some(one.clone()),
+                _ => None,
             }
-            assert!(
-                Instant::now() < deadline,
-                "no operation {state:?} within 30 s: {:?}; the work folder: {}",
+        });
+        found.unwrap_or_else(|stall| {
+            panic!(
+                "{stall}: {:?}; the work folder: {}",
                 self.records(),
                 holds(&self.work)
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+            )
+        })
     }
 }
 
@@ -298,18 +304,10 @@ fn alive(pid: libc::pid_t) -> bool {
 /// The pid the command wrote to `file`, once it did.
 #[track_caller]
 fn written_pid(file: &Path) -> libc::pid_t {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(pid) = fs::read_to_string(file).unwrap_or_default().trim().parse() {
-            return pid;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no pid in {} within 30 s",
-            file.display()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until(format!("a pid in {}", file.display()), patience(), || {
+        fs::read_to_string(file).unwrap_or_default().trim().parse().ok()
+    })
+    .unwrap()
 }
 
 #[test]
@@ -375,15 +373,10 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
         .work
         .join(recorded::OPERATIONS)
         .join(format!("{}.lease", finished.operation_id));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while lease.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "a finished operation lets its lease go: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let gone = test_time::until_true("a finished operation lets its lease go", patience(), || {
+        !lease.exists()
+    });
+    gone.unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
 }
 
 /// Seconds since the epoch, the clock a record is stamped by.
@@ -438,8 +431,14 @@ impl Silent {
 
     /// When it took the question, then when its asker was let go.
     fn heard(&self) -> (f64, f64) {
-        self.heard.recv_timeout(Duration::from_secs(300)).unwrap()
+        self.heard.recv_timeout(asked_patience()).unwrap()
     }
+}
+
+/// The backstop of a wait for a run that asks a board that never answers: the minute its asker is
+/// given ([`ASKED`]), as `test_time::backstop` makes it.
+fn asked_patience() -> Duration {
+    test_time::backstop(Duration::from_secs(60))
 }
 
 /// A command that writes its pid to `pid`, then runs until `accepted` exists: until the board is
@@ -466,12 +465,12 @@ const ASKED: &str = "60";
 
 /// Once this process's child `pid` has ended, which is left unreaped for its own caller to reap.
 fn until_ended(pid: libc::pid_t) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while ended(pid) != Some(true) {
-        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
-        assert!(Instant::now() < deadline, "not ended within 120 s");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    test_time::until_true(format!("its command {pid} ended"), patience(), || {
+        let seen = ended(pid);
+        assert_ne!(seen, None, "reaped before it was seen ended");
+        seen == Some(true)
+    })
+    .unwrap();
 }
 
 /// `finished`, run while the board took the question of its task at `taken` and let its asker go
@@ -563,7 +562,7 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     // Its command is this process's child, whose end is seen here while the board is still asked.
     until_ended(written_pid(&pid));
     board.release();
-    let ran = done.recv_timeout(Duration::from_secs(300)).unwrap();
+    let ran = done.recv_timeout(asked_patience()).unwrap();
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -676,7 +675,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         "the board was no longer asked once it ended"
     );
     board.release();
-    let ran = done.recv_timeout(Duration::from_secs(300)).unwrap();
+    let ran = done.recv_timeout(asked_patience()).unwrap();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
     assert_eq!(ended(pid), None, "left unreaped");
     let finished = folders.once(Step::Finished);
@@ -833,11 +832,7 @@ fn a_signal_sent_to_the_process_its_caller_started_reaches_its_command() {
     ));
     folders.once(Step::Running);
     // Running says its command started, not that it is ready for the signal yet: it says that.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !trapped.exists() {
-        assert!(Instant::now() < deadline, "the command never set its trap");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the command set its trap", patience(), || trapped.exists()).unwrap();
     let pid = libc::pid_t::try_from(recorder.id()).unwrap();
     // SAFETY: a signal to the process this test started and has not waited for.
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
@@ -941,19 +936,11 @@ fn the_task_its_session_holds_is_its_work_while_it_runs_and_its_record_keeps_how
     assert!(running.child_pid.is_some());
     assert!(running.queued_at <= running.started_at.unwrap());
     // Its recorder says it still runs, a beat at a time.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let beaten = loop {
+    let beaten = test_time::until("a beat after it started", patience(), || {
         let now = folders.once(Step::Running);
-        if now.beat_at > running.beat_at {
-            break now;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no beat within 30 s: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    };
+        (now.beat_at > running.beat_at).then_some(now)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
     assert_eq!(beaten.started_at, running.started_at);
     fs::write(&release, "").unwrap();
     assert!(recorder.wait().unwrap().success());
@@ -1471,11 +1458,10 @@ fn the_next_run_finishes_work_whose_recorder_died_and_keeps_both_in_the_history(
     let recorder = libc::pid_t::try_from(running.pid).unwrap();
     // SAFETY: the recorder of the operation this test started.
     assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(recorder) {
-        assert!(Instant::now() < deadline, "the recorder outlived its kill");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the recorder gone after its kill", patience(), || {
+        !alive(recorder)
+    })
+    .unwrap();
     // Its command outlives it; a reader cannot say the work ended, nor that it runs.
     let found = recorded::read(&folders.work);
     assert!(found.records.is_empty(), "{found:?}");
@@ -1944,22 +1930,19 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
 #[cfg(target_os = "macos")]
 #[track_caller]
 fn read_at_least(folders: &Folders, label: &str, processes: u32) -> recorded::CpuReading {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        let found = (folders.records().into_iter())
+    let what = format!("a reading of {processes} processes of {label}");
+    test_time::until(what, patience(), || {
+        (folders.records().into_iter())
             .filter(|record| record.label == label && record.state == Step::Running)
-            .find_map(|record| record.reading.filter(|read| read.processes >= processes));
-        if let Some(reading) = found {
-            return reading;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no reading of {processes} processes of {label} within 120 s: {:?}; the work folder: {}",
+            .find_map(|record| record.reading.filter(|read| read.processes >= processes))
+    })
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: {:?}; the work folder: {}",
             folders.records(),
             holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -2297,28 +2280,22 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     );
     let running = folders.once(Step::Running);
     // Its start line follows its record's.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let start = loop {
-        if let [start] = day_lines(&folders.work, &runs, 0).as_slice() {
-            break start.clone();
+    let start = test_time::until("its start line", patience(), || {
+        match day_lines(&folders.work, &runs, 0).as_slice() {
+            [start] => Some(start.clone()),
+            _ => None,
         }
-        assert!(
-            Instant::now() < deadline,
-            "no start line within 30 s: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
     assert!(start.is_start() && start.started.is_some(), "{start:?}");
     assert_eq!(start.run, running.operation_id);
     let recorder = libc::pid_t::try_from(running.pid).unwrap();
     // SAFETY: the recorder of the operation this test started.
     assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(recorder) {
-        assert!(Instant::now() < deadline, "the recorder outlived its kill");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the recorder gone after its kill", patience(), || {
+        !alive(recorder)
+    })
+    .unwrap();
     // The sweeping recorder's own lines go elsewhere; the lost run's end goes where its start went.
     let elsewhere = folders.dir.join("elsewhere");
     let done = output(

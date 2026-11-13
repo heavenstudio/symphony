@@ -375,9 +375,9 @@ mod tests {
     use super::*;
 
     /// The time a test gives what it asks of git or a shell, which answers at once on a quiet
-    /// machine: the backstop of the 30 s it once had, six times over, so a loaded machine's slow
-    /// start never reads as an answer not given.
-    const PATIENT: Duration = Duration::from_secs(180);
+    /// machine: the backstop of the 30 s it once had, so a loaded machine's slow start never reads
+    /// as an answer not given.
+    const PATIENT: Duration = test_time::backstop(Duration::from_secs(30));
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("symphony-runs-{name}-{}", std::process::id()));
@@ -649,11 +649,12 @@ mod tests {
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
         let (read, waited) = std::thread::scope(|scope| {
             let reading = scope.spawn(|| rerun_of(&dir, same, NOW));
-            let until = Instant::now() + Duration::from_secs(120);
-            while !reading.is_finished() && Instant::now() < until {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let waited = !reading.is_finished();
+            let returned = test_time::until_true(
+                "the reader returned from the FIFO",
+                test_time::backstop(Duration::from_secs(1)),
+                || reading.is_finished(),
+            );
+            let waited = returned.is_err();
             if waited {
                 drop(OpenOptions::new().write(true).open(&day));
             }

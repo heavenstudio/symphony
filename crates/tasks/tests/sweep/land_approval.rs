@@ -454,11 +454,12 @@ fn a_land_sending_the_task_back_to_review_starts_its_review_command() {
         "{}",
         told.text
     );
-    let until = Instant::now() + Duration::from_secs(60);
-    while !record.exists() {
-        assert!(Instant::now() < until, "the review command never ran");
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    test_time::until_true(
+        "the review command ran",
+        test_time::backstop(Duration::from_secs(60)),
+        || record.exists(),
+    )
+    .unwrap();
     assert_eq!(
         fs::read_to_string(&record).unwrap(),
         format!("{SLUG} {SLUG} {late}\n")

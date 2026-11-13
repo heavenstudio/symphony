@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::NewLaunch;
 use symphony_board::land::{DIRTY_MAIN, RECIPE, Record, Stop, land};
 use symphony_board::on_land::SAYS_VAR;
@@ -282,8 +282,10 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
-    // A window no loaded machine's count outlasts: the land listens until the command ends.
-    env.vars.insert(SAYS_VAR.into(), "120".into());
+    // The backstop of the land's own 3 s window, which no loaded machine's count outlasts: the land
+    // listens until the command ends.
+    let window = test_time::backstop(symphony_board::on_land::SAYS);
+    env.vars.insert(SAYS_VAR.into(), window.as_secs().to_string());
     let mut out = Vec::new();
     let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let said = String::from_utf8(out).unwrap();
@@ -1275,7 +1277,8 @@ fn two_lands_at_once_go_one_after_the_other() {
     );
 }
 
-/// Wait up to a minute for `ready`; past it, fail where it was called.
+/// Wait for `ready`, up to the backstop of the minute it once had; past it, fail where it was
+/// called.
 #[track_caller]
 fn wait_for(ready: impl Fn() -> bool) {
     wait_saying(ready, String::new);
@@ -1284,15 +1287,13 @@ fn wait_for(ready: impl Fn() -> bool) {
 /// [`wait_for`], failing with what `found` says was there instead.
 #[track_caller]
 fn wait_saying(ready: impl Fn() -> bool, found: impl Fn() -> String) {
-    let until = Instant::now() + Duration::from_secs(60);
-    while !ready() {
-        if Instant::now() >= until {
-            let found = found();
-            let sep = if found.is_empty() { "" } else { ": " };
-            panic!("waited a minute{sep}{found}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let what = format!("the condition at {}", std::panic::Location::caller());
+    let waited = test_time::until_true(what, test_time::backstop(Duration::from_secs(60)), ready);
+    waited.unwrap_or_else(|stall| {
+        let found = found();
+        let sep = if found.is_empty() { "" } else { ": " };
+        panic!("{stall}{sep}{found}");
+    });
 }
 
 /// A writer another thread reads while it is written.
