@@ -300,7 +300,10 @@ fn since(night: &Night<'_>) -> String {
 /// executor clears, say.
 const FIRST: &str = "It blocks every release, so it is staffed before anything else and fixed as \
 a bug fix is (RULES.md `workflow/fast-bugfixes`): one agent, the smallest checks that cover the \
-repair, and the code fixed, never a test or check loosened. It is red work, which takes no \
+repair, and the code fixed, never a test or check loosened; a test red on the machine's load (it \
+passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under load) is \
+discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` says, with one line on \
+this thread naming it, the evidence it is load and what it proved. It is red work, which takes no \
 orchestrator slot.";
 /// How a red's fix is approved: the bound its fast-fix mark records
 /// ([`symphony_board::fast_fix::RED`]) and the land holds it to, said in full.
@@ -2023,6 +2026,13 @@ mod tests {
              - `just test-rs -p symphony --test nightly`\n\n"
                 .into(),
             format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
+            // The owner's rule of 2026-11-13: a test red on load is discarded, not fixed.
+            "the code fixed, never a test or check loosened; a test red on the machine's load (it \
+             passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under \
+             load) is discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` \
+             says, with one line on this thread naming it, the evidence it is load and what it \
+             proved."
+                .into(),
         ] {
             assert!(filed.contains(&said), "{said:?} in:\n{filed}");
         }
