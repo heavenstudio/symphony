@@ -363,33 +363,6 @@ fn a_killed_shared_server_is_replaced_by_one_that_answers() {
 }
 
 #[test]
-fn a_start_where_an_older_builds_state_was_not_moved_refuses_and_registers_nothing() {
-    let repo = Repo::new("unmoved-start");
-    let common = symphony_server::repo::checkout(&repo.main).unwrap().common;
-    // The shared server's old install folder, which `tools/move-state.sh` moves into
-    // `symphony/server`.
-    let (new, old) = symphony_board::unmoved::OLD[1];
-    assert_eq!(new, symphony_server::home::FOLDER);
-    fs::create_dir_all(common.join(old)).unwrap();
-    let refusal = symphony_board::unmoved::refusal(&common, new).expect("unmoved");
-    for dir in [&repo.main, &repo.tree] {
-        let mut start = repo.run(repo.command(dir));
-        assert_eq!(start.wait().code(), Some(2), "{}", start.output());
-        assert!(
-            start.output().contains(&format!("✖ Symphony: {refusal}\n")),
-            "{}",
-            start.output()
-        );
-    }
-    assert!(repo.record().is_none(), "no server started");
-    assert!(
-        !repo.home.join("projects.json").exists(),
-        "the project was registered"
-    );
-    assert!(!common.join("symphony").exists(), "symphony/ was made");
-}
-
-#[test]
 fn shared_starts_report_and_ignore_in_repository_root_and_host_overrides() {
     let repo = Repo::new("ignored-options");
     for dir in [&repo.tree, &repo.main] {

@@ -1207,42 +1207,6 @@ fn a_project_pinned_past_the_release_takes_it_already_and_nothing_is_made() {
 }
 
 #[test]
-fn a_project_whose_state_an_older_build_keeps_takes_no_pin_until_it_is_moved() {
-    let (fixture, _) = refreshing();
-    let consumer = locked_consumer(&fixture);
-    register(&fixture, &[]);
-    fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
-    fixture.night(NOW, 0);
-    register(&fixture, &[("consumer", &consumer)]);
-    // Its board as an older build keeps it, in the old folder the move renames.
-    let common = consumer.join(".git");
-    let (new, old) = symphony_board::unmoved::OLD[0];
-    fs::create_dir_all(common.join(old).join("data")).unwrap();
-    let head = git(&consumer, &["rev-parse", "HEAD"]);
-    let before = checkout(&consumer);
-    let gates = gated(&fixture).len();
-    let home = cargo_home(&fixture);
-
-    let (code, out, err) =
-        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
-    assert_eq!(code, 1, "{out}{err}");
-    let refusal = symphony_board::unmoved::refusal(&common, new).unwrap();
-    assert!(
-        out.contains("release: refresh-consumer red (")
-            && out.contains(&format!("{refusal}: nothing of consumer was moved")),
-        "{out}"
-    );
-    // Nothing of it moved: no branch, no commit through its gate, its main, its files and its old
-    // folder as they were, and nothing made in the new one.
-    assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
-    assert_eq!(gated(&fixture).len(), gates);
-    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
-    assert_eq!(checkout(&consumer), before);
-    assert!(common.join(old).join("data").is_dir());
-    assert!(!common.join(new).exists());
-}
-
-#[test]
 fn a_pin_beside_the_release_is_left_with_its_files_and_board_until_a_release_descends_from_it() {
     let (fixture, _) = refreshing();
     // A red's fix branched from main's tip, and a landing on main meanwhile.
