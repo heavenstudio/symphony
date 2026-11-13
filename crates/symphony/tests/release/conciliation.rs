@@ -147,17 +147,24 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
         "{command}"
     );
     assert!(
-        command.contains("/.git/symphony-release-target --config 'patch."),
-        "it builds in the copy's own build folder, named to cargo: {command}"
+        command.contains("/.git/symphony-release-target -p consumer-host (in "),
+        "it builds in the copy's own build folder, named to cargo, and patches nothing: {command}"
+    );
+    let candidate = git(&fixture.worktree(), &["rev-parse", "HEAD"]);
+    assert!(
+        command.ends_with(&format!(
+            "its Cargo.lock moved to the candidate by cargo update -p 'file://{}#fixture-core' \
+             --precise {candidate})",
+            fixture.origin.display()
+        )),
+        "{command}"
     );
     assert!(
-        command.contains(&format!(
-            "\"fixture-core\".path=\"{}\"",
-            fixture.worktree().join("crates/core").display()
-        )),
-        "the candidate's checkout is patched in: {command}"
+        fs::read_to_string(scratch.join("Cargo.lock"))
+            .unwrap()
+            .contains(&format!("?branch=main#{candidate}\"")),
+        "the copy's lock takes the candidate from its git source"
     );
-    assert!(command.contains(" -p consumer-host (in "), "{command}");
     let log = fs::read_to_string(conciliated["log"].as_str().unwrap()).unwrap();
     for test in ["the_symphony_answers", "the_machine_is_a_copy"] {
         assert!(log.contains(&format!("test tests::{test} ... ok")), "{log}");
@@ -320,6 +327,149 @@ fn a_project_whose_tooling_empties_its_build_folder_is_conciliated_in_the_releas
     }
 }
 
+/// `cargo ARGS` in `dir` with the fixture's cargo home, which must succeed.
+fn cargo_ok(dir: &Path, home: &Path, args: &[&str]) {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("cargo")
+            .args(args)
+            .current_dir(dir)
+            .env("CARGO_HOME", home)
+            .env_remove("RUSTUP_TOOLCHAIN"),
+    )
+    .unwrap();
+    assert!(
+        done.status.success(),
+        "cargo {args:?} in {}: {}",
+        dir.display(),
+        String::from_utf8_lossy(&done.stderr)
+    );
+}
+
+#[test]
+fn what_a_projects_tests_build_with_a_cargo_of_their_own_is_the_candidate_too() {
+    let fixture = Fixture::new();
+    symphony_crate(&fixture, 41);
+    let pinned = fixture.commit("the Symphony's crate as the project pins it");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let manifest = format!(
+        "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
+        fixture.origin.display()
+    );
+    // Its test builds and runs a tool of its own with a cargo of its own, in its workspace,
+    // `--locked` and `--offline`, as a consuming project's tests build its tools: no patch given on
+    // the conciliation's command line reaches that cargo, only the copy's lock does.
+    let nested = "#[test]\nfn its_own_cargo_builds_the_candidate() {\n    \
+                  let root = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"..\");\n    \
+                  let done = std::process::Command::new(env!(\"CARGO\"))\n        \
+                  .args([\"run\", \"--quiet\", \"--locked\", \"--offline\", \"--bin\", \"answer\"])\n        \
+                  .current_dir(&root)\n        \
+                  .output()\n        \
+                  .unwrap();\n    \
+                  assert!(done.status.success(), \"{}\", String::from_utf8_lossy(&done.stderr));\n    \
+                  assert_eq!(String::from_utf8_lossy(&done.stdout).trim(), \"42\");\n    \
+                  assert_eq!(fixture_core::answer(), 42);\n}\n";
+    let toolchain = toolchain();
+    let root = project(
+        &fixture,
+        "consumer",
+        &[
+            ("rust-toolchain.toml", toolchain.as_str()),
+            (".gitignore", "/target/\n"),
+            (
+                "symphony.toml",
+                "[project]\nid = \"consumer\"\n\n[plugins]\ncrates = [\"consumer-plugin\"]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
+            ),
+            ("host/Cargo.toml", manifest.as_str()),
+            ("host/src/lib.rs", ""),
+            (
+                "host/src/bin/answer.rs",
+                "fn main() {\n    println!(\"{}\", fixture_core::answer());\n}\n",
+            ),
+            ("host/tests/nested.rs", nested),
+        ],
+    );
+    // Its committed lock pins the Symphony it was built against, older than the candidate.
+    let home = fixture.root.join("cargo-home");
+    cargo_ok(&root, &home, &["generate-lockfile"]);
+    git(&root, &["add", "Cargo.lock"]);
+    git(&root, &["commit", "-q", "-m", "its lock"]);
+    let lock = fs::read_to_string(root.join("Cargo.lock")).unwrap();
+    assert!(lock.contains(&format!("?branch=main#{pinned}\"")), "{lock}");
+    register(&fixture, &[("consumer", &root)]);
+    symphony_crate(&fixture, 42);
+    let candidate = fixture.commit("the candidate's answer");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let cargo_home = home.to_string_lossy().into_owned();
+    let extra = [("CARGO_HOME", cargo_home.as_str())];
+
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    let run = fixture.runs().last().unwrap().clone();
+    let conciliated = &run["checks"][1];
+    let log = fs::read_to_string(conciliated["log"].as_str().unwrap()).unwrap_or_default();
+    assert_eq!(code, 0, "{out}{err}\n{log}");
+    assert!(
+        out.contains("release: conciliate-consumer green (exit 0"),
+        "{out}"
+    );
+    assert!(
+        log.contains("test its_own_cargo_builds_the_candidate ... ok"),
+        "{log}"
+    );
+    let copy = fixture.root.join("wt/release-conciliate/consumer");
+    let moved = fs::read_to_string(copy.join("Cargo.lock")).unwrap();
+    assert!(
+        moved.contains(&format!("?branch=main#{candidate}\"")) && !moved.contains(&pinned),
+        "the copy's lock takes the candidate: {moved}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.lock")).unwrap(),
+        lock,
+        "the project's own lock is as it was"
+    );
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+
+    // A source that does not hold the candidate cannot be moved to it: red, and nothing tested.
+    let fork = fixture.root.join("fork.git");
+    git(
+        &fixture.root,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &fixture.origin.to_string_lossy(),
+            "fork.git",
+        ],
+    );
+    git(&fork, &["update-ref", "refs/heads/main", &pinned]);
+    let forked = manifest.replace(
+        &fixture.origin.display().to_string(),
+        &fork.display().to_string(),
+    );
+    fs::write(root.join("host/Cargo.toml"), forked).unwrap();
+    cargo_ok(&root, &home, &["generate-lockfile"]);
+    git(&root, &["commit", "-q", "-am", "the Symphony from a fork"]);
+    let later = fixture.land("next.txt", Some("a later candidate\n"), "a later candidate");
+    let (code, out, err) = fixture.release_with(NOW + 3600.0, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: conciliate-consumer red (did not run: its Cargo.lock could not be moved to \
+             the candidate {later} by `cargo update -p 'file://{}#fixture-core' --precise {later}`: \
+             cargo update failed in {}: ",
+            fork.display(),
+            copy.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+}
+
 #[test]
 fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
     let fixture = Fixture::new();
@@ -381,8 +531,8 @@ fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
     );
     let copy = fixture.root.join("wt/release-conciliate/consumer");
     let at = git(&copy, &["rev-parse", "HEAD"]);
-    // The lock its patched build wrote is passed over, its build being in the copy's `.git`; what
-    // its test left is not.
+    // The lock the conciliation moved to the candidate is passed over, its build being in the
+    // copy's `.git`; what its test left is not.
     assert_eq!(
         git(&copy, &["status", "--porcelain"]),
         "?? Cargo.lock\n?? host/left.txt"
