@@ -740,6 +740,7 @@ mod tests {
                 cpu_partial: Some(true),
                 runs: Some("/repo/.git/symphony/runs".into()),
             }),
+            reading: None,
         }
     }
 

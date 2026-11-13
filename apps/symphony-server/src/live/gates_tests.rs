@@ -348,6 +348,7 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     };
     symphony_board::cli::machine_work::recorded::keep(&work, &run).unwrap();
     // A run of another command at another task's tip says nothing of its check.

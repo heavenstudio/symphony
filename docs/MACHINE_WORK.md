@@ -129,7 +129,8 @@ board, keeps the bounds as they are, whatever it names.
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is
 for, queued, or running when COMMAND started by then; running once COMMAND started,
-rewritten every 2 s while it runs (its beat), and finished with how it ended. Every
+rewritten every 2 s while it runs (its beat, with its latest `reading` on macOS), and
+finished with how it ended. Every
 recorder, of any build, locks `operations/<id>.lease` before it writes its record and
 holds it until it finished: the sweep (below) relies on that across builds. This one
 takes it before COMMAND starts, waiting at most 50 ms, and on macOS writes in it the
@@ -156,6 +157,7 @@ it is for; the record is written once that is known. The board's schema is uncha
 | `exit_code`, `signal` | how COMMAND ended; neither when that is not known |
 | `reason` | why it ended without a status, or never started, else empty |
 | `run` | for a run or a step only, else left out: its `pipeline`, `step`, `trigger`, `project`, `tree`, `dirty`, `rerun_of` and, once finished, `cpu_s` and `cpu_partial`, as its line in the day files says them ([RUNS](RUNS.md)), and `runs`, the absolute path of the day files' folder its lines go to |
+| `reading` | on macOS, where the recorder watches COMMAND's processes, the latest reading of them it wrote with a beat, else left out: `at`, when it read them (seconds since the epoch), `cpu_s`, the most CPU seconds any reading so far found they had taken, `partial`, whether a reading so far knew it missed some (as `cpu_partial` says), and `processes`, how many it read then, COMMAND's and each under it; a finished record keeps the last |
 
 **For which task.** The first of these that answers. Unless a task is named, the
 board is read once for it, without starting its server, for at most 1 s, after

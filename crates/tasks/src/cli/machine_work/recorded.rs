@@ -118,6 +118,30 @@ pub struct Record {
     /// ([`crate::runs`]); left out of an operation of the work folder alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Run>,
+    /// The latest reading of its command's processes its recorder wrote with a beat, where it
+    /// watches them (macOS); left out before the first, and by a recorder that does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<CpuReading>,
+}
+
+/// What a recorder that watches its command read of the command's processes while they ran.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CpuReading {
+    /// When it read them, in seconds since the epoch.
+    pub at: f64,
+    /// The most CPU seconds any reading so far found they had taken, kept to the millisecond.
+    pub cpu_s: f64,
+    /// Whether a reading so far knew it missed some ([`Run::cpu_partial`]).
+    pub partial: bool,
+    /// How many processes this reading read: the command's and each under it.
+    pub processes: u32,
+}
+
+impl CpuReading {
+    /// Whether it reads as a recorder writes one.
+    fn valid(&self) -> bool {
+        self.at.is_finite() && self.cpu_s.is_finite() && self.cpu_s >= 0.0 && self.processes > 0
+    }
 }
 
 /// An operation's part as a run or a step: what its line in the day files says beside the record.
@@ -238,6 +262,10 @@ impl Record {
             && self.pid != 0
             && self.child_pid != Some(0)
             && self.run.as_ref().is_none_or(Run::valid)
+            && self
+                .reading
+                .as_ref()
+                .is_none_or(|reading| reading.valid() && self.started_at.is_some())
             && steps
     }
 

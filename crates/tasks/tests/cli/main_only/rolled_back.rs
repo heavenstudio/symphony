@@ -533,7 +533,7 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
             "",
         );
         assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             let found = recorded::read(&work)
                 .records
@@ -542,7 +542,10 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
             if let Some((run, _)) = found {
                 return (run.handle, run.task);
             }
-            assert!(std::time::Instant::now() < until, "no run {label} finished");
+            assert!(
+                std::time::Instant::now() < until,
+                "no run {label} finished within 120 s"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     };

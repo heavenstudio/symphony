@@ -4,8 +4,10 @@
 use super::*;
 use crate::cli::machine_work::native::Inventory;
 use crate::cli::machine_work::recorded::{
-    self, Found, HISTORY, OPERATIONS, Phase, RETAIN, ROTATE_BYTES, ROTATED, Record, Step,
+    self, CpuReading, Found, HISTORY, OPERATIONS, Phase, RETAIN, ROTATE_BYTES, ROTATED, Record,
+    Step,
 };
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -52,6 +54,17 @@ fn record(id: &str, state: Step) -> Record {
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
+    }
+}
+
+/// A reading a recorder that watches its command writes with a beat.
+fn reading() -> CpuReading {
+    CpuReading {
+        at: 1002.5,
+        cpu_s: 1.25,
+        partial: false,
+        processes: 2,
     }
 }
 
@@ -84,6 +97,71 @@ fn ids(found: &Found) -> Vec<(&str, Step)> {
         .iter()
         .map(|(record, _)| (record.operation_id.as_str(), record.state))
         .collect()
+}
+
+/// The backquoted words of `text`, in order.
+fn quoted(text: &str) -> Vec<String> {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A reading is read back as its beat wrote it; a record without one (its recorder watches no
+/// command's processes, or is older) reads as before and writes none. The record's table in
+/// docs/MACHINE_WORK.md names each field a record holds, and its `reading` row each of a reading's.
+#[test]
+fn a_reading_reads_back_as_written_is_left_out_when_there_is_none_and_the_doc_names_its_fields() {
+    let dir = folder("reading");
+    let mut read = record(ONE, Step::Running);
+    read.reading = Some(reading());
+    let _held = running(&dir, &read);
+    let _also = running(&dir, &record(TWO, Step::Running));
+    let found = recorded::read(&dir);
+    assert!(!found.uncertain, "{found:?}");
+    let mut readings: Vec<_> = (found.records.iter())
+        .map(|(record, _)| (record.operation_id.as_str(), record.reading))
+        .collect();
+    readings.sort_by_key(|(id, _)| *id);
+    assert_eq!(readings, [(ONE, Some(reading())), (TWO, None)]);
+    let text = fs::read_to_string(path(&dir, TWO)).unwrap();
+    assert!(!text.contains("reading"), "{text}");
+    fs::remove_dir_all(&dir).unwrap();
+
+    let doc = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/MACHINE_WORK.md"),
+    )
+    .unwrap();
+    let table = doc.split("**What.**").nth(1).unwrap();
+    let rows: Vec<&str> = (table.lines())
+        .skip_while(|line| !line.starts_with("| `"))
+        .take_while(|line| line.starts_with('|'))
+        .collect();
+    let named: BTreeSet<String> = (rows.iter())
+        .flat_map(|row| quoted(row.split('|').nth(1).unwrap()))
+        .collect();
+    let mut every = read.clone();
+    every.run = Some(
+        serde_json::from_value(serde_json::json!({
+            "pipeline": "verify", "trigger": "owner"
+        }))
+        .unwrap(),
+    );
+    let written = serde_json::to_value(&every).unwrap();
+    let fields: BTreeSet<String> = written.as_object().unwrap().keys().cloned().collect();
+    assert_eq!(named, fields);
+    let row = (rows.iter())
+        .find(|row| row.starts_with("| `reading` |"))
+        .unwrap();
+    let said: BTreeSet<String> = quoted(row.split('|').nth(2).unwrap()).into_iter().collect();
+    let keys = written["reading"].as_object().unwrap().keys().cloned();
+    for key in keys {
+        assert!(
+            said.contains(&key),
+            "the doc's reading row names no `{key}`: {row}"
+        );
+    }
 }
 
 #[test]
@@ -151,6 +229,22 @@ fn a_record_that_is_not_one_a_recorder_writes_is_uncertainty_and_a_partial_write
     let mut handle = record(TWO, Step::Finished);
     handle.handle = Some("line\nbreak".into());
     wrong.push(handle);
+    // A reading of CPU below none, of no process, or of a command not started yet.
+    let mut below = record(TWO, Step::Running);
+    below.reading = Some(CpuReading {
+        cpu_s: -0.5,
+        ..reading()
+    });
+    wrong.push(below);
+    let mut none = record(TWO, Step::Running);
+    none.reading = Some(CpuReading {
+        processes: 0,
+        ..reading()
+    });
+    wrong.push(none);
+    let mut early = record(TWO, Step::Queued);
+    early.reading = Some(reading());
+    wrong.push(early);
     for bad in wrong {
         recorded::write(&path(&dir, TWO), &bad).unwrap();
         let found = recorded::read(&dir);

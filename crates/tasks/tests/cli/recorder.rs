@@ -1938,6 +1938,30 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     holder.unlock().unwrap();
 }
 
+/// The first reading a beat wrote into the running record of the operation labelled `label` that
+/// read `processes` processes or more; a wait that gives up says the records a reader found and
+/// what the work folder holds.
+#[cfg(target_os = "macos")]
+#[track_caller]
+fn read_at_least(folders: &Folders, label: &str, processes: u32) -> recorded::CpuReading {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let found = (folders.records().into_iter())
+            .filter(|record| record.label == label && record.state == Step::Running)
+            .find_map(|record| record.reading.filter(|read| read.processes >= processes));
+        if let Some(reading) = found {
+            return reading;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no reading of {processes} processes of {label} within 120 s: {:?}; the work folder: {}",
+            folders.records(),
+            holds(&folders.work)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() {
@@ -1957,13 +1981,24 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
     // released once the recorder's last reading is written. It ends too once the test's folder is
     // gone, which a release written just before the folder's removal would leave it never to see,
     // and by itself after six minutes of its looks, should the test be killed before either. It
-    // holds none of the streams the test reads to their end.
+    // holds none of the streams the test reads to their end. The command then reads its stdin,
+    // starting no other process, and ends once the test closes it: once a reading its recorder
+    // wrote with a beat read two processes, the command and that child under it. However late a
+    // loaded machine lets the recorder look, the child is read before it leaves; a test that ends
+    // before closes it all the same.
     let leaves = format!(
         "(i=0; while [ -d '{}' ] && [ ! -e '{}' ] && [ $i -lt 7200 ]; do sleep 0.05; \
-         i=$((i + 1)); done) </dev/null >/dev/null 2>&1 & sleep 1.5",
+         i=$((i + 1)); done) </dev/null >/dev/null 2>&1 & read -r line; :",
         folders.dir.display(),
         release.0.display()
     );
+    let mut leaving =
+        pipeline_command(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
     // Plain runs at once, each reaped by the test only once every recorder wrote its end line: the
     // last reading of each is of its command ended and not yet reaped, however late a loaded
     // machine let its recorder look, so nothing is missed. What a caller that reaps first leaves a
@@ -1978,8 +2013,16 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
             script,
         ))
     };
-    let mut started = vec![run(("test", "leaves"), &leaves)];
-    started.extend((0..PLAIN).map(|_| run(("test", "plain"), "sleep 0.8")));
+    let mut started: Vec<Child> = (0..PLAIN)
+        .map(|_| run(("test", "plain"), "sleep 0.8"))
+        .collect();
+    let under = read_at_least(&folders, "leaves", 2);
+    assert!(
+        !under.partial,
+        "a reading while the child is under its command misses nothing: {under:?}"
+    );
+    drop(leaving.stdin.take());
+    started.push(leaving);
     let lines = symphony_api::fold(day_lines(&folders.work, &runs, PLAIN + 1));
     for mut each in started {
         assert!(each.wait().unwrap().success());

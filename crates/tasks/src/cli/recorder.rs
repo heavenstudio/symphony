@@ -57,7 +57,9 @@
 //! As its child, the CPU is what the reap reads, and whether that misses a process that left the
 //! command's tree is not watched; on macOS, where it becomes its command, the kernel's count of that
 //! process and of every process under it, read every [`SAMPLE`] and once more as it ends, the most
-//! read, with whether a reading knew it missed some (`supervised::cpu::Tree`).
+//! read, with whether a reading knew it missed some (`supervised::cpu::Tree`). There each beat also
+//! writes the latest reading into the running record ([`recorded::CpuReading`]): what a reader, or a
+//! test, waits on to know the processes it holds were read.
 //!
 //! The bounds the machine's speed meets ([`READY`], [`WAIT`], [`GIT_WAIT`], [`RERUN_WAIT`] and
 //! [`crate::runs::LOCK_WAIT`]) are a test's to scale, on a scratch board's database alone
@@ -517,7 +519,8 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             Ok(end) => break end,
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(recording) = &recording {
-                    recording.beat();
+                    // It reads its command's CPU only once it reaped it: no reading to say.
+                    recording.beat(None);
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -894,6 +897,7 @@ impl Recording {
             signal: None,
             reason: String::new(),
             run,
+            reading: None,
         };
         recorded::write(&path, &record)?;
         let recording = Recording {
@@ -958,9 +962,13 @@ impl Recording {
         self.line(&record);
     }
 
-    /// It still runs.
-    fn beat(&self) {
-        self.update(|_, _| {});
+    /// It still runs, its processes as `reading` last read them when there is one.
+    fn beat(&self, reading: Option<recorded::CpuReading>) {
+        self.update(|record, _| {
+            if reading.is_some() {
+                record.reading = reading;
+            }
+        });
     }
 
     /// It ended at `at` so (`exit_code` or `signal`, neither when that is not known), its command
@@ -1021,7 +1029,9 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, with
 /// The `tasks` process become its command, watched by a recorder it forks first.
 #[cfg(target_os = "macos")]
 mod supervised {
-    use super::{Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, role, unstarted};
+    use super::{
+        Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, cpu_seconds, role, unstarted,
+    };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
     use std::ffi::CString;
@@ -1029,11 +1039,16 @@ mod supervised {
     use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
     use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::{Duration, Instant};
 
     /// What the recorder's watch saw of its command, when it saw it, and the most CPU it read the
     /// command's processes had taken by then.
     type Heard = io::Result<(Seen, f64, Option<Cpu>)>;
+
+    /// The watch's latest reading of the command's processes, which each beat writes into the
+    /// running record.
+    type Latest = Arc<Mutex<Option<recorded::CpuReading>>>;
 
     /// Become `asked`'s command, recorded by a recorder that watches this process, in `env`; what
     /// returns is the code of a command that could not start, said on `err`.
@@ -1200,10 +1215,12 @@ mod supervised {
             // Read on a thread of its own, so what it sees is stamped as it comes while the board
             // is asked which task this is for.
             let (tell, heard) = mpsc::channel();
-            std::thread::spawn(move || watching(&watch, &tell, (target, caller)));
+            let latest = Latest::default();
+            let read = Arc::clone(&latest);
+            std::thread::spawn(move || watching(&watch, &tell, (target, caller), &read));
             if let Ok(recording) = Recording::begin(prepared, asked, env, (queued_at, None), true) {
                 recording.sweep();
-                follow(&heard, recording, start);
+                follow(&heard, recording, start, &latest);
             }
         }
         // SAFETY: ends the recorder without the runtime's exit, which is the caller's.
@@ -1215,11 +1232,12 @@ mod supervised {
     /// fails, or nothing listens. That is read every [`SAMPLE`] and as soon as each event comes,
     /// its exit's first: a process that ended is read until its parent reaps it, and a last reading
     /// that comes after misses what ran since the one before, which the tree weighs
-    /// ([`cpu::Tree::reaped_first`]).
+    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`.
     fn watching(
         watch: &Watch,
         tell: &mpsc::Sender<Heard>,
         (target, caller): (libc::pid_t, libc::pid_t),
+        latest: &Latest,
     ) {
         let mut tree = cpu::Tree::new(cpu::Machine, target).reaped_by(caller);
         let mut most = None;
@@ -1228,6 +1246,9 @@ mod supervised {
             let at = Instant::now();
             let read = tree.read(at);
             most = most.max(read);
+            if let Some(reading) = read.and(most).and_then(|ticks| reading(&tree, ticks)) {
+                *latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(reading);
+            }
             match next {
                 Ok(Some(seen)) => {
                     let exited = seen.exit.is_some();
@@ -1250,6 +1271,20 @@ mod supervised {
                 }
             }
         }
+    }
+
+    /// What `tree` read last, its readings having found `most` ticks at most: none for CPU no
+    /// clock says.
+    pub(super) fn reading<K: cpu::Kernel>(
+        tree: &cpu::Tree<K>,
+        most: u64,
+    ) -> Option<recorded::CpuReading> {
+        Some(recorded::CpuReading {
+            at: crate::store::now(),
+            cpu_s: cpu_seconds(cpu::seconds(most, tree.tick))?,
+            partial: tree.partial,
+            processes: u32::try_from(tree.processes()).unwrap_or(u32::MAX),
+        })
     }
 
     /// No stream of the caller's held open: `/dev/null` in, out and err, and every other
@@ -1281,8 +1316,14 @@ mod supervised {
     }
 
     /// Record its command as its watch was `heard`: started at `start` once it exec'd, said again
-    /// every [`BEAT`] while it runs, finished with its status when its exit was seen.
-    fn follow(heard: &mpsc::Receiver<Heard>, recording: Recording, start: super::Start) {
+    /// every [`BEAT`] while it runs with the `latest` reading of its processes, finished with its
+    /// status when its exit was seen.
+    fn follow(
+        heard: &mpsc::Receiver<Heard>,
+        recording: Recording,
+        start: super::Start,
+        latest: &Latest,
+    ) {
         let mut started = false;
         loop {
             match heard.recv_timeout(BEAT) {
@@ -1304,7 +1345,7 @@ mod supervised {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if started {
-                        recording.beat();
+                        recording.beat(*latest.lock().unwrap_or_else(PoisonError::into_inner));
                     }
                 }
                 Ok(Err(error)) => {
@@ -1682,6 +1723,12 @@ mod supervised {
                 if self.ticks(since).saturating_mul(self.cpus) > allowed {
                     self.partial = true;
                 }
+            }
+
+            /// How many processes the last reading the root answered read: the root and each one
+            /// under it.
+            pub(in super::super) fn processes(&self) -> usize {
+                self.under.len() + 1
             }
 
             /// The children of `pid`; as many as there is room for is too many to know all.
@@ -2167,6 +2214,38 @@ mod tests {
         table.0.borrow_mut().insert(1, (0, 10, false));
         assert_eq!(Tree::new(&table, 1).read(now), None);
         assert_eq!(Tree::new(&Table::default(), 1).read(now), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_beats_reading_says_the_most_cpu_read_whether_a_reading_missed_some_and_what_it_read() {
+        use supervised::cpu::Tree;
+        let now = std::time::Instant::now();
+        // 1 runs 2, and 2 runs 3; a tick is a millisecond.
+        let table = Table::with(&[(1, 0, 10), (2, 1, 20), (3, 2, 30)]);
+        let mut tree = Tree::new(&table, 1);
+        tree.tick = 1e6;
+        let before = crate::store::now();
+        let most = tree.read(now).unwrap();
+        let reading = supervised::reading(&tree, most).unwrap();
+        assert!(reading.at >= before, "{reading:?}");
+        assert_eq!(
+            (reading.cpu_s, reading.partial, reading.processes),
+            (0.06, false, 3)
+        );
+        // 2 ends unreaped, leaving 3 to the system: the next reading reads the root alone and knows
+        // it missed one, and the most read stays.
+        table.0.borrow_mut().remove(&2);
+        table.0.borrow_mut().insert(3, (0, 35, true));
+        let read = tree.read(now).unwrap();
+        let reading = supervised::reading(&tree, most.max(read)).unwrap();
+        assert_eq!(
+            (reading.cpu_s, reading.partial, reading.processes),
+            (0.06, true, 1)
+        );
+        // CPU no clock says is no reading.
+        tree.tick = f64::NAN;
+        assert_eq!(supervised::reading(&tree, most), None);
     }
 
     /// Whether a root read at each `(ms, ticks)` of `readings`, then reaped by its caller before
