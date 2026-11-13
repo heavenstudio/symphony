@@ -8,9 +8,10 @@ use symphony_board::{Message, NewLaunch, Role, Session, Task};
 
 #[test]
 fn each_command_says_what_it_did_in_one_line() {
-    let c = Case::new();
+    let mut c = Case::new();
+    // Past its first live line, orch stays once it holds sim/a, so the board gives it sim/b too.
     let (orch, exe, rev) = (
-        c.register("orchestrator"),
+        c.register_settled("orchestrator"),
         c.register("worker"),
         c.register("reviewer"),
     );

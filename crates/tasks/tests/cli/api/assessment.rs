@@ -9,10 +9,11 @@ const SLUG: &str = "tools/assessment";
 const RECORD: &str = "aaa: changes";
 
 fn setup() -> (Case, String) {
-    let case = Case::new();
-    // A live orchestrator, which the board gives the task: with none, it would wait for one,
-    // marked in its board fields.
-    case.register("orchestrator");
+    let mut case = Case::new();
+    // An orchestrator that stays, which the board gives the task: past its first live line and
+    // waiting. With none, the task would wait for one, marked in its board fields.
+    let orch = case.register_settled("orchestrator");
+    case.ok(&orch, &["wait", "--timeout", "0"]);
     let actor = case.register("worker");
     let made = answer(
         &case.env,
@@ -21,6 +22,7 @@ fn setup() -> (Case, String) {
         }}),
     );
     assert_eq!(made["ok"]["slug"], SLUG, "{made}");
+    assert_eq!(made["ok"]["roles"][0]["handle"], json!(orch), "{made}");
     (case, actor)
 }
 
