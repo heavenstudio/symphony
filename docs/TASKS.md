@@ -1568,6 +1568,16 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   closed, and with no live executor `@orchestrator` hears it, which restaffs the
   executor or reviewer the task needs. Either move, the land's or the command line's,
   starts `[board] on_review` as a move to review does.
+- **A release candidate's red.** While the release run holds a candidate
+  ([RELEASES](RELEASES.md#the-release-candidate)), a red of it is fixed on a branch started
+  at the local branch `release-candidate`, which merges that branch again before review and
+  never merges main before its approve, its approve naming the full tip, and it lands by this
+  same land. Nothing in the land changes for it: its `[board] on_land`, the release run's
+  `--due`, reads the land afterwards and moves the candidate to the newest commit of the
+  branch an approve named that holds the candidate and the fix alone. A conflict goes back to
+  `@executor` as above, who merges the default branch then and asks for a fresh approve; the
+  candidate keeps the commit approved before that merge. A red fixed outside this repository
+  is answered by its task cancelled, saying where; one done waits for its land.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `sf-tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
@@ -1828,7 +1838,11 @@ same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
-commits no distribution of its own: the land keeps main's.
+commits no distribution of its own: the land keeps main's. The one that does is a release
+candidate's fix that changes what the client is built from, since no regenerator builds the
+candidate: it commits the distribution its own sources make (`just client-update`), which the
+candidate's rerun checks, and the land keeps main's side of it all the same
+([RELEASES](RELEASES.md#the-release-candidate)).
 
 ## Gates
 

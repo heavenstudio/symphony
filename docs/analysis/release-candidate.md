@@ -1,9 +1,10 @@
 # A release candidate held still
 
 How a red found by the full run gets fixed so that a release comes, and what the run and its
-command are called. This is a design: nothing here is built but the refresh's rule that a pin
-moves only forward, which any candidate needs (A, below), and the rename to `just release`
-([below](#the-names)). The owner chose A on its card in
+command are called. This is a design: built are the refresh's rule that a pin moves only
+forward, which any candidate needs (A, below), the rename to `just release`
+([below](#the-names)) and A's held candidate (`crates/symphony/src/release/candidate.rs`,
+[RELEASES](../RELEASES.md#the-release-candidate)). The owner chose A on its card in
 [DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
 corrections wait on the owner approving A again, and the three choices A leaves open are cards of
 their own there.
@@ -515,8 +516,8 @@ Their slugs keep the old word; their code uses the names on main when they merge
 
 ## The implementation tasks
 
-The first two are built (`tools/refresh-moves-pins-forward`, `tools/release-rename`); none other
-is filed. The rename keeps `on_land` naming `nightly --due`, which the new build runs as `release
+The first three are built (`tools/refresh-moves-pins-forward`, `tools/release-rename`,
+`tools/release-candidate-held`); none other is filed. The rename keeps `on_land` naming `nightly --due`, which the new build runs as `release
 --due`, since a build older than it refuses `release` ([RELEASES](../RELEASES.md#the-rename)). In
 the order above:
 

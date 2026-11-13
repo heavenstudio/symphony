@@ -94,6 +94,28 @@ pub(crate) struct Run {
     /// (docs/RELEASES.md).
     #[serde(default)]
     pub(crate) refreshed: Option<Refresh>,
+    /// The release candidate it reran, when it was a rerun of one ([`super::candidate`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rerun: Option<Rerun>,
+}
+
+/// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
+/// rerun), and each check or step it kept green from an earlier round instead of running it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Rerun {
+    pub(crate) first: String,
+    pub(crate) round: u32,
+    #[serde(default)]
+    pub(crate) carried: Vec<Carried>,
+}
+
+/// A check or step a rerun kept green: its name and the commit and run it was green on, whose
+/// tree is the rerun's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Carried {
+    pub(crate) name: String,
+    pub(crate) commit: String,
+    pub(crate) run: String,
 }
 
 /// A release's refresh: the release, one step for each project the machine serves that builds on
@@ -213,6 +235,17 @@ pub(crate) struct Board {
     pub(crate) closed: Vec<String>,
     #[serde(default)]
     pub(crate) error: Option<String>,
+    /// Each red check or step it filed or told a line, with its task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) reds: Vec<Held>,
+}
+
+/// A red the board holds: its key, the check or step it is of, and its task.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Held {
+    pub(crate) key: String,
+    pub(crate) name: String,
+    pub(crate) slug: String,
 }
 
 /// The release run's folder in the git common dir `common`.
@@ -439,6 +472,7 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         unpushed: None,
         cause: None,
         refreshed: None,
+        rerun: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -579,6 +613,18 @@ fn line(run: &Run, now: f64) -> String {
         age(now, run.started_at),
         short(&run.commit)
     );
+    if let Some(rerun) = &run.rerun {
+        said.push_str(&format!(
+            " (round {} of the release candidate first judged at {}{})",
+            rerun.round,
+            short(&rerun.first),
+            match rerun.carried.len() {
+                0 => String::new(),
+                1 => ", 1 carried green".into(),
+                n => format!(", {n} carried green"),
+            }
+        ));
+    }
     let red: Vec<String> = (run.checks.iter())
         .flat_map(super::steps::reds)
         .map(|ran| format!("{} ({})", ran.name, ran.ended()))
@@ -735,6 +781,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            rerun: None,
         }
     }
 

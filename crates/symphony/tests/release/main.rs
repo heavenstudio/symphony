@@ -13,6 +13,7 @@ mod common;
 mod board;
 
 mod cadence;
+mod candidate;
 mod conciliation;
 mod places;
 mod recorder;
@@ -139,17 +140,23 @@ impl Fixture {
         fixture
     }
 
-    /// The fixture's project file: its agents' worktrees `../wt`, and a release's refresh off (a
-    /// test of the refresh turns it on), with `releases` more lines of its `[releases]` table.
+    /// The fixture's project file: its agents' worktrees `../wt`, a release's refresh off (a test
+    /// of the refresh turns it on) and no release candidate held (a test of the candidate holds
+    /// one), with `releases` more lines of its `[releases]` table.
     fn project_file(releases: &str) -> String {
         let refresh = if releases.contains("refresh") {
             ""
         } else {
             "refresh = false\n"
         };
+        let candidate = if releases.contains("candidate_") {
+            ""
+        } else {
+            "candidate_reruns = 0\n"
+        };
         format!(
             "[project]\nid = \"fixture\"\n\n[agents]\nworktrees = \"../wt\"\n\n[releases]\n\
-             {refresh}{releases}"
+             {refresh}{candidate}{releases}"
         )
     }
 

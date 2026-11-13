@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 921d45d8d0a45bc8 files=SKILL.md -->
+<!-- symphony-stamp: f525d253b4dad448 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -73,7 +73,13 @@ product-specific policy or taste data.
    approve when its fix changes no test or check, the failing tests unchanged and
    green at its tip; the land refuses your approve on a fix that changes a test, a
    check, a budget or a run step ([land] check_paths), and you staff a fresh reviewer
-   for it. Staff ready work, restore
+   for it. A red whose release run held its commit as the release candidate says so in
+   its text: brief its executor to start from the local branch release-candidate, never
+   main, and to merge no main before its approve; its own land moves the candidate, and
+   the land that answers the last red starts its rerun. Rerunning or dropping a
+   candidate by hand is an orchestrator's retry the project's guidance names. A red
+   fixed outside the repository is answered by cancelling its task, saying where; an
+   approved one still waits for its land. Staff ready work, restore
    orphaned work and arrange independent reviews. File gaps between approved docs and
    implementation only with evidence, complete acceptance and no existing task. Use
    the create-task skill.

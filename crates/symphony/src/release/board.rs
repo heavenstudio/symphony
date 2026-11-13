@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::checks::{Ran, tail};
 use super::git::short;
-use super::record::Board;
+use super::record::{Board, Held};
 use crate::taskcli::CliBoard;
 
 /// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
@@ -166,6 +166,9 @@ pub(crate) struct Night<'a> {
     /// Whether the run checked a candidate (a run or a release), so its getting through closes the
     /// red [`RUN`]; a `--refresh` checks none, and answers for its refresh steps alone.
     pub(crate) whole: bool,
+    /// The release candidate's tip, when the run's reds are a release candidate's
+    /// ([`super::candidate`]): their tasks say how a fix of one starts, merges and lands.
+    pub(crate) candidate: Option<&'a str>,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -201,6 +204,12 @@ fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
         return Ok((old, true));
     }
     first(board, SERIES, key)
+}
+
+/// The open red task of `key`, as a run would tell it ([`generation`]): none when it has none.
+pub(crate) fn open(board: &dyn Reds, key: &str) -> Result<Option<String>, String> {
+    let (slug, open) = generation(board, key)?;
+    Ok(open.then_some(slug))
 }
 
 /// The first of `key`'s generations in `series` that is open (true) or not on the board (false).
@@ -416,9 +425,52 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
+/// What a red task of the release candidate held at `tip` says of its fix ([`super::candidate`]):
+/// where its branch starts and what it merges, when it commits the client, how its approve and its
+/// land move the candidate, and what reruns it.
+fn held(tip: &str) -> String {
+    let branch = super::candidate::BRANCH;
+    format!(
+        "The release candidate: this run holds {tip} as the commit to release, the local branch \
+         `{branch}` (never pushed), so the release is that commit and its reds' fixes alone, however \
+         fast main moves. Fix it there, not on main: start this task's branch, named for its slug, \
+         at `{branch}`, never at main; merge `{branch}` again before review, as it moves when \
+         another red's fix lands; and never merge main before the approve. When the fix changes \
+         what the client is built from, commit the distribution its own sources make (`just \
+         client-update`): the one kind of branch that commits it, as no regenerator builds the \
+         candidate, and the land keeps main's side of it. Its approve names the full tip it read. It \
+         lands by `just land` like any task, and its land advances the candidate to the newest \
+         approved commit of this branch that holds the candidate and the fix alone. A land that \
+         conflicts comes back to its executor: merge main then and ask for a fresh approve, and the \
+         candidate takes the commit approved before that merge. A fix that merges main before any \
+         approve leaves the candidate nothing to take, and drops it. A fix made outside this \
+         repository answers this red by the task cancelled, saying where. Once every red of the \
+         candidate is answered, its tip is rerun (the next landing starts it, or `just release \
+         --rerun`): each step that was red, did not run or whose inputs a fix changed, and the \
+         conciliation.\n\n",
+        tip = short(tip)
+    )
+}
+
+/// What closes a red task of the check `name`: a run green in it, and, for a red of the release
+/// candidate, its own land.
+fn closed_by(name: &str, night: &Night<'_>) -> String {
+    if night.candidate.is_some() {
+        return format!(
+            "Its own land closes this task and answers it for the release candidate; a rerun of \
+             the candidate green in `{name}` closes it too."
+        );
+    }
+    format!(
+        "The next run of `just release` closes this task once `{name}` is green; a fix released out \
+         of cycle (`just release --commit COMMIT`) closes it too."
+    )
+}
+
 /// A red task's body: what is red, how it ended, its log, the load it ended under, the commands
-/// that rerun its failures alone, the commits since the last green run, who fixes it, how its fix
-/// is approved, the open red `beside` it ([`beside`]) and what closes it.
+/// that rerun its failures alone, the commits since the last green run, how a release candidate's
+/// red is fixed ([`held`]), who fixes it, how its fix is approved, the open red `beside` it
+/// ([`beside`]) and what closes it.
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
         "The Symphony release run is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
@@ -428,11 +480,13 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {tail}\n\n\
          {alone}\n\n\
          {since}\n\n\
+         {held}\
          Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
          {beside}\
-         The next run of `just release` closes this task once `{name}` is green; a fix released \
-         out of cycle (`just release --commit COMMIT`) closes it too.\n\n\
+         {closed}\n\n\
          key: {key}\ncheck: {name}",
+        held = night.candidate.map(held).unwrap_or_default(),
+        closed = closed_by(&ran.name, night),
         beside = beside.unwrap_or_default(),
         name = ran.name,
         commit = short(night.commit),
@@ -449,10 +503,19 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     )
 }
 
-/// The line a red task that is still open gets on a later red run.
+/// The line a red task that is still open gets on a later red run: for a release candidate's, its
+/// tip, which its fix starts from or merges.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
+    let held = night.candidate.map_or_else(String::new, |tip| {
+        format!(
+            "\n\nThe release candidate is {}, the branch `{}`: a fix of this red starts from it, or \
+             merges it before review, and never merges main before the approve.",
+            short(tip),
+            super::candidate::BRANCH
+        )
+    });
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}{held}",
         short(night.commit),
         night.id,
         night.when,
@@ -589,11 +652,62 @@ struct Red {
 /// What a run does to one key's task.
 enum Act {
     /// File the red `slug`; its later line goes on it instead in case another run filed it.
-    File { slug: String, red: Red },
+    File {
+        slug: String,
+        red: Red,
+        of: Option<Of>,
+    },
     /// Add a line to the open red `slug`.
-    Say { slug: String, text: String },
+    Say {
+        slug: String,
+        text: String,
+        of: Option<Of>,
+    },
     /// Close the open red `slug`, saying why.
     Close { slug: String, why: String },
+}
+
+/// The red check or step an act files or tells: its key and name.
+struct Of {
+    key: String,
+    name: String,
+}
+
+impl Of {
+    /// The red [`Held`] on the task `slug`.
+    fn on(&self, slug: &str) -> Held {
+        Held {
+            key: self.key.clone(),
+            name: self.name.clone(),
+            slug: slug.to_string(),
+        }
+    }
+}
+
+/// `act` as the red of the check or step `ran` when it files or tells one, so the run knows each
+/// red's task ([`Board::reds`]).
+fn as_red(act: Result<Option<Act>, String>, ran: &Ran) -> Result<Option<Act>, String> {
+    let of = || {
+        Some(Of {
+            key: key(&ran.name),
+            name: ran.name.clone(),
+        })
+    };
+    act.map(|act| {
+        act.map(|act| match act {
+            Act::File { slug, red, .. } => Act::File {
+                slug,
+                red,
+                of: of(),
+            },
+            Act::Say { slug, text, .. } => Act::Say {
+                slug,
+                text,
+                of: of(),
+            },
+            close @ Act::Close { .. } => close,
+        })
+    })
 }
 
 /// The act on the key `key`'s task: red with what it files, else green with the name of what
@@ -621,8 +735,13 @@ fn act(
         (Some(red), true) => Some(Act::Say {
             slug,
             text: red.again,
+            of: None,
         }),
-        (Some(red), false) => Some(Act::File { slug, red }),
+        (Some(red), false) => Some(Act::File {
+            slug,
+            red,
+            of: None,
+        }),
     })
 }
 
@@ -699,7 +818,10 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
     for step in &ran.steps {
         let near = open.as_deref().map(|slug| beside(slug, &ran.name));
         let red = red_of(step, night, near.as_deref());
-        let act = act(board, night, &key(&step.name), red, &passed(step));
+        let act = as_red(
+            act(board, night, &key(&step.name), red, &passed(step)),
+            step,
+        );
         if let Ok(Some(Act::File { slug, .. } | Act::Say { slug, .. })) = &act {
             held.push(format!("`{}` ({}) in {slug}", step.name, step.ended()));
         }
@@ -707,11 +829,15 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
     }
     if told {
         let red = red_of(ran, night, None);
-        found.push(act(board, night, &key(&ran.name), red, &passed(ran)));
+        found.push(as_red(
+            act(board, night, &key(&ran.name), red, &passed(ran)),
+            ran,
+        ));
     } else if let Some(slug) = open {
         found.push(Ok(Some(Act::Say {
             slug,
             text: in_steps(ran, night, &held),
+            of: None,
         })));
     }
     found
@@ -784,11 +910,12 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             Act::Close { slug, why } => board
                 .close(slug, &handle, why)
                 .map(|()| done.closed.push(slug.clone())),
-            Act::Say { slug, text } => board
-                .say(slug, &handle, text)
-                .map(|()| done.updated.push(slug.clone())),
-            Act::File { slug, red } => {
-                match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
+            Act::Say { slug, text, of } => board.say(slug, &handle, text).map(|()| {
+                done.updated.push(slug.clone());
+                done.reds.extend(of.as_ref().map(|of| of.on(slug)));
+            }),
+            Act::File { slug, red, of } => {
+                let wrote = match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
                     Ok(()) => {
                         done.filed.push(slug.clone());
                         Ok(())
@@ -800,7 +927,11 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                             .map(|()| done.updated.push(slug.clone())),
                         _ => Err(error),
                     },
+                };
+                if wrote.is_ok() {
+                    done.reds.extend(of.as_ref().map(|of| of.on(slug)));
                 }
+                wrote
             }
         };
         if let Err(error) = wrote {
@@ -958,6 +1089,7 @@ mod tests {
             cleared: &[],
             closes: &|_| true,
             whole: true,
+            candidate: None,
         }
     }
 
@@ -1483,6 +1615,74 @@ mod tests {
             ),
             "{thread:?}"
         );
+    }
+
+    #[test]
+    fn a_release_candidates_red_says_how_its_fix_starts_merges_and_lands() {
+        let board = Fake::with(&[("tests/release-red-lint", "in_progress")]);
+        let mut held = night(&[]);
+        held.candidate = Some("cafe0123456789abcdef");
+        let checks = [ran("verify", 101), ran("lint", 1), ran("docs", 0)];
+        let done = report(&board, &held, &checks);
+        assert_eq!(done.filed, ["tests/release-red-verify"]);
+        assert_eq!(done.updated, ["tests/release-red-lint"]);
+        let red = |key: &str| Held {
+            key: key.into(),
+            name: key.into(),
+            slug: format!("tests/release-red-{key}"),
+        };
+        assert_eq!(
+            done.reds,
+            vec![red("verify"), red("lint")],
+            "each red's task"
+        );
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        for said in [
+            "The release candidate: this run holds cafe01234567 as the commit to release, the local \
+             branch `release-candidate` (never pushed), so the release is that commit and its \
+             reds' fixes alone",
+            "start this task's branch, named for its slug, at `release-candidate`, never at main; \
+             merge `release-candidate` again before review",
+            "never merge main before the approve",
+            "commit the distribution its own sources make (`just client-update`)",
+            "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
+             approve, and the candidate takes the commit approved before that merge.",
+            "A fix made outside this repository answers this red by the task cancelled, saying \
+             where.",
+            "(the next landing starts it, or `just release --rerun`)",
+            "Its own land closes this task and answers it for the release candidate; a rerun of \
+             the candidate green in `verify` closes it too.",
+        ] {
+            assert!(filed.contains(said), "{said}\n\n{filed}");
+        }
+        assert!(
+            !filed.contains("The next run of `just release` closes"),
+            "{filed}"
+        );
+        let again = &board.thread("tests/release-red-lint")[0];
+        assert!(
+            again.ends_with(
+                "\n\nThe release candidate is cafe01234567, the branch `release-candidate`: a fix \
+                 of this red starts from it, or merges it before review, and never merges main \
+                 before the approve."
+            ),
+            "{again}"
+        );
+
+        // A red run that holds no candidate says none of it.
+        let board = Fake::default();
+        let done = report(&board, &night(&[]), &checks);
+        assert_eq!(done.reds.len(), 2);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        assert!(!filed.contains("release candidate"), "{filed}");
+        assert!(
+            filed.contains(
+                "The next run of `just release` closes this task once `verify` is green; a fix \
+                 released out of cycle (`just release --commit COMMIT`) closes it too."
+            ),
+            "{filed}"
+        );
+        assert!(!board.thread("tests/release-red-lint")[0].contains("candidate"));
     }
 
     #[test]
