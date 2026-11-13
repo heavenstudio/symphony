@@ -90,34 +90,46 @@ measurement before and after.
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
-  document renders, and every recipe this repository's documents name is one a project has,
+  document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
   last edit: a run before an edit is evidence of the text before it. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
-  the shipped skills' tests (`just test-rs -p symphony --lib init`); for a shipped skill or a
-  binary's string that names a recipe, the test that judges those
-  (`just test-rs -p symphony --test hooks named_recipes`), at that tip too. It runs no other test.
+  the shipped skills' tests (`just test-rs -p symphony --lib init`). It runs no other test.
 
 ### The recipes a text names
 
-A `just NAME` in what the Symphony says is a recipe `symphony init` installs
-(`crates/symphony/shipped/symphony.just`), the consumer's landing, named as the project's own, or,
-in a text about this repository, a recipe of its own justfile that the rule lists for that file
-(`OWN` in `crates/symphony/src/docs_audit/recipes.rs`): a freshly initialised project has no other.
-One rule, in that file, judges it in two places:
+A `just NAME` in what this repository says is a recipe `symphony init` installs
+(`crates/symphony/shipped/symphony.just`), the consumer's landing, named as the project's own, a
+word of prose, in one of its guides a recipe of its justfile, or, in a text about this repository,
+one of its own recipes or one filed to be made that the lists name for that file: a freshly
+initialised project has no other. The lists are `tools/named-recipes.txt`, this repository's data,
+a line to a list (`consumers NAME...`, `prose WORD...`, `own FILE NAME...`, `filed FILE NAME
+TASK`), which one reader (`crates/symphony/src/docs_audit/recipes.rs`) reads from the checkout, so
+no binary carries them. The word after `just` is read past the options that leave a recipe to run
+(a justfile or folder named, the quiet, verbose, dry-run and yes switches), across one line break
+but never a blank line. One rule, two places:
 
-- the docs audit judges this repository's documents, in the Symphony's own checkout alone (the
-  one that holds `crates/symphony/shipped/symphony.just`): its Markdown under `docs/`, but the
-  decision register (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are
-  records. Each name it refuses is an error naming its file and line, and so is an entry of the
-  rule's lists for a document that no longer names it. A consuming project's documents name its
-  own recipes, and its audit judges none of them;
-- the hooks test (`named_recipes`) judges the shipped skills, rules and recipes and the strings
-  the binaries print.
+- the docs audit, in the Symphony's own checkout alone (its project file names it `symphony`, and
+  it holds the lists), judges its documents, the Markdown under `docs/` but the decision register
+  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records; and, of the files
+  git's index holds (so a new one once added), every file of what it ships, under
+  `crates/symphony/shipped/` (the skills, the Codex rules and the recipes), and its guides, each
+  `AGENTS.md`, `README.md` and `RULES.md` at the root or in a package under `crates/` or `apps/`.
+  A consuming project's texts name its own recipes, and its audit judges none of them, the
+  Symphony's crate vendored in it or not;
+- the hooks test (`named_recipes`) judges what the Symphony ships too, and the strings the
+  binaries print, which no docs change touches: a change to such a string runs it
+  (`just test-rs -p symphony --test hooks named_recipes`).
 
-So a document that names one is red at its own tip, and should it land, the regenerator's run of
-the audit on main after the land's round files it within minutes
+Each name either refuses is an error naming its file and line. Each entry of the lists is kept
+current, still named in its file and a filed one beside its task (`[[task:SLUG]]` on the line that
+names it), by the one place that judges its file: the audit for the texts above, the test for every
+other. Neither judges the records, the tests, `tools/`, or the installed copies of the shipped
+skills under `.agents/skills/`, which `symphony init` keeps the same as what it ships.
+
+So a text that names one is red at its own tip, and should it land, the regenerator's run of the
+audit on main after the land's round files it within minutes
 ([checks with no reviewer](#checks-with-no-reviewer)), not the next release.
 
 ## Picking the focused set

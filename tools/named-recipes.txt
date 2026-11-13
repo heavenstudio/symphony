@@ -1,0 +1,37 @@
+# The names this repository's texts may write after `just` besides the recipes `symphony init`
+# installs (crates/symphony/shipped/symphony.just) and, in its guides, the recipes of its own
+# justfile. One reader (crates/symphony/src/docs_audit/recipes.rs) judges by it in two places: the
+# docs audit, in this checkout alone, its documents, what it ships and its guides; and the hooks test
+# (crates/symphony/tests/hooks/named_recipes.rs) what it ships and the strings the binaries print.
+# docs/CHECKS.md, "The recipes a text names", says which texts each judges and which entries each
+# keeps current. A change here changes a check.
+#
+# A line is a list's name and its words; `#` starts a comment:
+#   consumers NAME...      the consumer's recipes, which a text names as the project's where it has them
+#   prose WORD...          words that follow "just" in prose, never a recipe
+#   own FILE NAME...       this repository's own recipes, which FILE (from the root) names
+#   filed FILE NAME TASK   a recipe this repository's justfile does not have yet, which FILE names in
+#                          code beside the task filed to make it, `[[task:TASK]]`, on the same line
+
+consumers land-approve land-request land-stamps merge-feature merge-risk
+
+prose a above after as became because before done finished in launched like now one past
+prose published pushed ran so started successful the this to when written
+
+# Text of this repository's own development: a source kit's client build, which no project runs,
+# the checks a task here proves its work with, its size budgets, its measurements, and its releases,
+# which the nightly cuts and no project runs, with the test targets a red night's task reruns alone.
+own apps/symphony-server/src/api/client.rs symphony-ui-dist
+own apps/symphony-server/src/development.rs symphony-ui-dev
+own crates/symphony/src/cli/commands/size_budget.rs size-check
+own crates/symphony/src/nightly.rs nightly verify
+own crates/symphony/src/nightly/board.rs nightly test-rs
+own crates/symphony/src/nightly/cadence.rs nightly
+own crates/symphony/src/nightly/record.rs nightly
+own crates/symphony/src/nightly/refresh.rs nightly
+own crates/symphony/src/nightly/schedule.rs nightly
+own docs/CHECKS.md client-check client-update lint-rs nightly size-check test-rs verify
+own docs/PLUGIN_PROTOCOL.md test-rs
+own docs/RELEASES.md nightly test-rs verify
+
+filed docs/CHECKS.md check-fast tools/check-fast

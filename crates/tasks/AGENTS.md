@@ -655,7 +655,7 @@ another terminal since is never closed for this one's end, and a restore under w
 terminal until the next sweep. It returns every terminal of the board it leaves open with its reason (`Sweep::kept`), and
 `reap.json` keeps the reason last said of each idle one, so `reap` writes
 `· idle sweep keeps pane T of H (WHY)` to its stderr, the Symphony's log, once per change of
-reason; `reap --dry-run` prints `keeps pane …` for every one. `clean` (`just clean`) runs
+reason; `reap --dry-run` prints `keeps pane …` for every one. `clean` (`just tasks clean`) runs
 cleanup for its caller (`--as`, `cleanup_as`) and then one sweep, under their own rules, and
 prints each terminal it closed (`closed pane T of H (WHY); restore: …`) and why each one it left
 open stays (`kept pane T of H (WHY)`); with `--dry-run`, what it would close. Only a terminal

@@ -1,139 +1,73 @@
-//! The one rule of the recipes a text may tell a project to run (`just NAME`): a recipe
-//! `symphony init` installs (`shipped/symphony.just`), the consumer's landing, named as the
-//! project's own ([`CONSUMERS`]), a word of prose ([`PROSE`]), or, in a text about this repository,
-//! one of its own justfile's recipes where [`OWN`] lists it for that file, or one filed to be made
-//! ([`FILED`]). The docs audit judges this repository's documents by it ([`Rule::in_documents`]),
-//! and the hooks test (`crates/symphony/tests/hooks/named_recipes.rs`) the shipped skills, rules and
-//! recipes and the strings the binaries print.
+//! The reader of the rule of the recipes a text may tell a project to run (`just NAME`): a recipe
+//! `symphony init` installs, a name the lists allow anywhere (the consumer's landing, a word of
+//! prose), in one of this repository's guides a recipe of its justfile, or, in a text about this
+//! repository, one of its own recipes or one filed to be made where the lists name it for that
+//! file. The lists are this repository's data, [`LISTS`], read from its checkout, never carried in
+//! the binary.
 //!
-//! The audit judges it only in the Symphony's own checkout ([`symphony_checkout`]: the one holding
-//! the recipes init installs), and there only the documents [`judged`] names: the Markdown under
-//! `docs/`, but the decision register (`docs/DECISIONS.md`), `docs/analysis/` and
-//! `docs/history/`, which are records. A consuming project's documents name its own recipes, and its
-//! audit judges none of them.
+//! One source, two places: the docs audit holds it as a module of its own and judges, in the
+//! Symphony's own checkout ([`PROJECT`], holding [`LISTS`]), what [`audited`] names; the hooks test
+//! (`crates/symphony/tests/hooks/named_recipes.rs`) takes this file by its path and judges what the
+//! Symphony ships and the strings its binaries print. Each entry of the lists is kept current by
+//! the one place that judges its file ([`Rule::errors`]). It names nothing else of the crate's, so
+//! either can hold it.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
 
-#[cfg(test)]
-#[path = "recipes_tests.rs"]
-mod tests;
+/// The project whose checkout holds the lists.
+pub const PROJECT: &str = "symphony";
 
-/// The consumer's recipes, which the text names as the project's where it has them.
-pub const CONSUMERS: [&str; 5] = [
-    "land-approve",
-    "land-request",
-    "land-stamps",
-    "merge-feature",
-    "merge-risk",
-];
+/// The lists, from the root of the Symphony's own checkout: a line is a list's name and its words,
+/// and `#` starts a comment ([`Rule::read`]).
+pub const LISTS: &str = "tools/named-recipes.txt";
 
-/// Words that follow "just" in prose, never a recipe.
-pub const PROSE: [&str; 21] = [
-    "a",
-    "above",
-    "after",
-    "as",
-    "became",
-    "before",
-    "done",
-    "finished",
-    "launched",
-    "like",
-    "now",
-    "one",
-    "past",
-    "published",
-    "pushed",
-    "ran",
-    "started",
-    "successful",
-    "the",
-    "this",
-    "written",
-];
-
-/// Text of this repository's own development, which names recipes of its own justfile: a source
-/// kit's client build, which no project runs, the checks a task here proves its work with, its
-/// size budgets, its measurements, and its releases, which the nightly cuts and no project runs,
-/// with the test targets a red night's task reruns alone. Each is the file from the root and the
-/// recipe it names.
-pub const OWN: [(&str, &str); 22] = [
-    ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
-    ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
-    (
-        "crates/symphony/src/cli/commands/size_budget.rs",
-        "size-check",
-    ),
-    ("crates/symphony/src/nightly.rs", "nightly"),
-    ("crates/symphony/src/nightly.rs", "verify"),
-    ("crates/symphony/src/nightly/board.rs", "nightly"),
-    ("crates/symphony/src/nightly/board.rs", "test-rs"),
-    ("crates/symphony/src/nightly/cadence.rs", "nightly"),
-    ("crates/symphony/src/nightly/record.rs", "nightly"),
-    ("crates/symphony/src/nightly/refresh.rs", "nightly"),
-    ("crates/symphony/src/nightly/schedule.rs", "nightly"),
-    ("docs/CHECKS.md", "client-check"),
-    ("docs/CHECKS.md", "client-update"),
-    ("docs/CHECKS.md", "lint-rs"),
-    ("docs/CHECKS.md", "nightly"),
-    ("docs/CHECKS.md", "size-check"),
-    ("docs/CHECKS.md", "test-rs"),
-    ("docs/CHECKS.md", "verify"),
-    ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
-    ("docs/RELEASES.md", "nightly"),
-    ("docs/RELEASES.md", "test-rs"),
-    ("docs/RELEASES.md", "verify"),
-];
-
-/// Recipes this repository's justfile does not have yet, each named where a task is filed to make
-/// it: the file, the recipe and the task, which the file names as `[[task:SLUG]]` beside it.
-pub const FILED: [(&str, &str, &str); 1] = [("docs/CHECKS.md", "check-fast", "tools/check-fast")];
-
-/// Where the lists are, for a message that says to change one.
-const LISTS: &str = "crates/symphony/src/docs_audit/recipes.rs";
+/// What the Symphony ships, from the root of its checkout: the skills, the Codex rules and the
+/// recipes init installs ([`INSTALLED`]).
+pub const SHIPPED: &str = "crates/symphony/shipped/";
 
 /// The recipes `symphony init` installs, from the root of the Symphony's own checkout.
-pub const SHIPPED: &str = "crates/symphony/shipped/symphony.just";
+pub const INSTALLED: &str = "crates/symphony/shipped/symphony.just";
 
 /// What to do about a name the rule refuses.
-pub const ADVICE: &str = "ship it in crates/symphony/shipped/symphony.just, name the command \
-     another way, or say it is the project's own (CONSUMERS) or, in a text about this repository, \
-     its own justfile's (OWN, in crates/symphony/src/docs_audit/recipes.rs); a word of prose after \
-     \"just\" goes in PROSE";
+pub const ADVICE: &str = "ship it in crates/symphony/shipped/symphony.just, name the command another way, or list it in \
+     tools/named-recipes.txt";
 
 /// The records under `docs/`, which say what was decided or found rather than how things are now:
 /// a file, or a folder ending in `/`.
 const RECORDS: [&str; 3] = ["docs/DECISIONS.md", "docs/analysis/", "docs/history/"];
 
+/// What a guide is called: this repository's own guidance, at its root or in a package.
+const GUIDES: [&str; 3] = ["AGENTS.md", "README.md", "RULES.md"];
+
 static HEAD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([a-z][a-z0-9_-]*)(?:\s[^:]*)?:(?:[^=]|$)").unwrap());
-static COMMAND: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[^A-Za-z0-9_-])just\s+([a-z][a-z0-9_-]*)").unwrap());
+
+/// `just`, the options that leave a recipe to run (a justfile or folder named, quiet, verbose, a
+/// dry run), and the recipe's name. The space between words holds at most one line break: a name
+/// after a blank line is another paragraph's word.
+static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
+    let space = r"(?:[ \t]+(?:\r?\n[ \t]*)?|\r?\n[ \t]*)";
+    Regex::new(&format!(
+        r"(?:^|[^A-Za-z0-9_-])just(?:{space}(?:(?:-f|--justfile|-d|--working-directory)(?:{space}|=)[^\s`]+|-[nqv]+|--(?:dry-run|quiet|verbose|yes)))*{space}([a-z][a-z0-9_-]*)"
+    ))
+    .unwrap()
+});
 
 /// The recipes a justfile's text defines, private ones (`_NAME`) and settings aside.
-pub fn recipes(text: &str) -> BTreeSet<String> {
-    text.lines()
-        .filter_map(|line| HEAD.captures(line))
-        .map(|found| found[1].to_string())
-        .collect()
+pub fn recipes(text: &str) -> Vec<&str> {
+    let head = |line| Some(HEAD.captures(line)?.get(1)?.as_str());
+    text.lines().filter_map(head).collect()
 }
 
 /// Each `just NAME` in `text`, with its line counted from `first`.
-pub fn named_in(text: &str, first: usize) -> Vec<(usize, String)> {
-    COMMAND
-        .captures_iter(text)
-        .map(|found| {
-            let at = found.get(1).unwrap().start();
-            (
-                first + text[..at].matches('\n').count(),
-                found[1].to_string(),
-            )
-        })
-        .collect()
+pub fn named_in(text: &str, first: usize) -> impl Iterator<Item = (usize, &str)> {
+    COMMAND.captures_iter(text).filter_map(move |found| {
+        let name = found.get(1)?;
+        let line = first + text[..name.start()].bytes().filter(|b| *b == b'\n').count();
+        Some((line, name.as_str()))
+    })
 }
 
 /// What a name after `just` is, in the file that names it.
@@ -141,129 +75,135 @@ pub fn named_in(text: &str, first: usize) -> Vec<(usize, String)> {
 pub enum Standing {
     /// A recipe `symphony init` installs.
     Installed,
-    /// The consumer's, named as the project's own.
-    Consumer,
-    /// A word of prose.
-    Prose,
-    /// This repository's own, in a file the rule's own list names it for (its index there).
-    Own(usize),
-    /// Filed to be made, in a file the rule's filed list names it for (its index there).
-    Filed(usize),
+    /// A name the lists allow anywhere: the consumer's own, or a word of prose.
+    Listed,
+    /// A recipe of this repository's justfile, in one of its guides ([`guide`]).
+    Justfile,
+    /// This repository's own, or filed to be made, in the file an entry names it for (its index in
+    /// [`Rule::entries`]).
+    Entry(usize),
     /// None of those: a recipe a freshly initialised project lacks.
     Unknown,
 }
 
-/// The lists a name after `just` is judged by.
-pub struct Rule {
-    pub installed: BTreeSet<String>,
-    pub consumers: &'static [&'static str],
-    pub prose: &'static [&'static str],
-    pub own: &'static [(&'static str, &'static str)],
-    pub filed: &'static [(&'static str, &'static str, &'static str)],
+/// A recipe of this repository's that a file names: its own, or filed to be made by `task`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Entry<'a> {
+    pub file: &'a str,
+    pub name: &'a str,
+    pub task: Option<&'a str>,
 }
 
-/// The Symphony's rule: the recipes this build installs and the lists above.
-pub static RULE: LazyLock<Rule> = LazyLock::new(|| Rule {
-    installed: recipes(crate::init::SHIPPED_RECIPES),
-    consumers: &CONSUMERS,
-    prose: &PROSE,
-    own: &OWN,
-    filed: &FILED,
-});
-
-/// The recipes `symphony init` installs.
-pub fn installed() -> &'static BTreeSet<String> {
-    &RULE.installed
+/// What a name after `just` is judged by, borrowed from the texts it was read from.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Rule<'a> {
+    pub installed: Vec<&'a str>,
+    pub justfile: Vec<&'a str>,
+    pub listed: Vec<&'a str>,
+    pub entries: Vec<Entry<'a>>,
 }
 
-impl Rule {
+impl<'a> Rule<'a> {
+    /// The rule of `lists` (the text of [`LISTS`]), with the recipes `installed` (the text of
+    /// [`INSTALLED`]) and `justfile` (this repository's justfile) define; the first line of `lists`
+    /// that does not read as a list, naming [`LISTS`] and that line, if any. A line is
+    /// `consumers NAME...` or `prose WORD...` (allowed anywhere), `own FILE NAME...` or
+    /// `filed FILE NAME TASK`.
+    pub fn read(lists: &'a str, installed: &'a str, justfile: &'a str) -> Result<Self, String> {
+        let mut rule = Rule {
+            installed: recipes(installed),
+            justfile: recipes(justfile),
+            ..Rule::default()
+        };
+        for (at, line) in lists.lines().enumerate() {
+            let line = line.split_once('#').map_or(line, |(line, _)| line);
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words[..] {
+                [] => {}
+                ["consumers" | "prose", ref names @ ..] => rule.listed.extend(names),
+                ["own", file, ref names @ ..] if !names.is_empty() => {
+                    let entry = |&name| Entry {
+                        file,
+                        name,
+                        task: None,
+                    };
+                    rule.entries.extend(names.iter().map(entry));
+                }
+                ["filed", file, name, task] => rule.entries.push(Entry {
+                    file,
+                    name,
+                    task: Some(task),
+                }),
+                _ => {
+                    return Err(format!(
+                        "{LISTS}:{}: not `consumers NAME...`, `prose WORD...`, `own FILE NAME...` \
+                         or `filed FILE NAME TASK`",
+                        at + 1
+                    ));
+                }
+            }
+        }
+        Ok(rule)
+    }
+
     /// What `name`, after `just` in `file` (its path from the root), is.
     pub fn standing(&self, file: &str, name: &str) -> Standing {
-        if self.installed.contains(name) {
+        let entry = |entry: &Entry| entry.file == file && entry.name == name;
+        if self.installed.contains(&name) {
             Standing::Installed
-        } else if self.consumers.contains(&name) {
-            Standing::Consumer
-        } else if self.prose.contains(&name) {
-            Standing::Prose
-        } else if let Some(at) = self
-            .own
-            .iter()
-            .position(|(at, own)| *at == file && *own == name)
-        {
-            Standing::Own(at)
-        } else if let Some(at) = self
-            .filed
-            .iter()
-            .position(|(at, filed, _)| *at == file && *filed == name)
-        {
-            Standing::Filed(at)
+        } else if self.listed.contains(&name) {
+            Standing::Listed
+        } else if guide(file) && self.justfile.contains(&name) {
+            Standing::Justfile
+        } else if let Some(at) = self.entries.iter().position(entry) {
+            Standing::Entry(at)
         } else {
             Standing::Unknown
         }
     }
 
-    /// The docs audit's errors for `documents`, each its file from the root and its text, of the
-    /// Symphony's own checkout, those [`judged`] says alone: each `just NAME` none of the lists
-    /// allows, by its file and line; each entry of the own and filed lists for a judged document
-    /// that the document no longer names (or that is not among them); and each filed recipe named on
-    /// no line beside the task filed to make it.
-    pub fn in_documents<'a>(
-        &self,
-        documents: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> Vec<String> {
+    /// The errors of `texts`, each a file from the root, the line its text starts on and the text:
+    /// each `just NAME` the rule allows nowhere; then, of the entries whose file `owns` says this
+    /// place judges, each that no text of its file names, and each filed recipe its file names on no
+    /// line beside the task filed to make it.
+    pub fn errors(&self, texts: &[(String, usize, String)], owns: fn(&str) -> bool) -> Vec<String> {
         let mut errors = Vec::new();
-        let mut own = HashSet::new();
-        let mut filed: HashMap<usize, usize> = HashMap::new();
-        let mut texts = HashMap::new();
-        for (file, text) in documents {
-            if !judged(file) {
-                continue;
-            }
-            texts.insert(file, text);
-            for (line, name) in named_in(text, 1) {
-                match self.standing(file, &name) {
+        let mut first = vec![None; self.entries.len()];
+        for (file, start, text) in texts {
+            for (line, name) in named_in(text, *start) {
+                match self.standing(file, name) {
                     Standing::Unknown => errors.push(format!(
                         "{file}:{line}: names `just {name}`, a recipe a freshly initialised project \
                          lacks: {ADVICE}"
                     )),
-                    Standing::Own(at) => {
-                        own.insert(at);
+                    Standing::Entry(at) => {
+                        first[at].get_or_insert(line);
                     }
-                    Standing::Filed(at) => {
-                        filed.entry(at).or_insert(line);
-                    }
-                    Standing::Installed | Standing::Consumer | Standing::Prose => {}
+                    _ => {}
                 }
             }
         }
-        for (at, (file, name)) in self.own.iter().enumerate() {
-            if judged(file) && !own.contains(&at) {
-                errors.push(format!(
-                    "{file}: names no `just {name}`, which OWN lists as its own: take that entry \
-                     out of OWN, in {LISTS}"
-                ));
-            }
-        }
-        for (at, (file, name, task)) in self.filed.iter().enumerate() {
-            if !judged(file) {
+        for (Entry { file, name, task }, line) in self.entries.iter().zip(first) {
+            if !owns(file) {
                 continue;
             }
-            let Some(line) = filed.get(&at) else {
+            let Some(line) = line else {
                 errors.push(format!(
-                    "{file}: names no `just {name}`, which FILED lists as filed to be made: take \
-                     that entry out of FILED, in {LISTS}"
+                    "{file}: names no `just {name}`, which {LISTS} lists for it: take that entry out"
                 ));
                 continue;
             };
+            let Some(task) = task else { continue };
             let (command, filing) = (format!("`just {name}`"), format!("[[task:{task}]]"));
-            let beside = texts[file]
-                .lines()
-                .any(|text| text.contains(&command) && text.contains(&filing));
+            let beside = texts.iter().any(|(at, _, text)| {
+                at == file
+                    && (text.lines()).any(|line| line.contains(&command) && line.contains(&filing))
+            });
             if !beside {
                 errors.push(format!(
-                    "{file}:{line}: names `just {name}`, which this repository's justfile does not \
+                    "{file}:{line}: names {command}, which this repository's justfile does not \
                      have yet, on no line beside the task filed to make it: write {filing} on the \
-                     line that names {command}"
+                     line that names it"
                 ));
             }
         }
@@ -271,23 +211,36 @@ impl Rule {
     }
 }
 
-/// Whether the docs audit judges the recipes the document at `file` (its path from the root of the
-/// Symphony's own checkout) names: Markdown under `docs/`, but the records (`RECORDS`).
-pub fn judged(file: &str) -> bool {
-    file.starts_with("docs/")
-        && file.ends_with(".md")
-        && !RECORDS.iter().any(|record| {
-            if record.ends_with('/') {
-                file.starts_with(record)
-            } else {
-                file == *record
-            }
-        })
+/// Whether `file`, a path from the root of the Symphony's own checkout, is one of its guides: an
+/// `AGENTS.md`, `README.md` or `RULES.md` at its root or in a package under `crates/` or `apps/`,
+/// what it ships aside. A guide may name any recipe of this repository's justfile.
+pub fn guide(file: &str) -> bool {
+    let (folder, name) = file.rsplit_once('/').unwrap_or(("", file));
+    GUIDES.contains(&name)
+        && (folder.is_empty() || folder.starts_with("crates/") || folder.starts_with("apps/"))
+        && !file.starts_with(SHIPPED)
 }
 
-/// Whether the checkout at `root` is the Symphony's own, whose documents' recipes the docs audit
-/// judges: it holds the recipes `symphony init` installs ([`SHIPPED`]). A consuming project takes
-/// the Symphony through a pinned dependency and holds no such file.
-pub fn symphony_checkout(root: &Path) -> bool {
-    root.join(SHIPPED).is_file()
+/// Whether the docs audit judges the names in `file`, a path from the root of the Symphony's own
+/// checkout, beside the documents it walks: a file of what the Symphony ships ([`SHIPPED`]) or a
+/// guide ([`guide`]).
+pub fn beside_documents(file: &str) -> bool {
+    file.starts_with(SHIPPED) || guide(file)
+}
+
+/// Whether the docs audit judges the names in `file`, a path from the root of the Symphony's own
+/// checkout, and keeps the lists' entries for it current: Markdown under `docs/` but the records
+/// (`RECORDS`), and what [`beside_documents`] names. The hooks test keeps the entries for every
+/// other file current.
+pub fn audited(file: &str) -> bool {
+    let record = |record: &&str| {
+        if record.ends_with('/') {
+            file.starts_with(record)
+        } else {
+            file == *record
+        }
+    };
+    let document =
+        file.starts_with("docs/") && file.ends_with(".md") && !RECORDS.iter().any(record);
+    document || beside_documents(file)
 }
