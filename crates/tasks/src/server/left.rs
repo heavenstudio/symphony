@@ -23,10 +23,11 @@
 //! starts the board's own server under the board's memtable, with nothing left to replay.
 //!
 //! The record is removed only once nothing it may name runs: the server it names has ended, or it
-//! names none, and a listing of every process that ran shows no server on the data. The server it
-//! names has ended once no process has its pid, or once the process that has it started at another
-//! second than the one the record wrote down ([`Home::process_start`]): a pid since reused, after a
-//! reboot in the middle of a replay say, is not taken for it. A listing that fails, and a named
+//! names none, and every listing of every process for a second ([`GONE_FOR`]) shows no server on
+//! the data, past a process seen between two programs. The server it names has ended once no
+//! process has its pid, or once the process that has it started at another time than the one the
+//! record wrote down ([`Home::process_start`]): a pid since reused, after a reboot in the middle of
+//! a replay say, is not taken for it. A listing that fails, and a named
 //! server that runs while neither it nor any other server is on the data (a process between
 //! programs as it starts), cannot be told from a replay that runs: the caller is refused, nothing
 //! adopted, started or removed, and the next command asks again. A record that does not read is
@@ -58,6 +59,12 @@ const SETTLES: usize = 3;
 /// How long what runs on the data is asked again while it cannot be told, before the caller is
 /// refused: long past a `ps` that failed once or a process's move from one program to the next.
 const TELLING: Duration = Duration::from_secs(2);
+
+/// How long every look must find nothing the record may name running before the record is
+/// settled as gone (or the caller's bound, when shorter): past a process's move from one program to
+/// the next, in which no listing names it a server, as a wrapper that runs `surreal` by `exec`
+/// leaves one between the two.
+const GONE_FOR: Duration = Duration::from_secs(1);
 
 /// What `sf-tasks/replay.json` says: the private replay whose server may still run.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -164,20 +171,31 @@ impl Home {
     /// [`Home::left_server_now`], asked again while what runs cannot be told, for at most
     /// [`TELLING`] or the wait ([`Home::answer_wait`]), whichever is shorter: a `ps` that failed
     /// once, a process between programs as it starts. Refused, saying why, once that has passed.
+    /// None only once every look for [`GONE_FOR`], or for that bound when it is shorter, found
+    /// nothing the record may name: a server seen between two programs is found at the next look.
     fn left_server(&self, replay: &Replay) -> Result<Option<LeftReplay>, ServerError> {
-        let until = Instant::now() + self.answer_wait().min(TELLING);
+        let bound = self.answer_wait().min(TELLING);
+        let until = Instant::now() + bound;
+        let mut gone_since = None;
         loop {
             match self.left_server_now(replay) {
-                Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+                Ok(None) => {
+                    if gone_since.get_or_insert_with(Instant::now).elapsed() >= GONE_FOR.min(bound)
+                    {
+                        return Ok(None);
+                    }
+                }
+                Err(_) if Instant::now() < until => gone_since = None,
                 told => return told.map_err(|why| self.cannot_tell(&why)),
             }
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
     /// Whether the server `replay` names still runs: its pid has a process that started when the
     /// record says it did ([`Home::process_start`]), or, with no start written down, any process.
     /// No when it names none, its pid has none, or the process that has it started at another
-    /// second; why not, when `ps` cannot say when that process started.
+    /// time; why not, when the kernel does not say when that process started.
     fn named_runs(replay: &Replay) -> Result<bool, String> {
         let Some(server) = &replay.server else {
             return Ok(false);
@@ -192,7 +210,7 @@ impl Home {
             Ok(now) => Ok(&now == started),
             Err(_) if !pid_alive(server.pid) => Ok(false),
             Err(problem) => Err(format!(
-                "`ps` could not say when pid {}, which it names, started ({problem})",
+                "when pid {}, which it names, started cannot be read ({problem})",
                 server.pid
             )),
         }
@@ -379,8 +397,9 @@ mod tests {
     use crate::server::{
         Home, LOG, PS_FAILS, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION, ServerError,
     };
-    use crate::sys::command;
+    use crate::sys::{Stdio, command};
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -437,7 +456,7 @@ mod tests {
             logged: 441_648_764,
             memtable: 883_297_528,
             server: server(4343),
-            started: Some("Thu Nov 12 08:45:01 2026".into()),
+            started: Some("1794469501.204918".into()),
         };
         home.mark_replay(&replay).unwrap();
         assert_eq!(home.replay_record(), Some(replay.clone()));
@@ -557,7 +576,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A record naming a pid that a process has which started at another second than the one it
+    /// A record naming a pid that a process has which started at another time than the one it
     /// wrote down names a server that has ended, its pid since reused: settled as gone, with no
     /// hand step.
     #[test]
@@ -565,7 +584,7 @@ mod tests {
         let (dir, home) = folder("reused");
         home.mark_replay(&Replay {
             server: server(i64::from(std::process::id())),
-            started: Some("Thu Jan  1 00:00:00 1970".into()),
+            started: Some("1.000000".into()),
             ..Replay::default()
         })
         .unwrap();
@@ -579,15 +598,64 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// When `ps` cannot say when the process that has the named pid started, whether it is the
-    /// replay's cannot be told: said why, and the record kept.
+    /// A server that no listing names one for a moment, between two programs as a wrapper runs
+    /// `surreal` by `exec`, while the record names a pid that has ended, is found once it is one:
+    /// the record is settled as gone only after every look for a second found none.
     #[test]
-    fn a_record_is_kept_while_ps_cannot_say_when_its_named_process_started() {
+    fn a_server_seen_between_two_programs_is_found_never_settled_as_gone() {
+        let (dir, home) = folder("between");
+        let home = home.patience(Duration::from_secs(5));
+        // In the place of `surreal`, which the folder's board runs: a program that runs on.
+        let surreal = dir.join("no-surreal");
+        fs::write(&surreal, "#!/bin/sh\nwhile :; do sleep 0.05; done\n").unwrap();
+        fs::set_permissions(&surreal, fs::Permissions::from_mode(0o755)).unwrap();
+        let replay = Replay {
+            server: server(ended_pid()),
+            ..Replay::default()
+        };
+        home.mark_replay(&replay).unwrap();
+        // No server's command line for its first 0.3 s (its words are in its environment), then a
+        // server on the data by `exec`, its pid the same.
+        let mut between = command("/bin/sh")
+            .arg("-c")
+            .arg("sleep 0.3; exec \"$SF_SURREAL\" start --bind 127.0.0.1:1 \"$SF_DATA\"")
+            .env("SF_SURREAL", &surreal)
+            .env("SF_DATA", home.data())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = i64::from(between.id());
+        let began = Instant::now();
+        let left = home.left_server(&replay);
+        let took = began.elapsed();
+        between.kill().unwrap();
+        between.wait().unwrap();
+        assert_eq!(
+            left.map(|left| left.map(|left| (left.server.pid, left.named))),
+            Ok(Some((pid, false)))
+        );
+        assert!(took < Duration::from_secs(1), "looked for {took:?}");
+        assert!(dir.join(RECORD).exists());
+        assert!(!dir.join(LOG).exists(), "said gone");
+
+        // With none ever on the data, it is settled as gone after a second of looks.
+        let began = Instant::now();
+        assert_eq!(home.left_server(&replay), Ok(None));
+        assert!(began.elapsed() >= super::GONE_FOR);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// When the kernel does not say when the process that has the named pid started, whether it is
+    /// the replay's cannot be told: said why, and the record kept.
+    #[test]
+    fn a_record_is_kept_while_when_its_named_process_started_cannot_be_read() {
         let (dir, home) = folder("untold-start");
         let pid = i64::from(std::process::id());
         let replay = Replay {
             server: server(pid),
-            started: Some("Thu Jan  1 00:00:00 1970".into()),
+            started: Some("1.000000".into()),
             ..Replay::default()
         };
         home.mark_replay(&replay).unwrap();
@@ -596,8 +664,8 @@ mod tests {
             assert_eq!(
                 home.left_replay_told(),
                 Err(format!(
-                    "`ps` could not say when pid {pid}, which it names, started (ps failed, as a \
-                     test made it)"
+                    "when pid {pid}, which it names, started cannot be read (ps failed, as a test \
+                     made it)"
                 ))
             );
         }

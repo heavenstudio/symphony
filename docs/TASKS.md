@@ -233,12 +233,12 @@ stands, and …` names which server it was (the one the record names, or another
 on the data, and whether `server.json` names it), then come its `Goodbye!` and
 `· the private replay is through`, before the board's server's lines. The hold
 and a reclaim stop it the same way. The record is removed only once nothing it
-may name runs: the pid it names has ended, or it names none, and a listing of
-every process (`ps`) shows no server on the data (`· the private replay begun
-above has no server running and was not said through`); the next start then
-replays what log is left. The record writes down when its server's process
-started, as each ask to end does: a pid that a process started at another
-second has now, after a reboot in the middle of a replay say, is not taken for
+may name runs: the pid it names has ended, or it names none, and every listing
+of every process (`ps`) for a second shows no server on the data (`· the private
+replay begun above has no server running and was not said through`); the next
+start then replays what log is left. The record writes down when its server's
+process started, as each ask to end does: a pid that a process started at
+another time has now, after a reboot in the middle of a replay say, is not taken for
 that server, so a record or an ask left behind holds nothing up and needs no
 hand. Where whether its server runs cannot be told for two seconds, a `ps` that
 fails or the named server running off the data, the command is refused saying
@@ -366,13 +366,14 @@ owner holds the board (`just tasks database hold "WHY" --as HANDLE`, which holds
 from the moment it begins, while its stop still waits on the server, and after
 it says the server still closes, so nothing starts another), ends it by hand
 (`kill -9 PID`: the writes it held are in its log, which the next start replays)
-and releases the hold. The ask is forgotten by the next stop or
-start once its process has ended, or once another process, which started at
-another second, has its pid.
+and releases the hold. The ask is forgotten by the next stop or start once its
+process has ended, or once another process, which started at another time, has
+its pid.
 
 A private replay's record (`sf-tasks/replay.json`) whose server cannot be told
-to run or not (a `ps` that keeps failing, or the server it names running while
-neither it nor any other process is a server on the data) refuses every command
+to run or not (a `ps` that keeps failing, a kernel that does not say when the
+process with its pid started, or the server it names running while neither it
+nor any other process is a server on the data) refuses every command
 that would start or stop the board's server, and `just tasks database` says why.
 Once `ps` can tell, the next command settles it alone. Should it never, the owner
 removes the record by hand once `ps -ww -axo pid,command` lists no `surreal

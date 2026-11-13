@@ -216,9 +216,10 @@ const OWNED_START: &str = r#"exec 3<&0 </dev/null
 
 #[cfg(test)]
 thread_local! {
-    /// Set by the library's tests on their own thread: how many of the next `ps` calls the board
-    /// reads servers by fail ([`Home::listed`], [`Home::serves`]), as one can on a loaded machine;
-    /// `u32::MAX` for every one.
+    /// Set by the library's tests on their own thread: how many of the next reads of the process
+    /// table the board tells servers by fail (`ps` in [`Home::listed`] and [`Home::serves`], the
+    /// kernel's stamp in [`Home::process_start`]), as one can on a loaded machine; `u32::MAX` for
+    /// every one.
     static PS_FAILS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -693,30 +694,29 @@ impl Home {
         last_argument_is(String::from_utf8_lossy(&out.stdout).trim(), &self.data())
     }
 
-    /// When process `pid` started, as `ps -o lstart=` says it in the C locale and UTC, so a reading
-    /// by any process on the machine says the same of one process: the second it was made, which
-    /// its later programs keep. Another process given that pid later says a later one, so a pid
-    /// recorded with it ([`left`], [`ending`]) is told from one since reused. An error when `ps`
-    /// fails or the process has ended.
+    /// When process `pid` started, as the kernel stamps it ([`crate::sys::process_starts`]): to the
+    /// microsecond on macOS, in clock ticks after this boot on Linux, so any reading of one process
+    /// says the same, which its later programs keep. Another process given that pid later says
+    /// another, so a pid recorded with it ([`left`], [`ending`]) is told from one since reused. An
+    /// error when the process has ended or its start cannot be read.
     pub(crate) fn process_start(pid: i64) -> std::io::Result<String> {
         #[cfg(test)]
         if ps_fails() {
             return Err(std::io::Error::other("ps failed, as a test made it"));
         }
-        let out = output(command("ps").env("LC_ALL", "C").env("TZ", "UTC0").args([
-            "-o",
-            "lstart=",
-            "-p",
-            &pid.to_string(),
-        ]))?;
-        let started = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !out.status.success() || started.is_empty() {
-            return Err(std::io::Error::other(format!(
-                "ps says no start of pid {pid}: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
+        match crate::sys::process_starts(&[pid]).pop() {
+            Some(crate::sys::Start::At(at)) => Ok(format!("{at:.6}")),
+            Some(crate::sys::Start::AfterBoot(crate::sys::Boottime { boot, at })) => {
+                Ok(format!("{at:.2} s after boot {boot}"))
+            }
+            Some(crate::sys::Start::Ended) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("pid {pid} has ended"),
+            )),
+            _ => Err(std::io::Error::other(format!(
+                "the kernel does not say when pid {pid} started"
+            ))),
         }
-        Ok(started)
     }
 
     /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers

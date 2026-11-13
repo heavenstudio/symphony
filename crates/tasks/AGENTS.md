@@ -1172,16 +1172,17 @@ never sends a second: SurrealDB 3.3 takes one for an immediate shutdown ("A
 second signal will force an immediate shutdown"), before its store is closed.
 `Home::end` (`src/server/ending.rs`) writes the ask down first, whole (a temporary
 file renamed), `sf-tasks/ending/PID` holding `{"at", "started"}`: when, and when
-the process asked started (`Home::process_start`, `ps -o lstart=` in UTC); it
-makes none it cannot write down. A later `end` of that pid, from any process,
+the process asked started (`Home::process_start`, the kernel's stamp that
+`sys::process_starts` reads: libproc's to the microsecond on macOS, `/proc`'s
+ticks after boot on Linux); it makes none it cannot write down. A later `end` of that pid, from any process,
 only waits (saying when it was asked), and a scratch board's supervisor
 (`OWNED_START`, given that folder as `$4`) sends no SIGTERM of its own on its
 lifeline's end to a server that folder names. A file goes when its server is
 seen to end, when any `end` finds its pid gone or held by a process that started
-at another second (a pid reused: an ask left behind never holds up a later
+at another time (a pid reused: an ask left behind never holds up a later
 server, so no start waits ten minutes on one), and when a start makes a new
 process of that pid (`Home::started`); one that does not read, or whose process's
-start `ps` cannot say, stays. A server that has not
+start the kernel does not say, stays. A server that has not
 answered is never signalled: until its handlers are set a SIGTERM ends it as a
 kill would, in the middle of its replay. A start that does not answer within the
 patience (60 s) is left running and its caller refused, saying so; each later
@@ -1312,12 +1313,15 @@ one the record names or another, and whether `server.json` names it) and
 board's own server under the board's memtable, the log empty. A caller starting
 apart has that stop and start run apart (`Home::start_apart`). The record is
 removed only once the server it names has ended (no process has its pid, or the
-one that has it started at another second: a pid since reused) or it names none,
-and a `ps -axo` that ran lists no server on the data; `server.log` then says the
-replay was not said through (`left::GONE`). A `ps` that fails (`serves` says no
-then too, so a no is never taken for an end), one that cannot say when the named
-pid's process started, and a named server that runs while nothing is on the data
-(between programs) cannot be told: asked again for up to two seconds (`TELLING`,
+one that has it started at another time: a pid since reused) or it names none,
+and every `ps -axo` for a second (`GONE_FOR`, or the caller's shorter bound) ran
+and listed no server on the data, so a server seen between two programs (the
+tests' wrappers run `surreal` by `exec`, and no listing names a process a server
+in between) is found at the next look; `server.log` then says the replay was not
+said through (`left::GONE`). A `ps` that fails (`serves` says no then too, so a
+no is never taken for an end), a named pid's process whose start the kernel does
+not say, and a named server that runs while nothing is on the data (between
+programs) cannot be told: asked again for up to two seconds (`TELLING`,
 or the caller's shorter bound), then the caller is refused (`cannot_tell`, with
 `Home::untold_rule`: the rule, and the hand removal should it last), nothing
 adopted, started or removed. The library's tests make `ps` fail on their own

@@ -7,7 +7,7 @@
 //! supervisor sends none of its own to a server that file names ([`super::OWNED_START`]). The file
 //! holds when the process it asked started ([`Home::process_start`]), and goes once that server
 //! has ended: when an ask sees it end, when any ask finds its pid gone or held by a process that
-//! started at another second (a pid since reused), and when a start of this board's makes a new
+//! started at another time (a pid since reused), and when a start of this board's makes a new
 //! process of that pid ([`Home::started`]). So an ask left behind never keeps a later server of
 //! that pid from being asked.
 
@@ -49,8 +49,8 @@ fn read_ask(path: &Path) -> std::io::Result<Option<Ask>> {
 }
 
 /// Whether `ask`, of `pid`, which runs, asked another process than the one that has the pid now:
-/// one that `ps` says started at another second. Not when the ask wrote down no start, or `ps`
-/// cannot say.
+/// one the kernel says started at another time. Not when the ask wrote down no start, or the
+/// kernel does not say.
 fn stale(pid: i64, ask: &Ask) -> bool {
     ask.started
         .as_ref()
@@ -133,7 +133,7 @@ impl Home {
     }
 
     /// The asks that no longer stand forgotten: of a pid no process has, or one a process has that
-    /// started at another second than the one asked. One that cannot be removed stays, which can
+    /// started at another time than the one asked. One that cannot be removed stays, which can
     /// only keep a later process of its pid from being asked.
     fn forget_ended(&self) {
         let Ok(entries) = fs::read_dir(self.dir.join(ENDING)) else {
@@ -339,7 +339,7 @@ mod tests {
         fs::write(&asked, ask(&Home::process_start(runs).unwrap())).unwrap();
         home.forget_ended();
         assert!(asked.exists(), "the ask of the process that runs went");
-        fs::write(&asked, ask("Thu Jan  1 00:00:00 1970")).unwrap();
+        fs::write(&asked, ask("1.000000")).unwrap();
         home.forget_ended();
         assert!(
             !asked.exists(),
@@ -348,8 +348,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// When `ps` cannot say when a process started, its ask is kept: a process of a reused pid may
-    /// wait on it, never a server be asked twice.
+    /// When the kernel does not say when a process started, its ask is kept: a process of a
+    /// reused pid may wait on it, never a server be asked twice.
     #[test]
     fn an_ask_is_kept_while_ps_cannot_say_when_its_process_started() {
         let dir = folder("untold-start");
@@ -357,11 +357,7 @@ mod tests {
         let ending = dir.join(ENDING);
         fs::create_dir_all(&ending).unwrap();
         let asked = ending.join(std::process::id().to_string());
-        fs::write(
-            &asked,
-            r#"{"at":1794469500.0,"started":"Thu Jan  1 00:00:00 1970"}"#,
-        )
-        .unwrap();
+        fs::write(&asked, r#"{"at":1794469500.0,"started":"1.000000"}"#).unwrap();
         crate::server::PS_FAILS.set(u32::MAX);
         home.forget_ended();
         crate::server::PS_FAILS.set(0);
