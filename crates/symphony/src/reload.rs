@@ -188,6 +188,7 @@ const CLIENT_INPUTS: &[&str] = &[
     "Dioxus.toml",
     "index.html",
     "bundle.sh",
+    "dx-path.sh",
     "package.sh",
     "tools.sh",
     "wasm-fresh.sh",

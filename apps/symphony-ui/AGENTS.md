@@ -51,7 +51,14 @@ never the whole target, which the release run runs.
   the move (`tests/tools.rs`). No build removes them, since another worktree's
   build may be running them; only the move takes them away, while nothing
   builds, and it refuses while a process has a file open under them or works
-  there. A new tree's folder starts from a seed
+  there. A build runs dx from neither folder: dx makes itself the rustc wrapper of
+  the workspace's own crates by its canonical path, which Cargo mixes into their
+  symbol names, and so into every byte of the wasm and every asset name. So
+  `bundle.sh` runs it as `/private/tmp/symphony-client-tools/dx-0.7.10/bin/dx`,
+  in a folder private to the user, the same path in every checkout and common dir:
+  `dx-path.sh` keeps there a hard link of the installed dx (a copy across volumes),
+  replaced whole when it is not that file or its bytes (`tests/tools.rs`).
+  A new tree's folder starts from a seed
   another tree made, its wasm32 builds among it. The wrapper clears workspace
   crates from every seeded target/profile and records that cleanup for
   `wasm-fresh.sh`. Without a matching

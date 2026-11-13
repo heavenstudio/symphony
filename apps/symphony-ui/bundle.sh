@@ -13,7 +13,8 @@
 # symphony/tools/ in the git common dir by tools.sh the first time they are missing (minutes, once per
 # machine), or an older build's copies, run where they stand until tools/move-state.sh moves them.
 # dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into DX_HOME, also
-# there.
+# there. dx itself runs from /private/tmp/symphony-client-tools (dx-path.sh), the same path wherever
+# it was installed.
 set -euo pipefail
 
 out="${1:?usage: bundle.sh OUT}"
@@ -58,6 +59,9 @@ bindgen_version="$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/"/, "",
 if [ ! -x "$dx" ] || [ ! -x "$DX_HOME/tools/wasm-bindgen-$bindgen_version/wasm-bindgen" ]; then
     SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh"
 fi
+# dx's own path is in every workspace crate's Cargo hash (it is their RUSTC_WORKSPACE_WRAPPER), and
+# so in every byte of the client: run it from one path in every checkout and common dir.
+dx="$(bash "$here/dx-path.sh" "$tools" dx-0.7.10/bin/dx)"
 
 bash "$here/wasm-fresh.sh"
 
