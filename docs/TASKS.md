@@ -2141,12 +2141,11 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
   `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
   or leaves the open statuses another way.
-- **Work in review takes no slot.** The owner, 2026-11-13: "reviewer should not
-  count as a slot. It's task based". The cap counts the tasks being built: a
-  task's slot frees when it moves to `review`, and a move into `review` is never
-  refused. Its return to `in_progress`, on a changes verdict or a move, goes
-  between open statuses and starts nothing: it is never refused, and counts
-  again from then, as it was being worked already.
+- **Work in review takes no slot.** The cap counts the tasks being built, not
+  the review of them: a task's slot frees when it moves to `review`, and a move
+  into `review` is never refused. Its return to `in_progress`, on a changes
+  verdict or a move, goes between open statuses and starts nothing: it is never
+  refused, and counts again from then, as it was being worked already.
 - **Each open task, one slot.** A subtask holds a slot of its own, so
   gathering open work under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
@@ -2189,7 +2188,8 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   it, and ends with the task's next move (a landing's close and the owner's
   moves included: every status write deletes it), change of parent or of
   dependencies.
-  Work blocked by any other move holds no slot, and takes one to come back.
+  Work blocked by any other move holds no slot, and takes one to come back to
+  `in_progress`.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
 - **Red work takes no slot.** A task filed for a red that stops every
