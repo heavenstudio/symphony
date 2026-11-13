@@ -169,7 +169,8 @@ pub struct BucketFlow {
     #[serde(default)]
     pub entered: ByStatus<u32>,
     /// The tasks done in it, each once at its last close ([`crate::reports::Flow::done`]), summed
-    /// over its roll-up hours that record them; none when none does.
+    /// over its roll-up hours; none unless every one of them records them, so a period that spans
+    /// a file written before they were counted is a gap, never a part of its count shown whole.
     #[serde(default)]
     pub done: Option<u32>,
     /// The task-hours spent in each open status in it.

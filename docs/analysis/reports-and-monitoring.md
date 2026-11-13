@@ -517,8 +517,10 @@ hours of any span sum to that span's figure (a day, a week, a local day):
   how many times a task took each status in the hour, the tasks done in the hour (`done`: each
   task done at the read, once, in the hour of its last close, the rule `just tasks stats` counts
   its tasks done per day by, so a task approved, sent back to review by its landing and approved
-  again is one task done where it took done twice), the task-hours in each status and the part
-  spent before a first claim, and the moves from review back to in progress.
+  again is one task done where it took done twice; a span with an hour of a file written before
+  it was counted has none, a gap, never its other hours' part shown whole), the task-hours in
+  each status and the part spent before a first claim, and the moves from review back to in
+  progress.
 - **Landings**: the `landed` lines the land writes. **Reds** filed and closed.
 - **Waits**, each counted in the hour it ended:
   - approved to landed: the approve the landing went by, to the landing;

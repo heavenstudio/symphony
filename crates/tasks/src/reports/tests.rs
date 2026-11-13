@@ -695,6 +695,8 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
     let mut odd = day("p \"q\" \\ \n\t\u{1}é☃", D, at(2.0), at(2.0), &board());
     odd.read = f64::NAN;
     odd.hours[0].top.task_hours.review = f64::INFINITY;
+    // An hour that did not count its tasks done, as one of a file written before they were.
+    odd.hours[1].top.done = None;
     odd.hours[1].waits.changes_to_review.push(Wait {
         slug: "sim/\u{7f}\u{2028}".into(),
         seconds: -0.0,
@@ -711,6 +713,8 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
         let serde = serde_json::to_string(day).unwrap();
         assert_eq!(ours, serde, "{}", day.project);
     }
+    let odd = String::from_utf8(json::day(&days[4])).unwrap();
+    assert!(odd.contains(r#""done":null"#), "{odd}");
 }
 
 #[test]

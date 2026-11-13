@@ -547,17 +547,28 @@ fn a_week_sums_its_days_and_weighs_their_lead_times_by_their_closes() {
     assert!(week.agents.is_some() && week.health.is_some());
 }
 
-/// The tasks done ([`BucketFlow::done`]) are the sum of the roll-up hours that count them: an
-/// hour of a file that does not record them adds none, and a period none of whose hours does has
-/// none, missing, where its entries into done are still summed.
+/// A roll-up hour at `start` with `done` entries into done, of a file written before the hours
+/// counted their tasks done.
+fn uncounted(start: f64, done: u32) -> symphony_api::ReportHour {
+    let mut hour = hour(start, done, 0);
+    hour.top.done = None;
+    hour
+}
+
+/// The period of each bucket's flow, as its entries into done and its tasks done.
+fn done_by_period(page: &ReportsPage) -> Vec<Option<(u32, Option<u32>)>> {
+    (page.buckets.iter())
+        .map(|bucket| bucket.flow.map(|flow| (flow.entered.done, flow.done)))
+        .collect()
+}
+
+/// The tasks done ([`BucketFlow::done`]) of a period are the sum of its roll-up hours only when
+/// every one of them counts them: one hour of a file that does not record them leaves the period
+/// none, missing, never the other hours' part of it shown whole, while its entries into done are
+/// still summed.
 #[test]
 fn the_tasks_done_sum_the_hours_that_count_them_and_a_period_none_counts_has_none() {
     let tree = Tree::new();
-    let uncounted = |start: f64, done: u32| {
-        let mut hour = hour(start, done, 0);
-        hour.top.done = None;
-        hour
-    };
     report(
         &tree,
         MONDAY,
@@ -573,17 +584,64 @@ fn the_tasks_done_sum_the_hours_that_count_them_and_a_period_none_counts_has_non
         vec![uncounted(MONDAY + DAY + 9.0 * HOUR, 4)],
         |_| {},
     );
-    let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
-    let flows: Vec<Option<(u32, Option<u32>)>> = (page.buckets.iter())
-        .map(|bucket| bucket.flow.map(|flow| (flow.entered.done, flow.done)))
-        .collect();
-    assert_eq!(
-        flows,
-        [Some((7, Some(2))), Some((4, None)), None],
-        "Monday counts its 10:00 alone, Tuesday none of its hours, Wednesday has no file"
+    report(
+        &tree,
+        MONDAY + 2.0 * DAY,
+        vec![hour(MONDAY + 2.0 * DAY + 9.0 * HOUR, 3, 0)],
+        |_| {},
     );
-    let text = serde_json::to_string(&page.buckets[1].flow).unwrap();
+    let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    assert_eq!(
+        done_by_period(&page),
+        [Some((7, None)), Some((4, None)), Some((3, Some(3)))],
+        "Monday counts its 10:00 alone, so none; Tuesday none of its hours; Wednesday all of them"
+    );
+    let text = serde_json::to_string(&page.buckets[0].flow).unwrap();
     assert!(text.contains(r#""done":null"#), "{text}");
+}
+
+/// The week the first file that counts its tasks done arrives in also holds files written before
+/// it, which are never written again: that week has none, a gap, never the count of its later days
+/// alone; the week after, every file of which counts them, has their sum.
+#[test]
+fn a_week_that_spans_the_first_file_counting_the_tasks_done_has_none() {
+    let tree = Tree::new();
+    report(
+        &tree,
+        MONDAY,
+        vec![uncounted(MONDAY + 9.0 * HOUR, 30)],
+        |_| {},
+    );
+    report(
+        &tree,
+        MONDAY + DAY,
+        vec![hour(MONDAY + DAY + 9.0 * HOUR, 2, 0)],
+        |_| {},
+    );
+    let next = MONDAY + 7.0 * DAY;
+    report(&tree, next, vec![hour(next + 9.0 * HOUR, 3, 0)], |_| {});
+    report(
+        &tree,
+        next + DAY,
+        vec![hour(next + DAY + 9.0 * HOUR, 1, 0)],
+        |_| {},
+    );
+    let page = page(
+        &folders(&tree),
+        Grain::Week,
+        14,
+        wednesday() + 7.0 * DAY,
+        none,
+    );
+    assert_eq!(
+        (page.buckets.iter().map(|b| (b.start, b.rolled))).collect::<Vec<_>>(),
+        [(MONDAY, 2), (next, 2)]
+    );
+    assert_eq!(
+        done_by_period(&page),
+        [Some((32, None)), Some((4, Some(4)))],
+        "the first week's 2 are a part of its count, so it has none"
+    );
 }
 
 #[test]
