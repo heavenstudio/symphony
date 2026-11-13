@@ -4,14 +4,18 @@ Whether the client's eight page modules can share one copy of the code they all 
 page's module holds only its own code: what each module holds, the ways the locked toolchain
 offers, a prototype of the most promising one, what it would change, and the card it is asked on
 in [DECISIONS](../DECISIONS.md). Measured 2026-11-13 on this Mac with Rust 1.99.0, dx 0.7.10 and
-wasm-bindgen 0.2.129, against the committed client of main at 310a8c3, at load averages of 30 to
+wasm-bindgen 0.2.129, against the client main had committed at 310a8c3, at load averages of 30 to
 136 from a release run and other agents' builds: every time below is slower than on a quiet
-machine, and only times taken in the same run, one distribution after the other, are compared.
+machine, and moves with the machine's load as much as with the files ([below](#the-prototype)).
+The published client's size is main's at c76d0bc4, 20,557,418 bytes (at 310a8c3 it was
+20,471,262).
 
 The owner, 2026-11-13, on the Reports page costing 557 KB on a first visit, choosing "Share the
 runtime between modules. One common chunk that every page module loads, so a page's own module is
 only its own code": "seems like the obious choice. I'm okay with keeping it t 557 for now, and a
-follow up to investigate this option".
+follow up to investigate this option". The 300,000-byte first-visit caps on `/` and `/tasks` are
+the owner's too, of 2026-11-11 ("lets increase the budget to 300"); that choice left them as they
+are, and only the owner moves them.
 
 ## The choice
 
@@ -19,15 +23,15 @@ Sharing works with this toolchain, through the splitter dx already ships (`dx bu
 --wasm-split`), once two faults in that splitter are dealt with ([below](#the-splitters-faults)).
 It shrinks the published client and makes Reports cheap. But a shared part that every page loads
 holds code a given page never needed, and the board page has about 4 KB of room under its cap: on
-the prototype, `/tasks`'s first visit grew from 295,837 to 360,579 bytes. So the card asks which
-pages share:
+the prototype, `/tasks`'s first visit grew from 295,837 to 360,579 bytes. So the card asked which
+pages share, and the owner chose A, 2026-11-13:
 
 - **A, recommended: every page but home and the board.** `/` and `/tasks` keep a module of their
   own, as today, and their caps stand. The task pages, `/agents` and Reports share one runtime with
   the chat, the menus and the task timeline; the documents and the queue join them once the shared
   part is trimmed enough that their first visits do not grow.
-- **B: all eight**, which needs the board's first-visit cap raised to about 365,000 bytes, and
-  likely home's: the owner's alone to do.
+- **B: all eight**, which needs the board's first-visit cap raised to about 365,000 bytes, the
+  owner's alone to do. Home's first visit is estimated at about 291,000, about 9 KB under its cap.
 - **C: only within the task pages' module**, so Reports loads the shared part and its own code,
   and nothing is shared between page kinds.
 
@@ -36,7 +40,7 @@ the rest estimated as [the last section](#verified-and-inferred) says:
 
 | | today | A | B | C |
 |---|---|---|---|---|
-| `/`, first visit | 236,400 | the same | about 291,000, at its 300,000 cap | the same |
+| `/`, first visit | 236,400 | the same | about 291,000, about 9 KB under its 300,000 cap | the same |
 | `/tasks`, first visit | 295,837 | the same | 360,579 measured, over its 300,000 cap | the same |
 | a task page, first visit | 559,627 | 567,087 | 568,930 measured | 567,087 measured |
 | `/agents`, first visit | 559,034 | 566,494 | 568,337 measured | 566,494 measured |
@@ -44,15 +48,17 @@ the rest estimated as [the last section](#verified-and-inferred) says:
 | `/docs/` and `/queue`, their module and script | 447,267 and 229,641 | the same until they join | about +106 KB and +45 KB until the shared part is trimmed | the same |
 | `/tasks`, then Reports | 539,160 more | 267,722 more | 55,963 more, measured | 267,722 more, measured |
 | the chat and menus, warmed at idle, their modules and scripts | 742,886 | about 524 KB after a shared page, the same after `/` or `/tasks` | about 524 KB | the same |
-| the published client, three builds kept | 20,557,418 of a 20,750,000 line | about −2.4 MB, −4.7 MB once the documents and the queue join | about −7.0 MB | +504,993, three measured builds, past the line |
+| the published client, three builds kept | 20,557,418 at c76d0bc4, of a 20,750,000 line | about −2.4 MB, −4.7 MB once the documents and the queue join | about −7.0 MB | +504,993 (one build's measured +168,331, three kept), past the line |
 
 A is recommended because it keeps both caps the owner set, gives Reports back 271 KB, and frees
 the published client a tenth to a quarter of its size where its line has 0.9 % of room. Its costs:
-a shared page waits for one request more, its chunk, 34 to 107 ms on the mid phone; a task page
-grows by 7.5 KB; and the documents and the queue join only after the work of trimming the
-shared part. B saves more and makes moves between all pages cheap, at a cap the owner set two days
-ago. C alone answers Reports but costs the size line half a megabyte it does not have, so it can
-only land together with A's next step.
+a shared page waits for one request more, its chunk, whose time this machine's load hid
+([below](#the-prototype)) and is measured on a quiet machine as the second step's evidence; a task
+page grows by 7.5 KB; and the documents and the queue join only after the work of trimming the
+shared part. B saves more and makes moves between all pages cheap, but needs the board's cap,
+which the owner set two days ago, raised by about 65 KB; home's estimate stays under its cap. C
+alone answers Reports but costs the size line half a megabyte it does not have, so it can only
+land together with A's next step.
 
 ## What each module holds
 
@@ -104,7 +110,10 @@ program's entry points (its exports, start function and imports) to find what th
 needs, and cuts each split point's code into a chunk of its own, which the generated loader
 fetches the first time the split point is called. A split point is an import and an export named
 by convention (`__wasm_split_00___MODULE___00_import_HASH_NAME`, its `_export_` twin and the loader
-`__wasm_split_load_MODULE_HASH_NAME`), which the `wasm_split` macro writes; its expansion uses
+`__wasm_split_load_MODULE_HASH_NAME`), which the `wasm_split` macro writes. The client guide
+already records that this splitter "retained shared exports and increased the measured initial
+payload", which is why each kind is built apart today (`apps/symphony-ui/AGENTS.md`, on
+`bundle.sh`); the prototype measures the same on `/tasks` and finds why. The macro's expansion uses
 `extern "C"` blocks and `#[no_mangle]` without `unsafe`, which this edition 2024 crate refuses,
 so the prototype writes them out. Three limits, read in its source: code two chunks share that the
 main module does not reach is copied into each chunk (the shared chunk it means to make,
@@ -166,11 +175,11 @@ First visits, and moves made in place from `/tasks`:
 
 | | today | two-kind program | change | C | change |
 |---|---|---|---|---|---|
-| `/tasks` | 295,837 | 360,579 | +64,742 | 295,839 | 0 |
+| `/tasks` | 295,837 | 360,579 | +64,742 | 295,839 | +2, the shell |
 | `/agents` | 559,034 | 568,337 | +9,303 | 566,494 | +7,460 |
 | `/reports` | 557,536 | 287,976 | −269,560 | 286,100 | −271,436 |
 | a task page | 559,627 | 568,930 | +9,303 | 567,087 | +7,460 |
-| `/` | 236,400 | | | 236,402 | 0 |
+| `/` | 236,400 | | | 236,402 | +2, the shell |
 | `/tasks`, then `/agents` | 540,658 more | 336,324 more | −204,334 | 548,116 more | +7,458 |
 | `/tasks`, then `/reports` | 539,160 more | 55,963 more | −483,197 | 267,722 more | −271,438 |
 | `/tasks`, then a task page | 541,251 more | 336,917 more | −204,334 | 548,709 more | +7,458 |
@@ -179,7 +188,8 @@ First visits, and moves made in place from `/tasks`:
 reached from the shared `App` before its split points: the Dioxus runtime's generic code for the
 task pages' types 41 KB, the standard library's 32 KB (float formatting 10 KB of it), the media
 layer 19 KB, the keyboard's key names 10 KB, `anyhow`'s error printing 8 KB and the split's own
-loaders about 14 KB; and by 4.2 KB of script for the task pages' bindings. The main module is
+loaders about 14 KB; and by 4,515 bytes of script on the wire for the task pages' bindings (the
+program's one script, 15,839, against the board's own, 11,324). The main module is
 nearly the same with or without the board (472,166 against 474,428 bytes): it is the shared
 `App`'s reach, not any one page's.
 
@@ -193,14 +203,20 @@ off, the median of three, in ms, two rounds each:
 | `/agents` | 1,015, 1,129 | 1,235, 1,115 | 1,038, 1,089 | 1,145, 1,123 |
 | `/reports` | 994, 1,064 | 829, 922 | 991, 1,018 | 837, 825 |
 | a task page | 1,131, 1,239 | 1,213, 1,200 | 1,113, 1,113 | 1,200, 1,212 |
+| `/` | | | 754, 760 | 766, 732 |
 
-At the lighter load the split pages take 34 to 107 ms longer and Reports 154 to 193 ms less. A
-split page waits for one request more: its chunk is asked for only once the main module runs and
-reaches the split point. A preload of the route's chunk beside the main module would overlap the
-two.
+These times move with the machine as much as with the files. In the same rounds `/tasks` under C
+loaded today's bytes but for 2 of the shell, yet took 83 and 48 ms longer, and `/`, the same but
+for those 2 bytes, moved by +12 and −28 ms. So the split pages' 34 to 107 ms more at the lighter
+load cannot be told from that drift, and is not the cost of sharing. That cost is one request
+more: a split page's chunk is asked for only once the main module runs and reaches the split
+point. Its time is measured on a quiet machine as the second step's evidence. Reports' 154 to
+193 ms less is beyond the drift: an indication, not a figure to rely on. A preload of the route's
+chunk beside the main module would overlap the two requests.
 
-Build: the two-kind program took 43 to 121 s, 20 s when only the final link changed, against 20 to
-30 s for each kind on its own with dependencies built. One program replaces a build per kind.
+Build, at the same loads: the two-kind program took 121 s and C's 61 s, and a second build of C
+with nothing changed 6 s. A kind built on its own took 20 to 30 s with its dependencies built,
+timed but not logged. One program replaces a build per kind.
 
 ## The splitter's faults
 
@@ -219,8 +235,10 @@ has to make that repair itself and fail when a kept symbol would read a zeroed b
 
 **Its chunks differ from one build to the next.** Two builds of C from the same source gave the same
 main module and different chunk files: the same sizes, other bytes, so other names, and a script
-that names them differently. Three runs of the splitter over one program did the same. It writes a
-chunk's table entries and data segments in the order of a hash map, which changes with every run.
+that names them differently. Three runs of the splitter over one linked program gave the same main
+module and empty shared chunk each time, and three different files for each page's chunk. It
+writes a chunk's table entries and data segments in the order of a hash map, which changes with
+every run.
 The client check rebuilds the client and compares every byte with the committed distribution, so a
 split client would fail it on every run. The fix is to emit them in a fixed order; until dx does, a
 step after the split has to sort them.
@@ -272,8 +290,8 @@ step after the split has to sort them.
    to about 286 KB, the size line by about 2.4 MB.
 3. **Trim the shared part** to what every page of the program needs: the media layer, the keyboard
    types and float formatting behind the pages that use them.
-4. **Bring in the documents and the queue**, each once its first visit grows by no more than its
-   chunk's request; the size line falls by about 2.3 MB more.
+4. **Bring in the documents and the queue**, each once its first visit no longer grows by joining;
+   the size line falls by about 2.3 MB more.
 5. **Lower the size line** in the commit of each reduction.
 
 Each step is a board task with its own measurements, the canonical-entry test and the client check
@@ -295,6 +313,14 @@ of its first visits and moves; the mid-phone times; the merged constants and the
 the main module; the chunks differing between two builds and three splits; the three kept builds
 sharing one file; the build times. Read in source: the splitter's graph, its zeroing, its empty
 shared chunk, its hash-map order, its loader's failure path, the macro's edition, dx's flags.
+
+The logs, file lists and scratch scripts behind them are kept with the task's evidence, in
+`perf/client-shared-runtime-investigation/` under the project's artifacts folder. Measured in
+scratch runs whose output was not kept: 195,926, the largest copy of each function all eight hold;
+the 122,814 bytes of code the prototype's main module holds beyond the board's, with its parts; and
+a kind's own build time. The documents', the queue's and the chat and menus' figures (447,267,
+229,641 and 742,886) are the gzip at level 9 of their committed modules and scripts with a response
+head each, which the committed client recomputes.
 
 Inferred: in the first table, A's rows for a task page, `/agents`, Reports and `/tasks`, then
 Reports, which are C's measured ones, as A's program holds the task pages' kind as C does; `/`
