@@ -79,8 +79,10 @@
 .chart-x > span:only-child { transform:translateX(-50%); }
 .chart-table-toggle { margin-top:4px; padding:4px 0; border:0; background:none; color:var(--primary); font:inherit; font-size:var(--fs-xs); cursor:pointer; }
 .chart-table { max-height:320px; overflow:auto; margin-top:6px; }
-.chart-table table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
-.chart-table caption { text-align:left; color:var(--muted-foreground); padding-bottom:4px; }
-.chart-table th, .chart-table td { padding:3px 8px 3px 0; text-align:right; border-bottom:1px solid var(--border); white-space:nowrap; }
+/* The app's table (board.css), as wide as its chart: a table is a scrolling block there. */
+.chart-table table { display:table; width:100%; margin:0; font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
+.chart-table caption { text-align:left; color:var(--muted-foreground); padding:0 0 4px; }
+.chart-table th, .chart-table td { padding:3px 8px; text-align:right; white-space:nowrap; font-size:var(--fs-xs); }
 .chart-table th[scope="row"], .chart-table thead th:first-child { text-align:left; }
+.chart-table th[scope="row"] { background:none; font-weight:600; }
 @media (forced-colors:active) { .seg { background:CanvasText; } .chart-col.gap { background-image:repeating-linear-gradient(135deg, transparent 0 4px, GrayText 4px 6px); } }
