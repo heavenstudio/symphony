@@ -540,7 +540,13 @@ never the whole target, which the release run runs.
   board time; requests never walk model history or other checkouts to build
   the gallery.
   `DocumentPicture(image: symphony_api::Image)` preserves typed document image
-  dimensions, presentation and `data-full`; `MediaView(media)` renders native
+  dimensions, presentation and `data-full`; until its latch opens its `img` holds
+  the empty picture `media::WAITING` as its src, never none, so it is a sized picture
+  from its first frame and the latch only changes that node's src, keeping a keyboard
+  focus on it. A src-less img is drawn as its alt text, and Chrome rebuilds its box
+  when a src comes: a rebuild asked for in the frame an ancestor slot takes
+  `content-visibility: auto` is lost, so the picture never loads (a folded card
+  opened by a click). The picture viewer skips a waiting img. `MediaView(media)` renders native
   media from either `Block::Media` or `Span::Media`.
   `asks::Asks(path, scope, render_blocks)` reads and posts ephemeral document
   questions and follow-ups. Key both pages by scope and path when navigating so
