@@ -2423,7 +2423,10 @@ fn a_frame_sent_on_while_its_document_still_arrives_waits_for_the_next_document_
     assert!(output.status.success(), "{}", said(&output));
     let picture = Picture::read(&out);
     for (name, first, then, frame) in frames {
-        for (on, path) in [(first, format!("/{name}.html")), (then, format!("/{name}-next.html"))] {
+        for (on, path) in [
+            (first, format!("/{name}.html")),
+            (then, format!("/{name}-next.html")),
+        ] {
             assert!(
                 on.requests().contains(&path),
                 "{name}: {path} not asked for: {:?}",
@@ -2543,11 +2546,7 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
     let site = site();
     let away = format!("http://localhost:{}", other.addr.port());
     site.set_file("/worker.js", fetching("/worker-data"), "text/javascript");
-    site.set_file(
-        "/worker-data",
-        b"from the worker".to_vec(),
-        "text/plain",
-    );
+    site.set_file("/worker-data", b"from the worker".to_vec(), "text/plain");
     site.set_file(
         "/shared.js",
         shared_fetching("/shared-data"),
@@ -2639,11 +2638,17 @@ fn the_report_names_the_frame_each_console_error_and_failed_request_came_from() 
     let other = site();
     let site = site();
     let erring = |said: &str| {
-        format!(r#"<!doctype html><img src="/missing.png"><script>console.error('{said}')</script>"#)
-            .into_bytes()
+        format!(
+            r#"<!doctype html><img src="/missing.png"><script>console.error('{said}')</script>"#
+        )
+        .into_bytes()
     };
     other.set_file("/erring.html", erring("in the frame"), "text/html");
-    site.set_file("/erring.html", erring("in a frame of its own site"), "text/html");
+    site.set_file(
+        "/erring.html",
+        erring("in a frame of its own site"),
+        "text/html",
+    );
     let away = format!("http://localhost:{}", other.addr.port());
     site.set_file(
         "/reporting.html",

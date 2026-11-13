@@ -1986,7 +1986,14 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
         .collect();
     assert_eq!(
         kept,
-        ["unfollowed", "frame", "worker", "running", "service", "shared"]
+        [
+            "unfollowed",
+            "frame",
+            "worker",
+            "running",
+            "service",
+            "shared"
+        ]
     );
     drop(chrome);
     let follow = json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true});
@@ -2077,8 +2084,10 @@ fn a_dialog_is_answered_on_the_session_it_opened_on_once_dialogs_are_dismissed_a
                     ("page", "prompt"),
                     ("page", "beforeunload"),
                 ] {
-                    peer.send(json!({"sessionId": session, "method": "Page.javascriptDialogOpening",
-                        "params": {"type": kind, "message": kind, "url": "http://a/"}}));
+                    peer.send(
+                        json!({"sessionId": session, "method": "Page.javascriptDialogOpening",
+                        "params": {"type": kind, "message": kind, "url": "http://a/"}}),
+                    );
                 }
                 peer.reply(&command, json!({}));
                 continue;
@@ -3157,14 +3166,7 @@ fn a_frame_going_on_to_another_document_takes_the_frames_its_document_held_along
             "Network.responseReceived",
             json!({"requestId": "c1", "response": {"status": 200}}),
         ),
-        sent(
-            "cs",
-            "picture",
-            "Image",
-            Some("c"),
-            inner,
-            "http://c/p.png",
-        ),
+        sent("cs", "picture", "Image", Some("c"), inner, "http://c/p.png"),
         // `b` goes on to a document of the page's own site, in the page's process: its session
         // ends, and no removal of `c` is told of.
         sent(
@@ -3201,14 +3203,19 @@ fn a_frame_going_on_to_another_document_takes_the_frames_its_document_held_along
     );
     // `b` itself, and the frame its new document holds, still load.
     for url in ["http://a/b2.html", "http://a/d.html"] {
-        assert_eq!(said(&requests, url), (Some(url), false, None, false), "{url}");
+        assert_eq!(
+            said(&requests, url),
+            (Some(url), false, None, false),
+            "{url}"
+        );
     }
 }
 
 #[test]
 fn a_frames_document_still_arriving_is_given_up_once_the_frame_goes_on_to_another() {
     let [one, two, three] = ["http://a/1.html", "http://a/2.html", "http://a/3.html"];
-    let document = |id: &str, frame: &str, url: &str| sent("page", id, "Document", Some(frame), url, url);
+    let document =
+        |id: &str, frame: &str, url: &str| sent("page", id, "Document", Some(frame), url, url);
     let mut events = vec![
         // `f`'s first document is answered, its body still arriving, when the page sends it to a
         // second, then a third before the second's arrival is told of.
@@ -3247,7 +3254,11 @@ fn a_frames_document_still_arriving_is_given_up_once_the_frame_goes_on_to_anothe
     );
     // The document it went to, and a navigation started after it, still load.
     for url in [two, three, "http://a/h2.html"] {
-        assert_eq!(said(&requests, url), (Some(url), false, None, false), "{url}");
+        assert_eq!(
+            said(&requests, url),
+            (Some(url), false, None, false),
+            "{url}"
+        );
     }
     assert_eq!(
         said(&requests, "http://a/g.html"),
@@ -3330,13 +3341,16 @@ fn a_followed_workers_requests_are_its_own_by_its_script_and_end_with_it() {
             request.canceled,
         )
     };
-    assert_eq!(
-        whose(dedicated),
-        (Some(dedicated), None, true, None, false)
-    );
+    assert_eq!(whose(dedicated), (Some(dedicated), None, true, None, false));
     assert_eq!(
         whose("http://a/data.json"),
-        (Some(dedicated), None, false, Some(crate::WORKER_ENDED), true)
+        (
+            Some(dedicated),
+            None,
+            false,
+            Some(crate::WORKER_ENDED),
+            true
+        )
     );
     assert_eq!(whose(framed), (Some(framed), None, false, None, false));
     assert_eq!(whose(shared), (Some(shared), None, false, None, false));

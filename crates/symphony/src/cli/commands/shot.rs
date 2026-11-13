@@ -2053,15 +2053,15 @@ impl Origins {
             }
             Some("Runtime.executionContextCreated") => {
                 let context = &params["context"];
-                if let (Some(id), Some(frame)) = (
-                    context["id"].as_i64(),
-                    text(&context["auxData"]["frameId"]),
-                ) {
+                if let (Some(id), Some(frame)) =
+                    (context["id"].as_i64(), text(&context["auxData"]["frameId"]))
+                {
                     self.contexts.insert((session(event), id), frame);
                 }
             }
             Some("Network.requestWillBeSent") => {
-                if let (Some(id), Some(frame)) = (text(&params["requestId"]), text(&params["frameId"]))
+                if let (Some(id), Some(frame)) =
+                    (text(&params["requestId"]), text(&params["frameId"]))
                 {
                     self.requests.insert(id, frame);
                 }

@@ -2175,9 +2175,7 @@ fn the_report_keeps_errors_failures_dialogs_and_overflow_and_leaves_out_the_rest
 
 #[test]
 fn the_report_names_the_frame_each_error_came_from_but_the_pages_own() {
-    let on = |session: &str, method: &str, params: Value| {
-        json!({"sessionId": session, "method": method, "params": params})
-    };
+    let on = |session: &str, method: &str, params: Value| json!({"sessionId": session, "method": method, "params": params});
     let navigated = |session: &str, frame: &str, parent: Option<&str>, url: &str| {
         let mut told = json!({"id": frame, "url": url});
         if let Some(parent) = parent {

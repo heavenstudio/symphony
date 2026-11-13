@@ -1539,10 +1539,9 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             }
             "Page.frameNavigated" => {
                 let navigated = &params["frame"];
-                if let (Some(id), Some(loader)) = (
-                    navigated["id"].as_str(),
-                    navigated["loaderId"].as_str(),
-                ) {
+                if let (Some(id), Some(loader)) =
+                    (navigated["id"].as_str(), navigated["loaderId"].as_str())
+                {
                     // The frames the document it left held went with that document.
                     let gone: Vec<String> = parents
                         .keys()
@@ -1653,8 +1652,7 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
         .collect();
     for (id, request) in &mut requests {
         if let Some(script) = scripts.get(id).or_else(|| {
-            told
-                .get(id)
+            told.get(id)
                 .into_iter()
                 .flatten()
                 .find_map(|session| workers.get(session))
