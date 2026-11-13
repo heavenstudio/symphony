@@ -2,6 +2,7 @@
 //! each with its links and holders.
 
 use crate::common::{Fixture, NOW, RawWrite, Seed, refused, session};
+use crate::gate::Gate;
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::rows::{MessageRow, SessionRow, TaskRow};
@@ -356,42 +357,43 @@ fn a_board_read_never_sees_half_a_write() {
 
 /// `read` of a board holding a ready `sim/jump`, with another session's claim of it forced into the
 /// middle (main's `SnapshotReadTest`): the read stalls on each task row it reads, after the tasks and
-/// before the roles, for as long as `gate:read` says when it starts, and the claim lands in that stall.
-fn claimed_mid_read<T>(read: impl FnOnce(&Store) -> T) -> T {
+/// before the roles, at a gate while `gate:read` says so when it starts, and the claim lands in that
+/// stall: the gate opens only once the claim has.
+fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
     let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
             .task("sim/jump", "ready"),
     );
     let (other, board) = (f.other(), f.other_client());
+    let gate = Gate::new();
     board
         .write(
-            "BEGIN TRANSACTION;
-             DEFINE FIELD stall ON task COMPUTED sleep((SELECT VALUE wait FROM ONLY gate:read) ?? 0s);
-             UPSERT gate:read SET wait = 2s;
-             COMMIT TRANSACTION;",
+            &format!(
+                "BEGIN TRANSACTION;
+                 DEFINE FIELD stall ON task COMPUTED {{ IF (SELECT VALUE held FROM ONLY gate:read) ?? false {{ {} }}; NONE }};
+                 UPSERT gate:read SET held = true;
+                 COMMIT TRANSACTION;",
+                gate.wait_here()
+            ),
             serde_json::json!({}),
         )
         .unwrap();
-    let began = std::time::Instant::now();
-    let (result, read, claimed) = std::thread::scope(|scope| {
-        let claiming = scope.spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500)); // the read is in its stall
-            board
-                .write("UPSERT gate:read SET wait = 0s;", serde_json::json!({}))
-                .unwrap(); // the claim's own read does not stall
-            other.claim("sim/jump", "amber-heron").unwrap();
-            began.elapsed()
-        });
-        let result = read(&f.store);
-        let read = began.elapsed();
-        (result, read, claiming.join().unwrap())
-    });
-    assert!(
-        claimed < read,
-        "the claim landed at {claimed:?}, after the read ended at {read:?}"
-    );
-    result
+    std::thread::scope(|scope| {
+        let opening = gate.opening();
+        let reading = scope.spawn(|| read(&f.store));
+        gate.reached(); // the read is in its stall
+        board
+            .write("UPSERT gate:read SET held = false;", serde_json::json!({}))
+            .unwrap(); // the claim's own read does not stall
+        other.claim("sim/jump", "amber-heron").unwrap();
+        assert!(
+            !reading.is_finished(),
+            "the read ended before the claim landed"
+        );
+        drop(opening);
+        reading.join().unwrap()
+    })
 }
 
 fn consistent(task: &Task) {

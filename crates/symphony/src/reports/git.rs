@@ -190,6 +190,29 @@ pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Resul
     Ok(Read { line, all })
 }
 
+/// The commits on `branch`'s line of first parents since `since` that changed the project's settings
+/// file ([`crate::project::FILE`]), a merge by what it brought against its first parent, tip first:
+/// where the Reports page marks a change of the gates and limits the file sets.
+pub fn settings_changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Commit>, String> {
+    let since = format!("--since=@{}", since.floor());
+    let tip = format!("refs/heads/{branch}");
+    let text = log(
+        root,
+        &[
+            &since,
+            "--first-parent",
+            "--diff-merges=first-parent",
+            "--name-only",
+        ],
+        std::slice::from_ref(&tip),
+        &[format!(":(literal){}", crate::project::FILE)],
+    )?;
+    Ok(parse(&text)
+        .into_iter()
+        .filter(|commit| commit.changed)
+        .collect())
+}
+
 /// The commits of a read's `text`, in its order: after each record's head, a `--numstat` line
 /// (`added\tremoved\tpath`, `-` for a binary file's) or a `--name-only` path is a change.
 pub fn parse(text: &str) -> Vec<Commit> {

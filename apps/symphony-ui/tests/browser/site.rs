@@ -225,6 +225,13 @@ impl Site {
                 "/api/machine-work",
                 serde_json::json!({"freshness": "unknown", "machines": [], "unassigned": []}),
             ),
+            (
+                symphony_api::REPORTS_PATH,
+                serde_json::json!({
+                    "grain": "day", "days": 14, "from": 1_799_884_800.0,
+                    "to": 1_800_003_600.0, "buckets": [], "first": null
+                }),
+            ),
         ] {
             files.insert(
                 path.into(),

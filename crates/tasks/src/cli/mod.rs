@@ -65,6 +65,16 @@ impl Env {
             .filter(|v| !v.is_empty())
     }
 
+    /// The deadline `name` sets in seconds (a fraction or none), else `fallback`: how a test gives
+    /// a product's deadline the time a loaded machine needs, or makes it run out at once, without
+    /// changing it for anyone else. A value that is no such number leaves `fallback`.
+    pub(crate) fn seconds(&self, name: &str, fallback: Duration) -> Duration {
+        self.var(name)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+            .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+            .unwrap_or(fallback)
+    }
+
     /// One of Symphony's variables, by [`Env::var`]'s rule: an empty value is unset.
     pub(crate) fn read(&self, var: symphony_env::Var) -> Option<&str> {
         self.var(var.name)
@@ -391,13 +401,18 @@ impl Clock {
         }
     }
 
-    /// Wait `seconds`. A pinned clock moves on by them instead, says `STEP <now>` on `err`, and reads a
-    /// line on `input` (or its end) before going on, so a test acts between a monitor's looks.
+    /// What the machine's clock sleeps for a wait of `seconds`: none for a negative span or no
+    /// number.
+    pub fn span(seconds: f64) -> Duration {
+        Duration::try_from_secs_f64(seconds).unwrap_or_default()
+    }
+
+    /// Wait `seconds` ([`Clock::span`]). A pinned clock moves on by them instead, says `STEP <now>` on
+    /// `err`, and reads a line on `input` (or its end) before going on, so a test acts between a
+    /// monitor's looks.
     pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
         match self {
-            Clock::Machine => {
-                std::thread::sleep(Duration::try_from_secs_f64(seconds).unwrap_or_default())
-            }
+            Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {
                     let mut now = now.lock().unwrap_or_else(|held| held.into_inner());
@@ -694,6 +709,29 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deadline_a_setting_names_replaces_the_products_and_no_number_leaves_it() {
+        let fallback = Duration::from_secs(3);
+        let read = |value: &str| {
+            Env {
+                vars: [("TASKS_SOME_WAIT".to_string(), value.to_string())].into(),
+                cwd: std::env::temp_dir(),
+            }
+            .seconds("TASKS_SOME_WAIT", fallback)
+        };
+        assert_eq!(read("120"), Duration::from_secs(120));
+        assert_eq!(read("0.25"), Duration::from_millis(250));
+        assert_eq!(read(" 7 "), Duration::from_secs(7));
+        assert_eq!(read("0"), Duration::ZERO);
+        for nothing in ["", "soon", "-1", "NaN", "inf", "1e400", "3 s"] {
+            assert_eq!(read(nothing), fallback, "{nothing:?}");
+        }
+        assert_eq!(
+            Env::default().seconds("TASKS_SOME_WAIT", fallback),
+            fallback
+        );
+    }
 
     #[test]
     fn the_board_an_environment_names_is_the_command_its_refusals_name() {

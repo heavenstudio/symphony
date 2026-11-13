@@ -9,9 +9,10 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::NewLaunch;
 use symphony_board::land::{DIRTY_MAIN, RECIPE, Record, Stop, land};
+use symphony_board::on_land::SAYS_VAR;
 use symphony_board::sweep::size;
 
 const SLUG: &str = "sim/jump";
@@ -281,6 +282,11 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
+    // The backstop of the land's own 3 s window, which no loaded machine's count outlasts: the land
+    // listens until the command ends.
+    let window = test_time::backstop(symphony_board::on_land::SAYS);
+    env.vars
+        .insert(SAYS_VAR.into(), window.as_secs().to_string());
     let mut out = Vec::new();
     let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let said = String::from_utf8(out).unwrap();
@@ -316,12 +322,7 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
         index.contains(&format!("(its lines: {})", output.display())),
         "{index}"
     );
-    let began = Instant::now();
-    while !fs::read_to_string(&heard).is_ok_and(|text| text.lines().count() == 2)
-        && began.elapsed() < Duration::from_secs(10)
-    {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // Heard to its end within the window, the command wrote both lines before its count.
     assert_eq!(
         fs::read_to_string(&heard).unwrap(),
         format!("{SLUG} {merge}\nnone none\n"),
@@ -1236,9 +1237,11 @@ fn two_lands_at_once_go_one_after_the_other() {
     let r = Repo::new();
     let started = r.dir.join("started");
     let go = r.dir.join("go");
+    // The check waits for the test's word, for six minutes of its looks at most (the backstop of
+    // the minute it once had), and fails past them.
     let check = format!(
         "echo \"$TASKS_TASK\" >> '{runs}'; touch '{started}'; i=0; while [ ! -e '{go}' ] && \
-         [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done; test -e '{go}'",
+         [ $i -lt 3600 ]; do sleep 0.1; i=$((i+1)); done; test -e '{go}'",
         runs = r.dir.join("runs").display(),
         started = started.display(),
         go = go.display()
@@ -1281,7 +1284,8 @@ fn two_lands_at_once_go_one_after_the_other() {
     );
 }
 
-/// Wait up to a minute for `ready`; past it, fail where it was called.
+/// Wait for `ready`, up to the backstop of the minute it once had; past it, fail where it was
+/// called.
 #[track_caller]
 fn wait_for(ready: impl Fn() -> bool) {
     wait_saying(ready, String::new);
@@ -1290,15 +1294,13 @@ fn wait_for(ready: impl Fn() -> bool) {
 /// [`wait_for`], failing with what `found` says was there instead.
 #[track_caller]
 fn wait_saying(ready: impl Fn() -> bool, found: impl Fn() -> String) {
-    let until = Instant::now() + Duration::from_secs(60);
-    while !ready() {
-        if Instant::now() >= until {
-            let found = found();
-            let sep = if found.is_empty() { "" } else { ": " };
-            panic!("waited a minute{sep}{found}");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let what = format!("the condition at {}", std::panic::Location::caller());
+    let waited = test_time::until_true(what, test_time::backstop(Duration::from_secs(60)), ready);
+    waited.unwrap_or_else(|stall| {
+        let found = found();
+        let sep = if found.is_empty() { "" } else { ": " };
+        panic!("{stall}{sep}{found}");
+    });
 }
 
 /// A writer another thread reads while it is written.

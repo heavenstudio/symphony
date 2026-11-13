@@ -51,7 +51,14 @@ never the whole target, which the release run runs.
   the move (`tests/tools.rs`). No build removes them, since another worktree's
   build may be running them; only the move takes them away, while nothing
   builds, and it refuses while a process has a file open under them or works
-  there. A new tree's folder starts from a seed
+  there. A build runs dx from neither folder: dx makes itself the rustc wrapper of
+  the workspace's own crates by its canonical path, which Cargo mixes into their
+  symbol names, and so into every byte of the wasm and every asset name. So
+  `bundle.sh` runs it as `/private/tmp/symphony-client-tools/dx-0.7.10/bin/dx`,
+  in a folder private to the user, the same path in every checkout and common dir:
+  `dx-path.sh` keeps there a hard link of the installed dx (a copy across volumes),
+  replaced whole when it is not that file or its bytes (`tests/tools.rs`).
+  A new tree's folder starts from a seed
   another tree made, its wasm32 builds among it. The wrapper clears workspace
   crates from every seeded target/profile and records that cleanup for
   `wasm-fresh.sh`. Without a matching
@@ -403,6 +410,19 @@ never the whole target, which the release run runs.
   `queue_filter.rs` derives counts from the complete snapshot and stores the selected
   owner category through `Platform` on this device. Chips use the shared Button;
   an absent saved category displays All without hiding new work.
+- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, drawn by the task pages'
+  module (`page-tasks`) as the Agents page is, which already holds the runtime, frame and
+  components it uses: a module of its own would weigh some 560 KB in each build the
+  distribution keeps, against the client's line. Its style is `assets/reports.css`. It reads
+  the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
+  once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
+  phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
+  boxes over a column a period, lines as one SVG whose strokes keep their width, both on one
+  axis with its unit; a period no file recorded is hatched and its line broken, never a zero.
+  A tap or the arrow keys pick a period, the same on every chart, and its readout says every
+  value as text; each chart's table holds every period. The series take `--chart-1` to
+  `--chart-5`, set at no specificity so a theme's own win, with their own steps in the dark.
+  Charts below the screen mount through `NearViewport`. Hours are labelled in UTC.
 - **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
   source positions and anchors, with short card summaries. `viewport::NearViewport`
   uses the shared visibility latch to mount each block once near the screen; a collapsed

@@ -2,9 +2,11 @@
 //! per test, a settable clock and process table (`tasks_store_test.py`'s `Clock` and `alive`), and a
 //! board seeded through the one-way copy ([`Seed`], `seed.rs`).
 //!
-//! The server is the pinned `surreal` (`SYMPHONY_SURREAL`, else `tools/surreal.sh` fetches it),
-//! in memory on a free local port. It runs under a shell that stops it when this process's pipe to
-//! the shell closes,
+//! The server is the pinned `surreal` (`SYMPHONY_SURREAL`, else `tools/surreal.sh` fetches it), in
+//! memory on a free local port, its outbound connections allowed to this machine alone
+//! (`--allow-net 127.0.0.1`, after the address, which a stand-in reads as its fourth word), for the
+//! gates a test's statement waits at (`gate.rs`). It runs under a shell that stops it when this
+//! process's pipe to the shell closes,
 //! so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
 //! (`symphony_board::port`), every start within one backstop only a stall reaches
@@ -48,7 +50,8 @@ pub const GONE: f64 = LIVE_SECONDS + STALE_SECONDS + 1.0;
 pub const HOST: &str = "this-host";
 
 /// Raw fixture writes can meet SurrealDB's deferred HNSW compaction even after a store call
-/// commits. Retry conflicts with the store's 30 s patience and capped, jittered backoff.
+/// commits. Retry conflicts, with capped, jittered backoff, until the backstop of the store's 30 s
+/// patience: a loaded machine slows the compaction, never ends it.
 /// Multi-statement callers must be idempotent or supply their own transaction.
 pub trait RawWrite {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError>;
@@ -56,9 +59,8 @@ pub trait RawWrite {
 
 impl RawWrite for Client {
     fn write(&self, sql: &str, vars: serde_json::Value) -> Result<Vec<serde_json::Value>, DbError> {
-        retry_conflicts(Instant::now() + Duration::from_secs(30), || {
-            self.query(sql, vars.clone())
-        })
+        let until = Instant::now() + test_time::backstop(Duration::from_secs(30));
+        retry_conflicts(until, || self.query(sql, vars.clone()))
     }
 }
 
@@ -247,7 +249,7 @@ pub fn launch_on(
             Command::new("bash")
                 .arg("-c")
                 .arg(concat!(
-                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error "$3" >&2 3<&- & s=$!; "#,
+                    r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net 127.0.0.1 "$3" >&2 3<&- & s=$!; "#,
                     r#"echo "$s"; exec >/dev/null; "#,
                     r#"(fixture_wait_eof <&3; kill $s 2>/dev/null) & c=$!; exec 3<&-; wait $s; r=$?; kill $c 2>/dev/null; wait $c 2>/dev/null; exit $r"#,
                 ))

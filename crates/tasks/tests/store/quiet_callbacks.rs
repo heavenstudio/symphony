@@ -4,6 +4,7 @@ use super::common::Fixture;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
 use symphony_board::NewTask;
+use symphony_board::codex_queue::PATIENCE_VAR;
 use symphony_board::sys::{Command, Spawning as _};
 use symphony_board::{Health, NewLaunch, cli, sys};
 
@@ -1309,7 +1310,7 @@ while IFS= read -r line; do
   method=$(printf '%s\n' "$line" | jq -r .method)
   case "$method" in
     initialize)
-      if [ "$CODEX_STATE" = stdout-held ]; then /bin/sleep 40 & printf '%s\n' "$!" > "$CODEX_CHILD_PID"; fi
+      if [ "$CODEX_STATE" = stdout-held ]; then /bin/sleep 600 & printf '%s\n' "$!" > "$CODEX_CHILD_PID"; fi
       if [ "$CODEX_STATE" = unavailable ]; then exit 1; fi
       if [ "$CODEX_STATE" = legacy ]; then printf '%s\n' '{"id":1,"error":{"code":-32601}}'; else printf '%s\n' '{"id":1,"result":{}}'; fi ;;
     thread/read)
@@ -1371,6 +1372,13 @@ done
             .env("CODEX_ARGV", &argv_log)
             .env("CODEX_STATE", state)
             .env("CODEX_CHILD_PID", dir.join("held-child.pid"));
+        // A stand-in that answers is given the backstop of the delivery's 5 s, so a loaded
+        // machine's slow jq never reads as a Codex that did not answer. The stall, which never
+        // answers its steer, is the deadline's own case: it keeps the delivery's 5 s.
+        if state != "stall" {
+            let patience = test_time::backstop(std::time::Duration::from_secs(5));
+            command.env(PATIENCE_VAR, patience.as_secs().to_string());
+        }
         command
     };
     let run = |state: &str, args: &[&str]| {

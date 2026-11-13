@@ -433,19 +433,21 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
             .stderr(File::create(&said).unwrap())
             .spawn()
             .unwrap();
-        let start = Instant::now();
-        while !processes().iter().any(waiting) {
-            assert!(
-                seed.try_wait().unwrap().is_none(),
-                "the seed ended before its clone waited: {}",
-                fs::read_to_string(&said).unwrap()
-            );
-            assert!(
-                start.elapsed() < Duration::from_secs(300),
-                "the clone never waited on the lock"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // Within the backstop of the 300 s it once had, which only the seed's own
+        // SYMPHONY_SEED_WAIT, ending it, comes before.
+        test_time::until_true(
+            "the clone waited on the lock",
+            test_time::backstop(Duration::from_secs(300)),
+            || {
+                assert!(
+                    seed.try_wait().unwrap().is_none(),
+                    "the seed ended before its clone waited: {}",
+                    fs::read_to_string(&said).unwrap()
+                );
+                processes().iter().any(waiting)
+            },
+        )
+        .unwrap();
         assert!(
             f.beside().contains(&format!(".target.seed.{}", seed.id())),
             "{:?}",
@@ -455,23 +457,19 @@ fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
         let pid = libc::pid_t::try_from(seed.id()).unwrap();
         // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
         assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
-        // Its end within a minute, never the lock's wait: a seed the signal did not end waits on
-        // with its clone for all of SYMPHONY_SEED_WAIT, so it is killed and the test says so.
-        let until = Instant::now() + Duration::from_secs(60);
-        let ended = loop {
-            if let Some(ended) = seed.try_wait().unwrap() {
-                break ended;
-            }
-            if Instant::now() > until {
-                seed.kill().unwrap();
-                seed.wait().unwrap();
-                panic!(
-                    "signal {signal} did not end the seed within a minute: {}",
-                    fs::read_to_string(&said).unwrap()
-                );
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        // Its end within the backstop of the minute it once had, never the lock's wait: a seed the
+        // signal did not end waits on with its clone for all of SYMPHONY_SEED_WAIT, so it is killed
+        // and the test says so.
+        let ending = test_time::until(
+            format!("signal {signal} ended the seed"),
+            test_time::backstop(Duration::from_secs(60)),
+            || seed.try_wait().unwrap(),
+        );
+        let ended = ending.unwrap_or_else(|stall| {
+            seed.kill().unwrap();
+            seed.wait().unwrap();
+            panic!("{stall}: {}", fs::read_to_string(&said).unwrap());
+        });
         assert_eq!(ended.signal(), Some(signal), "the run ends by its signal");
         f.no_staging_left();
         assert!(!target.exists());

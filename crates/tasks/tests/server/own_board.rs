@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::server::{FOLDER, Running};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
@@ -103,15 +103,17 @@ exec {} "$@"
 
     pub fn shutdown(&mut self) -> ExitStatus {
         drop(self.watchdog.stdin.take());
-        let began = Instant::now();
-        while began.elapsed() < Duration::from_secs(5) {
-            if let Some(status) = self.watchdog.try_wait().unwrap() {
-                return status;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let _ = self.watchdog.kill();
-        self.watchdog.wait().unwrap()
+        // Given the backstop of the 5 s it once had to end at its EOF, then killed.
+        let watchdog = &mut self.watchdog;
+        let ended = test_time::until(
+            "the watchdog ended at its EOF",
+            test_time::backstop(Duration::from_secs(5)),
+            || watchdog.try_wait().unwrap(),
+        );
+        ended.unwrap_or_else(|_| {
+            let _ = self.watchdog.kill();
+            self.watchdog.wait().unwrap()
+        })
     }
 }
 
@@ -160,16 +162,14 @@ pub fn signal(pid: i64, name: &str) {
         .status_locked();
 }
 
-/// Waits until `pid` is gone, for up to 20 s: whether it went.
+/// Waits until `pid` is gone, for up to the backstop of the 20 s it once had: whether it went.
 pub fn gone(pid: i64) -> bool {
-    let began = Instant::now();
-    while began.elapsed() < Duration::from_secs(20) {
-        if !symphony_board::sys::pid_alive(pid) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    false
+    test_time::until_true(
+        format!("{pid} is gone"),
+        test_time::backstop(Duration::from_secs(20)),
+        || !symphony_board::sys::pid_alive(pid),
+    )
+    .is_ok()
 }
 
 /// A repository of its own, its board the one in its git dir in the live board's shape: reached

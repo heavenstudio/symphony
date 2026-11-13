@@ -534,8 +534,9 @@ fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
     }
 }
 
-/// How long a race's side waits for the other before the test fails rather than hangs.
-pub(super) const WAIT: Duration = Duration::from_secs(60);
+/// How long a race's side waits for the other before the test fails rather than hangs: the backstop
+/// of the minute it once had.
+pub(super) const WAIT: Duration = test_time::backstop(Duration::from_secs(60));
 
 #[test]
 fn a_red_marked_as_the_owner_cancels_it_is_decided_again_and_a_claim_read_between_counts_it() {

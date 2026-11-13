@@ -7,8 +7,9 @@
 # names is recorded again, as a step of that run; any other command recorded inside a recorded
 # command is exec'd as it is, as is every one with TASKS_RECORDER=off or with no recorder that
 # answers `run --probe` with `run 1` within two seconds (none built yet, one older than the command,
-# or one hung or slow). A recorder that does not answer `run 2` too records no run or step: the
-# command is recorded at top level as before, and exec'd as it is inside a recorded command.
+# or one hung or slow; TASKS_RECORDER_PROBE_WAIT sets other seconds, a test's). A recorder that
+# does not answer `run 2` too records no run or step: the command is recorded at top level as
+# before, and exec'd as it is inside a recorded command.
 # The recorder is TASKS_RECORDER's, else this checkout's prepared .target/bin/tasks, else that of
 # the main checkout this worktree belongs to; never a containing project's. Finding the recorder
 # starts no process: only the probe and COMMAND run.
@@ -58,7 +59,7 @@ record() {
     fi
     # The probe answers each version of `tasks run` it takes, a line each.
     if [ -x "$recorder" ]; then
-        while IFS= read -r -t 2 line; do
+        while IFS= read -r -t "${TASKS_RECORDER_PROBE_WAIT:-2}" line; do
             case "$line" in
                 "run 1") first=1 ;;
                 "run 2") second=1 ;;

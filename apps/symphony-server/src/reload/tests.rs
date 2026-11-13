@@ -180,6 +180,7 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
         "symphony/apps/symphony-ui/index.html",
         "symphony/apps/symphony-ui/bin/cargo-symphony-ui",
         "symphony/apps/symphony-ui/bundle.sh",
+        "symphony/apps/symphony-ui/dx-path.sh",
         "symphony/apps/symphony-ui/package.sh",
         "symphony/apps/symphony-ui/tools.sh",
         "symphony/apps/symphony-ui/wasm-fresh.sh",

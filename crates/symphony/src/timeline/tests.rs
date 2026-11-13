@@ -119,6 +119,7 @@ fn record(n: u32, phase: Phase, label: &str, times: (f64, Option<f64>, Option<f6
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     }
 }
 

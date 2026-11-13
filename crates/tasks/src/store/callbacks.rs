@@ -1794,11 +1794,13 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
     queue(thread, text)
 }
 
-/// `text` queued on Codex thread `thread` by `codex queue`, given 5 s. Started without a fork: a
-/// connection the Symphony server accepted and has not yet marked close-on-exec stays out of it, so
-/// that client's read to the end of its answer never waits for the queue.
+/// `text` queued on Codex thread `thread` by `codex queue`, given 5 s (`codex_queue::patience`).
+/// Started without a fork: a connection the Symphony server accepted and has not yet marked
+/// close-on-exec stays out of it, so that client's read to the end of its answer never waits for
+/// the queue.
 fn queue(thread: &str, text: &str) -> Result<(), DeliveryError> {
-    crate::codex_queue::queue(crate::sys::command("codex"), thread, text)
+    let patience = crate::codex_queue::patience(&crate::cli::Env::of_process());
+    crate::codex_queue::queue(crate::sys::command("codex"), thread, text, patience)
         .map_err(DeliveryError::retry)
 }
 
