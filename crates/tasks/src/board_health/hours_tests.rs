@@ -566,6 +566,28 @@ fn a_recorder_that_keeps_no_hours_writes_none() {
 }
 
 #[test]
+fn a_keeping_recorder_names_its_folder_nothing_appended_makes_none_and_bytes_not_text_read_as_none()
+{
+    let dir = Scratch::new("edges");
+    let (recorder, _) = keeping(
+        &dir.0,
+        &Arc::new(Gate::default()),
+        &Arc::new(QueryLog::default()),
+    );
+    assert_eq!(recorder.hours_folder(), Some(dir.0.clone()));
+    assert!(format!("{recorder:?}").contains("Hours {"), "{recorder:?}");
+    let unmade = dir.path("unmade");
+    append(&unmade, &[]).unwrap();
+    assert!(!unmade.exists(), "no lines, no folder");
+    fs::write(dir.path(&format!("{}.jsonl", run_day(T0))), b"\xff\xfe\n").unwrap();
+    assert!(read(&dir.0, &run_day(T0)).is_empty());
+    assert!(
+        Arc::ptr_eq(&Gate::process(), &Gate::process()),
+        "one gate for the whole process"
+    );
+}
+
+#[test]
 fn the_hours_of_a_board_are_in_its_common_dir_named_by_its_database() {
     let dir = Scratch::new("folder");
     fs::create_dir_all(dir.path(".git")).unwrap();
