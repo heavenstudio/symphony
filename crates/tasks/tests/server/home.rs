@@ -195,7 +195,6 @@ fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_superv
     );
     std::fs::remove_file(home.dir().join("server.json")).unwrap();
 
-    let began = Instant::now();
     let listed = sys::output(
         Command::new(env!("CARGO_BIN_EXE_tasks"))
             .arg("list")
@@ -206,7 +205,6 @@ fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_superv
             .env("PATH", std::env::var_os("PATH").unwrap_or_default()),
     )
     .unwrap();
-    let took = began.elapsed();
     let said = format!(
         "{}{}",
         String::from_utf8_lossy(&listed.stdout),
@@ -214,10 +212,8 @@ fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_superv
     );
     assert!(listed.status.success(), "{said}");
     assert!(said.contains("sim/found"), "{said}");
-    assert!(
-        took < Duration::from_secs(60),
-        "found within less than the start's patience: {took:?}"
-    );
+    // Found, not started again: the same server recorded, and its supervisor left alone, which a
+    // start that waited out its patience on the lost record and replaced the server would not leave.
     assert_eq!(home.recorded(), Some(running.clone()));
     assert!(pid_alive(running.pid), "the server runs");
     assert!(pid_alive(supervisor), "its supervisor was left alone");
@@ -834,13 +830,12 @@ fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
         "{}",
         String::from_utf8_lossy(&input.stdout)
     );
-    let began = Instant::now();
+    // Stopped is ended within its closing: a server that did not end in that time is an error.
     assert_eq!(
         s.home().closing(Duration::from_secs(30)).stop().unwrap(),
         Some(running.clone())
     );
     assert!(!pid_alive(running.pid));
-    assert!(began.elapsed() < Duration::from_secs(30));
 }
 
 #[test]

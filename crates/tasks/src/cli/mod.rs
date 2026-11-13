@@ -398,13 +398,18 @@ impl Clock {
         }
     }
 
-    /// Wait `seconds`. A pinned clock moves on by them instead, says `STEP <now>` on `err`, and reads a
-    /// line on `input` (or its end) before going on, so a test acts between a monitor's looks.
+    /// What the machine's clock sleeps for a wait of `seconds`: none for a negative span or no
+    /// number.
+    pub fn span(seconds: f64) -> Duration {
+        Duration::try_from_secs_f64(seconds).unwrap_or_default()
+    }
+
+    /// Wait `seconds` ([`Clock::span`]). A pinned clock moves on by them instead, says `STEP <now>` on
+    /// `err`, and reads a line on `input` (or its end) before going on, so a test acts between a
+    /// monitor's looks.
     pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
         match self {
-            Clock::Machine => {
-                std::thread::sleep(Duration::try_from_secs_f64(seconds).unwrap_or_default())
-            }
+            Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {
                     let mut now = now.lock().unwrap_or_else(|held| held.into_inner());

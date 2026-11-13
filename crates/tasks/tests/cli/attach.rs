@@ -168,11 +168,12 @@ fn the_machines_clock_waits_for_real_and_never_for_less_than_nothing() {
     let began = Instant::now();
     Clock::Machine.wait(0.05, &mut "".as_bytes(), &mut Vec::new());
     assert!(began.elapsed() >= Duration::from_millis(50));
-    let began = Instant::now();
-    for odd in [-1.0, f64::NAN] {
+    assert_eq!(Clock::span(0.05), Duration::from_millis(50));
+    // What it sleeps for a span that is no wait, which a loaded machine's time would not show.
+    for odd in [-1.0, f64::NAN, f64::NEG_INFINITY] {
+        assert_eq!(Clock::span(odd), Duration::ZERO, "{odd}");
         Clock::Machine.wait(odd, &mut "".as_bytes(), &mut Vec::new());
     }
-    assert!(began.elapsed() < Duration::from_secs(1));
 }
 
 #[test]
