@@ -1076,7 +1076,17 @@ fn a_builder_that_died_is_replaced_by_the_next_trigger_which_makes_mains_tip() {
     let tip = head(&r.root, "main");
     let mut builder = spawned(&r);
     // The build noted its tip and its pid, each a whole line, whichever it wrote first.
-    wait_for(|| builds(&r).len() == 1 && pids(&r).len() == 1);
+    wait_saying(
+        || builds(&r).len() == 1 && pids(&r).len() == 1,
+        || {
+            let held = |file: &str| fs::read_to_string(r.dir.join(file)).ok();
+            format!(
+                "builds holds {:?}, pids {:?}",
+                held("builds"),
+                held("pids")
+            )
+        },
+    );
     assert_eq!(builds(&r), vec![tip.clone()]);
     let build = pids(&r)[0];
     let pid = builder.id();
@@ -1161,13 +1171,24 @@ fn the_status_waits_while_the_regenerator_makes_them_then_says_where_it_stands()
     let me = i64::from(std::process::id());
     wrote(&r, "building", &moved, me, Some(&top));
     let env = r.env(&r.root);
-    let (code, out, err) = std::thread::scope(|s| {
-        let waiting = s.spawn(|| cli(&["regenerate", "--status", "--wait"], &env));
-        std::thread::sleep(Duration::from_millis(500));
+    let printed = Arc::new(Mutex::new(Vec::new()));
+    let said = || String::from_utf8_lossy(&printed.lock().unwrap()).into_owned();
+    let mut out = Shared(Arc::clone(&printed));
+    let (code, err) = std::thread::scope(|s| {
+        let waiting = s.spawn(|| {
+            let args = ["regenerate", "--status", "--wait"].map(String::from);
+            let mut err = Vec::new();
+            let code =
+                symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
+            (code, String::from_utf8(err).unwrap())
+        });
+        // It read the state a regenerator that lives is building, said so, and waits on.
+        wait_saying(|| said().starts_with("waiting: "), said);
         assert!(!waiting.is_finished(), "it waits");
         wrote(&r, "current", &moved, dead_pid(), Some(&moved));
         waiting.join().unwrap()
     });
+    let out = said();
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(&format!(
