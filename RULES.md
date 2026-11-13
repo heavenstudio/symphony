@@ -176,17 +176,50 @@ real choice. The owner, 2026-11-11: "run some auto triage. Some decisions look l
 had been auto approved". An orchestrator marks it `[a]` with a dated
 `agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/REVIEW.md)) when the owner's own
 words, quoted in the basis, already decide it, or when the card's own evidence leaves one option
-standing (the others measured wrong, or against something the owner said). It stays the
+standing (the others measured wrong, or against something the owner said). A card the owner
+approved is such words for a later card only when the choice it approved already answers what the
+later card asks, and each of the later card's other options would change that choice: the basis
+quotes the verdict and names its card (`review/decided-is-not-asked`). It stays the
 owner's when it is a matter of taste or look (names, layout, pictures), a product direction with
 live alternatives, money, or an act that cannot be undone (moving live state, deleting, a tag or
 a release): those are recommended, never auto-approved. An auto-approved card stays in the
 register for the owner to spot-check, and any verdict of theirs overrides it.
 
+### `review/decided-is-not-asked`
+
+An approved card is never reopened by a question on it, and nothing an earlier verdict decides is
+put to the owner. The owner, 2026-11-12, approving cards a design had added after they approved
+its first: "A. this should had been auto approve/triaged, its basically what was decided in the
+other card." and "A. should also had been auto approved."; then of the first card, which an
+agent's question on it had put back in front of them: "this should had been a seaparate card no
+the same one. I also don't really get why those similar questions about things that were already
+been approved are being asked. They are consequences of the previous decision and should be
+auto-approved". A consequence of an approved choice is whatever follows from it while the option
+chosen stays the one the card described, a cost or a trade the card did not state included: it is
+a plain agent line on that card, quoting the owner's words it rests on and answering any owner note
+still open there, and the card stays resolved, where the owner can reopen it with a comment. A
+material change is only one that would make the option chosen another than the one described: it
+is a new card that links the approved one. A question the approved choice does not answer is a new
+card too, checked first as every card is. Before any card goes to the owner its agent checks the
+owner's earlier verdicts. A card the owner approved decides a later card only when the choice it
+approved already answers what the later card asks, and each of the later card's other options
+would change that choice. A recommendation that leaves alone something the approved card never
+addressed decides nothing, and that card is asked. An auto-approved card, or a line an agent
+recorded as answered, is not the owner's approval and decides no further card. A decided card is
+recorded as answered on the card the owner approved, never asked; one already posted is
+auto-approved (`review/auto-approve-what-is-decided`). A design review that asks for a new owner
+card says which earlier verdict it checked and why that does not decide it. Only the owner's own
+words decide; a question of theirs decides nothing
+([REVIEW](docs/REVIEW.md#before-a-card-goes-to-the-owner)).
+
 ### `docs/cards-clear-and-concise`
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
-question. Detail the decision does not need goes in a linked file, and pictures go where the
-thing judged is visual ([REVIEW](docs/REVIEW.md#writing-a-card)).
+question. It opens with what changes for the owner, in one or two plain sentences, before any
+option, written for someone who has not read the internals. The owner, 2026-11-12, on a card that
+did not: "I don't fully understand this issue. So pick whatever choice makes sense to you." Detail
+the decision does not need goes in a linked file, and pictures go where the thing judged is visual
+([REVIEW](docs/REVIEW.md#writing-a-card)).
 
 ## Documents
 

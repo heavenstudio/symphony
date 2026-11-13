@@ -151,7 +151,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    Symphony's from git, is named in the run's output and record and in the release's message
    (`Left out of conciliation`). Since a refresh moves a consumer's pin and none of its code, a
    public name its code calls changes only with a consumer release plan. Most of them are held
-   earlier, at every task's gate, by a `tests/consumer_api.rs` that `just lint-rs` compiles in each
+   earlier, at every task's gate, by a `tests/consumer_api.rs` that the workspace's lint compiles in each
    package a consumer's code calls: `crates/tasks` (`symphony_board`), `crates/symphony` (with
    `symphony_plugin`, `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
    `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`. Each holds the
