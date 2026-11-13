@@ -393,8 +393,7 @@ fn moved_checkout(
         let _ = git_until(root, &relocked, until);
         return Err(format!("cannot move {at} to {there}: {why}"));
     }
-    let admin =
-        admin(common, &to).ok_or_else(|| format!("git kept no admin folder for {there}"))?;
+    let admin = admin(common, to).ok_or_else(|| format!("git kept no admin folder for {there}"))?;
     let marker = admin.join(MARK);
     fs::write(&marker, format!("{there}\n")).map_err(|e| crate::text::os_error(&e, &marker))?;
     let _ = fs::remove_file(admin.join(LEGACY_MARK));
