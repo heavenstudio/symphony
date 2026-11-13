@@ -18,8 +18,9 @@ const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CS
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
-and no request but a feed stream in flight for 300 ms), runs the steps in the order given, and saves
-a PNG. It only reads the page: no server is started, stopped or changed.
+and no request but a feed stream in flight for 300 ms, its frames' among them, those Chrome runs
+in a process of their own too), runs the steps in the order given, and saves a PNG. It only reads
+the page: no server is started, stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
@@ -29,14 +30,17 @@ options:
   --out FILE.png       where the final picture goes (its folder is made)
   --timeout SECS       how long the page's load, each step and the final capture may each take,
                        every call to the browser within them included, before the shot fails
-                       naming what it waited for (default 20; a pause adds its own length)
+                       naming what it waited for, a frame by its address (default 20; a pause
+                       adds its own length)
   --size WxH           the viewport in CSS pixels (default 1440x900)
   --phone              a mid phone's screen instead, as the browser tests emulate it: 390x844
                        at 3x, mobile
   --full-page          capture the whole page rather than the viewport
   --scheme light|dark  the colour scheme the page is told the system prefers
   --report             print, as JSON, the console errors and failed requests seen, and the
-                       document's scroll width against the viewport's (horizontal overflow)
+                       document's scroll width against the viewport's (horizontal overflow); a
+                       frame Chrome runs in a process of its own (a cross-site or sandboxed one)
+                       has its failed requests there, not its console errors
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
@@ -583,6 +587,9 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
             .map(drop),
     };
     said(view, "setting the view", late)?;
+    // A frame in a process of its own (a cross-site one, a sandboxed one: a document's mockup) is
+    // answered in that process: followed, its requests end as the page's own do.
+    said(chrome.follow_frames(), "following the page's frames", late)?;
     if let Some(scheme) = &shot.scheme {
         let value = match scheme {
             Scheme::Light => "light",
@@ -1863,7 +1870,9 @@ fn not_drawn(after: &str, wait: Wait, still: &[String], failed: &[Value]) -> Str
     )
 }
 
-/// What a page still lacks to count as drawn, in words; empty once it has all of it.
+/// What a page still lacks to count as drawn, in words; empty once it has all of it. The requests
+/// in flight of a frame in it are said apart, after the page's own, by the frame's address: a
+/// frame whose document is among them as that frame still to load.
 fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
     let mut missing = Vec::new();
     if state["visible"] == "hidden" {
@@ -1880,28 +1889,62 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
             "{loading} region(s) still loading ([data-ready=loading])"
         ));
     }
-    let pending: Vec<&str> = requests
+    let pending: Vec<&Request> = requests
         .iter()
         .filter(|request| {
             !request.finished && request.failed.is_none() && request.kind != "EventSource"
         })
+        .collect();
+    let own: Vec<&str> = pending
+        .iter()
+        .filter(|request| request.frame.is_none())
         .map(|request| request.url.as_str())
         .collect();
-    if !pending.is_empty() {
-        let shown: Vec<&str> = pending.iter().take(3).copied().collect();
-        let more = pending.len() - shown.len();
-        missing.push(format!(
-            "{} request(s) in flight: {}{}",
-            pending.len(),
-            shown.join(", "),
-            if more > 0 {
-                format!(" and {more} more")
-            } else {
-                String::new()
-            }
-        ));
+    if !own.is_empty() {
+        missing.push(in_flight(&own, ""));
+    }
+    // Each frame with requests in flight, in the order its first was seen.
+    let mut frames: Vec<&str> = Vec::new();
+    for frame in pending
+        .iter()
+        .filter_map(|request| request.frame.as_deref())
+    {
+        if !frames.contains(&frame) {
+            frames.push(frame);
+        }
+    }
+    for frame in frames {
+        let theirs: Vec<&Request> = pending
+            .iter()
+            .copied()
+            .filter(|request| request.frame.as_deref() == Some(frame))
+            .collect();
+        if theirs.iter().any(|request| request.kind == "Document") {
+            missing.push(format!(
+                "the frame {frame} to load (its document is in flight)"
+            ));
+        } else {
+            let urls: Vec<&str> = theirs.iter().map(|request| request.url.as_str()).collect();
+            missing.push(in_flight(&urls, &format!(" in the frame {frame}")));
+        }
     }
     missing
+}
+
+/// Requests in flight, by their addresses (the first three named), `whose` after their count.
+fn in_flight(urls: &[&str], whose: &str) -> String {
+    let shown = &urls[..urls.len().min(3)];
+    let more = urls.len() - shown.len();
+    format!(
+        "{} request(s) in flight{whose}: {}{}",
+        urls.len(),
+        shown.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    )
 }
 
 fn seconds_said(length: Duration) -> String {
