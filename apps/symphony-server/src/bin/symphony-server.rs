@@ -2,5 +2,5 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(symphony_server::binary::run(&[], &args));
+    std::process::exit(symphony_server::binary::run_holding_none(&args));
 }

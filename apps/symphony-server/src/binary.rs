@@ -8,6 +8,13 @@ pub fn run(plugins: &'static [&'static dyn symphony_plugin::Plugin], args: &[Str
         eprintln!("{problem}");
         return 2;
     }
+    run_holding_none(args)
+}
+
+/// A `symphony-server` binary holding no plugin, the Symphony's own: [`run`] with none to install.
+/// It installs nothing, so it links none of what measures a call into a plugin
+/// ([`symphony::plugins::install`]). The exit code.
+pub fn run_holding_none(args: &[String]) -> i32 {
     let logging = if args.first().is_some_and(|arg| arg == "serve") {
         match args
             .windows(2)

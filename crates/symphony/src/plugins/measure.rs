@@ -229,6 +229,9 @@ pub const LINKED: &str = "linked";
 pub const LOOPBACK: &str = "loopback";
 /// A call answered by a plugin's process of its own.
 pub const PROCESS: &str = "process";
+/// What a loopback call's line says when its request reads back from JSON as another call. The
+/// loopback's round trip alone writes it, so a binary that links no loopback holds no such text.
+pub const READ_AS_ANOTHER: &str = "the request read back as another call";
 
 /// Now, in milliseconds since the epoch.
 pub(super) fn now_ms() -> u64 {
@@ -385,7 +388,7 @@ fn round_trip<A: Ask>(
     };
     let mut lost = (read != request).then(|| "the request read back otherwise".to_string());
     let Some(asked) = A::from_request(read) else {
-        return linked_trip(linked, "the request read back as another call".into());
+        return linked_trip(linked, READ_AS_ANOTHER.into());
     };
     let start = Instant::now();
     let answer = far(asked);
