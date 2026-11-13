@@ -10,8 +10,23 @@ use std::path::{Path, PathBuf};
 pub struct Checkout {
     pub common: PathBuf,
     pub top: PathBuf,
+    /// `top` itself unless it is a linked worktree; else the first worktree git lists, which is the
+    /// common dir itself when git names no main checkout (a bare repository's).
     pub main: PathBuf,
     pub tree_id: Option<String>,
+}
+
+impl Checkout {
+    /// Whether this is a linked worktree ([`crate::host::worktree_of`]), never a main checkout.
+    pub fn linked(&self) -> bool {
+        self.top != self.main
+    }
+
+    /// Whether git names no main checkout of this linked worktree's repository: a bare
+    /// repository's, or one whose git dir lies apart from its main checkout.
+    pub fn mainless(&self) -> bool {
+        self.main == self.common
+    }
 }
 
 /// One entry of `git worktree list --porcelain`.
@@ -107,11 +122,16 @@ pub fn checkout(dir: &Path) -> Result<Checkout, String> {
             ..tree
         })
         .collect();
-    let main = trees
-        .first()
-        .map(|tree| tree.path.clone())
-        .ok_or("git lists no worktree")?;
     let top = canonical(Path::new(top));
+    // A checkout that is no linked worktree is its own main checkout: for a submodule or a
+    // `--separate-git-dir` checkout git lists the git dir first.
+    let main = match crate::host::worktree_of(&top) {
+        None => top.clone(),
+        Some(_) => trees
+            .first()
+            .map(|tree| tree.path.clone())
+            .ok_or("git lists no worktree")?,
+    };
     Ok(Checkout {
         common: canonical(Path::new(common)),
         tree_id: tree_id(&top, &trees),
@@ -156,5 +176,34 @@ mod tests {
     #[test]
     fn a_directory_outside_any_repository_is_no_checkout() {
         assert!(checkout(Path::new("/")).is_err());
+    }
+
+    /// A checkout that is no linked worktree is its own main, though git lists the git dir first
+    /// for a submodule and a `--separate-git-dir` checkout; a linked worktree's main is its
+    /// repository's, which for a bare repository is the common dir itself.
+    #[test]
+    fn each_layout_is_read_as_a_main_checkout_or_a_linked_worktree_of_one() {
+        use crate::testing::layouts::{Others, others, repository};
+        let tree = crate::testing::Tree::new();
+        let (main, linked) = repository(&tree.root);
+        let Others {
+            submodule,
+            separate,
+            bare,
+            bare_worktree,
+        } = others(&tree.root);
+        for top in [&main, &submodule, &separate] {
+            let read = checkout(&top.join("docs")).unwrap();
+            assert_eq!((&read.top, &read.main), (top, top), "{}", top.display());
+            assert!(!read.linked(), "{}", top.display());
+            assert_eq!(read.tree_id, None);
+        }
+        let read = checkout(&linked.join("docs")).unwrap();
+        assert_eq!((&read.top, &read.main), (&linked, &main));
+        assert!(read.linked() && !read.mainless());
+        assert_eq!(read.tree_id.as_deref(), Some("feature~x"));
+        let read = checkout(&bare_worktree).unwrap();
+        assert_eq!((&read.top, &read.main), (&bare_worktree, &bare));
+        assert!(read.linked() && read.mainless());
     }
 }

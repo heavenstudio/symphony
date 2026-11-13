@@ -1,10 +1,10 @@
 # Releases
 
 How a Symphony release is cut, named and read. Projects that use the Symphony follow its release
-tags, never main. The owner, 2026-11-11: "B. There will be other projects using it. New releases
-can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that
-would do a full verification cycle and conciliation." The evidence and the update command that
-takes a release are in [the analysis](analysis/symphony-update.md).
+tags, never main ([its card](DECISIONS.md#symphony-update-command)), since other projects use it. A
+release comes from a run that verifies main in full and conciliates it with the projects that use
+it; an urgent fix may be released out of cycle. The evidence and the update command that takes a
+release are in [the analysis](analysis/symphony-update.md).
 
 ## A release
 
@@ -250,13 +250,12 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      command in its scratch copy, and any other check's its own command;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
 
-   **A test red on load** is discarded. The owner, 2026-11-13:
-   "A rerun should not fail or pass based on machine load. If it does, discard the tests and move on"
+   **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
    (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
    rerun, because of load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered
    step or a timeout under load) is removed from the tree in its red's own fix, with one line on
    the red's thread naming the test, the evidence it is load (its runs alone and the failing line)
-   and what it proved. That word is the approval: no card is put to the owner to discard it. If
+   and what it proved. That rule is the approval: no card is put to the owner to discard it. If
    what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
    time or an injected clock; the release does not wait for that. No rerun is spent on it, no
    rewrite of it is waited for, and nobody lowers the machine's load to help a run pass: an
@@ -433,9 +432,8 @@ the next landing; after a drop, at once.
 
 ## The cadence
 
-The owner, 2026-11-12: "Given the pace, It would be nice to release a new version every given
-number of tasks done, say 20 and refresh server/clients. Random number I know." So a release run
-also starts once enough tasks have landed, whatever the hour
+Tasks land fast, so a release run also starts once a given number of them have landed, whatever
+the hour, and its green release refreshes the server and its projects
 (`crates/symphony/src/release/cadence.rs`):
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
@@ -495,9 +493,8 @@ also starts once enough tasks have landed, whatever the hour
 
 ## The refresh
 
-Asked whether a green release should refresh the machine, the owner, 2026-11-12: "yes, a green
-release should refresh". The clients are the projects the machine serves, the consuming project
-among them.
+A green release refreshes the machine and its clients, the projects the machine serves, the
+consuming project among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project the conciliation covers (step 4 above: registered, its `symphony.toml` naming plugins, this
 repository aside) whose packages take one of the Symphony's from git
@@ -597,10 +594,10 @@ The release run is the one thing that pushes a tag to `origin`: the release that
 nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md)). A release
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
-does either only on the owner's word. The cadence's run is that word, given on 2026-11-12 (*The
-cadence*, above): a land starts `--due` without asking, and the release it runs is automatic. A
-green release's refresh is that word too ("yes, a green release should refresh"), so its retry,
-`just release --refresh`, is an orchestrator's act, run on a red refresh's task without asking.
+does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
+land starts `--due` without asking, and the release it runs is automatic. So has a green release's
+refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
+run on a red refresh's task without asking.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and

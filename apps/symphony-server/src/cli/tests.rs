@@ -122,6 +122,30 @@ fn if_up_asks_for_the_running_server_alone() {
 }
 
 #[test]
+fn shared_is_a_start_of_the_one_server_never_a_port_of_its_own_or_a_serve() {
+    let Ok(Action::Start(options)) = parse(&args("--shared --open")) else {
+        panic!("not a start");
+    };
+    assert!(options.shared && options.open);
+    assert!(
+        !Options::default().shared,
+        "a start is not shared unless asked"
+    );
+    for line in ["--shared --port 0", "9000 --shared"] {
+        assert_eq!(
+            parse(&args(line)),
+            Err("--shared starts the one server, which --port is not".into()),
+            "{line}"
+        );
+    }
+    assert_eq!(
+        parse(&args("serve --root /r --port 1 --shared")),
+        Err("\"--shared\" is not an argument".into())
+    );
+    assert!(USAGE.contains("--shared"));
+}
+
+#[test]
 fn stop_and_help_are_their_own_actions() {
     assert!(matches!(
         parse(&args("--host 127.0.0.1 --stop")),

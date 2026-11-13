@@ -7,9 +7,10 @@ use std::io::Write;
 mod release_inputs;
 mod shot;
 mod size_budget;
+mod split_repair;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 16] = [
+const OWN: [(&str, &str); 17] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -55,6 +56,10 @@ const OWN: [(&str, &str); 16] = [
         "check the shipped binaries' sizes against their budget",
     ),
     (
+        "split-repair",
+        "repair dx's --wasm-split output: safe, same bytes each build",
+    ),
+    (
         "release",
         "verify main's tip in full and tag it a release when green",
     ),
@@ -63,7 +68,7 @@ const OWN: [(&str, &str); 16] = [
 
 /// The usage of the commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 6] = [
+const PLAIN: [(&str, &str, &str); 7] = [
     ("project", "usage: symphony project add [DIR]", ""),
     (
         "hook",
@@ -85,6 +90,14 @@ const PLAIN: [(&str, &str, &str); 6] = [
         "size-budget",
         "usage: symphony size-budget ROOT RELEASE",
         "",
+    ),
+    (
+        "split-repair",
+        "usage: symphony split-repair PROGRAM PUBLIC",
+        "PROGRAM is the program dx linked, with its relocations; PUBLIC the folder\n\
+         dx bundle --wasm-split wrote. It writes back the merged constants the splitter\n\
+         zeroed in the main module, puts each chunk's segments in a fixed order and\n\
+         names every module and script it changed by its bytes, in place.\n",
     ),
     (
         "serve",
@@ -120,6 +133,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "size-budget" {
         return size_budget::main(args, out, err);
+    }
+    if name == "split-repair" {
+        return split_repair::main(args, out, err);
     }
     if name == "init" {
         return crate::init::main(args, out, err);

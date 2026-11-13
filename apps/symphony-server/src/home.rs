@@ -163,6 +163,18 @@ impl Home {
         self.recorded().filter(|running| self.healthy(running))
     }
 
+    /// The one server, answering, found as [`Home::ensure`] finds it with the record missing, stale
+    /// or naming another (its command line read from the process table), but only read: no lock
+    /// taken, no record mended, nothing started. What a start that may change nothing reads.
+    pub fn found(&self) -> Option<Running> {
+        self.up().or_else(|| {
+            self.recorded()
+                .and_then(|recorded| self.running_of(recorded.pid))
+                .or_else(|| self.unrecorded())
+                .filter(|running| self.answers(running))
+        })
+    }
+
     /// The one server, answering: the recorded one, else one started now. The recorded one counts
     /// only if it answers as itself (a record can name any port, and any pid), and a record that
     /// names this folder's server wrongly is mended from that server's own command line.
