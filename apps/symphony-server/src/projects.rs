@@ -19,9 +19,11 @@
 //! [`LOOK`], and a changed root or id is served from new state.
 //!
 //! Each project's state holds the maintenance of its board, its idle sweep and its embedding
-//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started when the
-//! project is first served, stopped when it is retired or the server stops. The starter's checkout
-//! is maintained by the server's own workers, under whatever id it is registered with.
+//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started once the
+//! server's generation is live, its socket hand-off committed, as the starter's own are, or when
+//! the project is first served after that; stopped when it is retired or the server stops. The
+//! starter's checkout is maintained by the server's own workers, under whatever id it is
+//! registered with.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -90,6 +92,10 @@ struct Held {
     retired: Vec<retired::Retired>,
     /// Whether the server stopped them: the projects served stay as they are from then on.
     stopped: bool,
+    /// Whether the server's generation is live, its socket hand-off committed
+    /// ([`Projects::watch`]): each other project's maintenance starts from then, never before, as
+    /// a hand-off that fails ends this generation by a kill that stops no state.
+    live: bool,
 }
 
 /// One project as this server serves it.
@@ -103,8 +109,8 @@ pub(crate) struct Served {
 }
 
 impl Projects {
-    /// The projects the registry in `machine` holds, served beside `starter`'s, each warmed and
-    /// maintained as it is read.
+    /// The projects the registry in `machine` holds, served beside `starter`'s, each warmed as it is
+    /// read and maintained once the server's generation is live ([`Projects::watch`]).
     pub(crate) fn new(machine: &Path, starter: &Arc<Shared>) -> Arc<Projects> {
         let home = machine.to_path_buf();
         let maintain = move |shared: &Arc<Shared>| crate::front::maintenance(shared, Some(&home));
@@ -135,27 +141,58 @@ impl Projects {
             maintain,
             held: Mutex::default(),
         });
-        projects.served();
+        drop(projects.read());
         projects
     }
 
-    /// The server's look at the registry, every [`LOOK`] until the starter stops: what a request
-    /// reads ([`Projects::served`]), so a project registered is served, warmed and maintained, and
-    /// one removed retired and its maintenance stopped, though no page asks. Run on a thread of its
-    /// own, within the runtime it is started in, which warms what it reads.
+    /// The server's generation is live, its socket hand-off committed: start the maintenance of
+    /// every other project it serves now, and of each it serves from now on, then look at the
+    /// registry every [`LOOK`] until the starter stops, as a request reads it, so a project
+    /// registered is served, warmed and maintained, and one removed retired and its maintenance
+    /// stopped, though no page asks. The look runs on a thread of its own, within the runtime it is
+    /// started in, which warms what it reads.
     pub(crate) fn watch(self: &Arc<Self>) -> std::thread::JoinHandle<()> {
+        self.go_live();
         let projects = Arc::clone(self);
         let runtime = tokio::runtime::Handle::try_current().ok();
         crate::front::worker(REGISTRY_WORKER, move || {
             let _within = runtime.as_ref().map(tokio::runtime::Handle::enter);
             while !projects.starter.wait(LOOK) {
-                projects.served();
+                drop(projects.read());
             }
         })
     }
 
+    /// Start the maintenance of each other project served now, once: none once the server stopped
+    /// them or its starter is stopping, as nothing would join it.
+    fn go_live(&self) {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.live || held.stopped || self.starter.stopping() {
+            return;
+        }
+        held.live = true;
+        for served in &held.served {
+            self.maintain(&served.entry, &served.shared);
+        }
+    }
+
+    /// Start the maintenance of `shared`, the state `entry` is served from, unless it is the
+    /// starter's checkout, under whatever id, whose board the server's own workers maintain.
+    fn maintain(&self, entry: &Entry, shared: &Arc<Shared>) {
+        if entry.root != self.starter_root
+            && let Some(maintain) = &self.maintain
+        {
+            shared.maintained(maintain(shared));
+        }
+    }
+
     /// The projects served now, the registry read again when its file changed.
     pub(crate) fn served(&self) -> Vec<Served> {
+        self.read().served.clone()
+    }
+
+    /// What is served now, held, the registry read again when its file changed.
+    fn read(&self) -> std::sync::MutexGuard<'_, Held> {
         // A panic while reading leaves the list before it whole: the new one is stored last, in
         // one assignment with the stamp it was read at.
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
@@ -166,12 +203,13 @@ impl Projects {
             )
         });
         if held.stopped || held.read == Some(stamp) {
-            return held.served.clone();
+            return held;
         }
         let registry = Registry::read(&self.machine).unwrap_or_else(|why| {
             eprintln!("· Symphony projects: {why}; serving the starter's project alone");
             Registry::default()
         });
+        let live = held.live;
         let mut next: Vec<Served> = Vec::new();
         for entry in registry.projects {
             if next.iter().any(|served| served.entry.id == entry.id) {
@@ -187,7 +225,7 @@ impl Projects {
                     entry,
                     ..kept.clone()
                 },
-                None => self.serve(entry),
+                None => self.serve(entry, live),
             });
         }
         // The starter's checkout, unregistered, is served under the id it started with, unless
@@ -206,10 +244,13 @@ impl Projects {
             });
             next.insert(
                 0,
-                self.serve(Entry {
-                    id: self.starter_id.clone(),
-                    ..entry
-                }),
+                self.serve(
+                    Entry {
+                        id: self.starter_id.clone(),
+                        ..entry
+                    },
+                    live,
+                ),
             );
         }
         let gone: Vec<Stopped> = held
@@ -229,23 +270,21 @@ impl Projects {
         retired::retire(gone, &mut held.retired);
         held.read = Some(stamp);
         held.served = next;
-        held.served.clone()
+        held
     }
 
     /// `entry` served: the starter's own state while the entry is the starter's checkout under the
-    /// id it started with, a new one beside it for any other root or id. A new state of another
-    /// checkout than the starter's (whose board the server's own workers maintain) starts the
-    /// maintenance of its board, which waits while the project has no board.
-    fn serve(&self, entry: Entry) -> Served {
+    /// id it started with, a new one beside it for any other root or id. A new state starts the
+    /// maintenance of its board while the server is `live` ([`Projects::maintain`]), which waits
+    /// while the project has no board.
+    fn serve(&self, entry: Entry, live: bool) -> Served {
         let shared = if entry.root == self.starter_root && entry.id == self.starter_id {
             self.starter.clone()
         } else {
             self.starter.beside(&entry.root, &format!("/{}", entry.id))
         };
-        if entry.root != self.starter_root
-            && let Some(maintain) = &self.maintain
-        {
-            shared.maintained(maintain(&shared));
+        if live {
+            self.maintain(&entry, &shared);
         }
         let refused = self.refused(&entry);
         if self.warming == Warming::AsRead

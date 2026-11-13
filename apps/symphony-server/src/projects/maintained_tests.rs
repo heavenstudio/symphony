@@ -143,10 +143,10 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
     let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
     let said = Said::default();
     let projects = machine.projects(recording(&said));
+    let look = projects.watch();
     assert_eq!(*said.lock().unwrap(), ["started beta"]);
     let beta = state(&projects, "beta");
     assert_eq!(beta.maintaining(), 1);
-    let look = projects.watch();
 
     machine.register("gamma", "exit 0");
     test_time::until_true("gamma's maintenance started", WAIT, || {
@@ -186,6 +186,47 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
     );
 }
 
+/// The projects a server builds as it starts ([`Projects::new`]) hold no maintenance until its
+/// generation is live, its socket hand-off committed, when the server starts their watch: a
+/// replacement killed by a failed hand-off stops no state, so nothing it started may run until
+/// then. A project a request serves before then waits too; from then, each has its sweep and its
+/// catch-up, and the server's stop joins them.
+#[test]
+fn no_project_is_maintained_until_the_generation_is_live() {
+    let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
+    let projects = Projects::new(&machine.tree.path("machine"), &machine.starter);
+    // A request before the hand-off commits reads the registry again, a project registered since.
+    machine.register("gamma", "exit 0");
+    projects.served();
+    let [beta, gamma] = ["beta", "gamma"].map(|id| state(&projects, id));
+    assert_eq!((beta.maintaining(), gamma.maintaining()), (0, 0));
+
+    let look = projects.watch();
+    assert_eq!(
+        (beta.maintaining(), gamma.maintaining()),
+        (2, 2),
+        "each its idle sweep and its embedding catch-up"
+    );
+    machine.starter.stop();
+    look.join().unwrap();
+    projects.stop();
+    assert_eq!((beta.maintaining(), gamma.maintaining()), (0, 0));
+}
+
+/// A generation whose hand-off failed (its starter stopped before it went live) starts no
+/// project's maintenance, whatever it served.
+#[test]
+fn a_generation_stopped_before_it_went_live_maintains_no_project() {
+    let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
+    let said = Said::default();
+    let projects = machine.projects(recording(&said));
+    machine.starter.stop();
+    projects.watch().join().unwrap();
+    projects.stop();
+    assert_eq!(*said.lock().unwrap(), Vec::<String>::new());
+    assert_eq!(state(&projects, "beta").maintaining(), 0);
+}
+
 /// A registered checkout of the starter's under another id is not maintained twice: the server's
 /// own workers maintain that board, under whatever id.
 #[test]
@@ -193,6 +234,7 @@ fn the_starters_checkout_under_another_id_is_not_maintained_beside_it() {
     let machine = Machine::new(&[("alpha", "exit 0")]);
     let said = Said::default();
     let projects = machine.projects(recording(&said));
+    let look = projects.watch();
     machine.tree.write(
         "alpha/symphony.toml",
         "[project]\nname = \"alpha\"\nid = \"renamed\"\n",
@@ -205,6 +247,8 @@ fn the_starters_checkout_under_another_id_is_not_maintained_beside_it() {
     let renamed = state(&projects, "renamed");
     assert!(!Arc::ptr_eq(&renamed, &machine.starter));
     assert_eq!(renamed.maintaining(), 0);
+    machine.starter.stop();
+    look.join().unwrap();
     projects.stop();
     assert_eq!(*said.lock().unwrap(), Vec::<String>::new());
 }
@@ -278,6 +322,8 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
         boards.push(board);
         hubs.insert(id, hub);
     }
+    // The generation is live: every other project's sweep starts.
+    let look = projects.watch();
     let sweeps = |id: &str| {
         let hub = &hubs[id];
         hub.health.report(hub.now()).sweep
@@ -336,6 +382,8 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
     assert_eq!(sweeps("beta").ok, ok);
 
     // The server's stop ends delta's hung reap with its worker.
+    machine.starter.stop();
+    look.join().unwrap();
     projects.stop();
     assert!(!crate::sys::pid_alive(hung), "the stop ended the hung reap");
     assert_eq!(state(&projects, "delta").maintaining(), 0);

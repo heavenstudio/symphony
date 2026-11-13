@@ -964,9 +964,13 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
             shared.stop();
         }
     }
-    // The starter's project is maintained by workers of the server's own; each other project it
-    // serves by workers its state holds ([`crate::projects`]), the registry read again on its own
-    // so a project registered or removed starts or stops its maintenance with no request.
+    // The generation is live from here, and only from here does any project's maintenance start:
+    // a hand-off that fails ends a replacement by a kill that stops no state, and would leave the
+    // children of a maintenance started before it. The starter's project is maintained by workers
+    // of the server's own; each other project it serves by workers its state holds, started by
+    // the projects' watch ([`crate::projects::Projects::watch`]), which then reads the registry
+    // again on its own so a project registered or removed starts or stops its maintenance with
+    // no request.
     background
         .workers
         .extend(maintenance(&shared, serve.home.as_deref()));
