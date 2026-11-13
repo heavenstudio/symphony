@@ -414,42 +414,6 @@ fn the_refusal_names_as_many_open_tasks_as_it_counts_and_how_a_slot_frees() {
 }
 
 #[test]
-fn the_manifest_names_the_cap_or_none_and_a_broken_one_is_an_error() {
-    let dir = std::env::temp_dir().join(format!("slots-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    assert_eq!(configured(&dir), Ok(None), "no manifest");
-    for (text, expected) in [
-        ("[project]\nname = \"x\"\n", Ok(None)),
-        ("[board]\non_review = [\"x\"]\n", Ok(None)),
-        ("[board]\norchestrator_slots = 8\n", Ok(Some(8))),
-        ("[board]\norchestrator_slots = 1\n", Ok(Some(1))),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        assert_eq!(configured(&dir), expected, "{text}");
-    }
-    for (text, said) in [
-        (
-            "[board]\norchestrator_slots = 0\n",
-            "an orchestrator needs at least one slot",
-        ),
-        (
-            "[board]\norchestrator_slots = -2\n",
-            "an orchestrator needs at least one slot",
-        ),
-        (
-            "[board]\norchestrator_slots = \"eight\"\n",
-            "[board] orchestrator_slots",
-        ),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        let error = configured(&dir).unwrap_err();
-        assert!(error.contains(said), "{text}: {error}");
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn only_a_claim_refused_at_the_cap_points_to_the_reservation() {
     let said = claim_hint("work/a", "work/a cannot start");
     assert!(

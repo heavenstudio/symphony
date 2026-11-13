@@ -23,20 +23,17 @@
 //! ([`reds`]), so no start decided on what it read before the close passes the cap after it.
 //!
 //! A task no orchestrator holds counts against its executor's parent session (`register
-//! --parent`). The cap is the project's (`[board] orchestrator_slots` in the main checkout's
-//! `symphony.toml`, [`of_env`]); a board with none configured caps nothing. It bites where work
+//! --parent`). The cap is the project's (`[limits] orchestrator_slots`, else `[board]`'s, in the main
+//! checkout's `symphony.toml`, [`crate::limits`]); a board with none configured caps nothing. It
+//! bites where work
 //! starts: a change that would raise an orchestrator's open count past the cap is refused, naming
 //! the open tasks it holds ([`started`]). It is not retroactive: an orchestrator above the cap
 //! keeps every task, and starts nothing new until it is below it.
 
 use crate::Board;
-use crate::cli::Env;
-use crate::on_review::{MANIFEST, branch_of};
-use crate::sweep::trigger::main_checkout;
-use serde::Deserialize;
+use crate::on_review::branch_of;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::Path;
 
 mod change;
 pub use change::{changed, reds, started};
@@ -45,55 +42,9 @@ pub use change::{changed, reds, started};
 pub const OPEN: [&str; 2] = ["in_progress", "review"];
 /// How a refusal names the status of blocked work a hold keeps open.
 pub const HELD: &str = "blocked, held";
-/// The `[board]` key of the project file naming the cap.
+/// The key of the project file naming the cap, in `[limits]` or, where an older build reads it,
+/// `[board]` ([`crate::limits`]).
 pub const KEY: &str = "orchestrator_slots";
-
-#[derive(Default, Deserialize)]
-struct Manifest {
-    #[serde(default)]
-    board: ManifestBoard,
-}
-
-#[derive(Default, Deserialize)]
-struct ManifestBoard {
-    orchestrator_slots: Option<i64>,
-}
-
-/// The cap `[board] orchestrator_slots` names in the manifest at `root`: none when the file, the
-/// table or the key is missing. A count below one, or a file that does not parse, is an error naming
-/// the file. Only that key is read; the rest of the file is the Symphony's.
-pub fn configured(root: &Path) -> Result<Option<usize>, String> {
-    let path = root.join(MANIFEST);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-    };
-    let manifest: Manifest = toml::from_str(&text)
-        .map_err(|error| format!("{}: [board] {KEY}: {error}", path.display()))?;
-    match manifest.board.orchestrator_slots {
-        None => Ok(None),
-        Some(cap) if cap >= 1 => Ok(usize::try_from(cap).ok()),
-        Some(cap) => Err(format!(
-            "{}: [board] {KEY} is {cap}; an orchestrator needs at least one slot",
-            path.display()
-        )),
-    }
-}
-
-/// The cap of the board `env` runs against: the one the main checkout of the repository holding its
-/// working directory configures ([`configured`]), as `[board] on_review` is read there; none outside
-/// a repository. The repository is found from its `.git` files alone, with no `git` process, since
-/// every command reads it.
-pub fn of_env(env: &Env) -> Result<Option<usize>, String> {
-    let Some(common) = crate::git::read(&env.cwd) else {
-        return Ok(None);
-    };
-    match main_checkout(&common) {
-        Some(root) => configured(root),
-        None => Ok(None),
-    }
-}
 
 /// One task as the ledger reads it.
 #[derive(Debug, Clone, PartialEq)]

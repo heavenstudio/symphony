@@ -275,13 +275,14 @@ impl Store {
     }
 
     /// A rule's read of `which` ([`Store::ruling`]) and what `decide` makes of it, with the counters
-    /// its write holds: a start's under this store's cap, and a red's close's whether this store
-    /// caps starts or not, a close of an open red read without the cap's board read and decided
-    /// again with it ([`closing`]). No counters for any other change.
+    /// its write holds: a start's under `cap`, the store's as the rule read it once, and a red's
+    /// close's whether this store caps starts or not, a close of an open red read without the
+    /// cap's board read and decided again with it ([`closing`]). No counters for any other change.
     pub(super) fn ruled(
         &self,
         which: &Which,
         slug: &str,
+        cap: Option<usize>,
         decide: &impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Ruled, Failure> {
         let mut view = self.view(which)?;
@@ -294,7 +295,7 @@ impl Store {
             view = self.view(&Which::Starting(slug))?;
             change = decide(&view).map_err(Failure::Stop)?;
         }
-        let slots = match (&change.opens, self.slots, closes(&view, &change)) {
+        let slots = match (&change.opens, cap, closes(&view, &change)) {
             (Some(opens), Some(cap), _) => self.slots_taken(&view, slug, opens, cap)?,
             (_, _, Some(closing)) => self.holding(&view, slug, &closing, None)?,
             _ => Vec::new(),
@@ -418,7 +419,7 @@ impl Store {
         parent: Option<&str>,
         by: &str,
     ) -> Result<Vec<Value>, Failure> {
-        let Some(cap) = self.slots.filter(|_| by != super::work::OWNER) else {
+        let Some(cap) = self.slots().filter(|_| by != super::work::OWNER) else {
             return Ok(Vec::new());
         };
         let opens = Opens {

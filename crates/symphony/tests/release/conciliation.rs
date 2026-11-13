@@ -270,7 +270,8 @@ fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
     assert!(
         err.contains(&format!(
             "after `conciliate-consumer` ended green (exit 0), {copy} is in use by process \
-             {survivor} (sleep), working in host; and {copy} no longer holds {short}: ?? \
+             {survivor} (sleep), working in host, where cargo runs the tests of the package \
+             consumer-host (a test of it may have left it); and {copy} no longer holds {short}: ?? \
              host/left.txt: what was checked may have changed, so nothing checked is released; \
              end it, or move it out of that folder (a shell, a terminal tab, an editor or a \
              Finder window there counts), and the next run goes",

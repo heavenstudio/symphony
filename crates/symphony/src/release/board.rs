@@ -540,10 +540,25 @@ folder, and the next run goes.";
 /// Who fixes any other stop.
 const EXECUTORS: &str = "Who fixes: any free executor takes this from the board.";
 
-/// The red [`RUN`]'s body: why the run stopped, who fixes it and what closes it.
-fn stopped_body(why: &str, night: &Night<'_>) -> String {
+/// What the red [`RUN`] says of the reds its checks found before it stopped, `held`, each filed or
+/// heard on a task of its own this run: nothing when there are none.
+fn reds_beside(held: &[String]) -> String {
+    if held.is_empty() {
+        return String::new();
+    }
+    format!(
+        "The reds its checks found before it stopped are tasks of their own, not this one's: {}.",
+        held.join(", ")
+    )
+}
+
+/// The red [`RUN`]'s body: why the run stopped, the reds `held` beside it ([`reds_beside`]), who
+/// fixes it and what closes it.
+fn stopped_body(why: &str, night: &Night<'_>, held: &[String]) -> String {
+    let beside = reds_beside(held);
     format!(
         "The Symphony release run stopped {on} (run {id}, {when}) short of a release: {why}\n\n\
+         {beside}{gap}\
          Until a run gets through, main goes unverified and unreleased. The run's record is \
          `symphony/release/runs/{id}.json` in the git common dir, and `just release --status` \
          says the last run.\n\n\
@@ -552,6 +567,7 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
         on = on(night),
         id = night.id,
         when = night.when,
+        gap = if beside.is_empty() { "" } else { "\n\n" },
         who = if night.for_owner {
             format!("{OWNERS} {UNMARKED}")
         } else {
@@ -705,33 +721,49 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
 /// close the open one of each green check, of the run when it got through and of each key the
 /// run cleared: what it did on the board, with every refusal it met. Each step a check listed is
 /// a check here; a check red in its steps alone files nothing of its own, and its open red, if it
-/// has one, hears which ([`super::steps::beyond`]). A run with nothing to write registers no
+/// has one, hears which ([`super::steps::beyond`]). The red run names the reds filed or heard beside
+/// it ([`reds_beside`]), so a stop never hides one. A run with nothing to write registers no
 /// session.
 pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Board {
     let mut done = Board::default();
-    let mut errors = Vec::new();
-    let mut acts = Vec::new();
-    let mut take = |found: Result<Option<Act>, String>| match found {
-        Ok(found) => acts.extend(found),
-        Err(error) => errors.push(error),
-    };
+    let mut found: Vec<Result<Option<Act>, String>> = Vec::new();
     for ran in checks {
-        for found in of_check(board, night, ran) {
-            take(found);
-        }
+        found.extend(of_check(board, night, ran));
     }
+    // The reds filed or heard so far, which the red run names beside it.
+    let held: Vec<String> = (found.iter())
+        .filter_map(|act| match act {
+            Ok(Some(Act::File { slug, .. } | Act::Say { slug, .. })) => Some(slug.clone()),
+            _ => None,
+        })
+        .collect();
     if night.whole {
-        let stopped = night.stopped.map(|why| Red {
-            title: format!("Release red: the run stopped {}", on(night)),
-            body: stopped_body(why, night),
-            again: format!("Stopped again (run {}, {}): {why}", night.id, night.when),
-            fast_fix: !night.for_owner,
+        let stopped = night.stopped.map(|why| {
+            let beside = reds_beside(&held);
+            let gap = if beside.is_empty() { "" } else { " " };
+            Red {
+                title: format!("Release red: the run stopped {}", on(night)),
+                body: stopped_body(why, night, &held),
+                again: format!(
+                    "Stopped again (run {}, {}): {why}{gap}{beside}",
+                    night.id, night.when
+                ),
+                fast_fix: !night.for_owner,
+            }
         });
-        take(act(board, night, RUN, stopped, "the run got through"));
+        found.push(act(board, night, RUN, stopped, "the run got through"));
     }
     for cleared in night.cleared {
         let passed = format!("`{cleared}` passed");
-        take(act(board, night, cleared, None, &passed));
+        found.push(act(board, night, cleared, None, &passed));
+    }
+    let mut errors = Vec::new();
+    let mut acts = Vec::new();
+    for found in found {
+        match found {
+            Ok(found) => acts.extend(found),
+            Err(error) => errors.push(error),
+        }
     }
     if acts.is_empty() {
         if !errors.is_empty() {
@@ -1084,6 +1116,58 @@ mod tests {
             steps,
             ..ran("verify", i32::from(red))
         }
+    }
+
+    #[test]
+    fn a_stop_after_a_red_check_files_each_red_step_beside_the_run_which_names_them() {
+        let board = Fake::with(&[("tests/release-red-verify-lint", "ready")]);
+        let mut stopped = night(&[]);
+        stopped.stopped = Some(
+            "after `verify` ended red (exit 1), /wt/release is in use by process 10 \
+             (chrome_crashpad_handler), working in apps/symphony-ui",
+        );
+        stopped.for_owner = true;
+        // As the run keeps a check a look stopped it after: its red steps alone.
+        let red = verify(&[("tests", 101)]);
+        let done = report(&board, &stopped, std::slice::from_ref(&red));
+        assert_eq!(
+            done.filed,
+            ["tests/release-red-verify-tests", "tests/release-red-run"]
+        );
+        assert!(
+            done.closed.is_empty(),
+            "a step it found green closes nothing: {done:?}"
+        );
+        assert_eq!(board.status_of("tests/release-red-verify-lint"), "ready");
+        let run = board.thread("tests/release-red-run").join("\n");
+        assert!(
+            run.contains(
+                "working in apps/symphony-ui\n\nThe reds its checks found before it stopped are \
+                 tasks of their own, not this one's: tests/release-red-verify-tests.\n\nUntil a run \
+                 gets through"
+            ),
+            "{run}"
+        );
+        assert_eq!(
+            *board.fast_fixes.borrow(),
+            ["tests/release-red-verify-tests"],
+            "the step's red takes the express path, the owner's stop none"
+        );
+
+        // Stopped again on the same red: the step's task hears it, and the run's line names it.
+        let done = report(&board, &stopped, &[red]);
+        assert_eq!(
+            done.updated,
+            ["tests/release-red-verify-tests", "tests/release-red-run"]
+        );
+        assert!(
+            board.thread("tests/release-red-run")[1].ends_with(
+                "working in apps/symphony-ui The reds its checks found before it stopped are \
+                 tasks of their own, not this one's: tests/release-red-verify-tests."
+            ),
+            "{:?}",
+            board.thread("tests/release-red-run")
+        );
     }
 
     #[test]

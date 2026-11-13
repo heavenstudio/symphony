@@ -1378,14 +1378,13 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
-        look(
+        let looked = look(
             &[Watched::checkout(&place, &candidate)],
             until,
             &after(&ran),
             true,
-        )?;
-        record.checks.push(ran);
-        record::so_far(&logs, record);
+        );
+        keep(record, &logs, ran, looked)?;
     }
     let cleared = conciliation(repo, options, &place, &logs, record, out, within)?;
     for skipped in &record.skipped {
@@ -1662,7 +1661,8 @@ fn moved_on(
 }
 
 /// The processes `lsof` found in each of `trees` (`found`, a list for each), said: each folder in
-/// use and by what, with the way out. None when no process is in any.
+/// use and by what (a process in a package's folder with that package, [`said_in`]), with the way
+/// out. None when no process is in any.
 fn in_use(trees: &[&Path], found: &[Vec<group::Inside>]) -> Option<(String, String)> {
     let mut said = Vec::new();
     let mut processes = 0;
@@ -1671,7 +1671,7 @@ fn in_use(trees: &[&Path], found: &[Vec<group::Inside>]) -> Option<(String, Stri
             continue;
         }
         processes += inside.len();
-        let named: Vec<String> = inside.iter().map(group::Inside::said).collect();
+        let named: Vec<String> = inside.iter().map(|found| said_in(tree, found)).collect();
         said.push(format!(
             "{} is in use by {}",
             tree.display(),
@@ -1692,6 +1692,33 @@ fn in_use(trees: &[&Path], found: &[Vec<group::Inside>]) -> Option<(String, Stri
          Finder window there counts), and the next run goes"
     );
     Some((said.join("; "), way_out))
+}
+
+/// The process `found` in `tree`, said, and when it works in a package's folder there, that
+/// package: cargo runs a package's tests in its folder, so what one of them left behind works there,
+/// and that is as near to the test that left it as the run can tell (the process has outlived its
+/// parent, and carries no environment that names its test).
+fn said_in(tree: &Path, found: &group::Inside) -> String {
+    let said = found.said();
+    match found
+        .working_in()
+        .and_then(|folder| package_at(tree, folder))
+    {
+        Some(package) => format!(
+            "{said}, where cargo runs the tests of the package {package} (a test of it may have \
+             left it)"
+        ),
+        None => said,
+    }
+}
+
+/// The name of the package whose folder `folder` (relative to `tree`) is, as its `Cargo.toml` says;
+/// none when that folder holds no package's manifest.
+fn package_at(tree: &Path, folder: &str) -> Option<String> {
+    let text = fs::read_to_string(tree.join(folder).join("Cargo.toml")).ok()?;
+    let manifest: toml::Table = toml::from_str(&text).ok()?;
+    let name = manifest.get("package")?.get("name")?.as_str()?;
+    Some(name.to_string())
 }
 
 /// Stop the run before it checks anything when a process, anyone's, works in its checkout or in its
@@ -1723,6 +1750,34 @@ fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
     }
 }
 
+/// Record the check `ran` into `record` (and its record so far among `logs`) once the look after it
+/// (`looked`) passed. A look that stops the run still records what of it is red ([`reds_only`]), so
+/// each red it found is filed on its own before the stop ends the run, and no red hides behind the
+/// red [`board::RUN`]; what it found green counts for nothing, as what it checked may have changed
+/// under it, and closes nothing.
+fn keep(record: &mut Run, logs: &Path, ran: Ran, looked: Result<(), Stop>) -> Result<(), Stop> {
+    let kept = match &looked {
+        Ok(()) => Some(ran),
+        Err(_) => reds_only(&ran),
+    };
+    if let Some(kept) = kept {
+        record.checks.push(kept);
+        record::so_far(logs, record);
+    }
+    looked
+}
+
+/// What of the check `ran` is red: the check with only its red steps; none when it is green.
+fn reds_only(ran: &Ran) -> Option<Ran> {
+    (!ran.green()).then(|| Ran {
+        steps: (ran.steps.iter())
+            .filter(|step| !step.green())
+            .cloned()
+            .collect(),
+        ..ran.clone()
+    })
+}
+
 /// The point after the check `ran`, said: its name and how it ended.
 fn after(ran: &Ran) -> String {
     let verdict = if ran.green() { "green" } else { "red" };
@@ -1751,8 +1806,9 @@ impl<'a> Watched<'a> {
 /// Stop the run when what it looks at changed `at` that point: a checkout that no longer holds its
 /// commit (HEAD moved, or `git status` names a path outside `.target/`), or, when it lists
 /// `processes`, a process that works in one or holds a file inside one open. What was checked is
-/// then not what would be tagged, so that check counts for nothing, green or red. The look has a
-/// minute past `until`, and sees that moment alone and nothing git ignores.
+/// then not what would be tagged, so nothing that check found green counts, and its reds are filed
+/// beside the stop ([`keep`]). The look has a minute past `until`, and sees that moment alone and
+/// nothing git ignores.
 fn look(watched: &[Watched<'_>], until: Bound<'_>, at: &str, processes: bool) -> Result<(), Stop> {
     let until = until.later(LOOK);
     let mut changes = Vec::new();
@@ -1937,9 +1993,8 @@ fn conciliation(
                 beside: &conciliate::REWRITTEN,
             });
         }
-        look(&watched, within.bound, &after(&ran), true)?;
-        record.checks.push(ran);
-        record::so_far(logs, record);
+        let looked = look(&watched, within.bound, &after(&ran), true);
+        keep(record, logs, ran, looked)?;
     }
     Ok(vec![board::CONCILIATE])
 }
@@ -2089,6 +2144,110 @@ mod tests {
                     .into(),
                 format!("end them, or move them out of those folders{counts}")
             ))
+        );
+    }
+
+    #[test]
+    fn a_process_working_in_a_packages_folder_is_said_with_that_package() {
+        let tree = crate::test_tree::Tree::new();
+        tree.write("Cargo.toml", "[workspace]\nmembers = [\"apps/ui\"]\n");
+        tree.write("apps/ui/Cargo.toml", "[package]\nname = \"ui\"\n");
+        tree.write("apps/ui/tests/browser.rs", "");
+        tree.write("apps/odd/Cargo.toml", "not a manifest [");
+        let inside = |pid, what: &str| group::Inside {
+            pid,
+            command: "chrome_crashpad_handler".into(),
+            what: what.into(),
+        };
+        let found = [
+            inside(10, "working in apps/ui"),
+            inside(11, "working there"),
+            inside(12, "working in apps/ui/tests"),
+            inside(13, "holding apps/ui/Cargo.toml open"),
+            inside(14, "working in apps/odd"),
+            inside(15, "working in apps/gone"),
+        ];
+        let (said, _) = in_use(&[tree.root.as_path()], &[found.into()]).unwrap();
+        assert_eq!(
+            said,
+            format!(
+                "{} is in use by process 10 (chrome_crashpad_handler), working in apps/ui, where \
+                 cargo runs the tests of the package ui (a test of it may have left it); process 11 \
+                 (chrome_crashpad_handler), working there; process 12 (chrome_crashpad_handler), \
+                 working in apps/ui/tests; process 13 (chrome_crashpad_handler), holding \
+                 apps/ui/Cargo.toml open; process 14 (chrome_crashpad_handler), working in \
+                 apps/odd; process 15 (chrome_crashpad_handler), working in apps/gone",
+                tree.root.display()
+            ),
+            "a workspace's own manifest, a folder below a package's, a file held open, a manifest \
+             that does not read and a folder gone name no package"
+        );
+    }
+
+    #[test]
+    fn a_check_a_look_stopped_the_run_after_keeps_its_reds_alone_and_a_passed_one_all() {
+        let tree = crate::test_tree::Tree::new();
+        let logs = tree.path("logs");
+        fs::create_dir_all(&logs).unwrap();
+        let step = |name: &str, code: i32| Ran {
+            name: format!("verify/{name}"),
+            exit_code: Some(code),
+            ..red("x")
+        };
+        let verify = Ran {
+            steps: vec![step("lint", 0), step("tests", 101), step("docs", 0)],
+            ..red("verify")
+        };
+        let stopped = || Err(Stop::InUse("in use".into()));
+
+        let mut record = run_of("a", "release", "abc");
+        let kept = keep(&mut record, &logs, verify.clone(), stopped());
+        assert!(matches!(kept, Err(Stop::InUse(why)) if why == "in use"));
+        assert_eq!(
+            record.checks,
+            [Ran {
+                steps: vec![step("tests", 101)],
+                ..red("verify")
+            }],
+            "the red step is kept, the greens count for nothing"
+        );
+        assert!(red_in(&record, "verify-tests"));
+        assert!(!red_in(&record, "verify-lint"));
+
+        let mut record = run_of("b", "release", "abc");
+        let green = Ran {
+            exit_code: Some(0),
+            ..red("verify")
+        };
+        let changed = Err(Stop::Error("changed".into()));
+        assert!(keep(&mut record, &logs, green.clone(), changed).is_err());
+        assert!(
+            record.checks.is_empty(),
+            "a green that may have changed counts for nothing"
+        );
+
+        // Red beyond its steps (every step it listed green): the check alone is kept, and filed.
+        let beyond = Ran {
+            steps: vec![step("lint", 0)],
+            ..red("verify")
+        };
+        assert!(keep(&mut record, &logs, beyond, stopped()).is_err());
+        assert_eq!(record.checks, [red("verify")]);
+        assert!(steps::beyond(&record.checks[0]));
+
+        let mut record = run_of("c", "release", "abc");
+        assert!(keep(&mut record, &logs, verify.clone(), Ok(())).is_ok());
+        assert!(keep(&mut record, &logs, green.clone(), Ok(())).is_ok());
+        assert_eq!(
+            record.checks,
+            [verify, green],
+            "a check the look passed is kept whole"
+        );
+        let so_far: Run =
+            serde_json::from_str(&fs::read_to_string(logs.join("run.json")).unwrap()).unwrap();
+        assert_eq!(
+            so_far.checks, record.checks,
+            "the record so far says what is kept"
         );
     }
 

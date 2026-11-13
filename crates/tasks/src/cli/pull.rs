@@ -67,8 +67,6 @@ pub const ALARM_SHOWN: usize = 5;
 /// The note on a task in review whose tip a reviewer asked changes of, counted as in progress
 /// ([`crate::alarm::CHANGES`]), when nobody executes it.
 pub const REWORK_NOTE: &str = "in review; changes asked of its tip";
-/// An orchestrator below this many open slots should look for disjoint work or owned blockers.
-const LOW_VOLUME: usize = 4;
 /// A count a PULL could not say, as its recipient's next one is measured against.
 pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
@@ -119,6 +117,9 @@ pub struct Digest {
     pub cap: Option<usize>,
     /// The open slots the orchestrator the digest is for holds, under a cap ([`Digest::only_for`]).
     pub slots: Option<usize>,
+    /// An orchestrator below this many open slots should look for disjoint work or owned blockers
+    /// (`[limits] low_volume`, [`crate::limits`]); 0 tells none.
+    pub low_volume: usize,
     /// The pipeline alarm, while it stands: the whole board's, whoever the digest is for.
     pub alarm: Option<ReviewAlarm>,
     /// Canonical counts for active orchestrators; only the recipient remains after scoping.
@@ -203,7 +204,7 @@ impl Digest {
             .chain(alarm)
             .collect();
         for (handle, count) in &self.volume {
-            if *count < LOW_VOLUME {
+            if *count < self.low_volume {
                 entries.insert(("low_volume".into(), handle.clone()));
             }
         }
@@ -389,9 +390,9 @@ impl Digest {
     fn low_volume_lines(&self) -> Vec<(String, String)> {
         let cap = (self.cap).map_or_else(|| "none".into(), |cap| cap.to_string());
         (self.volume.iter())
-            .filter(|(_, count)| self.scoped && **count < LOW_VOLUME)
+            .filter(|(_, count)| self.scoped && **count < self.low_volume)
             .map(|(handle, count)| {
-                (handle.clone(), format!("  low_volume {handle} open={count} threshold={LOW_VOLUME} cap={cap} — pick disjoint ready work or resolve owned blockers using actual resources and ownership"))
+                (handle.clone(), format!("  low_volume {handle} open={count} threshold={} cap={cap} — pick disjoint ready work or resolve owned blockers using actual resources and ownership", self.low_volume))
             })
             .collect()
     }
@@ -804,6 +805,8 @@ pub(crate) fn digest_on(
     for listed in found.values_mut() {
         listed.sort_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
     }
+    // The project's limits as the file is now, read once for the whole digest.
+    let limits = store.limits();
     Ok(Digest {
         now,
         executing,
@@ -814,9 +817,10 @@ pub(crate) fn digest_on(
         liveness_unknown,
         unanswered,
         unanswered_scanned,
-        cap: store.slots(),
+        cap: limits.orchestrator_slots,
         slots: None,
-        alarm: review_alarm(store, tasks, &waits, &fixes, &store.alarm(), now)?,
+        low_volume: limits.low_volume,
+        alarm: review_alarm(store, tasks, &waits, &fixes, &limits.alarm, now)?,
         volume,
         scoped: false,
     })

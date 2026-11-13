@@ -33,6 +33,7 @@ pub(super) struct File {
     pub(super) land: FileLand,
     pub(super) board: FileBoard,
     pub(super) releases: FileReleases,
+    pub(super) limits: FileLimits,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
@@ -60,7 +61,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 9] = [
+        let tables: [(&str, &[&str], &Unknown); 11] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -70,10 +71,16 @@ impl File {
                 &["agents", "launch"],
                 &self.agents.launch.unknown,
             ),
+            (
+                "[agents.models]",
+                &["agents", "models"],
+                &self.agents.models.unknown,
+            ),
             ("[verdicts]", &["verdicts"], &self.verdicts.unknown),
             ("[land]", &["land"], &self.land.unknown),
             ("[board]", &["board"], &self.board.unknown),
             ("[releases]", &["releases"], &self.releases.unknown),
+            ("[limits]", &["limits"], &self.limits.unknown),
         ];
         for (table, path, unknown) in tables {
             names.extend(
@@ -164,6 +171,34 @@ pub(super) struct FileAgents {
     pub(super) panes: Option<String>,
     pub(super) worktrees: Option<String>,
     pub(super) launch: FileLaunch,
+    pub(super) models: FileModels,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[agents.models]` table: the model each role runs on, which a board launch reads itself
+/// (`symphony_board::launch::Defaults`).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileModels {
+    pub(super) orchestrator: Option<String>,
+    pub(super) executor: Option<String>,
+    pub(super) reviewer: Option<String>,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[limits]` table: the work-in-progress limits the board reads from the file itself
+/// (`symphony_board::limits`), each known here by name so a misspelt one is refused. Their values
+/// are any the file writes, so one the board cannot read leaves the rest of the project read
+/// ([`super::Project::of`]); [`super::Project::parse`] refuses it with its line, as the board reads
+/// it.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileLimits {
+    pub(super) orchestrator_slots: Option<toml::Value>,
+    pub(super) low_volume: Option<toml::Value>,
+    pub(super) machine_agents: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
