@@ -2,13 +2,15 @@
 //! the machine's load does not multiply as it multiplies a wall. [`taken`] reads a live process
 //! (the board's server) as it runs, [`Quiet`] bills it what it takes for a piece of work, from
 //! quiet before the work to quiet again after it, and [`reaped`] reads what a child took in all
-//! once it ends.
+//! once it ends. The readings are the shared test helper's (`crates/test-time`, RULES.md
+//! `tests/no-test-fails-on-load`).
 
 use std::cell::OnceCell;
 use std::io::Read as _;
-use std::process::{ExitStatus, Output};
+use std::process::Output;
 use std::time::{Duration, Instant};
 use symphony_board::sys::Child;
+use test_time::cpu::tick;
 
 /// How long each look at a process's CPU lasts while [`settle`] waits, nominally, and the most it
 /// may take in that long to be quiet, a rate of 20 ms a second: a board's server with no client
@@ -133,14 +135,15 @@ impl Quiet {
                 took: QUIET,
             };
             let never = format!(
-                "{} never went quiet in {:.1?}: it took {:.3?} of CPU in that time, {:.3?} in its last look of {:.3?}, {:.1} ms a second, where quiet is under {:.1}",
+                "{} never went quiet in {:.1?}: it took {:.3?} of CPU in that time, {:.3?} in its last look of {:.3?}, {:.1} ms a second, where quiet is under {:.1}; {}",
                 self.what,
                 settled.waited,
                 settled.took,
                 settled.last.took,
                 settled.last.length,
                 settled.last.rate(),
-                quiet.rate()
+                quiet.rate(),
+                test_time::Load::now()
             );
             return Err(self.never.get_or_init(|| never).clone());
         }
@@ -179,80 +182,14 @@ pub fn worked(what: &str, cpu: Duration) -> Result<(), String> {
 }
 
 /// The user and system CPU `pid`, a live process, has taken so far: its own threads', not its
-/// children's.
-#[cfg(target_os = "macos")]
+/// children's, in the machine's ticks ([`tick`]).
 pub fn taken(pid: u32) -> Duration {
-    let raw = libc::pid_t::try_from(pid).expect("a process id");
-    // SAFETY: plain data, for which all zeroes is a value.
-    let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
-    // SAFETY: writes one rusage_info_v2, the size of the flavor asked for, into `info`.
-    let read = unsafe { libc::proc_pid_rusage(raw, libc::RUSAGE_INFO_V2, (&raw mut info).cast()) };
-    assert_eq!(
-        read,
-        0,
-        "the CPU of process {pid}: {}",
-        std::io::Error::last_os_error()
-    );
-    // The kernel counts it in the machine's ticks (`task_power_info`), not nanoseconds.
-    let ticks = u128::from(info.ri_user_time) + u128::from(info.ri_system_time);
-    let (numer, denom) = timebase();
-    Duration::from_nanos(u64::try_from(ticks * numer / denom).expect("CPU in range"))
-}
-
-/// How long one of the ticks [`taken`] counts in lasts: the machine's (a few tens of nanoseconds).
-#[cfg(target_os = "macos")]
-fn tick() -> Duration {
-    let (numer, denom) = timebase();
-    Duration::from_nanos(u64::try_from(numer.div_ceil(denom)).expect("a tick in range"))
-}
-
-/// The nanoseconds of the machine's ticks, as a fraction.
-#[cfg(target_os = "macos")]
-#[expect(
-    deprecated,
-    reason = "libc's mach_timebase_info, which points at the mach2 crate this workspace does not take"
-)]
-fn timebase() -> (u128, u128) {
-    let mut base = libc::mach_timebase_info { numer: 0, denom: 0 };
-    // SAFETY: writes the timebase into `base`.
-    let read = unsafe { libc::mach_timebase_info(&raw mut base) };
-    assert!(
-        read == 0 && base.numer != 0 && base.denom != 0,
-        "the machine's timebase: {read}"
-    );
-    (u128::from(base.numer), u128::from(base.denom))
-}
-
-/// The user and system CPU `pid`, a live process, has taken so far: its own threads', not its
-/// children's, from `/proc/PID/stat` in the clock's ticks.
-#[cfg(target_os = "linux")]
-pub fn taken(pid: u32) -> Duration {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .unwrap_or_else(|why| panic!("the CPU of process {pid}: {why}"));
-    // After the command's closing parenthesis, the state is the first field and utime and stime
-    // the twelfth and thirteenth (`proc(5)`'s 14 and 15).
-    let after = stat.rsplit_once(')').expect("a stat line").1;
-    let fields: Vec<&str> = after.split_whitespace().collect();
-    let ticks: u64 = fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap();
-    Duration::from_nanos(ticks * 1_000_000_000 / ticks_a_second())
-}
-
-/// How long one of the ticks [`taken`] counts in lasts: the clock's, 10 ms at 100 Hz.
-#[cfg(target_os = "linux")]
-fn tick() -> Duration {
-    Duration::from_nanos(1_000_000_000 / ticks_a_second())
-}
-
-/// The clock's ticks a second, which `/proc/PID/stat` counts in.
-#[cfg(target_os = "linux")]
-fn ticks_a_second() -> u64 {
-    // SAFETY: sysconf reads a configuration value.
-    let per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    u64::try_from(per_second).expect("clock ticks a second")
+    test_time::cpu::of(pid).unwrap_or_else(|why| panic!("the CPU of process {pid}: {why}"))
 }
 
 /// `child`, started with its outputs piped, read to their end and reaped: what it said, how it
 /// ended, and the user and system CPU it took with every child it reaped, as its reap reports it.
+/// `Child` neither reaps nor signals it once dropped.
 pub fn reaped(mut child: Child) -> (Output, Duration) {
     drop(child.stdin.take());
     let stderr = child.stderr.take().map(|mut stderr| {
@@ -269,44 +206,23 @@ pub fn reaped(mut child: Child) -> (Output, Duration) {
         Some(reader) => reader.join().unwrap().expect("the child's stderr"),
         None => Vec::new(),
     };
-    let pid = libc::pid_t::try_from(child.id()).expect("a process id");
-    loop {
-        let mut status = 0;
-        // SAFETY: plain data, for which all zeroes is a value.
-        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        // SAFETY: reaps this process's child `pid`, writing its status and its usage. `Child`
-        // neither reaps nor signals it once dropped.
-        let waited = unsafe { libc::wait4(pid, &raw mut status, 0, &raw mut usage) };
-        if waited == pid {
-            use std::os::unix::process::ExitStatusExt as _;
-            let output = Output {
-                status: ExitStatus::from_raw(status),
-                stdout,
-                stderr,
-            };
-            return (output, time(usage.ru_utime) + time(usage.ru_stime));
-        }
-        let error = std::io::Error::last_os_error();
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::Interrupted,
-            "the reap of {pid}: {error}"
-        );
-    }
-}
-
-/// A `timeval` as a duration.
-fn time(value: libc::timeval) -> Duration {
-    let seconds = u64::try_from(value.tv_sec).expect("a time since none");
-    let micros = u64::try_from(value.tv_usec).expect("a time since none");
-    Duration::from_secs(seconds) + Duration::from_micros(micros)
+    let pid = child.id();
+    let (status, cpu) =
+        test_time::cpu::reap(pid).unwrap_or_else(|why| panic!("the reap of {pid}: {why}"));
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
+    (output, cpu)
 }
 
 #[cfg(test)]
 mod meter {
     use super::*;
     use std::cell::Cell;
-    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use symphony_board::sys::{self, Command};
 
@@ -321,36 +237,23 @@ mod meter {
     /// milliseconds of CPU or more whatever the load.
     const STEPS: &str = "i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done";
 
-    /// A child's CPU read while it lives, once it has done its work and waits on its input, is what
-    /// its reap says it took in all, in the same unit; the wait between counts for nothing; and the
-    /// work counts whatever the load, as a count of steps, not a time, fixes it.
+    /// A child reaped says what it wrote on each output, how it ended and the CPU it took, which
+    /// counts its work whatever the load, as a count of steps, not a time, fixes it. What the meter
+    /// reads of a child while it lives and at its reap is the helper's to test
+    /// (`crates/test-time`).
     #[test]
-    fn a_childs_cpu_read_while_it_waits_is_what_its_reap_says_and_its_wait_is_none() {
-        let mut child = sh(&format!("{STEPS}; echo worked; read _"));
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        stdout.read_line(&mut line).unwrap();
-        assert_eq!(line, "worked\n");
-        let worked = taken(child.id());
-        std::thread::sleep(Duration::from_millis(300));
-        let waited = taken(child.id());
-        child.stdin.take().unwrap().write_all(b"\n").unwrap();
-        child.stdout = Some(stdout.into_inner());
-        let (output, all) = reaped(child);
-        assert!(output.status.success(), "{output:?}");
-        eprintln!("cpu: worked {worked:?}, after its wait {waited:?}, reaped {all:?}");
-        assert!(
-            worked >= Duration::from_millis(20),
-            "a hundred thousand steps of sh took {worked:?}"
+    fn a_reaped_child_says_what_it_wrote_how_it_ended_and_what_it_took() {
+        let child = sh(&format!("{STEPS}; echo worked; echo said >&2; exit 3"));
+        let (output, took) = reaped(child);
+        eprintln!("cpu: reaped {took:?}: {output:?}");
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        assert_eq!(
+            (output.stdout.as_slice(), output.stderr.as_slice()),
+            (&b"worked\n"[..], &b"said\n"[..])
         );
         assert!(
-            waited - worked < Duration::from_millis(20),
-            "its wait took {:?}",
-            waited - worked
-        );
-        assert!(
-            waited <= all && all - waited < Duration::from_millis(50),
-            "read while it waited {waited:?}, reaped {all:?}"
+            took >= Duration::from_millis(20),
+            "a hundred thousand steps of sh took {took:?}"
         );
     }
 
@@ -369,6 +272,8 @@ mod meter {
     struct Fake {
         state: Arc<Mutex<(Duration, Duration)>>,
         step: Duration,
+        /// How many times the meter was read.
+        reads: Arc<AtomicU64>,
     }
 
     impl Fake {
@@ -376,12 +281,20 @@ mod meter {
             Fake {
                 state: Arc::default(),
                 step,
+                reads: Arc::default(),
             }
+        }
+
+        /// How many times the meter was read so far: one at the start of a wait and one at the end
+        /// of each of its looks.
+        fn reads(&self) -> u64 {
+            self.reads.load(Ordering::Relaxed)
         }
 
         fn meter(&self) -> Meter {
             let fake = self.clone();
             Box::new(move || {
+                fake.reads.fetch_add(1, Ordering::Relaxed);
                 let mut state = fake.state.lock().unwrap();
                 let (took, owed) = &mut *state;
                 let done = (*owed).min(fake.step);
@@ -399,14 +312,18 @@ mod meter {
         }
     }
 
-    /// A child waiting on its input settles before the wait runs out; a process at work, a second
-    /// of CPU at each look, does not, and the wait ends when it runs out, having read what it took.
+    /// A child waiting on its input settles; a process at work, a second of CPU at each look, does
+    /// not, and the wait ends when it runs out, having read what it took. The child's wait is held
+    /// to the shared backstop only, as a loaded machine can stretch each look's sleep.
     #[test]
     fn a_waiting_child_settles_and_a_working_process_waits_until_the_wait_runs_out() {
         let mut waiting = sh("read _");
         let working = Fake::new(SECOND);
         working.works(Duration::ZERO, HOUR);
-        let (most, short) = (Duration::from_secs(10), Duration::from_secs(2));
+        let (most, short) = (
+            test_time::backstop(Duration::from_secs(10)),
+            Duration::from_secs(2),
+        );
         let quiet = settle(&|| taken(waiting.id()), tick(), most);
         let busy = settle(&working.meter(), FINE, short);
         waiting.stdin.take().unwrap().write_all(b"\n").unwrap();
@@ -416,10 +333,11 @@ mod meter {
             quiet.waited, busy.waited, busy.took
         );
         assert!(
-            quiet.quiet && quiet.waited < most,
-            "the waiting child: quiet {} after {:?}",
             quiet.quiet,
-            quiet.waited
+            "the waiting child: not quiet after {:?}, taking {:?}; {}",
+            quiet.waited,
+            quiet.took,
+            test_time::Load::now()
         );
         assert!(
             !busy.quiet && busy.waited >= short,
@@ -479,20 +397,9 @@ mod meter {
         }
     }
 
-    /// This machine's meter counts in ticks [`Window::quiet`] reads a rate in: under a microsecond
-    /// on macOS; on Linux the clock's, which `/proc/PID/stat` counts.
-    #[test]
-    fn the_meters_tick_is_this_machines() {
-        let tick = tick();
-        assert!(!tick.is_zero());
-        #[cfg(target_os = "macos")]
-        assert!(tick < Duration::from_micros(1), "{tick:?}");
-        #[cfg(target_os = "linux")]
-        assert_eq!(tick, Duration::from_nanos(1_000_000_000 / ticks_a_second()));
-    }
-
-    /// A process at work that never goes quiet fails the wait once it runs out, saying what it took
-    /// and at what rate, and every wait after it fails at once, the same, its work not done.
+    /// A process at work that never goes quiet fails the wait once it runs out, saying what it took,
+    /// at what rate and the machine's load, and every wait after it fails at once, the same, its
+    /// work not done: they read the meter not once more.
     #[test]
     fn a_wait_that_runs_out_fails_and_every_wait_after_it_fails_at_once() {
         let working = Fake::new(SECOND);
@@ -502,25 +409,28 @@ mod meter {
         let began = Instant::now();
         let first = waits.wait();
         let waited = began.elapsed();
-        let began = Instant::now();
+        let looked = working.reads();
         let again = waits.wait();
         let done = Cell::new(false);
         let billed = waits.bill(|| done.set(true));
-        let after = began.elapsed();
-        eprintln!("cpu: the first wait, after {waited:?}: {first:?}");
+        eprintln!("cpu: the first wait, after {waited:?} and {looked} reads: {first:?}");
         let why = first.expect_err("a working process never goes quiet");
         assert!(waited >= short, "the first wait waited {waited:?}");
         assert!(
             why.starts_with("the working process never went quiet in ")
                 && why.contains("s of CPU in that time, 1.000s in its last look of ")
-                && why.contains("ms a second, where quiet is under 20.0"),
+                && why.contains("ms a second, where quiet is under 20.0; load average "),
             "{why}"
         );
         let earlier = format!("{why} (at an earlier wait; this one did not wait)");
         assert_eq!(again.expect_err("a wait after it"), earlier);
         assert_eq!(billed.expect_err("work billed after it"), earlier);
         assert!(!done.get(), "work billed after a wait ran out was done");
-        assert!(after < QUIET_OVER, "the waits after it took {after:?}");
+        assert!(
+            (2..=5).contains(&looked),
+            "the first wait read the meter at its start and at each of its looks: {looked}"
+        );
+        assert_eq!(working.reads(), looked, "the waits after it read the meter");
     }
 
     /// Work billed from quiet to quiet again bears what the process did for it after it answered:

@@ -202,7 +202,7 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
         browser.wait_for(anchored, SHOWN),
         "returning to the agent section must align its heading within one pixel"
     );
-    assert!(wait_for_feed(&site));
+    wait_for_feed(&site).expect("the page never followed the feed");
     browser.eval("window.scrollBy(0,100);window.keptScroll=scrollY;window.keptRow=document.querySelector('#agent li[data-card]')");
     queue["waiting"] = json!([]);
     queue["spot_check"] = json!([]);

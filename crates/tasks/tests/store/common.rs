@@ -8,7 +8,8 @@
 //! waits at (`gate.rs`). It runs under a shell that stops it when this process's pipe to the shell
 //! closes, so it goes with the test binary however that ends, and that ends as soon as the server does, so a
 //! server whose port was taken before it bound it is started again at once on another
-//! (`symphony_board::port`), every start within one readiness bound; one that ends for any other reason
+//! (`symphony_board::port`), every start within one backstop only a stall reaches
+//! (`test_time::backstop`); one that ends for any other reason
 //! fails the tests with its exit status and its log, which also holds what the shell said. The
 //! fixture makes the log's folder itself ([`launch`]). The shell says the server's pid, so an
 //! answer on the port counts only once that process itself listens there. At a normal exit the binary also waits for the
@@ -223,9 +224,12 @@ pub fn launch_on(
         let _ = std::fs::File::open(log).and_then(|mut f| f.read_to_string(&mut said));
         said
     };
-    // Up once it answers and the server itself listens there (the shell says its pid), every start
-    // within the one readiness bound: a process that took its port answers too.
-    let until = Instant::now() + Duration::from_secs(20);
+    // Up once it answers and the server itself listens there (the shell says its pid): a process
+    // that took its port answers too. A quiet machine has it up within `READY`. Every start, a port
+    // taken tried again on another included, waits within the one backstop, which only a stall
+    // reaches: each attempt has what is left of it (RULES.md `tests/no-test-fails-on-load`).
+    const READY: Duration = Duration::from_secs(20);
+    let until = Instant::now() + test_time::backstop(READY);
     let started = symphony_board::port::start_on_free_port(
         symphony_board::port::ATTEMPTS,
         until,
@@ -264,29 +268,31 @@ pub fn launch_on(
             let _ = BufReader::new(announced).read_line(&mut line);
             shell.server = line.trim().parse().ok();
             let server = shell.server;
-            while Instant::now() < until {
-                if let Some(status) = shell.shell.try_wait().unwrap() {
-                    return Ok::<_, Infallible>(Start::Ended(format!(
-                        "{status}; it said: {}",
-                        said()
-                    )));
-                }
-                if rpc::healthy(&addr)
-                    && server.is_some_and(|pid| {
-                        symphony_board::port::listens(pid, reserved, symphony_board::sys::output)
+            let up = test_time::until(
+                format!("the SurrealDB server answering on {addr}"),
+                until.saturating_duration_since(Instant::now()),
+                || match shell.shell.try_wait().unwrap() {
+                    Some(status) => Some(Err(status)),
+                    None => (rpc::healthy(&addr)
+                        && server.is_some_and(|pid| {
+                            symphony_board::port::listens(
+                                pid,
+                                reserved,
+                                symphony_board::sys::output,
+                            )
                             .unwrap()
-                    })
-                {
-                    return Ok(Start::Up((addr, shell)));
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            let _ = shell.shutdown();
-            panic!(
-                "the SurrealDB server did not answer on {addr} within 20 s; its log ({}):\n{}",
-                log.display(),
-                said()
+                        }))
+                    .then_some(Ok(())),
+                },
             );
+            match up {
+                Ok(Ok(())) => Ok::<_, Infallible>(Start::Up((addr, shell))),
+                Ok(Err(status)) => Ok(Start::Ended(format!("{status}; it said: {}", said()))),
+                Err(stall) => {
+                    let _ = shell.shutdown();
+                    panic!("{stall}; its log ({}):\n{}", log.display(), said());
+                }
+            }
         },
     );
     started.map(|(up, _)| up)
