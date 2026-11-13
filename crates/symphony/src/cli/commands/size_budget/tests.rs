@@ -56,12 +56,14 @@ fn run(tree: &Tree) -> (i32, String, String) {
 const HINT: &str = "` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
                     it: the last release (`git tag -l 'release-*'`), or before the first one, the \
                     commit that last set the budget (`git log -1 -- tools/size-budget.toml`); a \
-                    budget is raised only in the commit that needs it, saying why.\n";
+                    line is never raised to fit growth: a reduction takes the bytes back \
+                    (docs/CHECKS.md, \"A red at the size check\").\n";
 
 #[test]
 fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
+    // Each binary at its line: a line the rule would put no lower.
     let tree = checkout(
-        &budget(100, 50, &[]),
+        &budget(100, 1, &[("tasks", 50), ("symphony-server", 30)]),
         &[("index.html", 30), ("assets/a.wasm", 70)],
         &built(1, &[("tasks", 50), ("symphony-server", 130)]),
     );
@@ -76,6 +78,71 @@ fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
          size-budget: embedded client  0.0 MiB of 0.0 MiB (2 files)\n\
          size-budget: every shipped binary and the embedded client within tools/size-budget.toml\n"
     );
+}
+
+#[test]
+fn a_line_is_its_binarys_size_plus_four_percent_rounded_down_to_ten_thousand_bytes() {
+    // The lines of 2026-11-13: symphony and the server less its client, before and after.
+    assert_eq!(line_for(17_883_360), 18_590_000);
+    assert_eq!(line_for(18_358_694), 19_090_000);
+    // Rounded down, never up: 4 % of 250,000 is the rounding's own 10,000.
+    assert_eq!(line_for(250_000), 260_000);
+    assert_eq!(line_for(259_615), 260_000);
+    assert_eq!(line_for(1_000_000), 1_040_000);
+    assert_eq!(line_for(1_009_615), 1_040_000);
+    assert_eq!(line_for(1_009_616), 1_050_000);
+    assert_eq!(line_for(9_999), 10_000);
+    // Never below the size: a binary too small for the rounding keeps its own size.
+    for bytes in [0, 1, 9_615, 240_000] {
+        assert_eq!(line_for(bytes), bytes, "{bytes}");
+    }
+    assert_eq!(line_for(u64::MAX), u64::MAX);
+}
+
+#[test]
+fn a_binarys_line_above_where_the_rule_puts_it_says_where_it_comes_down_to() {
+    // symphony at 300,000 bytes under a line of 400,000: the rule puts it at 310,000. The server's
+    // own 260,000 (its client aside) at 270,000, where the rule puts it: nothing to say. The
+    // client's line is never told to come down: its distribution grows and shrinks with the
+    // builds it keeps.
+    let tree = checkout(
+        &budget(
+            1_000_000,
+            1,
+            &[
+                ("symphony", 400_000),
+                ("symphony-server", 270_000),
+                ("tasks", 1),
+            ],
+        ),
+        &[("index.html", 30)],
+        &built(1, &[("symphony", 300_000), ("symphony-server", 260_030)]),
+    );
+    let (code, out, err) = run(&tree);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines[1],
+        "size-budget: symphony         0.3 MiB of 0.4 MiB; its line comes down to 310,000 (300,000 \
+         bytes plus 4 %)"
+    );
+    assert_eq!(
+        lines[2],
+        "size-budget: symphony-server  0.2 MiB of 0.3 MiB (0.2 MiB with the embedded client)"
+    );
+    assert_eq!(
+        lines[4],
+        "size-budget: embedded client  0.0 MiB of 1.0 MiB (1 files)"
+    );
+    // A line already under the rule's, as growth leaves it, is never told to go up.
+    let tree = checkout(
+        &budget(100, 1, &[("symphony", 300_000)]),
+        &[],
+        &built(1, &[("symphony", 299_000)]),
+    );
+    let (code, out, _) = run(&tree);
+    assert_eq!(code, 0);
+    assert!(!out.contains("comes down"), "{out}");
 }
 
 #[test]
@@ -138,7 +205,8 @@ fn servers(out: &str) -> &str {
 
 #[test]
 fn the_servers_line_is_its_file_less_the_client_it_embeds() {
-    // 130 bytes of file holding 90 of client: 40 of its own, within 50.
+    // 130 bytes of file holding 90 of client: 40 of its own, within 50, and where its line comes
+    // down to is of those 40.
     let tree = checkout(
         &budget(100, 50, &[]),
         &[("index.html", 90)],
@@ -148,7 +216,8 @@ fn the_servers_line_is_its_file_less_the_client_it_embeds() {
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(
         servers(&out),
-        "size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)"
+        "size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client); its \
+         line comes down to 40 (40 bytes plus 4 %)"
     );
     // The same client in a file of 141: 51 of its own, past 50, though the file's 141 is within
     // the two lines' 150; and the client past its line is said on the client's line alone.

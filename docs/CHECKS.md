@@ -89,6 +89,9 @@ measurement before and after.
   (`just test-rs -p symphony-board --test perf`), the launcher's and hooks' own targets
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
+- **Weight added to a shipped binary** (a dependency, a feature, a library the binary did not
+  reach before): `just size-check` at the tip, its lines on the thread, every binary within its
+  line ([a red at the size check](#a-red-at-the-size-check)).
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders) and `just symphony-cli status --lint` (no card slug in prose, nothing the
   plugins' prose rules refuse) clean; for a shipped skill, `just symphony-cli init --root .` run
@@ -268,19 +271,59 @@ the protocol's JSON (installed with the plugins, `symphony::plugins::install`, s
 installs none links none of it; a plugin answering from its process needs only the host's side of
 the protocol).
 
+On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
+`build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it: a
+link writes by default an export trie, a name for each global symbol, so that other code loading
+the binary can find them, and no code loads these. It was about 360 KB of the server and 330 KB of
+`symphony` and of `tasks`. Two dependencies build in one codegen unit (`Cargo.toml`), comrak and
+regex-syntax, whose large constant tables each unit that reads one otherwise holds a copy of:
+about 220 KB of the server and of `symphony`.
+
 The release profile leaves out the symbol table (`strip = true`). A panic in a shipped binary
 still prints its thread, file:line:col and message, but a backtrace names nothing:
 `RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw addresses. A build to debug or
 profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps the names.
 
-It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
-tip; no task's gate does, as it costs a release build of the whole workspace. A budget is set a
-few percent above what its line measured when it was set; it is raised only in the commit that
-needs it, saying why, and lowered in the commit of a reduction.
-
 The release profile is this workspace's: a consuming project that builds its own host or board
 binaries in a workspace of its own builds them with its own `[profile.release]`, and gets what
 this one sets only by setting it there.
+
+It is a step of `just verify` (`size-check`), so [the nightly](#the-nightly) runs it on main's
+tip. No task's gate runs it, as it costs a release build of the whole workspace, except a task
+whose change adds weight to a shipped binary ([a red at the size check](#a-red-at-the-size-check)).
+
+### Where a line stands
+
+A binary's line is its size, as `just size-check` measures it in the commit that sets the line,
+plus 4 %, rounded down to a multiple of 10,000 bytes. Only a reduction sets one: the commit of a
+reduction lowers the line of each binary it made smaller to that, and leaves a line where it
+stood when the rule would put it higher. A line never moves up, and a binary is never given room
+for its growth: the 4 % is the room the landings after a reduction share until the next one.
+Within its line, `symphony size-budget` prints where the rule brings down a binary's line that
+stands higher (`its line comes down to …`), so the commit of a reduction takes that number, not a
+choice of its own. The client's line is set by the same rule from the distribution main holds
+when it is set, and the check prints no such number for it: what the distribution holds rises and
+falls with the builds `publish-client` keeps.
+
+### A red at the size check
+
+A binary past its line is a red of the landing that took it there, not of the release that finds
+it. A task whose change adds weight to a shipped binary (a dependency, a feature, a library the
+binary did not reach before) runs `just size-check` at its tip and posts the sizes with its
+evidence. A binary past its line there is the task's own to take back before review, in its
+branch: bytes of its own code, or of anything else that binary links. Its line is never raised
+instead, whatever the feature is worth: a budget raised is a check loosened (RULES.md
+`workflow/nightly-reds-first`).
+
+The landings that each stayed under a line can still cross it together, and the nightly finds
+that: a red of its size step, fixed the same way, by a reduction. To find what grew, the red's
+task reads a link map of the binary at the last green tip and at the red one, by crate and by
+module: every live symbol with its size and the object it came from. After `just size-check`,
+touch the binary's own source file and run the recipe's build again, its packages and `--bin
+NAME`, with a `RUSTC_WRAPPER` that adds `-C link-arg=-Wl,-map,FILE` to that binary's link alone:
+Cargo relinks that binary and nothing else, its bytes as they were. Built with fewer packages
+(`-p symphony` alone, or `cargo rustc` of one), the dependencies take other features and the
+binary is another one. `cargo bloat` needs an unstripped rebuild of everything.
 
 ## Checks with no reviewer
 
