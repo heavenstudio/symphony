@@ -122,7 +122,11 @@ impl Setup {
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
             .env_remove(RUNS_VAR)
-            .env_remove("TASKS_RECORDER");
+            .env_remove("TASKS_RECORDER")
+            // The probe given the recorder's backstop: a loaded machine never leaves Cargo to run
+            // unrecorded for a probe it answered late.
+            .env(PROBE_WAIT_VAR, "120")
+            .envs(crate::RECORDER_PATIENCE);
         if let Some(recorder) = recorder {
             command.env("TASKS_RECORDER", recorder);
         }
@@ -169,6 +173,8 @@ impl Setup {
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
 /// The file [`logging`] logs its runs in.
 const LOG_VAR: &str = "RECORDER_LOG";
+/// What sets, in seconds, how long `tools/record.sh` waits for its recorder's probe.
+const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
 /// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
 const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 
@@ -363,9 +369,11 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${LOG_VAR}\"\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n"
         ),
     );
+    // The probe's own two seconds: the deadline this case is of.
     let done = setup.run(
         setup
             .command("cargo.sh", &["test"], Some(hung.to_str().unwrap()))
+            .env_remove(PROBE_WAIT_VAR)
             .env("RELEASE", &release)
             .env("ENDED", &ended),
     );

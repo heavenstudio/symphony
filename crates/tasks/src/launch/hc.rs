@@ -305,15 +305,16 @@ impl Binary {
 
     /// What `command` printed, fed `input`, within [`PATIENCE`] or what is left of the deadline:
     /// a call that does not end in that time is killed, and its error, as every error here, names
-    /// it (`named`).
+    /// it (`named`), and the limit that ran out: the deadline's time given only when what was left
+    /// of it was the shorter.
     fn answered(
         &self,
         command: &mut Command,
         input: &[u8],
         named: impl FnOnce() -> String,
     ) -> Result<std::process::Output, LaunchError> {
-        let limit = match self.deadline {
-            None => PATIENCE,
+        let (limit, by_deadline) = match self.deadline {
+            None => (PATIENCE, None),
             Some(deadline) => {
                 let left = deadline.at.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -323,11 +324,12 @@ impl Binary {
                         deadline.given.as_secs()
                     )));
                 }
-                left.min(PATIENCE)
+                let limit = left.min(PATIENCE);
+                (limit, (limit == left).then_some(deadline))
             }
         };
         probes::within_fed(command, input, limit).map_err(|why| {
-            let why = match self.deadline {
+            let why = match by_deadline {
                 Some(deadline) if why.starts_with("no answer in ") => {
                     format!(
                         "no answer within the {} s it is given",

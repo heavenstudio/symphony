@@ -17,11 +17,6 @@ const FIRST_TRY: Duration = Duration::from_secs(1);
 /// The longest deadline [`once_up`] tries: a stand-in not up in that long is broken, not slow.
 const LAST_TRY: Duration = Duration::from_secs(32);
 
-/// How much later than its deadline a hung call may answer: its spawn and this test's own threads
-/// on a loaded machine. Far short of the 120 s a call without a deadline is given, so an answer
-/// within it is the deadline's.
-const SLACK: Duration = Duration::from_secs(20);
-
 /// A deadline every call that answers keeps on a loaded machine: the fake hc's first start once
 /// it is linked can take seconds while macOS assesses it.
 const ANSWERING: Duration = Duration::from_secs(100);
@@ -57,7 +52,8 @@ fn never_answering(dir: &Path, name: &str) -> PathBuf {
 /// A stand-in that never answers and whose output is held by a process it started: each call adds
 /// its words to `NAME.calls`, starts a `sleep` in the background, which keeps its stdout and
 /// stderr, writes that `sleep`'s pid and its own on one line of `NAME.pids`, and waits for it. The
-/// `sleep` ends by itself within two minutes, should a test lose its pid.
+/// `sleep` ends by itself within ten minutes, should a test lose its pid: still running when the
+/// call answers, it shows the call did not wait for it.
 fn holding_its_output_in_a_grandchild(dir: &Path, name: &str) -> PathBuf {
     let (calls, pids) = (
         dir.join(format!("{name}.calls")),
@@ -67,7 +63,7 @@ fn holding_its_output_in_a_grandchild(dir: &Path, name: &str) -> PathBuf {
         dir,
         name,
         &format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\nsleep 120 &\necho \"$! $$\" >> '{}'\nwait\n",
+            "#!/bin/sh\necho \"$*\" >> '{}'\nsleep 600 &\necho \"$! $$\" >> '{}'\nwait\n",
             calls.display(),
             pids.display()
         ),
@@ -181,9 +177,11 @@ fn a_hung_window_or_hc_answers_within_the_deadline_all_calls_together_and_its_ch
             });
             (focused.join().unwrap(), read.join().unwrap())
         });
+        // The refusals name the deadline's time only when the deadline, not the 120 s every call
+        // has, was the limit that ran out: that, not how soon they came, says it was the deadline's.
         let secs = given.as_secs();
         let (refused, took) = (focused.0.unwrap_err(), focused.1);
-        assert!(took < given + SLACK, "the focus took {took:?} of {given:?}");
+        assert!(took >= given, "the focus took {took:?} of {given:?}");
         assert_eq!(
             refused.0,
             format!(
@@ -195,10 +193,7 @@ fn a_hung_window_or_hc_answers_within_the_deadline_all_calls_together_and_its_ch
         // One call took the whole deadline: the pane's focus and the raise were never started.
         asked_at_most(&folder.0, "app.calls", "do agent.focus --terminal t7");
         let (refused, took) = (read.0.unwrap_err(), read.1);
-        assert!(
-            took < given + SLACK,
-            "the screen read took {took:?} of {given:?}"
-        );
+        assert!(took >= given, "the screen read took {took:?} of {given:?}");
         assert_eq!(
             refused.0,
             format!("hc read t7: no answer within the {secs} s it is given")
@@ -226,10 +221,9 @@ fn a_hung_call_answers_at_the_deadline_though_what_it_started_holds_its_output()
         let started = Instant::now();
         let refused = screen(&Binary::of(&env).within(given), "t7").unwrap_err();
         let took = started.elapsed();
-        assert!(
-            took < given + SLACK,
-            "the screen read took {took:?} of {given:?}"
-        );
+        // At the deadline, though what the call started still holds its output: the refusal names
+        // the deadline only when it was the limit that ran out.
+        assert!(took >= given, "the screen read took {took:?} of {given:?}");
         assert_eq!(
             refused.0,
             format!(
@@ -238,10 +232,14 @@ fn a_hung_call_answers_at_the_deadline_though_what_it_started_holds_its_output()
             )
         );
         asked_at_most(&folder.0, "holder.calls", "read t7 --lines 0");
-        // What the stand-in started outlived the kill: once it is ended, both are reaped.
+        // What the stand-in started outlived the kill, and the call did not wait for it: once it
+        // is ended, both are reaped.
         for line in lines(&folder.0, "holder.pids") {
             let started: i64 = line.split_whitespace().next().unwrap().parse().unwrap();
-            assert!(pid_alive(started), "{started} ended with the call's kill");
+            assert!(
+                pid_alive(started),
+                "{started} ended with the call's kill, or the call waited for it"
+            );
             assert!(terminate(started, true), "{started}");
         }
         reaped(&folder.0, "holder.pids");

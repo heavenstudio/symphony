@@ -99,6 +99,20 @@ const SAMPLE: Duration = Duration::from_millis(250);
 const GIT_WAIT: Duration = Duration::from_millis(600);
 /// The longest a recorder apart from its command waits for an earlier run it may repeat to end.
 const RERUN_WAIT: Duration = Duration::from_secs(5);
+/// What sets, in seconds, how long a command waits to hear its recorder watches it, in place of
+/// `READY`'s second. This and the four below are a test's: each gives a loaded machine the time
+/// it needs, or runs its deadline out at once to show what its end does.
+#[cfg(target_os = "macos")]
+pub const READY_VAR: &str = "TASKS_RUN_READY";
+/// What sets, in seconds, how long the board is asked the run's task, in place of [`WAIT`].
+pub const WAIT_VAR: &str = "TASKS_RUN_BOARD_WAIT";
+/// What sets, in seconds, how long git is asked the run's tree, in place of [`GIT_WAIT`].
+pub const GIT_WAIT_VAR: &str = "TASKS_RUN_GIT_WAIT";
+/// What sets, in seconds, how long an earlier run is waited for, in place of [`RERUN_WAIT`].
+pub const RERUN_WAIT_VAR: &str = "TASKS_RUN_RERUN_WAIT";
+/// What sets, in seconds, how long a recorder apart from its command's caller waits for the day
+/// files' lock before each line, in place of [`crate::runs::LOCK_WAIT`].
+pub const LOCK_WAIT_VAR: &str = "TASKS_RUN_LOCK_WAIT";
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]\n                 [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
 /// `tasks run --help`, `just tasks help run`: its usage and what it does.
@@ -556,7 +570,7 @@ fn seconds(time: libc::timeval) -> f64 {
 fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>, Option<String>)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
-        client: reached.client.waiting(WAIT),
+        client: reached.client.waiting(env.seconds(WAIT_VAR, WAIT)),
         ..reached
     };
     let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
@@ -688,7 +702,8 @@ impl Prepared {
         let commit = asked.commit.clone().or_else(|| commit(&env.cwd));
         let run = role(asked, env).map(|role| {
             let (tree, dirty) = commit.as_deref().map_or((None, None), |commit| {
-                crate::runs::tree_and_dirty(&env.cwd, commit, asked.commit.is_some(), GIT_WAIT)
+                let within = env.seconds(GIT_WAIT_VAR, GIT_WAIT);
+                crate::runs::tree_and_dirty(&env.cwd, commit, asked.commit.is_some(), within)
             });
             (role, tree, dirty)
         });
@@ -753,7 +768,8 @@ impl Recording {
                         tree,
                     };
                     if apart {
-                        settled(&folder, &id, same, queued_at);
+                        let within = env.seconds(RERUN_WAIT_VAR, RERUN_WAIT);
+                        settled(&folder, &id, same, queued_at, within);
                     }
                     crate::runs::rerun_of(runs, same, queued_at)
                 }
@@ -814,7 +830,7 @@ impl Recording {
             folder,
             runs,
             wait: if apart {
-                crate::runs::LOCK_WAIT
+                env.seconds(LOCK_WAIT_VAR, crate::runs::LOCK_WAIT)
             } else {
                 crate::runs::BRIEF_WAIT
             },
@@ -912,10 +928,10 @@ impl Recording {
 }
 
 /// Once no operation in the work folder `folder` but `ours`, asked for by `before`, may still end as
-/// the run `same` repeats (`recorded::pending`), or [`RERUN_WAIT`] has passed: its end line is then
+/// the run `same` repeats (`recorded::pending`), or `within` ([`RERUN_WAIT`]) has passed: its end line is then
 /// in the day files, when it is to be.
-fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64) {
-    let deadline = std::time::Instant::now() + RERUN_WAIT;
+fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, within: Duration) {
+    let deadline = std::time::Instant::now() + within;
     let earlier = |record: &Record| {
         record.run.as_ref().is_some_and(|run| {
             run.dirty == Some(false)
@@ -1020,7 +1036,7 @@ mod supervised {
                     && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
                 {
                 }
-                ready(&told)
+                ready(&told, env.seconds(super::READY_VAR, READY))
             }
         }
     }
@@ -1045,9 +1061,9 @@ mod supervised {
         Ok((read, write))
     }
 
-    /// Whether the recorder said on `told`, within [`READY`], that it watches this process.
-    fn ready(told: &OwnedFd) -> bool {
-        let deadline = Instant::now() + READY;
+    /// Whether the recorder said on `told`, within `within` ([`READY`]), that it watches this process.
+    fn ready(told: &OwnedFd, within: Duration) -> bool {
+        let deadline = Instant::now() + within;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let mut poll = libc::pollfd {

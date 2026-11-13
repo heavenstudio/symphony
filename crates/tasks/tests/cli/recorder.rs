@@ -7,10 +7,10 @@
 use crate::{Case, git, repository, scratch};
 use std::fs;
 use std::io::Read as _;
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::Env;
@@ -294,10 +294,13 @@ fn now() -> f64 {
 }
 
 /// A board server that takes one connection and never answers it: once it took it, it makes the
-/// file `accepted` and tells when it took it, then when the asker gave up and closed it.
+/// file `accepted`. It tells when it took it, then when its asker was let go: by
+/// [`Silent::release`], or by the asker's own wait, which runs two minutes in these tests
+/// ([`crate::RECORDER_PATIENCE`]), so that a loaded machine never lets it go first.
 struct Silent {
     address: String,
     heard: mpsc::Receiver<(f64, f64)>,
+    held: Arc<Mutex<Option<TcpStream>>>,
 }
 
 impl Silent {
@@ -305,39 +308,69 @@ impl Silent {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap().to_string();
         let (tell, heard) = mpsc::channel();
+        let held = Arc::new(Mutex::new(None));
+        let holder = Arc::clone(&held);
         let accepted = accepted.to_path_buf();
         std::thread::spawn(move || {
             let (mut asked, _) = listener.accept().unwrap();
             let taken = now();
+            *holder.lock().unwrap() = Some(asked.try_clone().unwrap());
             fs::write(&accepted, "").unwrap();
             let mut said = [0; 4096];
             while matches!(asked.read(&mut said), Ok(read) if read > 0) {}
             let _ = tell.send((taken, now()));
         });
-        Silent { address, heard }
+        Silent {
+            address,
+            heard,
+            held,
+        }
     }
 
-    /// When it took the question, then when the asker gave up.
+    /// The question it took closed unanswered, which lets its asker go: called once `accepted`
+    /// exists.
+    fn release(&self) {
+        if let Some(asked) = &*self.held.lock().unwrap() {
+            let _ = asked.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// When it took the question, then when its asker was let go.
     fn heard(&self) -> (f64, f64) {
-        self.heard.recv_timeout(Duration::from_secs(60)).unwrap()
+        self.heard.recv_timeout(Duration::from_secs(300)).unwrap()
     }
 }
 
-/// A command that runs until `accepted` exists: until the board is being asked its task.
-fn until_asked(accepted: &Path) -> Vec<&str> {
-    vec![
+/// A command that writes its pid to `pid`, then runs until `accepted` exists: until the board is
+/// being asked its task.
+fn until_asked(accepted: &Path, pid: &Path) -> Vec<String> {
+    [
         "/bin/sh",
         "-c",
-        "while [ ! -e \"$1\" ]; do :; done",
+        "echo $$ > \"$2\"; while [ ! -e \"$1\" ]; do :; done",
         "sh",
         accepted.to_str().unwrap(),
+        pid.to_str().unwrap(),
     ]
+    .map(str::to_string)
+    .to_vec()
 }
 
-/// `finished`, run while the board took the question of its task at `taken` and its asker gave up
-/// at `closed`, was stamped as it ran, not once the board answered: asked for after `called`,
-/// started before the board was asked, ended after that (its command waited for it) and before
-/// the asker gave up; for its session, and no task.
+/// Once this process's child `pid` has ended, which is left unreaped for its own caller to reap.
+fn until_ended(pid: libc::pid_t) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while ended(pid) != Some(true) {
+        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
+        assert!(Instant::now() < deadline, "not ended within 120 s");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// `finished`, run while the board took the question of its task at `taken` and let its asker go
+/// at `closed`, once the test saw its command end, was stamped as it ran, not once the board let
+/// go: asked for after `called`, started before the board was asked, ended after that (its command
+/// waited for it) and before the board let go; for its session, and no task. A recorder that
+/// stamped its end once the board let its asker go would stamp it after `closed`.
 fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
     let (queued, started, ended) = (
         finished.queued_at,
@@ -350,7 +383,7 @@ fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f6
     );
     assert!(
         taken <= ended && ended < closed,
-        "the board asked at {taken}, given up at {closed}: {finished:?}"
+        "the board asked at {taken}, let go at {closed}: {finished:?}"
     );
     assert_eq!(
         (finished.handle.as_deref(), finished.task.as_deref()),
@@ -367,12 +400,24 @@ fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_
     case.env
         .vars
         .insert("TASKS_SERVER".into(), board.address.clone());
+    let command = until_asked(&accepted, &folders.dir.join("pid"));
     let mut args = vec!["run", "--phase", "test", "--"];
-    args.extend(until_asked(&accepted));
+    args.extend(command.iter().map(String::as_str));
     let called = now();
-    let done =
-        output(tasks(&case, &folders, Some("asks-a-silent-board"), &args).stdin(Stdio::null()))
-            .unwrap();
+    let started = tasks(&case, &folders, Some("asks-a-silent-board"), &args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // On macOS the binary becomes its command, whose end is seen here while its recorder still asks
+    // the board; then the board lets it go. Elsewhere the binary is its command's parent and ends
+    // once its own wait for the board has run out.
+    if cfg!(target_os = "macos") {
+        until_ended(libc::pid_t::try_from(started.id()).unwrap());
+        board.release();
+    }
+    let done = wait_output(started).unwrap();
     assert!(done.status.success(), "{done:?}");
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -393,10 +438,19 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
         env.vars.insert(name.into(), value.into());
     }
     env.cwd.clone_from(&folders.dir);
-    let mut args = vec!["run", "--phase", "test", "--"];
-    args.extend(until_asked(&accepted));
+    let pid = folders.dir.join("pid");
+    let mut args = ["run", "--phase", "test", "--"].map(str::to_string).to_vec();
+    args.extend(until_asked(&accepted, &pid));
     let called = now();
-    let ran = crate::run(&env, &args, "");
+    let (tell, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = tell.send(crate::run(&env, &args, ""));
+    });
+    // Its command is this process's child, whose end is seen here while the board is still asked.
+    until_ended(written_pid(&pid));
+    board.release();
+    let ran = done.recv_timeout(Duration::from_secs(300)).unwrap();
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -501,17 +555,14 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         let _ = tell.send(crate::run(&env, &args, ""));
     });
     let pid = written_pid(&pid);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while ended(pid) != Some(true) {
-        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
-        assert!(Instant::now() < deadline, "not ended within 30 s");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    until_ended(pid);
+    // The board lets its asker go only now: until then it is asked, however long the command took.
     assert!(
         board.heard.try_recv().is_err(),
         "the board was no longer asked once it ended"
     );
-    let ran = done.recv_timeout(Duration::from_secs(60)).unwrap();
+    board.release();
+    let ran = done.recv_timeout(Duration::from_secs(300)).unwrap();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
     assert_eq!(ended(pid), None, "left unreaped");
     let finished = folders.once(Step::Finished);
@@ -1423,10 +1474,23 @@ fn a_command_line_of_another_command_that_is_not_text_is_refused_without_a_panic
 fn pipeline_run(
     case: &Case,
     folders: &Folders,
+    places: (&Path, &Path),
+    names: (&str, &str),
+    script: &str,
+) -> std::process::ExitStatus {
+    let done = output(pipeline_command(case, folders, places, names, script).stdin(Stdio::null()))
+        .unwrap();
+    done.status
+}
+
+/// The command [`pipeline_run`] runs.
+fn pipeline_command(
+    case: &Case,
+    folders: &Folders,
     (repo, runs): (&Path, &Path),
     (pipeline, label): (&str, &str),
     script: &str,
-) -> std::process::ExitStatus {
+) -> Command {
     let args = [
         "run",
         "--phase",
@@ -1440,14 +1504,9 @@ fn pipeline_run(
         "-c",
         script,
     ];
-    let done = output(
-        tasks(case, folders, None, &args)
-            .env(RUNS_VAR, runs)
-            .current_dir(repo)
-            .stdin(Stdio::null()),
-    )
-    .unwrap();
-    done.status
+    let mut command = tasks(case, folders, None, &args);
+    command.env(RUNS_VAR, runs).current_dir(repo);
+    command
 }
 
 /// `case`'s environment for `tasks run` in this process, at top level in `repo`, recording in
@@ -1677,6 +1736,10 @@ fn a_checkout_is_clean_or_dirty_as_its_command_starts_whatever_the_command_write
     assert_eq!(child.cpu_partial, None);
 }
 
+/// The lock wait of a recorder apart from its caller in the case below: the wall-clock backstop of
+/// a test's wait, which no loaded machine reaches with a recorder that never waits so.
+const LOCK_WAIT_SECONDS: u64 = 120;
+
 #[test]
 fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     let case = Case::new();
@@ -1686,9 +1749,14 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     fs::create_dir_all(&runs).unwrap();
     let holder = fs::File::create(runs.join("lock")).unwrap();
     holder.lock().unwrap();
+    // A recorder apart from its caller waits for the lock before each line, two minutes here: one
+    // that ends sooner, the lock held throughout, never waited so.
+    let mut env = in_process(&case, &folders, (&repo, &runs));
+    env.vars
+        .insert("TASKS_RUN_LOCK_WAIT".into(), LOCK_WAIT_SECONDS.to_string());
     let began = Instant::now();
     let ran = crate::run(
-        &in_process(&case, &folders, (&repo, &runs)),
+        &env,
         &[
             "run",
             "--phase",
@@ -1704,7 +1772,10 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     );
     let took = began.elapsed();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
-    assert!(took < Duration::from_secs(1), "{took:?}");
+    assert!(
+        took < Duration::from_secs(LOCK_WAIT_SECONDS),
+        "waited for the held lock as a recorder apart from its caller does: {took:?}"
+    );
     // Both lines were appended still, each whole, without the lock.
     let [ended] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
     assert_eq!((ended.end, ended.exit), (Some(End::Red), Some(7)));
@@ -1734,30 +1805,26 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
         "(while [ ! -e '{}' ]; do sleep 0.05; done) </dev/null >/dev/null 2>&1 & sleep 1.5",
         release.0.display()
     );
-    // Plain runs at once, each reaped by the test, as its own thread sees it end, before or after
-    // its recorder reads it the last time: nothing is missed either way.
+    // Plain runs at once, each reaped by the test only once every recorder wrote its end line: the
+    // last reading of each is of its command ended and not yet reaped, however late a loaded
+    // machine let its recorder look, so nothing is missed. What a caller that reaps first leaves a
+    // count, the unit tests of `cpu::Tree::reaped_first` hold.
     const PLAIN: usize = 4;
-    std::thread::scope(|scope| {
-        let mut started =
-            vec![scope.spawn(|| {
-                pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
-            })];
-        for _ in 0..PLAIN {
-            started.push(scope.spawn(|| {
-                pipeline_run(
-                    &case,
-                    &folders,
-                    (&repo, &runs),
-                    ("test", "plain"),
-                    "sleep 0.8",
-                )
-            }));
-        }
-        for each in started {
-            assert!(each.join().unwrap().success());
-        }
-    });
+    let run = |names: (&str, &str), script: &str| {
+        spawn(&mut pipeline_command(
+            &case,
+            &folders,
+            (&repo, &runs),
+            names,
+            script,
+        ))
+    };
+    let mut started = vec![run(("test", "leaves"), &leaves)];
+    started.extend((0..PLAIN).map(|_| run(("test", "plain"), "sleep 0.8")));
     let lines = symphony_api::fold(day_lines(&runs, PLAIN + 1));
+    for mut each in started {
+        assert!(each.wait().unwrap().success());
+    }
     drop(release);
     let said = |label: &str| -> Vec<(bool, Option<bool>)> {
         let lines = lines.iter().filter(|line| line.label == label);
