@@ -24,6 +24,34 @@ const KINDS: [&str; 8] = [
     "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
 ];
 
+/// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
+const DX: &str = r#"#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --out-dir) out="$2"; shift 2 ;;
+        --features) kind="${2#page-}"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+work="$CARGO_TARGET_DIR/dx/symphony-ui/release/web"
+mkdir -p "$work/public/assets"
+printf '%s' "$BUNDLE_ID-$kind" > "$work/owner"
+if [ "$BUNDLE_ID-$kind" = first-board ]; then
+    echo 'fixture: first DX holds its intermediate files' >&2
+    read -r release
+    [ "$release" = release ]
+    [ "$FIRST_EXIT" = 0 ] || exit "$FIRST_EXIT"
+fi
+[ "$(cat "$work/owner")" = "$BUNDLE_ID-$kind" ]
+printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
+printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
+printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
+printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$work/public/assets/board-$kind.css"
+mkdir -p "$out"
+cp -R "$work/public" "$out/"
+"#;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -37,6 +65,7 @@ impl Fixture {
         for name in [
             "apps/symphony-ui/bundle.sh",
             "apps/symphony-ui/tools.sh",
+            "apps/symphony-ui/dx-path.sh",
             "apps/symphony-ui/wasm-fresh.sh",
             "apps/symphony-ui/package.sh",
             "apps/symphony-ui/assets-copy.sh",
@@ -69,35 +98,19 @@ impl Fixture {
             "#!/bin/bash\ncat\n",
         );
         release_protocol(&base);
-        executable(
-            &base.join("common/symphony/tools/dx-0.7.10/bin/dx"),
-            r#"#!/bin/bash
-set -euo pipefail
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --out-dir) out="$2"; shift 2 ;;
-        --features) kind="${2#page-}"; shift 2 ;;
-        *) shift ;;
-    esac
-done
-work="$CARGO_TARGET_DIR/dx/symphony-ui/release/web"
-mkdir -p "$work/public/assets"
-printf '%s' "$BUNDLE_ID-$kind" > "$work/owner"
-if [ "$BUNDLE_ID-$kind" = first-board ]; then
-    echo 'fixture: first DX holds its intermediate files' >&2
-    read -r release
-    [ "$release" = release ]
-    [ "$FIRST_EXIT" = 0 ] || exit "$FIRST_EXIT"
-fi
-[ "$(cat "$work/owner")" = "$BUNDLE_ID-$kind" ]
-printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
-printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
-printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
-printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$work/public/assets/board-$kind.css"
-mkdir -p "$out"
-cp -R "$work/public" "$out/"
-"#,
-        );
+        // dx where tools.sh installs it and where bundle.sh runs it from (dx-path.sh, its folder
+        // named by SYMPHONY_CLIENT_TOOLS, private as it asks): one file, so the stand is found
+        // current, nothing is linked, and the body is read beside the path it runs as.
+        let stand = base.join("client-tools");
+        fs::create_dir(&stand).unwrap();
+        fs::set_permissions(&stand, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        for dx in [
+            base.join("common/symphony/tools/dx-0.7.10/bin/dx"),
+            stand.join("dx-0.7.10/bin/dx"),
+        ] {
+            fs::create_dir_all(dx.parent().unwrap()).unwrap();
+            fixture_script::write(&dx, DX, true);
+        }
         owned_git(&base, &["init", "-q"]);
         owned_git(&base, &["commit", "-qm", "fixture", "--allow-empty"]);
         Self(base)
@@ -113,6 +126,7 @@ cp -R "$work/public" "$out/"
             .current_dir(&self.0)
             .env("HOME", home)
             .env("SYMPHONY_GIT_COMMON_DIR", self.0.join("common"))
+            .env("SYMPHONY_CLIENT_TOOLS", self.0.join("client-tools"))
             .env("CARGO_TARGET_DIR", self.0.join("target"))
             .env("CARGO", self.0.join("cargo"))
             .env("BUNDLE_ID", id)
