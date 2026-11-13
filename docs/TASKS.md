@@ -136,7 +136,9 @@ held a board of 0.5 GiB. The `tasks-reclaim` binary, the owner's to run from the
 rebuilds a store that grew that way. It stops the server and keeps the store as a
 [snapshot](#where-it-lives) before any server of its own starts on it: a clone, a plain copy where
 the volume cannot clone, and no reclaim where it can be neither (nothing exported or removed, the
-server started again on the store). It then exports every database, imports them into a new store,
+server started again on the store). On a volume that cannot clone, that copy needs free room equal
+to the whole store, beside what the exports and the new store take: make that room first, as the
+refusal says, with the store's size. It then exports every database, imports them into a new store,
 and checks that store's exports byte for byte against the old ones. Only then does it swap the
 stores and remove the old one, which that snapshot keeps; `tasks-reclaim` says where, and until
 when. It is kept as any snapshot is: until the owner removes it while its write-ahead log holds
@@ -183,7 +185,10 @@ snapshots of the old store are kept: the room comes back once they are removed. 
 one with `rm -rf sf-tasks/snapshots/NAME`; nothing runs on a snapshot, so that is safe at any time.
 
 The server is never killed. Whatever stops it asks it once to end and waits
-while it writes what it holds to disk and closes its store. One that has not
+while it writes what it holds to disk and closes its store. It is never asked
+twice, by any command: SurrealDB takes a second signal for an immediate
+shutdown, before its store is closed, so the board writes each ask down first
+(`sf-tasks/ending/PID`) and a later command only waits for it. One that has not
 answered yet is still starting, replaying its log, and is never signalled, ended
 or joined by a second: a command that waited a minute for it says so, and the
 next one waits again. A write the board answered for is on disk, and survives a
@@ -210,13 +215,46 @@ board that reads older than it was after a replay went back: hold it, and
 recover from a clone of that snapshot, never from the snapshot itself nor the
 board's own data ([A board that went back](#a-board-that-went-back)).
 
+A replay's server is never the board's server. The start records the replay in
+`sf-tasks/replay.json`, with its server's pid and address as soon as it has
+them, until that server has closed the store cleanly. A starter that ends in the
+middle of a replay (a Symphony stopped while its start replays, a command
+killed) leaves the replay's server running, detached, to finish alone under the
+replay's memtable. While the record stands, every server on the data is taken
+for the replay's, whichever pid the record names and whether or not
+`server.json` names it, so none is adopted as the board's and none started
+beside it. Until it answers it is never signalled: a command waits for it as
+for any server still starting, and the Symphony's reads are refused naming the
+replay, so its pages say the board is starting. Once it answers, the next start
+stops it cleanly, which writes what it replayed to the store's tables and
+empties the log, and starts the board's own server under the board's memtable,
+with nothing left to replay. In the server's log `· the private replay's record
+stands, and …` names which server it was (the one the record names, or another
+on the data, and whether `server.json` names it), then come its `Goodbye!` and
+`· the private replay is through`, before the board's server's lines. The hold
+and a reclaim stop it the same way. The record is removed only once nothing it
+may name runs: the pid it names has ended, or it names none, and every listing
+of every process (`ps`) for a second shows no server on the data (`· the private
+replay begun above has no server running and was not said through`); the next
+start then replays what log is left. The record writes down when its server's
+process started, as each ask to end does: a pid that a process started at
+another time has now, after a reboot in the middle of a replay say, is not taken for
+that server, so a record or an ask left behind holds nothing up and needs no
+hand. Where whether its server runs cannot be told for two seconds, a `ps` that
+fails or the named server running off the data, the command is refused saying
+so, nothing is adopted or removed, and the next command asks again; `just tasks
+database` says the same, and what the owner does should it last ([Stuck
+servers](#stuck-servers)). A build from before the record takes such a server
+for the board's.
+
 A command that waits on another's start, stop, hold or snapshot (the starters'
 lock, `sf-tasks/lock`) says on stderr, after a second and then every 30 s, what
 it waits on: the holder's pid, since when, and what it does, a private replay
 with its log's size among them (`sf-tasks/lock.json`, while it holds the lock).
 The Symphony's reads wait at most 5 s, then fail naming the same, and wait no
 longer for a server on the data that runs and does not answer (a replay whose
-starter has gone, as a Symphony restarted in the middle of one leaves). When the
+starter has gone, as a Symphony restarted in the middle of one leaves, which the
+refusal names as that replay). When the
 Symphony is itself the one to start the board, and the start is to replay the
 log, it runs that start on a thread of its own: the read that found it to make
 is refused at once, naming it, as is each read after it until the start is
@@ -314,6 +352,33 @@ there.
 | `just agent-send HANDLE "text" [--as SENDER]` | message an agent directly through its registered channel |
 | `just symphony` → **Board**, **Agents** | the board, each task's page and thread, and who is connected |
 
+### Stuck servers
+
+The board asks a server once to end and kills none, so two things can outlast
+its commands, and both are the owner's.
+
+A server still running ten minutes after its one ask (`sf-tasks/ending/PID`
+names it, with when it was asked and when its process started) is left to
+finish, and the stop says so, naming its pid, that file and its log; every later
+stop only waits on it again. A server writing a large memtable takes minutes. One
+whose CPU time (`ps -o time= -p PID`) stands still across a minute has hung: the
+owner holds the board (`just tasks database hold "WHY" --as HANDLE`, which holds
+from the moment it begins, while its stop still waits on the server, and after
+it says the server still closes, so nothing starts another), ends it by hand
+(`kill -9 PID`: the writes it held are in its log, which the next start replays)
+and releases the hold. The ask is forgotten by the next stop or start once its
+process has ended, or once another process, which started at another time, has
+its pid.
+
+A private replay's record (`sf-tasks/replay.json`) whose server cannot be told
+to run or not (a `ps` that keeps failing, a kernel that does not say when the
+process with its pid started, or the server it names running while neither it
+nor any other process is a server on the data) refuses every command
+that would start or stop the board's server, and `just tasks database` says why.
+Once `ps` can tell, the next command settles it alone. Should it never, the owner
+removes the record by hand once `ps -ww -axo pid,command` lists no `surreal
+start` on the board's `data`.
+
 ### A board that went back
 
 A board refused as one that went back holds an older store than the one it was seen at: what was
@@ -345,11 +410,25 @@ every server started is one of your own, on a clone, on a port of your own.
    clean stop's `Goodbye!` between two starts. A snapshot taken before a private replay is such a
    copy, whether the store had gone back before it or the replay itself was cut off: in
    `server.log` its line is followed by `· a private replay of the store's log begins`, the replay
-   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`.
-   That `Goodbye!` is the replay's and never counts as the board's server stopping cleanly: it is
-   the stop that removes a segment no server applied, so the snapshot before it holds what the
-   board lost (a build from before those two lines shows a replay as two servers' lines after one
-   snapshot's line, the first ending in its `Goodbye!`). Clone it out of `snapshots/` at once
+   server's own lines and its clean stop's `Goodbye!`, then `· the private replay is through`; a
+   replay whose starter ended before it was through has its end said by the next start instead,
+   `· the private replay's record stands, and …` just before that `Goodbye!`, naming the server it
+   stopped. That `Goodbye!` is the replay's and never counts as the board's server
+   stopping cleanly: it is the stop that removes a segment no server applied, so the snapshot
+   before it holds what the board lost. Nor do a reclaim's: after its keep's line (`· a snapshot
+   of the store before this reclaim`), the `Goodbye!` lines up to the next start's snapshot line
+   are its own servers', on the old store and on the new one. Where a build wrote none of these
+   lines, the times tell. SurrealDB dates each of its lines in UTC but its `Goodbye!`, which
+   follows its stop's last dated line, and each server's first line is its warning that
+   authentication is disabled; a snapshot is named by the UTC second it was taken, just before the
+   start whose lines follow it, and a start by a build that takes snapshots, outside a scratch
+   place, always writes its snapshot line first. A build from before the replay's two lines shows
+   a replay as two servers' lines after one snapshot line, the second server's first line dated
+   within a second of the first's last, with no snapshot line between. A clean stop and then a
+   start by a build that writes no snapshot line show the same lines, the start's first line
+   dated when that start came; one that came within a second of the stop reads as a replay, and
+   `sf-tasks/hold.log` dates each hold and release, whose stop a start may follow at once. Clone
+   it out of `snapshots/` at once
    (`cp -c -R sf-tasks/snapshots/NAME sf-tasks/data.evidence-DATE`; `cp -R --reflink=always` on
    Linux, `cp -R -p` where the volume cannot clone, as the board's own plain copy is made). With
    none (no build that takes snapshots made that start), clone the data folder the same way at
@@ -368,7 +447,14 @@ every server started is one of your own, on a clone, on a port of your own.
    CLONE/manifest/00000000000000000000.manifest)`. `ls -l CLONE/wal` lists the segments, each named
    by its number in 20 digits (`00000000000000000017.wal`). In a store that went back the log
    number reads N+1 while segment N is still in `wal/`: the engine moved past a segment it never
-   applied, and the segments from N+1 up are what a server started on the older state wrote. When
+   applied. What servers wrote on the older state is in the segments from N+1 up, and may be at
+   the end of segment N as well: the server whose replay split N goes on writing to N, the segment
+   it has open (in one reproduction it appended 923 bytes there and wrote no N+1), while a server
+   started later on the older state writes from a segment of its own. Writes at the end of N are
+   replayed with it in step 5, after the ones the board lost, in the order they were made, and
+   step 4 cannot remove them; step 6's counts show them. To leave them out, recover from a copy
+   taken before that server started, whose segment N ends before them, where there is one (the
+   snapshot a build that takes them took before that start). When
    several segments lie below the log number, N is the lowest of them; when none does, nothing is
    skipped, and step 4 has nothing to do: a snapshot taken before a replay of a store that had not
    gone back reads so, its whole log still to replay, and step 5 replays it all.
@@ -546,13 +632,16 @@ its asks in `artifacts/callbacks-NAME/asks.db`.
 
 **Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts the
 agent the project's `[agents] launch` in its main checkout's `symphony.toml` names (`default`,
-`codex` or `claude`, with its `model` and `effort`), else a Codex agent (`--no-daemon`; model
+`codex` or `claude`, with its `model` and `effort`), on the model `[agents.models]` names for
+its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
+([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
 `gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
 own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
 which the app would show under it rather than in a tab. `--kind` and `--model` win over the
-project's; its model and effort go with its agent, so `--kind` naming the other agent takes the
+project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
 board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
-A table that does not parse, or names another agent, refuses the launch. The `launched` line
+A table that does not parse, or names another agent, refuses the launch, and so does a machine
+running as many agents as `[limits] machine_agents` allows. The `launched` line
 names the agent, model and effort it started, and `launch --help` ends with what a bare launch
 starts where it runs (`crates/tasks/src/launch/defaults.rs`). The
 terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
@@ -586,8 +675,8 @@ nothing more, and a restore that lost it kills the terminal it started. A Codex 
 takes the thread its callback registered whichever is written first; one closed with no thread
 says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-A consuming project chooses its agent models, staffing policy and terminal lifecycle.
-The board records those sessions and roles; it imposes no model preference.
+A consuming project chooses its agent models (`[agents.models]`), staffing policy and terminal
+lifecycle. The board records those sessions and roles; it imposes no model preference.
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
 priority first. Enable it in `tools/task_staff.json` in the consuming checkout: `enabled`
@@ -624,12 +713,12 @@ Use these explicit markers for owner decisions.
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
 work in a suitable open terminal: an executor already on the task's own branch, or an
 instruction worker/reviewer in a detached checkout. A checkout with a live or stale
-executor is never reused. Otherwise it launches what a bare `just tasks launch` would (the
-project's `[agents] launch`, else Codex) in a separate worktree: the
-task's own branch, or detached main for an instruction or review. Live agent terminals
-and live board agent sessions without a terminal count toward the cap;
-reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
-deferral and failure prints one line. Only a successful ping or launch is posted on
+executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
+would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
+separate worktree: the task's own branch, or detached main for an instruction or review. Live
+agent terminals and live board agent sessions without a terminal count toward the cap, the
+lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the
+floor defers work. Every proposal, dispatch, deferral and failure prints one line. Only a successful ping or launch is posted on
 the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
@@ -1812,14 +1901,81 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   only. A subtask handed to another orchestrator is that one's, with what is
   below it. A message to a handle or to another role stays with them.
 
+## Limits and models
+
+The owner, 2026-11-12: "all WIP limits should be settings anyway, as well as preferred model to
+delegate to. Should be very easy and simple to change the file whenever conditions or deicions
+happen." Each is a key of the project's `symphony.toml`, read from the repository's main
+checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src/limits.rs`,
+`crates/tasks/src/launch/defaults.rs`):
+
+```toml
+[limits]
+orchestrator_slots = 8  # the open tasks an orchestrator holds (Slots, below)
+low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
+machine_agents = 12     # the agents this machine runs
+
+[agents.models]
+orchestrator = "fable"
+executor = "opus"
+reviewer = "opus"
+```
+
+- **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
+  orchestrator's open tasks), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
+  launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
+  also read from `[board]` where `[limits]` names none, where a build that does not know
+  `[limits]` reads it; written in both with two values, `[limits]`'s holds and the other is
+  said on stderr.
+- **`machine_agents`** counts every agent the machine runs, whoever started it, as the staffing
+  pass counts: each hc terminal running an agent, and each live worker, reviewer or
+  orchestrator session of this board with no terminal of its own
+  (`crates/tasks/src/launch/running.rs`). `just tasks launch` refuses at the limit (`no
+  launch: this machine runs 12 agents, at its limit of 12 ([limits] machine_agents in PATH)`),
+  and when hc cannot be asked to count them. `just tasks next` warns past it on stderr and
+  still names the task: whoever asks runs already, and refusing it work frees nothing. The
+  staffing pass defers at the lower of it and its own `max_sessions`.
+- **Models.** A launch of an executor or a reviewer, by hand or by the staffing pass, starts
+  `[agents] launch`'s agent on its role's model, else on `[agents] launch`'s `model`, else on
+  the board's own; `--model` and `--kind` win, and a role's model goes with the project's
+  agent. No board launch starts an orchestrator: with no model written for it, whoever starts
+  one chooses. An agent starting a subagent passes the model `just tasks limits` names for the
+  subagent's role.
+- **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
+  ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
+  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, or `default`), the
+  machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
+  not know, left out.
+- **A change holds at once.** Every command reads the file as it stands, and a store kept open
+  (the Symphony's server keeps its reader and its data worker's) reads it again at its next
+  read whenever the file's length or time changed: no restart.
+- **A value the board cannot read** is said on stderr with its line and takes its default
+  (`⚠ PATH: [limits] low_volume (line 3) is -1; it is at least 0; it takes its default, 4`): a
+  broken project file must not stop the board, nor the landing that mends it. A load of the
+  project and `just symphony-status --lint` refuse it in the same words, as they refuse a key
+  the Symphony does not know, by name and line (`[limits] wip (line 4) is not a setting the
+  Symphony knows`).
+- **Staging a new key.** A build older than a key does not know it: its `just symphony-status
+  --lint` and its load of the project refuse the file, naming the key, its server reads the rest
+  and says the key is left out, and its board never reads it. So a project writes a new key only
+  once every build that reads its file knows it: the machine's shared server, and the `symphony`
+  and `tasks` its recipes and lands run (its main checkout's `.target/bin/` links), which a
+  project taking the Symphony as a Git dependency builds at the Symphony commit its
+  `Cargo.lock` pins, so that pin must be one that knows the key. Until then the setting stays
+  where those builds read it (a cap in `[board] orchestrator_slots` holds for all of them); once
+  they all know the key, the value moves, and while builds are mixed it can be written in both
+  tables with one value, the older key dropped after.
+
 ## Slots
 
 An orchestrator holds at most a set number of open tasks, its slots, so work is
 pushed to done before new work starts (`crates/tasks/src/slots.rs`).
-The number is the project's: `orchestrator_slots` in the `[board]` table of
-`symphony.toml`, read from the repository's main checkout, as `on_review` is,
-so a branch cannot raise its own cap. With no key, or no file, nothing is
-capped. A value that does not parse, or one below 1, is said on stderr
+The number is the project's: `orchestrator_slots` in the `[limits]` table of
+`symphony.toml` ([Limits and models](#limits-and-models)), else in its `[board]` table,
+where builds before `[limits]` read it, from the repository's main checkout, as
+`on_review` is, so a branch cannot raise its own cap. With no key, or no file, nothing is
+capped. A value that does not parse, or one below 1, is said on stderr with its line
 (`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
@@ -1929,13 +2085,14 @@ more than twice in progress for an hour, so a short dip does not lower it and
 a short rise does not raise it. Exactly twice is not over; review with nothing
 in progress is.
 
-- **Thresholds.** The project's, beside `orchestrator_slots` in the `[board]`
-  table of `symphony.toml`, read from the main checkout as the cap is:
+- **Thresholds.** The project's, in the `[board]` table of `symphony.toml`, read
+  from the main checkout as the cap is and printed by `just tasks limits`
+  ([Limits and models](#limits-and-models)):
   `review_alarm_ratio` (2), `review_alarm_hours` (4) and
   `review_alarm_clear_hours` (1), whole numbers of at least 1. A key not
   written takes its default; a value that does not parse, or one below 1, is
-  said on stderr (`⚠ …; the pipeline alarm takes its default thresholds`) and
-  the defaults apply.
+  said on stderr with its line (`⚠ …; the pipeline alarm takes its default
+  thresholds`) and the defaults apply.
 - **What counts.** Work only: a review mirror counts with the task it reviews
   and an instruction subtask with the task it serves, as for
   [Slots](#slots), neither on its own, as the tree stood at each moment: a

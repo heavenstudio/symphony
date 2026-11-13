@@ -204,6 +204,7 @@ const COMMANDS: &[Command] = &[
         ],
     },
     plain("next", &[]),
+    plain("limits", &[]),
     Command {
         name: "create",
         pos: &[pos("slug"), pos("title")],

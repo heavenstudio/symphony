@@ -325,35 +325,27 @@ pub fn connect(env: &Env) -> Result<Store, String> {
     ))
 }
 
-/// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
-/// `env`'s repository configures ([`crate::slots::of_env`]), and its pipeline alarm raised at the
-/// thresholds it configures beside it ([`crate::alarm::of_env`]). A cap that cannot be read is said
-/// on stderr and caps nothing, and thresholds that cannot be read are said and the defaults apply: a
-/// broken project file must not stop the board, nor the landing that mends it.
+/// `store`, held to the limits the main checkout of `env`'s repository writes ([`crate::limits`]):
+/// the cap on each orchestrator's open tasks, the low-volume threshold, the agents a machine runs
+/// and the pipeline alarm's thresholds, as its `symphony.toml` is at each read, so a store kept
+/// open follows a change to the file. A value that cannot be read is said on stderr and takes its
+/// default: a broken project file must not stop the board, nor the landing that mends it. Outside
+/// a repository, every default.
 pub fn capped(store: Store, env: &Env) -> Store {
     capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
 }
 
-/// As [`capped`], what is wrong with the cap or the thresholds said by `say`.
+/// As [`capped`], what is wrong with the file as it is now said by `say`; a later version of it,
+/// read again by the store, on stderr ([`crate::limits::Watched`]).
 fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
-    let store = match crate::alarm::of_env(env) {
-        Ok(thresholds) => store.alarming(thresholds),
-        Err(problem) => {
-            say(&format!(
-                "{problem}; the pipeline alarm takes its default thresholds"
-            ));
-            store
-        }
+    let Some(path) = crate::limits::file_of(env) else {
+        return store.limiting(crate::limits::Limits::default());
     };
-    match crate::slots::of_env(env) {
-        Ok(slots) => store.capping(slots),
-        Err(problem) => {
-            say(&format!(
-                "{problem}; no cap on an orchestrator's open tasks applies"
-            ));
-            store
-        }
+    let (watched, read) = crate::limits::Watched::new(path);
+    for problem in &read.problems {
+        say(problem);
     }
+    store.watching(watched)
 }
 
 /// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs,
