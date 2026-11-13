@@ -21,7 +21,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use symphony_board::sys::{Child, Command, Stdio};
+use symphony_board::sys::{Child, Command, Start, Stdio, process_starts};
 
 mod discovery;
 
@@ -201,7 +201,9 @@ impl Home {
             .and_then(|recorded| self.running_of(recorded.pid))
             .or_else(|| self.unrecorded());
         if let Some(running) = &found {
-            self.end(running.pid)?;
+            self.end(running.pid, "asked to stop (`--stop`)", || {
+                ended(running.pid)
+            })?;
         }
         let address = self.dir.join(ADDRESS);
         if address.exists() {
@@ -316,13 +318,16 @@ impl Home {
         }
     }
 
-    /// Ask `pid` to end, then make it; it is gone when this returns.
-    fn end(&self, pid: i64) -> Result<(), ServerError> {
+    /// Ask `pid` to end, then make it; it is gone when this returns, as `gone` says. Each signal is
+    /// said on stderr before it is sent, with its pid and `why`, so a log kept of a process that
+    /// ended by one shows this sent it.
+    fn end(&self, pid: i64, why: &str, mut gone: impl FnMut() -> bool) -> Result<(), ServerError> {
         for (how, wait) in [(libc::SIGTERM, GRACE), (libc::SIGKILL, GRACE)] {
+            crate::front::tell(format_args!("{}", ending(pid, how, why)));
             signal(pid, how);
             let began = Instant::now();
             while began.elapsed() < wait {
-                if !pid_alive(pid) {
+                if gone() {
                     return Ok(());
                 }
                 std::thread::sleep(Duration::from_millis(20));
@@ -331,6 +336,22 @@ impl Home {
         Err(ServerError::NotUp(format!(
             "the Symphony server (pid {pid}) did not end when told to"
         )))
+    }
+
+    /// End the server `child`, `pid`, this start just started, for `what` it did not do within the
+    /// patience; it is reaped when this returns. It is this process's child, so once it ends it
+    /// stays a zombie, which a signal 0 still finds, until it is reaped: its own end is waited
+    /// for, not its pid's.
+    fn end_started(&self, pid: i64, child: &mut Child, what: &str) -> Result<(), ServerError> {
+        let why = format!(
+            "this start's server did not {what} within {}",
+            seconds(self.patience)
+        );
+        self.end(pid, &why, || match child.try_wait() {
+            Ok(status) => status.is_some(),
+            // Not this process's to reap after all: its pid says.
+            Err(_) => ended(pid),
+        })
     }
 
     /// Start the server, detached, wait until it and its app answer, and record it. Under the lock.
@@ -388,8 +409,7 @@ impl Home {
                 Some(port) => port,
                 None => {
                     if child.try_wait().ok().flatten().is_none() {
-                        self.end(pid)?;
-                        let _ = child.wait();
+                        self.end_started(pid, &mut child, "announce its port")?;
                     }
                     return Err(ServerError::NotUp(format!(
                         "the Symphony server did not start: {}; its log is {}",
@@ -410,13 +430,12 @@ impl Home {
             self.came_up(&running, &mut child)
         }) {
             if child.try_wait().ok().flatten().is_none() {
-                self.end(running.pid)?;
-                let _ = child.wait();
+                self.end_started(running.pid, &mut child, "answer")?;
                 return Err(ServerError::NotUp(format!(
-                    "the Symphony server (pid {}, port {}) did not answer within {} s; its log is {}",
+                    "the Symphony server (pid {}, port {}) did not answer within {}; its log is {}",
                     running.pid,
                     running.port,
-                    self.patience.as_secs(),
+                    seconds(self.patience),
                     log.display()
                 )));
             }
@@ -479,6 +498,31 @@ impl Home {
         }
         result
     }
+}
+
+/// What [`Home::end`] says before it sends `how`, SIGTERM or the SIGKILL after it, to the server
+/// `pid`, which it ends for `why`.
+fn ending(pid: i64, how: libc::c_int, why: &str) -> String {
+    if how == libc::SIGKILL {
+        format!(
+            "· Symphony: SIGKILL to the server, pid {pid}: it did not end within {} s of SIGTERM \
+             ({why})",
+            GRACE.as_secs()
+        )
+    } else {
+        format!("· Symphony: SIGTERM to the server, pid {pid}: {why}")
+    }
+}
+
+/// Whether process `pid` has ended: no process has it, or the one that has it is a zombie, which has
+/// ended and waits only for its parent to reap it.
+fn ended(pid: i64) -> bool {
+    !pid_alive(pid) || process_starts(&[pid]).first() == Some(&Start::Ended)
+}
+
+/// `patience` in seconds, as a person reads it: `60 s`, or `0.5 s` for one under a second.
+fn seconds(patience: Duration) -> String {
+    format!("{} s", patience.as_secs_f64())
 }
 
 /// Whether anything holds loopback `port`, where the one server always listens: only a refused

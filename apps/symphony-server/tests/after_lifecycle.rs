@@ -281,7 +281,11 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
     if observed == 0 {
         // Preserve the failed observation before cleanup so a broken drop cannot leak a child
         // or be hidden by this fallback. A positive waitpid result already reaped the child.
-        symphony_server::sys::signal(i64::from(pid), libc::SIGKILL);
+        fixture::killed::send(
+            i64::from(pid),
+            libc::SIGKILL,
+            "the case ends the child a Process drop left",
+        );
         // SAFETY: the nonblocking observation proved this exact owned child is still running.
         while unsafe { libc::waitpid(pid, &mut status, 0) } == -1
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
@@ -331,7 +335,7 @@ fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     };
     check_progress(repo.start(&repo.main, false));
     let first = repo.record().unwrap();
-    symphony_server::sys::signal(first.pid, libc::SIGKILL);
+    fixture::killed::send(first.pid, libc::SIGKILL, "the case kills the shared server");
     until("killed shared server", || {
         (!symphony_server::sys::pid_alive(first.pid)).then_some(())
     });

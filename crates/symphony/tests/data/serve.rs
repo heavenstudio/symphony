@@ -1,55 +1,52 @@
-//! What `symphony serve` answers for the schema check.
+//! What `symphony serve` answers a schema check: none. The check is the library's
+//! (`symphony::schema::validate`, tests/after_model.rs and tests/data/cache.rs), which a consumer's
+//! code links; `serve` refuses `validate` as a name it lacks, saying where the check is.
 
 use serde_json::{Value, json};
 
-fn call(request: Value) -> Value {
-    symphony::cli::call(&request)
-}
-
-fn ok(request: Value) -> Value {
-    let answer = call(request);
-    answer
-        .get("ok")
-        .cloned()
-        .unwrap_or_else(|| panic!("no answer: {answer}"))
-}
+const REFUSED: &str = "unknown function \"validate\": serve has no schema check; link \
+                       symphony_schema::validate (symphony::schema) instead";
 
 #[test]
-fn validate_answers_the_error_lines() {
+fn validate_is_an_unknown_function_naming_the_library_check() {
     let schema = json!({"type": "object", "properties": {"a": {"type": "string"}}});
+    for request in [
+        json!({"fn": "validate", "instance": {"a": 1}, "schema": schema}),
+        json!({"fn": "validate", "instance": {"a": "x"}, "schema": schema}),
+        json!({"fn": "validate", "instance": 1, "schema": {"minItem": 1}}),
+        json!({"fn": "validate"}),
+    ] {
+        assert_eq!(
+            symphony::cli::call(&request),
+            json!({"error": "value", "message": REFUSED}),
+            "{request}"
+        );
+    }
+    // The same kind and opening as any other name serve lacks.
+    let other = symphony::cli::call(&json!({"fn": "validated"}));
     assert_eq!(
-        ok(json!({"fn": "validate", "instance": {"a": "x"}, "schema": schema})),
-        json!([])
-    );
-    let found = ok(json!({"fn": "validate", "instance": {"a": 1}, "schema": schema}));
-    let lines = found.as_array().unwrap();
-    assert_eq!(lines.len(), 1, "{found}");
-    assert!(lines[0].as_str().unwrap().starts_with("$.a: "), "{found}");
-}
-
-#[test]
-fn validate_answers_in_the_order_the_instance_was_written() {
-    // As the serve loop reads a request: from its JSON line, members in the order sent.
-    let request: Value = serde_json::from_str(
-        r#"{"fn": "validate", "instance": {"z": "x", "a": "y"},
-            "schema": {"type": "object", "additionalProperties": {"type": "integer"}}}"#,
-    )
-    .unwrap();
-    assert_eq!(
-        ok(request),
-        json!([
-            "$.z: expected integer, got str",
-            "$.a: expected integer, got str"
-        ])
+        other,
+        json!({"error": "value", "message": "unknown function \"validated\""})
     );
 }
 
 #[test]
-fn validate_refuses_a_schema_it_cannot_enforce_as_a_value_error() {
-    let answer = call(json!({"fn": "validate", "instance": 1, "schema": {"minItem": 1}}));
-    assert_eq!(answer["error"], "value", "{answer}");
-    assert!(
-        answer["message"].as_str().unwrap().contains("minItem"),
-        "{answer}"
+fn a_refused_validate_leaves_the_serve_loop_answering_until_its_input_ends() {
+    let input = "{\"fn\": \"validate\", \"instance\": 1, \"schema\": {\"type\": \"integer\"}}\n\
+                 {\"fn\": \"split_message\", \"message\": \"a\"}\n";
+    let mut out = Vec::new();
+    let code = symphony::cli::serve_main(&mut input.as_bytes(), &mut out);
+    assert_eq!(code, 0);
+    let answers: Vec<Value> = String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        answers,
+        [
+            json!({"error": "value", "message": REFUSED}),
+            json!({"ok": ["a", ""]})
+        ]
     );
 }

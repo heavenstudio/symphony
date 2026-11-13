@@ -141,6 +141,25 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     let project = parsed("[verdicts]\ncheck = [\"make\", \"test\"]\n").unwrap();
     assert_eq!(project.verdicts.check, ["make", "test"]);
     assert!(project.verdicts.land.is_empty());
+    // The release candidate's bounds: 3 red reruns and 24 hours, 0 in either holding none.
+    let releases = parsed("").unwrap().releases;
+    assert_eq!(
+        (releases.candidate_reruns, releases.candidate_hours),
+        (3, 24)
+    );
+    assert!(releases.holds_candidates());
+    let releases = parsed("[releases]\ncandidate_hours = 6\n")
+        .unwrap()
+        .releases;
+    assert_eq!(
+        (releases.candidate_reruns, releases.candidate_hours),
+        (3, 6)
+    );
+    for off in ["candidate_reruns = 0", "candidate_hours = 0"] {
+        let releases = parsed(&format!("[releases]\n{off}\n")).unwrap().releases;
+        assert!(!releases.holds_candidates(), "{off}");
+    }
+    assert!(refused("[releases]\ncandidate_hours = -1\n").contains("candidate_hours"));
 }
 
 #[test]

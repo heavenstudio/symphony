@@ -249,7 +249,10 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. It is the one place every test runs
+stops short of deciding is the red `tests/release-red-run`. A run red in a check holds its commit
+as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
+reruns what was red and what the fixes changed, and releases that commit and its fixes alone
+([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
 on main: `just land` runs none ([after main moves](#after-main-moves)). It may be scheduled more
 often than daily, and its schedule is the owner's to install. It also runs every 20 landings:
 a land starts `--due` on the main checkout's linked build of `symphony`, which counts with git
@@ -307,7 +310,9 @@ reaches, to tell a board a move to SurrealDB froze (`reach` in `crates/tasks/src
 one place that names that check), and the loopback that measures a compiled plugin's calls through
 the protocol's JSON (installed with the plugins, `symphony::plugins::install`, so a binary that
 installs none links none of it; a plugin answering from its process needs only the host's side of
-the protocol).
+the protocol). The same test of `symphony` holds the JSON Schema validator out of it, which would
+add a fifth to its size: a schema check is a library call a consumer's code makes
+(`symphony::schema::validate`), and `symphony serve` answers `validate` as a function it lacks.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
@@ -402,7 +407,11 @@ as one commit. A branch commits no distribution: the land keeps main's side of e
 distribution file a branch changed, in a conflict or not, its approved tip unchanged; a conflict
 in any other file still goes back to its executor. Between a land and the regenerator's commit
 main's committed client is behind its sources: `just tasks regenerate --status` says how far,
-and the release run waits for it and releases nothing of a main still behind.
+and the release run waits for it and releases nothing of a main still behind. The one exception
+is a release candidate's fix that changes what the client is built from: no regenerator builds
+the candidate, so it commits the distribution its own sources make (`just client-update`), which
+its rerun's client check proves, and the land still keeps main's side of it
+([RELEASES](RELEASES.md#the-release-candidate)).
 
 ## After main moves
 
@@ -418,6 +427,16 @@ targets [steps 1 to 3](#picking-the-focused-set) pick at the new tip, where `mai
 lists the branch's own files alone; a package only main's commits touched is main's evidence, not
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
 evidence names, and a branch that merges main during its review runs them again first.
+
+**A release candidate's fix merges `release-candidate`, never main, before its approve.** A red's
+own task while the release run holds a candidate ([RELEASES](RELEASES.md#the-release-candidate))
+starts at the local branch `release-candidate` and merges it again before review, as that branch
+moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
+main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
+the red check's failures run alone at its tip, the commands its task names. Main is merged only
+when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
+the candidate on the commit approved before the merge. One that merges main before any approve
+gives the candidate nothing it can take, and drops it.
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for
