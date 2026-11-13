@@ -286,3 +286,159 @@ pub(super) fn with_no_fork_an_untracked_picture_is_warned_of() {
         ]
     );
 }
+
+/// The audit's refusals and warnings of a document's own pictures (not a card's).
+fn documents(root: &std::path::Path) -> (Vec<String>, Vec<String>) {
+    let result = symphony::docs_audit::audit(root);
+    let own = |line: &String| line.contains(": shows a picture");
+    (
+        result.errors.into_iter().filter(own).collect(),
+        result.warnings.into_iter().filter(own).collect(),
+    )
+}
+
+fn document_refused(rel: &str, line: usize, shown: &str) -> String {
+    format!(
+        "{rel}:{line}: shows a picture this checkout wrote that git does not track: {shown}; commit it beside the document, as a clone shows only what git tracks (an upload is for a thread, never a document)"
+    )
+}
+
+fn document_warned(rel: &str, line: usize, shown: &str) -> String {
+    format!("{rel}:{line}: shows a picture git does not track: {shown}: not in a clone")
+}
+
+const GUIDE: &str = "docs/guide.md";
+
+/// A document's own picture is judged as a card's is, on disk or not: warned of on main, refused on
+/// a branch for the lines it wrote, passed once git tracks it. Main's older line is never the
+/// branch's; history folders are passed over; an owner's callout is the owner's (its upload only
+/// warned of, by the page), and an agent's resolution nested in it is the document's.
+pub(super) fn a_documents_own_picture_is_a_file_git_tracks() {
+    let tree = repository();
+    tree.write(".gitignore", "/artifacts/\n");
+    // Lines 1 to 5: a picture git never tracked (absent here) and one it tracks.
+    let guide = "# Guide\n\n![old](old.png)\n\n![kept](kept.png)\n";
+    tree.write(GUIDE, guide);
+    tree.write("docs/kept.png", "png");
+    tree.write("docs/history/old.md", "# Old\n\n![gone](gone.png)\n");
+    commit(&tree.root, "main's guide", 1);
+    assert_eq!(
+        documents(&tree.root),
+        (vec![], vec![document_warned(GUIDE, 3, "old.png")])
+    );
+
+    // A branch writes a picture on disk that git does not track and one not on disk at all (line
+    // 7), and shows the tracked one again (line 9): only line 7 is refused, main's line 3 never.
+    let wt = branch(&tree, "tools/guide", "guide");
+    tree.write("guide/docs/new.png", "png");
+    tree.write("guide/docs/old.png", "png");
+    let added = format!("{guide}\n![new](new.png) ![absent](absent.png)\n\n![again](kept.png)\n");
+    std::fs::write(wt.join(GUIDE), &added).unwrap();
+    assert_eq!(
+        documents(&wt).0,
+        [document_refused(GUIDE, 7, "new.png and 1 more")]
+    );
+    // Committed, the line is still the branch's own; once git tracks what it shows, it passes.
+    commit(&wt, "the guide's pictures", 2);
+    assert_eq!(documents(&wt).0.len(), 1);
+    let tracked = added.replace(" ![absent](absent.png)", "");
+    std::fs::write(wt.join(GUIDE), &tracked).unwrap();
+    commit(&wt, "only what is committed", 2);
+    assert_eq!(documents(&wt).0, Vec::<String>::new());
+
+    // An owner's callout naming an upload, as a verdict writes it, refuses nothing; an agent's
+    // resolution nested in it (line 13) is the document's own.
+    let callout = format!(
+        "{tracked}\n> [!comment] Like this\n> ![sketch.png]({UPLOAD})\n> > [!resolved] Drawn: ![r](resolved.png)\n"
+    );
+    std::fs::write(wt.join(GUIDE), &callout).unwrap();
+    assert_eq!(
+        documents(&wt).0,
+        [document_refused(GUIDE, 13, "resolved.png")]
+    );
+}
+
+/// The picture reader sees every form a picture takes, on a card's line and in a document's text
+/// alike: a path with a title, a reference to a definition (refused when the branch wrote the
+/// definition too), raw `<img src>`, and this server's own URL for a file of this project. Another
+/// project's URL and a bare anchor name no file here.
+pub(super) fn every_form_of_a_picture_is_read() {
+    let tree = repository();
+    tree.write("symphony.toml", "[project]\nid = \"proj\"\n");
+    tree.write(".gitignore", "/artifacts/\n");
+    let posted = card("forms", ' ', "posted.", "");
+    tree.write(DOC, &register(&posted));
+    let guide = "# Guide\n\n[shared]: shared.png\n";
+    tree.write(GUIDE, guide);
+    commit(&tree.root, "main's card and guide", 1);
+    let wt = branch(&tree, "tools/forms", "forms");
+    for name in ["t1", "t2", "t3", "t4", "shared"] {
+        tree.write(&format!("forms/docs/{name}.png"), "png");
+    }
+    let forms = [
+        ("![A](t1.png \"a title\")", "t1.png", ""),
+        ("<img alt=\"B\" src=\"t2.png\">", "t2.png", ""),
+        (
+            "![C](http://127.0.0.1:8765/proj/docs/t3.png)",
+            "http://127.0.0.1:8765/proj/docs/t3.png",
+            "",
+        ),
+        ("![E][e]", "t4.png", "\n[e]: t4.png\n"),
+    ];
+    for (form, shown, definition) in forms {
+        // On a card's line (6), the definition below the register.
+        let answer = format!("  [2026-11-11 11:00] agent — {form}\n");
+        let text = register(&format!("{posted}{answer}")) + definition;
+        std::fs::write(wt.join(DOC), &text).unwrap();
+        assert_eq!(unclonable(&wt).0, [untracked(6, "forms", shown)], "{form}");
+        std::fs::write(wt.join(DOC), register(&posted)).unwrap();
+        // In a document's own text (line 5).
+        let text = format!("{guide}\n{form}\n{definition}");
+        std::fs::write(wt.join(GUIDE), &text).unwrap();
+        assert_eq!(
+            documents(&wt).0,
+            [document_refused(GUIDE, 5, shown)],
+            "{form}"
+        );
+        std::fs::write(wt.join(GUIDE), guide).unwrap();
+    }
+    // A reference to main's definition, written by the branch, is the branch's picture; main's
+    // definition alone is not. Another project's URL and a bare anchor show nothing of this one.
+    let text = "# Guide\n\n[shared]: shared.png\n\n![s][shared] ![x](http://127.0.0.1:8765/other/x.png) ![y](#top)\n";
+    std::fs::write(wt.join(GUIDE), text).unwrap();
+    assert_eq!(documents(&wt).0, [document_refused(GUIDE, 5, "shared.png")]);
+    std::fs::write(
+        wt.join(GUIDE),
+        "# Guide\n\n[shared]: shared.png\n\nNo picture.\n",
+    )
+    .unwrap();
+    assert_eq!(documents(&wt).0, Vec::<String>::new());
+}
+
+/// A picture git never tracked reaches main by a branch the audit did not refuse (a land runs
+/// none): a clone of main has no such file, and its audit, main itself there, warns of the card's
+/// and the document's alike.
+pub(super) fn a_clone_is_warned_of_a_picture_git_never_tracked() {
+    let tree = super::common::Tree::new();
+    tree.write("origin/.gitignore", "/artifacts/\n");
+    let origin = tree.path("origin");
+    command(&origin, &["init", "-q", "-b", "main"], 1);
+    tree.write(
+        &format!("origin/{DOC}"),
+        &register(&card("cloned", ' ', "![P](pic.png)", "")),
+    );
+    tree.write(&format!("origin/{GUIDE}"), "# Guide\n\n![g](guide.png)\n");
+    commit(&origin, "pictures git never tracked", 1);
+    command(&tree.root, &["clone", "-q", "origin", "clone"], 1);
+    let clone = tree.path("clone");
+    assert!(!clone.join("docs/pic.png").exists());
+    let result = symphony::docs_audit::audit(&clone);
+    assert_eq!(shown_pictures(&result.errors), Vec::<&String>::new());
+    assert_eq!(
+        result.warnings,
+        [
+            warned(5, "cloned", "pic.png"),
+            document_warned(GUIDE, 3, "guide.png"),
+        ]
+    );
+}

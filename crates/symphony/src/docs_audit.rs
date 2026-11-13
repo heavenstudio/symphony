@@ -20,6 +20,8 @@ use crate::register::{
 use crate::render::{Render, doc_paths, split_blocks};
 use crate::text::{read_text, splitlines};
 
+mod pictures;
+
 static COMPONENT_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="component-error"[^>]*>⚠ ([^<]*)</span>"#).unwrap());
 static ASKED: LazyLock<Regex> = LazyLock::new(|| {
@@ -127,7 +129,7 @@ fn undrawn_cards(text: &str, rel: &str, result: &mut Result) {
 }
 
 /// The path from the checkout's root that a link `target` in the document `rel` names, before the
-/// project maps it to a file; none for an outside URL.
+/// project maps it to a file, its `%XX` escapes read; none for an outside URL.
 fn resolved(rel: &str, target: &str) -> Option<String> {
     if SCHEME.is_match(target) {
         return None;
@@ -139,11 +141,63 @@ fn resolved(rel: &str, target: &str) -> Option<String> {
         .split('?')
         .next()
         .unwrap_or("");
+    let path = unescaped(path);
     Some(normpath(&if target.starts_with('/') {
         path.trim_start_matches('/').into()
     } else {
-        join(dirname(rel), path)
+        join(dirname(rel), &path)
     }))
+}
+
+/// `path` with its `%XX` escapes read, as the browser asks for the file; as written where they do
+/// not read as UTF-8.
+fn unescaped(path: &str) -> String {
+    if !path.contains('%') {
+        return path.to_string();
+    }
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = bytes
+            .get(at + 1..at + 3)
+            .and_then(|pair| std::str::from_utf8(pair).ok())
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+        match (bytes[at], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                at += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_string())
+}
+
+/// The path from the checkout's root that a picture `target` in the document `rel` names
+/// ([`resolved`]), this server's own URL read as its route ([`pictures::local_route`]); none for an
+/// outside URL, another project's, or a target that names no file (a bare `#anchor`).
+fn picture_path(project: &crate::project::Project, rel: &str, target: &str) -> Option<String> {
+    let routed = pictures::local_route(target, &project.id, |route| {
+        project.serving(route).is_some()
+            || names_upload(route)
+            || project
+                .file(route)
+                .starts_with(&format!("{}/", project.artifacts))
+    });
+    let target = match routed {
+        None => target.to_string(),
+        Some(None) => return None,
+        Some(Some(route)) => route,
+    };
+    let bare = target.split(['#', '?']).next().unwrap_or("");
+    if bare.is_empty() {
+        return None;
+    }
+    resolved(rel, &target)
 }
 
 /// Whether `resolved`, a link's path from the root ([`resolved`]), names an owner's upload: under
@@ -166,9 +220,10 @@ fn tracked_files(root: &Path) -> Option<HashSet<String>> {
     )
 }
 
-/// The pictures `card` shows in its text and its agents' lines, as written there, code left out:
-/// what agents put on it, never the owner's words.
-fn agent_pictures(card: &Decision) -> Vec<String> {
+/// The pictures `card` shows in its text and its agents' lines, in every form
+/// ([`pictures::pictures`], a reference read against the document's `definitions`), as written
+/// there: what agents put on it, never the owner's words.
+fn agent_pictures(card: &Decision, definitions: &pictures::Definitions) -> Vec<String> {
     let agents = card
         .entries()
         .into_iter()
@@ -177,11 +232,9 @@ fn agent_pictures(card: &Decision) -> Vec<String> {
     std::iter::once(card.text.clone())
         .chain(agents)
         .flat_map(|text| {
-            let prose = CODE.replace_all(&text, "");
-            IMAGE
-                .captures_iter(&prose)
-                .map(|c| c[2].to_string())
-                .collect::<Vec<_>>()
+            pictures::pictures(&text, definitions)
+                .into_iter()
+                .map(|picture| picture.target)
         })
         .collect()
 }
@@ -189,9 +242,11 @@ fn agent_pictures(card: &Decision) -> Vec<String> {
 /// The pictures `card` in the document `rel` shows (its text and its agents' lines) that are not
 /// on disk under the checkout at `root`: a picture the owner would see broken. Files the owner
 /// attached are left out: they live in the main checkout's uploads, which every branch's page
-/// shows.
+/// shows. A reference picture counts only in the audit, which reads the whole document's
+/// definitions.
 pub fn missing_pictures(root: &Path, rel: &str, card: &Decision) -> Vec<String> {
-    missing_in(&crate::project::Project::of(root), root, rel, card)
+    let project = crate::project::Project::of(root);
+    missing_in(&project, root, rel, card, &pictures::Definitions::new())
         .into_iter()
         .map(|(target, _)| target)
         .collect()
@@ -199,25 +254,27 @@ pub fn missing_pictures(root: &Path, rel: &str, card: &Decision) -> Vec<String> 
 
 /// The files of [`missing_pictures`], under `root`: what a card held back for them waits on.
 pub fn missing_files(root: &Path, rel: &str, card: &Decision) -> Vec<std::path::PathBuf> {
-    missing_in(&crate::project::Project::of(root), root, rel, card)
+    let project = crate::project::Project::of(root);
+    missing_in(&project, root, rel, card, &pictures::Definitions::new())
         .into_iter()
         .map(|(_, file)| root.join(file))
         .collect()
 }
 
-/// [`missing_pictures`] with the checkout's project already read: each picture's link, and the file
-/// it names under the checkout.
+/// [`missing_pictures`] with the checkout's project and the document's reference `definitions`
+/// already read: each picture's link, and the file it names under the checkout.
 fn missing_in(
     project: &crate::project::Project,
     root: &Path,
     rel: &str,
     card: &Decision,
+    definitions: &pictures::Definitions,
 ) -> Vec<(String, String)> {
     let uploads = format!("{}/uploads/", project.artifacts);
-    agent_pictures(card)
+    agent_pictures(card, definitions)
         .into_iter()
         .filter_map(|target| {
-            let path = resolved(rel, &target)?;
+            let path = picture_path(project, rel, &target)?;
             let file = project.file(&path);
             (!names_upload(&path) && !file.starts_with(&uploads) && !root.join(&file).exists())
                 .then_some((target, file))
@@ -225,25 +282,35 @@ fn missing_in(
         .collect()
 }
 
-/// The pictures `card` in the document `rel` shows (its text and its agents' lines) that are on
-/// disk under the checkout at `root` but are not files git tracks (`tracked`), and every one that
-/// names an owner's upload: a card's picture is committed beside its document, and attaching is
-/// for threads. A clone shows none of them. A picture not on disk is [`missing_in`]'s.
+/// Whether the picture at `path` ([`picture_path`]) is not in a clone: not a file git tracks
+/// (`tracked`) at the file the project maps it to, or an owner's upload, which a picture an agent
+/// shows never is (a picture is committed beside its document, and attaching is for threads).
+fn unclonable(project: &crate::project::Project, path: &str, tracked: &HashSet<String>) -> bool {
+    names_upload(path) || !tracked.contains(&project.file(path))
+}
+
+/// The pictures `card` in the document `rel` shows (its text and its agents' lines) that a clone
+/// lacks ([`unclonable`]), each once. Where they are refused (`on_disk`), only those on disk under
+/// the checkout at `root`: one not on disk is [`missing_in`]'s.
 fn untracked_in(
     project: &crate::project::Project,
     root: &Path,
     rel: &str,
     card: &Decision,
     tracked: &HashSet<String>,
+    definitions: &pictures::Definitions,
+    on_disk: bool,
 ) -> Vec<String> {
     let mut seen = HashSet::new();
-    agent_pictures(card)
+    agent_pictures(card, definitions)
         .into_iter()
         .filter(|target| {
             seen.insert(target.clone())
-                && resolved(rel, target).is_some_and(|path| {
-                    let file = project.file(&path);
-                    names_upload(&path) || (root.join(&file).exists() && !tracked.contains(&file))
+                && picture_path(project, rel, target).is_some_and(|path| {
+                    unclonable(project, &path, tracked)
+                        && (!on_disk
+                            || names_upload(&path)
+                            || root.join(project.file(&path)).exists())
                 })
         })
         .collect()
@@ -251,14 +318,24 @@ fn untracked_in(
 
 /// The line of the document that shows `target` on `card` (whose own line is `card.line`), in what
 /// `written` holds of it: the card's own line for its text, else the first of its lines that
-/// `written` kept and that names `target`.
-fn line_of(card: &Decision, written: &Decision, target: &str) -> usize {
-    if written.text.contains(target) {
+/// `written` kept and that shows `target` (a reference by its `definitions`).
+fn line_of(
+    card: &Decision,
+    written: &Decision,
+    target: &str,
+    definitions: &pictures::Definitions,
+) -> usize {
+    let shows = |text: &str| {
+        pictures::pictures(text, definitions)
+            .iter()
+            .any(|picture| picture.target == target)
+    };
+    if shows(&written.text) {
         return card.line;
     }
     card.raw
         .iter()
-        .position(|line| line.contains(target) && written.raw.contains(line))
+        .position(|line| shows(line) && written.raw.contains(line))
         .map_or(card.line, |at| card.line + 1 + at)
 }
 
@@ -269,6 +346,22 @@ fn and_more(first: &str, all: usize) -> String {
     } else {
         first.to_string()
     }
+}
+
+/// Each document of `docs` (by its route) as it stood where the checkout at `root` forked from
+/// main, "" for one the fork did not hold; none where git could not say.
+fn forked_documents(
+    root: &Path,
+    project: &crate::project::Project,
+    docs: &[String],
+) -> Option<std::collections::HashMap<String, String>> {
+    let base = crate::branches::fork_base(root)?;
+    let specs: Vec<String> = docs
+        .iter()
+        .map(|rel| format!("{base}:{}", project.file(rel)))
+        .collect();
+    let texts = crate::branches::blobs(root, &specs)?;
+    Some(docs.iter().cloned().zip(texts).collect())
 }
 
 /// Whether the checkout at `root` is main itself: on the project's default branch, or detached at
@@ -299,37 +392,60 @@ fn into_artifacts(project: &crate::project::Project, path: &str) -> bool {
             .starts_with(&format!("{}/", project.artifacts))
 }
 
-/// Each open card in `text` (not resolved or rejected) whose pictures do not load, or are not files
-/// git tracks (`tracked`, [`untracked_in`]), judged on what this checkout wrote: the card's text
-/// and lines its fork from main did not hold ([`crate::branches::Fork::written`]). A branch
-/// answering a card of main's is never refused for main's pictures, which `/artifacts/` (each
-/// checkout's own) may not hold in its worktree, and a verdict's branch, which writes only the
-/// owner's lines, never for an agent's. On main itself (`main`) or with no fork, the whole card is
-/// judged for what git does not track, and a picture is warned of rather than refused, the ones
-/// in the artifacts folder left to the page's own warning ([`artifacts`]).
-fn card_pictures(
-    root: &Path,
-    rel: &str,
-    text: &str,
-    fork: Option<&crate::branches::Fork>,
-    main: bool,
-    tracked: Option<&HashSet<String>>,
-    result: &mut Result,
-) {
-    let project = crate::project::Project::of(root);
-    if project
+/// What the audit judges each document of the checkout at `root` by.
+struct Judging<'a> {
+    project: &'a crate::project::Project,
+    root: &'a Path,
+    /// What the registers held where the checkout forked from main.
+    fork: Option<&'a crate::branches::Fork>,
+    /// Whether what the checkout wrote that a clone lacks is refused: a branch with a fork from
+    /// main. Main itself, or a checkout with no fork, is only warned.
+    refuses: bool,
+    /// The files git tracks; none where git cannot say, and nothing is judged for a clone.
+    tracked: Option<&'a HashSet<String>>,
+    /// Each document's text at the fork, by its route, for the lines a branch wrote of it; none
+    /// where git could not say, and a document's own pictures are then only warned of.
+    forked: Option<&'a std::collections::HashMap<String, String>>,
+}
+
+/// Whether the document `rel` is in a history folder, which the audit passes over.
+fn in_history(project: &crate::project::Project, rel: &str) -> bool {
+    project
         .serving(rel)
         .is_some_and(|(entry, inside)| entry.in_history(inside))
-    {
+}
+
+/// Each card in `text` whose pictures do not load (an open card's), or are not in a clone
+/// ([`untracked_in`]; a closed card's too, as every past decision is shown), judged on what this
+/// checkout wrote: the card's text and lines its fork from main did not hold
+/// ([`crate::branches::Fork::written`]). A branch answering a card of main's is never refused for
+/// main's pictures, which `/artifacts/` (each checkout's own) may not hold in its worktree, and a
+/// verdict's branch, which writes only the owner's lines, never for an agent's. On main itself or
+/// with no fork, the whole card is judged for what a clone lacks, on disk or not, and a picture is
+/// warned of rather than refused, the ones in the artifacts folder left to the page's own warning
+/// ([`artifacts`]).
+fn card_pictures(
+    judging: &Judging<'_>,
+    rel: &str,
+    text: &str,
+    definitions: &pictures::Definitions,
+    result: &mut Result,
+) {
+    let (project, root) = (judging.project, judging.root);
+    if in_history(project, rel) {
         return;
     }
     let plugins = crate::plugins::Plugins::of(root);
     for card in parse_decisions(&splitlines(text)) {
-        if crate::branches::closed(&plugins, &card) {
-            continue;
-        }
-        let written = fork.map_or_else(|| card.clone(), |fork| fork.written(&card));
-        let missing = missing_in(&project, root, rel, &written);
+        let closed = crate::branches::closed(&plugins, &card);
+        let written = judging
+            .fork
+            .map_or_else(|| card.clone(), |fork| fork.written(&card));
+        let missing = if closed {
+            Vec::new()
+        } else {
+            missing_in(project, root, rel, &written, definitions)
+        };
         if let Some((first, _)) = missing.first() {
             result.errors.push(format!(
                 "{rel}:{}: card **{}** shows a picture this checkout wrote that does not load: {} is not on disk; add the file, or take the picture out, before committing",
@@ -338,18 +454,23 @@ fn card_pictures(
                 and_more(first, missing.len())
             ));
         }
-        let refused = fork.is_some() && !main;
+        let refused = judging.refuses;
         let judged = if refused { &written } else { &card };
-        let mut untracked = tracked
-            .map(|tracked| untracked_in(&project, root, rel, judged, tracked))
+        // A closed card's picture not on disk is no one else's to refuse.
+        let on_disk = refused && !closed;
+        let mut untracked = judging
+            .tracked
+            .map(|tracked| untracked_in(project, root, rel, judged, tracked, definitions, on_disk))
             .unwrap_or_default();
         if !refused {
             untracked.retain(|target| {
-                resolved(rel, target).is_some_and(|path| !into_artifacts(&project, &path))
+                !missing.iter().any(|(shown, _)| shown == target)
+                    && picture_path(project, rel, target)
+                        .is_some_and(|path| !into_artifacts(project, &path))
             });
         }
         if let Some(first) = untracked.first() {
-            let line = line_of(&card, judged, first);
+            let line = line_of(&card, judged, first, definitions);
             let shown = and_more(first, untracked.len());
             if refused {
                 result.errors.push(format!(
@@ -363,6 +484,131 @@ fn card_pictures(
                 ));
             }
         }
+    }
+}
+
+/// The lines of `lines` (from 0) that are not a document's own: each card's (its pictures are
+/// [`card_pictures`]'), and each review callout the owner left with its body, an agent's nested
+/// resolution aside.
+fn not_the_documents(lines: &[&str]) -> HashSet<usize> {
+    let mut skipped = HashSet::new();
+    for card in parse_decisions(lines) {
+        let first = card.line.saturating_sub(1);
+        skipped.extend(first..=first + card.raw.len());
+    }
+    let (mut current, mut fenced) = (false, false);
+    for (index, line) in lines.iter().enumerate() {
+        if is_fence(line) {
+            fenced = !fenced;
+            current = false;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if crate::callouts::review_kind(line).is_some() {
+            skipped.insert(index);
+            current = true;
+            continue;
+        }
+        if !current {
+            continue;
+        }
+        match crate::register::QUOTE.captures(line) {
+            None => current = false,
+            Some(quote) if crate::register::NESTED_RESOLVED.is_match(&quote["rest"]) => {}
+            Some(_) if CALLOUT.is_match(line) => current = false,
+            Some(_) => {
+                skipped.insert(index);
+            }
+        }
+    }
+    skipped
+}
+
+/// The lines of `lines` (from 0) that `base`, the document at the fork, did not hold as often:
+/// what a branch wrote of it.
+fn written_lines(base: &str, lines: &[&str]) -> HashSet<usize> {
+    let mut held: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in splitlines(base) {
+        *held.entry(line).or_default() += 1;
+    }
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| match held.get_mut(line) {
+            Some(count) if *count > 0 => {
+                *count -= 1;
+                None
+            }
+            _ => Some(index),
+        })
+        .collect()
+}
+
+/// The pictures the document `rel` shows of its own (outside its cards and the owner's callouts,
+/// [`not_the_documents`]), in every form ([`pictures::pictures`]), that a clone lacks
+/// ([`unclonable`]), on disk or not: the owner's "a git clone should be able to see the images,
+/// specially the ones that are referenced in the docs". On a branch, those on lines it wrote (or
+/// shown by a definition it wrote) are refused; on main itself or with no fork every one is warned
+/// of, the ones in the artifacts folder left to the page's own warning ([`artifacts`]).
+fn document_pictures(
+    judging: &Judging<'_>,
+    rel: &str,
+    text: &str,
+    definitions: &pictures::Definitions,
+    result: &mut Result,
+) {
+    let project = judging.project;
+    let Some(tracked) = judging.tracked else {
+        return;
+    };
+    if in_history(project, rel) {
+        return;
+    }
+    let lines = splitlines(text);
+    let skipped = not_the_documents(&lines);
+    let written = judging
+        .refuses
+        .then_some(judging.forked)
+        .flatten()
+        .map(|forked| written_lines(forked.get(rel).map_or("", String::as_str), &lines));
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    for picture in pictures::pictures(text, definitions) {
+        if skipped.contains(&picture.line) {
+            continue;
+        }
+        if let Some(written) = &written
+            && !written.contains(&picture.line)
+            && !picture.defined.is_some_and(|at| written.contains(&at))
+        {
+            continue;
+        }
+        let Some(path) = picture_path(project, rel, &picture.target) else {
+            continue;
+        };
+        if !unclonable(project, &path, tracked)
+            || (written.is_none() && into_artifacts(project, &path))
+        {
+            continue;
+        }
+        if seen.insert(picture.target.clone()) {
+            found.push((picture.line + 1, picture.target));
+        }
+    }
+    let Some((line, first)) = found.first() else {
+        return;
+    };
+    let shown = and_more(first, found.len());
+    if written.is_some() {
+        result.errors.push(format!(
+            "{rel}:{line}: shows a picture this checkout wrote that git does not track: {shown}; commit it beside the document, as a clone shows only what git tracks (an upload is for a thread, never a document)"
+        ));
+    } else {
+        result.warnings.push(format!(
+            "{rel}:{line}: shows a picture git does not track: {shown}: not in a clone"
+        ));
     }
 }
 
@@ -456,8 +702,19 @@ pub fn audit(root: &Path) -> Result {
     folders.sort();
     folders.dedup();
     let fork = crate::branches::Fork::of(root);
-    let main = main_itself(root);
+    let refuses = fork.is_some() && !main_itself(root);
     let tracked = tracked_files(root);
+    let forked = refuses
+        .then(|| forked_documents(root, &project, &docs))
+        .flatten();
+    let judging = Judging {
+        project: &project,
+        root,
+        fork: fork.as_ref(),
+        refuses,
+        tracked: tracked.as_ref(),
+        forked: forked.as_ref(),
+    };
     for folder in &folders {
         match renderer.folder(folder) {
             Ok(page) => {
@@ -502,15 +759,9 @@ pub fn audit(root: &Path) -> Result {
             }
         }
         artifacts(root, rel, &text, tracked.as_ref(), &mut result);
-        card_pictures(
-            root,
-            rel,
-            &text,
-            fork.as_ref(),
-            main,
-            tracked.as_ref(),
-            &mut result,
-        );
+        let definitions = pictures::definitions(&text);
+        card_pictures(&judging, rel, &text, &definitions, &mut result);
+        document_pictures(&judging, rel, &text, &definitions, &mut result);
         picture_cards(&text, rel, &mut result);
         undrawn_cards(&text, rel, &mut result);
     }
