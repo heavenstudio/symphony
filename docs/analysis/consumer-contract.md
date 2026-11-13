@@ -23,9 +23,10 @@ allowing a phased update approach. Thoughts?"
   sources, so two packages taken at two tags bring two copies of every package they share, whose
   types do not match. Only a registry gives version ranges that unify. Tried here, resolving only
   ([below](#what-cargo-allows)).
-- **The machine** shares one server and one board schema per board, and neither reads a project
-  one version behind today. A contract can let a project's own code lag; it cannot let it keep an
-  older server or board than the machine's without new work that costs more than it gives
+- **The machine** shares one server and one board schema per board. The server serves a project
+  registered at an older pin or schema, and leaves out a setting it does not know; what it refuses
+  is a board behind its schema. A contract can let a project's own code lag; it cannot let it keep
+  an older server or board than the machine's without new work that costs more than it gives
   ([below](#what-one-machine-shares)).
 - **Three options:** A, the process boundary only; B, A plus a small set of packages with their
   own version numbers; C, every package versioned on its own. Recommended: **B**
@@ -56,8 +57,8 @@ that day: Symphony's main at `22bdb4c4`, the consuming project's checkout read i
   consumer's packages that use Symphony against the candidate
   ([step 4](../RELEASES.md#the-release-run)).
 - **The version numbers that do exist** are four counters, each raised by hand: the board's schema
-  (`VERSION = 17`, `crates/tasks/src/schema.rs`), the `tasks api` methods (`VERSION = 13`,
-  `crates/tasks/src/cli/api.rs`), the plugin protocol (`PROTOCOL`, 0.1,
+  (`VERSION = 17`, `crates/tasks/src/schema.rs`), the `tasks api` methods (`VERSION = 14`,
+  `crates/tasks/src/cli/api.rs`; 13 at `22bdb4c4`, raised later that day), the plugin protocol (`PROTOCOL`, 0.1,
   `crates/symphony-plugin/src/protocol.rs`) and the machine's pin (`PIN = 1`,
   `crates/symphony/src/machine.rs`: "raised with each change to the wire contract or the plugin
   seams a host and its projects share", 1 since it came on 2026-11-05).
@@ -67,8 +68,8 @@ that day: Symphony's main at `22bdb4c4`, the consuming project's checkout read i
 ### The packages it links
 
 Counted in the consuming project's `apps/`, `crates/` and `tools/`, tests included, by the Rust
-files that name each crate (`grep -rlw` of its Rust name, the library's by `symphony::`; read
-2026-11-13). "Guard" is the test here that compiles what a consumer calls
+files that name each crate (`grep -rlw` of its Rust name, the library's by a word-bounded
+`symphony::`, less two files of its gate where that names a module of its own; read 2026-11-13). "Guard" is the test here that compiles what a consumer calls
 (`tests/consumer_api.rs` in five packages: [RELEASES](../RELEASES.md#the-release-run), step 4).
 
 | Package | Its packages that link it | Files | What it uses | Stated as a contract? | Guard |
@@ -76,7 +77,7 @@ files that name each crate (`grep -rlw` of its Rust name, the library's by `symp
 | `symphony-plugin` | its host, its plugin crate | 18 | the `Plugin` trait and the seams its plugin implements, linked into its host | yes: "Each seam below takes and returns plain data … never a Symphony library type" (`lib.rs`, the crate's doc) | `crates/symphony/tests/consumer_api.rs`, the traits by the methods a plugin writes |
 | `symphony-api` | its host's tests, its plugin crate | 13 | the block vocabulary and the seams' data, re-exported as `symphony_plugin::vocabulary` | the crate is "the Symphony's wire types: the JSON the server … sends and the client … reads" (`lib.rs`); the blocks are part of it | not held: the blocks it builds are caught only by the conciliation (that guard's doc) |
 | `symphony-docs` | its plugin crate, three crates and three tools | 15 | `DocCheck`, `Docs`, `Problem`, the register's syntax | re-exported by the plugin crate (`pub use symphony_docs::{DocCheck, Docs, Problem}`) | `crates/symphony` guard |
-| `symphony` (the library) | its host, its plugin crate and two tools | 46 | the host's `cli::main` and `plugins::install`; in its plugin and tools, internals: `Project`, `register::parse_decisions`, `landing::generators`, `text`, `markup::escape`, `images::reserve`, `edit::heading_anchor`, `render::Render` and more | no | `crates/symphony` guard, by signature |
+| `symphony` (the library) | its host (4 files), its plugin crate (27), an art tool (9) and its review tool (4) | 44 | the host's `cli::main` and `plugins::install`; in its plugin and tools, internals: `Project`, `register::parse_decisions`, `landing::generators`, `text`, `markup::escape`, `images::reserve`, `edit::heading_anchor`, `render::Render` and more | no | `crates/symphony` guard, by signature |
 | `symphony-board` | its `tasks` package, its host's tests, its review tool, its plugin crate | 73 | its `tasks` and `agent-send` are the board's own `main`s; its review tool opens the live board as a writer (`Store::open` in `tools/gate-review/src/nightly/board.rs`) and links `assessment_publication`, `sweep`, `red`, `slots`, `on_review`, `alarm` | no | `crates/tasks/tests/consumer_api.rs` |
 | `symphony-server` | its host, its plugin crate | 7 | `binary::run`: its host builds the machine's one server, its plugin linked in | no | `apps/symphony-server/tests/consumer_api.rs` |
 | `process-cwd` | five packages | 132 | starting child processes | no | `crates/process-cwd/tests/consumer_api.rs` |
@@ -95,8 +96,8 @@ names (`crates/symphony/tests/consumer_api.rs`, the file's doc).
 |---|---|---|---|
 | The plugin process protocol ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)) | nothing yet: its plugin is linked (its `symphony.toml` has no `[plugins.process]`), and it declares seams a process does not answer (`unanswered` in `crates/symphony/src/plugins/process.rs`: renderers, routes, navigation, home regions, board actions, watches, doc checks, commands, a theme), with card kinds that would cost about eight round trips per card | yes | yes: 0.1, every call naming its minor; another major is refused by name (`Version::agreed`) |
 | The board's schema | its own `tasks` build and its review tool write its live board at the pin's schema | yes (`schema.rs`, its doc) | yes, 17: a writer opens a board only at its own version, a reader at its own or one ahead, read-only (`decide`); it went from 9 on 2026-11-02 to 17 on 2026-11-12 |
-| `tasks api` (JSON in, JSON out) | its notices are told through it (`tools/gate/src/cargo/notice/delivery.rs`), and its board launcher reads the schema's and the api's `VERSION` from Symphony's committed source (`tools/tasks.sh`, `contract`) | yes (`api.rs`, its doc) | yes, 13, raised each time a method takes or does something an earlier build did otherwise |
-| `symphony.toml` | the machine's one server reads it for every project | in `crates/symphony/src/project.rs` | no: a key the build does not know refuses the whole file, "is not a setting the Symphony knows" (`project/file.rs`, `refusal`; `Project::load`) |
+| `tasks api` (JSON in, JSON out) | its notices are told through it (`tools/gate/src/cargo/notice/delivery.rs`), and its board launcher reads the schema's and the api's `VERSION` from Symphony's committed source (`tools/tasks.sh`, `contract`) | yes (`api.rs`, its doc) | yes, 14, raised each time a method takes or does something an earlier build did otherwise |
+| `symphony.toml` | the machine's one server reads it for every project | in `crates/symphony/src/project.rs` | no. The server reads it through `Project::of`, which leaves out a table or key the build does not know, says so on stderr and reads the rest, "so a file a newer Symphony wrote keeps its settings"; only `Project::load` refuses the file, as registration (`project add`, a server started from that checkout), `status --lint` and `init` read it (`project/file.rs`, `refusal`). An unknown key inside an `[[entrypoints]]` entry or a landing generator's fails the file wherever it is read (`deny_unknown_fields`), and the server then serves that project on the defaults |
 | Recipes, skills and hooks (`symphony init`) | it keeps recipes and skills of its own; its Claude settings run its own build's `symphony hook tasks-beat` | the names, in AGENTS.md | no |
 | The client | embedded in the server its host builds, from the pin's committed distribution (`apps/symphony-server/build.rs`) | yes | rides with the server |
 | Symphony's source tree | its tests find Symphony's checkout through `cargo metadata --locked --offline` and copy its justfile, scripts and manifests into fixtures (`tools/gate/tests/gate/symphony_source.rs`, which also asserts the pin is a `branch = "main"` source); one test counts words in Symphony's own text (`tools/symphony/tests/vocabulary.rs`) | no | no |
@@ -187,10 +188,13 @@ are considered compatible if their left-most non-zero major/minor/patch componen
 - **Where.** crates.io is public: "crates.io does not accept packages that depend on crates from
   other registries" and does not permit path dependencies ([registries](https://doc.rust-lang.org/cargo/reference/registries.html),
   [specifying dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#local-paths-in-published-crates)).
-  A private one needs little: "A minimal registry can be implemented by having a git repository
-  that contains an index, and a server that contains the compressed `.crate` files", without the
-  web API, "sufficient for closed environments" ([running a registry](https://doc.rust-lang.org/cargo/reference/running-a-registry.html)),
+  A private one can be small: "A minimal registry can be implemented by having a git repository
+  that contains an index, and a server that contains the compressed `.crate` files created by
+  `cargo package`. Users won't be able to use Cargo to publish to it, but this may be sufficient
+  for closed environments" ([running a registry](https://doc.rust-lang.org/cargo/reference/running-a-registry.html)),
   and its downloads may be "https, http, and file URLs" ([the index](https://doc.rust-lang.org/cargo/reference/registry-index.html)).
+  So a release publishing to a minimal one writes the index entries and uploads the files itself;
+  `cargo publish` needs a registry that also serves the web API the same page describes.
   A consumer names it in `.cargo/config.toml` (`[registries]`) and each dependency with
   `registry = "NAME"`; publishing to it is allowed by `package.publish` listing it.
 - **Exact pins conflict.** This workspace takes `tokenizers = "=0.22.1"` and the `tract` crates at
@@ -263,8 +267,11 @@ blocks, the doc checks) and each leaf helper (`process-cwd`, `symphony-schema`, 
   ([the refresh](../RELEASES.md#the-refresh)). The rule chosen for later moves each board at the
   machine's update once every program that writes it is on the release
   ([the plugin delivery analysis](plugin-delivery.md#the-board)).
-- **The settings file** of every project is read by that one server, which refuses a key it does
-  not know.
+- **The settings file** of every project is read by that one server, which leaves out a table or
+  key it does not know and reads the rest (`Project::of`), so a file written for another release
+  is served with what this one knows. Registration, a start from that checkout and the lint refuse
+  such a key (`Project::load`); a misspelt key in an `[[entrypoints]]` entry fails the file, and
+  the server serves that project on the defaults.
 - **The client** is the server's own, embedded.
 
 ### One release behind
@@ -277,7 +284,7 @@ What a consuming project one release behind the machine would need from each, an
 | The plugin protocol | the host answering a plugin built at an older minor, and at the previous major for a window | built for minors: the host speaks every minor of its major (`Version::agreed`); a kept major is one more set of request and answer types beside the current, as Zed keeps one set of bindings per API version ([the plugin delivery analysis](plugin-delivery.md#webassembly-components)) |
 | The board's schema | a server at schema N reading and writing a board a project's own programs keep at N-1 | high: every write the server makes in two shapes, or that project's pages read-only. None at all when no program of the project's writes its board but the machine's own `tasks` |
 | `tasks api` | the methods of N-1 answered as they were | low: within a major, add and never remove or change |
-| `symphony.toml` | a file written for N-1 still loading at N | low: a retired key warned of for a window, not refused |
+| `symphony.toml` | a file written for N-1 still loading at N | low: the server already leaves a retired key out and reads the rest, the default taking its place; what is left is the lint and registration warning of it for a window rather than refusing it |
 | Recipes, skills, hooks | the names N-1's settings call still answering | low: keep each name for the window |
 | The client | nothing | it rides with the server |
 
@@ -305,7 +312,9 @@ repository promises, checked by tests it owns:
   drawn. A plugin of each protocol major still kept is started and declared.
 - **The board's interface:** `tasks api` calls of each kept version answered as before, and a
   board at the previous schema moved by the candidate's migrate on a scratch board.
-- **Settings:** each registered project's `symphony.toml` loaded by the candidate.
+- **Settings:** each registered project's `symphony.toml` loaded by the candidate as its lint
+  loads it, so a key the candidate no longer knows is named before the release rather than left
+  out by the server after it.
 
 What it gives up: the project's own tests no longer run in Symphony's release. A break the
 contract does not cover, such as a changed board rule a project's fixture relies on, is found when
@@ -340,7 +349,7 @@ Under B, in the words RELEASES would then use:
 | | A. The process boundary only | B. A small versioned kit and helpers, and A | C. Every package versioned |
 |---|---|---|---|
 | A consumer links | nothing of Symphony but the kit its plugin binary serves with, at any release | the kit (seams, blocks, doc checks) and the helpers it wants, each at its own version | what it links today, each package at its own version |
-| It can stay behind on | its plugin binary, while the machine speaks that protocol major | A's, plus the kit's version, and each helper for as long as it likes | any package, within what the others' version ranges allow |
+| It can stay behind on | its plugin binary, while the machine speaks that protocol major; its `tasks api` and command clients, within their versions | A's, plus the kit's version, and each helper for as long as it likes | any package, within what the others' version ranges allow |
 | It cannot stay behind on | the server, the board commands, its board's schema, the client, the recipes | the same | the board's schema and the machine's server: a board writer of its own holds the schema, and the server is still one build |
 | Symphony keeps compatible | the protocol's minors and a kept major; `tasks api`; command names and outputs; settings keys | A's, plus the kit's and each helper's Rust names within a major | every package's public names within its major, the library's and the board's included |
 | Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough | a registry, private or crates.io |
@@ -359,8 +368,9 @@ delivery design's fifth slice installs it.
   tools that call `tasks api` or the commands, within their versions. How long a major lasts is a
   number Symphony sets (open question 1).
 - **Symphony keeps compatible** every minor of the protocol's major, the previous major for that
-  window, the `tasks api` methods, the command names and outputs a project parses, and retired
-  settings keys for the window.
+  window, the `tasks api` methods, the command names and outputs a project parses, and the
+  settings keys: a retired one the server already leaves out, and the lint and registration would
+  warn of for the window rather than refuse.
 - **The work here, in order:**
   1. Every seam answered from a process: renderers, routes, navigation, home regions, board
      actions and fields, gates, watches, doc checks, prose rules, generators, commands, transports
@@ -374,10 +384,11 @@ delivery design's fifth slice installs it.
   5. The release run: the contract checks in place of the conciliation, the refresh as the
      machine's install; RELEASES rewritten.
   6. The Rust guards dropped, since nothing Rust is promised.
-- **The work on the consuming project's board:** its plugin a process; its review tool's board
-  writes through `tasks api --lines`; its uses of the library's internals (register parsing,
-  landing generators, text helpers, `Project`) copied into its own code or reached through
-  commands; and the helpers it links (`process-cwd` alone in 132 of its files, `symphony-docs`,
+- **The work on the consuming project's board:** its host no longer built; its plugin a process;
+  its review tool's board writes through `tasks api --lines`; its uses of the library's internals
+  in its plugin, its art tool and its review tool's landing (register parsing, landing checks,
+  text helpers, `Project`, status and triage; 40 of the 44 files that name the library) copied
+  into its own code or reached through commands; and the helpers it links (`process-cwd` alone in 132 of its files, `symphony-docs`,
   `symphony-schema`, `symphony-args`, `repository-read`) copied, since nothing of Symphony's is
   linked.
 - **What it cannot give:** a compile error when a plugin and the host disagree (a refused call or
@@ -417,10 +428,26 @@ of a consumer each asking for a different minor.
   3. No promised package shows another's type unless they share a line; the library's and the
      board's re-exports of the helpers stop mattering once no consumer links those two.
   4. A's steps 1 to 5.
-- **The work on the consuming project's board:** A's, less the copies: it keeps linking the kit
-  and the helpers at the versions it names; what its plugin takes from the library's internals
-  moves into the kit or comes in the protocol's answers (the plugin delivery design's fourth slice,
-  the plugin on the kit alone).
+- **The work on the consuming project's board:** as under A, its host is no longer built, its
+  plugin is a process and its review tool writes the board through `tasks api --lines`; it keeps
+  linking the kit and the helpers at the versions it names. What its plugin takes from the
+  library's internals (27 of the 44 files that name the library) moves into the kit or comes in
+  the protocol's answers (the plugin delivery design's fourth slice, the plugin on the kit alone).
+  Two other users of the library need an answer of their own:
+  - **Its art tool** (9 files) installs its plugin into the library and runs the library's status,
+    triage and page rendering (`tools/art/src/cards.rs`, `review_triage.rs`,
+    `tests/golden_card.rs`). Proposed: those go through the machine's commands, so the tool
+    checks what the machine shows; its register parsing and text helpers are copied.
+  - **Its review tool's landing** (three files of `tools/gate-review/src/land/` and a test) takes
+    the landing's checks (`landing::regenerates`, `is_doc`, `owner_lines_left`), `Project::of`
+    and the lock the server's document writes take (`commit::write_lock`). Proposed: it keeps the
+    library at the kit's own tag, which promises nothing of the library, so a kit move that breaks
+    it is the project's own red, found by its own gate; copying them is the other way. Either way
+    that lock is a file two programs must agree on, so its place and rule join the contract.
+
+  The library at any tag but the kit's is a second source, which brings a second copy of the kit:
+  a plugin built on the kit no longer fits that library's plugin list (inferred from the resolver
+  page, as above; not compiled).
 - **What it cannot give:** a project keeping an older server or board than the machine's; a
   semver check that sees every break, or any change of behaviour, such as a board rule its fixtures
   rely on (8 of the 31 reds of 2026-11-13); and the library's internals as a promise, which stay
@@ -434,10 +461,12 @@ it links today, each at the version it names.
 - **A consumer stays behind on** any package within what the others' ranges allow: the board at
   0.4 beside the library at 0.7 only if the library 0.7 accepts board 0.4.
 - **Symphony keeps compatible** the public names of every package within its major. That is every
-  public item of the library and the board, which changed in 198 and 270 commits last week; a
-  change to any is a version decision, and the packages' combinations a consumer may hold are
+  public item of the library and the board, whose sources 198 and 270 commits touched last week
+  (commits, not counted changes to public names); a change to any public name is a version
+  decision, and the packages' combinations a consumer may hold are
   tested together or not at all.
-- **The work here:** a registry (Git pins cannot do it: two references are two copies, above);
+- **The work here:** a registry (Git pins cannot do it: two references are two copies, above),
+  with its publishing written by hand for a minimal one or its web API served;
   `publish` opened and a real version in each manifest; semver checks for every package;
   compatibility tests across the versions a consumer may combine; and, for the phase to reach the
   board, a server that reads and writes a board one schema behind.
@@ -461,8 +490,9 @@ code: its plugin, its tools and the helpers it links.
 
 - **It phases what can be phased.** A project moves its plugin kit and each helper when it is
   ready, through its own landing and its own gate; the release never moves its pins.
-- **It promises little, where little changes.** The kit's parts and the helpers changed in 0 to 13
-  commits last week; the library and the board, which it leaves free, in 198 and 270.
+- **It promises little, where little changes.** The sources of the kit's parts and the helpers
+  were touched by 0 to 13 commits last week; those of the library and the board, which it leaves
+  free, by 198 and 270 (commits, not counted changes to public names).
 - **It builds on what was chosen.** The owner, 2026-11-12, on plugin delivery: "Let's go with B
   first, measure results against the current approach for a post change comparison." B finishes
   that path (every seam from a process, the release installed on the machine) and adds the version
@@ -470,8 +500,8 @@ code: its plugin, its tools and the helpers it links.
   rebuilt when "a seam changes, by semver"
   ([the plugin delivery analysis](plugin-delivery.md#the-target-split)); B gives it the version
   line and the check.
-- **A** costs the project copies of code it links today, and its plugin a code change at whatever
-  kit release it rebuilds with, for no promise in return.
+- **A** costs the project copies of code it links today, and possibly a code change to its plugin
+  at whatever kit release it rebuilds with, for no promise in return.
 - **C** promises compatibility on the packages that change most, needs a registry, and still cannot
   phase the server or the board's schema.
 
@@ -504,7 +534,8 @@ reds stay on its own board and no longer hold Symphony's release.
 - **Read in code:** each fact that names a file and an item, in Symphony at `22bdb4c4`; and, read
   only, the consuming project's workspace manifest, its packages' manifests, its `Cargo.lock`, its
   host and `tasks` binaries, `symphony.toml`, Claude settings, `tools/tasks.sh`,
-  `tools/gate-review/src/nightly/board.rs` and `tools/gate/tests/gate/symphony_source.rs`.
+  `tools/gate-review/src/nightly/board.rs`, `tools/gate/tests/gate/symphony_source.rs`, and the
+  library's uses in its art tool and in `tools/gate-review/src/land/`.
 - **Measured:** its uses of each crate (`grep -rlw` over its `apps/`, `crates/`, `tools/`); commits
   per package since 2026-11-06 (`git log --no-merges --name-only`); the pin's distance from main
   (`git rev-list --count`); one Cargo checkout's size (`du`); the machine's registry and server
@@ -516,6 +547,7 @@ reds stay on its own board and no longer hold Symphony's release.
 - **Inferred:** that the plugin seams would need one major in the period read, from their history
   (two methods with defaults); that a registry is needed under C only, from the trials; the
   combinations under C that would need testing, not counted.
-- **Not verified:** that two copies of the blocks fail to compile in the consumer's plugin (it
-  follows from the resolver page's words; nothing was compiled); what a private registry costs to
+- **Not verified:** that two copies of the blocks, or of the plugin seams, fail to compile in the
+  consumer's plugin or its art tool (it follows from the resolver page's words; nothing was
+  compiled); what a private registry costs to
   host; whether `[patch]` could force one copy of a package taken at two references.
