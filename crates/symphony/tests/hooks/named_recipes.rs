@@ -44,8 +44,9 @@ const PROSE: [&str; 21] = [
 /// Text of this repository's own development, which names recipes of its own justfile: a source
 /// kit's client build, which no project runs, the checks a task here proves its work with, its
 /// size budgets, its measurements, and its releases, which the release run cuts and no project runs,
-/// with the test targets a candidate red's task reruns alone.
-const OWN: [(&str, &str); 22] = [
+/// with the test targets a candidate red's task reruns alone and `just nightly`, the old name of
+/// `just release` that RELEASES says answers until the first release under the new one.
+const OWN: [(&str, &str); 24] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
     (
@@ -57,6 +58,7 @@ const OWN: [(&str, &str); 22] = [
     ("crates/symphony/src/release/board.rs", "release"),
     ("crates/symphony/src/release/board.rs", "test-rs"),
     ("crates/symphony/src/release/cadence.rs", "release"),
+    ("crates/symphony/src/release/place.rs", "release"),
     ("crates/symphony/src/release/record.rs", "release"),
     ("crates/symphony/src/release/refresh.rs", "release"),
     ("crates/symphony/src/release/schedule.rs", "release"),
@@ -68,6 +70,7 @@ const OWN: [(&str, &str); 22] = [
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
     ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
+    ("docs/RELEASES.md", "nightly"),
     ("docs/RELEASES.md", "release"),
     ("docs/RELEASES.md", "test-rs"),
     ("docs/RELEASES.md", "verify"),
