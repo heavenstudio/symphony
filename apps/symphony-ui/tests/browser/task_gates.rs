@@ -7,9 +7,10 @@
 //! look-parity fixture's; its gates are the A pictures' task
 //! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
 //! project's base is the one server's to show (projects.rs).
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed};
+use super::{
+    SHOWN, STALL, chrome, chrome::Chrome, common, dist, look_parity, site::Site, wait_for_feed,
+};
 use serde_json::{Value, json};
-use std::time::Instant;
 
 const GATES: &str = "/api/task-gates";
 const PAGE: &str = "/task/visual/in-progress";
@@ -116,15 +117,16 @@ fn reads(site: &Site) -> usize {
 }
 
 /// Wait until the page has asked for the gates `count` times.
+#[track_caller]
 fn wait_reads(page: &mut Chrome, site: &Site, count: usize) {
-    let asked = Instant::now();
-    while reads(site) < count {
-        assert!(
-            asked.elapsed() < SHOWN,
-            "the gates were read {} times, not {count}",
-            reads(site)
-        );
-        pause(page, 50);
+    let read = test_time::until_true(format!("the gates read {count} times"), STALL, || {
+        reads(site) >= count || {
+            pause(page, 50);
+            false
+        }
+    });
+    if let Err(stall) = read {
+        panic!("{stall}: read {} times", reads(site));
     }
 }
 
@@ -407,7 +409,7 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
         "the head, the brief and the message box do not wait on the gates, which hold four rows: {:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     push(&site, 4183, task_changed(2.0));
     wait_reads(&mut page, &site, 2);
     drawn(&mut page, 4);
@@ -512,7 +514,7 @@ fn task_page_gates_read_again_on_the_events_that_change_them_and_never_on_a_plai
     let Some(mut page) = chrome() else { return };
     view(&mut page, 1280, 900, false);
     open_gates(&mut page, &site, 4);
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     assert_eq!(reads(&site), 1);
     let mut expected = 1;
     // Each step: what the feed says, then whether the gates are read again.
@@ -632,14 +634,12 @@ fn brief_while_and_after(page: &mut Chrome, site: &Site, count: usize) -> (i64, 
     if count > 0 {
         drawn(page, count);
     } else {
-        let started = Instant::now();
-        while !page
-            .requests()
-            .iter()
-            .any(|request| request.url.contains(GATES) && request.finished)
-        {
-            assert!(started.elapsed() < SHOWN, "the gates were never answered");
-        }
+        test_time::until_true("the gates answered", STALL, || {
+            page.requests()
+                .iter()
+                .any(|request| request.url.contains(GATES) && request.finished)
+        })
+        .expect("the gates were never answered");
         frames(page);
     }
     (before, page.eval(BRIEF).as_i64().unwrap())

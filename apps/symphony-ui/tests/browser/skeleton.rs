@@ -38,18 +38,56 @@ fn site() -> Site {
 
 /// A browser at `width` x `height` watching `.settle`, on `path`.
 fn open(site: &Site, path: &str, width: u32, height: u32) -> Option<Chrome> {
+    let mut browser = watching(width, height, &[])?;
+    browser.open(&site.url(path));
+    Some(browser)
+}
+
+/// A browser of its own at `width` x `height`, on no page yet, whose every page runs [`WATCH`]
+/// and then `scripts` from its start.
+fn watching(width: u32, height: u32, scripts: &[&str]) -> Option<Chrome> {
     let mut browser = chrome()?;
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false}),
     );
-    browser.call(
-        "Page.addScriptToEvaluateOnNewDocument",
-        json!({ "source": WATCH }),
-    );
-    browser.open(&site.url(path));
+    for source in std::iter::once(&WATCH).chain(scripts) {
+        browser.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": source }),
+        );
+    }
     Some(browser)
 }
+
+/// What the task page shows of its thread at the first moment its thread is drawn under the ghost
+/// that covers it, recorded in the page then (`window.__under`): the ghost goes once the page
+/// settles, at most three seconds on, and a look from the test, a round trip later, could come
+/// after that on a loaded machine and find no ghost to read. The page mounts once its styles are
+/// in (`assets/shell.js`), so what it records is styled.
+const UNDER: &str = r#"window.__under = null;
+new MutationObserver((_, observer) => {
+    const thread = document.querySelector('article.task .settle #task-thread'), root = thread?.closest('.settle');
+    const cover = root?.querySelector(':scope > .settle-cover'), head = document.querySelector('article.task .task-head');
+    const status = cover?.querySelector('[role=status]');
+    if (!head || !status?.textContent) return;
+    observer.disconnect();
+    window.__under = {settled: root.dataset.settled, cover: getComputedStyle(cover).visibility, status: status.textContent,
+        head: getComputedStyle(head).visibility, page: getComputedStyle(thread).visibility, thread: thread.dataset.pending};
+}).observe(document, {subtree: true, childList: true, characterData: true, attributes: true});"#;
+
+/// The look of the skeleton's two kinds of bar, the ghost's and a section's still reading, at the
+/// first moment the page draws both, recorded in the page then (`window.__look`): the ghost's goes
+/// once the page settles, at most three seconds on, which a look from the test could miss on a
+/// loaded machine. A colour in `window.__skeleton` is set as the theme's `--skeleton` first.
+const LOOK: &str = r#"window.__look = null;
+new MutationObserver((_, observer) => {
+    const bars = [document.querySelector('.settle > .settle-cover .bone'), document.querySelector('.section-loading .bone')];
+    if (bars.some(bar => bar === null)) return;
+    observer.disconnect();
+    if (window.__skeleton) document.documentElement.style.setProperty('--skeleton', window.__skeleton);
+    window.__look = bars.map(bar => ({animation: getComputedStyle(bar).animationName, colour: getComputedStyle(bar).backgroundColor}));
+}).observe(document, {subtree: true, childList: true});"#;
 
 fn settled(browser: &mut Chrome) -> Value {
     assert!(
@@ -66,26 +104,17 @@ fn settled(browser: &mut Chrome) -> Value {
 fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() {
     let site = site();
     site.hold_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
+    let Some(mut browser) = watching(TALL.0, TALL.1, &[UNDER]) else {
         site.hold_route("/api/task-history", false);
         return;
     };
+    browser.open(&site.url(TASK));
     assert!(
-        browser.wait_for(
-            "document.querySelector('article.task .settle #task-thread') !== null",
-            SHOWN
-        ),
-        "the task was never drawn: {}",
+        browser.wait_for("window.__under !== null", SHOWN),
+        "the task's thread was never drawn under its ghost: {}",
         browser.eval(PAGE)
     );
-    let under = browser.eval(
-        "(() => { const root = document.querySelector('.settle'), cover = root.querySelector(':scope > .settle-cover'); return {
-            settled: root.dataset.settled, cover: getComputedStyle(cover).visibility,
-            status: cover.querySelector('[role=status]').textContent,
-            head: getComputedStyle(document.querySelector('article.task .task-head')).visibility,
-            page: getComputedStyle(root.querySelector('#task-thread')).visibility,
-            thread: document.querySelector('#task-thread').dataset.pending}; })()",
-    );
+    let under = browser.eval("window.__under");
     site.hold_route("/api/task-history", false);
     assert_eq!(
         under,
@@ -153,27 +182,41 @@ fn a_task_whose_thread_cannot_be_read_shows_at_once_with_the_error() {
 fn a_skeleton_shimmers_only_for_a_reader_who_accepts_motion_in_the_theme_s_colour() {
     let site = site();
     site.hold_route("/api/section", true);
-    let Some(mut browser) = open(&site, "/docs/PROBE.md", 1280, 900) else {
-        site.hold_route("/api/section", false);
-        return;
-    };
-    let bars = "[document.querySelector('.settle > .settle-cover .bone'), document.querySelector('.section-loading .bone')]";
-    let drawn = browser.wait_for(&format!("{bars}.every(bar => bar !== null)"), SHOWN);
-    let look = |browser: &mut Chrome, media: &str| {
+    // Each look a first visit of its own, in a browser of its own: a return visit draws what the
+    // device kept, with no ghost.
+    let look = |media: &str, theme: Option<&str>| {
+        let mut browser = watching(1280, 900, &[LOOK])?;
+        if let Some(colour) = theme {
+            browser.call(
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({ "source": format!("window.__skeleton = {};", json!(colour)) }),
+            );
+        }
         browser.call(
             "Emulation.setEmulatedMedia",
             json!({"features": [{"name": "prefers-reduced-motion", "value": media}]}),
         );
-        browser.eval(&format!(
-            "{bars}.map(bar => ({{animation: getComputedStyle(bar).animationName, colour: getComputedStyle(bar).backgroundColor}}))"
-        ))
+        browser.open(&site.url("/docs/PROBE.md"));
+        if browser.wait_for("window.__look !== null", SHOWN) {
+            Some(Ok(browser.eval("window.__look")))
+        } else {
+            Some(Err(format!(
+                "no skeleton was drawn for {media}: {}",
+                browser.eval(PAGE)
+            )))
+        }
     };
-    let moving = look(&mut browser, "no-preference");
-    let still = look(&mut browser, "reduce");
-    browser.eval("document.documentElement.style.setProperty('--skeleton', 'rgb(1, 2, 3)')");
-    let themed = look(&mut browser, "no-preference");
+    let looks = [
+        look("no-preference", None),
+        look("reduce", None),
+        look("no-preference", Some("rgb(1, 2, 3)")),
+    ];
     site.hold_route("/api/section", false);
-    assert!(drawn, "no skeleton was drawn: {}", browser.eval(PAGE));
+    let [Some(moving), Some(still), Some(themed)] = looks else {
+        return;
+    };
+    let [moving, still, themed] =
+        [moving, still, themed].map(|look| look.unwrap_or_else(|why: String| panic!("{why}")));
     let each = |animation: &str, colour: &str| json!([{"animation": animation, "colour": colour}, {"animation": animation, "colour": colour}]);
     assert_eq!(moving, each("shimmer", "rgba(127, 127, 127, 0.14)"));
     assert_eq!(still, each("none", "rgba(127, 127, 127, 0.14)"));
@@ -663,6 +706,23 @@ fn place(browser: &mut Chrome, selector: &str) -> (f64, f64) {
     )
 }
 
+/// The page's sizes, `[scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY]`
+/// of its document and window, at the first frame and at every frame that changes one, until
+/// [`SIZES`] is read: a scroll width past the client's is a horizontal overflow, which puts a
+/// scrollbar along the window's foot, and a client width or height short of the window's inner one
+/// is the room a classic scrollbar takes, which an overlay one does not.
+const WATCH_SIZES: &str = "window.__sizes = []; window.__sized = true;
+(function frame() {
+    const page = document.documentElement, now = [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY];
+    const last = window.__sizes[window.__sizes.length - 1];
+    if (!last || now.some((size, at) => size !== last[at])) window.__sizes.push(now);
+    if (window.__sized && window.__sizes.length < 100) requestAnimationFrame(frame);
+})()";
+
+/// The sizes [`WATCH_SIZES`] recorded, with the page's at this moment last; it stops recording.
+const SIZES: &str = "(() => { window.__sized = false; const page = document.documentElement;
+    return [...window.__sizes, [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY]]; })()";
+
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     let site = site();
@@ -697,7 +757,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the composer was never drawn: {}",
         browser.eval(PAGE)
     );
-    assert!(wait_for_feed(&site), "the page never followed the feed");
+    wait_for_feed(&site).expect("the page never followed the feed");
     let composer = "[id^=composer-] textarea";
     browser.eval(&format!(
         "(() => {{ const field = document.querySelector({}); field.scrollIntoView({{block: 'end'}}); field.focus(); }})()",
@@ -708,6 +768,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         json!({"text": "A reply the owner is typing"}),
     );
     let (before, scrolled) = place(&mut browser, composer);
+    browser.eval(WATCH_SIZES);
     assert!(
         scrolled > 0.0,
         "the composer must sit below the first screen for the page to have room to hold it"
@@ -729,8 +790,15 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the message never landed: {}",
         browser.eval(PAGE)
     );
-    frames(&mut browser);
+    // The shell holds the composer in place frame by frame until four pass with nothing moved
+    // (`reviewHoldPlace`): a loaded machine's frames can still be in that hold three frames after
+    // the message lands, so the composer is read once the page stands still around it.
+    still(&mut browser, composer);
     let (after, _) = place(&mut browser, composer);
+    let sizes = browser.eval(SIZES);
+    eprintln!(
+        "skeleton: the composer at {before} then {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+    );
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const field = document.querySelector({}); return {{focused: document.activeElement === field, text: field.value}}; }})()",
@@ -740,7 +808,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     );
     assert!(
         (after - before).abs() < 1.0,
-        "the composer moved from {before} to {after}"
+        "the composer moved from {before} to {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
 }
 
@@ -838,7 +906,7 @@ fn board_of_fourteen(site: &Site) -> Option<Chrome> {
         "the task board was never drawn: {}",
         browser.eval(PAGE)
     );
-    assert!(wait_for_feed(site), "the page never followed the feed");
+    wait_for_feed(site).expect("the page never followed the feed");
     Some(browser)
 }
 
