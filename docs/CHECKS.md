@@ -249,7 +249,8 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. A run red in a check holds its commit
+stops short of deciding is the red `tests/release-red-run`. A test red on load is answered by its
+discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
 as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
 reruns what was red and what the fixes changed, and releases that commit and its fixes alone
 ([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
@@ -314,10 +315,24 @@ one helper, `crates/test-time` (a development dependency only):
 **Who takes a test out of the release run: the owner, and no one else.** An executor who finds a test
 that none of the three ways can hold proposes it on its task's thread: the promise the test guards
 and why no CPU bound, count, wait or injected clock stands in for it. The orchestrator puts it to
-the owner, and the test leaves `just verify` only on the owner's word. A real-time promise is never
-dropped, only moved: to a recipe a quiet machine runs, which still runs the test. No such recipe
-exists yet, so nothing is `#[ignore]`d for a quiet machine; a test the owner lets go waits in the
-release run until that recipe lands, and is then listed below with its promise and the owner's word.
+the owner, and the test leaves `just verify` only on the owner's word. A test the owner lets go on
+such a proposal is not dropped but moved: to a recipe a quiet machine runs, which still runs the
+test. No such recipe exists yet, so nothing is `#[ignore]`d for a quiet machine; a test the owner
+lets go so waits in the release run until that recipe lands, and is then listed below with its
+promise and the owner's word.
+
+**A test red on load in the release run is discarded.** The owner, 2026-11-13:
+"A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
+A test that fails a release run, or the release candidate's rerun, because of load (it passes
+alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout under load) is
+answered by its red's own fix removing it from the tree, with one line on the red's thread naming
+the test, the evidence it is load (its runs alone and the failing line) and what it proved. That
+word is the owner's approval: no card is put to them to discard it. If what it proved matters, a
+follow-up task may bring it back written on a condition, a count, CPU time or an injected clock;
+the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
+nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to
+keep the load down for a run. A test that fails alone on what its code did, or fails the same way
+without load, is not this case and is fixed in the code.
 
 No budget, allowance or tolerance is widened to make a loaded run pass. Evidence for a test
 rewritten under this rule is the test run alone five times on the loaded machine, the load average

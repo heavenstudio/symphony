@@ -311,7 +311,8 @@ continues with the other publications. Terminal failures are logged and filed on
 the board; generated branches that fail to land remain available.
 Branch-checkout saves remain for that
 branch's executor to commit. Verdict filing runs off the save path, and the
-shared server calls the board's locked `reap` every five minutes. Private foreground
+shared server calls the board's locked `reap` every five minutes for each project it
+serves that has a board, each on its own schedule (`front::maintenance`). Private foreground
 servers do no session maintenance, including when they use a copied scratch board.
 
 Branch questions retain a docs-relative storage path and put the full branch
