@@ -8,9 +8,9 @@
 mod macho_exports;
 
 /// On macOS every binary of the board links with `-no_exported_symbols` (build.rs): no other code
-/// loads it, so the export trie a link writes by default, a name for each global symbol, is bytes
-/// nothing reads. This test's own executable, linked without it, exports, and so shows the
-/// reading finds a trie where there is one.
+/// loads it, so the export trie a link writes by default, a name for each global symbol, would
+/// serve only a debugger reading a stripped build. This test's own executable, linked without it,
+/// exports, and so shows the reading finds a trie where there is one.
 #[test]
 #[cfg(target_os = "macos")]
 fn the_shipped_binaries_export_no_symbols() {

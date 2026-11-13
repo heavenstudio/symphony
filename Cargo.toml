@@ -27,7 +27,7 @@ incremental = false
 strip = true
 
 # One codegen unit for the two dependencies whose large constant tables each unit that reads one
-# would otherwise hold a copy of: comrak's and regex-syntax's (its Unicode tables), about 220 KB
+# would otherwise hold a copy of: comrak's and regex-syntax's (its Unicode tables), about 200 KB
 # of each of symphony-server and symphony. It costs only their own compile, once per build folder.
 [profile.release.package.comrak]
 codegen-units = 1

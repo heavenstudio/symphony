@@ -55,9 +55,11 @@ fn run(tree: &Tree) -> (i32, String, String) {
 /// What the hint past a binary's line says after its name.
 const HINT: &str = "` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
                     it: the last release (`git tag -l 'release-*'`), or before the first one, the \
-                    commit that last set the budget (`git log -1 -- tools/size-budget.toml`); a \
-                    line is never raised to fit growth: a reduction takes the bytes back \
-                    (docs/CHECKS.md, \"A red at the size check\").\n";
+                    commit that last set the budget (`git log -1 -- tools/size-budget.toml`). A \
+                    reduction takes the bytes back first; a line is raised only in a commit of \
+                    its own that names the growth and why no reduction will do, to the size plus \
+                    4 % and never higher, on a fresh reviewer's approve (docs/CHECKS.md, \"A red \
+                    at the size check\").\n";
 
 #[test]
 fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
@@ -82,7 +84,7 @@ fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
 
 #[test]
 fn a_line_is_its_binarys_size_plus_four_percent_rounded_down_to_ten_thousand_bytes() {
-    // The lines of 2026-11-13: symphony and the server less its client, before and after.
+    // Sizes of the order of symphony's and of the server's less its client.
     assert_eq!(line_for(17_883_360), 18_590_000);
     assert_eq!(line_for(18_358_694), 19_090_000);
     // Rounded down, never up: 4 % of 250,000 is the rounding's own 10,000.

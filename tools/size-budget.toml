@@ -3,10 +3,11 @@
 # the server embeds may weigh. `just size-check` builds the binaries and checks every line
 # (`symphony size-budget`, docs/CHECKS.md "Size budgets"); the release run's `just verify` runs it.
 #
-# A line is its size plus 4 %, rounded down to a multiple of 10,000 bytes, set only in the commit of
-# a reduction, which lowers it to that (as `symphony size-budget` prints it) and never raises it. A
-# binary past its line is taken back under by a reduction, never by a higher line (docs/CHECKS.md,
-# "Where a line stands" and "A red at the size check").
+# A line is its size plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction
+# sets it, lowering it to that (as `symphony size-budget` prints it). A binary past its line is taken
+# back under by a reduction first; a line is raised only in a commit of its own that names the growth
+# and why no reduction will do, to the size plus 4 % and never higher, on a fresh reviewer's approve
+# (docs/CHECKS.md, "Where a line stands" and "A red at the size check").
 
 # Every regular file under apps/symphony-server/client/public, as the server's build script embeds
 # them: the generations `symphony publish-client` keeps.

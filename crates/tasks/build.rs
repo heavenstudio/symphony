@@ -1,7 +1,8 @@
 //! Every binary of the board links on macOS with `-no_exported_symbols`: no other code loads one,
-//! so the export trie a link writes by default, a name for each global symbol, is bytes nothing
-//! reads (tests/links.rs; docs/CHECKS.md, "Size budgets"). A consuming project's own binaries link
-//! as their own packages say.
+//! so the export trie a link writes by default, a name for each global symbol, would serve only a
+//! debugger reading a stripped build, which a build to debug replaces with one that keeps every
+//! name (`CARGO_PROFILE_RELEASE_STRIP=debuginfo`; tests/links.rs; docs/CHECKS.md, "Size budgets").
+//! A consuming project's own binaries link as their own packages say.
 #![forbid(unsafe_code)]
 
 fn main() {

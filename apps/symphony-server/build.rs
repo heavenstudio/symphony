@@ -72,8 +72,9 @@ fn generate(root: &Path) -> io::Result<String> {
 )]
 fn main() -> io::Result<()> {
     // No other code loads a binary of this package, so on macOS each links with no export trie, a
-    // name for each global symbol that nothing reads (tests/links.rs; docs/CHECKS.md, "Size
-    // budgets").
+    // name for each global symbol that would serve only a debugger reading a stripped build, which
+    // a build to debug replaces with one that keeps every name
+    // (`CARGO_PROFILE_RELEASE_STRIP=debuginfo`; tests/links.rs; docs/CHECKS.md, "Size budgets").
     if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "macos") {
         println!("cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols");
     }

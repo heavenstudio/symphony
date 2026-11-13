@@ -288,9 +288,10 @@ fn refusal(line: &Measured) -> String {
             "size-budget: {name}{} {over}. See what grew: `cargo bloat --release --crates --bin \
              {name}` (`cargo install cargo-bloat --root DIR`) beside the same at a commit within \
              it: the last release (`git tag -l 'release-*'`), or before the first one, the commit \
-             that last set the budget (`git log -1 -- {BUDGET}`); a line is never raised to fit \
-             growth: a reduction takes the bytes back (docs/CHECKS.md, \"A red at the size \
-             check\").",
+             that last set the budget (`git log -1 -- {BUDGET}`). A reduction takes the bytes \
+             back first; a line is raised only in a commit of its own that names the growth and \
+             why no reduction will do, to the size plus 4 % and never higher, on a fresh \
+             reviewer's approve (docs/CHECKS.md, \"A red at the size check\").",
             match whole {
                 Some(whole) => format!(
                     ", less its embedded client (its file is {} bytes),",
