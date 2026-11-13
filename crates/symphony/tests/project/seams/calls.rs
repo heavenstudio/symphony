@@ -247,7 +247,7 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
             with_card(text, |card| p.card_kinds()[0].chosen(card))
         });
     }
-    for (src, label) in [("/docs/a.every?v=2#top", ""), ("/docs/b.every", "the widget")] {
+    for (src, label) in [("/docs/a.every?v=2#top", ""), ("/docs/b.every", "a widget")] {
         let file = File { src, label };
         both.same("draw", |p| {
             symphony::renderers::renderer_of(p, src)
@@ -948,7 +948,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     });
     let file = File {
         src: "/docs/b.every",
-        label: "the widget",
+        label: "a widget",
     };
     let _ = black_box(plugin.renderers()[0].draw(&page, &file));
     let _ = black_box(plugins.route("every").map(|r| r.serve(root, "data.json")));

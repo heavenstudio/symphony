@@ -102,7 +102,9 @@ fn a_request_that_cannot_be_answered_is_refused_by_its_id_naming_why() {
     let card = serde_json::to_string(&card()).unwrap();
     let lines = [
         // A call this build does not know.
-        format!(r#"{{"id":1,"request":{{"card_kinds.colour":{{"kind":"widget","card":{card}}}}}}}"#),
+        format!(
+            r#"{{"id":1,"request":{{"card_kinds.colour":{{"kind":"widget","card":{card}}}}}}}"#
+        ),
         // A field missing.
         r#"{"id":2,"request":{"card_kinds.slot":{"kind":"widget"}}}"#.to_string(),
         // An object the plugin does not have.

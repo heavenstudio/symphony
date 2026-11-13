@@ -49,7 +49,7 @@ const REFUSED: [&str; 19] = [
 ];
 
 /// The characters a phrase's words may be parted by.
-const PARTINGS: [u8; 3] = [b' ', b'-', b'_'];
+const PARTINGS: [u8; 3] = *b" -_";
 
 /// The digest of `word`, in lower case: the first 8 bytes of its SHA-256, the 16 hex digits an
 /// entry writes.
@@ -244,7 +244,12 @@ fn the_list_reads_to_one_entry_a_word_or_phrase_and_none_twice() {
     // An entry is what `shasum -a 256` prints for the word, cut to 16 digits.
     assert_eq!(digest(b"abc"), 0xba7816bf8f01cfea);
     assert_eq!(digest(b"ABC"), digest(b"abc"));
-    for entry in ["BA7816BF8F01CFEA", "ba7816bf8f01cfe", "ba7816bf8f01cfeax", ""] {
+    for entry in [
+        "BA7816BF8F01CFEA",
+        "ba7816bf8f01cfe",
+        "ba7816bf8f01cfeax",
+        "",
+    ] {
         assert!(Refused::read(&[entry]).is_err(), "{entry}");
     }
     let phrase = "ba7816bf8f01cfea/ba7816bf8f01cfea";
@@ -266,7 +271,10 @@ fn listing(words: &[&str], phrases: &[(&str, u8)]) -> Refused {
 
 #[test]
 fn a_word_is_found_whole_in_any_case_and_a_phrase_only_with_its_one_parting() {
-    let refused = listing(&["lamp", "lamps"], &[("blue moon", b' '), ("tide-pool", b'-')]);
+    let refused = listing(
+        &["lamp", "lamps"],
+        &[("blue moon", b' '), ("tide-pool", b'-')],
+    );
     let text = b"A Lamp.\nlamp_post and is-lamp, lamp/lamps\nlamplight, clamp, lamp2\n\
                  Blue Moon, blue  moon, blue-moon, blue\nmoon\ntide-pool tide pool TIDE-POOL\n\
                  caf\xc3\xa9lamp \xe9lamp\n";
@@ -287,7 +295,10 @@ fn a_word_is_found_whole_in_any_case_and_a_phrase_only_with_its_one_parting() {
         ]
     );
     assert_eq!(refused.found(b"", &mut HashMap::new()), []);
-    assert_eq!(refused.found(b"lamp", &mut HashMap::new()), [(1, "lamp".into())]);
+    assert_eq!(
+        refused.found(b"lamp", &mut HashMap::new()),
+        [(1, "lamp".into())]
+    );
 }
 
 #[test]
