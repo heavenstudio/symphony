@@ -1217,8 +1217,8 @@ fn wrapped() -> Vec<u8> {
   window.lines = id => document.getElementById(id).getClientRects().length;
 </script>
 {POINTED}"##,
-        vec![words; 20].join(" "),
-        vec![words; 8].join(" ")
+        [words; 20].join(" "),
+        [words; 8].join(" ")
     )
     .into_bytes()
 }
