@@ -199,7 +199,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
-   - the log's last lines;
+   - what the log names failed (`crates/symphony/src/release/failures.rs`), then a few of its last
+     lines; its last 40 lines alone when it names nothing it knows, and for a check that listed its
+     steps, whose log is its own lines and its steps' tails. A test run's names each test libtest
+     said `FAILED`, with where it panicked and the first line of what it said, then cargo's list of
+     the targets that failed (`error: N targets failed:`, or each target's own `to rerun pass` line
+     when there is no list), and nothing else of it, as the tests' own output says the errors of
+     what they run. Any other log names each line with a word starting `error` or `refus`, or the
+     docs audit's `✖`, a compiler's `-->` line after an error, and the step's own last word, the
+     line before just's saying its recipe failed (`client-check: …`), with each line its tool
+     starts the same way (`size-budget: …`). Each stops at 40, then says how many more;
    - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
      named no failed test and never ran or never compiled because a file its own build had made
      was gone (its executable, cargo's `could not execute process … (never executed)` for no such

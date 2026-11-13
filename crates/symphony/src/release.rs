@@ -32,6 +32,7 @@ mod cadence;
 mod candidate;
 mod checks;
 mod conciliate;
+mod failures;
 mod git;
 mod gone;
 mod group;

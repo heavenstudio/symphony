@@ -7,7 +7,10 @@
 //! filed) and as a fast fix, under the bound the land holds a red's fix to
 //! ([`symphony_board::fast_fix::RED`]: its orchestrator's approve lands a fix that changes none of
 //! the project's tests and checks, a fresh reviewer's any other). A stop the owner clears is filed
-//! with no fast-fix mark, since nothing lands for it. Its text says what failed, the commands that
+//! with no fast-fix mark, since nothing lands for it. Its text says what is red, what its log names
+//! failed ([`super::failures`]: each failed test with where it panicked and cargo's list of the
+//! targets that failed, or the lines that say an error, a refusal or the step's own last word)
+//! before a few of the log's last lines, the commands that
 //! rerun each failure alone ([`super::rerun`]: each failed test, else its own command, a step's
 //! included), its log and the machine's load when it ended, a step's as the step's list says it,
 //! and, when files its own build had made went while it ran, that those failures are the
@@ -43,9 +46,12 @@ const MARK: &str = "release";
 const LINK: &str = "docs/RELEASES.md";
 /// The generations of a key looked at before the board is taken to be wrong.
 const GENERATIONS: u32 = 1000;
-/// How much of a log a red task quotes: its last lines, within so many bytes.
+/// How much of a log a red task quotes: its last lines, within so many bytes; fewer after what it
+/// names failed ([`super::failures`]).
 const TAIL_LINES: usize = 40;
 const TAIL_BYTES: u64 = 6000;
+const SHORT_TAIL_LINES: usize = 10;
+const SHORT_TAIL_BYTES: u64 = 2000;
 /// The commits since the last green run a red task lists at most.
 const SINCE_LISTED: usize = 50;
 
@@ -234,9 +240,27 @@ fn first(board: &dyn Reds, series: &str, key: &str) -> Result<(String, bool), St
     Err(format!("{base}: {GENERATIONS} generations, all closed"))
 }
 
-/// The log's end, fenced.
-fn quoted_tail(ran: &Ran) -> String {
-    let tail = tail(&ran.log, TAIL_LINES, TAIL_BYTES);
+/// What a red task quotes of its log: what it names failed ([`super::failures`]: each failed test
+/// with where it panicked and cargo's list of the targets that failed, or the lines that say an
+/// error, a refusal or the step's own last word), then its last few lines; its last lines alone
+/// when it names nothing, or when it is a check's that listed its steps, whose log is its own lines
+/// and its steps' tails, each step being read from its own ([`log_of`]).
+fn quoted(ran: &Ran) -> String {
+    let named = (ran.steps.is_empty())
+        .then(|| super::failures::read(&ran.log).quoted())
+        .flatten();
+    let Some(named) = named else {
+        return quoted_tail(ran, TAIL_LINES, TAIL_BYTES);
+    };
+    format!(
+        "{named}\n\n{}",
+        quoted_tail(ran, SHORT_TAIL_LINES, SHORT_TAIL_BYTES)
+    )
+}
+
+/// The log's end, fenced: its last `lines`, within `bytes`.
+fn quoted_tail(ran: &Ran, lines: usize, bytes: u64) -> String {
+    let tail = tail(&ran.log, lines, bytes);
     if tail.is_empty() {
         return "Its log is empty or cannot be read.".into();
     }
@@ -509,7 +533,8 @@ fn closed_by(name: &str, night: &Night<'_>) -> String {
     )
 }
 
-/// A red task's body: what is red, how it ended, its log, the load it ended under, what of it is
+/// A red task's body: what is red, how it ended, its log, the load it ended under, what its log
+/// names failed and its last lines ([`quoted`]), what of it is
 /// the environment's (files of its build gone while it ran), the commands that rerun its failures
 /// alone, the commits since the last green run, how a release candidate's red is fixed ([`held`]),
 /// who fixes it, how its fix is approved, the open red `beside` it ([`beside`]) and what closes it.
@@ -544,7 +569,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
         ended = ran.ended(),
         log = ran.log.display(),
         load = load(ran),
-        tail = quoted_tail(ran),
+        tail = quoted(ran),
         environment = environment(ran),
         alone = alone(ran, night),
         since = since(night),
@@ -573,7 +598,7 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
         load(ran),
         environment(ran),
         alone(ran, night),
-        quoted_tail(ran)
+        quoted(ran)
     )
 }
 
@@ -615,7 +640,7 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
         commit = short(night.commit),
         why = refresh_why(ran),
         log = ran.log.display(),
-        tail = quoted_tail(ran),
+        tail = quoted(ran),
         key = key(&ran.name),
         name = ran.name,
     )
@@ -630,7 +655,7 @@ fn refresh_again(ran: &Ran, night: &Night<'_>) -> String {
         night.when,
         refresh_why(ran),
         ran.log.display(),
-        quoted_tail(ran)
+        quoted(ran)
     )
 }
 
@@ -2350,7 +2375,7 @@ mod tests {
     }
 
     #[test]
-    fn a_red_task_quotes_the_end_of_its_log() {
+    fn a_red_task_quotes_the_end_of_its_log_when_it_names_no_failure() {
         let tree = crate::test_tree::Tree::new();
         let lines: String = (0..60).map(|n| format!("line {n}\n")).collect();
         let log = tree.write("verify.log", &lines);
@@ -2358,15 +2383,148 @@ mod tests {
             log,
             ..ran("verify", 1)
         };
-        let quoted = quoted_tail(&red);
+        let said = quoted(&red);
         assert!(
-            quoted.starts_with("Its last lines:\n\n```\nline 20\n"),
-            "{quoted}"
+            said.starts_with("Its last lines:\n\n```\nline 20\n"),
+            "{said}"
         );
-        assert!(quoted.ends_with("line 59\n```"), "{quoted}");
+        assert!(said.ends_with("line 59\n```"), "{said}");
         assert_eq!(
-            quoted_tail(&ran("verify", 1)),
+            quoted(&ran("verify", 1)),
             "Its log is empty or cannot be read."
+        );
+        // A step stopped at the run's time while it built says no failure of its own: its whole
+        // log, which is shorter than the tail, is its last lines.
+        let stopped = include_str!("fixtures/no-failure.log");
+        let red = Ran {
+            log: tree.write("size-check.log", stopped),
+            ..ran("verify/size-check", 1)
+        };
+        assert_eq!(
+            quoted(&red),
+            format!("Its last lines:\n\n```\n{}\n```", stopped.trim_end())
+        );
+    }
+
+    /// The fence after `heading` in `body`, its lines.
+    fn fenced<'a>(body: &'a str, heading: &str) -> Vec<&'a str> {
+        let (_, rest) = (body.split_once(&format!("{heading}\n\n```\n")))
+            .unwrap_or_else(|| panic!("no {heading:?} in:\n{body}"));
+        rest.split_once("\n```").unwrap().0.lines().collect()
+    }
+
+    #[test]
+    fn a_red_steps_task_names_what_failed_before_a_few_of_its_last_lines() {
+        let tree = crate::test_tree::Tree::new();
+        let tests = include_str!("fixtures/tests-red.log");
+        let client = include_str!("fixtures/client-check-red.log");
+        let mut red = verify(&[("client-check", 1), ("tests", 101)]);
+        red.steps[0].log = tree.write("client-check.log", client);
+        red.steps[1].log = tree.write("tests.log", tests);
+        let board = Fake::default();
+        report(&board, &night(&[]), &[red]);
+
+        let filed = board.thread("tests/release-red-verify-tests").join("\n");
+        let named = fenced(&filed, "What failed, as its log says it:");
+        assert_eq!(
+            named.first(),
+            Some(
+                &"test tests::a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_\
+                  browser_ends_at_the_backstop ... FAILED"
+            ),
+            "{filed}"
+        );
+        assert_eq!(
+            named[named.len() - 3..],
+            [
+                "error: 2 targets failed:",
+                "    `-p chrome-devtools --lib`",
+                "    `-p symphony --lib`"
+            ]
+        );
+        assert_eq!(
+            named.len(),
+            3 * 2 + 3,
+            "three tests, each where it panicked, and the list"
+        );
+        // Then a few of its last lines, and the reruns.
+        let last = fenced(&filed, "Its last lines:");
+        assert_eq!(last.len(), SHORT_TAIL_LINES, "{filed}");
+        assert_eq!(
+            last.last(),
+            Some(
+                &"verify: the client check is red: the tests ran against the client it built from \
+                  this tree, /work/symphony-wt/release/build/verified-client/public, not the \
+                  committed one"
+            )
+        );
+        let at = |what: &str| {
+            filed
+                .find(what)
+                .unwrap_or_else(|| panic!("{what}: {filed}"))
+        };
+        assert!(at("Load average when it ended") < at("What failed"));
+        assert!(at("What failed") < at("Its last lines"));
+        assert!(at("Its last lines") < at("Rerun alone"));
+
+        let filed = board
+            .thread("tests/release-red-verify-client-check")
+            .join("\n");
+        assert_eq!(
+            fenced(&filed, "What failed, as its log says it:"),
+            [
+                "client-check: rebuild and commit the client asset: index.html",
+                "error: recipe `_client-check` failed on line 98 with exit code 1",
+                "error: recipe `client-check` failed on line 93 with exit code 1",
+            ],
+            "{filed}"
+        );
+        assert_eq!(fenced(&filed, "Its last lines:").len(), SHORT_TAIL_LINES);
+
+        // Red again: its line names what failed this time too.
+        let mut again = verify(&[("client-check", 1)]);
+        again.steps[0].log = tree.write("client-check-2.log", "client-check: refused x\n");
+        report(&board, &night(&[]), &[again]);
+        let line = &board.thread("tests/release-red-verify-client-check")[1];
+        assert_eq!(
+            fenced(line, "What failed, as its log says it:"),
+            ["client-check: refused x"],
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_check_that_listed_its_steps_quotes_its_own_log_by_its_last_lines() {
+        // Its log is its own lines and its steps' tails, whose errors are its steps' tasks' to name.
+        let tree = crate::test_tree::Tree::new();
+        let red = Ran {
+            log: tree.write(
+                "verify.log",
+                "verify: tests: red, exit 101 (3 s); its last lines:\n    error: 2 targets \
+                 failed:\n        `-p symphony --lib`\nerror: recipe `_verify` failed on line 120\n",
+            ),
+            ..verify(&[("tests", 101)])
+        };
+        let said = quoted(&red);
+        assert!(
+            said.starts_with("Its last lines:\n\n```\nverify: tests: red"),
+            "{said}"
+        );
+        assert!(!said.contains("What failed"), "{said}");
+        // A refresh's red names what its log says failed as a check's does.
+        let refresh = Ran {
+            command: "refresh consumer".into(),
+            log: tree.write(
+                "refresh.log",
+                "$ git merge --ff-only abc\nhook refused the move\n",
+            ),
+            ..ran("refresh-consumer", 1)
+        };
+        let filed = refresh_body(&refresh, &night(&[]));
+        assert_eq!(
+            fenced(&filed, "What failed, as its log says it:"),
+            ["hook refused the move"],
+            "{filed}"
         );
     }
 }
