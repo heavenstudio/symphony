@@ -4,7 +4,7 @@
 //! route…) by its name, a watch by its place among the plugin's watches, and carries owned forms of
 //! what the call borrows ([`PageData`], [`CardData`], [`TaskData`], [`FileData`]). A request is a
 //! JSON object of one member, its call (its seam and call, `card_kinds.slot`, [`Ask::TAG`]) holding
-//! its fields: `{"card_kinds.slot":{"kind":"hull","card":{…}}}`. Its answer is [`Answered`]:
+//! its fields: `{"card_kinds.slot":{"kind":"widget","card":{…}}}`. Its answer is [`Answered`]:
 //! `{"answer": …}` holding the value the seam's method returns as serde writes it (a `Result` as
 //! `{"Ok": …}` or `{"Err": …}`, `()` as `null`), or `{"refused": "…"}` when the request could not
 //! be read.

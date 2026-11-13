@@ -75,7 +75,7 @@ fn every_call_is_answered_by_its_id_but_the_loopbacks_alone_which_is_refused() {
         &[asking(
             5,
             Slot {
-                kind: "hull".into(),
+                kind: "widget".into(),
                 card: card.clone(),
             },
         )],
@@ -102,9 +102,9 @@ fn a_request_that_cannot_be_answered_is_refused_by_its_id_naming_why() {
     let card = serde_json::to_string(&card()).unwrap();
     let lines = [
         // A call this build does not know.
-        format!(r#"{{"id":1,"request":{{"card_kinds.colour":{{"kind":"hull","card":{card}}}}}}}"#),
+        format!(r#"{{"id":1,"request":{{"card_kinds.colour":{{"kind":"widget","card":{card}}}}}}}"#),
         // A field missing.
-        r#"{"id":2,"request":{"card_kinds.slot":{"kind":"hull"}}}"#.to_string(),
+        r#"{"id":2,"request":{"card_kinds.slot":{"kind":"widget"}}}"#.to_string(),
         // An object the plugin does not have.
         format!(r#"{{"id":3,"request":{{"card_kinds.slot":{{"kind":"lantern","card":{card}}}}}}}"#),
         // Two members.
@@ -239,7 +239,7 @@ fn a_panic_in_a_call_is_answered_as_a_refusal_naming_it_and_the_process_goes_on(
         .unwrap()
         .shown()
         .unwrap_err();
-    assert_eq!(refused, "moody panicked: pick-a-hull made it panic");
+    assert_eq!(refused, "moody panicked: pick-a-widget made it panic");
     assert_eq!(answers[&2].0, r#"{"answer":true}"#);
 }
 
@@ -370,7 +370,7 @@ fn a_command_runs_as_the_binary_with_its_own_streams_and_its_code() {
         )
     };
     assert_eq!(
-        run(&["command", "ship-art", "--all"], ""),
+        run(&["command", "draw-widgets", "--all"], ""),
         (0, String::new(), String::new())
     );
     let (code, _, said) = run(&["command", "nothing"], "");
@@ -551,14 +551,14 @@ fn a_card_kinds_gates_and_choice_answer_as_linked() {
             asking(
                 1,
                 CardGates {
-                    kind: "hull".into(),
+                    kind: "widget".into(),
                     card: card.clone(),
                 },
             ),
             asking(
                 2,
                 Chosen {
-                    kind: "hull".into(),
+                    kind: "widget".into(),
                     card: card.clone(),
                 },
             ),

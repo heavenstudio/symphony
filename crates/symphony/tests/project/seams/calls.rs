@@ -146,9 +146,9 @@ pub(super) fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
         })
         .collect();
     read(&Card {
-        slug: "pick-a-hull",
-        doc: "docs/SHIPS.md",
-        topic: "Hulls · \\ back",
+        slug: "pick-a-widget",
+        doc: "docs/WIDGETS.md",
+        topic: "Widgets · \\ back",
         text,
         thread: &thread,
     })
@@ -218,7 +218,7 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
     }
     both.same("cache_version", |p| p.cache_version(&page()));
     for text in [
-        "Pick every hull.\n*Slot:* North · cover",
+        "Pick every widget.\n*Slot:* North · cover",
         "hold every broken one",
         "",
     ] {
@@ -247,7 +247,7 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
             with_card(text, |card| p.card_kinds()[0].chosen(card))
         });
     }
-    for (src, label) in [("/docs/a.every?v=2#top", ""), ("/docs/b.every", "the hull")] {
+    for (src, label) in [("/docs/a.every?v=2#top", ""), ("/docs/b.every", "the widget")] {
         let file = File { src, label };
         both.same("draw", |p| {
             symphony::renderers::renderer_of(p, src)
@@ -255,7 +255,7 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
                 .draw(&page(), &file)
         });
     }
-    for rest in ["", "data.json", "models/a b.glb"] {
+    for rest in ["", "data.json", "models/a b.stl"] {
         both.same("serve", |p| p.route("every").unwrap().serve(root, rest));
     }
     both.same("region", |p| p.home_regions()[0].region(root));
@@ -934,7 +934,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     );
     let _ = black_box(plugins.cache_version(&page));
     let kind = plugins.card_kinds()[0];
-    with_card("Pick every hull.\n*Slot:* North · cover", |card| {
+    with_card("Pick every widget.\n*Slot:* North · cover", |card| {
         let _ = black_box((
             kind.recognises(card),
             kind.pictures(root, card),
@@ -948,7 +948,7 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     });
     let file = File {
         src: "/docs/b.every",
-        label: "the hull",
+        label: "the widget",
     };
     let _ = black_box(plugin.renderers()[0].draw(&page, &file));
     let _ = black_box(plugins.route("every").map(|r| r.serve(root, "data.json")));

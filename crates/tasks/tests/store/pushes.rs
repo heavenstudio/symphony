@@ -348,7 +348,7 @@ fn a_childs_release_does_not_hide_the_move_it_made_before_it() {
     assert!(read(&f, &reader).is_empty());
 }
 
-const VERDICT: &str = "OWNER accepted card 7 in docs/DECISIONS.md — ship it";
+const VERDICT: &str = "OWNER accepted card 7 in docs/DECISIONS.md — land it";
 
 #[test]
 fn a_waiting_orchestrator_holds_the_vacant_chat_seat() {

@@ -53,7 +53,7 @@
   const unstarted = open.filter((t) => t.s === "ready" && ["queued", "nobody"].includes(kind(t))).length;
   const banner = () => `<div class="banner warn"><b>No live orchestrator.</b> sable-finch-625 is stale, glacial-heron-497 left · ${unstarted} of the ${B.counts.ready} ready tasks wait to start</div>`;
   // Today's header, names and rows as the shared server draws them: its design is app/header-names'.
-  const header = () => `<nav class="hdr"><a class="pill">Change board</a><a>⌂ board</a><a>≡ docs</a><a class="on">▦ tasks</a><a>◉ agents</a><a>⬡ hulls</a><span class="sep"></span><span class="sect">tasks</span><span class="end">activity</span></nav>`;
+  const header = () => `<nav class="hdr"><a class="pill">Change board</a><a>⌂ board</a><a>≡ docs</a><a class="on">▦ tasks</a><a>◉ agents</a><a>⬡ widgets</a><span class="sep"></span><span class="sect">tasks</span><span class="end">activity</span></nav>`;
   // Today's title row and filters, labels and all; `status` keeps the Status filter (A only).
   const head = (o = {}) => `<div class="title"><h1>Tasks</h1><a class="who">Who is connected</a></div><div class="filters"><label>Search tasks and messages<span class="search"></span></label>${o.status ? `<label>Status<span class="sel">All statuses</span></label>` : ""}<label>Finished tasks<span class="sel">Last 24 hours</span></label></div>`;
   // Today's buttons: the + that files a task, and the column pager (kept where columns scroll sideways).

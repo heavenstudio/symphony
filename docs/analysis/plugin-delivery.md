@@ -128,7 +128,7 @@ hours (`git log --first-parent --merges`, each merge's diff against its first pa
 
 What did break Star Foundry, in its last four pin moves, was all in its tests of Symphony's
 internals, never the seams: `symphony::verdicts::BoardTask` gained `links` (a struct literal in
-`tools/art`'s test), `docview::folder` took a new argument (`tools/symphony`'s renderer test), and
+a tool's test), `docview::folder` took a new argument (`tools/symphony`'s renderer test), and
 the CLI's usage text changed (an exact-text test). So the seams are stable; what breaks is linking
 the library's internals. And with nothing broken at all, every update is still a compile of the
 server, the CLIs and the plugin, an install and a restart.
@@ -141,17 +141,17 @@ Star Foundry's plugin (`tools/symphony/src/lib.rs`), seam by seam:
 
 | Seam | What it adds | How it runs |
 |---|---|---|
-| components | 14: ship, ships, art, screen, ship-matrix, shape-matrix, subfaction-ships, relationships, five icon families, the hull gallery | reads the game's data under the checkout, renders blocks, gives a cache version per page; used 726 times in its docs |
-| card kinds | 4: hull model, art, golden frame, hull mentions | reads a card's text and thread: pictures, slot, markers, triage category, what it gates, the letter chosen; 842 cards in 39 registers |
-| renderers | `.glb` hull models | draws a viewer, a custom element whose script is a file of the project |
-| routes | `/x/hulls/<id>.glb` | answers a file from the models folder |
-| nav | "⬡ hulls" | a fixed entry |
-| home regions | ship art | a region computed from the checkout |
+| components | 14: an entry, the catalogue, pictures, screen, a matrix, shape-matrix, a group listing, relationships, five icon families, the model gallery | reads the game's data under the checkout, renders blocks, gives a cache version per page; used 726 times in its docs |
+| card kinds | 4: model, picture, golden frame, mentions | reads a card's text and thread: pictures, slot, markers, triage category, what it gates, the letter chosen; 842 cards in 39 registers |
+| renderers | its 3D model files | draws a viewer, a custom element whose script is a file of the project |
+| routes | `/x/PAGE/ID.EXT`, a model by its id | answers a file from the models folder |
+| nav | "⬡" and its page's name | a fixed entry |
+| home regions | the pictures' progress | a region computed from the checkout |
 | board actions | approve to land | already out of process: it runs `tools/rs-bin.sh sf-land api` with JSON on stdin (`land_call`) |
-| commands | `relationships`, `screens`, `ship-art` | `symphony NAME ARGS`, writing to stdout and stderr |
+| commands | `relationships`, `screens` and one that draws pictures | `symphony NAME ARGS`, writing to stdout and stderr |
 | watches | the gallery's models, concepts and outlines folders | drops and warms a cache in the server's memory |
 | theme | the name and the icon | fixed data |
-| doc checks | the design data, the faction pages, the screen catalogue | read `docs/` and return problems |
+| doc checks | the design data, the group pages, the screen catalogue | read `docs/` and return problems |
 
 It uses none of board fields, gates, prose rules, generators or transports. Its generators are
 configuration already: `[verdicts] generators` in its `symphony.toml`, with its check, land
@@ -261,7 +261,7 @@ error ([Trap](https://docs.rs/wasmtime/latest/wasmtime/enum.Trap.html)); memory 
 the host limits it ([StoreLimits](https://docs.rs/wasmtime/latest/wasmtime/struct.StoreLimitsBuilder.html)).
 Values are copied across every call, and synchronous calls between components carry "roughly
 3.5x overhead" ([road to 1.0](https://bytecodealliance.org/articles/the-road-to-component-model-1-0)).
-wasmtime ships a new major every month and supports one for 2 months, an LTS for 24
+wasmtime releases a new major every month and supports one for 2 months, an LTS for 24
 ([release policy](https://docs.wasmtime.dev/stability-release.html)), and compiled plugins load
 only into the same wasmtime version
 ([Module](https://docs.rs/wasmtime/latest/wasmtime/struct.Module.html)). wasmtime's own C library,
@@ -500,9 +500,9 @@ WIT world, the project's checkout preopened.
 - **What it keeps**: the data seams, as in B. What changes for Star Foundry, seam by seam:
   - **approve to land** runs `tools/rs-bin.sh sf-land api`, a process: it becomes a host function
     the server grants for that one program, which is the sandbox's door.
-  - **pictures**: the hull cards' small copies go through the library's `images::reserve`, which
+  - **pictures**: the model cards' small copies go through the library's `images::reserve`, which
     runs `sips`; that becomes a host function too, or the server resizes after the plugin answers.
-  - **commands**: `ship-art` writes files under the checkout, so it needs a folder granted for
+  - **commands**: its picture command writes under the checkout, so it needs a folder granted for
     writing; `symphony NAME` runs a command inside a runtime, so the command line embeds wasmtime
     as well as the server.
   - **watches**: the server watches the paths and calls `changed`; the cache lives in the
@@ -612,7 +612,7 @@ first measure of this design once it posts.
   that weighs on both size and compile time ([cargo-llvm-lines](https://github.com/dtolnay/cargo-llvm-lines)).
 - **Assets beside the binary, not in it.** `include_bytes!` makes the file part of the crate's
   inputs ([include_bytes](https://doc.rust-lang.org/std/macro.include_bytes.html)), so a new client
-  recompiles the embedding crate and relinks what is above it. Helix ships a `runtime/` folder
+  recompiles the embedding crate and relinks what is above it. Helix delivers a `runtime/` folder
   beside its executable ([building](https://docs.helix-editor.com/building-from-source.html)), and
   Vite writes a manifest naming each hashed file for a backend to read
   ([backend integration](https://vite.dev/guide/backend-integration)). The server already serves an
@@ -634,8 +634,8 @@ first measure of this design once it posts.
 - **Several binaries or one.** rustup's `cargo` and `rustc` are links to one binary that looks at
   its own name ([self_update.rs](https://github.com/rust-lang/rustup/blob/master/src/cli/self_update.rs));
   uutils builds either one binary or one per tool ([coreutils](https://github.com/uutils/coreutils)).
-  One binary keeps one copy of the shared code but ships whole at every change; separate binaries
-  repeat the shared code and ship only the one that changed. For a release fetched per artifact,
+  One binary keeps one copy of the shared code but is sent whole at every change; separate binaries
+  repeat the shared code and send only the one that changed. For a release fetched per artifact,
   separate binaries win.
 - **Dynamic linking of a shared core** speeds a developer's rebuilds, not a release: Bevy's
   `dynamic_linking` is "not recommended" for shipping

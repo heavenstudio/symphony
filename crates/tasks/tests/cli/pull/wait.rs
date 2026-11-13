@@ -179,7 +179,7 @@ fn wait_is_refused_while_a_channel_takes_the_pushes() {
 }
 
 /// What the app publishes when the owner decides a card.
-pub(super) const OWNER: &str = "OWNER accepted card 7 in docs/DECISIONS.md — ship it";
+pub(super) const OWNER: &str = "OWNER accepted card 7 in docs/DECISIONS.md — land it";
 
 #[test]
 fn wait_says_what_the_owner_says_while_no_channel_holds_the_seat() {
