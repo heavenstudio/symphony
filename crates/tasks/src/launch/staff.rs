@@ -257,7 +257,7 @@ fn review_target(store: &Store, task: &Task, machine: &Machine) -> Result<Review
     Ok(ReviewTarget { branch, tip })
 }
 
-/// A review is an instruction child: `/work` can claim it and the parent keeps its reviewer role.
+/// A review is an instruction child: `/review-task` claims it and the parent keeps its reviewer role.
 fn review_job(
     store: &Store,
     task: &Task,
@@ -555,7 +555,7 @@ fn dispatch(
                 launching.said(),
                 s.row.pane,
                 s.row.worktree,
-                prompt_text(&job.slug, &s.row.handle, "", launching.agent),
+                prompt_text(&job.slug, &s.row.handle, "", launching.agent, role),
             )
         })
     })();
@@ -607,7 +607,7 @@ fn reuse(
     }
     store.reserve(&job.slug, handle, crate::health::RESERVE_SECONDS)?;
     let kind = agent.agent.as_deref().unwrap_or("codex");
-    let prompt = prompt_text(&job.slug, handle, "", kind);
+    let prompt = prompt_text(&job.slug, handle, "", kind, role);
     // Record before prompting: once the prompt is sent, a timeout must never free this job for a duplicate.
     store.record_launch(&NewLaunch {
         slug: job.slug.clone(),

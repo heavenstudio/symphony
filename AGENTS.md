@@ -239,7 +239,7 @@ this folder (`../symphony-wt/release`), which tags a green tip as a release
 
 ## Agent integration
 
-`symphony init --root ROOT` installs the seven generic skills, their Claude links,
+`symphony init --root ROOT` installs the eight generic skills, their Claude links,
 Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
 the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
 `symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`, and the

@@ -5,38 +5,6 @@ description: Join the shared task board and register a native callback so messag
 
 # Work from the task board
 
-## Parent feature delivery
-
-A top-level task owns one feature branch and one delivery cycle. Subtasks are
-small implementation slices, not independent releases. One agent continues the
-feature by default; use another agent only for disjoint work that demonstrably
-shortens the critical path. Commit slices into the feature branch, or merge
-their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
-where it has one: that refuses the default branch and runs no delivery hooks or stamps,
-and the project's landing (`land` where it has one) remains the completed feature
-delivery command. Run only focused checks needed for that slice;
-no slice-level full build, full suite, reviewer staffing, certificate, stamps or
-landing. Close the slice with its integration commit and focused result using
-tasks done. When the complete feature is ready, the parent goes to review once
-with its evidence, then lands. Review fixes stay with that parent and do not
-create independent delivery rounds.
-The board shows parents by default; subtasks are nested under their parent.
-This rule supersedes conflicting per-subtask gate instructions.
-
-## Evidence is the gate
-
-A task's gate, parent or slice, feature or fix, is evidence that what it changed
-works, not the full suite: the tests closest to the change and the project's
-lint, posted with their exact commands and results, plus what the kind of change
-calls for (before and after screenshots of a changed page, a measurement before
-and after). A reviewer reruns those tests, never the suite, judges whether the
-evidence is good enough for the change's risk, and records its approval as the
-task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
-The full verification runs on the project's main line on its own schedule, such
-as a release run or a nightly, and a red run there is filed as a task of its own. The
-project's guidance names its focused checks, its stamp and that schedule.
-
-
 Several sessions share one Symphony board from their project checkouts. Read the
 project's board, permission, staffing, testing and landing instructions first. It
 records who holds each task and keeps a thread per task, visible in the
@@ -205,24 +173,11 @@ Act on requests without an acknowledgement post.
 
 ## Review (reviewer)
 
-Choose reviewer families, models and launch methods under the project's policy;
-`just tasks limits` names the reviewer's model the project sets.
-Reviewers must be independent of the author and use the project's required stamps.
-
-`just tasks role SLUG reviewer` on a task in `review`, then read the diff and
-the thread. Finish with `just tasks verdict SLUG approve "FULL_SHA: why"`, naming the
-whole tip you read (it becomes `done`, and the default land lands that commit and no
-other), or `just tasks verdict SLUG changes "what and where"`. Never judge a task you
-executed: the board refuses the verdict of any session that ever executed it or a slice
-of it (a subtask without `--instruction`); claiming its `--instruction` review subtask
-is not executing it. Run the targeted
-tests of what changed yourself, never the full suite; do not take the executor's
-word for them being green. Judge whether the evidence is good enough for the
-change's risk: an approve is the task's stamp, a changes verdict names the
-evidence missing. A test that a loaded machine could fail (a wall-clock bound
-where a CPU bound, a count or a wait on its condition belongs) is a changes. Follow the destination project's requirements for review
-evidence and any additional verification. Do not assume a certificate or landing system exists.
-Read any review checklist the project provides for the changed languages or domains.
+A reviewer works by the [review-task](../review-task/SKILL.md) skill, its whole prompt
+`/review-task SLUG HANDLE` (Codex: `$review-task SLUG HANDLE`): an independent verdict
+naming the tip it read, after rerunning the task's focused tests itself. Choose reviewer
+families, models and launch methods under the project's policy; `just tasks limits`
+names the reviewer's model the project sets.
 
 ## Orchestrate (orchestrator)
 
@@ -260,9 +215,9 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    <handle> [--instruction]`) whose body is the instruction verbatim, never a
    file (a hook refuses a brief written to a file or a scratchpad);
    `--body-file -` reads a long body from stdin. The agent's whole
-   prompt is `/work SLUG HANDLE` (Codex: `$work SLUG HANDLE`), and the steps
-   below that put the handle and the rules in a brief are then already in that
-   skill.
+   prompt is `/work SLUG HANDLE` (Codex: `$work SLUG HANDLE`), a reviewer's
+   `/review-task SLUG HANDLE`, and the steps below that put the handle and the
+   rules in a brief are then already in that skill.
    Choose an agent launch method under the project's policy, with a terminal
    of its own (`just tasks launch`, below) only when the work needs one:
    [task-orchestrator](../task-orchestrator/SKILL.md).
@@ -274,7 +229,8 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    `--role reviewer` too). Launch registers the handle, reserves the subtask (a
    reviewer also takes the reviewer role on its parent), starts that agent in
    its own terminal and worktree, and records its session.
-   Its prompt is `/work SLUG HANDLE` and nothing else: the work skill tells it
+   Its prompt is `/work SLUG HANDLE` (a reviewer's `/review-task SLUG HANDLE`)
+   and nothing else: the skill tells it
    to run every command as `just tasks … --as <its handle>`, claim
    exactly that task, post what another agent needs
    with `just tasks say`, and use `just tasks inbox --as HANDLE` between steps
@@ -325,7 +281,8 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   machine_agents` allows. `just tasks limits` prints the limits and each role's
   model in force, and where each came from. Launch
   records the handle, role, conversation, checkout, branch, terminal and start time.
-  Its prompt uses the work skill with the task slug and registered handle.
+  Its prompt uses the work skill (a reviewer's, review-task) with the task slug
+  and registered handle.
   Always pass `--kind`. Choose a terminal reviewer only when the project's
   launch policy calls for one; otherwise use its supported in-process or
   headless launch method.
