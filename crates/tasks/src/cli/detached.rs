@@ -74,7 +74,7 @@ pub(super) fn run(env: &Env, err: &mut dyn Write) -> i32 {
     let store =
         Clock::of(env).and_then(|clock| open_unchecked(reach(env, &env.cwd, false)?, &clock));
     // Its passes give the open tasks no orchestrator holds first ([`crate::Store::giving`]).
-    let store = store.map(crate::Store::giving);
+    let store = store.map(|store| super::looking_up(store, env).giving());
     match store.and_then(|store| store.dispatch_detached().map_err(|e| e.to_string())) {
         Ok(_) => 0,
         Err(why) => {

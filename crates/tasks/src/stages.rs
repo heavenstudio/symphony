@@ -176,6 +176,15 @@ impl Stages {
     pub fn lead_seconds(&self, created: f64) -> Option<f64> {
         self.closed.map(|closed| (closed - created).max(0.0))
     }
+
+    /// When the task counts as done: its last close, while it holds done; none for a task open,
+    /// cancelled (after done too) or reopened since. A task approved, sent back to review by its
+    /// landing and approved again is done once, at the second approve. The one rule of a task done:
+    /// `tasks stats` counts its tasks done per day by it, and the roll-up its hours' `done`
+    /// ([`crate::reports`]), so the two agree on one board read at one time.
+    pub fn done_at(&self) -> Option<f64> {
+        self.closed.filter(|_| self.current == "done")
+    }
 }
 
 /// What a line did.
@@ -492,6 +501,13 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
         current_since: replay.since,
         closed: replay.closed,
     }
+}
+
+/// When the task `facts` describe took the status it holds, by its thread's `lines`: the replay's
+/// [`Stages::current_since`], which no clock moves. For a closed task it is its close; where the
+/// thread does not record the change to the status it holds, its `updated`.
+pub fn in_status_since(facts: Facts, lines: &[Line]) -> f64 {
+    stages(facts, lines, facts.updated).current_since
 }
 
 /// One session's hold on the executor or reviewer role of a task.

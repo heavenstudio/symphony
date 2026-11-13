@@ -66,6 +66,10 @@ pub fn env() -> Env {
         ("TASKS_SERVER", db.addr().to_string()),
         ("TASKS_DATABASE", db.database().to_string()),
         ("TASKS_NOW", common::NOW.to_string()),
+        (
+            symphony_board::UNANSWERED_WAIT_VAR,
+            common::LOOKUP_BACKSTOP.to_string(),
+        ),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))

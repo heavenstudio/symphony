@@ -8,7 +8,12 @@
 //! run in the write that fires them is planned from the schema itself ([`crate::sql::events`]),
 //! `$before` and `$after` a message of the board's. The check fails on what [`crate::findings`]
 //! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
-//! subquery in a predicate.
+//! subquery in a predicate. Before its commands it files a task nobody orchestrates, so the give
+//! pass a dispatch and a look make is among what it plans on every run, whatever the tests before
+//! it on the same board left ([`unowned`]); then, after a look by another orchestrator that makes
+//! it one that stays (as the timings' looks make theirs), it files another and dispatches again.
+//! Each give is judged by its having been made ([`gave`]), never by who the board picked, which
+//! turns on the orchestrators earlier tests made stay.
 
 use crate::board::board;
 use crate::findings::{Finding, findings, reads_rows, whole_read};
@@ -31,13 +36,16 @@ pub fn bound(name: &str) -> Option<Value> {
         "slugs" | "open" | "waiting" => open,
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
-        "sid" | "same" | "last" | "post" => json!(1),
+        // The unanswered lookup's answers below a task: the sequence its ask reads after.
+        "sid" | "same" | "last" | "post" | "after" => json!(1),
         "ts" => json!(NOW),
         "counted" => json!({"last": 1, "ts": NOW}),
         "agent" | "binding" | "old" | "other" | "had" | "made" | "was" => Value::Null,
         "s" | "state" | "c" | "lease" | "recipient" | "channel" | "before" | "pull" => json!({}),
         "candidates" | "acked" | "wanted" | "pool" | "keys" | "waiting_keys" | "said" => json!([]),
         "line" => json!({"slug": generated::thread(), "sid": 1}),
+        // A give pass's fence names each task it decided on with its version as read.
+        "g" => json!({"slug": generated::thread(), "version": 1}),
         "address" => json!("uds:/tmp/perf.sock"),
         // The pending-post read is planned outside the closure that supplies each task's slug.
         "slug" | "dependent" => json!(generated::thread()),
@@ -158,9 +166,69 @@ fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> 
     planned
 }
 
+/// A statement of the give pass's fence ([`symphony_board::Store::give_unowned`]): what the requests
+/// hold once the check's commands made a give.
+const GIVE_FENCE: &str = "type::record('task', $g.slug)";
+
+/// A new top-level task nobody orchestrates on `board`, named for `which` and this run, filed by the
+/// owner as a plain create, which gives none: the next reader of the whole board that gives (`tasks
+/// dispatch`, a look of `tasks wait`) gives it, whatever the board's other tasks are, and however
+/// earlier tests left them.
+fn unowned(board: &crate::board::Board, which: &str) -> String {
+    let store = symphony_board::Store::with(
+        board.client(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        &symphony_board::sys::hostname(),
+    )
+    .unwrap();
+    let slug = format!("perf/unowned-{which}-{}", std::process::id());
+    let new = symphony_board::NewTask::new(&slug, "Nobody orchestrates it", "owner");
+    let task = store.create(&new).unwrap();
+    assert!(
+        task.roles.iter().all(|role| role.role != "orchestrator"),
+        "{:?}",
+        task.roles
+    );
+    slug
+}
+
+/// Who a give pass gave `slug` to, or `waiting` when it marked it waiting for one: it gave it when
+/// exactly one session holds its orchestrator role and that session is an orchestrator, whichever
+/// the board picked (the one holding fewest of those that stay, which earlier tests decide), or
+/// when it carries the waiting mark and nobody holds it. Fails the test otherwise.
+fn gave(board: &crate::board::Board, slug: &str) -> String {
+    let found = board
+        .client()
+        .query(
+            "LET $held = (SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'orchestrator');
+             RETURN {
+                held: $held,
+                kinds: (SELECT VALUE kind FROM $held.map(|$h| type::record('session', $h))),
+                waiting: (SELECT VALUE fields._board.waiting FROM ONLY type::record('task', $slug)),
+             };",
+            json!({"slug": slug}),
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+    match (&found["held"], &found["kinds"], &found["waiting"]) {
+        (Value::Array(held), kinds, _) if held.len() == 1 && *kinds == json!(["orchestrator"]) => {
+            held[0].as_str().unwrap_or_default().to_owned()
+        }
+        (Value::Array(held), _, waiting) if held.is_empty() && waiting.is_number() => {
+            "waiting".to_owned()
+        }
+        _ => panic!("no give pass gave {slug} to one orchestrator or marked it waiting: {found}"),
+    }
+}
+
 #[test]
 fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     let mut board = board();
+    // The give pass runs on a condition the check sets, never on what earlier tests or the clock
+    // left: a task nobody orchestrates, made before the relay records.
+    let first = unowned(&board, "first");
     let relay = Proxy::to(&board.addr);
     let thread = generated::thread();
     let writer = generated::writer();
@@ -231,9 +299,35 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         assert_eq!(ran.code, 0, "{call}: {}", ran.err);
         assert!(ran.out.contains("\"ok\""), "{call}: {}", ran.out);
     }
+    let to_first = gave(&board, &first);
+    // Another orchestrator's look makes it one that stays, holding fewer than the live one, as a
+    // test before this one may have made the waiter: the next give may go to it. Its look is not
+    // the check's; the dispatch after it is.
+    let joiner = generated::joiner();
+    let looked = board.run(
+        &board.addr,
+        &["wait", "--timeout", "0", "--as", &joiner],
+        "",
+    );
+    assert_eq!(looked.code, 0, "{joiner}'s look: {}", looked.err);
+    let second = unowned(&board, "second");
+    let ran = board.run(&relay.addr, &["dispatch"], "");
+    assert_eq!(
+        ran.code, 0,
+        "the dispatch after {joiner}'s look: {}",
+        ran.err
+    );
+    let to_second = gave(&board, &second);
+    eprintln!("perf: the give passes gave {first} to {to_first}, then {second} to {to_second}");
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
     let planned = plan_all(&board.client(), &requests);
+    assert!(
+        planned
+            .keys()
+            .any(|statement| statement.contains(GIVE_FENCE)),
+        "the requests hold the give pass's fence"
+    );
     let failed = failures(&planned);
     let unread = unread(&board.client(), &requests, statements);
     eprintln!(
@@ -322,12 +416,18 @@ fn checked(client: &Client, sql: &str) -> BTreeMap<String, Planned> {
     plan_all(client, &[request(sql)])
 }
 
-/// Exercise the actual pending-post read and its closure bindings on a small owned board. This
-/// uses the existing recording/planning check without replaying the generated board's commands.
+/// Exercise the actual unanswered-post lookup a digest runs and its closure bindings on a small
+/// owned board: its thread and the thread below it read by record range, and no recipient's suffix
+/// of records across the board. This uses the existing recording/planning check without replaying
+/// the generated board's commands.
 #[test]
-fn pending_answers_plan_the_actual_recipient_suffix_on_a_small_board() {
+fn pending_posts_plan_their_threads_by_range_on_a_small_board() {
     let f = store::Fixture::empty();
     f.task("work");
+    f.task_with(symphony_board::NewTask {
+        parent: Some("work".into()),
+        ..symphony_board::NewTask::new("work-child", "child", "owner")
+    });
     let worker = f.session("worker");
     f.store.claim("work", &worker).unwrap();
     f.store
@@ -346,19 +446,24 @@ fn pending_answers_plan_the_actual_recipient_suffix_on_a_small_board() {
     let digest = symphony_board::cli::pull::digest(&reader, &[], None, at, &[]).unwrap();
     assert_eq!(digest.count("unanswered"), 1);
     let planned = plan_all(f.store.client(), &proxy.take());
-    let suffix: Vec<_> = planned
-        .iter()
-        .filter(|(sql, _)| sql.contains("WITH INDEX message_sender"))
+    let ranged: Vec<_> = (planned.keys())
+        .filter(|sql| sql.contains("FROM message:[$slug,"))
         .collect();
     assert_eq!(
-        suffix.len(),
-        1,
-        "the actual recipient suffix is planned: {planned:#?}"
+        ranged.len(),
+        2,
+        "the thread and the one below it, each by its range: {planned:#?}"
     );
     assert!(
-        suffix[0].1.plan.contains("message_sender") && suffix[0].1.plan.contains("MoreThan 1"),
-        "{suffix:#?}"
+        ranged
+            .iter()
+            .any(|sql| sql.contains("message:[$slug, $after]")),
+        "{ranged:#?}"
     );
+    let suffix: Vec<_> = (planned.keys())
+        .filter(|sql| sql.contains("WITH INDEX message_sender") && sql.contains("sid >"))
+        .collect();
+    assert!(suffix.is_empty(), "no recipient suffix: {suffix:#?}");
     let failed = failures(&planned);
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }

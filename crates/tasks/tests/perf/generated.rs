@@ -42,6 +42,12 @@ pub fn waiter() -> String {
     handle(1)
 }
 
+/// Another orchestrator without a callback, last seen days ago, whom no other test acts as: the
+/// plan check's look makes it one that stays, as the timings' looks make the waiter.
+pub fn joiner() -> String {
+    handle(2)
+}
+
 /// A live worker with a callback, who executes nothing: the recipient of the posts timed.
 pub fn recipient() -> String {
     handle(ORCHESTRATORS)

@@ -392,6 +392,9 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     let gap = &page.buckets[1];
     assert!(gap.flow.is_none() && gap.git.is_none() && gap.agents.is_some());
     assert_eq!(page.buckets[0].flow.unwrap().held.review, 1);
+    // A period's tasks done, each once, beside its entries into done, which count a second approve.
+    let flow = page.buckets[0].flow.unwrap();
+    assert_eq!((flow.entered.done, flow.done), (6, Some(5)));
     // An empty page, as a server with no file yet answers, reads with every list empty.
     let empty: ReportsPage =
         serde_json::from_str(r#"{"grain":"hour","days":1,"from":0.0,"to":3600.0}"#).unwrap();
@@ -525,6 +528,25 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     assert_eq!(sum(|h| u64::from(h.decisions.unwrap().auto_approved)), 1);
     assert_eq!(sum(|h| u64::from(h.decisions.unwrap().withdrawn)), 1);
     assert_eq!(sum(|h| u64::from(h.landed)), 1);
+    assert_eq!(
+        sum(|h| u64::from(h.top.done.unwrap() + h.subtasks.done.unwrap())),
+        1
+    );
+    // A day file written before its hours counted the tasks done reads with none in each, never a
+    // zero, and writes that back as `null`.
+    let mut older: Value = serde_json::from_str(&self::fixture("report-day.json")).unwrap();
+    for hour in older["hours"].as_array_mut().unwrap() {
+        for part in ["top", "subtasks"] {
+            hour[part].as_object_mut().unwrap().remove("done");
+        }
+    }
+    let older: ReportDay = serde_json::from_value(older).unwrap();
+    assert!(
+        (older.hours.iter()).all(|h| h.top.done.is_none() && h.subtasks.done.is_none()),
+        "no hour of an older file counted them"
+    );
+    let written = serde_json::to_value(&older).unwrap();
+    assert_eq!(written["hours"][0]["top"]["done"], Value::Null);
     let decisions = day.decisions.unwrap();
     assert_eq!(
         decisions.open[0].since, None,

@@ -18,9 +18,23 @@ const WORK: &str = "fixture/recorded-run/work";
 const SLICED: &str = "fixture/sliced-run";
 const SLICE: &str = "fixture/sliced-run/slice";
 
+/// Names a scale of the recorder's waits, which it takes on a scratch board alone.
+const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
+/// The scale, as the board's recorder tests take it: 20 s for the recorder's word that it watches
+/// its command and for the board's answer of the task a run is for, 12 s for git's.
+const SCALE: &str = "20";
+/// Names, in seconds, how long `tools/record.sh` waits for its recorder's probe.
+const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
+/// That wait: the backstop of a test's wait, where the script's own is 2 s.
+const PROBE_WAIT: &str = "120";
+
 /// A `tools/cargo.sh test` run in the server's checkout as `handle`, recorded on the scratch board
 /// at `board` into the work folder the server reads. Its Cargo is a stand-in that waits for its
-/// release; dropping the run releases it and reaps it, so a failed assertion leaves no run.
+/// release; dropping the run releases it and reaps it, so a failed assertion leaves no run. On that
+/// scratch board its recorder takes the scale of its waits ([`SCALE`]), and the script waits long
+/// for its probe ([`PROBE_WAIT`]): a loaded machine never leaves a run unrecorded, or recorded for
+/// no task (docs/MACHINE_WORK.md, "A test's waits"). A recorder grown slow is the board's tests' to
+/// turn red.
 struct Run {
     child: Child,
     release: PathBuf,
@@ -49,6 +63,8 @@ impl Run {
             .env("TASKS_WORK", root.join(".git/symphony/tasks/work"))
             .env("TASKS_SERVER", fixture.board.address())
             .env("TASKS_DATABASE", DATABASE)
+            .env(SCALE_VAR, SCALE)
+            .env(PROBE_WAIT_VAR, PROBE_WAIT)
             .env("SYMPHONY_MACHINE_DIR", &fixture.machine.0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

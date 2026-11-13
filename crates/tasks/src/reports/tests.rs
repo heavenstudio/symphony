@@ -250,6 +250,14 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
 
     let lead = day.top.lead.unwrap();
     assert_eq!((lead.n, lead.median / H, lead.p90 / H), (3, 4.0, 8.0));
+    let done: Vec<(usize, u32)> = (day.hours.iter().enumerate())
+        .filter_map(|(n, h)| h.top.done.filter(|done| *done > 0).map(|done| (n, done)))
+        .collect();
+    assert_eq!(
+        done,
+        [(4, 1), (6, 1), (10, 1)],
+        "sim/a, the main red and sim/b, each at its close: the tasks the lead time counts"
+    );
     assert_eq!(
         day.top
             .longest
@@ -419,7 +427,141 @@ fn a_review_with_no_reviewer_by_its_end_is_no_wait_and_a_reopened_task_enters_re
         waits(&day.hours[4].waits.review_to_reviewer),
         [("sim/z", 1.0)]
     );
-    assert_eq!(day.top.lead.unwrap().median, 2.0 * H);
+    assert_eq!(day.hours[2].top.entered, counts(&[("done", 1)]));
+    assert_eq!(
+        (day.hours[2].top.done, day.top.lead),
+        (Some(0), None),
+        "in review again, it is no task done: no close to count or to time"
+    );
+}
+
+/// A task done ([`Flow::done`]) counts once, in the hour of its last close, while it holds done at
+/// the read, as `tasks stats` counts its tasks done per day: one approved, sent back to review by
+/// its landing and approved again counts at the second approve; one closed the day before and
+/// closed again today counts today alone; one cancelled after it was done, or reopened and still
+/// in review, counts in no hour. `entered.done` keeps every entry into done, and the day's lead
+/// time is of the tasks done alone.
+#[test]
+fn a_task_done_counts_once_at_its_last_close_and_one_cancelled_or_reopened_since_in_none() {
+    let (o, e, r) = ("o", "e", "r");
+    let worked = |made: f64| {
+        Thread::default()
+            .made(made, o)
+            .claim(made, e)
+            .moved(made + 0.5, e, "in_progress", "review")
+            .joined(made + 0.5, r)
+    };
+    let again = task(
+        "sim/again",
+        1.0,
+        "done",
+        4.0,
+        worked(1.0)
+            .verdict(2.0, r, "approve: fine")
+            .moved(3.0, e, "done", "review")
+            .verdict(4.0, r, "approve: the mer")
+            .verdict(4.5, o, "landed sim/again"),
+    );
+    let next = task(
+        "sim/next",
+        -30.0,
+        "done",
+        5.0,
+        worked(-30.0)
+            .verdict(-20.0, r, "approve")
+            .moved(1.0, e, "done", "review")
+            .verdict(5.0, r, "approve"),
+    );
+    // Cancelled by a hand edit after its approve: no line says so, its `updated` dates it.
+    let cancelled = task(
+        "sim/cancelled",
+        0.0,
+        "cancelled",
+        7.0,
+        worked(0.0).verdict(6.0, r, "approve"),
+    );
+    let reopened = task(
+        "sim/reopened",
+        0.0,
+        "review",
+        9.0,
+        worked(0.0)
+            .verdict(8.0, r, "approve")
+            .moved(9.0, e, "done", "review"),
+    );
+    let mut slice = task(
+        "sim/again/slice",
+        1.0,
+        "done",
+        7.0,
+        Thread::default()
+            .made(1.0, o)
+            .claim(1.0, e)
+            .verdict(7.0, e, "done: merged in"),
+    );
+    slice.parent = Some("sim/again".into());
+    let read = ReportRead {
+        tasks: vec![next, cancelled, reopened, again, slice],
+    };
+    let today = day("sim", D, at(10.0), at(10.0), &read);
+    let per_hour = |pick: fn(&ReportHour) -> u32| -> Vec<(usize, u32)> {
+        (today.hours.iter().enumerate())
+            .filter(|(_, hour)| pick(hour) > 0)
+            .map(|(n, hour)| (n, pick(hour)))
+            .collect()
+    };
+    assert_eq!(
+        per_hour(|h| h.top.done.unwrap()),
+        [(4, 1), (5, 1)],
+        "sim/again at its second approve, sim/next at its close today"
+    );
+    assert!(today.hours.iter().all(|h| h.top.done.is_some()));
+    assert_eq!(
+        per_hour(|h| h.top.entered.done),
+        [(2, 1), (4, 1), (5, 1), (6, 1), (8, 1)],
+        "every entry into done: both of sim/again's, sim/next's, the cancelled one's and the \
+         reopened one's"
+    );
+    assert_eq!(per_hour(|h| h.top.entered.cancelled), [(7, 1)]);
+    assert_eq!(per_hour(|h| h.subtasks.done.unwrap()), [(7, 1)]);
+    let lead = today.top.lead.unwrap();
+    assert_eq!(
+        (lead.n, lead.median / H),
+        (2, 19.0),
+        "creation to last close of sim/again (3 h) and sim/next (35 h)"
+    );
+    assert!((lead.p90 / H - 31.8).abs() < 1e-9, "{}", lead.p90 / H);
+    let yesterday = day("sim", D - DAY, D, at(10.0), &read);
+    let done: u32 = yesterday.hours.iter().filter_map(|h| h.top.done).sum();
+    let entered: u32 = yesterday.hours.iter().map(|h| h.top.entered.done).sum();
+    assert_eq!(
+        (done, entered, yesterday.top.lead),
+        (0, 1, None),
+        "read after sim/next closed again today, its first close yesterday is no task done"
+    );
+    // `tasks stats` counts its tasks done per day over the same tasks by the same rule: the last
+    // close of each top-level task done now, here by UTC day.
+    let closes: Vec<f64> = (read.tasks.iter())
+        .filter(|task| task.parent.is_none())
+        .filter_map(|task| {
+            let facts = Facts {
+                status: &task.status,
+                created: task.created,
+                updated: task.updated,
+            };
+            stages::stages(facts, &task.lines, at(10.0)).done_at()
+        })
+        .collect();
+    let utc_day = |at: f64| symphony_api::run_day(day_start(at));
+    let stats = stages::stats::summarize(&[], &closes, at(10.0), 1, &utc_day);
+    let rolled: Vec<(String, usize)> = [&yesterday, &today]
+        .iter()
+        .map(|day| {
+            let done: u32 = day.hours.iter().filter_map(|h| h.top.done).sum();
+            (day.day.clone(), usize::try_from(done).unwrap())
+        })
+        .collect();
+    assert_eq!(stats.done_per_day, rolled);
 }
 
 #[test]
@@ -553,6 +695,8 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
     let mut odd = day("p \"q\" \\ \n\t\u{1}é☃", D, at(2.0), at(2.0), &board());
     odd.read = f64::NAN;
     odd.hours[0].top.task_hours.review = f64::INFINITY;
+    // An hour that did not count its tasks done, as one of a file written before they were.
+    odd.hours[1].top.done = None;
     odd.hours[1].waits.changes_to_review.push(Wait {
         slug: "sim/\u{7f}\u{2028}".into(),
         seconds: -0.0,
@@ -569,6 +713,8 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
         let serde = serde_json::to_string(day).unwrap();
         assert_eq!(ours, serde, "{}", day.project);
     }
+    let odd = String::from_utf8(json::day(&days[4])).unwrap();
+    assert!(odd.contains(r#""done":null"#), "{odd}");
 }
 
 #[test]

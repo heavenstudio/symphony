@@ -1185,7 +1185,8 @@ A channel registered anew starts again from the whole digest: `--off`, a registr
 session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
 Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
 stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
-A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+The scan reads only the open tasks' threads, and each of its reads waits at most ten seconds and is sent once, so a
+board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
 those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
 next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
@@ -2429,6 +2430,16 @@ an unblock's): they follow one another from the task's creation, the one it
 holds has no `to`, and their times add up to the statuses'. No table is added
 for them; they are the same read.
 
+`just tasks list --json` carries, on each task it lists, `in_status_since`:
+when the task took the status it holds, the replay's `current.since` (its close
+for a done or cancelled task; the task's `updated` where its thread does not
+record the change). `just tasks search --json` carries it too, its rows being
+list's, and `tasks api`'s `in_status_since` (api version 14) answers it for the
+tasks its `slugs` name, by slug, refusing a slug no task has. Each reads the
+tasks it names and their status and verdict lines in one request however many
+there are (`Store::in_status_since`; `tests/cli/stats.rs` counts them over 300
+tasks); `list` and `search` read nothing more without `--json`.
+
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
 made in the window, subtasks left out. Every figure is of those tasks but the
@@ -2444,7 +2455,13 @@ tasks done per day, which its header says:
 - how many tasks review sent back how often (`0 × 41 · 1 × 6 · 2 × 1`);
 - top-level tasks done on each day of the window, whenever they were made (a
   task made a month ago and closed yesterday counts yesterday), by this
-  machine's time zone, every date of the window named once;
+  machine's time zone, every date of the window named once: each task done
+  now, once, on the day of its last close (`Stages::done_at`), so one approved,
+  sent back to review by its landing and approved again counts once, at the
+  second approve, and one cancelled or reopened since counts on no day. The
+  Reports page's Tasks done counts the same tasks by the same rule, by UTC
+  day (its day files' `done`, beside `entered.done`, which counts every entry
+  into done);
 - the ten open tasks that have held their status longest, with that status
   and how long;
 - how many tasks are blocked and how many are ready with no executor, each
