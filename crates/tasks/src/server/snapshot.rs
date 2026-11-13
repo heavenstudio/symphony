@@ -292,7 +292,7 @@ impl Home {
                 let _ = fs::remove_dir_all(&taking);
                 return Err(failed(format!(
                     "could not clone {} to {} copy-on-write ({why}), and a snapshot is a plain \
-                     copy only before a replay of the store's log",
+                     copy only before a replay of the store's log or a reclaim",
                     data.display(),
                     taking.display()
                 )));
@@ -369,7 +369,9 @@ impl Home {
             Untaken::Failed(why) => refused(
                 why,
                 &format!(
-                    "; make room, or clone it by hand, and run {} again",
+                    "; where the volume cannot clone, its plain copy needs free room equal to the \
+                     whole store ({}): make room, or clone it by hand, and run {} again",
+                    crate::size(super::bytes(&data)),
                     before.command()
                 ),
             ),
@@ -459,9 +461,45 @@ fn log_and_manifest(store: &Path) -> Option<Vec<(PathBuf, u64, SystemTime)>> {
     Some(found)
 }
 
+/// Whether the volume of `folder`, which must exist, clones a folder copy-on-write, asked as a
+/// snapshot asks it: one clone of a probe folder holding a file, made in `folder`, both removed
+/// after. What a snapshot taken there is, a clone or (before a replay or a reclaim) a plain copy,
+/// follows from it, whatever the system: APFS clones and HFS+ does not, btrfs and XFS clone and
+/// ext4 does not.
+pub fn clones(folder: &Path) -> bool {
+    static PROBES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let probe = folder.join(format!(
+        ".clone-probe-{}-{}",
+        std::process::id(),
+        PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let (from, to) = (probe.join("from"), probe.join("to"));
+    // Made one level at a time, so a folder that is not there is never made: it clones nothing.
+    if fs::create_dir(&probe).is_err() {
+        return false;
+    }
+    let cloned = fs::create_dir(&from)
+        .and_then(|()| fs::write(from.join("file"), b"probe"))
+        .is_ok()
+        && clone(&from, &to).is_ok();
+    let _ = fs::remove_dir_all(&probe);
+    cloned
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Why a clone made on this thread fails, while a test says one does: a volume that cannot
+    /// clone, so the plain copy's path runs where every volume a test runs on clones.
+    static CLONE_FAILS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
 /// Clone the folder `from` whole to `to`, which must not exist, copy-on-write: one `clonefile` on
 /// macOS, `cp -R --reflink=always` on Linux; why not, when it cannot.
 fn clone(from: &Path, to: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(why) = CLONE_FAILS.get() {
+        return Err(why.into());
+    }
     #[cfg(target_os = "macos")]
     {
         use std::ffi::CString;
@@ -610,8 +648,8 @@ fn civil(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Before, FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, free_name, hold_store, holds_log,
-        named, order, stamp,
+        Before, CLONE_FAILS, FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, clones, free_name,
+        hold_store, holds_log, named, order, stamp,
     };
     use crate::server::{Home, LOG, ServerError};
     use std::fs;
@@ -777,12 +815,12 @@ mod tests {
     fn a_store_is_kept_whole_and_again_only_once_its_log_or_manifest_moved() {
         let (dir, home) = store("kept");
         let at = 1_794_469_500.0;
-        // A clone where the volume clones (macOS's APFS), a copy where it cannot.
+        // A clone where the volume clones (APFS, btrfs, XFS), a copy where it cannot.
         let first = home.keep(at, Before::Replay).unwrap();
         let (Kept::Cloned(path) | Kept::Copied(path)) = &first else {
             panic!("{first:?}");
         };
-        assert_eq!(matches!(first, Kept::Cloned(_)), cfg!(target_os = "macos"));
+        assert_eq!(matches!(first, Kept::Cloned(_)), clones(&dir));
         assert_eq!(path, &dir.join(FOLDER).join("2026-11-12T07-45-00Z"));
         for (file, bytes) in [
             ("wal/00000000000000000017.wal", &b"a log"[..]),
@@ -855,6 +893,131 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Makes every clone on this thread fail, saying `why`, until it drops: a volume that cannot
+    /// clone.
+    struct CannotClone;
+
+    impl CannotClone {
+        fn saying(why: &'static str) -> CannotClone {
+            CLONE_FAILS.set(Some(why));
+            CannotClone
+        }
+    }
+
+    impl Drop for CannotClone {
+        fn drop(&mut self) {
+            CLONE_FAILS.set(None);
+        }
+    }
+
+    /// Where the volume cannot clone, a store is kept before a replay or a reclaim by a plain copy:
+    /// whole, its files' times kept, said as a plain copy in the server's log, and never pruned
+    /// while its log holds writes. Its times kept, the next keep of the store as it is finds the
+    /// copy holds it and copies nothing more. The snapshot before a start that replays nothing is
+    /// only ever a clone: none is taken, and the server's log says why.
+    #[test]
+    fn a_store_that_cannot_be_cloned_is_kept_by_a_plain_copy_whole_and_said_as_one() {
+        let (dir, home) = store("copied");
+        let at = 1_794_469_500.0;
+        let _cannot = CannotClone::saying("this volume cannot clone");
+        assert!(!clones(&dir), "the probe asks the clone a snapshot makes");
+        let first = home.keep(at, Before::Replay).unwrap();
+        let Kept::Copied(path) = &first else {
+            panic!("{first:?}");
+        };
+        assert_eq!(path, &dir.join(FOLDER).join("2026-11-12T07-45-00Z"));
+        for file in [
+            "wal/00000000000000000017.wal",
+            "manifest/00000000000000000000.manifest",
+            "sstables/1.sst",
+        ] {
+            let (copy, original) = (path.join(file), dir.join("data").join(file));
+            assert_eq!(
+                fs::read(&copy).unwrap(),
+                fs::read(&original).unwrap(),
+                "{file}"
+            );
+            assert_eq!(
+                fs::metadata(&copy).unwrap().modified().unwrap(),
+                fs::metadata(&original).unwrap().modified().unwrap(),
+                "{file}: its time"
+            );
+        }
+        assert!(
+            read(&dir.join(LOG)).ends_with(&format!(
+                "· a snapshot of the store before this start, a plain copy, as this volume cannot \
+                 clone: {}{KEPT}\n",
+                path.display()
+            )),
+            "{}",
+            read(&dir.join(LOG))
+        );
+        assert_eq!(
+            home.kept(),
+            (vec![path.clone()], vec![]),
+            "nothing cut short"
+        );
+        assert_eq!(
+            home.keep(at + 60.0, Before::Reclaim).unwrap(),
+            Kept::Already(path.clone()),
+            "the copy kept the times its store's log and manifest are known by"
+        );
+
+        fs::write(dir.join("data/wal/00000000000000000018.wal"), b"more").unwrap();
+        let second = home.keep(at, Before::Reclaim).unwrap();
+        assert_eq!(
+            second,
+            Kept::Copied(dir.join(FOLDER).join("2026-11-12T07-45-00Z.1"))
+        );
+        assert!(read(&dir.join(LOG)).ends_with(&format!(
+            "· a snapshot of the store before this reclaim, a plain copy, as this volume cannot \
+             clone: {}{KEPT}\n",
+            second.path().display()
+        )));
+
+        let home = home.snapshotting(true);
+        fs::write(dir.join("data/wal/00000000000000000019.wal"), b"later").unwrap();
+        home.snapshot_before_start();
+        assert_eq!(
+            home.snapshots().unwrap().len(),
+            2,
+            "no plain copy before a start"
+        );
+        assert!(
+            read(&dir.join(LOG)).ends_with(&format!(
+                "· no snapshot of the store before this start: could not clone {} to {} \
+                 copy-on-write (this volume cannot clone), and a snapshot is a plain copy only \
+                 before a replay of the store's log or a reclaim\n",
+                dir.join("data").display(),
+                dir.join(FOLDER).join(TAKING).display()
+            )),
+            "{}",
+            read(&dir.join(LOG))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The volume a test runs on is asked, not its system: the probe clones as a snapshot does,
+    /// and leaves nothing behind.
+    #[test]
+    fn whether_a_volume_clones_is_asked_of_the_volume_and_leaves_nothing() {
+        let dir = std::env::temp_dir().join(format!("snapshot-clones-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        fs::create_dir(&from).unwrap();
+        fs::write(from.join("file"), b"x").unwrap();
+        assert_eq!(clones(&dir), super::clone(&from, &to).is_ok());
+        let left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with(".clone-probe-"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        assert!(!clones(&dir.join("missing")), "no folder, no clone");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// A store that can be neither cloned nor copied is not replayed: the refusal says so, and
     /// leaves nothing cut short. One a process has open is refused the same way, naming it.
     #[test]
@@ -874,11 +1037,14 @@ mod tests {
             )) && refused.contains(") nor copied ("),
             "{refused}"
         );
+        // The room a plain copy takes: the whole store.
+        let room = crate::size(crate::server::bytes(&data));
         assert!(
-            refused.ends_with(
-                "); it was not replayed and no server was started on it; make room, or clone it \
-                 by hand, and run the board's command again"
-            ),
+            refused.ends_with(&format!(
+                "); it was not replayed and no server was started on it; where the volume cannot \
+                 clone, its plain copy needs free room equal to the whole store ({room}): make \
+                 room, or clone it by hand, and run the board's command again"
+            )),
             "{refused}"
         );
         assert_eq!(home.kept(), (vec![], vec![]), "nothing cut short is left");
@@ -894,10 +1060,11 @@ mod tests {
                 "the board's store at {} could not be kept before its reclaim: it could not be \
                  cloned (",
                 data.display()
-            )) && said.ends_with(
-                "); it was not reclaimed, and nothing was exported or removed; make room, or clone \
-                 it by hand, and run `tasks-reclaim` again"
-            ),
+            )) && said.ends_with(&format!(
+                "); it was not reclaimed, and nothing was exported or removed; where the volume \
+                 cannot clone, its plain copy needs free room equal to the whole store ({room}): \
+                 make room, or clone it by hand, and run `tasks-reclaim` again"
+            )),
             "{said}"
         );
         assert_eq!(home.kept(), (vec![], vec![]));

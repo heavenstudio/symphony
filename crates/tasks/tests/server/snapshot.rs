@@ -380,7 +380,8 @@ fn a_snapshot_that_cannot_be_cloned_takes_none_and_never_keeps_the_server_from_s
     assert!(
         refused.as_ref().is_err_and(|e| e.starts_with(&why)
             && e.ends_with(
-                "), and a snapshot is a plain copy only before a replay of the store's log"
+                "), and a snapshot is a plain copy only before a replay of the store's log or a \
+                 reclaim"
             )),
         "{refused:?}"
     );
