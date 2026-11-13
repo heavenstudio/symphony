@@ -20,6 +20,9 @@ mod private_tests;
 #[path = "after_lifecycle/board_schema_tests.rs"]
 mod board_schema_tests;
 
+#[path = "after_lifecycle/worktree_tests.rs"]
+mod worktree_tests;
+
 use fixture::{Repo, front, get, repository, until, write};
 use std::fs;
 use std::io::{Read, Write};
@@ -179,10 +182,14 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
     let repo = Repo::new("concurrent");
     // Spawn all contenders before waiting on any. Each prints the pid it actually found; requiring
     // that same pid in every result catches duplicate starts without scanning machine processes.
+    // The worktree's are the owner's `--shared` starts, which may start the one server too.
     let mut starts: Vec<_> = (0..8)
         .map(|n| {
-            let dir = if n % 2 == 0 { &repo.main } else { &repo.tree };
-            (n, repo.run(repo.command(dir)))
+            let mut command = repo.command(if n % 2 == 0 { &repo.main } else { &repo.tree });
+            if n % 2 == 1 {
+                command.arg("--shared");
+            }
+            (n, repo.run(command))
         })
         .collect();
     for (_, child) in &mut starts {
@@ -224,7 +231,7 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
 #[test]
 fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
     let repo = Repo::new("record recovery");
-    repo.start(&repo.tree, false);
+    repo.start(&repo.main, false);
     let running = repo.record().unwrap();
     let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
     let stale_pid = dead.id();
@@ -250,7 +257,7 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
         if let Some(contents) = contents {
             fs::write(&address, contents).unwrap();
         }
-        repo.start(&repo.tree, false);
+        repo.start(&repo.main, false);
         assert_eq!(repo.record(), Some(running.clone()));
         assert_eq!(repo.check_server().pid, running.pid);
     }
@@ -357,7 +364,7 @@ fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     until("killed shared server", || {
         (!symphony_server::sys::pid_alive(first.pid)).then_some(())
     });
-    check_progress(repo.start(&repo.tree, false));
+    check_progress(repo.start(&repo.main, false));
     let second = repo.check_server();
     assert_ne!(second.pid, first.pid);
 }
@@ -392,7 +399,8 @@ fn a_start_where_an_older_builds_state_was_not_moved_refuses_and_registers_nothi
 #[test]
 fn shared_starts_report_and_ignore_in_repository_root_and_host_overrides() {
     let repo = Repo::new("ignored-options");
-    for dir in [&repo.tree, &repo.main] {
+    // Main's start starts the one server; the worktree's finds it (`worktree_tests`).
+    for dir in [&repo.main, &repo.tree] {
         let mut command = repo.command(dir);
         command.args([
             "--root",
