@@ -2,8 +2,8 @@
 //! machine serves that builds on the Symphony (its project file names plugins, `projects.json`)
 //! built and tested with its Symphony moved to the candidate. It runs in a scratch copy of the
 //! project's default branch as committed, never in its checkout or on its board: a repository
-//! sharing the checkout's objects, at `NIGHTLY-conciliate/ID` beside the nightly's own checkout,
-//! marked as the nightly's when it is made ([`place::copy_at`]) and refreshed each night with its
+//! sharing the checkout's objects, at `RELEASE-conciliate/ID` beside the release run's own checkout,
+//! marked as the release run's when it is made ([`place::copy_at`]) and refreshed each day with its
 //! build folder kept. Every package of the candidate's workspace is patched in over each git
 //! source the project takes one from (`cargo --config patch…`, so no file of the project changes),
 //! and its packages that depend on one are tested with `cargo test`, with a machine folder of the
@@ -66,7 +66,7 @@ pub(crate) fn consumers(registry: &Registry, ours: &Path) -> (Vec<Consumer>, Vec
     (found, skipped)
 }
 
-/// Make an empty repository at `scratch`, marked as the nightly's copy of `consumer` and sharing
+/// Make an empty repository at `scratch`, marked as the release run's copy of `consumer` and sharing
 /// its checkout's objects, before anything is fetched into it.
 fn make(consumer: &Consumer, scratch: &Path, until: Bound<'_>) -> Result<(), String> {
     fs::create_dir_all(scratch).map_err(|e| crate::text::os_error(&e, scratch))?;
@@ -85,9 +85,9 @@ fn make(consumer: &Consumer, scratch: &Path, until: Bound<'_>) -> Result<(), Str
 }
 
 /// Bring the scratch copy at `scratch` to `consumer`'s default branch as committed, by `until`: a
-/// repository of the nightly's sharing its checkout's objects the first time, fetched and reset
+/// repository of the release run's sharing its checkout's objects the first time, fetched and reset
 /// later, untracked and ignored files gone but its build folder (`.target/`), which is cleared once
-/// it is [`place::BUILD_KEPT_DAYS`] old at `now`. A folder there that is not the nightly's copy of
+/// it is [`place::BUILD_KEPT_DAYS`] old at `now`. A folder there that is not the release run's copy of
 /// it is refused and left as it is. Its commit, and what it noted on the way.
 pub(crate) fn prepare(
     consumer: &Consumer,
@@ -120,7 +120,7 @@ pub(crate) fn prepare(
                 return Ok((at, noted));
             }
             Err(error) => {
-                // The nightly's own copy, which no longer refreshes: made again.
+                // The release run's own copy, which no longer refreshes: made again.
                 fs::remove_dir_all(scratch).map_err(|e| crate::text::os_error(&e, scratch))?;
                 noted.push(format!("made {} again: {error}", scratch.display()));
             }
@@ -452,14 +452,14 @@ mod tests {
             root: source.clone(),
             branch: "main".into(),
         };
-        let scratch = tree.path("wt/nightly-conciliate/source");
+        let scratch = tree.path("wt/release-conciliate/source");
         assert_eq!(prepared(&consumer, &scratch, NOW).unwrap(), first);
         assert_eq!(fs::read_to_string(scratch.join("a.txt")).unwrap(), "one");
         assert!(!scratch.join("uncommitted.txt").exists());
         assert_eq!(
             fs::read_to_string(scratch.join(".git").join(COPY_MARK)).unwrap(),
             format!("{}\n", source.display()),
-            "marked as the nightly's copy of the project"
+            "marked as the release run's copy of the project"
         );
         assert_eq!(
             fs::read_to_string(scratch.join(".git/objects/info/alternates")).unwrap(),
@@ -467,9 +467,9 @@ mod tests {
             "sharing the project's objects"
         );
 
-        tree.write("wt/nightly-conciliate/source/.target/kept", "build");
-        tree.write("wt/nightly-conciliate/source/stray.txt", "left by a build");
-        tree.write("wt/nightly-conciliate/source/a.txt", "changed in the copy");
+        tree.write("wt/release-conciliate/source/.target/kept", "build");
+        tree.write("wt/release-conciliate/source/stray.txt", "left by a build");
+        tree.write("wt/release-conciliate/source/a.txt", "changed in the copy");
         let third = commit_file(&source, "a.txt", "two");
         git_ok(&source, &["checkout", "-q", "-b", "elsewhere"]);
         let checked_out = commit_file(&source, "b.txt", "on another branch");
@@ -513,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_in_a_copys_place_that_the_nightly_did_not_make_is_left_as_it_is() {
+    fn a_folder_in_a_copys_place_that_the_release_run_did_not_make_is_left_as_it_is() {
         let tree = Tree::new();
         let source = repo(&tree, "source");
         commit_file(&source, "a.txt", "one");
@@ -528,8 +528,8 @@ mod tests {
         tree.write("copies/source/precious.txt", "uncommitted");
         let refused = prepared(&consumer, &theirs, NOW).unwrap_err();
         assert!(
-            refused.contains("is not the nightly's copy of")
-                && refused.contains("(no marker of the nightly's)"),
+            refused.contains("is not the release run's copy of")
+                && refused.contains("(no marker of the release run's)"),
             "{refused}"
         );
         assert_eq!(
@@ -550,11 +550,11 @@ mod tests {
         prepared(&elsewhere, &other, NOW).unwrap();
         let refused = prepared(&consumer, &other, NOW).unwrap_err();
         assert!(
-            refused.contains("(no marker of the nightly's)"),
+            refused.contains("(no marker of the release run's)"),
             "{refused}"
         );
 
-        // A link, even to the nightly's own copy, is never followed.
+        // A link, even to the release run's own copy, is never followed.
         let link = tree.path("copies/link");
         std::os::unix::fs::symlink(&other, &link).unwrap();
         let refused = prepared(&elsewhere, &link, NOW).unwrap_err();

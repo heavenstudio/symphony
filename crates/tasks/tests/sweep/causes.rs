@@ -13,7 +13,8 @@
 //!   is evidence like any other; an open task's artifacts keep its worktree.
 //! * Build output never keeps a merged worktree, and goes from one whose work is in review or done
 //!   once nothing ran there for an hour.
-//! * A land's worktree goes once the land is gone; a running land's and the nightly's stay.
+//! * A land's worktree goes once the land is gone; a running land's and the release run's stay,
+//!   its checkout locked by a build older than the rename included.
 
 use crate::common::{GONE, NOW, Seed, session};
 use crate::{Repo, dead_pid, git, started, text, write};
@@ -22,7 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::rows::SessionRow;
-use symphony_board::sweep::holder::NIGHTLY_LOCK;
+use symphony_board::sweep::holder::{LEGACY_LOCK, RELEASE_LOCK};
 use symphony_board::sweep::{self, Request, size};
 
 const AGENT: &str = "a5a6262f496f70d23";
@@ -548,8 +549,9 @@ fn build_output_of_work_in_review_or_awaiting_its_land_goes_after_an_hour() {
 }
 
 #[test]
-fn a_lands_worktree_goes_once_its_land_is_gone_and_the_nightlys_stays() {
-    // Both where the land and the nightly make them, beside the main checkout.
+fn a_lands_worktree_goes_once_its_land_is_gone_and_the_release_runs_stays() {
+    // Each where the land and the release run make them, beside the main checkout, and the run's
+    // checkout as a build older than the rename left it, not moved yet.
     let r = Repo::new();
     let land = r.detached("symphony-wt/land-tools-x");
     let gone = dead_pid();
@@ -560,9 +562,12 @@ fn a_lands_worktree_goes_once_its_land_is_gone_and_the_nightlys_stays() {
         &running,
         &format!("symphony land: tools/y (pid {})", std::process::id()),
     );
-    let nightly = r.detached("symphony-wt/nightly");
-    r.lock(&nightly, NIGHTLY_LOCK);
-    write(&nightly, "artifacts/nightly/report.json", "{}\n");
+    let release = r.detached("symphony-wt/release");
+    r.lock(&release, RELEASE_LOCK);
+    write(&release, "artifacts/release/report.json", "{}\n");
+    let legacy = r.detached("symphony-wt/nightly");
+    r.lock(&legacy, LEGACY_LOCK);
+    write(&legacy, "artifacts/nightly/report.json", "{}\n");
     let said = r.sweep();
     r.assert_removed(&land, &said);
     assert!(
@@ -573,7 +578,8 @@ fn a_lands_worktree_goes_once_its_land_is_gone_and_the_nightlys_stays() {
     );
     for (wt, why) in [
         (&running, "a land runs there"),
-        (&nightly, "the nightly's checkout"),
+        (&release, "the release run's checkout"),
+        (&legacy, "the release run's checkout"),
     ] {
         r.assert_kept(wt, &said);
         assert!(
@@ -581,5 +587,6 @@ fn a_lands_worktree_goes_once_its_land_is_gone_and_the_nightlys_stays() {
             "{said}"
         );
     }
-    assert!(nightly.join("artifacts/nightly/report.json").is_file());
+    assert!(release.join("artifacts/release/report.json").is_file());
+    assert!(legacy.join("artifacts/nightly/report.json").is_file());
 }

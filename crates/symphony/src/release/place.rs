@@ -1,10 +1,13 @@
 //! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
-//! worktree of the repository that the nightly made, locked with [`LOCK_REASON`] and marked in its
+//! worktree of the repository that the release run made, locked with [`LOCK_REASON`] and marked in its
 //! admin folder with its real path ([`MARK`]); its conciliation copies are clones it made, marked in
 //! their `.git` with the project they copy ([`COPY_MARK`]). Each is outside the main checkout and
 //! every other worktree, and holds none. Anything else found in their place, a link included, is
 //! refused and left exactly as it is. A build folder it keeps is cleared once it is older than
-//! [`BUILD_KEPT_DAYS`].
+//! [`BUILD_KEPT_DAYS`]. What a build older than the rename to `just release` made under its names
+//! (`nightly` and `nightly-conciliate` beside the checkout, [`LEGACY_LOCK_REASON`] and its marks) the
+//! first run of a build that knows the new names moves to them ([`legacy`]), once no process works
+//! in it.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -13,16 +16,25 @@ use std::path::{Component, Path, PathBuf};
 use super::git::{commit, git, git_until, short};
 use super::group::{self, Bound};
 
-/// The reason the nightly's checkout is locked with, which keeps the board's sweep off it.
-pub(crate) const LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
+/// The reason the release run's checkout is locked with, which keeps the board's sweep off it.
+pub(crate) const LOCK_REASON: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
 /// The marker in the checkout's admin folder (`.git/worktrees/NAME/`): the checkout's real path.
-const MARK: &str = "symphony-nightly";
+const MARK: &str = "symphony-release";
 /// The marker in a copy's `.git`: the real path of the project it copies.
-pub(crate) const COPY_MARK: &str = "symphony-nightly-copy";
-/// When a build folder the nightly keeps was last cleared, beside the folder's marker.
-pub(crate) const BUILT: &str = "symphony-nightly-built";
-/// The days a build folder the nightly keeps is built on incrementally before it is cleared.
+pub(crate) const COPY_MARK: &str = "symphony-release-copy";
+/// When a build folder the release run keeps was last cleared, beside the folder's marker.
+pub(crate) const BUILT: &str = "symphony-release-built";
+/// The days a build folder the release run keeps is built on incrementally before it is cleared.
 pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
+/// The checkout's name before the rename, beside where it is now, and its copies' folder's
+/// `nightly-conciliate`.
+const LEGACY_NAME: &str = "nightly";
+/// The reason a build older than the rename locked the checkout with.
+pub(crate) const LEGACY_LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
+/// [`MARK`], [`COPY_MARK`] and [`BUILT`] as a build older than the rename named them.
+const LEGACY_MARK: &str = "symphony-nightly";
+const LEGACY_COPY_MARK: &str = "symphony-nightly-copy";
+const LEGACY_BUILT: &str = "symphony-nightly-built";
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
@@ -100,7 +112,7 @@ fn listed(listing: &str) -> Vec<Listed> {
     all
 }
 
-/// Why `path` cannot be a folder of the nightly's: it is one of `others` (the main checkout and
+/// Why `path` cannot be a folder of the release run's: it is one of `others` (the main checkout and
 /// the worktrees not its own), lies inside one, or holds one.
 fn crossed(path: &Path, others: &[PathBuf]) -> Option<String> {
     others.iter().find_map(|other| {
@@ -152,7 +164,7 @@ fn admin(common: &Path, path: &Path) -> Option<PathBuf> {
 pub(crate) struct Place {
     /// Its checkout's real path.
     pub(crate) checkout: PathBuf,
-    /// The checkout's admin folder, when the nightly made it before.
+    /// The checkout's admin folder, when the release run made it before.
     admin: Option<PathBuf>,
     /// The folder of its conciliation copies, beside the checkout: `NAME-conciliate`.
     pub(crate) copies: PathBuf,
@@ -160,7 +172,7 @@ pub(crate) struct Place {
 
 /// The run's place, the checkout at `asked`, in the repository whose checkout is `root`, main
 /// checkout `main` and common dir `common`: refused, and left as it is, when it is not the
-/// nightly's.
+/// release run's.
 pub(crate) fn place(
     root: &Path,
     main: &Path,
@@ -170,12 +182,12 @@ pub(crate) fn place(
     let asked = normal(asked);
     let name = asked
         .file_name()
-        .map_or_else(|| "nightly".into(), |name| name.to_string_lossy());
+        .map_or_else(|| "release".into(), |name| name.to_string_lossy());
     let copies_asked = asked.with_file_name(format!("{name}-conciliate"));
     for path in [&asked, &copies_asked] {
         if is_link(path) {
             return Err(format!(
-                "{} is a link: the nightly's folders are its own, and it is left as it is; \
+                "{} is a link: the release run's folders are its own, and it is left as it is; \
                  move it away",
                 path.display()
             ));
@@ -196,14 +208,14 @@ pub(crate) fn place(
     for path in [&checkout, &copies] {
         if let Some(why) = crossed(path, &others) {
             return Err(format!(
-                "{why}: the nightly works outside the repository's checkouts, and leaves them as \
+                "{why}: the release run works outside the repository's checkouts, and leaves them as \
                  they are"
             ));
         }
     }
     let not_ours = |why: &str| {
         format!(
-            "{} is not the nightly's own checkout ({why}); it is left as it is: move it away or \
+            "{} is not the release run's own checkout ({why}); it is left as it is: move it away or \
              name another --worktree",
             checkout.display()
         )
@@ -220,11 +232,11 @@ pub(crate) fn place(
         });
     };
     if tree.locked.as_deref() != Some(LOCK_REASON) {
-        return Err(not_ours("a worktree the nightly did not lock"));
+        return Err(not_ours("a worktree the release run did not lock"));
     }
     let admin = admin(common, &checkout)
         .filter(|admin| marked(&admin.join(MARK), &checkout))
-        .ok_or_else(|| not_ours("a worktree without the nightly's marker"))?;
+        .ok_or_else(|| not_ours("a worktree without the release run's marker"))?;
     if exists {
         let pointed = fs::read_to_string(checkout.join(".git")).ok();
         let gitdir = pointed
@@ -242,6 +254,186 @@ pub(crate) fn place(
     })
 }
 
+/// What a build older than the rename made at `nightly` beside the run's checkout, which the run
+/// moves to the names this build gives it ([`legacy`], [`Legacy::moved`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Legacy {
+    /// The checkout that build locked and marked, where it is and where it goes.
+    checkout: Option<(PathBuf, PathBuf)>,
+    /// Why that checkout stays where it is: something is where it would go.
+    left: Option<String>,
+    /// Each copy that build marked, where it is and where it goes, with nothing of its name there.
+    copies: Vec<(PathBuf, PathBuf)>,
+    /// The folder of that build's copies, which goes once empty.
+    copies_folder: Option<PathBuf>,
+}
+
+/// What [`Legacy::moved`] moves of what a build older than the rename made at `nightly` beside
+/// `asked`, the run's checkout in the repository whose checkout is `root` and common dir `common`:
+/// a checkout it locked with [`LEGACY_LOCK_REASON`] and marked, with nothing where it would go,
+/// and each copy of the release run's it marked in `nightly-conciliate` likewise. Anything else is
+/// left as it is; nothing is asked for its old name or through a link. Nothing is written.
+pub(crate) fn legacy(root: &Path, common: &Path, asked: &Path) -> Result<Legacy, String> {
+    let asked = normal(asked);
+    let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
+        return Ok(Legacy::default());
+    };
+    if name == LEGACY_NAME {
+        return Ok(Legacy::default());
+    }
+    let old = asked.with_file_name(LEGACY_NAME);
+    let mut legacy = legacy_checkout(root, common, &old, &asked)?;
+    let (from, to) = (
+        old.with_file_name(format!("{LEGACY_NAME}-conciliate")),
+        asked.with_file_name(format!("{name}-conciliate")),
+    );
+    legacy.copies = legacy_copies(&from, &to);
+    legacy.copies_folder = (!is_link(&from) && !is_link(&to)).then_some(from);
+    Ok(legacy)
+}
+
+/// [`legacy`]'s checkout: the one at `old`, which goes to `asked`.
+fn legacy_checkout(root: &Path, common: &Path, old: &Path, asked: &Path) -> Result<Legacy, String> {
+    if is_link(old) || is_link(asked) {
+        return Ok(Legacy::default());
+    }
+    let (from, to) = (real(old), real(asked));
+    let worktrees = listed(&git(root, &["worktree", "list", "--porcelain", "-z"])?);
+    let ours = (worktrees.iter())
+        .find(|tree| tree.path == from)
+        .is_some_and(|tree| tree.locked.as_deref() == Some(LEGACY_LOCK_REASON))
+        && fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
+        && admin(common, &from).is_some_and(|admin| marked(&admin.join(LEGACY_MARK), &from));
+    if !ours {
+        return Ok(Legacy::default());
+    }
+    if fs::symlink_metadata(&to).is_ok() || worktrees.iter().any(|tree| tree.path == to) {
+        return Ok(Legacy {
+            left: Some(format!(
+                "left {}, the checkout a build older than the rename to `just release` made: {} is \
+                 in the way",
+                from.display(),
+                to.display()
+            )),
+            ..Legacy::default()
+        });
+    }
+    Ok(Legacy {
+        checkout: Some((from, to)),
+        ..Legacy::default()
+    })
+}
+
+/// [`legacy`]'s copies: each of the folder `old` that a build older than the rename marked, with
+/// nothing of its name in `new`, and where it goes there.
+fn legacy_copies(old: &Path, new: &Path) -> Vec<(PathBuf, PathBuf)> {
+    if is_link(old) || is_link(new) {
+        return Vec::new();
+    }
+    let Ok(entries) = fs::read_dir(old) else {
+        return Vec::new();
+    };
+    let mut copies: Vec<(PathBuf, PathBuf)> = (entries.filter_map(Result::ok))
+        .map(|entry| (entry.path(), new.join(entry.file_name())))
+        .filter(|(from, to)| {
+            let git = from.join(".git");
+            fs::symlink_metadata(from).is_ok_and(|meta| meta.is_dir())
+                && fs::symlink_metadata(&git).is_ok_and(|meta| meta.is_dir())
+                && fs::symlink_metadata(git.join(LEGACY_COPY_MARK)).is_ok_and(|meta| meta.is_file())
+                && fs::symlink_metadata(to).is_err()
+        })
+        .collect();
+    copies.sort();
+    copies
+}
+
+impl Legacy {
+    /// The folders [`Legacy::moved`] moves, which no process may work in while it does.
+    pub(crate) fn trees(&self) -> Vec<&Path> {
+        (self.checkout.iter().map(|(from, _)| from.as_path()))
+            .chain(self.copies.iter().map(|(from, _)| from.as_path()))
+            .collect()
+    }
+
+    /// Move it in the repository whose checkout is `root` and common dir `common`, within `until`:
+    /// the checkout unlocked, moved by git with its build folder, locked with [`LOCK_REASON`] and
+    /// marked again, its build's stamp renamed; then each copy, with its marks, into the copies'
+    /// folder beside the checkout, and the old copies' folder once empty. What it moved, and a
+    /// checkout it left because something is where it would go.
+    pub(crate) fn moved(
+        self,
+        root: &Path,
+        common: &Path,
+        until: Bound<'_>,
+    ) -> Result<Vec<String>, String> {
+        let mut noted: Vec<String> = self.left.into_iter().collect();
+        if let Some((from, to)) = &self.checkout {
+            noted.push(moved_checkout(root, common, from, to, until)?);
+        }
+        noted.extend(moved_copies(&self.copies));
+        if let Some(folder) = &self.copies_folder {
+            let _ = fs::remove_dir(folder);
+        }
+        Ok(noted)
+    }
+}
+
+/// [`Legacy::moved`]'s checkout: the one at `from` to `to`, both real paths.
+fn moved_checkout(
+    root: &Path,
+    common: &Path,
+    from: &Path,
+    to: &Path,
+    until: Bound<'_>,
+) -> Result<String, String> {
+    let (at, there) = (from.to_string_lossy(), to.to_string_lossy());
+    git_until(root, &["worktree", "unlock", &at], until)?;
+    if let Err(why) = git_until(root, &["worktree", "move", &at, &there], until) {
+        let relocked = ["worktree", "lock", "--reason", LEGACY_LOCK_REASON, &at];
+        let _ = git_until(root, &relocked, until);
+        return Err(format!("cannot move {at} to {there}: {why}"));
+    }
+    let admin = admin(common, to).ok_or_else(|| format!("git kept no admin folder for {there}"))?;
+    let marker = admin.join(MARK);
+    fs::write(&marker, format!("{there}\n")).map_err(|e| crate::text::os_error(&e, &marker))?;
+    let _ = fs::remove_file(admin.join(LEGACY_MARK));
+    if fs::symlink_metadata(admin.join(LEGACY_BUILT)).is_ok() {
+        let _ = fs::rename(admin.join(LEGACY_BUILT), admin.join(BUILT));
+    }
+    git_until(
+        root,
+        &["worktree", "lock", "--reason", LOCK_REASON, &there],
+        until,
+    )?;
+    Ok(format!(
+        "moved the release run's checkout from {at} to {there}, where a build older than the \
+         rename to `just release` made it"
+    ))
+}
+
+/// [`Legacy::moved`]'s copies: each from where it is to where it goes, its marks renamed. One
+/// that cannot be moved, or finds something where it would go by now, stays.
+fn moved_copies(copies: &[(PathBuf, PathBuf)]) -> Vec<String> {
+    let mut moved = Vec::new();
+    for (from, to) in copies {
+        let made = (to.parent()).is_none_or(|folder| fs::create_dir_all(folder).is_ok());
+        if !made || fs::symlink_metadata(to).is_ok() || fs::rename(from, to).is_err() {
+            continue;
+        }
+        let git = to.join(".git");
+        let _ = fs::rename(git.join(LEGACY_COPY_MARK), git.join(COPY_MARK));
+        if fs::symlink_metadata(git.join(LEGACY_BUILT)).is_ok() {
+            let _ = fs::rename(git.join(LEGACY_BUILT), git.join(BUILT));
+        }
+        moved.push(format!(
+            "moved the release run's copy {} to {}",
+            from.display(),
+            to.display()
+        ));
+    }
+    moved
+}
+
 /// Remove the git locks a killed git left in the admin folder `admin`, when no process holds one
 /// open: what it removed. One held open stops the run.
 fn stale_locks(admin: &Path) -> Result<Vec<String>, String> {
@@ -256,7 +448,7 @@ fn stale_locks(admin: &Path) -> Result<Vec<String>, String> {
         if !holders.is_empty() {
             let pids: Vec<String> = holders.iter().map(u32::to_string).collect();
             return Err(format!(
-                "{} is held by process {}: a git runs in the nightly's checkout",
+                "{} is held by process {}: a git runs in the release run's checkout",
                 lock.display(),
                 pids.join(", ")
             ));
@@ -303,7 +495,7 @@ pub(crate) fn prune_build(target: &Path, stamp: &Path, now: f64) -> Option<Strin
 impl Place {
     /// Bring the checkout to the commit `to`, clean, by `until`: made the first time (a detached
     /// worktree, locked and marked), later reset, every untracked and ignored file gone but its
-    /// build folder (`.target/`), which keeps a night's build incremental until it is
+    /// build folder (`.target/`), which keeps a run's build incremental until it is
     /// [`BUILD_KEPT_DAYS`] old at `now`. What it noted on the way.
     pub(crate) fn checkout(
         &mut self,
@@ -333,7 +525,7 @@ impl Place {
                 }
                 let mut add = vec!["worktree", "add", "--quiet", "--detach", "--no-checkout"];
                 if registered.is_some() {
-                    // Its folder is gone but its registration, locked as the nightly's, is not.
+                    // Its folder is gone but its registration, locked as the release run's, is not.
                     add.extend(["-f", "-f"]);
                 }
                 add.extend(["--lock", "--reason", LOCK_REASON, &at, to]);
@@ -390,8 +582,8 @@ pub(crate) fn changed(
     Ok(changed)
 }
 
-/// What is at `copy` for the project at the real path `project`: none, the nightly's own copy of
-/// it, or an empty folder (which it may take), else why it is not the nightly's.
+/// What is at `copy` for the project at the real path `project`: none, the release run's own copy of
+/// it, or an empty folder (which it may take), else why it is not the release run's.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Copy {
     None,
@@ -399,7 +591,7 @@ pub(crate) enum Copy {
     Empty,
 }
 
-/// What is at `copy`, a copy of `project` the nightly may take, or why it may not.
+/// What is at `copy`, a copy of `project` the release run may take, or why it may not.
 pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     let meta = match fs::symlink_metadata(copy) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Copy::None),
@@ -408,7 +600,7 @@ pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     };
     let refuse = |why: &str| {
         format!(
-            "{} is not the nightly's copy of {} ({why}); it is left as it is: move it away",
+            "{} is not the release run's copy of {} ({why}); it is left as it is: move it away",
             copy.display(),
             project.display()
         )
@@ -427,10 +619,10 @@ pub(crate) fn copy_at(copy: &Path, project: &Path) -> Result<Copy, String> {
     if fs::read_dir(copy).is_ok_and(|mut entries| entries.next().is_none()) {
         return Ok(Copy::Empty);
     }
-    Err(refuse("no marker of the nightly's"))
+    Err(refuse("no marker of the release run's"))
 }
 
-/// Remove from the copies' folder `copies` each copy of the nightly's whose project is not among
+/// Remove from the copies' folder `copies` each copy of the release run's whose project is not among
 /// `registered` (ids): what it removed. A folder it did not make stays.
 pub(crate) fn prune_copies(copies: &Path, registered: &[String]) -> Vec<String> {
     let Ok(entries) = fs::read_dir(copies) else {

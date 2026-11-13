@@ -15,7 +15,7 @@ pub const RUN_SCHEMA: u32 = 1;
 
 /// The pipelines Symphony's own recipes and recorder name: a verify, a lint, a test, a client
 /// build, a Cargo build no recipe names, the command a task moving to review starts, a landing, a
-/// nightly. A project may name others ([`run_name`]).
+/// release run. A project may name others ([`run_name`]).
 pub const PIPELINES: [&str; 8] = [
     "verify",
     "lint",
@@ -24,11 +24,11 @@ pub const PIPELINES: [&str; 8] = [
     "build",
     "review-callback",
     "landing",
-    "nightly",
+    "release",
 ];
 
-/// What started a run when no session did: the review callback, a nightly, a landing, the owner.
-pub const TRIGGERS: [&str; 4] = ["on_review", "nightly", "land", "owner"];
+/// What started a run when no session did: the review callback, a release run, a landing, the owner.
+pub const TRIGGERS: [&str; 4] = ["on_review", "release", "land", "owner"];
 
 /// How a run ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

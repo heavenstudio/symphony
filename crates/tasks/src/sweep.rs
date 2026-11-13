@@ -38,7 +38,7 @@
 //!   the agent the lock and the worktree's name give), none of them is live or stale, and every task
 //!   tied to the worktree, at least one, is done or cancelled ([`Index::agent_finished`]). A lock
 //!   the board cannot answer for keeps it: an agent it knows nothing of, a land that runs, the
-//!   nightly's checkout, any other reason, a start that cannot be read;
+//!   release run's checkout, any other reason, a start that cannot be read;
 //! * it holds no owner verdict that no commit has (an owner line the Symphony wrote into a docs/
 //!   file, the one place the owner's answer to a card on this branch lives until the agent commits it);
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
@@ -86,7 +86,7 @@
 //! Of the worktrees that stay, it then removes the build output of work past its executor: a
 //! worktree's build folders ([`build_output::FOLDERS`], and what git ignores in
 //! [`build_output::BUILDS`]) once every task it is tied to is in review, done or cancelled, or it
-//! is a land's that ended or the nightly's, and nothing ran there for an hour, the recorder's
+//! is a land's that ended or the release run's, and nothing ran there for an hour, the recorder's
 //! builds and tests included ([`build_output`]); a worktree tied to no task keeps its build.
 //!
 //! Each removal and clear says what it held on disk ([`size`]), and the summary the bytes freed. A
@@ -710,7 +710,9 @@ impl<'a> Index<'a> {
                 }
             }
             Holder::Land(pid) => Err(format!("a land runs there (pid {pid})")),
-            Holder::Nightly => Err("the nightly's checkout, which it reuses each night".into()),
+            Holder::Release => {
+                Err("the release run's checkout, which it reuses on each run".into())
+            }
             Holder::Foreign(reason) => Err(format!(
                 "locked by something the sweep does not know: {reason:?}"
             )),

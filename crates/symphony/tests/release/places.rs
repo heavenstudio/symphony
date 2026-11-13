@@ -1,4 +1,4 @@
-//! The nightly works in a checkout it made, nowhere else: a link in its place, another worktree
+//! The release run works in a checkout it made, nowhere else: a link in its place, another worktree
 //! named for it, or a folder it did not make is refused and left exactly as it was.
 
 use std::fs;
@@ -9,7 +9,7 @@ use super::{CHECK, Fixture, NOW, git};
 #[test]
 fn an_agents_worktree_behind_a_link_or_named_outright_is_never_reset() {
     let fixture = Fixture::new();
-    // An agent's worktree beside the nightly's place, with work of its own.
+    // An agent's worktree beside the release run's place, with work of its own.
     let agent = fixture.root.join("wt/agent-x");
     git(
         &fixture.main,
@@ -27,33 +27,33 @@ fn an_agents_worktree_behind_a_link_or_named_outright_is_never_reset() {
     let status = git(&agent, &["status", "--porcelain"]);
     let files = Fixture::files(&agent);
 
-    // A link in the checkout's place, to that worktree: the night stops, and says so.
+    // A link in the checkout's place, to that worktree: the run stops, and says so.
     symlink(&agent, fixture.worktree()).unwrap();
-    let (code, out, err) = fixture.nightly_at(NOW, &["--check", CHECK]);
+    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
         err.contains(&format!("{} is a link", fixture.worktree().display())),
         "{err}"
     );
-    assert!(!out.contains("nightly: verify"), "nothing ran: {out}");
-    assert!(fixture.reds().contains_key("tests/nightly-red-run"));
+    assert!(!out.contains("release: verify"), "nothing ran: {out}");
+    assert!(fixture.reds().contains_key("tests/release-red-run"));
     fs::remove_file(fixture.worktree()).unwrap();
 
     // Named by hand: refused, nothing recorded.
     let runs = fixture.runs().len();
-    let (code, out, err) = fixture.nightly_at(
+    let (code, out, err) = fixture.release_at(
         NOW,
         &["--check", CHECK, "--worktree", &agent.to_string_lossy()],
     );
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        err.contains("(a worktree the nightly did not lock)"),
+        err.contains("(a worktree the release run did not lock)"),
         "{err}"
     );
     assert_eq!(fixture.runs().len(), runs, "a refusal records nothing");
 
     // Or the folder holding it.
-    let (code, _, err) = fixture.nightly_at(
+    let (code, _, err) = fixture.release_at(
         NOW,
         &[
             "--check",
@@ -74,7 +74,7 @@ fn an_agents_worktree_behind_a_link_or_named_outright_is_never_reset() {
     );
     assert!(fixture.remote_tags().is_empty());
 
-    // Its own place free, the nightly makes its checkout there, beside the agent's.
+    // Its own place free, the release run makes its checkout there, beside the agent's.
     fixture.night(NOW + 60.0, 0);
     assert_eq!(Fixture::files(&agent), files);
 }

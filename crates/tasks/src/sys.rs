@@ -14,7 +14,7 @@
 //! kept hc's and ran `hc run` would start a terminal under that one, which ends with it (`hc
 //! --skill`), and an hc call would answer for that core and scope alone. Clippy refuses a child
 //! made anywhere else in the crate, however its path is spelled, imported or gated (the crate's
-//! clippy.toml, `disallowed-methods`; tried by the nightly's `tests/child_guard`).
+//! clippy.toml, `disallowed-methods`; tried by the release run's `tests/child_guard`).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, c_char, c_int, c_long};

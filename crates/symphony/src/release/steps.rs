@@ -1,9 +1,9 @@
-//! The steps a check lists: a check of the night is given a folder of its own among the run's logs
+//! The steps a check lists: a check of the run is given a folder of its own among the run's logs
 //! ([`VAR`] names it), and one that lists the steps it ran there ([`FILE`]), as `verify` does its
 //! lint, client check, size budgets, docs audit and tests (tools/verify.sh), is told by its steps.
 //! Each listed step is a check of its own in the run's record, under the check (`verify/tests`),
 //! with its own status and log, and so on the board ([`super::board`]): a red step is a task of its
-//! own, keyed by the check and the step (`tests/nightly-red-verify-tests`), closed when that step is
+//! own, keyed by the check and the step (`tests/release-red-verify-tests`), closed when that step is
 //! green. The check's own task is filed only for a red no step it listed holds: it was stopped,
 //! never ran, ended by a signal, or ended red with every step it listed green.
 //!
@@ -51,7 +51,7 @@ pub(crate) fn run(
         Err(e) => {
             let _ = writeln!(
                 out,
-                "nightly: `{}` is told as one check: {}",
+                "release: `{}` is told as one check: {}",
                 step.name,
                 crate::text::os_error(&e, &folder)
             );
@@ -63,7 +63,7 @@ pub(crate) fn run(
         Err(why) => {
             let _ = writeln!(
                 out,
-                "nightly: `{}` is told as one check: its steps do not read: {why}",
+                "release: `{}` is told as one check: its steps do not read: {why}",
                 ran.name
             );
         }
@@ -168,7 +168,7 @@ pub(crate) fn beyond(ran: &Ran) -> bool {
     !(ended && ran.steps.iter().any(|step| !step.green()))
 }
 
-/// The reds of the check `ran` as the night tells them: the check itself when its red is
+/// The reds of the check `ran` as the run tells them: the check itself when its red is
 /// [`beyond`] its steps, then each red step it listed.
 pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
     let mut reds: Vec<&Ran> = Vec::new();
@@ -182,7 +182,7 @@ pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nightly::group::Bound;
+    use crate::release::group::Bound;
     use crate::test_tree::Tree;
     use std::time::{Duration, Instant};
 
@@ -431,7 +431,7 @@ mod tests {
         );
         let said = String::from_utf8(out).unwrap();
         assert!(
-            said.starts_with("nightly: `verify` is told as one check: its steps do not read: "),
+            said.starts_with("release: `verify` is told as one check: its steps do not read: "),
             "{said}"
         );
         assert!(ran.steps.is_empty());
@@ -453,7 +453,7 @@ mod tests {
         assert!(
             String::from_utf8(out)
                 .unwrap()
-                .starts_with("nightly: `verify` is told as one check: "),
+                .starts_with("release: `verify` is told as one check: "),
         );
         assert!(fs::read_to_string(&ran.log).unwrap().contains("\nnone\n"));
     }

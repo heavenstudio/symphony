@@ -368,8 +368,8 @@ fn forked_documents(
 }
 
 /// Whether the checkout at `root` is main itself: on the project's default branch, or detached at
-/// its tip, as the nightly's clean checkout is. Main has no fork of its own, so what its cards show
-/// is warned of, never refused ([`card_pictures`]).
+/// its tip, as the release run's clean checkout is. Main has no fork of its own, so what its cards
+/// show is warned of, never refused ([`card_pictures`]).
 fn main_itself(root: &Path) -> bool {
     if crate::commit::on_main(root) {
         return true;
