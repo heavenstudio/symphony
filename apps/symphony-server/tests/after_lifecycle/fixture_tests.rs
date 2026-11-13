@@ -206,7 +206,7 @@ fn a_starter_timeout_keeps_the_requested_pending_stage() {
             .contains("begin startup lock")
             .then_some(())
     });
-    starter.wait_elapsed = Box::new(|_| PATIENCE);
+    starter.wait_elapsed = Box::new(|_| BACKSTOP);
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| starter.wait()));
     let launch = starter.launch.clone();
     drop(starter);

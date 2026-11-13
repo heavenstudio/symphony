@@ -109,6 +109,14 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         None,
         Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
     );
+    // Each wait on an event here; only a stall reaches this backstop.
+    const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+    let stalled = |what: &str| {
+        format!(
+            "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+            test_time::Load::now()
+        )
+    };
     std::thread::scope(|scope| {
         let (entered, stopping) = std::sync::mpsc::channel();
         let (release, finish) = std::sync::mpsc::channel();
@@ -116,7 +124,8 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         let (returned, stopped) = std::sync::mpsc::channel();
         let working = shared.clone();
         let worker = std::thread::spawn(move || {
-            working.wait(Duration::from_secs(60));
+            // A timer far past the backstop: only the stop wakes it in time.
+            working.wait(Duration::from_secs(86_400));
             entered.send(working.stopping()).unwrap();
             // Closing release also lets an early assertion unwind without stranding a worker.
             let _ = finish.recv();
@@ -130,13 +139,22 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
             drop(background);
             returned.send(()).unwrap();
         });
-        assert!(stopping.recv_timeout(Duration::from_secs(30)).unwrap());
+        assert!(
+            stopping
+                .recv_timeout(BACKSTOP)
+                .unwrap_or_else(|_| panic!("{}", stalled("the stop to wake the worker")))
+        );
+        // A negative assertion, never the synchronization: a load can only make it wait longer.
         let early = stopped.recv_timeout(Duration::from_millis(100));
         release.send(()).unwrap();
         if early.is_err() {
-            stopped.recv_timeout(Duration::from_secs(30)).unwrap();
+            stopped
+                .recv_timeout(BACKSTOP)
+                .unwrap_or_else(|_| panic!("{}", stalled("the server scope to return")));
         }
-        completed.recv_timeout(Duration::from_secs(30)).unwrap();
+        completed
+            .recv_timeout(BACKSTOP)
+            .unwrap_or_else(|_| panic!("{}", stalled("the worker to finish")));
         assert!(
             matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
             "the server scope returned before its worker finished: {early:?}"

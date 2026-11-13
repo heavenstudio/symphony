@@ -32,6 +32,22 @@ enum Board {
     Absent,
 }
 
+/// The wall-clock backstop of a wait here on its event: only a stall reaches it (RULES.md
+/// `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// `work` to its end, or a failure that says `what` stalled and the load average then.
+async fn within<T>(what: &str, work: impl Future<Output = T>) -> T {
+    tokio::time::timeout(BACKSTOP, work)
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+                test_time::Load::now()
+            )
+        })
+}
+
 /// A board read's failure on a server that took the request and gave no answer within the wait.
 pub(super) const SLOW: &str = "SurrealDB: the server at 127.0.0.1:1 is slow: no answer within 3s: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); the request only reads, so it went once more, on a new connection: read failed on a freshly opened socket after 0 completed requests: Resource temporarily unavailable (os error 35); it was not sent a third time";
 
@@ -47,10 +63,12 @@ impl Held {
     async fn entered(board: Board) -> Self {
         let mut held = Self::published(board).await;
         held.hub.start_initial_board();
-        tokio::time::timeout(Duration::from_secs(30), held.entering.take().unwrap())
-            .await
-            .expect("initial board I/O did not start")
-            .unwrap();
+        within(
+            "the initial board I/O to start",
+            held.entering.take().unwrap(),
+        )
+        .await
+        .unwrap();
         held
     }
 
@@ -98,9 +116,10 @@ impl Held {
                 },
             )
         });
-        let hub = tokio::time::timeout(Duration::from_secs(30), starting)
+        // A publication that waited on the held board I/O never ends: the read is released only
+        // once this returns.
+        let hub = within("the hub's publication beside the held board I/O", starting)
             .await
-            .expect("hub publication waited on the held board I/O")
             .unwrap()
             .unwrap();
         Self {
@@ -157,10 +176,7 @@ async fn a_published_hub_stops_and_joins_without_opening_its_unactivated_board()
     held.release();
     let stopping = held.hub.clone();
     let stopped = tokio::task::spawn_blocking(move || stopping.stop());
-    tokio::time::timeout(Duration::from_secs(30), stopped)
-        .await
-        .unwrap()
-        .unwrap();
+    within("the stop", stopped).await.unwrap();
     assert_eq!(
         held.entering.as_mut().unwrap().try_recv(),
         Err(TryRecvError::Closed)
@@ -188,7 +204,7 @@ async fn tasks_read_across_the_held_board(held: &mut Held) -> (StatusCode, Vec<u
     assert!(status.ready, "the document hub is published: {status:?}");
 
     let mut read = Box::pin(app.oneshot(request("/api/tasks")));
-    tokio::time::timeout(Duration::from_secs(30), async {
+    within("the request to reach the initial-board barrier", async {
         loop {
             if let Poll::Ready(response) = poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await {
                 panic!(
@@ -202,12 +218,10 @@ async fn tasks_read_across_the_held_board(held: &mut Held) -> (StatusCode, Vec<u
             tokio::task::yield_now().await;
         }
     })
-    .await
-    .expect("request did not reach the initial-board barrier");
+    .await;
     held.release();
-    let response = tokio::time::timeout(Duration::from_secs(30), read)
+    let response = within("the read's answer once the first board read ended", read)
         .await
-        .expect("the read never answered once the first board read ended")
         .unwrap();
     let status = response.status();
     let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
@@ -256,9 +270,7 @@ async fn stopping_releases_initial_board_waiters_and_joins_the_owned_read() {
     );
     let stopping = held.hub.clone();
     let mut stopped = tokio::task::spawn_blocking(move || stopping.stop());
-    let result = tokio::time::timeout(Duration::from_secs(30), waiting)
-        .await
-        .unwrap();
+    let result = within("the stop to release the initial board's waiter", waiting).await;
     assert_eq!(result, Err("the Symphony server is stopping".into()));
     assert_eq!(
         poll_fn(|cx| Poll::Ready(std::pin::Pin::new(&mut stopped).poll(cx).map(|r| r.is_ok())))
@@ -267,9 +279,8 @@ async fn stopping_releases_initial_board_waiters_and_joins_the_owned_read() {
         "the held read was not joined"
     );
     held.release();
-    tokio::time::timeout(Duration::from_secs(30), stopped)
+    within("the stop to join the released read", stopped)
         .await
-        .unwrap()
         .unwrap();
     assert_eq!(held.worker_finished(), None);
 }
@@ -291,7 +302,7 @@ async fn a_hub_knows_whether_its_project_has_a_board_once_its_first_read_is_done
         // The read ends on the hub's own thread, which needs nothing of this test's runtime.
         let known = test_time::until(
             format!("{board:?}: the first board read done"),
-            test_time::backstop(Duration::from_secs(30)),
+            BACKSTOP,
             || held.hub.has_board(),
         )
         .unwrap();

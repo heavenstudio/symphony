@@ -28,9 +28,11 @@ fn native_access_uses_command_stdout_and_refuses_unconfirmed_peers() {
             "refused" => false,
             other => panic!("unknown access fixture: {other}"),
         };
-        // The native caller must unwrap mapped IPv4 before passing the address to whois.
+        // The native caller must unwrap mapped IPv4 before passing the address to whois. The
+        // stand-in answers within a backstop only a stall reaches, not the server's 3 s.
         let address = format!("::ffff:{ADDRESS}").parse().unwrap();
-        assert_eq!(Gate::tailscale().allows(address), expected);
+        let gate = Gate::tailscale_within(test_time::backstop(std::time::Duration::from_secs(3)));
+        assert_eq!(gate.allows(address), expected);
         return;
     }
 

@@ -98,18 +98,19 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
     // own serves its one checkout at `/`.
     assert_eq!(actual.projects, Vec::<String>::new());
     for page in ["/api/tasks", "/api/agents"] {
-        let deadline = Instant::now() + fixture::PATIENCE;
-        let (status, body) = loop {
-            let answer = get(actual.port, page);
-            match answer {
-                Some((status, body)) if body.contains(&behind) => break (status, body),
-                answer => assert!(
-                    Instant::now() < deadline,
-                    "{page} never said why it reads no board: {answer:?}"
-                ),
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        };
+        let mut last = None;
+        let said = test_time::until(
+            format!("{page} to say why it reads no board"),
+            fixture::BACKSTOP,
+            || {
+                let answer = get(actual.port, page);
+                let said = answer.clone().filter(|(_, body)| body.contains(&behind));
+                last = answer;
+                said
+            },
+        );
+        let (status, body) =
+            said.unwrap_or_else(|stall| panic!("{stall}; its last answer: {last:?}"));
         assert_eq!(status, 503, "{page}: {body}");
         assert_eq!(board.version(), Some(before), "{page}");
     }
