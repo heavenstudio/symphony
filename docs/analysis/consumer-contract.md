@@ -2,15 +2,10 @@
 
 Whether Symphony's packages can be released and versioned one by one, so that a consuming project
 takes each when it is ready, and what that asks of Cargo, of the one machine every project shares
-and of the release. This is an investigation: nothing here is built, and the choice is the owner's,
-on its card in [DECISIONS](../DECISIONS.md).
-
-The owner, 2026-11-13, commenting on the conciliation card in that register: "There should be
-proper isolation against a contract, so that each package/crate of symphony can be released and
-versioned on its own. Consumers could list an outdated package u til they are ready to update,
-allowing a phased update approach. Thoughts?"
-
-> [!comment] there should be no mention of exact words in docs. That is what decision register and tasks are for. A document should only describe intent/behavior/options etc. Not historical ledger
+and of the release. This is an investigation: nothing here is built. The direction is B, the
+process boundary and a few packages with version numbers of their own
+([its card](../DECISIONS.md#consumer-contract-versioning)); each further choice B leaves open is a
+decision of its own, on a card of its own.
 
 - **Today there is one version of everything.** The consuming project names ten Symphony packages
   from one Git pin, and its lock binds them all to one commit. The machine's one server is built
@@ -31,7 +26,7 @@ allowing a phased update approach. Thoughts?"
   an older server or board than the machine's without new work that costs more than it gives
   ([below](#what-one-machine-shares)).
 - **Three options:** A, the process boundary only; B, A plus a small set of packages with their
-  own version numbers; C, every package versioned on its own. Recommended: **B**
+  own version numbers; C, every package versioned on its own. The direction: **B**
   ([below](#the-options)).
 
 How facts are marked: a fact about the code names the file and the item it was read in; a
@@ -71,7 +66,8 @@ that day: Symphony's main at `22bdb4c4`, the consuming project's checkout read i
 
 Counted in the consuming project's `apps/`, `crates/` and `tools/`, tests included, by the Rust
 files that name each crate (`grep -rlw` of its Rust name, the library's by a word-bounded
-`symphony::`, less two files of its gate where that names a module of its own; read 2026-11-13). "Guard" is the test here that compiles what a consumer calls
+`symphony::`, less two files of its gate, which links no library: one declares a module of its own
+named `symphony`, the other names the library's `symphony::commit` in a doc comment alone; read 2026-11-13). "Guard" is the test here that compiles what a consumer calls
 (`tests/consumer_api.rs` in five packages: [RELEASES](../RELEASES.md#the-release-run), step 4).
 
 | Package | Its packages that link it | Files | What it uses | Stated as a contract? | Guard |
@@ -99,7 +95,7 @@ names (`crates/symphony/tests/consumer_api.rs`, the file's doc).
 | The plugin process protocol ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)) | nothing yet: its plugin is linked (its `symphony.toml` has no `[plugins.process]`), and it declares seams a process does not answer (`unanswered` in `crates/symphony/src/plugins/process.rs`: renderers, routes, navigation, home regions, board actions, watches, doc checks, commands, a theme), with card kinds that would cost about eight round trips per card | yes | yes: 0.1, every call naming its minor; another major is refused by name (`Version::agreed`) |
 | The board's schema | its own `tasks` build and its review tool write its live board at the pin's schema | yes (`schema.rs`, its doc) | yes, 17: a writer opens a board only at its own version, a reader at its own or one ahead, read-only (`decide`); it went from 9 on 2026-11-02 to 17 on 2026-11-12 |
 | `tasks api` (JSON in, JSON out) | its notices are told through it (`tools/gate/src/cargo/notice/delivery.rs`), and its board launcher reads the schema's and the api's `VERSION` from Symphony's committed source (`tools/tasks.sh`, `contract`) | yes (`api.rs`, its doc) | yes, 14, raised each time a method takes or does something an earlier build did otherwise |
-| `symphony.toml` | the machine's one server reads it for every project | in `crates/symphony/src/project.rs` | no. The server reads it through `Project::of`, which leaves out a table or key the build does not know, says so on stderr and reads the rest, "so a file a newer Symphony wrote keeps its settings"; only `Project::load` refuses the file, as registration (`project add`, a server started from that checkout), `status --lint` and `init` read it (`project/file.rs`, `refusal`). An unknown key inside an `[[entrypoints]]` entry or a landing generator's fails the file wherever it is read (`deny_unknown_fields`), and the server then serves that project on the defaults |
+| `symphony.toml` | the machine's one server reads it for every project | in `crates/symphony/src/project.rs` | no. The server reads it through `Project::of`, which leaves out a table or key the build does not know, says so on stderr and reads the rest, "so a file a newer Symphony wrote keeps its settings"; only `Project::load` refuses the file, as registration (`project add`, a server started from that checkout), `status --lint` and `init` read it (`project/file.rs`, `refusal`). Three tables are strict wherever the file is read (`deny_unknown_fields`): an unknown key in an `[[entrypoints]]` entry (`project/file.rs`, `FileEntrypoint`), in a landing generator (`[land]` or `[verdicts] generators`, the board's `land::Generator`) or in a `[board] machine_wip` entry (`project/board.rs`, `WipGuidance`) fails the file, and the server then serves that project on the defaults. The board's own reading of `[land]`, which `tasks land`, `tasks done --covered-by` and the regenerator make, refuses a key it does not know anywhere in that table (`crates/tasks/src/land.rs`, `Settings::of`) |
 | Recipes, skills and hooks (`symphony init`) | it keeps recipes and skills of its own; its Claude settings run its own build's `symphony hook tasks-beat` | the names, in AGENTS.md | no |
 | The client | embedded in the server its host builds, from the pin's committed distribution (`apps/symphony-server/build.rs`) | yes | rides with the server |
 | Symphony's source tree | its tests find Symphony's checkout through `cargo metadata --locked --offline` and copy its justfile, scripts and manifests into fixtures (`tools/gate/tests/gate/symphony_source.rs`, which also asserts the pin is a `branch = "main"` source); one test counts words in Symphony's own text (`tools/symphony/tests/vocabulary.rs`) | no | no |
@@ -272,8 +268,11 @@ blocks, the doc checks) and each leaf helper (`process-cwd`, `symphony-schema`, 
 - **The settings file** of every project is read by that one server, which leaves out a table or
   key it does not know and reads the rest (`Project::of`), so a file written for another release
   is served with what this one knows. Registration, a start from that checkout and the lint refuse
-  such a key (`Project::load`); a misspelt key in an `[[entrypoints]]` entry fails the file, and
-  the server serves that project on the defaults.
+  such a key (`Project::load`). Three tables are strict wherever the file is read: a misspelt key
+  in an `[[entrypoints]]` entry, a landing generator or a `[board] machine_wip` entry fails the
+  file, and the server serves that project on the defaults. The board's own reading of `[land]`
+  (`tasks land`, a covered close and the regenerator) refuses a key it does not know anywhere in
+  that table, so a release's `tasks` refuses an older project's `[land]` that holds a key it retired.
 - **The client** is the server's own, embedded.
 
 ### One release behind
@@ -286,7 +285,7 @@ What a consuming project one release behind the machine would need from each, an
 | The plugin protocol | the host answering a plugin built at an older minor, and at the previous major for a window | built for minors: the host speaks every minor of its major (`Version::agreed`); a kept major is one more set of request and answer types beside the current, as Zed keeps one set of bindings per API version ([the plugin delivery analysis](plugin-delivery.md#webassembly-components)) |
 | The board's schema | a server at schema N reading and writing a board a project's own programs keep at N-1 | high: every write the server makes in two shapes, or that project's pages read-only. None at all when no program of the project's writes its board but the machine's own `tasks` |
 | `tasks api` | the methods of N-1 answered as they were | low: within a major, add and never remove or change |
-| `symphony.toml` | a file written for N-1 still loading at N | low: the server already leaves a retired key out and reads the rest, the default taking its place; what is left is the lint and registration warning of it for a window rather than refusing it |
+| `symphony.toml` | a file written for N-1 still loading at N | low: the server already leaves a retired key out and reads the rest, the default taking its place; what is left is the lint and registration warning of it for a window rather than refusing it, and the same in the three strict tables and in the board's reading of `[land]`, which refuse it today |
 | Recipes, skills, hooks | the names N-1's settings call still answering | low: keep each name for the window |
 | The client | nothing | it rides with the server |
 
@@ -314,14 +313,16 @@ repository promises, checked by tests it owns:
   drawn. A plugin of each protocol major still kept is started and declared.
 - **The board's interface:** `tasks api` calls of each kept version answered as before, and a
   board at the previous schema moved by the candidate's migrate on a scratch board.
-- **Settings:** each registered project's `symphony.toml` loaded by the candidate as its lint
-  loads it, so a key the candidate no longer knows is named before the release rather than left
-  out by the server after it.
+- **Settings:** each registered project's `symphony.toml` loaded by the candidate as the server,
+  the lint and the board's `[land]` reading load it, so a key the candidate no longer knows is
+  named before the release rather than left out by the server after it, and a file the candidate
+  would serve on the defaults or whose `[land]` it would refuse is red.
 
 What it gives up: the project's own tests no longer run in Symphony's release. A break the
 contract does not cover, such as a changed board rule a project's fixture relies on, is found when
-that project moves its own pins, by its own gate. Until these checks replace the conciliation,
-what makes the conciliation red is the conciliation card's question in DECISIONS.
+that project moves its own pins, by its own gate. The project's suite can leave the release before
+any of these checks is new: the consumer-API guards, the protocol's tests and `tasks api`'s already
+run in the full verification, and hold the Rust names until the kit's semver check does.
 
 ### The refresh becomes the machine's install
 
@@ -344,7 +345,8 @@ Under B, in the words RELEASES would then use:
 - **The conciliation** is the contract checks above; no project's suite runs in the release.
 - **The refresh** installs the release on the machine; a project's pins are its own to move.
 - **A project still on a protocol major the release no longer serves** is named before the
-  release; whether that holds the release is an open question below.
+  release. The protocol is on its first major, so what a release does with such a project is
+  asked when a second is planned.
 
 ## The options
 
@@ -367,12 +369,13 @@ delivery design's fifth slice installs it.
 
 - **A consumer stays behind on** its plugin binary, built with whichever `symphony-plugin` it last
   took, for as long as the machine's server speaks that protocol major; and on its scripts and
-  tools that call `tasks api` or the commands, within their versions. How long a major lasts is a
-  number Symphony sets (open question 1).
+  tools that call `tasks api` or the commands, within their versions. How long a major lasts is asked
+  when a second one is planned.
 - **Symphony keeps compatible** every minor of the protocol's major, the previous major for that
   window, the `tasks api` methods, the command names and outputs a project parses, and the
-  settings keys: a retired one the server already leaves out, and the lint and registration would
-  warn of for the window rather than refuse.
+  settings keys: a retired one the server already leaves out, and the lint, registration, the
+  three strict tables and the board's `[land]` reading would warn of for the window rather than
+  refuse.
 - **The work here, in order:**
   1. Every seam answered from a process: renderers, routes, navigation, home regions, board
      actions and fields, gates, watches, doc checks, prose rules, generators, commands, transports
@@ -438,18 +441,19 @@ of a consumer each asking for a different minor.
   Two other users of the library need an answer of their own:
   - **Its art tool** (9 files) installs its plugin into the library and runs the library's status,
     triage and page rendering (`tools/art/src/cards.rs`, `review_triage.rs`,
-    `tests/golden_card.rs`). Proposed: those go through the machine's commands, so the tool
-    checks what the machine shows; its register parsing and text helpers are copied.
+    `tests/golden_card.rs`). Its routes: the machine's commands, so the tool checks what the
+    machine shows, or copies of its own. Its register parsing and text helpers are small enough
+    to copy whichever route the rest takes.
   - **Its review tool's landing** (three files of `tools/gate-review/src/land/` and a test) takes
     the landing's checks (`landing::regenerates`, `is_doc`, `owner_lines_left`), `Project::of`
-    and the lock the server's document writes take (`commit::write_lock`). Proposed: it keeps the
-    library at the kit's own tag, which promises nothing of the library, so a kit move that breaks
-    it is the project's own red, found by its own gate; copying them is the other way. Either way
-    that lock is a file two programs must agree on, so its place and rule join the contract.
+    and the lock the server's document writes take (`commit::write_lock`). Its routes: commands
+    of the machine's, or copies of its own. Whichever it takes, that lock is a file two programs
+    must agree on, so its place and rule join the contract.
 
-  The library at any tag but the kit's is a second source, which brings a second copy of the kit:
-  a plugin built on the kit no longer fits that library's plugin list (inferred from the resolver
-  page, as above; not compiled).
+  Neither keeps the library, which B does not let a project link. At any tag but the kit's it
+  would also be a second source, which brings a second copy of the kit: a plugin built on the kit
+  no longer fits that library's plugin list (inferred from the resolver page, as above; not
+  compiled).
 - **What it cannot give:** a project keeping an older server or board than the machine's; a
   semver check that sees every break, or any change of behaviour, such as a board rule its fixtures
   rely on (8 of the 31 reds of 2026-11-13); and the library's internals as a promise, which stay
@@ -484,8 +488,8 @@ it links today, each at the version it names.
 
 A project keeping an older server, older board commands or an older board schema than the
 machine's. Under each option those are one per machine and move together for every project at
-the machine's update, as the owner chose for the board (2026-11-12: "C makes sense to improve upon
-A. while we don't have a dedicated build service."). What a contract can phase is a project's own
+the machine's update, as each board's schema does
+([its card](../DECISIONS.md#board-schema-at-update)). What a contract can phase is a project's own
 code: its plugin, its tools and the helpers it links.
 
 ## Why B
@@ -495,10 +499,10 @@ code: its plugin, its tools and the helpers it links.
 - **It promises little, where little changes.** The sources of the kit's parts and the helpers
   were touched by 0 to 13 commits last week; those of the library and the board, which it leaves
   free, by 198 and 270 (commits, not counted changes to public names).
-- **It builds on what was chosen.** The owner, 2026-11-12, on plugin delivery: "Let's go with B
-  first, measure results against the current approach for a post change comparison." B finishes
-  that path (every seam from a process, the release installed on the machine) and adds the version
-  lines the comment asks for. That design's target split already has the plugin SDK as a crate
+- **It builds on what was chosen.** Plugin delivery goes the process way first, measured against
+  today's ([its card](../DECISIONS.md#plugin-delivery-choice)). B finishes that path (every seam
+  from a process, the release installed on the machine) and adds the version lines a phased update
+  needs. That design's target split already has the plugin SDK as a crate
   rebuilt when "a seam changes, by semver"
   ([the plugin delivery analysis](plugin-delivery.md#the-target-split)); B gives it the version
   line and the check.
@@ -507,29 +511,45 @@ code: its plugin, its tools and the helpers it links.
 - **C** promises compatibility on the packages that change most, needs a registry, and still cannot
   phase the server or the board's schema.
 
-The release gets what the owner asked of it on 2026-11-11, "a full verification cycle and
-conciliation", with the conciliation become checks of what Symphony promises, so a project's own
-reds stay on its own board and no longer hold Symphony's release.
+The release keeps its full verification and its conciliation
+([its card](../DECISIONS.md#symphony-update-command)), with the conciliation become checks of what
+Symphony promises, so a project's own reds stay on its own board and no longer hold Symphony's
+release.
 
 ## What stands of the tasks in flight
 
 - **The per-project update command** (the board task that moves a project's pin to the newest
-  release tag) moves every package at once. Under A or B it shrinks to moving the kit's tag, and
-  the machine's update takes the rest; under C it moves packages one by one.
-- **The plugin process follow-ups** on the board are B's step 4 either way.
-- **The conciliation card** decides what holds a release until the contract checks are built.
+  release tag) moves every package at once. Under B it shrinks to moving the kit's and the
+  helpers' tags, and the machine's update takes the rest.
+- **Every seam from a process** (A's steps 1 and 2) is B's step 4: the seams a registered plugin
+  declares, card kinds asked in one request a read first.
+- **The settings and plugin checks** above wait for a first break of either: the server already
+  reads a settings file leniently, and no project's plugin is a process yet.
+- **The conciliation** is the first part of the release B's build replaces: the project's suite
+  leaves the run before any new contract check exists, the consumer-API guards and the tests of
+  the protocol and of `tasks api` judging it meanwhile.
 
-## Open questions
+## Open choices
 
-1. How many releases does a protocol major outlive its successor, and does a release wait for a
-   project still on a major it would drop? Zed keeps every API version it has shipped
-   ([the plugin delivery analysis](plugin-delivery.md#webassembly-components)).
-2. Is the kit 0.x (each minor may break, as Cargo reads 0.y) or 1.0 from its first tag, with
-   breaks as new majors?
-3. Do the leaf helpers stay in this repository on their own tag lines, or leave it as crates of
-   their own?
-4. Which board rules does `tasks api` promise, so a change of one is a new api major rather than a
-   consumer's red?
+One choice is the owner's, a card of its own in [DECISIONS](../DECISIONS.md): how the art tool and
+the review tool's landing get what they use of the library today, through the machine's commands
+or through copies of their own. Whichever, the write lock the landing shares with the server joins
+the contract.
+
+B decides the rest:
+
+- **Where versions live:** a line of tags in this repository for the kit and one for each helper,
+  cut by the release run; Git is enough (the options' table, Distribution).
+- **The board's rules:** the board commands stay one per machine and move at its update, so a
+  changed rule reaches every project at once, the release's notes saying so. `tasks api` promises
+  what its calls take and answer, not the rules behind them.
+- **An old protocol major:** the protocol is on its first, and no settings key or command is
+  retired, so how long an old major is kept is asked when a second is planned.
+
+The kit's first number is no choice of its own: Cargo reads a change of 0.y as it reads a new
+major, and a Git dependency names a tag, never a range, so 0.x and 1.0 promise a project the same.
+The kit and each helper take 1.0.0 at their first tag, the number whose majors and minors B's
+promise is written in.
 
 ## Verified and inferred
 

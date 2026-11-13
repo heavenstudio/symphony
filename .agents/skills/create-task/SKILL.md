@@ -2,7 +2,7 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: 0cc456f54a67e230 files=SKILL.md -->
+<!-- symphony-stamp: a85e7e26143fbf1f files=SKILL.md -->
 
 # File a task on the board
 
@@ -42,6 +42,16 @@ Read the destination project's task conventions and permissions first. Use the
 board CLI help for supported arguments; this page describes how to prepare a brief. Load `/tasks` first if you
 are not yet attached to the board; a subagent has no monitor, so it gets its
 handle from `just tasks register` instead.
+
+## 0. Does this need a task at all
+
+Keep it simple. A problem met once (a one-time migration, a cleanup, a repair of
+one machine's state) is solved by doing it: run the commands or a throwaway
+script, say what was run and what came of it, and stop. File no task whose
+output is a committed tool, tests and a review round for something that runs
+once, and none that hardens a script after it has done its job. File a task for
+what will be built on, run again or must be reviewed, and write the smallest
+form of it that solves the problem.
 
 ## 1. Look before filing
 

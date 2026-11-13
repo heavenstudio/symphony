@@ -488,7 +488,7 @@ fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
                 use std::process::{Command, Stdio};\n    \
                 assert_eq!(fixture_core::answer(), 42);\n    \
                 std::fs::write(\"left.txt\", \"left\\n\").unwrap();\n    \
-                let child = Command::new(\"sleep\").arg(\"120\").process_group(0)\n        \
+                let child = Command::new(\"sleep\").arg(\"1000\").process_group(0)\n        \
                 .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())\n        \
                 .spawn().unwrap();\n    \
                 std::fs::write(std::env::var(\"SURVIVOR_PID\").unwrap(), \

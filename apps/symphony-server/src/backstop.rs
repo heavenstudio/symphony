@@ -31,19 +31,27 @@ pub(crate) enum Wake {
 pub(crate) struct Backstop {
     period: Duration,
     due: Instant,
+    /// The time now, by which the period runs: the machine's, or a test's ([`Backstop::timed_by`]).
+    clock: Box<dyn Fn() -> Instant + Send>,
 }
 
 impl Backstop {
     pub fn new(period: Duration) -> Self {
+        Self::timed_by(period, Instant::now)
+    }
+
+    /// A backstop whose period runs by `clock`.
+    fn timed_by(period: Duration, clock: impl Fn() -> Instant + Send + 'static) -> Self {
         Self {
             period,
-            due: Instant::now() + period,
+            due: clock() + period,
+            clock: Box::new(clock),
         }
     }
 
     /// One wait of at most `tick`. A watcher that has gone (or never sends) leaves the period.
     pub fn wait(&mut self, events: &mpsc::Receiver<()>, tick: Duration) -> Wake {
-        let now = Instant::now();
+        let now = (self.clock)();
         if now >= self.due {
             self.due = now + self.period;
             return Wake::Period;
@@ -311,37 +319,55 @@ mod tests {
 
     #[test]
     fn a_watcher_that_never_sends_still_gets_its_period_and_an_event_wakes_at_once() {
+        // The period runs by the test's clock, moved on by a tick after each wait: what a wait
+        // answers is that clock's, never how long a loaded machine took to let it.
+        let start = Instant::now();
+        let now = std::sync::Arc::new(std::sync::Mutex::new(start));
+        let clock = {
+            let now = now.clone();
+            move || *now.lock().unwrap()
+        };
+        let tick = Duration::from_millis(50);
+        let pass = || *now.lock().unwrap() += tick;
         let (send, events) = mpsc::sync_channel(1);
         let period = Duration::from_millis(300);
-        let mut backstop = Backstop::new(period);
-        let began = Instant::now();
+        let mut backstop = Backstop::timed_by(period, clock);
         let mut idle = 0;
-        while backstop.wait(&events, Duration::from_millis(50)) == Wake::Idle {
+        while backstop.wait(&events, tick) == Wake::Idle {
             idle += 1;
+            pass();
         }
-        assert!(began.elapsed() >= period, "{:?}", began.elapsed());
-        assert!(idle >= 2, "ticks bound each wait: {idle}");
+        assert_eq!(idle, 6, "a tick bounds each wait: six make the period");
+        assert_eq!(*now.lock().unwrap() - start, period);
         send.send(()).unwrap();
         assert_eq!(backstop.wait(&events, Duration::from_secs(5)), Wake::Event);
-        // Events do not hold the next period back.
-        let began = Instant::now();
+        // Events do not hold the next period back: with one always waiting, it still comes.
+        let mut woken = 0;
         loop {
             let _ = send.try_send(());
-            if backstop.wait(&events, Duration::from_millis(50)) == Wake::Period {
-                break;
+            match backstop.wait(&events, tick) {
+                Wake::Period => break,
+                Wake::Event => woken += 1,
+                Wake::Idle => panic!("an event was waiting"),
             }
+            pass();
         }
-        assert!(began.elapsed() < period * 3, "{:?}", began.elapsed());
+        assert_eq!(
+            woken, 6,
+            "each event woke its wait, and the period came on time"
+        );
+        assert_eq!(*now.lock().unwrap() - start, period * 2);
         // A watcher that has gone neither spins nor ends the periods.
         while events.try_recv().is_ok() {}
         drop(send);
         let began = Instant::now();
-        assert_eq!(
-            backstop.wait(&events, Duration::from_millis(50)),
-            Wake::Idle
-        );
+        assert_eq!(backstop.wait(&events, tick), Wake::Idle);
         assert!(began.elapsed() >= Duration::from_millis(40));
-        while backstop.wait(&events, Duration::from_millis(50)) != Wake::Period {}
+        pass();
+        while backstop.wait(&events, tick) != Wake::Period {
+            pass();
+        }
+        assert_eq!(*now.lock().unwrap() - start, period * 3);
     }
 
     #[test]

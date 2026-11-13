@@ -19,6 +19,18 @@ fn ends_after_four_deadlines(
 
 const FIRES_FIRST: &str = "the watchdog fires before the stub ends";
 
+/// The child log a watchdog's `report` for the case `name` gives, after its first line, which
+/// says it stalled and the machine's load.
+fn logged<'a>(report: &'a str, name: &str) -> &'a str {
+    let (said, log) = report.split_once('\n').unwrap_or((report, ""));
+    let stalled = format!("{name} watchdog: stalled: no stage event in {DEADLINE:?}; ");
+    assert!(
+        said.starts_with(&stalled) && said.contains("load average"),
+        "{report}"
+    );
+    log
+}
+
 #[test]
 fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event() {
     let tree = common::Tree::new();
@@ -49,8 +61,9 @@ fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event()
         },
     )
     .expect_err(FIRES_FIRST);
+    let log = logged(&report, "stalled stub");
     assert!(
-        report.starts_with("stalled stub watchdog: --- child.log ---\n") && report.ends_with(&open),
+        log.starts_with("--- child.log ---\n") && log.ends_with(&open),
         "the report gives the child log, ending at the open stage: {report}"
     );
     assert_eq!(
@@ -74,7 +87,7 @@ fn the_watchdog_fails_a_stub_case_that_goes_its_deadline_without_a_stage_event()
         || clock.set(clock.get() + POLL),
     )
     .expect_err(FIRES_FIRST);
-    assert!(report.starts_with("silent stub watchdog: "), "{report}");
+    logged(&report, "silent stub");
     assert_eq!(
         clock.get() - spawned,
         DEADLINE,
@@ -123,8 +136,9 @@ fn the_watchdog_fails_a_stub_case_whose_output_only_looks_like_stage_events() {
         },
     )
     .expect_err(FIRES_FIRST);
+    let log = logged(&report, "noisy stub");
     assert!(
-        report.starts_with("noisy stub watchdog: --- child.log ---\n") && report.ends_with(&open),
+        log.starts_with("--- child.log ---\n") && log.ends_with(&open),
         "{report}"
     );
     assert_eq!(
@@ -199,7 +213,7 @@ fn watchdog_report_keeps_the_pending_publication_stage_and_non_utf8_output() {
     .unwrap();
     let output = watchdog_report("queued save", &tree.root);
     assert!(
-        output.contains("queued save watchdog: --- child.log ---\npublication pid=17 id=2 thread=ThreadId(3)/\"worker\" stage=\"wait git pid=18 update-index\" started elapsed=0.000s\n"),
+        logged(&output, "queued save").starts_with("--- child.log ---\npublication pid=17 id=2 thread=ThreadId(3)/\"worker\" stage=\"wait git pid=18 update-index\" started elapsed=0.000s\n"),
         "{output}"
     );
     assert!(

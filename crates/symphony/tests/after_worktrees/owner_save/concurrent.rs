@@ -3,20 +3,16 @@
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// `payload` saved by a worker of its own, posted again while its save is uncertain.
 fn post(root: &Path, payload: &Value) -> Result<Value, symphony::save::Failure> {
     let saves = symphony::save::Saves::start(root);
-    let began = std::time::Instant::now();
-    let mut result = saves.post("", "/api/quick-task", payload);
-    while result.as_ref().is_ok_and(|value| value["pending"] == true)
-        || result.as_ref().is_err_and(|error| error.status == 503)
-    {
-        assert!(
-            began.elapsed() < super::LIMIT,
-            "concurrent save stayed uncertain"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        result = saves.post("", "/api/quick-task", payload);
-    }
+    let result = test_time::until("a concurrent save settled", super::LIMIT, || {
+        let result = saves.post("", "/api/quick-task", payload);
+        let uncertain = result.as_ref().is_ok_and(|value| value["pending"] == true)
+            || result.as_ref().is_err_and(|error| error.status == 503);
+        (!uncertain).then_some(result)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
     saves.close();
     result
 }

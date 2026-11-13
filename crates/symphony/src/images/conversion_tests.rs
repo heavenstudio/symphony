@@ -1,6 +1,6 @@
 //! The real process boundary: overlapping conversions, complete publication, failure and timeout.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::Command;
 
 use crate::test_tree::Tree;
@@ -25,35 +25,35 @@ fn overlapping_conversions_publish_complete_outputs_from_distinct_files() {
         while [ ! -f "$1" ]; do sleep 0.01; done
         printf complete > "$part"
     "#;
+    // Each conversion's time is a wait for the release below, which only a stall outlasts.
+    let patient = test_time::backstop(Duration::from_secs(10));
     std::thread::scope(|scope| {
         let start = || {
             let mut command = shell(script);
             command.arg(&release);
-            convert(command, &dest, Duration::from_secs(10))
+            convert(command, &dest, patient)
         };
         let first = scope.spawn(start);
         let second = scope.spawn(start);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let ready = loop {
-            let ready: Vec<String> = tree
-                .names("")
-                .into_iter()
-                .filter(|name| name.ends_with(".ready"))
-                .collect();
-            if ready.len() == 2 || Instant::now() >= deadline {
-                break ready;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let ready = test_time::until(
+            "each call's own part file",
+            test_time::backstop(Duration::from_secs(5)),
+            || {
+                let ready: Vec<String> = tree
+                    .names("")
+                    .into_iter()
+                    .filter(|name| name.ends_with(".ready"))
+                    .collect();
+                (ready.len() == 2).then_some(ready)
+            },
+        );
         // Let the children finish even if an assertion below fails.
         let before = tree.read("thumb.jpg");
         tree.write("release", "go");
         let results = (first.join().unwrap(), second.join().unwrap());
-        assert_eq!(
-            ready.len(),
-            2,
-            "each call must have its own part file: {ready:?}"
-        );
+        if let Err(stall) = ready {
+            panic!("each call must have its own part file: {stall}");
+        }
         assert_eq!(
             before, "previous complete image",
             "no partial output is published"
@@ -158,12 +158,22 @@ fn the_system_converter_receives_sips_arguments_and_publishes_its_output() {
 fn a_timed_out_converter_is_reaped_and_its_partial_file_is_removed() {
     let tree = Tree::new();
     let dest = tree.write("thumb.jpg", "previous");
-    let mut command = shell("printf partial > \"$3\"; printf %s \"$$\" > \"$1\"; exec sleep 30");
-    command.arg(tree.path("pid"));
-    let start = Instant::now();
-    assert!(!convert(command, &dest, Duration::from_secs(1)));
-    assert!(start.elapsed() < Duration::from_secs(10));
-    let pid: i32 = tree.read("pid").parse().unwrap();
+    // A converter its second of time stopped before it wrote its pid tells nothing of its reaping,
+    // so it is run again until one did.
+    let timed_out = || {
+        let _ = std::fs::remove_file(tree.path("pid"));
+        let mut command =
+            shell("printf partial > \"$3\"; printf %s \"$$\" > \"$1\"; exec sleep 1000");
+        command.arg(tree.path("pid"));
+        assert!(!convert(command, &dest, Duration::from_secs(1)));
+        std::fs::read_to_string(tree.path("pid")).ok()?.parse().ok()
+    };
+    let pid: i32 = test_time::until(
+        "a converter that wrote its pid",
+        test_time::FLOOR,
+        timed_out,
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
     // SAFETY: kill with signal 0 checks only the child PID written by this command.
     assert_eq!(
         unsafe { libc::kill(pid, 0) },

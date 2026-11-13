@@ -110,11 +110,17 @@ fn a_project_without_documents_serves_its_board_tasks_agents_and_health_and_says
         let ask = |path: &'static str| {
             let app = app.clone();
             async move {
-                let response =
-                    tokio::time::timeout(Duration::from_secs(60), app.oneshot(request(path)))
-                        .await
-                        .unwrap_or_else(|_| panic!("{path} did not answer"))
-                        .unwrap();
+                let backstop = test_time::backstop(Duration::from_secs(60));
+                let response = tokio::time::timeout(backstop, app.oneshot(request(path)))
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "{path} to answer: stalled: the wait's wall-clock backstop of \
+                             {backstop:?} ran out; {}",
+                            test_time::Load::now()
+                        )
+                    })
+                    .unwrap();
                 let status = response.status();
                 let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
                 (
@@ -181,18 +187,16 @@ fn documents_that_arrive_after_the_start_are_read_within_a_period() {
     let waiting = || hub.pages.read().unwrap()[""].board.counts.waiting;
     assert_eq!(waiting(), 0);
 
-    let added = Instant::now();
     tree.write(
         "main/docs/TOPIC.md",
         "# Topic\n\n- [ ] **first-card** — Arrived after the start.\n",
     );
-    while waiting() != 1 {
-        assert!(
-            added.elapsed() < period + Duration::from_secs(30),
-            "the new folder's documents were not read"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the new folder's documents to be read",
+        test_time::backstop(period + Duration::from_secs(30)),
+        || waiting() == 1,
+    )
+    .unwrap();
     assert_eq!(
         hub.folder("", "docs/").unwrap().docs,
         1,

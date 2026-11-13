@@ -48,8 +48,9 @@ record = ".git/land/verdicts"
 "#;
 const CHILD: &str = "SYMPHONY_AFTER_COMMIT_ROOT";
 /// How long a case child may go without a stage event before its watchdog fails it (`watch`),
-/// and how long a gate socket waits for its peer's line.
-const DEADLINE: Duration = Duration::from_secs(45);
+/// and how long a gate socket waits for its peer's line: the backstop of 45 s, which only a stall
+/// reaches (RULES.md `tests/no-test-fails-on-load`).
+const DEADLINE: Duration = test_time::backstop(Duration::from_secs(45));
 /// How each line `stage` writes starts, and how each publication trace does. A whole line of
 /// either form is a stage event (`stage_event`), the progress a case child's watchdog measures.
 const STAGE_EVENT: &str = "after_commit case=";
@@ -94,7 +95,11 @@ fn child_output(home: &Path) -> String {
 
 #[allow(dead_code)]
 fn watchdog_report(name: &str, home: &Path) -> String {
-    format!("{name} watchdog: {}", child_output(home))
+    format!(
+        "{name} watchdog: stalled: no stage event in {DEADLINE:?}; {}\n{}",
+        test_time::Load::now(),
+        child_output(home)
+    )
 }
 
 #[allow(dead_code)]
