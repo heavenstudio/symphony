@@ -115,6 +115,15 @@ directory, so every worktree of a repository records where its Symphony reads;
 another folder. A board named by `TASKS_SERVER` without `TASKS_WORK` (a test's board)
 records nothing.
 
+**A test's waits.** `TASKS_RUN_WAIT_SCALE=N`, a whole number from 1 to 60, makes each
+wait the machine's speed meets N times as long: the 1 s COMMAND waits to hear its
+recorder watches it, the 1 s the board is asked its task (below) and the 0.6 s git is
+asked a run's tree ([RUNS](RUNS.md)). So a loaded machine never decides what a test's
+run records. It is taken only where the board the run reaches is a scratch one, as the
+board tells its live one: a test's `TASKS_SERVER` with a `TASKS_DATABASE` of its own, or
+`--database NAME`. A run on a project's live board, or one that reaches no board, keeps
+the bounds as they are, whatever it names.
+
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is
 for, queued, or running when COMMAND started by then; running once COMMAND started,

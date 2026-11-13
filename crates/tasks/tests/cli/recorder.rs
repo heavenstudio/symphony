@@ -3,8 +3,15 @@
 //! started; its record in a work folder of the test's own names the task its session holds on a
 //! board of the test's own (or the one named) while it runs, then how it ended and how long it took.
 //! The recorder finishes after its command does, so what it keeps is waited for.
+//!
+//! Every run here is on a scratch board, and takes [`SCALE`]: each wait of the recorder's a
+//! machine's speed meets (its word that it watches its command, the board's answer, git's) is that
+//! many times its own, so a loaded machine never decides what a run records. A wait of the tests'
+//! own that gives up says what the work folder holds ([`holds`]): never recorded, or recorded and
+//! never finished.
 
 use crate::{Case, git, repository, scratch};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read as _;
 use std::net::TcpListener;
@@ -21,10 +28,89 @@ pub(crate) const MACHINE: &str = "0123456789abcdef0123456789abcdef";
 const TASK_VAR: &str = "TASKS_TASK";
 /// Names the day files' folder of a test's own.
 pub(crate) const RUNS_VAR: &str = "SYMPHONY_RUNS";
+/// Names a scale of the recorder's waits, which it takes on a scratch board alone.
+pub(crate) const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
+/// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, far past
+/// what a loaded machine takes, and inside the 30 s each test waits for a record.
+pub(crate) const SCALE: &str = "20";
+/// A board that cannot be reached, which refuses at once, on a database of its own: a scratch
+/// board, for a test that has none to give its runs [`SCALE`].
+pub(crate) const UNREACHED: [(&str, &str); 2] = [
+    ("TASKS_SERVER", "127.0.0.1:1"),
+    ("TASKS_DATABASE", "unreached"),
+];
+
+/// What the work folder `work` holds, for a wait that gave up to say: each operation's record as
+/// its recorder last wrote it, read whether or not a live recorder still holds its lease (a reader
+/// passes over an unfinished one nobody holds), each lease with no record, and how many operations
+/// the history keeps. So a run never recorded (nothing at all, as when its command went on without
+/// its recorder, which then let its lease go; or a lease with no record) is told from one recorded
+/// and never finished.
+pub(crate) fn holds(work: &Path) -> String {
+    let operations = work.join(recorded::OPERATIONS);
+    let names: Vec<String> = fs::read_dir(&operations)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let ids: BTreeSet<&str> = names
+        .iter()
+        .filter_map(|name| {
+            name.strip_suffix(".lease")
+                .or_else(|| name.strip_suffix(".json"))
+        })
+        .collect();
+    let mut said: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            let lease = match held(&operations.join(format!("{id}.lease"))) {
+                Some(true) => "its lease held",
+                Some(false) => "its lease let go",
+                None => "no lease",
+            };
+            match fs::read(operations.join(format!("{id}.json"))) {
+                Err(_) => format!("{id}: never recorded, {lease} and no record"),
+                Ok(bytes) => match serde_json::from_slice::<Record>(&bytes) {
+                    Ok(record) if record.state == Step::Finished => format!(
+                        "{id}: finished (exit {:?}, signal {:?}, {:?}), {lease}",
+                        record.exit_code, record.signal, record.reason
+                    ),
+                    Ok(record) => format!(
+                        "{id}: recorded {:?} and never finished, {lease}",
+                        record.state
+                    ),
+                    Err(error) => format!("{id}: a record that does not read ({error}), {lease}"),
+                },
+            }
+        })
+        .collect();
+    if said.is_empty() {
+        said.push(format!(
+            "never recorded: no lease and no record in {}",
+            operations.display()
+        ));
+    }
+    let kept = recorded::history(work).map_or(0, |history| history.len());
+    format!("{}; the history keeps {kept}", said.join("; "))
+}
+
+/// Whether the lease at `path` is locked by its recorder, which holds it while it records: none
+/// when there is no lease to ask.
+fn held(path: &Path) -> Option<bool> {
+    let file = fs::File::open(path).ok()?;
+    Some(matches!(
+        file.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ))
+}
 
 /// Every line of the day files in `runs`, read once they hold `ends` end lines (and no more), in
-/// the order each file holds them: each a whole line.
-pub(crate) fn day_lines(runs: &Path, ends: usize) -> Vec<RunLine> {
+/// the order each file holds them: each a whole line. A wait that gives up says what the work
+/// folder `work` holds.
+#[track_caller]
+pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let mut days: Vec<PathBuf> = fs::read_dir(runs)
@@ -56,7 +142,8 @@ pub(crate) fn day_lines(runs: &Path, ends: usize) -> Vec<RunLine> {
         }
         assert!(
             Instant::now() < deadline,
-            "{ends} runs not ended within 30 s: {lines:#?}"
+            "{ends} runs not ended within 30 s: {lines:#?}; the work folder: {}",
+            holds(work)
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -70,6 +157,7 @@ pub(crate) fn git_says(dir: &Path, args: &[&str]) -> String {
 }
 
 /// The history of the work folder `work` once it keeps `count` operations.
+#[track_caller]
 pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -80,7 +168,8 @@ pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
         }
         assert!(
             Instant::now() < deadline,
-            "{count} operations not kept within 30 s: {history:?}"
+            "{count} operations not kept within 30 s: {history:?}; the work folder: {}",
+            holds(work)
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -115,7 +204,9 @@ impl Folders {
             .collect()
     }
 
-    /// The one operation recorded, once it is in `state`.
+    /// The one operation recorded, once it is in `state`; a wait that gives up says the records a
+    /// reader found and what the work folder holds.
+    #[track_caller]
     fn once(&self, state: Step) -> Record {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -126,8 +217,9 @@ impl Folders {
             }
             assert!(
                 Instant::now() < deadline,
-                "no operation {state:?} within 30 s: {:?}",
-                self.records()
+                "no operation {state:?} within 30 s: {:?}; the work folder: {}",
+                self.records(),
+                holds(&self.work)
             );
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -140,7 +232,8 @@ impl Folders {
 const ENDING: [libc::c_int; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM];
 
 /// The `tasks` binary running `args` for `case`'s board, as `session` when one is given, recording
-/// in `folders`, with each of [`ENDING`] at its default; standard streams the test's to set.
+/// in `folders`, its waits at [`SCALE`], with each of [`ENDING`] at its default; standard streams
+/// the test's to set.
 fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
     for signal in ENDING {
@@ -149,6 +242,7 @@ fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -
     command
         .args(args)
         .envs(&case.env.vars)
+        .env(SCALE_VAR, SCALE)
         .env("TASKS_WORK", &folders.work)
         .env("SYMPHONY_MACHINE_DIR", &folders.machine)
         .env_remove("TASKS_SESSION")
@@ -201,13 +295,18 @@ fn alive(pid: libc::pid_t) -> bool {
 }
 
 /// The pid the command wrote to `file`, once it did.
+#[track_caller]
 fn written_pid(file: &Path) -> libc::pid_t {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(pid) = fs::read_to_string(file).unwrap_or_default().trim().parse() {
             return pid;
         }
-        assert!(Instant::now() < deadline, "no pid within 30 s");
+        assert!(
+            Instant::now() < deadline,
+            "no pid in {} within 30 s",
+            file.display()
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -279,7 +378,8 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
     while lease.exists() {
         assert!(
             Instant::now() < deadline,
-            "a finished operation lets its lease go"
+            "a finished operation lets its lease go: {}",
+            holds(&folders.work)
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -334,10 +434,17 @@ fn until_asked(accepted: &Path) -> Vec<&str> {
     ]
 }
 
+/// The scale of a run that asks a board that never answers: the board is asked 5 s, its own 1 s
+/// that many times, so a loaded machine stamps the command's end while it is asked, and the test
+/// waits that out once.
+const ASKED: u32 = 5;
+
 /// `finished`, run while the board took the question of its task at `taken` and its asker gave up
 /// at `closed`, was stamped as it ran, not once the board answered: asked for after `called`,
 /// started before the board was asked, ended after that (its command waited for it) and before
-/// the asker gave up; for its session, and no task.
+/// the asker gave up, which was no sooner than [`ASKED`] seconds after it was called; for its
+/// session, and no task.
+#[track_caller]
 fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
     let (queued, started, ended) = (
         finished.queued_at,
@@ -351,6 +458,10 @@ fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f6
     assert!(
         taken <= ended && ended < closed,
         "the board asked at {taken}, given up at {closed}: {finished:?}"
+    );
+    assert!(
+        closed - called >= f64::from(ASKED),
+        "the board asked as its scale says, {ASKED} s: called at {called}, given up at {closed}"
     );
     assert_eq!(
         (finished.handle.as_deref(), finished.task.as_deref()),
@@ -370,9 +481,12 @@ fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_
     let mut args = vec!["run", "--phase", "test", "--"];
     args.extend(until_asked(&accepted));
     let called = now();
-    let done =
-        output(tasks(&case, &folders, Some("asks-a-silent-board"), &args).stdin(Stdio::null()))
-            .unwrap();
+    let done = output(
+        tasks(&case, &folders, Some("asks-a-silent-board"), &args)
+            .env(SCALE_VAR, ASKED.to_string())
+            .stdin(Stdio::null()),
+    )
+    .unwrap();
     assert!(done.status.success(), "{done:?}");
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -389,6 +503,7 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
         ("TASKS_SESSION", "asks-a-silent-board"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+        (SCALE_VAR, &ASKED.to_string()),
     ] {
         env.vars.insert(name.into(), value.into());
     }
@@ -436,6 +551,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         ("TASKS_SESSION", "asks-a-silent-board"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
+        (SCALE_VAR, &ASKED.to_string()),
     ] {
         env.vars.insert(name.into(), value.into());
     }
@@ -515,6 +631,7 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
             command
                 .args(["run", "--phase", "test", "--"])
                 .envs(&case.env.vars)
+                .env(SCALE_VAR, SCALE)
                 .env("TASKS_WORK", &folders.work)
                 .env("SYMPHONY_MACHINE_DIR", &folders.machine)
                 .env_remove("TASKS_SESSION")
@@ -740,7 +857,11 @@ fn the_task_its_session_holds_is_its_work_while_it_runs_and_its_record_keeps_how
         if now.beat_at > running.beat_at {
             break now;
         }
-        assert!(Instant::now() < deadline, "no beat within 30 s");
+        assert!(
+            Instant::now() < deadline,
+            "no beat within 30 s: {}",
+            holds(&folders.work)
+        );
         std::thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(beaten.started_at, running.started_at);
@@ -907,6 +1028,7 @@ fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path
 }
 
 /// The handle and the task a run of `true` with `vars`, in `cwd`, records on `case`'s board.
+#[track_caller]
 fn run_in(
     case: &Case,
     name: &str,
@@ -945,6 +1067,7 @@ impl<'c> Runs<'c> {
     }
 
     /// A run in `cwd` with `vars` records `expected`, its handle and its task, for the reason `why`.
+    #[track_caller]
     fn record(
         &self,
         why: &str,
@@ -1410,7 +1533,7 @@ fn pipeline_run(
 }
 
 /// `case`'s environment for `tasks run` in this process, at top level in `repo`, recording in
-/// `folders` and writing its lines to `runs`.
+/// `folders` and writing its lines to `runs`, its waits at [`SCALE`].
 fn in_process(case: &Case, folders: &Folders, (repo, runs): (&Path, &Path)) -> Env {
     let mut env = case.env.clone();
     for (name, value) in [
@@ -1421,6 +1544,7 @@ fn in_process(case: &Case, folders: &Folders, (repo, runs): (&Path, &Path)) -> E
         env.vars
             .insert(name.into(), value.to_string_lossy().into_owned());
     }
+    env.vars.insert(SCALE_VAR.into(), SCALE.into());
     for name in [
         "TASKS_SESSION",
         TASK_VAR,
@@ -1456,7 +1580,7 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     // One command, `just test-rs -p a`, whatever its shell does this time.
     let ran = |pipeline: &str, script: &str| labelled(pipeline, "just test-rs -p a", script);
     assert_eq!(ran("test", "exit 3").code(), Some(3));
-    let red = symphony_api::fold(day_lines(&runs, 1)).remove(0);
+    let red = symphony_api::fold(day_lines(&folders.work, &runs, 1)).remove(0);
     assert!(
         !runs.join("2000-01-01.jsonl").exists(),
         "an old day file stayed"
@@ -1503,7 +1627,7 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     // The same command on the same tree: it repeats the red, and the CPU its command burned is said.
     let burn = "i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done";
     assert!(ran("test", burn).success());
-    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 2));
     let green = &lines[1];
     assert_eq!((green.end, green.exit), (Some(End::Green), Some(0)));
     assert_eq!(green.rerun_of.as_deref(), Some(red.run.as_str()));
@@ -1511,7 +1635,7 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     // Another pipeline, or another command of the same one, repeats none.
     assert!(labelled("lint", "just test-rs -p a", "true").success());
     assert!(labelled("test", "just test-rs -p b", "true").success());
-    let lines = symphony_api::fold(day_lines(&runs, 4));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 4));
     let others: Vec<(&str, &str, Option<&str>)> = lines[2..]
         .iter()
         .map(|line| {
@@ -1532,7 +1656,7 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     );
     // A run interrupted says by which signal.
     assert_eq!(ran("test", "kill -INT $$").signal(), Some(libc::SIGINT));
-    let lines = symphony_api::fold(day_lines(&runs, 5));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 5));
     let interrupted = &lines[4];
     assert_eq!(
         (interrupted.end, interrupted.exit, interrupted.signal),
@@ -1542,7 +1666,7 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     // A checkout that differs from its commit is dirty, and repeats nothing.
     fs::write(repo.join("untracked"), "x").unwrap();
     assert!(ran("test", "true").success());
-    let lines = symphony_api::fold(day_lines(&runs, 6));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 6));
     assert_eq!(
         (lines[5].dirty, lines[5].rerun_of.as_deref()),
         (Some(true), None)
@@ -1551,14 +1675,14 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "untracked"]);
     assert!(ran("test", "true").success());
-    let lines = symphony_api::fold(day_lines(&runs, 7));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 7));
     assert_eq!(
         (lines[6].dirty, lines[6].rerun_of.as_deref()),
         (Some(false), None)
     );
     assert_ne!(lines[6].tree.as_deref(), Some(tree.as_str()));
     // Each run wrote its start line, then its end line.
-    let all = day_lines(&runs, 7);
+    let all = day_lines(&folders.work, &runs, 7);
     assert_eq!(all.len(), 14, "{all:#?}");
     for line in &lines {
         let starts = all
@@ -1582,7 +1706,7 @@ fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
         .map(|script| pipeline_run(&case, &folders, (&repo, &runs), label, script).code())
         .collect();
     assert_eq!(statuses, [Some(3), Some(0), Some(0), Some(0)]);
-    let mut lines = symphony_api::fold(day_lines(&runs, 4));
+    let mut lines = symphony_api::fold(day_lines(&folders.work, &runs, 4));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     assert_eq!(lines[0].rerun_of, None);
     for pair in lines.windows(2) {
@@ -1604,7 +1728,9 @@ fn a_checkout_is_clean_or_dirty_as_its_command_starts_whatever_the_command_write
     let script = "touch made";
     // As the binary, which on macOS becomes its command.
     assert!(pipeline_run(&case, &folders, (&repo, &runs), label, script).success());
-    let [made] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    let [made] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
     assert_eq!(made.dirty, Some(false), "{made:?}");
     assert!(repo.join("made").exists());
     fs::remove_file(repo.join("made")).unwrap();
@@ -1627,7 +1753,7 @@ fn a_checkout_is_clean_or_dirty_as_its_command_starts_whatever_the_command_write
         "",
     );
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
-    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 2));
     let child = lines.iter().find(|line| line.run != made.run).unwrap();
     assert_eq!(child.dirty, Some(false), "{child:?}");
     assert_eq!(child.rerun_of.as_deref(), Some(made.run.as_str()));
@@ -1665,9 +1791,11 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
     assert!(took < Duration::from_secs(1), "{took:?}");
     // Both lines were appended still, each whole, without the lock.
-    let [ended] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    let [ended] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
     assert_eq!((ended.end, ended.exit), (Some(End::Red), Some(7)));
-    assert_eq!(day_lines(&runs, 1).len(), 2);
+    assert_eq!(day_lines(&folders.work, &runs, 1).len(), 2);
     holder.unlock().unwrap();
 }
 
@@ -1716,7 +1844,7 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
             assert!(each.join().unwrap().success());
         }
     });
-    let lines = symphony_api::fold(day_lines(&runs, PLAIN + 1));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, PLAIN + 1));
     drop(release);
     let said = |label: &str| -> Vec<(bool, Option<bool>)> {
         let lines = lines.iter().filter(|line| line.label == label);
@@ -1772,7 +1900,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         pipeline_run(&case, &folders, (&repo, &runs), label, "exit 3").code(),
         Some(3)
     );
-    day_lines(&runs, 1);
+    day_lines(&folders.work, &runs, 1);
     let day = fs::read_dir(&runs)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -1869,7 +1997,7 @@ fn a_run_inside_a_run_and_a_command_naming_no_pipeline_write_no_line() {
     );
     assert_eq!(fs::read_to_string(&seen).unwrap(), "[]\n");
     let history = kept(&folders.work, 5);
-    let lines = symphony_api::fold(day_lines(&runs, 2));
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 2));
     let verify = lines.iter().find(|line| line.step.is_none()).unwrap();
     let lint = lines.iter().find(|line| line.step.is_some()).unwrap();
     assert_eq!(
@@ -1921,7 +2049,9 @@ fn in_a_callers_process_a_step_hands_on_its_pipeline_and_a_plain_command_removes
     assert_eq!(seen(&["--step", "lint"]), "[verify]\n");
     assert_eq!(seen(&["--label", "plain"]), "[]\n");
     assert_eq!(seen(&["--pipeline", "build"]), "[]\n");
-    let [step] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    let [step] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
     assert_eq!(
         (step.pipeline.as_str(), step.step.as_deref()),
         ("verify", Some("lint"))
@@ -1962,7 +2092,7 @@ fn runs_at_once_each_write_their_lines_whole() {
     for child in &mut started {
         assert!(child.wait().unwrap().success());
     }
-    let lines = day_lines(&runs, 8);
+    let lines = day_lines(&folders.work, &runs, 8);
     assert_eq!(lines.len(), 16);
     assert!(lines.iter().all(|line| line.label == label));
     assert_eq!(symphony_api::fold(lines).len(), 8);
@@ -1987,10 +2117,14 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     // Its start line follows its record's.
     let deadline = Instant::now() + Duration::from_secs(30);
     let start = loop {
-        if let [start] = day_lines(&runs, 0).as_slice() {
+        if let [start] = day_lines(&folders.work, &runs, 0).as_slice() {
             break start.clone();
         }
-        assert!(Instant::now() < deadline, "no start line within 30 s");
+        assert!(
+            Instant::now() < deadline,
+            "no start line within 30 s: {}",
+            holds(&folders.work)
+        );
         std::thread::sleep(Duration::from_millis(20));
     };
     assert!(start.is_start() && start.started.is_some(), "{start:?}");
@@ -2026,11 +2160,13 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     )
     .unwrap();
     assert!(done.status.success(), "{done:?}");
-    let [own] = symphony_api::fold(day_lines(&elsewhere, 1))
+    let [own] = symphony_api::fold(day_lines(&folders.work, &elsewhere, 1))
         .try_into()
         .unwrap();
     assert_eq!(own.pipeline, "build");
-    let [lost] = symphony_api::fold(day_lines(&runs, 1)).try_into().unwrap();
+    let [lost] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
     assert_eq!(lost.run, running.operation_id);
     assert_eq!(
         (lost.end, lost.exit, lost.signal, lost.cpu_s),
