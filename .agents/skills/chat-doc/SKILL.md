@@ -2,7 +2,7 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: 56b9acdbfb3dc0aa files=SKILL.md -->
+<!-- symphony-stamp: a4fef92325bf4ed1 files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
@@ -104,6 +104,12 @@ report.
   document rewrites).
 - **Plain approval**: nothing to reply; `just symphony-status --tidy` resolves it.
   Update any document that still calls the card pending.
+- **After any approval**, never ask again on that card. A consequence of the
+  choice the owner made (a correction, or a cost or trade it did not state) is
+  a plain line on it, quoting their words. A change that would make the chosen
+  option another, or a question the choice does not answer, is a new card
+  linking it, put to the owner only if no earlier verdict of theirs decides it
+  (the `apply-review` skill, step 4).
 - **Plain rejection or question**: reply with what you will do next, or ask
   what the owner wants when it is not clear.
 - **Callout**: resolve it with `just symphony-reply PATH L<line> "<answer>" --as <handle>`,
