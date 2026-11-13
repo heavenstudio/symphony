@@ -234,7 +234,16 @@ never the whole target, which the release run runs.
   about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
   7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
   462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
-  unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
+  unchanged, its page and thread each a `304` of 82) and a document at 464,410. Documents
+  drawn from the device, an entrypoint's page kept and the reads ahead
+  (`perf/client-cache/documents` and `/ahead`, against main's build at 19f0287) cost every page
+  about 0.9 KB of the shell and the documents' kind about 30.4 KB: `/tasks` takes 296,785 bytes
+  (3,215 under the cap, from 295,823), `/` 237,297 (from 236,391) and `/docs/` 505,300 (from
+  474,924); a document's return takes 1,633 (from 2,371), the budget's stand-in naming no cursor
+  on its document reads, so its outline's `304` is read again whole. The reads ahead start only
+  once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
+  budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
+  the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
   drawn and is idle: 202,155 bytes outside its first visit (its WASM 186,101, glue 12,344,
   style sheet 2,605 and first read 1,105), and `/agents` never loads it. Once a page has its

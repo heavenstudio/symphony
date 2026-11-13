@@ -31,7 +31,7 @@ fn document(text: &str) -> (Document, DocumentOutline) {
         "threads": {"palette": thread("Posted."), "tiles": thread("Tiled.")},
         "tasks": [{"slug": "design/palette", "title": "Pick the palette", "status": "ready"}],
     }))
-    .unwrap();
+    .expect("the fixture is a whole document");
     let mut outline = DocumentOutline {
         document: document.clone(),
         anchors: BTreeMap::from([
@@ -64,7 +64,9 @@ fn keys(part: &DocumentOutline) -> Vec<&str> {
 }
 
 fn bytes(part: &DocumentOutline) -> usize {
-    serde_json::to_vec(part).unwrap().len()
+    serde_json::to_vec(part)
+        .expect("an outline serializes")
+        .len()
 }
 
 #[test]
