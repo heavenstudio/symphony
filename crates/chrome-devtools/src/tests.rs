@@ -15,7 +15,7 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, Leash, Owner, POLL, PROTOCOL_CPU,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, Leash, Owner, POLL, PROTOCOL_CPU,
     WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, process, signal_group,
 };
 
@@ -169,6 +169,75 @@ fn the_backstop_is_six_times_the_allowance_never_under_its_floor_and_ends_the_wa
             .stall()
             .ends_with("0 completed observer polls and 0ns CPU")
     );
+}
+
+/// The tests' own waits on a condition (`test_time::backstop`, RULES.md
+/// `tests/no-test-fails-on-load`) run to the same backstop as a driver's wait on the same
+/// allowance: a change to either rule fails here until the other follows.
+#[test]
+fn the_tests_waits_and_the_driver_share_one_backstop_rule() {
+    for allowance in [
+        Duration::ZERO,
+        POLL,
+        Duration::from_secs(10),
+        Duration::from_secs(20),
+        Duration::from_secs(21),
+        crate::BACKSTOP_FLOOR,
+        PROTOCOL_CPU,
+        Duration::from_secs(3600),
+    ] {
+        assert_eq!(
+            test_time::backstop(allowance),
+            WaitBudget::new(allowance, &[]).backstop(),
+            "the backstop of a wait of {allowance:?}"
+        );
+    }
+    assert_eq!(test_time::FLOOR, BACKSTOP_FLOOR);
+}
+
+#[test]
+fn a_wait_says_the_check_that_ended_it_however_late_its_error_is_made() {
+    let hour = Duration::from_secs(3600);
+    // Its allowance spent first (one turn of a 25 ms allowance): a deadline and a backstop that
+    // pass before its error is made turn it into neither.
+    let mut spent = WaitBudget::new(POLL, &[]).until(Some(Instant::now() + hour));
+    assert!(spent.poll(&[]));
+    assert_eq!(spent.end, Some(End::Allowance));
+    spent.deadline = Some(Instant::now());
+    spent.started -= Duration::from_secs(600);
+    assert!(spent.past_deadline() && spent.past_backstop());
+    let error = spent.ended("a wait", "a wait: its allowance spent".to_string());
+    assert!(!error.past_deadline() && !error.stalled(), "{error}");
+    assert_eq!(error.to_string(), "a wait: its allowance spent");
+    // The deadline passed first: a deadline, whatever else ran out after it.
+    let mut late = WaitBudget::new(PROTOCOL_CPU, &[]).until(Some(Instant::now()));
+    assert!(late.exhausted(&[]));
+    late.started -= Duration::from_secs(600);
+    late.polls = late.max_polls;
+    let error = late.ended("a wait", "spent".to_string());
+    assert!(error.past_deadline() && !error.stalled(), "{error}");
+    assert_eq!(error.to_string(), "a wait: no reply before the deadline");
+    // The backstop ran out first: a stall, though the deadline has passed by the time its error
+    // is made.
+    let mut stalled = WaitBudget::new(PROTOCOL_CPU, &[]).until(Some(Instant::now() + hour));
+    stalled.started -= Duration::from_secs(600);
+    assert!(stalled.exhausted(&[]));
+    stalled.deadline = Some(Instant::now());
+    let error = stalled.ended("a wait", "spent".to_string());
+    assert!(error.stalled() && !error.past_deadline(), "{error}");
+    assert!(
+        error.to_string().starts_with("a wait: the browser stalled"),
+        "{error}"
+    );
+    // A wait still running has no end kept, and one found stays: the first check found true.
+    let mut running = WaitBudget::new(PROTOCOL_CPU, &[]).until(Some(Instant::now() + hour));
+    assert!(!running.exhausted(&[]));
+    assert_eq!(running.end, None);
+    running.polls = running.max_polls;
+    assert!(running.exhausted(&[]));
+    running.deadline = Some(Instant::now());
+    assert!(running.exhausted(&[]));
+    assert_eq!(running.end, Some(End::Allowance));
 }
 
 /// Reexecuted in a separate process, with no shared mutable environment in the suite.
@@ -1690,9 +1759,10 @@ fn a_page_that_never_runs_ends_each_wait_at_its_backstop_with_an_error_naming_th
             message.contains("the wait's wall-clock backstop of 300ms ran out"),
             "{message}"
         );
-        // The message says the backstop ended it, not the minute of the protocol's own
-        // allowance: how much later than the backstop a loaded machine let it end is no part of
-        // the promise (RULES.md `tests/no-test-fails-on-load`).
+        // A wait is a stall only when the backstop is the check that ended it (`End::Backstop`),
+        // whenever its error is made: had the allowance ended it, the error would name the polls
+        // and CPU spent instead. How much later than the backstop a loaded machine let it end is
+        // no part of the promise (RULES.md `tests/no-test-fails-on-load`).
         assert!(
             took >= Duration::from_millis(300),
             "{what} ended {took:?} after its start, its backstop 300 ms"
@@ -1877,8 +1947,10 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
         ),
         "{stalled}"
     );
-    // The message says the backstop ended it; how much later than it a loaded machine let it end
-    // is no part of the promise (RULES.md `tests/no-test-fails-on-load`).
+    // A wait is a stall only when the backstop is the check that ended it (`End::Backstop`), so
+    // the frozen renderer, not the 250 ms allowance, ended this one; how much later than the
+    // backstop a loaded machine let it end is no part of the promise (RULES.md
+    // `tests/no-test-fails-on-load`).
     assert!(
         took >= Duration::from_millis(1500),
         "the stall ended {took:?} after the wait's start, its backstop 1.5 s"
@@ -2340,9 +2412,10 @@ fn a_deadline_ends_every_wait_soon_after_it_with_an_error_that_says_so() {
             error.to_string().contains("no reply before the deadline"),
             "{wait}: {error}"
         );
-        // The error says the deadline ended it, not the protocol's own allowance; how much later
-        // than the deadline a loaded machine let it end is no part of the promise (RULES.md
-        // `tests/no-test-fails-on-load`).
+        // A wait is a deadline only when the deadline is the check that ended it (`End::Deadline`),
+        // whenever its error is made: had the protocol's own allowance or the backstop ended it,
+        // `past_deadline` would be false. How much later than the deadline a loaded machine let it
+        // end is no part of the promise (RULES.md `tests/no-test-fails-on-load`).
         assert!(
             took >= Duration::from_millis(500),
             "{wait} ended {took:?} after its start, its deadline 500 ms"

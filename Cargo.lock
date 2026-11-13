@@ -417,6 +417,7 @@ dependencies = [
  "libc",
  "serde_json",
  "symphony-api",
+ "test-time",
  "tungstenite 0.30.0",
 ]
 
