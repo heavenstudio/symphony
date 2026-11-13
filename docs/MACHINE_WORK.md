@@ -123,13 +123,35 @@ asked a run's tree, and, for a recorder apart from its command, the 5 s it waits
 earlier run it may repeat to end and the 2 s it waits for the day files' lock
 ([RUNS](RUNS.md)). So a loaded machine never decides what a test's run records. It is taken only where the board the run reaches is on a database other
 than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
-board never takes for a live one either. A run on the `tasks` database, by whatever server
+board never takes for a live one either. A server `TASKS_SERVER` names is reached whether
+or not it answers, so a database of a test's own there takes it, on one that refuses
+(`127.0.0.1:1`) too. A run on the `tasks` database, by whatever server
 or folder it reaches it and whether or not that server is up, or one that reaches no
-board, keeps the bounds as they are, whatever it names. `TASKS_RUN_END_MARK=FILE` makes the
+board (as with no server named and none recorded for its repository), keeps the bounds as
+they are, whatever it names. `tools/record.sh` waits `TASKS_RECORDER_PROBE_WAIT` seconds for
+its recorder's probe instead of 2 (below): a test's, taken wherever it is named, since the
+probe reaches no board and a live board's waits are the recorder's own.
+`TASKS_RUN_END_MARK=FILE` makes the
 recorder create FILE (a relative name from the run's folder) once it has stamped its command's
 end, whether or not the board has answered which task the run is for: a test's mark of that
 moment, so what it does next comes after the stamp whatever a loaded machine runs first. It is
 made only where no file is, and a run that names none makes none.
+
+What each test that waits on a record takes: the board's recorder tests
+(`crates/tasks/tests/cli/recorder.rs`) take the scale 20 on boards of their own, but one that
+bounds its time by the wait it rules out, and the script's (`record_script.rs`) take it on one
+that refuses, with a probe's wait of 120 s but in the case of that deadline. The server's test
+of what its machine panel reads takes the scale on its board's scratch database
+(`apps/symphony-server/src/live/machine_work/tests`). The release run's test
+(`crates/symphony/tests/release/recorder.rs`) and the browser test of the board's Build and
+Test columns (`apps/symphony-ui/tests/browser/run_records.rs`) take both, the scale and the
+probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
+waits for a record on its condition, with a backstop on the wall only a stall reaches (the
+browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
+the long probe would hide, a recorder grown slow, two tests turn red at half the real bound:
+the quickest of several runs of a recorder test started within 0.5 s of being asked for
+(`one_started_promptly`), and a probe of the real recorder answers within 1 s, probed until
+one does (`record_script::the_recorder_answers_its_probe_well_within_the_scripts_own_wait`).
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is
@@ -260,7 +282,7 @@ Its recorder is `TASKS_RECORDER` when it names one, else this checkout's prepare
 (`tools/rs-bin.sh --link tasks` prepares it); finding it starts no process. With
 `TASKS_RECORDER=off`, or no recorder that answers the probe within 2 s (none built, an
 older one, or a hung or slow one, as the first run of a binary linked a moment ago can
-be), the command is exec'd as it is; a recorder that answers `run 1` alone records it
+be; a test's `TASKS_RECORDER_PROBE_WAIT` names other seconds), the command is exec'd as it is; a recorder that answers `run 1` alone records it
 with no pipeline at top level, and no step inside a run. The freshness build before
 `just tasks` or `just symphony` is not recorded.
 

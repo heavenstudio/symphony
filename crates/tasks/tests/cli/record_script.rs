@@ -10,8 +10,10 @@
 //! all there is, where a work folder is written by a recorder that may still be on its way.
 //!
 //! Each run names a board that cannot be reached ([`UNREACHED`]), a scratch one, so it takes the
-//! recorder tests' scale of the recorder's waits ([`SCALE`]): a loaded machine never decides
-//! whether it is recorded.
+//! recorder tests' scale of the recorder's waits ([`SCALE`]), and the script's wait for its
+//! recorder's probe is long ([`PROBE_WAIT`]) but in the case of that deadline: a loaded machine
+//! never decides whether it is recorded. What the long wait would hide, a recorder grown slow to
+//! answer, a probe of its own shows ([`PROMPT_PROBE`]).
 
 use crate::recorder::{MACHINE, RUNS_VAR, SCALE, SCALE_VAR, UNREACHED, day_lines, git_says, kept};
 use crate::{git, scratch};
@@ -20,6 +22,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record};
 use symphony_board::sys::{Command, Stdio, output, wait_output};
@@ -180,6 +183,15 @@ const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
 /// The probe's wait in every case here but the one of it: the backstop of a test's wait, so a
 /// loaded machine never leaves Cargo to run unrecorded for a probe it answered late.
 const PROBE_WAIT: &str = "120";
+/// The probe's own wait, the script's when [`PROBE_WAIT_VAR`] names none (`tools/record.sh`, which
+/// a test cannot read): a recorder that answers no later than this records the builds it is asked
+/// to.
+const SCRIPT_PROBE_WAIT: Duration = Duration::from_secs(2);
+/// What a probe of the real recorder must answer within, from its start to the end of its answer,
+/// once at least, for the recorder to count as prompt: half of [`SCRIPT_PROBE_WAIT`]. Every other
+/// case lengthens the script's wait ([`PROBE_WAIT`]), so this is what turns a recorder grown slow
+/// to answer red. Spans measured: 12 ms to 193 ms at a load of 19 on 16 cores.
+const PROMPT_PROBE: Duration = Duration::from_secs(1);
 /// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
 const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 
@@ -394,6 +406,38 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     .unwrap();
     // It was asked, and never asked to record: its one run was the probe.
     assert_eq!(setup.logged(), "run --probe\n");
+}
+
+/// The real recorder answers a probe well within the script's own wait ([`PROMPT_PROBE`]): probed
+/// until one answer comes that soon, so a loaded machine's slow probes, however many, never fail
+/// it, and a recorder slow on every probe stalls the wait. A failure says each probe's span.
+#[test]
+fn the_recorder_answers_its_probe_well_within_the_scripts_own_wait() {
+    warmed();
+    let mut spans = Vec::new();
+    let prompt = test_time::until(
+        format!("a probe of the recorder answered within {PROMPT_PROBE:?}"),
+        test_time::backstop(SCRIPT_PROBE_WAIT),
+        || {
+            let asked = Instant::now();
+            let probe = output(
+                Command::new(RECORDER)
+                    .args(["run", "--probe"])
+                    .stdin(Stdio::null()),
+            )
+            .unwrap();
+            let span = asked.elapsed();
+            assert_eq!(probe.stdout, b"run 1\nrun 2\n", "{probe:?}");
+            spans.push(span.as_secs_f64());
+            (span < PROMPT_PROBE).then_some(span)
+        },
+    );
+    if let Err(stall) = prompt {
+        panic!(
+            "{stall}: the script waits {SCRIPT_PROBE_WAIT:?} for the answer; each probe's span, in \
+             seconds: {spans:?}"
+        );
+    }
 }
 
 #[test]
