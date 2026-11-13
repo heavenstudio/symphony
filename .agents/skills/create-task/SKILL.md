@@ -2,14 +2,56 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: ddd85acf3c91f339 files=SKILL.md -->
+<!-- symphony-stamp: a85e7e26143fbf1f files=SKILL.md -->
 
 # File a task on the board
+
+## Parent feature delivery
+
+A top-level task owns one feature branch and one delivery cycle. Subtasks are
+small implementation slices, not independent releases. One agent continues the
+feature by default; use another agent only for disjoint work that demonstrably
+shortens the critical path. Commit slices into the feature branch, or merge
+their worktree commits into it with the project's `just merge-feature FEATURE [SOURCE]`
+where it has one: that refuses the default branch and runs no delivery hooks or stamps,
+and the project's landing (`land` where it has one) remains the completed feature
+delivery command. Run only focused checks needed for that slice;
+no slice-level full build, full suite, reviewer staffing, certificate, stamps or
+landing. Close the slice with its integration commit and focused result using
+tasks done. When the complete feature is ready, the parent goes to review once
+with its evidence, then lands. Review fixes stay with that parent and do not
+create independent delivery rounds.
+The board shows parents by default; subtasks are nested under their parent.
+This rule supersedes conflicting per-subtask gate instructions.
+
+## Evidence is the gate
+
+A task's gate, parent or slice, feature or fix, is evidence that what it changed
+works, not the full suite: the tests closest to the change and the project's
+lint, posted with their exact commands and results, plus what the kind of change
+calls for (before and after screenshots of a changed page, a measurement before
+and after). A reviewer reruns those tests, never the suite, judges whether the
+evidence is good enough for the change's risk, and records its approval as the
+task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
+The full verification runs on the project's main line on its own schedule, such
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
+
 
 Read the destination project's task conventions and permissions first. Use the
 board CLI help for supported arguments; this page describes how to prepare a brief. Load `/tasks` first if you
 are not yet attached to the board; a subagent has no monitor, so it gets its
 handle from `just tasks register` instead.
+
+## 0. Does this need a task at all
+
+Keep it simple. A problem met once (a one-time migration, a cleanup, a repair of
+one machine's state) is solved by doing it: run the commands or a throwaway
+script, say what was run and what came of it, and stop. File no task whose
+output is a committed tool, tests and a review round for something that runs
+once, and none that hardens a script after it has done its job. File a task for
+what will be built on, run again or must be reviewed, and write the smallest
+form of it that solves the problem.
 
 ## 1. Look before filing
 

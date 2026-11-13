@@ -6,6 +6,9 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 pub mod board;
+/// The git layouts a checkout can have, shared with the symphony crate's tests.
+#[path = "../../../crates/symphony/tests/common/layouts.rs"]
+pub mod layouts;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
 pub use crate::shelf;
