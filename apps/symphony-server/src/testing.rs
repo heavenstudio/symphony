@@ -6,6 +6,9 @@
 )]
 #[path = "../../../crates/tasks/tests/store/common.rs"]
 pub mod board;
+/// The git layouts a checkout can have, shared with the symphony crate's tests.
+#[path = "../../../crates/symphony/tests/common/layouts.rs"]
+pub mod layouts;
 #[path = "../../../crates/symphony/tests/common/tree.rs"]
 mod tree;
 pub use crate::shelf;
@@ -54,7 +57,8 @@ fn wait_entered(fd: std::os::fd::RawFd, deadline: std::time::Instant) {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         assert!(
             !remaining.is_zero(),
-            "fixture child readiness deadline passed"
+            "fixture child readiness deadline passed: a stall; {}",
+            test_time::Load::now()
         );
         // Round up so a sub-millisecond remainder still waits for readiness.
         let timeout = i32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap();
@@ -79,13 +83,14 @@ fn wait_entered(fd: std::os::fd::RawFd, deadline: std::time::Instant) {
     }
 }
 
-/// The pid a fixture child writes to the FIFO `file` as it enters, waited for up to 30 s.
+/// The pid a fixture child writes to the FIFO `file` as it enters, waited for until a backstop only a
+/// stall reaches (six times the 30 s it had as a bound).
 pub fn entered(file: &std::fs::File) -> i64 {
     use std::io::Read;
     use std::os::fd::AsRawFd;
     wait_entered(
         file.as_raw_fd(),
-        std::time::Instant::now() + std::time::Duration::from_secs(30),
+        std::time::Instant::now() + test_time::backstop(std::time::Duration::from_secs(30)),
     );
     // The shell writes this short record atomically; one read also bounds malformed records
     // that omit their newline instead of hanging a line reader after the readiness deadline.
@@ -171,24 +176,33 @@ mod tests {
         use std::os::fd::AsRawFd;
         let tree = Tree::new();
         let file = fifo(&tree.path("empty"));
-        let began = std::time::Instant::now();
-        let panic = std::panic::catch_unwind(|| {
-            wait_entered(
-                file.as_raw_fd(),
-                began + std::time::Duration::from_millis(1),
-            );
-        })
-        .unwrap_err();
-        let elapsed = began.elapsed();
-        assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "fixture wait ignored the caller's deadline: {elapsed:?}"
-        );
+        // Nothing writes the FIFO, which the test holds open: only the deadline ends the wait.
+        let fd = file.as_raw_fd();
+        let waiting = std::thread::spawn(move || {
+            std::panic::catch_unwind(|| {
+                wait_entered(
+                    fd,
+                    std::time::Instant::now() + std::time::Duration::from_millis(1),
+                );
+            })
+        });
+        test_time::until_true(
+            "the fixture wait to end at the caller's deadline",
+            test_time::backstop(std::time::Duration::from_secs(10)),
+            || waiting.is_finished(),
+        )
+        .unwrap_or_else(|stall| panic!("fixture wait ignored the caller's deadline: {stall}"));
+        let panic = waiting.join().unwrap().unwrap_err();
+        drop(file);
         let message = match panic.downcast::<String>() {
             Ok(message) => *message,
             Err(panic) => (*panic.downcast::<&str>().unwrap()).to_owned(),
         };
-        assert_eq!(message, "fixture child readiness deadline passed");
+        assert!(
+            message.starts_with("fixture child readiness deadline passed: a stall; ")
+                && message.contains("load average"),
+            "{message}"
+        );
     }
 
     /// A stand-in is primed only as the machine's copy `fixture_script::write` links; a file

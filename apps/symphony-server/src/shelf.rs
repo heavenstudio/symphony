@@ -214,7 +214,8 @@ impl Component for Shelf {
 pub const GATES_ANSWERER: &str = "shelf-gates";
 /// The file a fixture checkout's gates come from: a JSON object of task slugs, each
 /// `{"gates": [Gate, …]}` answered as given, `{"error": "why"}` refused, `"sleep_ms"` waited
-/// first, `"panic": true` panicking. A task it does not name has no gates of the shelf's.
+/// first, `"held_until": "FILE"` held first until the checkout holds FILE, `"panic": true`
+/// panicking. A task it does not name has no gates of the shelf's.
 pub const GATES: &str = "gates.json";
 /// Where each call is written, a line `SLUG BRANCH TIP` (`-` for no tip).
 pub const GATES_CALLS: &str = "gates.calls";
@@ -247,6 +248,11 @@ impl Gates for ShelfGates {
         let answer = &answers[task.slug];
         if let Some(ms) = answer["sleep_ms"].as_u64() {
             std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        if let Some(file) = answer["held_until"].as_str() {
+            while !root.join(file).exists() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
         assert!(
             answer["panic"] != true,

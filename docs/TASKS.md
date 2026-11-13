@@ -763,7 +763,7 @@ floor defers work. Every proposal, dispatch, deferral and failure prints one lin
 the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
-**Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
+**Idle agents are closed by the board, not by a reminder.** A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
 Symphony's process (`just symphony`) runs every five minutes for each project it serves that
 has a board, each on a schedule of its own in its own checkout, started as the project is
@@ -785,8 +785,8 @@ Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the Ch
 app's `cua-repl.mjs` under its own `node` among them, each by its exact path, and
 Codex's `codex-code-mode-host` in a standalone release's `bin` folder), caffeinate and
 board commands: anything else is work, a `codex exec` job included. The roles above
-keep it for an hour at most (owner, 2026-11-08: "Only sessions doing active work or that
-will soon (less than one hour) have active work should be kept open"): idle at its
+keep it for an hour at most, since only a session doing work, or about to within the hour, stays
+open: idle at its
 prompt that long, from its last tool call or the last change of its role or task
 status, it closes saying what brings it back; only an unanswered addressed post keeps
 it longer. A terminal whose program ended is removed at the first sweep, the open
@@ -802,9 +802,8 @@ and why each terminal stays; a sweep tells its log why it keeps an idle one, onc
 reason. `just tasks clean` runs cleanup and one sweep at once, never closing the caller's.
 Code: `crates/tasks/src/launch/reap.rs`.
 
-**Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees
-that can help decrease needless disk usage. No need to ask, this should happen automatically
-when tasks are complete"). The worktree sweep (`just tasks sweep`, the rules in
+**Finished worktrees go by themselves**, without asking, so they hold no disk once their tasks
+are complete. The worktree sweep (`just tasks sweep`, the rules in
 the consuming project's worktree policy) starts, detached, whenever work
 finishes: a task going to done or cancelled (its closed sessions' worktrees then go without
 the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `just tasks
@@ -867,14 +866,10 @@ A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
 
 **What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
-check by hand.** The owner, 2026-11-12: "images should be kept, build should not. Images and other
-artifacts can be pushed into a main tree. However there should be a cap to the size of the folder,
-after which it should ask/warn agents to manually check and remove stale images and artifacts not
-in use. Maybe 5 GB limit?"; and the same day: "Instead of directly commiting, artifacts could be
-attached some with some different process. Either nodes, or git files? Forgot the name but I think
-there was something for this type of challenge in particular. But if there's something that still
-actively references the artifact, then it should be kept until space used becomes a problems
-requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
+check by hand.** A finished worktree's pictures and other artifacts are kept in the main checkout
+and its build output is not; past a size cap, agents are asked to check by hand and remove what
+nothing uses any more ([its card](DECISIONS.md#sweep-artifacts-set-aside)). What is set aside
+stays in the main checkout's artifacts folder, which
 git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
 design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
 `CACHEDIR.TAG` that begins with the convention's signature, `Signature:
@@ -882,7 +877,7 @@ design of its own. Build output in a worktree's artifacts folder (a folder tagge
 nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
 never set aside and goes with the worktree. Nothing removes what
 was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
-unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
+unwritten; a value that is no number over 0 is said and 5 taken), the
 sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
 and keeps the measure in `symphony/tasks/swept.json` in the git common dir, beside the tasks tied to each
 folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
@@ -1345,9 +1340,8 @@ the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once, and the board's Status filter offers neither of them
 ([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
 
-**Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
-in review, but actually waiting for some approval. So it should had been
-blocked instead in regards to the status, since no work was happening." A task
+**Review waiting on nobody is blocked.** A task that only waits on an approval,
+with no work happening, says so by its status. A task
 in review whose branch has every stamp it needs to land but ones nobody is
 producing (the owner's approval, a dependency only that approval collects, a
 hold its orchestrator names: the consuming project's stamp policy)
@@ -1420,10 +1414,9 @@ executor) is the one that lands it.
 
 ### A task another landing covers
 
-The owner, 2026-11-12, of a task whose fix landed with another task's branch, so that it had no
-branch of its own to land: "seems like a proccess bug. Should be able to close or cancel it". Its
-executor or its orchestrator, the session holding that role on it, closes it in any open status
-with no reviewer's verdict:
+A task whose fix landed with another task's branch has no branch of its own to land, and can
+still be closed. Its executor or its orchestrator, the session holding that role on it, closes it
+in any open status with no reviewer's verdict:
 
 ```sh
 just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
@@ -1482,11 +1475,9 @@ what it lands. An orchestrator lands an approved task without asking the owner. 
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
-path or behind its lock, by the owner's verdict (2026-11-12, 06:42): "Adding 5 minutes
-may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that
-gets merged could invalidate the 5 min run, making it have to run it again and again
-and again, spiraling the 5 minute forever. A solution like a lock or queue would
-directly bottleneck the pipeline which isn’t acceptable either." One land of a
+path or behind its lock, since every merge could make a slow run start again, and a lock
+or queue around one would hold the whole pipeline back
+([its card](DECISIONS.md#land-tests-changed-packages)). One land of a
 repository runs at a time (`land.lock` in `symphony/tasks/`), the lock held for those
 seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
@@ -1738,9 +1729,9 @@ lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there, and
-**every open task has an orchestrator** (the owner, 2026-11-13: "Generally speaking, a task
-without an orchestrator is a bug"). The board gives the role wherever a task would come to have
-none (`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs`):
+**every open task has an orchestrator**: one without is a bug. The board gives the role wherever
+a task would come to have none (`crates/tasks/src/orchestration.rs`,
+`crates/tasks/src/store/work/given.rs`):
 
 - **Filed.** An orchestrator session that files a task with `just tasks create` holds its
   orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
@@ -1828,11 +1819,10 @@ already work in (`--affinity`, and the slug prefix of tasks you hold).
 ### The regenerator
 
 What a project's `[land] generators` make (this repository's client distribution) is
-made after a land, never on its path, by the owner's rule (2026-11-12): "There should
-only be one version being built for main at a time, and once a version is built, it
-could then build the next most recent one. It should not cancel a previous in progress
-build and let it finish. This way there's no queue, just a limit of 1 per time that
-possibly skips some merges from building entirely". A land that closed its task starts
+made after a land, never on its path. One build for main runs at a time, and once it is
+built the next is main's newest tip: a build in progress is never cancelled but let
+finish, and there is no queue, so some merges are never built on their own. A land that
+closed its task starts
 `tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
 build, its output appended to `symphony/tasks/land/regenerate.log`, and waits for nothing it
 does.
@@ -1920,7 +1910,7 @@ sources, and a server built from main then embeds the older client. The release 
 within its time, while the regenerator makes main's outputs, and releases nothing of a
 main still behind, filing nothing for it: the regenerator's red is the task then
 ([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
-same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
+same way ([its card](DECISIONS.md#pin-waits-for-current-client)): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
@@ -2035,9 +2025,9 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 
 ## Limits and models
 
-The owner, 2026-11-12: "all WIP limits should be settings anyway, as well as preferred model to
-delegate to. Should be very easy and simple to change the file whenever conditions or deicions
-happen." Each is a key of the project's `symphony.toml`, read from the repository's main
+Every work-in-progress limit, and the model each role is delegated to, is a setting, so a change
+of conditions or of mind is one edit of one file. Each is a key of the project's `symphony.toml`,
+read from the repository's main
 checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src/limits.rs`,
 `crates/tasks/src/launch/defaults.rs`):
 

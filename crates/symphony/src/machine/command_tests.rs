@@ -1,6 +1,7 @@
 //! `project add`: registered once, again, and as the running server's host rule says.
 
 use super::*;
+use crate::test_layouts::{Others, others, repository};
 use crate::test_tree::Tree;
 
 fn project(tree: &Tree, id: &str, plugins: &str) -> PathBuf {
@@ -33,7 +34,7 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
     let tree = Tree::new();
     let root = project(&tree, "lantern", "");
     let machine = tree.path("machine");
-    let first = add(&root, &machine, None).unwrap();
+    let first = add(&root, &tree.root, &machine, None).unwrap();
     assert!(
         first.starts_with("· lantern works registered at /lantern/ ("),
         "{first}"
@@ -43,12 +44,12 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
         "{first}"
     );
     let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
-    let again = add(&root, &machine, Some(&host)).unwrap();
+    let again = add(&root, &tree.root, &machine, Some(&host)).unwrap();
     assert!(
         again.contains("already registered") && again.ends_with("the running Symphony serves it"),
         "{again}"
     );
-    let old = add(&root, &machine, Some(&front(&[], 0, 0))).unwrap();
+    let old = add(&root, &tree.root, &machine, Some(&front(&[], 0, 0))).unwrap();
     assert!(old.contains("predates the registry"), "{old}");
     let registry = Registry::read(&machine).unwrap();
     assert_eq!(registry.projects.len(), 1);
@@ -63,19 +64,19 @@ fn a_renamed_project_is_registered_again_and_one_whose_folder_moved_says_where_f
     let tree = Tree::new();
     let first = project(&tree, "lantern", "");
     let machine = tree.path("machine");
-    add(&first, &machine, None).unwrap();
+    add(&first, &tree.root, &machine, None).unwrap();
     tree.write(
         "lantern/symphony.toml",
         "[project]\nid = \"lantern\"\nname = \"Lantern Lit\"\n",
     );
-    let again = add(&first, &machine, None).unwrap();
+    let again = add(&first, &tree.root, &machine, None).unwrap();
     assert!(
         again.starts_with("· Lantern Lit registered again at /lantern/ ("),
         "{again}"
     );
     let left = Registry::read(&machine).unwrap().projects[0].root.clone();
     std::fs::rename(&first, tree.path("lamp")).unwrap();
-    let moved = add(&tree.path("lamp"), &machine, None).unwrap();
+    let moved = add(&tree.path("lamp"), &tree.root, &machine, None).unwrap();
     assert!(
         moved.starts_with(&format!(
             "· Lantern Lit moved from {} at /lantern/ (",
@@ -98,7 +99,7 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
     );
     let machine = tree.path("machine");
     let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
-    let said = add(&shelved, &machine, Some(&host)).unwrap();
+    let said = add(&shelved, &tree.root, &machine, Some(&host)).unwrap();
     assert!(
         said.contains(
             "· the running Symphony lacks the plugin fixture-absent, which shelved names"
@@ -111,13 +112,106 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
         crate::machine::PIN,
         symphony_board::SCHEMA - 1,
     );
-    let refused = add(&plain, &machine, Some(&older)).unwrap_err();
+    let refused = add(&plain, &tree.root, &machine, Some(&older)).unwrap_err();
     assert!(refused.contains("reads board schema"), "{refused}");
     assert!(
         Registry::read(&machine).unwrap().get("plain").is_none(),
         "a refused project is not registered"
     );
     assert!(Registry::read(&machine).unwrap().get("shelved").is_some());
+}
+
+#[test]
+fn a_linked_worktree_registers_no_project_of_its_own_repository_and_names_the_main_checkout() {
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree.root);
+    let machine = tree.path("machine");
+    let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
+    let refusal = format!(
+        "this runs in the linked worktree {}, and a linked worktree registers no project of its \
+         own repository with the machine's Symphony: run `project add` in {}, the main checkout",
+        linked.display(),
+        main.display()
+    );
+    // Whichever folder of its repository it names and whatever runs, it registers none.
+    for from in [linked.clone(), linked.join("docs")] {
+        for dir in [linked.clone(), main.clone(), main.join("docs")] {
+            for running in [None, Some(&host)] {
+                assert_eq!(
+                    add(&dir, &from, &machine, running),
+                    Err(refusal.clone()),
+                    "{} from {}",
+                    dir.display(),
+                    from.display()
+                );
+            }
+        }
+    }
+    assert!(
+        !machine.join(crate::machine::PROJECTS).exists(),
+        "a linked worktree wrote the registry for its own repository"
+    );
+    // The main checkout registers the project its worktree names, at its main checkout.
+    let added = add(&linked, &main, &machine, Some(&host)).unwrap();
+    assert!(
+        added.starts_with(&format!(
+            "· Lantern registered at /lantern/ ({})",
+            main.display()
+        )),
+        "{added}"
+    );
+    assert_eq!(Registry::read(&machine).unwrap().projects[0].root, main);
+}
+
+#[test]
+fn a_linked_worktree_registers_another_repositorys_project_and_a_submodule_its_own() {
+    let tree = Tree::new();
+    let (_, linked) = repository(&tree.root);
+    let Others {
+        submodule,
+        separate,
+        bare,
+        bare_worktree,
+    } = others(&tree.root);
+    let plain = project(&tree, "plain", "");
+    let machine = tree.path("machine");
+    // From a linked worktree, a project of another repository, or of none, registers as it would
+    // from anywhere: what a scratch repository's `project add` run in a branch's checkout does.
+    for (dir, said) in [
+        (&submodule, "lib registered at /lib/"),
+        (&separate, "sep registered at /sep/"),
+        (&plain, "plain works registered at /plain/"),
+    ] {
+        let added = add(dir, &linked.join("docs"), &machine, None).unwrap();
+        assert!(
+            added.starts_with(&format!("· {said} (")),
+            "{} from the worktree: {added}",
+            dir.display()
+        );
+    }
+    // A submodule and a `--separate-git-dir` checkout are main checkouts, whose `.git` is a file:
+    // each registers its own project, from itself, at itself.
+    for (dir, id) in [(&submodule, "lib"), (&separate, "sep")] {
+        let added = add(dir, dir, &machine, None).unwrap();
+        assert!(
+            added.starts_with(&format!("· {id} already registered at /{id}/ (")),
+            "{added}"
+        );
+        let registry = Registry::read(&machine).unwrap();
+        assert_eq!(&registry.get(id).unwrap().root, dir);
+    }
+    // A bare repository's worktree registers none of its own, and names no checkout to run in.
+    assert_eq!(
+        add(&bare_worktree, &bare_worktree, &machine, None),
+        Err(format!(
+            "this runs in the linked worktree {}, and a linked worktree registers no project of \
+             its own repository with the machine's Symphony: its repository's git dir {} names \
+             no main checkout: run `project add` in that repository's main checkout, if it has one",
+            bare_worktree.display(),
+            bare.display()
+        ))
+    );
+    assert_eq!(Registry::read(&machine).unwrap().projects.len(), 3);
 }
 
 #[test]
@@ -185,7 +279,7 @@ fn the_running_server_is_read_from_its_record_and_its_front() {
     let old = running(&machine, Some(&older)).unwrap();
     assert_eq!(old.pin, 0, "{old:?}");
     let plain = project(&tree, "plain", "");
-    let added = add(&plain, &machine, Some(&old)).unwrap();
+    let added = add(&plain, &tree.root, &machine, Some(&old)).unwrap();
     assert!(added.contains("predates the registry"), "{added}");
     // The machine folder's record is read before the older one.
     tree.write("machine/server.json", &record);

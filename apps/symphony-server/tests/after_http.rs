@@ -28,7 +28,17 @@ use symphony_server::gate::Gate;
 use symphony_server::shelf;
 
 const CHILD: &str = "SYMPHONY_AFTER_HTTP_CHILD";
-const LIMIT: Duration = Duration::from_secs(30);
+/// The wall-clock backstop of every wait of this target, six times the 30 s it had as a bound, which
+/// only a stall reaches (`test_time::backstop`, RULES.md `tests/no-test-fails-on-load`).
+const LIMIT: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// A wait for `what` that ran past [`LIMIT`]: a stall, and the machine's load then.
+fn stalled(what: impl std::fmt::Display) -> String {
+    format!(
+        "{what}: stalled: the wait's wall-clock backstop of {LIMIT:?} ran out; {}",
+        test_time::Load::now()
+    )
+}
 const DOCUMENT: &str = "/api/document?path=docs/TOPIC.md";
 const SCOPE: &str = "/@work~http";
 const PHASE: &str = "after_http phase: ";
