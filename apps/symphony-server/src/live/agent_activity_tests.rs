@@ -1465,7 +1465,7 @@ fn summed(lines: &[Line], hour: f64) -> Summed {
 #[derive(Clone, Copy)]
 enum HandOff {
     Committed,
-    /// The replacement never became ready, and is killed.
+    /// The replacement never became ready: it stops, or is killed.
     FailedBeforeTheClose,
     /// Its commit failed after the old server closed its gate, which opens again at `H + 1890`.
     FailedAfterTheClose,
@@ -1501,7 +1501,10 @@ fn hand_off(outcome: HandOff) -> Vec<Line> {
                 old_gate.stop(old.as_mut().unwrap(), || H + 1925.0);
                 old = None;
             }
-            (HandOff::FailedBeforeTheClose, 31) => replacement = false,
+            (HandOff::FailedBeforeTheClose, 31) => {
+                new_gate.stop(&mut new, || t);
+                replacement = false;
+            }
             (HandOff::FailedAfterTheClose, 31) => old_gate.close(H + 1830.0),
             (HandOff::FailedAfterTheClose, 32) => {
                 old_gate.open();
