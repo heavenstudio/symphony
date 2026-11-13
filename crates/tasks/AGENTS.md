@@ -258,7 +258,9 @@ The next successful sweep confirms the terminal or retires the registration.
 An incomplete terminal inventory still confirms its identified threads; it withholds retirement of
 unmatched registrations until an inventory establishes absence. PULL lists unknown handles only
 while they hold claimable work, just as the per-child warning does.
-The shared server sweeps once on startup, then every five minutes. Each command has a four-minute
+The shared server sweeps each project it serves that has a board, in that project's checkout, once
+it first serves it (at startup, or as the project is registered), then every five minutes, each on
+a schedule of its own until the project is removed. Each command has a four-minute
 deadline and its owned process group is ended on timeout or shutdown, so the next sweep can run.
 An unchanged callback snapshot drains its durable outbox without rescanning the inbox; its message
 cursor advances only with the persisted observation and queued events.
@@ -1524,8 +1526,9 @@ its 384-F32 chunks publish atomically. Missing parts are repaired, removed
 sources are pruned, and a model id change re-embeds every source. The schema's
 `task_embedding` HNSW index is cosine/F32 over `task_chunk.embedding`.
 
-The shared Symphony server runs `tasks embed --maintenance --threads 1` through
-the project's committed-main launcher, at startup and every minute, in an owned
+The shared Symphony server runs `tasks embed --maintenance --threads 1` for each
+project it serves that has a board, through that project's committed-main launcher,
+as it first serves it and every minute, in an owned
 child with `nice -n 10` and without the starter's agent, database or server
 environment. Private previews never run it. Failures retry; server shutdown
 cancels the child, and completed sources survive interruption. If the shared

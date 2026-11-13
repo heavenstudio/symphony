@@ -15,13 +15,19 @@
 //! Every route but `/api/front`, which loopback's name alone reaches, answers a Host naming this
 //! machine alone.
 //! A project's state is its registered root's under its id: until the server stops, the registry
-//! is read again whenever its file changes, and a changed root or id is served from new state.
+//! is read again whenever its file changes, at a request or at the server's own look every
+//! [`LOOK`], and a changed root or id is served from new state.
+//!
+//! Each project's state holds the maintenance of its board, its idle sweep and its embedding
+//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started when the
+//! project is first served, stopped when it is retired or the server stops. The starter's checkout
+//! is maintained by the server's own workers, under whatever id it is registered with.
 
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Request, State};
@@ -38,6 +44,16 @@ mod retired;
 
 pub(crate) use retired::{Stopped, close_saves};
 
+/// How often the server reads the registry again when no request does.
+const LOOK: Duration = Duration::from_secs(1);
+
+/// The thread name of the server's look at the registry ([`Projects::watch`]).
+pub(crate) const REGISTRY_WORKER: &str = "review project registry";
+
+/// What starts the maintenance of a project served beside the starter's, the workers its state
+/// holds until it stops ([`Shared::maintained`]).
+pub(crate) type Maintain = dyn Fn(&Arc<Shared>) -> Vec<std::thread::JoinHandle<()>> + Send + Sync;
+
 /// The registered projects and the server that serves them.
 pub(crate) struct Projects {
     machine: PathBuf,
@@ -48,6 +64,9 @@ pub(crate) struct Projects {
     starter_root: PathBuf,
     build: Build,
     warming: Warming,
+    /// The maintenance each other project's state runs: the server's ([`crate::front::maintenance`]);
+    /// none in the dispatch's tests.
+    maintain: Option<Box<Maintain>>,
     held: Mutex<Held>,
 }
 
@@ -84,13 +103,25 @@ pub(crate) struct Served {
 }
 
 impl Projects {
-    /// The projects the registry in `machine` holds, served beside `starter`'s, each warmed as
-    /// it is read.
+    /// The projects the registry in `machine` holds, served beside `starter`'s, each warmed and
+    /// maintained as it is read.
     pub(crate) fn new(machine: &Path, starter: &Arc<Shared>) -> Arc<Projects> {
-        Projects::made(machine, starter, Warming::AsRead)
+        let home = machine.to_path_buf();
+        let maintain = move |shared: &Arc<Shared>| crate::front::maintenance(shared, Some(&home));
+        Projects::with(machine, starter, Warming::AsRead, Some(Box::new(maintain)))
     }
 
+    #[cfg(test)]
     fn made(machine: &Path, starter: &Arc<Shared>, warming: Warming) -> Arc<Projects> {
+        Projects::with(machine, starter, warming, None)
+    }
+
+    fn with(
+        machine: &Path,
+        starter: &Arc<Shared>,
+        warming: Warming,
+        maintain: Option<Box<Maintain>>,
+    ) -> Arc<Projects> {
         let projects = Arc::new(Projects {
             machine: machine.into(),
             starter: starter.clone(),
@@ -101,10 +132,26 @@ impl Projects {
                 .unwrap_or_else(|_| starter.root.clone()),
             build: Build::this(&starter.root),
             warming,
+            maintain,
             held: Mutex::default(),
         });
         projects.served();
         projects
+    }
+
+    /// The server's look at the registry, every [`LOOK`] until the starter stops: what a request
+    /// reads ([`Projects::served`]), so a project registered is served, warmed and maintained, and
+    /// one removed retired and its maintenance stopped, though no page asks. Run on a thread of its
+    /// own, within the runtime it is started in, which warms what it reads.
+    pub(crate) fn watch(self: &Arc<Self>) -> std::thread::JoinHandle<()> {
+        let projects = Arc::clone(self);
+        let runtime = tokio::runtime::Handle::try_current().ok();
+        crate::front::worker(REGISTRY_WORKER, move || {
+            let _within = runtime.as_ref().map(tokio::runtime::Handle::enter);
+            while !projects.starter.wait(LOOK) {
+                projects.served();
+            }
+        })
     }
 
     /// The projects served now, the registry read again when its file changed.
@@ -186,13 +233,20 @@ impl Projects {
     }
 
     /// `entry` served: the starter's own state while the entry is the starter's checkout under the
-    /// id it started with, a new one beside it for any other root or id.
+    /// id it started with, a new one beside it for any other root or id. A new state of another
+    /// checkout than the starter's (whose board the server's own workers maintain) starts the
+    /// maintenance of its board, which waits while the project has no board.
     fn serve(&self, entry: Entry) -> Served {
         let shared = if entry.root == self.starter_root && entry.id == self.starter_id {
             self.starter.clone()
         } else {
             self.starter.beside(&entry.root, &format!("/{}", entry.id))
         };
+        if entry.root != self.starter_root
+            && let Some(maintain) = &self.maintain
+        {
+            shared.maintained(maintain(&shared));
+        }
         let refused = self.refused(&entry);
         if self.warming == Warming::AsRead
             && refused.is_none()
@@ -672,3 +726,7 @@ fn refusal(
 #[cfg(test)]
 #[path = "projects_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projects/maintained_tests.rs"]
+mod maintained_tests;
