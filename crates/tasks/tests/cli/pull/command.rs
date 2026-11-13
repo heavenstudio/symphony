@@ -44,7 +44,7 @@ fn pull_prints_the_whole_digest_its_actor_hears_every_time_it_asks() {
         ("sim/mine", "Mine"),
         ("sim/theirs", "Theirs"),
     ] {
-        c.ok(&orch, &["create", slug, title]);
+        c.ok(&orch, &["create", slug, title, "--no-role"]);
     }
     c.ok(&orch, &["role", "sim/mine", "orchestrator"]);
     c.ok(&other, &["role", "sim/theirs", "orchestrator"]);

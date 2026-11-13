@@ -602,7 +602,19 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         fast_fix: p.get("fast_fix").map(str::to_string),
     };
     let t = store.create(&new)?;
-    c.say(&format!("created {} ({})", t.slug, t.status));
+    // A task an orchestrator files is its own, unless it says otherwise; filed, it stays filed when
+    // the role is refused. One line says both.
+    let role = match p.flag("no_role") {
+        true => Ok(false),
+        false => store.orchestrate_filed(&t.slug, &new.by),
+    };
+    let role = match role {
+        Ok(true) => format!("; {} orchestrates it", new.by),
+        Ok(false) => String::new(),
+        Err(Error::Refused(why)) => format!("; {} does not orchestrate it: {why}", new.by),
+        Err(error) => return Err(error.into()),
+    };
+    c.say(&format!("created {} ({}){role}", t.slug, t.status));
     Ok(())
 }
 

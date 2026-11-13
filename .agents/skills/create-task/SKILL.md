@@ -2,7 +2,7 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: d184fdfe640809c7 files=SKILL.md -->
+<!-- symphony-stamp: ad3564a0a156d6cd files=SKILL.md -->
 
 # File a task on the board
 
@@ -116,7 +116,10 @@ also follow that project; this skill imposes no separate document execution lane
 
 ## 8. Afterwards
 
-- `just tasks role SLUG orchestrator` if you intend to follow this task's
+- Filed by an orchestrator session, the task is yours from the create (it
+  ends `; HANDLE orchestrates it`), unless you passed `--no-role` or a
+  parent you hold already makes it yours. Any other session runs
+  `just tasks role SLUG orchestrator` if it intends to follow this task's
   events.
 - Tell the owner the slug in one line.
 - Starting an executor on it is a separate step — see the task-orchestrator

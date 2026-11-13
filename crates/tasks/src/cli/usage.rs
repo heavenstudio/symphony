@@ -501,7 +501,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -509,7 +509,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 
 positional arguments:
@@ -540,6 +540,9 @@ options:
   --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
                         reviewer: its orchestrator approves it (RULES.md
                         workflow/fast-bugfixes)
+  --no-role             filed by an orchestrator, leave it without one: else
+                        the orchestrator takes the role, unless an
+                        orchestrator holds the task it is filed under
 "#,
     ),
     (
