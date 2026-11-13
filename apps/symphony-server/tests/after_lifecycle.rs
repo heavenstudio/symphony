@@ -20,13 +20,13 @@ mod private_tests;
 #[path = "after_lifecycle/board_schema_tests.rs"]
 mod board_schema_tests;
 
-use fixture::{Repo, front, get, repository, until, write};
+use fixture::{Repo, answer, front, get, repository, status, until, write};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
 
@@ -265,9 +265,11 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
 #[test]
 fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
     let repo = Repo::new("foreign-record-cleanup");
-    let mut command = Command::new("/bin/sleep");
-    command.arg("60");
+    // It reads its input, which this test holds open to the end: it never ends by itself.
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "read -r line"]).stdin(Stdio::piped());
     let mut unrelated = repo.run(command);
+    let _held = unrelated.child.stdin.take().unwrap();
     write(
         &repo.home.join("server.json"),
         &serde_json::json!({
@@ -285,11 +287,14 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
         "cleanup signalled a foreign record's pid"
     );
     // The record is foreign to Repo, but this Process owns the child. Its drop must end and
-    // reap that exact child before returning, rather than waiting for the sleep to expire.
+    // reap that exact child before returning: the child, whose input is held, would never end.
     let pid = libc::pid_t::try_from(unrelated.child.id()).unwrap();
-    let began = Instant::now();
-    drop(unrelated);
-    let elapsed = began.elapsed();
+    let dropping = std::thread::spawn(move || drop(unrelated));
+    let dropped = test_time::until_true(
+        "Process::drop to end its child rather than wait for it",
+        fixture::BACKSTOP,
+        || dropping.is_finished(),
+    );
     let mut status = 0;
     // SAFETY: the recorded pid is this test's child; WNOHANG only observes/reaps that child.
     let observed = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
@@ -309,14 +314,16 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
         {}
     }
+    if let Err(stall) = dropped {
+        panic!("{stall}");
+    }
+    if let Err(failure) = dropping.join() {
+        std::panic::resume_unwind(failure);
+    }
     assert_eq!(
         (observed, error),
         (-1, Some(libc::ECHILD)),
         "Process::drop left its child {pid} alive or unreaped"
-    );
-    assert!(
-        elapsed < fixture::PATIENCE,
-        "Process::drop waited for its child instead of ending it: {elapsed:?}"
     );
 }
 
@@ -433,7 +440,7 @@ fn record_write_failure_leaves_no_partial_and_does_not_restart_the_server() {
         .filter(|name| name.to_string_lossy().starts_with("server.json."))
         .collect();
     assert!(partials.is_empty(), "{partials:?}");
-    assert_eq!(front(running.port).unwrap().pid, running.pid);
+    assert_eq!(status(running.port).pid, running.pid);
     fs::remove_dir(&address).unwrap();
     repo.start(&repo.main, false);
     assert_eq!(repo.record(), Some(running));
@@ -562,8 +569,8 @@ fn a_profiled_server_times_each_stage_of_its_warm_start() {
     let actual = server.ready();
     // Only the card the branch added is its own: had a register read come back empty, the
     // card it shares with main and with its fork would be listed too.
-    let (status, queue) = get(actual.port, "/api/queue").unwrap();
-    assert_eq!(status, 200, "{queue}");
+    let (code, queue) = answer(actual.port, "/api/queue");
+    assert_eq!(code, 200, "{queue}");
     let queue: symphony_api::Queue = serde_json::from_str(&queue).unwrap();
     let proposed: Vec<_> = queue
         .waiting
@@ -630,7 +637,7 @@ fn the_native_server_has_no_interpreter_child() {
     until("native server without resident children", || {
         children(actual.pid).is_empty().then_some(())
     });
-    assert_eq!(get(actual.port, "/api/front").unwrap().0, 200);
+    assert_eq!(answer(actual.port, "/api/front").0, 200);
     server.signal(libc::SIGTERM);
     server.success();
 }

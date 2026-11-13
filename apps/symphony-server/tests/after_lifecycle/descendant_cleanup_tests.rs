@@ -218,10 +218,17 @@ fn cleanup_waits_for_release(
     let scratch_present = base.is_dir();
     let released = Instant::now();
     writeln!(release, "finish").unwrap();
-    let ended = completion.recv_timeout(PATIENCE);
-    // A cleanup still running at the deadline fails here: joining it would wait unbounded.
+    let ended = completion.recv_timeout(BACKSTOP);
+    // A cleanup still running at the backstop, which only a stall reaches, fails here: joining it
+    // would wait unbounded.
     if matches!(ended, Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
-        panic!("cleanup ({what}) did not end within {PATIENCE:?} of release");
+        panic!(
+            "{}",
+            stalled(
+                &format!("cleanup ({what}) to end after its release"),
+                BACKSTOP
+            )
+        );
     }
     // It sent or ended without sending: the join returns at once and carries its panic.
     if let Err(failure) = cleanup.join() {

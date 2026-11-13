@@ -96,6 +96,8 @@ pub struct Home {
     port: u16,
     hosts: Vec<String>,
     patience: Duration,
+    /// How long one look at a server may take: [`LOOK`], or a test's backstop.
+    look: Duration,
 }
 
 impl Home {
@@ -111,6 +113,7 @@ impl Home {
             port,
             hosts,
             patience: PATIENCE,
+            look: LOOK,
         }
     }
 
@@ -135,6 +138,13 @@ impl Home {
     /// How long a server that is starting, or that runs and does not answer, is waited for.
     pub fn patience(self, patience: Duration) -> Home {
         Home { patience, ..self }
+    }
+
+    /// How long one look at a server may take: a test's server answers a look within its
+    /// backstop, which only a stall reaches, rather than within [`LOOK`] on a loaded machine.
+    #[cfg(test)]
+    pub(crate) fn look(self, look: Duration) -> Home {
+        Home { look, ..self }
     }
 
     pub fn dir(&self) -> &Path {
@@ -310,7 +320,7 @@ impl Home {
     /// Whether the server at `running`'s port answers, as `running`'s pid serving its root: the
     /// project that started it, whichever project asks.
     fn healthy(&self, running: &Running) -> bool {
-        probe::front(running.port, LOOK)
+        probe::front(running.port, self.look)
             .is_some_and(|front| front.pid == running.pid && front.root == running.root)
     }
 
@@ -495,7 +505,7 @@ impl Home {
             if child.try_wait().ok().flatten().is_some() {
                 return false;
             }
-            match probe::front(running.port, LOOK) {
+            match probe::front(running.port, self.look) {
                 Some(front) if front.pid == running.pid && front.ready => return true,
                 Some(front) if front.pid == running.pid => up = true,
                 _ => {}

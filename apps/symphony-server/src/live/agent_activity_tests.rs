@@ -1188,21 +1188,42 @@ fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
     .unwrap();
     hub.gate_recorders(Arc::default());
     hub.start_initial_board();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while hub.task_snapshot().is_err() {
-        assert!(Instant::now() < deadline, "the first board read never came");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the first board read",
+        test_time::backstop(Duration::from_secs(60)),
+        || hub.task_snapshot().is_ok(),
+    )
+    .unwrap();
     let common = symphony_board::git::common_dir(&root).unwrap();
     (tree, hub, common.join(FOLDER))
+}
+
+/// Every line of every day file in `folder`, none while there is none.
+fn days(folder: &Path) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for entry in fs::read_dir(folder).into_iter().flatten() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        lines.extend(read_day(folder, name.trim_end_matches(".jsonl")));
+    }
+    lines
 }
 
 #[test]
 fn only_the_one_server_writes_the_day_files_and_a_private_server_writes_nothing() {
     let (_private_tree, private, private_folder) = hub_started(false);
     let (_shared_tree, shared, shared_folder) = hub_started(true);
-    // A tick or two more for each.
-    std::thread::sleep(Duration::from_millis(1500));
+    // Until the shared server's ticks have recorded its agent; the private one, started first,
+    // has ticked as long.
+    test_time::until_true(
+        "the shared server to record amber-heron",
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            days(&shared_folder)
+                .iter()
+                .any(|l| matches!(l, Line::Seen(s) if s.handle == "amber-heron"))
+        },
+    )
+    .unwrap();
     private.stop();
     shared.stop();
     assert!(
@@ -1210,11 +1231,7 @@ fn only_the_one_server_writes_the_day_files_and_a_private_server_writes_nothing(
         "a private server wrote {}",
         private_folder.display()
     );
-    let mut lines = Vec::new();
-    for entry in fs::read_dir(&shared_folder).unwrap() {
-        let name = entry.unwrap().file_name().into_string().unwrap();
-        lines.extend(read_day(&shared_folder, name.trim_end_matches(".jsonl")));
-    }
+    let lines = days(&shared_folder);
     assert!(matches!(lines[0], Line::Start(_)), "{lines:?}");
     assert!(
         lines

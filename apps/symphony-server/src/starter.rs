@@ -188,7 +188,8 @@ mod tests {
     /// refused; the process found is asked, and said.
     #[test]
     fn a_hand_off_is_asked_of_the_server_found_and_of_no_process_given_its_pid_since() {
-        let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        // It lives until signalled, however long the test takes.
+        let mut holder = Command::new("/bin/sleep").arg("86400").spawn().unwrap();
         let pid = i64::from(holder.id());
         let exe = Path::new("/bin/symphony-server");
         let since = Taken::started(pid, Start::At(1.0));

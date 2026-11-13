@@ -13,7 +13,7 @@ use crate::testing::{
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_api::{GateState, TaskGates};
 use symphony_board::rows::MessageRow;
 
@@ -31,14 +31,19 @@ fn verdict(mut seed: Seed, id: i64, slug: &str, by: &str, text: &str) -> Seed {
     seed
 }
 
-/// A hub over `root` and `f`'s board, its plugin answers waited for `wait`.
+/// How long a plugin that is meant to answer is waited for: a backstop only a stall reaches
+/// (RULES.md `tests/no-test-fails-on-load`), as no plugin here but the held one is slow.
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// A hub over `root` and `f`'s board, its plugin answers waited for `wait`. A failed plugin is
+/// asked again only past a backstop, so no test's steps, however slow, reach a retry.
 fn hub(root: &Path, f: &Fixture, wait: Duration) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     let board = f.other_client();
     hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
     hub.gates = symphony::gates::Kept::new(symphony::gates::Limits {
         wait,
-        retry: Duration::from_secs(60),
+        retry: test_time::backstop(Duration::from_secs(60)),
         ..symphony::gates::Limits::default()
     });
     hub.refresh_page("", root).unwrap();
@@ -106,7 +111,7 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         "lucid-heron",
         "changes: not yet",
     ));
-    let (shared, ask) = served(&root, hub(&root, &f, Duration::from_secs(30)));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
 
     // The task page holds no room for gates the server has not answered yet.
     let (status, page) = ask("/api/task-page?slug=tools/x");
@@ -239,12 +244,15 @@ fn git_tip(root: &Path, branch: &str) -> String {
 fn a_plugin_that_errs_panics_or_is_slow_is_one_unknown_gate_and_the_answer_still_arrives() {
     let tree = Tree::new();
     let root = shelf_project(&tree, &["tools/err", "tools/panic", "tools/slow"]);
+    // The slow plugin answers only once the test lets it, so its wait runs out first however
+    // loaded the machine is, and a request that waited on it would never be answered.
+    const RELEASED: &str = "slow.released";
     std::fs::write(
         root.join(shelf::GATES),
         json!({
             "tools/err": {"error": "land exited 2\nits log"},
             "tools/panic": {"panic": true},
-            "tools/slow": {"sleep_ms": 3000, "gates": [{"name": "certificate", "state": "met"}]},
+            "tools/slow": {"held_until": RELEASED, "gates": [{"name": "certificate", "state": "met"}]},
         })
         .to_string(),
     )
@@ -255,49 +263,48 @@ fn a_plugin_that_errs_panics_or_is_slow_is_one_unknown_gate_and_the_answer_still
             .task("tools/panic", "in_progress")
             .task("tools/slow", "in_progress"),
     );
-    let (shared, ask) = served(&root, hub(&root, &f, Duration::from_millis(300)));
     let review = (
         "review".to_string(),
         GateState::Missing,
         "Not reviewed yet".to_string(),
     );
+    let unknown = |said: &str| {
+        [
+            review.clone(),
+            ("shelf-gates".into(), GateState::Unknown, said.into()),
+        ]
+    };
+    // A plugin that errs or panics is said so within any wait; here one only a stall outlasts.
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
     for (slug, said) in [
         ("tools/err", "land exited 2"),
         (
             "tools/panic",
             "shelf-gates panicked answering: gates.json says to panic for tools/panic",
         ),
-        ("tools/slow", "shelf-gates gave no answer within 0.3 s"),
     ] {
-        let began = Instant::now();
         let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
         assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
-        assert!(
-            began.elapsed() < Duration::from_secs(2),
-            "{slug} waited on its plugin"
-        );
-        assert_eq!(
-            gates(&answer),
-            [
-                review.clone(),
-                ("shelf-gates".into(), GateState::Unknown, said.into()),
-            ],
-            "{slug}"
-        );
+        assert_eq!(gates(&answer), unknown(said), "{slug}");
     }
+    shared.stop();
+    // A slow one is an unknown gate once its wait runs out.
+    let (shared, ask) = served(&root, hub(&root, &f, Duration::from_millis(300)));
+    let (status, answer) = ask("/api/task-gates?slug=tools/slow");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        gates(&answer),
+        unknown("shelf-gates gave no answer within 0.3 s")
+    );
     // The slow answer, once it comes, is the one kept: no second call.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    std::fs::write(root.join(RELEASED), "").unwrap();
+    test_time::until_true("the slow answer to come", BACKSTOP, || {
         let (_, answer) = ask("/api/task-gates?slug=tools/slow");
-        if gates(&answer)
+        gates(&answer)
             .iter()
             .any(|(name, _, _)| name == "certificate")
-        {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the slow answer never came");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    })
+    .unwrap();
     assert_eq!(
         calls(&root)
             .iter()
@@ -374,7 +381,7 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
             _ => {}
         });
     let f = Fixture::new(seed);
-    let (shared, ask) = served(&root, hub(&root, &f, Duration::from_secs(30)));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
 
     let (status, answer) = ask("/api/task-gates?slug=tools/green");
     assert_eq!(status, StatusCode::OK, "{answer}");
