@@ -1383,19 +1383,13 @@ mod tests {
         );
         let (spoken, mut spoken_peer) = kept_connection(&listener, 0);
         spoken_peer.write_all(b"x").unwrap();
-        spoken
-            .stream
-            .set_read_timeout(Some(READ_PATIENCE))
-            .unwrap();
+        spoken.stream.set_read_timeout(Some(READ_PATIENCE)).unwrap();
         assert_eq!(spoken.stream.peek(&mut [0]).unwrap(), 1);
         let failure = check(&spoken.stream).unwrap_err();
         assert_eq!(failure.why, "it sent a reply nobody asked for");
         let (closed, closed_peer) = kept_connection(&listener, 0);
         drop(closed_peer);
-        closed
-            .stream
-            .set_read_timeout(Some(READ_PATIENCE))
-            .unwrap();
+        closed.stream.set_read_timeout(Some(READ_PATIENCE)).unwrap();
         assert_eq!(closed.stream.peek(&mut [0]).unwrap(), 0);
         let failure = check(&closed.stream).unwrap_err();
         assert_eq!(failure.why, "it closed the connection");

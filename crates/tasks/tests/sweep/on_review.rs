@@ -58,7 +58,11 @@ fn written(path: &Path) -> String {
     test_time::until(
         format!("a whole line written to {}", path.display()),
         test_time::backstop(Duration::from_secs(60)),
-        || fs::read_to_string(path).ok().filter(|text| text.ends_with('\n')),
+        || {
+            fs::read_to_string(path)
+                .ok()
+                .filter(|text| text.ends_with('\n'))
+        },
     )
     .unwrap()
 }

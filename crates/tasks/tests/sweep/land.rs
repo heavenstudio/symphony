@@ -285,7 +285,8 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     // The backstop of the land's own 3 s window, which no loaded machine's count outlasts: the land
     // listens until the command ends.
     let window = test_time::backstop(symphony_board::on_land::SAYS);
-    env.vars.insert(SAYS_VAR.into(), window.as_secs().to_string());
+    env.vars
+        .insert(SAYS_VAR.into(), window.as_secs().to_string());
     let mut out = Vec::new();
     let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let said = String::from_utf8(out).unwrap();

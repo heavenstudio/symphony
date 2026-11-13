@@ -217,12 +217,14 @@ impl Folders {
     /// reader found and what the work folder holds.
     #[track_caller]
     fn once(&self, state: Step) -> Record {
-        let found = test_time::until(format!("one operation {state:?}"), patience(), || {
-            match self.records().as_slice() {
+        let found = test_time::until(
+            format!("one operation {state:?}"),
+            patience(),
+            || match self.records().as_slice() {
                 [one] if one.state == state => Some(one.clone()),
                 _ => None,
-            }
-        });
+            },
+        );
         found.unwrap_or_else(|stall| {
             panic!(
                 "{stall}: {:?}; the work folder: {}",
@@ -305,7 +307,11 @@ fn alive(pid: libc::pid_t) -> bool {
 #[track_caller]
 fn written_pid(file: &Path) -> libc::pid_t {
     test_time::until(format!("a pid in {}", file.display()), patience(), || {
-        fs::read_to_string(file).unwrap_or_default().trim().parse().ok()
+        fs::read_to_string(file)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .ok()
     })
     .unwrap()
 }

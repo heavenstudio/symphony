@@ -82,17 +82,21 @@ impl Listener {
 fn frames(mut stream: UnixStream) -> String {
     stream.set_nonblocking(true).unwrap();
     let (mut bytes, mut buffer) = (Vec::new(), [0; 4096]);
-    let closed = test_time::until("a callback frame closed", test_time::backstop(Duration::from_secs(5)), || {
-        loop {
-            match stream.read(&mut buffer) {
-                Ok(0) => return Some(()),
-                Ok(n) => bytes.extend_from_slice(&buffer[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return None,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => panic!("callback frame: {e}"),
+    let closed = test_time::until(
+        "a callback frame closed",
+        test_time::backstop(Duration::from_secs(5)),
+        || {
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) => return Some(()),
+                    Ok(n) => bytes.extend_from_slice(&buffer[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return None,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => panic!("callback frame: {e}"),
+                }
             }
-        }
-    });
+        },
+    );
     closed.unwrap();
     String::from_utf8(bytes).unwrap()
 }

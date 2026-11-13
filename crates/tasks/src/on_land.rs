@@ -295,7 +295,11 @@ mod tests {
         test_time::until(
             format!("{} holds {wanted:?}", path.display()),
             test_time::backstop(Duration::from_secs(10)),
-            || fs::read_to_string(path).ok().filter(|text| text.contains(wanted)),
+            || {
+                fs::read_to_string(path)
+                    .ok()
+                    .filter(|text| text.contains(wanted))
+            },
         )
         .unwrap_or_else(|stall| {
             let text = fs::read_to_string(path).unwrap_or_default();

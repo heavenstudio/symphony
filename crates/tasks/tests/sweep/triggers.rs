@@ -75,7 +75,10 @@ fn logged(r: &Repo, start: &str, count: usize) -> String {
     let found = test_time::until(
         format!("{count} {start:?} lines in the log"),
         test_time::backstop(Duration::from_secs(60)),
-        || Some(read()).filter(|text| text.lines().filter(|l| l.starts_with(start)).count() >= count),
+        || {
+            Some(read())
+                .filter(|text| text.lines().filter(|l| l.starts_with(start)).count() >= count)
+        },
     );
     found.unwrap_or_else(|stall| panic!("{stall}; the log:\n{}", read()))
 }

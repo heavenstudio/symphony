@@ -547,9 +547,9 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
                     return Some(Some((run.handle, run.task)));
                 }
                 let leased = std::fs::read_dir(&operations).is_ok_and(|entries| {
-                    entries.flatten().any(|entry| {
-                        entry.path().extension().is_some_and(|ext| ext == "lease")
-                    })
+                    entries
+                        .flatten()
+                        .any(|entry| entry.path().extension().is_some_and(|ext| ext == "lease"))
                 });
                 (!leased).then_some(None)
             },
@@ -560,9 +560,10 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
     // `answered`, at most ATTEMPTS times. On a live board's database the recorder keeps its own
     // waits, a second for its word to its command and a second for the board's answer (a test's
     // scale is never taken there), so a loaded machine may let one run go unanswered; a recorder
-    // that never finds the answer fails every attempt.
+    // that never finds the answer fails every attempt. What a run found: its session and task.
     const ATTEMPTS: usize = 5;
-    let recorded_run = |label: &str, answered: &dyn Fn(&(Option<String>, Option<String>)) -> bool| {
+    type Found = (Option<String>, Option<String>);
+    let recorded_run = |label: &str, answered: &dyn Fn(&Found) -> bool| {
         let mut said = Vec::new();
         for attempt in 1..=ATTEMPTS {
             match recorded_once(&format!("{label}-{attempt}")) {
