@@ -112,7 +112,7 @@ Each line is one JSON object, the envelope: an `id`, and exactly one of
 
 | Member | From | What it holds |
 |---|---|---|
-| `request` | the host | a call: one member named by the call and holding its fields (`{"card_kinds.slot":{"kind":"hull","card":{…}}}`) |
+| `request` | the host | a call: one member named by the call and holding its fields (`{"card_kinds.slot":{"kind":"widget","card":{…}}}`) |
 | `cancel` | the host | `{}`: the call of that id is given up and its answer, if one comes, is dropped |
 | `answered` | the plugin | the answer to the call of that id: `{"answer":…}` or `{"refused":"…"}` |
 
@@ -131,7 +131,7 @@ read ends the process that wrote it: the host ends a plugin's process for it, an
 stops reading and says so on stderr.
 
 ```json
-{"id":7,"request":{"components.render":{"component":"hull","page":{"root":"/p","doc_path":"docs/A.md","render":3},"argument":"A-1","option":null}}}
+{"id":7,"request":{"components.render":{"component":"report","page":{"root":"/p","doc_path":"docs/A.md","render":3},"argument":"A-1","option":null}}}
 {"id":7,"answered":{"answer":{"Ok":[{"type":"paragraph","spans":[{"type":"text","text":"A-1"}]}]}},"us":41.5}
 ```
 

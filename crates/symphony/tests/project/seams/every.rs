@@ -442,7 +442,7 @@ impl Gates for Every {
 
 impl Watch for Every {
     fn paths(&self) -> Vec<String> {
-        vec!["data/every".into(), "art".into()]
+        vec!["data/every".into(), "pictures".into()]
     }
     fn changed(&self, root: &Path) -> Option<String> {
         Some(format!("warmed {}", root.display()))

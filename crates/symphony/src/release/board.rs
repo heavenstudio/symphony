@@ -2226,7 +2226,7 @@ mod tests {
         let unexecuted = |name: &str| {
             format!(
                 "     Running tests/{name}.rs (.target/debug/deps/{name}-c2)\n\
-                 error: test failed, to rerun pass `-p art --test {name}`\n\n\
+                 error: test failed, to rerun pass `-p app --test {name}`\n\n\
                  Caused by:\n  could not execute process `{target}/debug/deps/{name}-c2` (never \
                  executed)\n\nCaused by:\n  No such file or directory (os error 2)\n"
             )
@@ -2238,7 +2238,7 @@ mod tests {
             (
                 "     Running tests/golden_card.rs (.target/debug/deps/golden_card-87ae)\n\
                  test shared_app_discovers_branch_card ... FAILED\n\
-                 error: test failed, to rerun pass `-p art --test golden_card`\n"
+                 error: test failed, to rerun pass `-p app --test golden_card`\n"
                     .to_string(),
                 String::new(),
             )
@@ -2250,7 +2250,7 @@ mod tests {
             &format!(
                 "{before}{boundary}{after}{failure_capture}   Doc-tests content_index\n\
                  error: couldn't find file `{target}/debug/build/content-index-c3/out/index.rs`\n\
-                 error: doctest failed, to rerun pass `-p art --doc`\n",
+                 error: doctest failed, to rerun pass `-p app --doc`\n",
                 failure_capture = unexecuted("failure_capture"),
             ),
         )
@@ -2262,7 +2262,7 @@ mod tests {
         let target = tree.path("copies/consumer/.target");
         tree.write("copies/consumer/.target/tree", "the tree that emptied it");
         let conciliation = Ran {
-            command: "cargo test --no-fail-fast --target-dir /copies/consumer/.git/t -p art (in \
+            command: "cargo test --no-fail-fast --target-dir /copies/consumer/.git/t -p app (in \
                       /copies/consumer at 1a2b)"
                 .into(),
             log: emptied_log(&tree, &target, true),
@@ -2275,10 +2275,10 @@ mod tests {
             .join("\n");
         let paragraph = format!(
             "\n\nAn environment failure, not a failed test: 2 of its failed targets found files \
-             its own build had made gone, and never ran or never compiled for that (`-p art --test \
-             failure_capture` and `-p art --doc`): `{target}/debug/deps/failure_capture-c2` and \
+             its own build had made gone, and never ran or never compiled for that (`-p app --test \
+             failure_capture` and `-p app --doc`): `{target}/debug/deps/failure_capture-c2` and \
              `{target}/debug/build/content-index-c3/out/index.rs`. They went while `Running \
-             tests/dependency_boundary.rs (.target/debug/deps/dependency_boundary-c5)` (`-p art \
+             tests/dependency_boundary.rs (.target/debug/deps/dependency_boundary-c5)` (`-p app \
              --test dependency_boundary`) ran, the last target cargo started before the first \
              that found one gone: what removed them ran then, that target or something it \
              started, or something outside the run. Its build folder, {target}, holds now: \
@@ -2290,7 +2290,7 @@ mod tests {
             filed.contains(
                 "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`), the \
                  command above, in its scratch copy, with each of these in place of its `-p` \
-                 packages, as its log names each failure (1):\n- `-p art --test golden_card -- \
+                 packages, as its log names each failure (1):\n- `-p app --test golden_card -- \
                  shared_app_discovers_branch_card --exact`\n\n"
             ),
             "the targets that found files gone are no failures to rerun:\n{filed}"

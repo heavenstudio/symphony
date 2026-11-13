@@ -1,8 +1,9 @@
 # The names this repository's texts may write after `just` besides the recipes `symphony init`
 # installs (crates/symphony/shipped/symphony.just) and, in its guides, the recipes of its own
 # justfile. One reader (crates/symphony/src/docs_audit/recipes.rs) judges by it in two places: the
-# docs audit, in this checkout alone, its documents, what it ships and its guides; and the hooks test
-# (crates/symphony/tests/hooks/named_recipes.rs) what it ships and the strings the binaries print.
+# docs audit, in this checkout alone, its documents, what it delivers and its guides; and the hooks
+# test (crates/symphony/tests/hooks/named_recipes.rs) what it delivers and the strings the binaries
+# print.
 # docs/CHECKS.md, "The recipes a text names", says which texts each judges and which entries each
 # keeps current. A change here changes a check.
 #

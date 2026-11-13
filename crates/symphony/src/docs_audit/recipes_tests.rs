@@ -203,7 +203,7 @@ fn a_name_stands_by_the_first_list_that_holds_it_and_an_entry_only_in_its_file()
 }
 
 #[test]
-fn the_audit_judges_the_documents_what_the_symphony_ships_and_its_guides() {
+fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
     for file in [
         "docs/CHECKS.md",
         "docs/sub/GUIDE.md",
@@ -522,7 +522,7 @@ fn a_consuming_projects_audit_judges_no_recipe_its_texts_name() {
 }
 
 /// The Symphony's own checkout is judged by its lists: its documents but the records, and of the
-/// files git tracks what it ships and its guides, each name no list allows refused with its file
+/// files git tracks what it delivers and its guides, each name no list allows refused with its file
 /// and line; a binary's string is the hooks test's. A file git does not track yet is judged once it
 /// does, and a project named `symphony` with no lists is not judged.
 #[test]

@@ -1,4 +1,4 @@
-# The most bytes each binary this workspace ships may weigh, built as `cargo install` builds it
+# The most bytes each binary this workspace delivers may weigh, built as `cargo install` builds it
 # (the workspace's release profile) for aarch64-apple-darwin, and the most the client distribution
 # the server embeds may weigh. `just size-check` builds the binaries and checks every line
 # (`symphony size-budget`, docs/CHECKS.md "Size budgets"); the release run's `just verify` runs it.

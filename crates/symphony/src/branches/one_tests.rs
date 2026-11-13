@@ -207,7 +207,7 @@ fn a_branchs_later_verdict_line_gives_its_copys_mark_though_mains_last_line_is_l
         "- [ ] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 12:00] agent — Main's note.\n",
     );
     let branch = card(
-        "- [?] **c** — Pick one, revised.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 11:00] owner · approved\n  [2026-11-11 11:30] agent · question — Ship it today?\n",
+        "- [?] **c** — Pick one, revised.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 11:00] owner · approved\n  [2026-11-11 11:30] agent · question — Land it today?\n",
     );
     let one = one_card(&main, &branch);
     assert_eq!(one.text, "Pick one.");
@@ -292,7 +292,7 @@ fn owner_lines_join_mains_copy_without_its_text_or_a_newer_mark() {
     let main = card(
         "- [r] **c** — Pick one.\n  [2026-11-11 10:00] agent — Posted.\n  [2026-11-11 19:00] agent · resolved\n",
     );
-    let late = card("- [x] **c** — Old text.\n  [2026-11-11 18:48] owner · approved — Ship it.\n");
+    let late = card("- [x] **c** — Old text.\n  [2026-11-11 18:48] owner · approved — Land it.\n");
     let one = with_owner_lines(&main, &late);
     assert_eq!(
         one.state,
@@ -302,7 +302,7 @@ fn owner_lines_join_mains_copy_without_its_text_or_a_newer_mark() {
     assert_eq!(one.text, "Pick one.");
     assert_eq!(
         said(&one)[1],
-        "2026-11-11 18:48 owner approved Ship it.",
+        "2026-11-11 18:48 owner approved Land it.",
         "placed in time order"
     );
     let later = card("- [-] **c** — Old text.\n  [2026-11-11 20:00] owner · rejected — No.\n");
