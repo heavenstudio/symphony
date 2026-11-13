@@ -58,6 +58,11 @@
 //! command's tree is not watched; on macOS, where it becomes its command, the kernel's count of that
 //! process and of every process under it, read every [`SAMPLE`] and once more as it ends, the most
 //! read, with whether a reading knew it missed some (`supervised::cpu::Tree`).
+//!
+//! The bounds the machine's speed meets ([`READY`], [`WAIT`], [`GIT_WAIT`], [`RERUN_WAIT`] and
+//! [`crate::runs::LOCK_WAIT`]) are a test's to scale, on a scratch board's database alone
+//! ([`SCALE_VAR`], [`Waits`]), so a loaded machine never decides what a test's run records; a run
+//! on the live board's database keeps them whatever it names.
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
@@ -99,20 +104,11 @@ const SAMPLE: Duration = Duration::from_millis(250);
 const GIT_WAIT: Duration = Duration::from_millis(600);
 /// The longest a recorder apart from its command waits for an earlier run it may repeat to end.
 const RERUN_WAIT: Duration = Duration::from_secs(5);
-/// What sets, in seconds, how long a command waits to hear its recorder watches it, in place of
-/// `READY`'s second. This and the four below are a test's: each gives a loaded machine the time
-/// it needs, or runs its deadline out at once to show what its end does.
-#[cfg(target_os = "macos")]
-pub const READY_VAR: &str = "TASKS_RUN_READY";
-/// What sets, in seconds, how long the board is asked the run's task, in place of [`WAIT`].
-pub const WAIT_VAR: &str = "TASKS_RUN_BOARD_WAIT";
-/// What sets, in seconds, how long git is asked the run's tree, in place of [`GIT_WAIT`].
-pub const GIT_WAIT_VAR: &str = "TASKS_RUN_GIT_WAIT";
-/// What sets, in seconds, how long an earlier run is waited for, in place of [`RERUN_WAIT`].
-pub const RERUN_WAIT_VAR: &str = "TASKS_RUN_RERUN_WAIT";
-/// What sets, in seconds, how long a recorder apart from its command's caller waits for the day
-/// files' lock before each line, in place of [`crate::runs::LOCK_WAIT`].
-pub const LOCK_WAIT_VAR: &str = "TASKS_RUN_LOCK_WAIT";
+/// Names a test's scale of the waits a machine's speed decides ([`Waits`]): a whole number from 1
+/// to [`MOST_SCALE`], taken only on a scratch board.
+pub const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
+/// The largest scale [`SCALE_VAR`] takes: a minute for a bound of a second.
+const MOST_SCALE: u32 = 60;
 const USAGE: &str = "usage: tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]\n                 [--pipeline NAME] [--step NAME] [--commit SHA] [--branch NAME] -- COMMAND [ARGS...]\n       tasks run --probe\n";
 
 /// `tasks run --help`, `just tasks help run`: its usage and what it does.
@@ -290,6 +286,69 @@ fn trigger(env: &Env, handle: Option<&str>) -> String {
         .to_owned()
 }
 
+/// How long a run waits on what the machine's speed decides: its recorder's word that it watches
+/// its command ([`READY`]), the board's answer ([`WAIT`]), git's ([`GIT_WAIT`]) and, apart from its
+/// command, another recorder's end line ([`RERUN_WAIT`]) and its hold on the day files' lock
+/// ([`crate::runs::LOCK_WAIT`]), each its own bound times a scale. The scale is 1 but where a test
+/// names one ([`SCALE_VAR`]) and the board the run reaches is on a database other than the live
+/// one's ([`crate::DATABASE`]: a test's `TASKS_DATABASE`, or a `--database`), which the board never
+/// takes for a live board either ([`super::Reached::live`]), so a loaded machine never decides
+/// what a test's run records. A run on the live one's database, by whatever server or folder it
+/// reaches it and whether or not that server is up, or one that reaches no board, keeps its own
+/// bounds whatever it names, and one that names none asks nothing more.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Waits(u32);
+
+impl Waits {
+    /// The bounds themselves.
+    const OWN: Waits = Waits(1);
+
+    /// The waits of a run in `env`.
+    fn of(env: &Env) -> Waits {
+        let Some(scale) = env
+            .var(SCALE_VAR)
+            .and_then(|named| named.parse::<u32>().ok())
+            .filter(|scale| (1..=MOST_SCALE).contains(scale))
+        else {
+            return Waits::OWN;
+        };
+        match super::reach(env, &env.cwd, false) {
+            Ok(reached)
+                if reached.live.is_none() && reached.client.database() != crate::DATABASE =>
+            {
+                Waits(scale)
+            }
+            _ => Waits::OWN,
+        }
+    }
+
+    /// How long the board is asked which task the session holds.
+    fn board(self) -> Duration {
+        WAIT * self.0
+    }
+
+    /// How long git is asked a run's tree and whether its checkout is clean.
+    fn git(self) -> Duration {
+        GIT_WAIT * self.0
+    }
+
+    /// How long a command waits to hear its recorder watches it.
+    #[cfg(target_os = "macos")]
+    fn ready(self) -> Duration {
+        READY * self.0
+    }
+
+    /// How long a recorder apart from its command waits for an earlier run it may repeat to end.
+    fn rerun(self) -> Duration {
+        RERUN_WAIT * self.0
+    }
+
+    /// How long a recorder apart from its command waits for the day files' lock before each line.
+    fn lock(self) -> Duration {
+        crate::runs::LOCK_WAIT * self.0
+    }
+}
+
 /// `tasks run ARGS` in `env`, the probe's answer on `out` and what it must say on `err`. `process`
 /// when this is the `tasks` binary's own process, which may become the command, pass its signals
 /// on, or end by the one that ended it; it runs no other thread yet.
@@ -331,8 +390,9 @@ pub fn run(
 
 /// The session and the task `asked` runs for in `env`: the task named, else as the board says
 /// ([`crate::store::Store::run_for`]: the given session's, the live session placed in this linked
-/// worktree's, the branch's, the live session the Claude Code session binds).
-fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
+/// worktree's, the branch's, the live session the Claude Code session binds), asked for at most
+/// `wait`.
+fn attributed(asked: &Asked, env: &Env, wait: Duration) -> (Option<String>, Option<String>) {
     let identity = |name: &String| super::machine_work::identity(name);
     let handle = asked
         .handle
@@ -358,7 +418,7 @@ fn attributed(asked: &Asked, env: &Env) -> (Option<String>, Option<String>) {
             .map(|(_, branch)| branch.as_str())
             .filter(|branch| !branch.is_empty()),
     };
-    match on_board(env, &place) {
+    match on_board(env, &place, wait) {
         Some((found, task)) => (handle.or(found).filter(identity), task.filter(identity)),
         None => (handle, None),
     }
@@ -378,10 +438,11 @@ fn unstarted(error: &io::Error) -> i32 {
 /// passing on the signals it gets, then ending as its command did.
 fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     let queued_at = crate::store::now();
+    let waits = Waits::of(env);
     // Its lease, and a run's tree and whether its checkout is clean, before its command starts.
     let prepared = recorded::folder(env)
         .zip(recorded::new_id().ok())
-        .and_then(|(folder, id)| Prepared::new(folder, id, (asked, None), env).ok());
+        .and_then(|(folder, id)| Prepared::new(folder, id, (asked, None), env, waits).ok());
     let id = prepared.as_ref().map(|prepared| prepared.id.clone());
     let mut command = if process {
         sys::command(&asked.command[0])
@@ -565,12 +626,17 @@ fn seconds(time: libc::timeval) -> f64 {
 }
 
 /// The session and task a run at `place` is for, as the board `env` reaches says in one read,
-/// without starting its server; none when it does not answer. Whether a session is live is judged
-/// by the clock every board command reads (`TASKS_NOW` pins it), else this machine's.
-fn on_board(env: &Env, place: &crate::store::RunPlace) -> Option<(Option<String>, Option<String>)> {
+/// without starting its server, waiting at most `wait` for each answer; none when it does not
+/// answer. Whether a session is live is judged by the clock every board command reads (`TASKS_NOW`
+/// pins it), else this machine's.
+fn on_board(
+    env: &Env,
+    place: &crate::store::RunPlace,
+    wait: Duration,
+) -> Option<(Option<String>, Option<String>)> {
     let reached = super::reach(env, &env.cwd, false).ok()?;
     let reached = super::Reached {
-        client: reached.client.waiting(env.seconds(WAIT_VAR, WAIT)),
+        client: reached.client.waiting(wait),
         ..reached
     };
     let clock = super::Clock::of(env).unwrap_or(super::Clock::Machine);
@@ -670,18 +736,21 @@ struct Prepared {
     /// Its role, the tree and whether the checkout differed from its commit: none for an operation
     /// of the work folder alone.
     run: Option<(Role, Option<String>, Option<bool>)>,
+    /// How long it waits on the board's answer, as on git's.
+    waits: Waits,
 }
 
 impl Prepared {
     /// The lease of the operation `id` of `asked` in `env` taken in the work folder `folder`, never
     /// waited for longer than [`crate::runs::BRIEF_WAIT`] (a new file only a sweep's look holds, for
     /// an instant), naming the process its command is when that is known; then a run's or a step's
-    /// tree and cleanliness asked of git for at most [`GIT_WAIT`].
+    /// tree and cleanliness asked of git for as long as its `waits` say ([`GIT_WAIT`]).
     fn new(
         folder: PathBuf,
         id: String,
         (asked, command): (&Asked, Option<u32>),
         env: &Env,
+        waits: Waits,
     ) -> io::Result<Prepared> {
         let operations = folder.join(recorded::OPERATIONS);
         fs::create_dir_all(&operations)?;
@@ -702,8 +771,7 @@ impl Prepared {
         let commit = asked.commit.clone().or_else(|| commit(&env.cwd));
         let run = role(asked, env).map(|role| {
             let (tree, dirty) = commit.as_deref().map_or((None, None), |commit| {
-                let within = env.seconds(GIT_WAIT_VAR, GIT_WAIT);
-                crate::runs::tree_and_dirty(&env.cwd, commit, asked.commit.is_some(), within)
+                crate::runs::tree_and_dirty(&env.cwd, commit, asked.commit.is_some(), waits.git())
             });
             (role, tree, dirty)
         });
@@ -713,6 +781,7 @@ impl Prepared {
             lease,
             commit,
             run,
+            waits,
         })
     }
 }
@@ -733,9 +802,10 @@ struct Recording {
 impl Recording {
     /// Its record written as `prepared` was, as `asked` in `env`, asked for at `queued_at`: running
     /// since `started` when its command started, else queued. The task it is for is asked of the
-    /// board first, then the run it repeats read (by a recorder `apart` from its command's caller,
-    /// once each earlier run that may be that one ended, waiting [`RERUN_WAIT`] at most); the times
-    /// were stamped before. A run or a step that started appends its start line.
+    /// board first, for as long as its waits say ([`WAIT`]), then the run it repeats read (by a
+    /// recorder `apart` from its command's caller, once each earlier run that may be that one
+    /// ended, waiting [`RERUN_WAIT`] at most); the times were stamped before. A run or a step that
+    /// started appends its start line.
     fn begin(
         prepared: Prepared,
         asked: &Asked,
@@ -749,8 +819,9 @@ impl Recording {
             lease,
             commit,
             run,
+            waits,
         } = prepared;
-        let (handle, task) = attributed(asked, env);
+        let (handle, task) = attributed(asked, env, waits.board());
         let branch = asked.branch.clone().or_else(|| {
             crate::git::checkout(&env.cwd)
                 .map(|(_, branch)| branch)
@@ -768,8 +839,7 @@ impl Recording {
                         tree,
                     };
                     if apart {
-                        let within = env.seconds(RERUN_WAIT_VAR, RERUN_WAIT);
-                        settled(&folder, &id, same, queued_at, within);
+                        settled(&folder, &id, same, queued_at, waits.rerun());
                     }
                     crate::runs::rerun_of(runs, same, queued_at)
                 }
@@ -830,7 +900,7 @@ impl Recording {
             folder,
             runs,
             wait: if apart {
-                env.seconds(LOCK_WAIT_VAR, crate::runs::LOCK_WAIT)
+                waits.lock()
             } else {
                 crate::runs::BRIEF_WAIT
             },
@@ -928,8 +998,8 @@ impl Recording {
 }
 
 /// Once no operation in the work folder `folder` but `ours`, asked for by `before`, may still end as
-/// the run `same` repeats (`recorded::pending`), or `within` ([`RERUN_WAIT`]) has passed: its end line is then
-/// in the day files, when it is to be.
+/// the run `same` repeats (`recorded::pending`), or `within` ([`RERUN_WAIT`], or a test's scale of
+/// it) has passed: its end line is then in the day files, when it is to be.
 fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, within: Duration) {
     let deadline = std::time::Instant::now() + within;
     let earlier = |record: &Record| {
@@ -951,7 +1021,7 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, with
 /// The `tasks` process become its command, watched by a recorder it forks first.
 #[cfg(target_os = "macos")]
 mod supervised {
-    use super::{Asked, BEAT, Cpu, Prepared, READY, Recording, SAMPLE, role, unstarted};
+    use super::{Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, role, unstarted};
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
     use std::ffi::CString;
@@ -969,6 +1039,7 @@ mod supervised {
     /// returns is the code of a command that could not start, said on `err`.
     pub(super) fn exec(asked: &Asked, env: &Env, err: &mut dyn Write) -> i32 {
         let queued_at = crate::store::now();
+        let waits = Waits::of(env);
         let Ok(words) = asked
             .command
             .iter()
@@ -981,7 +1052,7 @@ mod supervised {
         let mut argv: Vec<*const libc::c_char> = words.iter().map(|word| word.as_ptr()).collect();
         argv.push(std::ptr::null());
         if let Ok(id) = recorded::new_id()
-            && watched(asked, env, &id, queued_at)
+            && watched(asked, env, (&id, queued_at), waits)
         {
             // SAFETY: this process runs one thread: nothing reads its environment beside this.
             unsafe { std::env::set_var(recorded::PARENT_VAR, &id) };
@@ -1008,8 +1079,9 @@ mod supervised {
     }
 
     /// Whether a recorder forked now watches this process, as the operation `id` asked for at
-    /// `queued_at`: told within [`READY`] on a pipe of their own.
-    fn watched(asked: &Asked, env: &Env, id: &str, queued_at: f64) -> bool {
+    /// `queued_at`: told on a pipe of their own, within as long as its `waits` say
+    /// ([`super::READY`]).
+    fn watched(asked: &Asked, env: &Env, (id, queued_at): (&str, f64), waits: Waits) -> bool {
         let Ok((told, tell)) = pipe() else {
             return false;
         };
@@ -1023,7 +1095,7 @@ mod supervised {
                 // SAFETY: as above: the grandchild records, and its parent ends at once, so the
                 // command has no child of the recorder's to wait for.
                 if unsafe { libc::fork() } == 0 {
-                    record((target, caller), &tell, asked, env, (id, queued_at));
+                    record((target, caller), &tell, asked, env, (id, queued_at), waits);
                 }
                 // SAFETY: ends the child between without the runtime's exit, which is the caller's.
                 unsafe { libc::_exit(0) }
@@ -1036,7 +1108,7 @@ mod supervised {
                     && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
                 {
                 }
-                ready(&told, env.seconds(super::READY_VAR, READY))
+                ready(&told, waits.ready())
             }
         }
     }
@@ -1061,7 +1133,8 @@ mod supervised {
         Ok((read, write))
     }
 
-    /// Whether the recorder said on `told`, within `within` ([`READY`]), that it watches this process.
+    /// Whether the recorder said on `told`, `within` ([`super::READY`], or a test's scale of it),
+    /// that it watches this process.
     fn ready(told: &OwnedFd, within: Duration) -> bool {
         let deadline = Instant::now() + within;
         loop {
@@ -1087,13 +1160,15 @@ mod supervised {
     /// The recorder: out of the caller's session and streams, it watches `target`, takes the
     /// operation's lease and reads a run's tree and cleanliness, and says so on `tell` when it has
     /// a work folder to record it in; then it records the operation `id` asked for at `queued_at`
-    /// until `target` ends, and ends. Told, the command execs: that is its start.
+    /// until `target` ends, and ends, waiting on git and the board as its `waits` say. Told, the
+    /// command execs: that is its start.
     fn record(
         (target, caller): (libc::pid_t, libc::pid_t),
         tell: &OwnedFd,
         asked: &Asked,
         env: &Env,
         (id, queued_at): (&str, f64),
+        waits: Waits,
     ) -> ! {
         let watch = Watch::new(target);
         // SAFETY: a session of its own: no signal for the caller's group or terminal reaches it.
@@ -1112,6 +1187,7 @@ mod supervised {
                     id.to_owned(),
                     (asked, Some(target.unsigned_abs())),
                     env,
+                    waits,
                 )
                 .ok()
             });
@@ -2226,6 +2302,7 @@ mod tests {
                 .collect(),
             cwd: std::env::temp_dir(),
         };
+        let attributed = |asked: &Asked, env: &Env| super::attributed(asked, env, WAIT);
         let mut asked = parse(&args(&["--phase", "test", "--", "true"]))
             .unwrap()
             .unwrap();
@@ -2253,6 +2330,125 @@ mod tests {
             attributed(&asked, &env(&[(TASK_VAR, "line\nbreak")])),
             (None, None)
         );
+    }
+
+    /// A folder of the test's own, removed when it ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let dir = std::env::temp_dir().join(format!(
+                "recorder-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            Scratch(dir.canonicalize().unwrap())
+        }
+
+        /// A main checkout at `name`, a folder holding `.git`, whose board's server record names
+        /// `port` when one is given, as the board's server writes it.
+        fn repository(&self, name: &str, port: Option<u16>) -> PathBuf {
+            let main = self.0.join(name);
+            let board = main.join(".git").join(crate::server::FOLDER);
+            fs::create_dir_all(&board).unwrap();
+            if let Some(port) = port {
+                let record = format!(r#"{{"addr":"127.0.0.1:{port}","pid":1,"version":"3.3.0"}}"#);
+                fs::write(board.join("server.json"), record).unwrap();
+            }
+            main
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_scale_is_a_whole_number_from_one_to_sixty_and_lengthens_each_wait_alike() {
+        let at = |scale: &str| {
+            Waits::of(&env(&[
+                ("TASKS_SERVER", "127.0.0.1:1"),
+                ("TASKS_DATABASE", "scratch_waits"),
+                (SCALE_VAR, scale),
+            ]))
+        };
+        assert_eq!(Waits::of(&env(&[])), Waits::OWN);
+        let own = Waits::OWN;
+        #[cfg(target_os = "macos")]
+        assert_eq!(own.ready(), READY);
+        assert_eq!(
+            (own.board(), own.git(), own.rerun(), own.lock()),
+            (WAIT, GIT_WAIT, RERUN_WAIT, crate::runs::LOCK_WAIT)
+        );
+        let scaled = at("20");
+        assert_eq!(scaled, Waits(20));
+        #[cfg(target_os = "macos")]
+        assert_eq!(scaled.ready(), Duration::from_secs(20));
+        assert_eq!(
+            (scaled.board(), scaled.git(), scaled.rerun(), scaled.lock()),
+            (
+                Duration::from_secs(20),
+                Duration::from_secs(12),
+                Duration::from_secs(100),
+                Duration::from_secs(40)
+            )
+        );
+        assert_eq!((at("1"), at("60")), (Waits(1), Waits(60)));
+        for named in ["0", "61", "-2", "2.5", "twenty", "", " 20", "20 "] {
+            assert_eq!(at(named), Waits::OWN, "{named:?}");
+        }
+    }
+
+    /// A scale is taken only on a scratch board's database: a run that reaches its project's live
+    /// board, by the server a `TASKS_SERVER` names or by its folder, keeps its own waits, and so
+    /// does one on the live database of a server named from where the board cannot tell whose it
+    /// is (the server down, the run in another repository or in none), or one that reaches no
+    /// board; the same server's scratch database takes it.
+    #[test]
+    fn a_scale_is_never_taken_on_a_live_board_or_where_no_board_is_reached() {
+        let scratch = Scratch::new("waits");
+        let machine = scratch.0.join("machine");
+        fs::create_dir_all(&machine).unwrap();
+        // Port 1, which nothing listens on, is the one the repository's record names: where the
+        // machine cannot say who listens, a server there is that repository's live board.
+        let live = scratch.repository("live", Some(1));
+        let unserved = scratch.repository("unserved", None);
+        let machine = machine.to_str().unwrap();
+        let at = |cwd: &Path, vars: &[(&str, &str)]| {
+            let mut all = vec![("SYMPHONY_MACHINE_DIR", machine), (SCALE_VAR, "20")];
+            all.extend_from_slice(vars);
+            Waits::of(&Env {
+                cwd: cwd.to_path_buf(),
+                ..env(&all)
+            })
+        };
+        let scratch_database = ("TASKS_DATABASE", "scratch_waits");
+        // By the server it names: the live board's database, named or not, and a scratch one.
+        let named = ("TASKS_SERVER", "127.0.0.1:1");
+        assert_eq!(at(&live, &[named]), Waits::OWN);
+        assert_eq!(at(&live, &[named, ("TASKS_DATABASE", "tasks")]), Waits::OWN);
+        assert_eq!(at(&live, &[named, scratch_database]), Waits(20));
+        // The live database of a server no one answers on, named from a repository that records
+        // no server, or from no repository: the board takes it for no live board, and still the
+        // scale is not taken.
+        for cwd in [&unserved, &scratch.0] {
+            assert_eq!(at(cwd, &[named]), Waits::OWN, "{}", cwd.display());
+            let live_database = ("TASKS_DATABASE", crate::DATABASE);
+            assert_eq!(at(cwd, &[named, live_database]), Waits::OWN);
+            assert_eq!(at(cwd, &[named, scratch_database]), Waits(20));
+        }
+        // By its folder: the project's board, and a scratch database on its server.
+        assert_eq!(at(&live, &[]), Waits::OWN);
+        assert_eq!(at(&live, &[scratch_database]), Waits(20));
+        // No board reached: no server recorded, or no repository at all.
+        assert_eq!(at(&unserved, &[scratch_database]), Waits::OWN);
+        assert_eq!(at(&scratch.0, &[scratch_database]), Waits::OWN);
     }
 
     /// Signals this test set to the dispositions it relies on, each put back as the test found it

@@ -62,19 +62,7 @@ pub struct Ran {
     pub err: String,
 }
 
-/// The deadlines of `tasks run`'s recorder (`cli/recorder.rs`), each set to the wall-clock backstop
-/// a test's wait is given, two minutes (`test_time::FLOOR`): how long a command waits to hear its
-/// recorder watches it, how long the board is asked its task, git its tree, and an earlier run it
-/// may repeat waited for. A loaded machine runs none of them out; a test of one sets its own.
-pub const RECORDER_PATIENCE: [(&str, &str); 4] = [
-    ("TASKS_RUN_READY", "120"),
-    ("TASKS_RUN_BOARD_WAIT", "120"),
-    ("TASKS_RUN_GIT_WAIT", "120"),
-    ("TASKS_RUN_RERUN_WAIT", "120"),
-];
-
-/// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`,
-/// with the recorder's deadlines at [`RECORDER_PATIENCE`].
+/// An environment reaching a database of its own on the tests' server, its clock at `common::NOW`.
 pub fn env() -> Env {
     let db = common::client();
     let vars: BTreeMap<String, String> = [
@@ -84,11 +72,6 @@ pub fn env() -> Env {
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
-    .chain(
-        RECORDER_PATIENCE
-            .into_iter()
-            .map(|(name, seconds)| (name.to_string(), seconds.to_string())),
-    )
     .collect();
     Env {
         vars,

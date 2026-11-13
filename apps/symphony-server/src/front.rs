@@ -527,7 +527,40 @@ fn stages_on_stderr(pid: i64) -> Stages {
 /// and a closed or broken stderr must never end a stop before every save closes and every
 /// worker joins (`eprintln!` panics on a failed write).
 pub(crate) fn tell(line: std::fmt::Arguments<'_>) {
+    #[cfg(test)]
+    if told::kept(line) {
+        return;
+    }
     let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("{line}\n"));
+}
+
+/// What [`tell`] says on a test's own thread, kept for the test instead of written to stderr.
+#[cfg(test)]
+pub(crate) mod told {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static LINES: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    /// What `run` returns, and each line told on this thread while it ran.
+    pub(crate) fn during<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
+        LINES.with(|lines| *lines.borrow_mut() = Some(Vec::new()));
+        let result = run();
+        let lines = LINES.with(|lines| lines.borrow_mut().take());
+        (result, lines.unwrap_or_default())
+    }
+
+    /// Keep `line` when this thread's lines are kept: whether it was.
+    pub(super) fn kept(line: std::fmt::Arguments<'_>) -> bool {
+        LINES.with(|lines| {
+            let mut lines = lines.borrow_mut();
+            lines
+                .as_mut()
+                .map(|lines| lines.push(line.to_string()))
+                .is_some()
+        })
+    }
 }
 
 /// A listener on `host`, reusing an address a restart left in TIME_WAIT; on IPv6 that side alone, so

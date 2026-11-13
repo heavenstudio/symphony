@@ -66,6 +66,10 @@ fn a_recorded_test_puts_the_task_its_session_holds_in_test_while_it_runs_and_bac
             "SYMPHONY_MACHINE_DIR",
             tree.path("machine").display().to_string(),
         ),
+        // Its board's answer and git's waited for twenty times as long, which the recorder grants
+        // on this scratch board alone (`cli::recorder`'s scale), so a loaded machine never decides
+        // which task its record names.
+        ("TASKS_RUN_WAIT_SCALE", "20".to_string()),
     ]
     .into_iter()
     .map(|(name, value)| (name.to_string(), value))
