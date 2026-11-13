@@ -1,30 +1,35 @@
 //! The board's public names that consuming projects' code calls, each in the shape it calls it: a
-//! signature pinned by coercing the function to its pointer type (a few functions are named alone,
-//! their signatures left to the conciliation below), a struct its code builds by its fields built
-//! by them all, a variant it builds, compares or matches built, compared or matched as it does, a
-//! trait it implements implemented with the methods it writes, a struct it builds by the fields it
-//! names and fills from `Default` or a constructor built by those. Nothing here runs; it is
-//! compiled by the test build and by `just lint-rs` (clippy over every target), so a change that
-//! would break a consumer fails a task's gate rather than a run later. A field it reads or a method
-//! it calls on a value that is not named here the release run's conciliation
+//! signature pinned by coercing the function to its pointer type, or a call written as a consumer
+//! writes it (a few functions are named alone, their signatures left to the conciliation below), a
+//! struct its code builds by its fields built by them all, a variant it builds, compares or matches
+//! built, compared or matched as it does, a trait it implements implemented with the methods it
+//! writes, a struct it builds by the fields it names and fills from `Default` or a constructor
+//! built by those. Nothing it defines is called but `asserted`, which does nothing: it is compiled
+//! by the test build and by `just lint-rs` (clippy over every target), so a change that would
+//! break a consumer in what this file holds fails a task's gate rather than a run later. The
+//! signature of a function named here alone, and a field it reads or a method it calls on a value
+//! that is not named here, the release run's conciliation
 //! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on
 //! the candidate) alone catches; the other packages' guards are named in
 //! `crates/symphony/tests/consumer_api.rs`.
 //!
-//! Each enum held here is also matched by every variant, with no `_` arm. That match is this
-//! repository's own choice, wider than a consumer's use unless it matches the enum whole: a
+//! Each enum whose variants are held here is also matched by every variant, with no `_` arm (an
+//! enum named only as a type, as `port::NotStarted` is, or only by its constructors, as
+//! `sys::Stdio` is, has no variant held and no such match). That match is this repository's own
+//! choice, wider than a consumer's use unless it matches the enum whole, as one matches `Error`: a
 //! tripwire, so a variant added fails this file and whoever adds it reads what the consumers do
 //! with that enum. One that matches it whole breaks, and the variant waits for a consumer release
 //! plan; otherwise the match takes the new variant. A variant that only the match names may be
 //! renamed or removed along with it; one built, compared or matched beside it is a consumer's.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
-//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
-//! only with a consumer release plan (the consumer's code moved first, against a release that still
-//! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
-//! one. A lint that asks for a signature pinned here to change is answered by an `#[expect]` on the
-//! item, never by the change (`clippy.toml`). Names were read from the consuming projects' code on
-//! 2026-11-12 (every `symphony_board::` path and import); add one when a consumer starts calling it.
+//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a
+//! consumer uses changes only with a consumer release plan (the consumer's code moved first,
+//! against a release that still has the old name). New behaviour goes behind the name a consumer
+//! calls, or beside it under a new one. A lint that asks for a signature pinned here to change is
+//! answered by an `#[expect]` on the item, never by the change (`clippy.toml`). Names were read
+//! from the consuming projects' code on 2026-11-12 and 2026-11-13 (every `symphony_board::` path
+//! and import); add one when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -114,11 +119,15 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &str) -> Result<Vec<Task>> = Store::tasks_for_branch;
     let _: fn(&Store, &str) -> Result<()> = Store::touch;
     let _ = |task: &Task| task.holders("orchestrator").len();
-    // Matched by both its variants, and built by `Error::Db`.
+    // The board's error. A consumer builds both its variants and compares them in `assert_eq!`; it
+    // matches each alone, the rest through a catch-all, and in one place matches it whole, by both
+    // variants, as below: a variant added breaks it.
+    let _: fn(String) -> Error = Error::Db;
+    let _: fn(String) -> Error = Error::Refused;
+    asserted::<Error>();
     let _ = |e: Error| match e {
         Error::Refused(why) | Error::Db(why) => why,
     };
-    let _: fn(String) -> Error = Error::Db;
     // A raw query's error. A consumer's fixture builds each of its three variants, clones them and
     // `assert_eq!`s them, and matches `Conflict` alone, taking the rest through a catch-all; the
     // match of every variant below is the header's tripwire.

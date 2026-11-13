@@ -1,20 +1,22 @@
 //! The public names of `symphony`, `symphony_plugin`, `symphony_api`, `symphony_docs`,
 //! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
-//! calls it: a signature pinned by coercing the function to its pointer type (a few functions,
-//! generic ones among them, are named alone, their signatures left to the conciliation below), a
-//! struct it builds by its fields built by them all (by those it names, where it fills the rest
-//! from `Default`), a variant it builds, compares or matches built, compared or matched as it does,
-//! a trait it implements implemented with the methods it writes, a type it names named. Nothing
-//! here runs; it is compiled by the test build and by `just lint-rs` (clippy over every target), so
-//! a change that would break a consumer fails a task's gate rather than a run later.
+//! calls it: a signature pinned by coercing the function to its pointer type, or a call written as
+//! a consumer writes it (a few functions, one of them generic, are named alone, their signatures
+//! left to the conciliation below), a struct it builds by its fields built by them all (by those it
+//! names, where it fills the rest from `Default`), a variant it builds, compares or matches built,
+//! compared or matched as it does (but the blocks', below), a trait it implements implemented with
+//! the methods it writes, a type it names named. Nothing it defines is called but `compared` and
+//! `asserted`, which do nothing: it is compiled by the test build and by `just lint-rs` (clippy
+//! over every target), so a change that would break a consumer in what this file holds fails a
+//! task's gate rather than a run later.
 //!
-//! Each enum held here is also matched by every variant, with no `_` arm. That match is this
-//! repository's own choice, wider than a consumer's use unless it matches the enum whole (a
-//! plugin's route test matches `Reply` so): a tripwire, so a variant added fails this file and
-//! whoever adds it reads what the consumers do with that enum. One that matches it whole breaks,
-//! and the variant waits for a consumer release plan; otherwise the match takes the new variant. A
-//! variant that only the match names may be renamed or removed along with it; one built, compared
-//! or matched beside it is a consumer's.
+//! Each enum whose variants are held here is also matched by every variant, with no `_` arm. That
+//! match is this repository's own choice, wider than a consumer's use unless it matches the enum
+//! whole (a plugin's route test matches `Reply` so): a tripwire, so a variant added fails this file
+//! and whoever adds it reads what the consumers do with that enum. One that matches it whole
+//! breaks, and the variant waits for a consumer release plan; otherwise the match takes the new
+//! variant. A variant that only the match names may be renamed or removed along with it; one built,
+//! compared or matched beside it is a consumer's.
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
@@ -27,12 +29,13 @@
 //! on a value that is not named in a guard.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
-//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
-//! only with a consumer release plan (the consumer's code moved first, against a release that still
-//! has the old name). New behaviour goes behind the name a consumer calls, or beside it under a new
-//! one; a trait gains a method only with a default. A lint that asks for a signature pinned here to
-//! change is answered by an `#[expect]` on the item, never by the change (`clippy.toml`). Names were
-//! read from the consuming projects' code on 2026-11-12; add one when a consumer starts calling it.
+//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a
+//! consumer uses changes only with a consumer release plan (the consumer's code moved first,
+//! against a release that still has the old name). New behaviour goes behind the name a consumer
+//! calls, or beside it under a new one; a trait gains a method only with a default. A lint that
+//! asks for a signature pinned here to change is answered by an `#[expect]` on the item, never by
+//! the change (`clippy.toml`). Names were read from the consuming projects' code on 2026-11-12 and
+//! 2026-11-13; add one when a consumer starts calling it.
 #![expect(
     clippy::type_complexity,
     reason = "each signature is written out whole: it is what a consumer's code depends on"
@@ -216,8 +219,9 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: Option<(&LinkTarget, &Presentation, &Span)> = None;
 
     // The plugin vocabulary a consumer's plugin builds by its fields: every field named, so one
-    // added here breaks it. (The blocks themselves, `Block`, `Span`, `Media`, `Cell`, `Image`,
-    // `Presentation` and `Fragment`, are left to the release run's conciliation, as the header says.)
+    // added here breaks it, but for `Theme`, built by the fields it names over `Default`. (The
+    // blocks themselves, `Block`, `Span`, `Media`, `Cell`, `Image`, `Presentation` and `Fragment`,
+    // are left to the release run's conciliation, as the header says.)
     let _ = |text: String| NavItem {
         label: text.clone(),
         title: text.clone(),
