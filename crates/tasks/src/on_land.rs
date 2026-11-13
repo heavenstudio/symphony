@@ -463,6 +463,22 @@ mod tests {
         .unwrap();
     }
 
+    /// Opens the gate of a command [`held_at`] it and waits until it has said `later` into
+    /// `output` and made `done`, its last act, so nothing it still does races what the test does
+    /// next (a `touch` into a folder the test is removing leaves it not empty). What `output`
+    /// holds then.
+    fn opened(gate: &Path, done: &Path, output: &Path) -> String {
+        fs::write(gate, "").unwrap();
+        let said = holding(output, "later");
+        test_time::until_true(
+            "the command made its done file",
+            test_time::backstop(Duration::from_secs(10)),
+            || done.exists(),
+        )
+        .unwrap();
+        said
+    }
+
     #[test]
     fn a_command_that_runs_on_is_heard_for_a_while_and_left_running() {
         let main = scratch("runs-on");
@@ -484,14 +500,7 @@ mod tests {
         assert!(!heard.ended);
         assert_eq!(heard.lines, ["started"]);
         // It runs on past the land, into its own file.
-        fs::write(&gate, "").unwrap();
-        assert!(holding(&heard.output, "later").contains("started\nlater\n"));
-        test_time::until_true(
-            "the command made its done file",
-            test_time::backstop(Duration::from_secs(10)),
-            || done.exists(),
-        )
-        .unwrap();
+        assert!(opened(&gate, &done, &heard.output).contains("started\nlater\n"));
         fs::remove_dir_all(&main).unwrap();
     }
 
@@ -505,6 +514,7 @@ mod tests {
         held_at(&main, &gate, &done);
         for (set, window) in [(None, SAYS), (Some("0.2"), Duration::from_millis(200))] {
             let _ = fs::remove_file(&gate);
+            let _ = fs::remove_file(&done);
             let mut pairs = vec![("PATH", "/usr/bin:/bin")];
             pairs.extend(set.map(|value| (SAYS_VAR, value)));
             let began = Instant::now();
@@ -516,8 +526,9 @@ mod tests {
             let waited = began.elapsed();
             assert!(waited >= window, "{waited:?} of {window:?}");
             assert!(!heard.ended, "held at its gate, it runs on");
-            fs::write(&gate, "").unwrap();
-            assert!(holding(&heard.output, "later").contains("later\n"));
+            // The first command has ended before the second starts, and the second before the
+            // folder goes.
+            assert!(opened(&gate, &done, &heard.output).contains("started\nlater\n"));
         }
         assert_eq!(says(&env(&[(SAYS_VAR, "45")])), Duration::from_secs(45));
         assert_eq!(says(&env(&[])), SAYS);
