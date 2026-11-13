@@ -49,7 +49,9 @@ guidance names its focused checks, its stamp and its nightly.
 
 
 Load the tasks skill and the project's AGENTS.md first. Follow its staffing limits,
-model choices, verification and landing rules. Generic integration supplies no
+model choices, verification and landing rules. The limits and each role's model are
+settings, `[limits]` and `[agents.models]` in its `symphony.toml`: `just tasks limits`
+prints those in force and where each came from. Generic integration supplies no
 product-specific policy or taste data.
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
@@ -77,8 +79,9 @@ product-specific policy or taste data.
    it only $work SLUG HANDLE (Claude: /work SLUG HANDLE). The work skill owns
    claiming, milestones and finishing. Use a separate checkout per executor.
 6. Choose a supported launch method under project policy: an in-process agent,
-   a headless run, or just tasks launch SLUG --kind claude|codex. Pass its required
-   model and effort. A terminal is for work needing a terminal or outliving your
+   a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
+   just tasks limits names for its role, and its required effort. A terminal is for
+   work needing a terminal or outliving your
    session. Never run tests in another agent's terminal. Launch records retain
    conversations for restore.
 7. Full-session workers register their own callbacks. In-process workers must

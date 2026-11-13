@@ -25,7 +25,7 @@
 //! tip a reviewer asked changes of is rework, counted in progress (`alarm/rework.rs`, [`reworked`]).
 //!
 //! The thresholds are the project's: `[board]` [`KEYS`] in the main checkout's `symphony.toml`,
-//! beside `orchestrator_slots`, read as the cap is ([`of_env`]); a key not written takes the default.
+//! read as the limits beside them are ([`crate::limits`]); a key not written takes the default.
 
 mod rework;
 mod tree;
@@ -37,12 +37,8 @@ pub use rework::{
 };
 pub use tree::{Moved, NOTHING, UNDER, WAS, moved, own_only, own_over};
 
-use crate::cli::Env;
-use crate::on_review::MANIFEST;
-use crate::sweep::trigger::main_checkout;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 
 /// The `[board]` keys of the project file: the ratio, the hours above it that raise the alarm, the
 /// hours at or below it that clear it.
@@ -94,72 +90,6 @@ impl Thresholds {
     /// Whether `counts` hold more review than the ratio allows.
     pub fn over(&self, counts: Counts) -> bool {
         counts.review > counts.in_progress.saturating_mul(self.ratio as usize)
-    }
-}
-
-#[derive(Default, Deserialize)]
-struct Manifest {
-    #[serde(default)]
-    board: ManifestBoard,
-}
-
-#[derive(Default, Deserialize)]
-struct ManifestBoard {
-    review_alarm_ratio: Option<i64>,
-    review_alarm_hours: Option<i64>,
-    review_alarm_clear_hours: Option<i64>,
-}
-
-/// The thresholds `[board]` [`KEYS`] name in the manifest at `root`, each key not written (or no
-/// file) the default's. A value below one, or a file that does not parse, is an error naming the file
-/// and the key. Only those keys are read; the rest of the file is the Symphony's.
-pub fn configured(root: &Path) -> Result<Thresholds, String> {
-    let path = root.join(MANIFEST);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Thresholds::default());
-        }
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-    };
-    let manifest: Manifest = toml::from_str(&text)
-        .map_err(|error| format!("{}: [board] {}: {error}", path.display(), KEYS.join(", ")))?;
-    let board = manifest.board;
-    let defaults = Thresholds::default();
-    let read = |key: &str, value: Option<i64>, default: u32| match value {
-        None => Ok(default),
-        Some(n) if n >= 1 => u32::try_from(n).map_err(|_| {
-            format!(
-                "{}: [board] {key} is {n}, past what it can be",
-                path.display()
-            )
-        }),
-        Some(n) => Err(format!(
-            "{}: [board] {key} is {n}; it is at least 1",
-            path.display()
-        )),
-    };
-    Ok(Thresholds {
-        ratio: read(KEYS[0], board.review_alarm_ratio, defaults.ratio)?,
-        raise_hours: read(KEYS[1], board.review_alarm_hours, defaults.raise_hours)?,
-        clear_hours: read(
-            KEYS[2],
-            board.review_alarm_clear_hours,
-            defaults.clear_hours,
-        )?,
-    })
-}
-
-/// The thresholds of the board `env` runs against: the ones the main checkout of the repository
-/// holding its working directory configures ([`configured`]), as the cap is read
-/// ([`crate::slots::of_env`]); the defaults outside a repository.
-pub fn of_env(env: &Env) -> Result<Thresholds, String> {
-    let Some(common) = crate::git::read(&env.cwd) else {
-        return Ok(Thresholds::default());
-    };
-    match main_checkout(&common) {
-        Some(root) => configured(root),
-        None => Ok(Thresholds::default()),
     }
 }
 

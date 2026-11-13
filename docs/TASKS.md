@@ -546,13 +546,16 @@ its asks in `artifacts/callbacks-NAME/asks.db`.
 
 **Agent sessions behind a task** (`task_sessions`): `just tasks launch SLUG` starts the
 agent the project's `[agents] launch` in its main checkout's `symphony.toml` names (`default`,
-`codex` or `claude`, with its `model` and `effort`), else a Codex agent (`--no-daemon`; model
+`codex` or `claude`, with its `model` and `effort`), on the model `[agents.models]` names for
+its role (`executor`, or `reviewer` under `--role reviewer`) when there is one
+([Limits and models](#limits-and-models)), else a Codex agent (`--no-daemon`; model
 `gpt-6.1-sol`, effort `xhigh`, workspace-write with network access), in an hc terminal of its
 own, `hc run --bg --no-parent --outlive-parent --keep`: no child of the caller's terminal,
 which the app would show under it rather than in a tab. `--kind` and `--model` win over the
-project's; its model and effort go with its agent, so `--kind` naming the other agent takes the
+project's; its models and effort go with its agent, so `--kind` naming the other agent takes the
 board's model for that one (Codex `gpt-6.1-sol` at `xhigh`, Claude `sonnet` at its own effort).
-A table that does not parse, or names another agent, refuses the launch. The `launched` line
+A table that does not parse, or names another agent, refuses the launch, and so does a machine
+running as many agents as `[limits] machine_agents` allows. The `launched` line
 names the agent, model and effort it started, and `launch --help` ends with what a bare launch
 starts where it runs (`crates/tasks/src/launch/defaults.rs`). The
 terminal shows in its stream tab (`code` for an executor, `review` for a reviewer, or
@@ -586,8 +589,8 @@ nothing more, and a restore that lost it kills the terminal it started. A Codex 
 takes the thread its callback registered whichever is written first; one closed with no thread
 says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
-A consuming project chooses its agent models, staffing policy and terminal lifecycle.
-The board records those sessions and roles; it imposes no model preference.
+A consuming project chooses its agent models (`[agents.models]`), staffing policy and terminal
+lifecycle. The board records those sessions and roles; it imposes no model preference.
 
 **Optional automatic staffing:** `just tasks staff [--dry-run]` makes one pass, highest
 priority first. Enable it in `tools/task_staff.json` in the consuming checkout: `enabled`
@@ -624,11 +627,11 @@ Use these explicit markers for owner decisions.
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
 work in a suitable open terminal: an executor already on the task's own branch, or an
 instruction worker/reviewer in a detached checkout. A checkout with a live or stale
-executor is never reused. Otherwise it launches what a bare `just tasks launch` would (the
-project's `[agents] launch`, else Codex) in a separate worktree: the
-task's own branch, or detached main for an instruction or review. Live agent terminals
-and live board agent sessions without a terminal count toward the cap;
-reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
+executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
+would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
+separate worktree: the task's own branch, or detached main for an instruction or review. Live
+agent terminals and live board agent sessions without a terminal count toward the cap, the
+lower of `max_sessions` and `[limits] machine_agents`; reuse adds no session. Memory below the floor defers work. Every proposal, dispatch,
 deferral and failure prints one line. Only a successful ping or launch is posted on
 the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
@@ -1757,14 +1760,77 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   only. A subtask handed to another orchestrator is that one's, with what is
   below it. A message to a handle or to another role stays with them.
 
+## Limits and models
+
+The owner, 2026-11-12: "all WIP limits should be settings anyway, as well as preferred model to
+delegate to. Should be very easy and simple to change the file whenever conditions or deicions
+happen." Each is a key of the project's `symphony.toml`, read from the repository's main
+checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src/limits.rs`,
+`crates/tasks/src/launch/defaults.rs`):
+
+```toml
+[limits]
+orchestrator_slots = 8  # the open tasks an orchestrator holds (Slots, below)
+low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
+machine_agents = 12     # the agents this machine runs
+
+[agents.models]
+orchestrator = "fable"
+executor = "opus"
+reviewer = "opus"
+```
+
+- **Defaults.** A key not written is today's value: no cap on an orchestrator's open tasks, a
+  low-volume threshold of 4, no limit on the agents a machine runs, and the models a launch
+  started before the table. `orchestrator_slots` is still read from `[board]` where `[limits]`
+  names none, so a file older builds read keeps its cap; written in both with two values,
+  `[limits]`'s holds and the other is said on stderr.
+- **`machine_agents`** counts every agent the machine runs, whoever started it, as the staffing
+  pass counts: each hc terminal running an agent, and each live worker, reviewer or
+  orchestrator session of this board with no terminal of its own
+  (`crates/tasks/src/launch/running.rs`). `just tasks launch` refuses at the limit (`no
+  launch: this machine runs 12 agents, at its limit of 12 ([limits] machine_agents in PATH)`),
+  and when hc cannot be asked to count them. `just tasks next` warns past it on stderr and
+  still names the task: whoever asks runs already, and refusing it work frees nothing. The
+  staffing pass defers at the lower of it and its own `max_sessions`.
+- **Models.** A launch of an executor or a reviewer, by hand or by the staffing pass, starts
+  `[agents] launch`'s agent on its role's model, else on `[agents] launch`'s `model`, else on
+  the board's own; `--model` and `--kind` win, and a role's model goes with the project's
+  agent. No board launch starts an orchestrator: with no model written for it, whoever starts
+  one chooses. An agent starting a subagent passes the model `just tasks limits` names for the
+  subagent's role.
+- **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
+  ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
+  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, or `default`), the
+  machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
+  not know, left out.
+- **A change holds at once.** Every command reads the file as it stands, and a store kept open
+  (the Symphony's server keeps its reader and its data worker's) reads it again at its next
+  read whenever the file's length or time changed: no restart.
+- **A value the board cannot read** is said on stderr with its line and takes its default
+  (`⚠ PATH: [limits] low_volume (line 3) is -1; it is at least 0; it takes its default, 4`): a
+  broken project file must not stop the board, nor the landing that mends it. A load of the
+  project and `just symphony-status --lint` refuse it in the same words, as they refuse a key
+  the Symphony does not know, by name and line (`[limits] wip (line 4) is not a setting the
+  Symphony knows`).
+- **Staging a new key.** A build older than a key does not know it: its lint and its docs audit
+  refuse the file, naming the key, its server reads the rest and says the key is left out, and
+  its board never reads it. So a project writes a new key only once every build that reads its
+  file knows it: the shared server, the build a land runs and each consuming project's pin.
+  Until then the setting stays where those builds read it (a cap in `[board]
+  orchestrator_slots` holds for all of them); once they all know the key, the value moves, and
+  while builds are mixed it can be written in both tables with one value, the older key dropped
+  after.
+
 ## Slots
 
 An orchestrator holds at most a set number of open tasks, its slots, so work is
 pushed to done before new work starts (`crates/tasks/src/slots.rs`).
-The number is the project's: `orchestrator_slots` in the `[board]` table of
-`symphony.toml`, read from the repository's main checkout, as `on_review` is,
-so a branch cannot raise its own cap. With no key, or no file, nothing is
-capped. A value that does not parse, or one below 1, is said on stderr
+The number is the project's: `orchestrator_slots` in the `[limits]` table of
+`symphony.toml` ([Limits and models](#limits-and-models)), else in its `[board]` table,
+where builds before `[limits]` read it, from the repository's main checkout, as
+`on_review` is, so a branch cannot raise its own cap. With no key, or no file, nothing is
+capped. A value that does not parse, or one below 1, is said on stderr with its line
 (`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
@@ -1874,13 +1940,14 @@ more than twice in progress for an hour, so a short dip does not lower it and
 a short rise does not raise it. Exactly twice is not over; review with nothing
 in progress is.
 
-- **Thresholds.** The project's, beside `orchestrator_slots` in the `[board]`
-  table of `symphony.toml`, read from the main checkout as the cap is:
+- **Thresholds.** The project's, in the `[board]` table of `symphony.toml`, read
+  from the main checkout as the cap is and printed by `just tasks limits`
+  ([Limits and models](#limits-and-models)):
   `review_alarm_ratio` (2), `review_alarm_hours` (4) and
   `review_alarm_clear_hours` (1), whole numbers of at least 1. A key not
   written takes its default; a value that does not parse, or one below 1, is
-  said on stderr (`⚠ …; the pipeline alarm takes its default thresholds`) and
-  the defaults apply.
+  said on stderr with its line (`⚠ …; the pipeline alarm takes its default
+  thresholds`) and the defaults apply.
 - **What counts.** Work only: a review mirror counts with the task it reviews
   and an instruction subtask with the task it serves, as for
   [Slots](#slots), neither on its own, as the tree stood at each moment: a

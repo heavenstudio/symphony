@@ -352,8 +352,8 @@ perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost p
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
-An orchestrator below four canonical open slots receives a recipient-scoped `low_volume`
-PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
+An orchestrator below `[limits] low_volume` canonical open slots (4 unwritten, 0 says it to
+none: `limits.rs`) receives a recipient-scoped `low_volume` PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
 slot cap still governs starts. Each attach or callback pass shares one successful
 `slot_holdings` observation across scheduling, recipient scoping and idle checks. A changed
 canonical count invalidates an otherwise unchanged observation; a failed read reports the
@@ -722,9 +722,14 @@ Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `sf-tasks/`. Its idle reviewer pick (`idle_for`)
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
 board would refuse. A launch, the CLI's and staffing's, starts
-the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
-(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
-and the project's model and effort go with its agent only. The legacy `claude_session` storage
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
+the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`),
+else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's models and effort go with its agent only. `src/launch/running.rs` counts the
+agents the machine runs, as staffing's cap always has: `launch` refuses at `[limits]
+machine_agents`, `next` warns past it, and staffing holds to the lower of it and `max_sessions`.
+`tasks limits` (`src/cli/commands/limits.rs`) prints each limit and role's model with where it
+came from. The legacy `claude_session` storage
 column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
@@ -956,11 +961,18 @@ tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a
 of their own: through a land that starts it detached, three lands during one build, a
 builder killed and replaced, two starts at once, and the check on landed, red, dropped,
 stopped and signalled rounds, a land during the build, one late and one that cannot run.
-`slots.rs` owns the cap on an orchestrator's open tasks: `[board]
-orchestrator_slots`, read from the main checkout's `symphony.toml` from the
-`.git` files alone (no `git` process: every command reads it) when the CLI or
-the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
-without it caps nothing. A rule that may start work reads, in its view's
+`limits.rs` reads the project's limits: `[limits] orchestrator_slots` (else `[board]`'s,
+which builds before `[limits]` read), `low_volume` and `machine_agents`, and the alarm's
+`[board]` thresholds, from the main checkout's `symphony.toml` found from the `.git` files
+alone (no `git` process: every command reads it) when the CLI or the Symphony opens its store
+(`cli::capped`, `Store::watching`). The store holds a `limits::Watched` that reads the file
+again whenever its length or time changes, so a store kept open (the server's) follows an
+edit at its next read; a value it cannot read is said with its line and takes its default, and
+a key of `[limits]` it does not know is left out, named by `tasks limits` (the Symphony's own
+reading refuses both). A write reads the cap once (`Store::ruling`), so an edit mid-write
+cannot split a decision. A store opened without a file, or held by `Store::limiting`, keeps
+what it was given.
+`slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing. A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
 tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
 tasks, and their roles through `role_slug`; then the tasks above them and the
@@ -996,7 +1008,7 @@ dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
-(`cli::capped`, `Store::alarming`). It writes only where rework ended (below):
+(`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):
 each digest reads the
 status lines of the lookback window through `message_ts` (`store/history.rs`),
 walks each task's back from its status now and replays the counts
