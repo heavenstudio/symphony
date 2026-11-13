@@ -36,7 +36,7 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue, reports, deferred panel, overlay and task timeline modules, then
+  board, task/detail, document, review-home, queue, deferred panel, overlay and task timeline modules, then
   assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
   it against the other kinds already in that output folder. Dioxus's native
   splitter retained shared exports and increased the measured initial payload;
@@ -380,10 +380,12 @@ never the whole target, which the release run runs.
   `queue_filter.rs` derives counts from the complete snapshot and stores the selected
   owner category through `Platform` on this device. Chips use the shared Button;
   an absent saved category displays All without hiding new work.
-- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, in its own page kind
-  (`page-reports`, `assets/reports.css`): the window this device last chose (`reports-grain`,
-  `reports-days` through `Platform`), read at once, on each new choice and every five minutes
-  with the last answer's tag. Four figures sit over five sections of charts, one column on a
+- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, drawn by the task pages'
+  module (`page-tasks`) as the Agents page is, which already holds the runtime, frame and
+  components it uses: a module of its own would weigh some 560 KB in each build the
+  distribution keeps, against the client's line. Its style is `assets/reports.css`. It reads
+  the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
+  once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
   phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
   boxes over a column a period, lines as one SVG whose strokes keep their width, both on one
   axis with its unit; a period no file recorded is hatched and its line broken, never a zero.

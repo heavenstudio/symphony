@@ -399,9 +399,8 @@ function route(path) {
     path = path.replace(/^doc\//, "");
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
-    if (path.startsWith("task/") || clean === "agents") return "tasks";
+    if (path.startsWith("task/") || clean === "agents" || clean === "reports") return "tasks";
     if (clean === "queue") return "queue";
-    if (clean === "reports") return "reports";
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";

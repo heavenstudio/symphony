@@ -93,8 +93,6 @@ pub(crate) fn kind() -> &'static str {
         "docs"
     } else if cfg!(feature = "page-queue") {
         "queue"
-    } else if cfg!(feature = "page-reports") {
-        "reports"
     } else {
         "review"
     }

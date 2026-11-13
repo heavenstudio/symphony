@@ -71,8 +71,8 @@ pub mod postpone_live;
 pub mod queue;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-queue"))]
 pub mod queue_filter;
-/// The Reports page, the page kind `reports` of its own.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-reports"))]
+/// The Reports page, drawn by the task pages' module as the Agents page is.
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub mod reports;
 #[cfg(target_arch = "wasm32")]
 pub mod request;

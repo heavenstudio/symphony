@@ -2,11 +2,14 @@
 //! figures, a gap hatched and said, the readout of a tapped period, the table, the four figures,
 //! the empty state that says when the first roll-up comes, and the ghost before the first answer.
 
-use super::chart::Table;
+use super::chart::table;
 use super::*;
-use symphony_api::agent_activity::Level;
-use symphony_api::report_page::{BucketAgents, BucketFlow, ReportMark};
-use symphony_api::reports::{DecisionCounts, GitCounts, Spread};
+use symphony_api::agent_activity::{Gauge, Level, RoleLevel};
+use symphony_api::health::HourPasses;
+use symphony_api::report_page::{
+    BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, ReportBucket, ReportsPage,
+};
+use symphony_api::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
 
 /// Monday 2026-11-09, 00:00 UTC.
 const MONDAY: f64 = 1_794_182_400.0;
@@ -32,9 +35,19 @@ fn chart(unit: Unit, series: Vec<SeriesData>) -> ChartData {
     }
 }
 
+/// `wire` as the page reads it: sent as the server sends it and parsed, as the browser does.
+fn read(wire: &ReportsPage) -> Page {
+    serde_json::from_value(serde_json::to_value(wire).unwrap()).unwrap()
+}
+
+/// [`wire`] as the page reads it.
+fn page() -> Page {
+    read(&wire())
+}
+
 /// Three days: Monday rolled up whole with its agents watched, Tuesday recorded by no source,
 /// Wednesday under way, half rolled up; a settings change on Monday.
-fn page() -> ReportsPage {
+fn wire() -> ReportsPage {
     let mut monday_flow = BucketFlow::default();
     monday_flow.entered.done = 3;
     monday_flow.held.ready = 2;
@@ -336,7 +349,7 @@ fn a_period_is_named_by_its_utc_day_week_or_hour_and_the_axis_labels_at_most_six
     // By the hour, six labels at most on the clock's round hours: a week's every other midnight,
     // two days' midnights and noons, a day's every fourth hour.
     let hours = |count: u32, first: f64| {
-        let mut hours = page.clone();
+        let mut hours = wire();
         hours.grain = Grain::Hour;
         hours.buckets = (0..count)
             .map(|n| ReportBucket {
@@ -345,7 +358,7 @@ fn a_period_is_named_by_its_utc_day_week_or_hour_and_the_axis_labels_at_most_six
                 ..ReportBucket::default()
             })
             .collect();
-        super::axis(&hours).ticks
+        super::axis(&read(&hours)).ticks
     };
     let labels = |ticks: Vec<(usize, String)>| -> Vec<String> {
         ticks
@@ -393,10 +406,10 @@ fn the_figures_sum_the_window_and_say_what_is_missing() {
         (decisions.value.as_str(), decisions.detail.as_str()),
         ("2", "2 auto-approved · 2 answered in the window")
     );
-    let empty = ReportsPage {
+    let empty = read(&ReportsPage {
         buckets: vec![ReportBucket::default()],
         ..ReportsPage::default()
-    };
+    });
     for figure in figures(&empty) {
         assert_eq!(figure.value, "–", "{figure:?}");
     }
@@ -460,7 +473,7 @@ fn the_charts_take_each_series_from_its_source_and_none_where_it_has_no_record()
     );
 }
 
-fn charts_of(page: &ReportsPage) -> Vec<(&'static str, Vec<ChartData>)> {
+fn charts_of(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
     charts(page)
 }
 
@@ -528,7 +541,7 @@ fn a_chart_s_table_says_every_period_and_a_gap_as_a_dash() {
     let charts = charts(&page);
     let chart = find(&charts, "done").clone();
     let axis = axis(&page);
-    let html = dioxus_ssr::render_element(rsx! { Table { chart, axis } });
+    let html = dioxus_ssr::render_element(table(&chart, &axis));
     assert!(
         html.contains("<caption>Tasks done, by period</caption>"),
         "{html}"
@@ -574,11 +587,11 @@ fn card(chart: ChartData, axis: Axis, selected: Option<usize>) -> String {
     dioxus_ssr::render(&dom)
 }
 
-fn view(page: Option<ReportsPage>) -> String {
+fn view(page: Option<Page>) -> String {
     failed(page, None)
 }
 
-fn failed(page: Option<ReportsPage>, error: Option<String>) -> String {
+fn failed(page: Option<Page>, error: Option<String>) -> String {
     let mut dom = VirtualDom::new_with_props(
         |props: ViewProps| rsx! { ReportsView { grain: props.grain, days: props.days, page: props.page, error: props.error, onask: |_| {} } },
         ViewProps {
@@ -596,7 +609,7 @@ fn failed(page: Option<ReportsPage>, error: Option<String>) -> String {
 struct ViewProps {
     grain: Grain,
     days: u32,
-    page: Option<ReportsPage>,
+    page: Option<Page>,
     error: Option<String>,
 }
 
@@ -663,7 +676,7 @@ fn the_report_draws_its_figures_marks_and_every_chart() {
 
 #[test]
 fn with_no_roll_up_yet_the_page_says_when_the_first_comes() {
-    let mut empty = page();
+    let mut empty = wire();
     empty.first = None;
     for bucket in &mut empty.buckets {
         *bucket = ReportBucket {
@@ -672,14 +685,14 @@ fn with_no_roll_up_yet_the_page_says_when_the_first_comes() {
             ..ReportBucket::default()
         };
     }
-    let html = view(Some(empty.clone()));
+    let html = view(Some(read(&empty)));
     assert!(html.contains("No roll-up yet."), "{html}");
     assert!(html.contains("the next is due by 11:00 UTC"), "{html}");
     assert!(!html.contains("chart-plot"), "no chart of nothing: {html}");
     // The agents recorded before the first roll-up still draw.
-    empty.buckets[0].agents = page().buckets[0].agents.clone();
+    empty.buckets[0].agents = wire().buckets[0].agents.clone();
     empty.unread = vec!["/repo/.git/symphony/reports/2026-11-10.json: not a regular file".into()];
-    let html = view(Some(empty));
+    let html = view(Some(read(&empty)));
     assert!(html.contains("No roll-up yet."));
     assert!(html.contains("chart-plot"));
     assert!(
@@ -714,4 +727,173 @@ fn the_window_chosen_is_this_browser_s_when_it_is_one_the_page_offers() {
     assert_eq!(range_name(Grain::Hour, 1), "24 hours");
     assert_eq!(range_name(Grain::Week, 84), "12 weeks");
     assert_eq!(range_name(Grain::Day, 30), "30 days");
+}
+
+#[test]
+fn a_period_s_number_is_none_where_its_source_has_no_record_and_zero_where_a_count_left_it_out() {
+    let bucket = Bucket(serde_json::json!({
+        "start": 10.0,
+        "end": 70.0,
+        "flow": { "held": { "ready": 2 }, "task_hours": {} },
+        "waits": { "changes_to_review": null, "review_to_reviewer": { "median": 30.5 } },
+        "agents": null,
+    }));
+    assert_eq!(bucket.number("flow.held.ready"), Some(2.0));
+    assert_eq!(
+        bucket.number("flow.held.blocked"),
+        Some(0.0),
+        "a status at zero is left out"
+    );
+    assert_eq!(bucket.number("flow.task_hours.review"), Some(0.0));
+    assert_eq!(bucket.number("waits.review_to_reviewer.median"), Some(30.5));
+    assert_eq!(
+        bucket.number("waits.changes_to_review.median"),
+        None,
+        "no wait of the kind ended"
+    );
+    assert_eq!(
+        bucket.number("agents.started"),
+        None,
+        "no agents' line in the period"
+    );
+    assert_eq!(bucket.number("git.commits"), None, "no source at all");
+    assert_eq!(
+        bucket.number("flow.held.ready.more"),
+        None,
+        "a number has no members"
+    );
+    assert!(bucket.has("flow") && !bucket.has("agents") && !bucket.has("git"));
+    assert_eq!(bucket.span(), (10.0, 70.0));
+    assert!(bucket.list("agents", "running").is_empty());
+}
+
+/// A period every source recorded whole, with every status, wait and gauge it can have.
+fn full() -> ReportBucket {
+    let all = |n: u32| ByStatus {
+        backlog: n,
+        blocked: n,
+        cancelled: n,
+        concept: n,
+        design: n,
+        done: n,
+        in_progress: n,
+        ready: n,
+        review: n,
+    };
+    let spread = Some(Spread {
+        n: 1,
+        median: 1.0,
+        p90: 1.0,
+    });
+    ReportBucket {
+        start: MONDAY,
+        end: MONDAY + DAY,
+        rolled: 24,
+        flow: Some(BucketFlow {
+            held: all(1),
+            entered: all(1),
+            task_hours: ByStatus {
+                blocked: 1.0,
+                in_progress: 1.0,
+                ready: 1.0,
+                review: 1.0,
+                ..ByStatus::default()
+            },
+            bounces: 1,
+            reds_filed: 1,
+            ..BucketFlow::default()
+        }),
+        decisions: Some(DecisionCounts::default()),
+        git: Some(GitCounts::default()),
+        waits: Some(BucketWaits {
+            review_to_reviewer: spread,
+            changes_to_resumed: spread,
+            changes_to_review: spread,
+            approved_to_landed: spread,
+        }),
+        lead: spread,
+        verdicts: Some(BucketVerdicts::default()),
+        red_fix: spread,
+        agents: Some(BucketAgents {
+            observed_s: 3600.0,
+            load_1m: Some(Gauge {
+                peak: 1.0,
+                mean: 1.0,
+            }),
+            ..BucketAgents::default()
+        }),
+        health: Some(BucketHealth {
+            covered_s: 3600.0,
+            dispatch: HourPasses { ok: 1, failed: 1 },
+            sweep: HourPasses { ok: 1, failed: 1 },
+            ..BucketHealth::default()
+        }),
+    }
+}
+
+/// Each chart reads its series where the wire writes them: a path the wire has not, as a member
+/// misspelt, would read a source's every period as nothing or a status's as zero.
+#[test]
+fn every_series_reads_a_member_the_wire_writes() {
+    let wire = serde_json::to_value(full()).unwrap();
+    let written = |path: &str| {
+        wire.pointer(&format!("/{}", path.replace('.', "/")))
+            .is_some_and(serde_json::Value::is_number)
+    };
+    let mut read = 0;
+    for (_, specs) in SECTIONS {
+        for spec in specs {
+            for series in spec.series {
+                let paths = match series.pick {
+                    Pick::At(path) => vec![path],
+                    Pick::Sum(one, other) => vec![one, other],
+                    Pick::Role(_) => vec![],
+                };
+                for path in paths {
+                    assert!(written(path), "{}: {} reads {path}", spec.id, series.name);
+                    read += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        read, 38,
+        "every series' path but the four by role's, and the failed passes' two"
+    );
+}
+
+/// The wire's own fixture, as the server writes it, read by the page.
+#[test]
+fn the_page_reads_the_wire_s_fixture() {
+    let page: Page = serde_json::from_str(include_str!(
+        "../../../../crates/symphony-api/fixtures/reports-page.json"
+    ))
+    .unwrap();
+    let charts = charts(&page);
+    assert_eq!(find(&charts, "done").series[0].values[0], Some(5.0));
+    assert_eq!(
+        find(&charts, "task-hours").series[3].values[0],
+        Some(0.0),
+        "no blocked hours"
+    );
+    let agents = find(&charts, "agents");
+    assert_eq!(
+        agents
+            .series
+            .iter()
+            .map(|s| s.values[0])
+            .collect::<Vec<_>>(),
+        [Some(0.0), Some(2.125), Some(0.75), Some(0.0), Some(2.875)]
+    );
+    assert_eq!(
+        find(&charts, "health").series[2].values[0],
+        Some(12.0),
+        "dispatch's and sweep's failed passes"
+    );
+    assert_eq!(
+        find(&charts, "waits").series[1].values[0],
+        None,
+        "no such wait ended"
+    );
+    assert_eq!(figures(&page)[0].value, "5");
 }

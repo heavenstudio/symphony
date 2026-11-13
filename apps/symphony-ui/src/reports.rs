@@ -1,21 +1,25 @@
-//! The Reports page, `/reports`, a page kind of its own (`page-reports`): how the project's work
-//! flows, how many agents work it and in which roles, its decisions, its code and its board's
-//! health, by the hour, the day or the week, so a change to a gate or a limit shows in the speed
-//! and the quality of what lands (the owner, 2026-11-13). It draws the one read
-//! [`symphony_api::REPORTS_PATH`] answers ([`symphony_api::report_page`]), summed by the server from
-//! the project's day files: four figures over the window, then the charts on one time axis, two
-//! columns on a wide screen. A period a source has no record of is a gap, hatched, never a zero.
+//! The Reports page, `/reports`: how the project's work flows, how many agents work it and in which
+//! roles, its decisions, its code and its board's health, by the hour, the day or the week, so a
+//! change to a gate or a limit shows in the speed and the quality of what lands (the owner,
+//! 2026-11-13). It draws the one read [`symphony_api::REPORTS_PATH`] answers
+//! ([`symphony_api::report_page`]), summed by the server from the project's day files: four figures
+//! over the window, then the charts on one time axis, two columns on a wide screen. A period a
+//! source has no record of is a gap, hatched, never a zero.
+//!
+//! The task pages' module draws it (`page-tasks`), as it draws the Agents page: a module of its own
+//! would carry the whole runtime again, some 560 KB in each build the distribution keeps, where
+//! that module already holds all but the page's own code.
 
 use dioxus::prelude::*;
-use symphony_api::agent_activity::RoleLevel;
-use symphony_api::report_page::{Grain, ReportBucket, ReportsPage};
+use serde::Deserialize;
+use symphony_api::report_page::{Grain, ReportMark};
 
 mod chart;
-use chart::float;
 pub use chart::{
-    Axis, ChartCard, ChartData, GhostChart, Mark, Scale, Segment, SeriesData, Unit, coverage, runs,
-    segments, shown,
+    Axis, ChartCard, ChartData, Mark, Scale, Segment, SeriesData, Unit, coverage, ghost_chart,
+    runs, segments, shown,
 };
+use chart::{float, short};
 
 const STYLE: Asset = asset!(
     "/assets/reports.css",
@@ -52,11 +56,163 @@ fn grain_name(grain: Grain) -> &'static str {
     }
 }
 
-/// Where a series' value comes from: none where its source has no record of the period.
+/// A value of the answer as the browser parsed it (kept by `serde_wasm_bindgen::preserve`), or as
+/// `serde_json` did on the host.
+#[cfg(target_arch = "wasm32")]
+type Raw = wasm_bindgen::JsValue;
+#[cfg(not(target_arch = "wasm32"))]
+type Raw = serde_json::Value;
+
+/// The member `key` of `value`: none where it has none, `null` kept.
+#[cfg(target_arch = "wasm32")]
+fn member(value: &Raw, key: &str) -> Option<Raw> {
+    js_sys::Reflect::get(value, &key.into())
+        .ok()
+        .filter(|found| !found.is_undefined())
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn member(value: &Raw, key: &str) -> Option<Raw> {
+    value.get(key).cloned()
+}
+
+/// `value`'s items, none where it is no list.
+#[cfg(target_arch = "wasm32")]
+fn items(value: &Raw) -> Vec<Raw> {
+    if js_sys::Array::is_array(value) {
+        js_sys::Array::from(value).iter().collect()
+    } else {
+        Vec::new()
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn items(value: &Raw) -> Vec<Raw> {
+    value.as_array().cloned().unwrap_or_default()
+}
+
+/// `value` as text, none where it is no string.
+#[cfg(target_arch = "wasm32")]
+fn text(value: &Raw) -> Option<String> {
+    value.as_string()
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn text(value: &Raw) -> Option<String> {
+    value.as_str().map(str::to_owned)
+}
+
+/// One period of the answer ([`symphony_api::report_page::ReportBucket`] on the wire), read by
+/// path where the page needs a value rather than into the wire's structs: their deserializer
+/// alone would weigh more than the rest of the page in each build the distribution keeps.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct Bucket(
+    #[cfg_attr(target_arch = "wasm32", serde(with = "serde_wasm_bindgen::preserve"))] Raw,
+);
+
+impl Bucket {
+    /// The number at `path` (`flow.held.ready`): none where a member on the way is missing or
+    /// `null`, a source with no record of the period, and zero where only the last is missing, as
+    /// a count by status leaves out its zeros.
+    pub fn number(&self, path: &str) -> Option<f64> {
+        let mut value = self.0.clone();
+        let mut keys = path.split('.').peekable();
+        while let Some(key) = keys.next() {
+            match member(&value, key) {
+                Some(found) if !found.is_null() => value = found,
+                None if keys.peek().is_none() && value.is_object() => return Some(0.0),
+                _ => return None,
+            }
+        }
+        value.as_f64()
+    }
+
+    /// Whether the source `key` (`flow`, `agents`, `health`…) recorded the period.
+    pub fn has(&self, key: &str) -> bool {
+        member(&self.0, key).is_some_and(|found| !found.is_null())
+    }
+
+    /// The items of the list at `key` of the member `source`, each read the same way.
+    fn list(&self, source: &str, key: &str) -> Vec<Bucket> {
+        member(&self.0, source)
+            .and_then(|found| member(&found, key))
+            .map(|found| items(&found).into_iter().map(Bucket).collect())
+            .unwrap_or_default()
+    }
+
+    /// The text at `key`, empty where there is none.
+    fn text(&self, key: &str) -> String {
+        member(&self.0, key)
+            .and_then(|found| text(&found))
+            .unwrap_or_default()
+    }
+
+    /// Its first second, and its end.
+    fn span(&self) -> (f64, f64) {
+        let start = self.number("start").unwrap_or(0.0);
+        (start, self.number("end").unwrap_or(start))
+    }
+}
+
+/// The answer of [`symphony_api::REPORTS_PATH`] as the page reads it: the window and what it says
+/// of the periods ([`symphony_api::report_page::ReportsPage`] on the wire), each period kept as
+/// the browser parsed it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Page {
+    pub grain: Grain,
+    pub days: u32,
+    pub from: f64,
+    pub to: f64,
+    #[serde(default)]
+    pub buckets: Vec<Bucket>,
+    #[serde(default)]
+    pub first: Option<f64>,
+    #[serde(default)]
+    pub marks: Vec<ReportMark>,
+    #[serde(default)]
+    pub unread: Vec<String>,
+}
+
+/// Where a series' value is read from in a period.
+#[derive(Clone, Copy)]
+enum Pick {
+    /// The number at a path of the period.
+    At(&'static str),
+    /// The mean of the sessions running work in a role (`orchestrator`, `executor`, `reviewer`),
+    /// or every other role's together for none.
+    Role(Option<&'static str>),
+    /// The sum of the numbers at two paths.
+    Sum(&'static str, &'static str),
+}
+
+impl Pick {
+    /// The value in `bucket`: none where its source has no record of the period.
+    fn of(self, bucket: &Bucket) -> Option<f64> {
+        const NAMED: [&str; 3] = ["orchestrator", "executor", "reviewer"];
+        match self {
+            Pick::At(path) => bucket.number(path),
+            Pick::Role(role) => bucket.has("agents").then(|| {
+                bucket
+                    .list("agents", "running")
+                    .iter()
+                    .filter(|level| {
+                        let name = level.text("role");
+                        match role {
+                            Some(role) => name == role,
+                            None => !NAMED.contains(&name.as_str()),
+                        }
+                    })
+                    .filter_map(|level| level.number("mean"))
+                    .sum()
+            }),
+            Pick::Sum(one, other) => Some(bucket.number(one)? + bucket.number(other)?),
+        }
+    }
+}
+
+/// A series: its name, how it is drawn and where its value is read from.
 struct Series {
     name: &'static str,
     mark: Mark,
-    value: fn(&ReportBucket) -> Option<f64>,
+    pick: Pick,
 }
 
 /// The source a chart's coverage is read from.
@@ -77,24 +233,23 @@ struct Spec {
     series: &'static [Series],
 }
 
-/// The mean of the sessions running work in `role` (`orchestrator`, `executor`, `reviewer`), or
-/// every other role's together for `None`.
-fn role(levels: &[RoleLevel], role: Option<&str>) -> f64 {
-    const NAMED: [&str; 3] = ["orchestrator", "executor", "reviewer"];
-    levels
-        .iter()
-        .filter(|level| match role {
-            Some(role) => level.role == role,
-            None => !NAMED.contains(&level.role.as_str()),
-        })
-        .map(|level| level.mean)
-        .sum()
+/// A series drawn as `mark`, read at `path`.
+const fn at(name: &'static str, mark: Mark, path: &'static str) -> Series {
+    Series {
+        name,
+        mark,
+        pick: Pick::At(path),
+    }
 }
 
-/// A count as a float: far below 2^52.
-#[expect(clippy::cast_precision_loss, reason = "a count far below 2^52")]
-fn float_u64(count: u64) -> f64 {
-    count as f64
+/// A bar read at `path`.
+const fn bar(name: &'static str, path: &'static str) -> Series {
+    at(name, Mark::Bar, path)
+}
+
+/// A line read at `path`.
+const fn line(name: &'static str, path: &'static str) -> Series {
+    at(name, Mark::Line, path)
 }
 
 /// The page's sections, each a heading and its charts.
@@ -108,11 +263,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 note: "Top-level tasks that reached done, per {per}.",
                 unit: Unit::Count,
                 source: Source::Rollup,
-                series: &[Series {
-                    name: "Done",
-                    mark: Mark::Bar,
-                    value: |b| b.flow.map(|f| f64::from(f.entered.done)),
-                }],
+                series: &[bar("Done", "flow.entered.done")],
             },
             Spec {
                 id: "open",
@@ -121,26 +272,10 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Count,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Ready",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f64::from(f.held.ready)),
-                    },
-                    Series {
-                        name: "In progress",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f64::from(f.held.in_progress)),
-                    },
-                    Series {
-                        name: "Review",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f64::from(f.held.review)),
-                    },
-                    Series {
-                        name: "Blocked",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f64::from(f.held.blocked)),
-                    },
+                    bar("Ready", "flow.held.ready"),
+                    bar("In progress", "flow.held.in_progress"),
+                    bar("Review", "flow.held.review"),
+                    bar("Blocked", "flow.held.blocked"),
                 ],
             },
             Spec {
@@ -150,26 +285,10 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Hours,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Ready",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f.task_hours.ready),
-                    },
-                    Series {
-                        name: "In progress",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f.task_hours.in_progress),
-                    },
-                    Series {
-                        name: "Review",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f.task_hours.review),
-                    },
-                    Series {
-                        name: "Blocked",
-                        mark: Mark::Bar,
-                        value: |b| b.flow.map(|f| f.task_hours.blocked),
-                    },
+                    bar("Ready", "flow.task_hours.ready"),
+                    bar("In progress", "flow.task_hours.in_progress"),
+                    bar("Review", "flow.task_hours.review"),
+                    bar("Blocked", "flow.task_hours.blocked"),
                 ],
             },
             Spec {
@@ -178,18 +297,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 note: "Creation to close of the top-level tasks closed in each {per}.",
                 unit: Unit::Seconds,
                 source: Source::Rollup,
-                series: &[
-                    Series {
-                        name: "Median",
-                        mark: Mark::Line,
-                        value: |b| b.lead.map(|s| s.median),
-                    },
-                    Series {
-                        name: "p90",
-                        mark: Mark::Line,
-                        value: |b| b.lead.map(|s| s.p90),
-                    },
-                ],
+                series: &[line("Median", "lead.median"), line("p90", "lead.p90")],
             },
             Spec {
                 id: "waits",
@@ -198,26 +306,10 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Seconds,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Review to reviewer",
-                        mark: Mark::Line,
-                        value: |b| b.waits.and_then(|w| w.review_to_reviewer).map(|s| s.median),
-                    },
-                    Series {
-                        name: "Changes to resumed",
-                        mark: Mark::Line,
-                        value: |b| b.waits.and_then(|w| w.changes_to_resumed).map(|s| s.median),
-                    },
-                    Series {
-                        name: "Changes to review",
-                        mark: Mark::Line,
-                        value: |b| b.waits.and_then(|w| w.changes_to_review).map(|s| s.median),
-                    },
-                    Series {
-                        name: "Approved to landed",
-                        mark: Mark::Line,
-                        value: |b| b.waits.and_then(|w| w.approved_to_landed).map(|s| s.median),
-                    },
+                    line("Review to reviewer", "waits.review_to_reviewer.median"),
+                    line("Changes to resumed", "waits.changes_to_resumed.median"),
+                    line("Changes to review", "waits.changes_to_review.median"),
+                    line("Approved to landed", "waits.approved_to_landed.median"),
                 ],
             },
         ],
@@ -236,40 +328,24 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                     Series {
                         name: "Orchestrators",
                         mark: Mark::Bar,
-                        value: |b| {
-                            b.agents
-                                .as_ref()
-                                .map(|a| role(&a.running, Some("orchestrator")))
-                        },
+                        pick: Pick::Role(Some("orchestrator")),
                     },
                     Series {
                         name: "Executors",
                         mark: Mark::Bar,
-                        value: |b| {
-                            b.agents
-                                .as_ref()
-                                .map(|a| role(&a.running, Some("executor")))
-                        },
+                        pick: Pick::Role(Some("executor")),
                     },
                     Series {
                         name: "Reviewers",
                         mark: Mark::Bar,
-                        value: |b| {
-                            b.agents
-                                .as_ref()
-                                .map(|a| role(&a.running, Some("reviewer")))
-                        },
+                        pick: Pick::Role(Some("reviewer")),
                     },
                     Series {
                         name: "Other roles",
                         mark: Mark::Bar,
-                        value: |b| b.agents.as_ref().map(|a| role(&a.running, None)),
+                        pick: Pick::Role(None),
                     },
-                    Series {
-                        name: "Sessions, each once",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().map(|a| a.running_agents.mean),
-                    },
+                    line("Sessions, each once", "agents.running_agents.mean"),
                 ],
             },
             Spec {
@@ -279,21 +355,9 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Count,
                 source: Source::Agents,
                 series: &[
-                    Series {
-                        name: "Started",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().map(|a| float_u64(a.started)),
-                    },
-                    Series {
-                        name: "Went stale",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().map(|a| float_u64(a.went_stale)),
-                    },
-                    Series {
-                        name: "Went lost",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().map(|a| float_u64(a.went_lost)),
-                    },
+                    line("Started", "agents.started"),
+                    line("Went stale", "agents.went_stale"),
+                    line("Went lost", "agents.went_lost"),
                 ],
             },
             Spec {
@@ -303,16 +367,8 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Load,
                 source: Source::Agents,
                 series: &[
-                    Series {
-                        name: "Peak",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().and_then(|a| a.load_1m).map(|g| g.peak),
-                    },
-                    Series {
-                        name: "Mean",
-                        mark: Mark::Line,
-                        value: |b| b.agents.as_ref().and_then(|a| a.load_1m).map(|g| g.mean),
-                    },
+                    line("Peak", "agents.load_1m.peak"),
+                    line("Mean", "agents.load_1m.mean"),
                 ],
             },
         ],
@@ -327,21 +383,9 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Count,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Answered",
-                        mark: Mark::Bar,
-                        value: |b| b.decisions.map(|d| f64::from(d.answered)),
-                    },
-                    Series {
-                        name: "Auto-approved",
-                        mark: Mark::Bar,
-                        value: |b| b.decisions.map(|d| f64::from(d.auto_approved)),
-                    },
-                    Series {
-                        name: "Open",
-                        mark: Mark::Line,
-                        value: |b| b.decisions.map(|d| f64::from(d.open)),
-                    },
+                    bar("Answered", "decisions.answered"),
+                    bar("Auto-approved", "decisions.auto_approved"),
+                    line("Open", "decisions.open"),
                 ],
             },
             Spec {
@@ -350,18 +394,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 note: "Commits that reached the default branch, and its merges, per {per}.",
                 unit: Unit::Count,
                 source: Source::Rollup,
-                series: &[
-                    Series {
-                        name: "Commits",
-                        mark: Mark::Bar,
-                        value: |b| b.git.map(|g| f64::from(g.commits)),
-                    },
-                    Series {
-                        name: "Merges",
-                        mark: Mark::Bar,
-                        value: |b| b.git.map(|g| f64::from(g.merges)),
-                    },
-                ],
+                series: &[bar("Commits", "git.commits"), bar("Merges", "git.merges")],
             },
             Spec {
                 id: "lines",
@@ -371,16 +404,8 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Count,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Added",
-                        mark: Mark::Bar,
-                        value: |b| b.git.map(|g| float_u64(g.added)),
-                    },
-                    Series {
-                        name: "Removed",
-                        mark: Mark::Below,
-                        value: |b| b.git.map(|g| float_u64(g.removed)),
-                    },
+                    bar("Added", "git.added"),
+                    at("Removed", Mark::Below, "git.removed"),
                 ],
             },
         ],
@@ -396,26 +421,10 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 unit: Unit::Count,
                 source: Source::Rollup,
                 series: &[
-                    Series {
-                        name: "Bounces",
-                        mark: Mark::Line,
-                        value: |b| b.flow.map(|f| f64::from(f.bounces)),
-                    },
-                    Series {
-                        name: "Reds filed",
-                        mark: Mark::Line,
-                        value: |b| b.flow.map(|f| f64::from(f.reds_filed)),
-                    },
-                    Series {
-                        name: "Reverts",
-                        mark: Mark::Line,
-                        value: |b| b.git.map(|g| f64::from(g.reverts)),
-                    },
-                    Series {
-                        name: "Changes asked",
-                        mark: Mark::Line,
-                        value: |b| b.verdicts.map(|v| f64::from(v.changes)),
-                    },
+                    line("Bounces", "flow.bounces"),
+                    line("Reds filed", "flow.reds_filed"),
+                    line("Reverts", "git.reverts"),
+                    line("Changes asked", "verdicts.changes"),
                 ],
             },
             Spec {
@@ -424,18 +433,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
                 note: "Filing to close of the reds closed done in each {per}.",
                 unit: Unit::Seconds,
                 source: Source::Rollup,
-                series: &[
-                    Series {
-                        name: "Median",
-                        mark: Mark::Line,
-                        value: |b| b.red_fix.map(|s| s.median),
-                    },
-                    Series {
-                        name: "p90",
-                        mark: Mark::Line,
-                        value: |b| b.red_fix.map(|s| s.p90),
-                    },
-                ],
+                series: &[line("Median", "red_fix.median"), line("p90", "red_fix.p90")],
             },
         ],
     ),
@@ -449,24 +447,12 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
             unit: Unit::Count,
             source: Source::Health,
             series: &[
-                Series {
-                    name: "Slow",
-                    mark: Mark::Line,
-                    value: |b| b.health.as_ref().map(|h| float_u64(h.slow)),
-                },
-                Series {
-                    name: "Unanswered",
-                    mark: Mark::Line,
-                    value: |b| b.health.as_ref().map(|h| float_u64(h.unanswered)),
-                },
+                line("Slow", "health.slow"),
+                line("Unanswered", "health.unanswered"),
                 Series {
                     name: "Failed passes",
                     mark: Mark::Line,
-                    value: |b| {
-                        b.health
-                            .as_ref()
-                            .map(|h| float_u64(h.dispatch.failed + h.sweep.failed))
-                    },
+                    pick: Pick::Sum("health.dispatch.failed", "health.sweep.failed"),
                 },
             ],
         }],
@@ -474,7 +460,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
 ];
 
 /// Every section's heading and its charts, ready to draw, out of `page`.
-pub fn charts(page: &ReportsPage) -> Vec<(&'static str, Vec<ChartData>)> {
+pub fn charts(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
     let per = page.grain.word();
     SECTIONS
         .iter()
@@ -492,7 +478,7 @@ pub fn charts(page: &ReportsPage) -> Vec<(&'static str, Vec<ChartData>)> {
                         .map(|series| SeriesData {
                             name: series.name,
                             mark: series.mark,
-                            values: page.buckets.iter().map(series.value).collect(),
+                            values: page.buckets.iter().map(|b| series.pick.of(b)).collect(),
                         })
                         .collect(),
                     cover: page
@@ -511,14 +497,14 @@ pub fn charts(page: &ReportsPage) -> Vec<(&'static str, Vec<ChartData>)> {
 }
 
 /// How much of `bucket` `source` recorded, from 0 to 1.
-fn cover(bucket: &ReportBucket, source: Source) -> f64 {
-    let length = (bucket.end - bucket.start).max(1.0);
+fn cover(bucket: &Bucket, source: Source) -> f64 {
+    let (start, end) = bucket.span();
     let seconds = match source {
-        Source::Rollup => f64::from(bucket.rolled) * HOUR,
-        Source::Agents => bucket.agents.as_ref().map_or(0.0, |a| a.observed_s),
-        Source::Health => bucket.health.as_ref().map_or(0.0, |h| h.covered_s),
+        Source::Rollup => bucket.number("rolled").unwrap_or(0.0) * HOUR,
+        Source::Agents => bucket.number("agents.observed_s").unwrap_or(0.0),
+        Source::Health => bucket.number("health.covered_s").unwrap_or(0.0),
     };
-    (seconds / length).clamp(0.0, 1.0)
+    (seconds / (end - start).max(1.0)).clamp(0.0, 1.0)
 }
 
 /// The UTC date of `at`: its weekday's name, its day, its month's name and its hour.
@@ -560,19 +546,19 @@ fn tick(grain: Grain, start: f64) -> String {
 /// The page's one time axis out of `page`: each period's name and hours, at most six labels
 /// under the plot (by the hour on the clock's round hours, else counted back from the last period)
 /// and the settings changes.
-pub fn axis(page: &ReportsPage) -> Axis {
+pub fn axis(page: &Page) -> Axis {
     let count = page.buckets.len();
     let every = count.div_ceil(6).max(1);
+    let spans: Vec<(f64, f64)> = page.buckets.iter().map(Bucket::span).collect();
     let marks = page
         .marks
         .iter()
         .filter_map(|mark| {
-            let at = page
-                .buckets
+            let at = spans
                 .iter()
-                .position(|b| b.start <= mark.at && mark.at < b.end)?;
-            let bucket = &page.buckets[at];
-            let within = (mark.at - bucket.start) / (bucket.end - bucket.start).max(1.0);
+                .position(|(start, end)| *start <= mark.at && mark.at < *end)?;
+            let (start, end) = spans[at];
+            let within = (mark.at - start) / (end - start).max(1.0);
             Some((
                 (float(at) + within) / float(count) * 100.0,
                 at,
@@ -586,39 +572,37 @@ pub fn axis(page: &ReportsPage) -> Axis {
             .into_iter()
             .find(|step| count <= 6 * usize::try_from(*step).unwrap_or(usize::MAX))
             .unwrap_or(48);
-        page.buckets
+        spans
             .iter()
             .enumerate()
-            .filter(|(_, bucket)| {
+            .filter(|(_, (start, _))| {
                 #[expect(
                     clippy::cast_possible_truncation,
                     reason = "an hour since 1970 fits an i64"
                 )]
-                let hour = (bucket.start / HOUR).round() as i64;
+                let hour = (start / HOUR).round() as i64;
                 hour.rem_euclid(step) == 0
             })
-            .map(|(at, bucket)| (at, tick(page.grain, bucket.start)))
+            .map(|(at, (start, _))| (at, tick(page.grain, *start)))
             .collect()
     } else {
         // Days and weeks counted back from the last, which is always labelled.
         let mut ticks: Vec<(usize, String)> = (0..count)
             .rev()
             .step_by(every)
-            .map(|at| (at, tick(page.grain, page.buckets[at].start)))
+            .map(|at| (at, tick(page.grain, spans[at].0)))
             .collect();
         ticks.reverse();
         ticks
     };
     Axis {
-        periods: page
-            .buckets
+        periods: spans
             .iter()
-            .map(|b| period(page.grain, b.start))
+            .map(|(start, _)| period(page.grain, *start))
             .collect(),
-        hours: page
-            .buckets
+        hours: spans
             .iter()
-            .map(|b| ((b.end - b.start) / HOUR).max(0.0))
+            .map(|(start, end)| ((end - start) / HOUR).max(0.0))
             .collect(),
         ticks,
         marks,
@@ -643,79 +627,86 @@ fn missing(label: &'static str, why: &str) -> Figure {
 
 /// The four figures over the window: the tasks done, the lead time, the agents at work and the
 /// decisions open at its end.
-pub fn figures(page: &ReportsPage) -> [Figure; 4] {
+pub fn figures(page: &Page) -> [Figure; 4] {
     let per = page.grain.word();
-    let flows: Vec<_> = page.buckets.iter().filter_map(|b| b.flow).collect();
-    let done: u32 = flows.iter().map(|f| f.entered.done).sum();
+    // The periods `source` recorded, and the sum of the numbers at `path` over them.
+    let recorded =
+        |source: &str| -> Vec<&Bucket> { page.buckets.iter().filter(|b| b.has(source)).collect() };
+    let total = |of: &[&Bucket], path: &str| -> f64 {
+        of.iter().filter_map(|b| b.number(path)).sum::<f64>() + 0.0
+    };
+    let flows = recorded("flow");
     let done = if flows.is_empty() {
         missing("Done", "no roll-up in the window")
     } else {
+        let done = total(&flows, "flow.entered.done");
         Figure {
             label: "Done",
-            value: done.to_string(),
+            value: short(done, 0),
             detail: format!(
                 "{} a {per} on average",
-                Unit::Mean.format(((f64::from(done) / float(flows.len())) * 10.0).round() / 10.0)
+                Unit::Mean.format((done / float(flows.len()) * 10.0).round() / 10.0)
             ),
         }
     };
-    let leads: Vec<_> = page.buckets.iter().filter_map(|b| b.lead).collect();
-    let closed: u32 = leads.iter().map(|lead| lead.n).sum();
+    let leads = recorded("lead");
+    let closed = total(&leads, "lead.n");
     let lead = if page.grain == Grain::Hour {
         missing("Lead time", "kept by the day")
-    } else if closed == 0 {
+    } else if closed <= 0.0 {
         missing("Lead time", "no task closed in the window")
     } else {
         let median = leads
             .iter()
-            .map(|lead| lead.median * f64::from(lead.n))
+            .filter_map(|b| Some(b.number("lead.median")? * b.number("lead.n")?))
             .sum::<f64>()
-            / f64::from(closed);
-        let p90 = leads.iter().map(|lead| lead.p90).fold(0.0, f64::max);
+            / closed;
+        let p90 = leads
+            .iter()
+            .filter_map(|b| b.number("lead.p90"))
+            .fold(0.0, f64::max);
         Figure {
             label: "Lead time",
             value: Unit::Seconds.format(median),
             detail: format!(
-                "median of {closed} closed · p90 up to {}",
+                "median of {} closed · p90 up to {}",
+                short(closed, 0),
                 Unit::Seconds.format(p90)
             ),
         }
     };
-    let watched: Vec<_> = page
-        .buckets
-        .iter()
-        .filter_map(|b| b.agents.as_ref())
-        .collect();
-    let seconds: f64 = watched.iter().map(|a| a.observed_s).sum();
+    let watched = recorded("agents");
+    let seconds = total(&watched, "agents.observed_s");
     let agents = if seconds <= 0.0 {
         missing("Agents at work", "no agents' hours in the window")
     } else {
         let mean = watched
             .iter()
-            .map(|a| a.running_agents.mean * a.observed_s)
+            .filter_map(|b| {
+                Some(b.number("agents.running_agents.mean")? * b.number("agents.observed_s")?)
+            })
             .sum::<f64>()
             / seconds;
         let peak = watched
             .iter()
-            .map(|a| a.running_agents.peak)
-            .max()
-            .unwrap_or(0);
+            .filter_map(|b| b.number("agents.running_agents.peak"))
+            .fold(0.0, f64::max);
         Figure {
             label: "Agents at work",
             value: Unit::Mean.format((mean * 10.0).round() / 10.0),
-            detail: format!("running on average · {peak} at most"),
+            detail: format!("running on average · {} at most", short(peak, 0)),
         }
     };
-    let cards: Vec<_> = page.buckets.iter().filter_map(|b| b.decisions).collect();
+    let cards = recorded("decisions");
     let decisions = match cards.last() {
         None => missing("Open decisions", "no cards read in the window"),
         Some(last) => Figure {
             label: "Open decisions",
-            value: last.open.to_string(),
+            value: short(last.number("decisions.open").unwrap_or(0.0), 0),
             detail: format!(
                 "{} auto-approved · {} answered in the window",
-                cards.iter().map(|c| c.auto_approved).sum::<u32>(),
-                cards.iter().map(|c| c.answered).sum::<u32>()
+                short(total(&cards, "decisions.auto_approved"), 0),
+                short(total(&cards, "decisions.answered"), 0)
             ),
         },
     };
@@ -723,14 +714,16 @@ pub fn figures(page: &ReportsPage) -> [Figure; 4] {
 }
 
 /// Whether any source recorded any period of `page`.
-fn recorded(page: &ReportsPage) -> bool {
-    page.buckets
-        .iter()
-        .any(|b| b.flow.is_some() || b.agents.is_some() || b.health.is_some() || b.git.is_some())
+fn recorded(page: &Page) -> bool {
+    page.buckets.iter().any(|b| {
+        ["flow", "agents", "health", "git"]
+            .iter()
+            .any(|source| b.has(source))
+    })
 }
 
 /// What the page says while the roll-up has written no file: when the next one is due.
-pub fn first_roll_up(page: &ReportsPage) -> String {
+pub fn first_roll_up(page: &Page) -> String {
     let (_, _, _, hour) = date(page.to);
     format!(
         "No roll-up yet. The machine's shared server writes this project's first day file at its \
@@ -745,7 +738,7 @@ pub fn first_roll_up(page: &ReportsPage) -> String {
 pub fn ReportsView(
     grain: Grain,
     days: u32,
-    page: Option<ReportsPage>,
+    page: Option<Page>,
     #[props(default)] error: Option<String>,
     onask: EventHandler<(Grain, u32)>,
 ) -> Element {
@@ -767,13 +760,13 @@ pub fn ReportsView(
                         "{grain_name(grain)} · the last {range_name(grain, days)} · times in UTC"
                     }
                 }
-                Controls { grain, days, onask }
+                {controls(grain, days, onask)}
             }
             if let Some(error) = error {
                 p { class: "reports-error", role: "alert", "The reports could not be read: {error}" }
             }
             match page {
-                None => rsx! { GhostReports {} },
+                None => ghost_reports(),
                 // A new window is a new axis: the period tapped on the last one means nothing on it.
                 Some(page) => rsx! { Report { key: "{page.grain.word()}-{page.days}-{page.from}", page } },
             }
@@ -781,8 +774,10 @@ pub fn ReportsView(
     }
 }
 
-#[component]
-fn Controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Element {
+/// The grain's buttons and the window's. This and the ghosts are functions rather than
+/// components, drawn again with what holds them: a component's own props and memo would only add
+/// to the module.
+fn controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Element {
     use crate::components::button::{Button, ButtonSize};
     rsx! {
         div { class: "reports-controls",
@@ -810,7 +805,7 @@ fn Controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Eleme
 
 /// One window's report. The period tapped is the same on every chart.
 #[component]
-fn Report(page: ReportsPage) -> Element {
+fn Report(page: Page) -> Element {
     let mut tapped = use_signal(|| None::<usize>);
     let selected = tapped();
     let figures = figures(&page);
@@ -853,7 +848,7 @@ fn Report(page: ReportsPage) -> Element {
                     h2 { "{heading}" }
                     div { class: "reports-charts",
                         for chart in section {
-                            crate::viewport::NearViewport { key: "{chart.id}", height: 330, class: "chart-slot", ghost: rsx! { GhostChart {} },
+                            crate::viewport::NearViewport { key: "{chart.id}", height: 330, class: "chart-slot", ghost: ghost_chart(),
                                 ChartCard { chart, axis: axis.clone(), selected, onselect: move |at| tapped.set(Some(at)) }
                             }
                         }
@@ -865,8 +860,7 @@ fn Report(page: ReportsPage) -> Element {
 }
 
 /// The page waiting for its first answer: one status line, four figures' boxes and two charts'.
-#[component]
-fn GhostReports() -> Element {
+fn ghost_reports() -> Element {
     rsx! {
         p { class: "status-text", role: "status", "Loading the reports…" }
         div { class: "reports-figures ghost-figures", "aria-hidden": "true",
@@ -879,7 +873,8 @@ fn GhostReports() -> Element {
             }
         }
         div { class: "reports-charts",
-            for n in 0..2 { GhostChart { key: "{n}" } }
+            {ghost_chart()}
+            {ghost_chart()}
         }
     }
 }
@@ -900,12 +895,12 @@ pub fn chosen(load: impl Fn(&str) -> Option<String>) -> (Grain, u32) {
 /// whenever another is chosen, and every five minutes while the page is open, naming the copy
 /// shown so an hour no file changed in answers `304`. A read that fails keeps what is shown and
 /// says why.
-#[cfg(all(target_arch = "wasm32", feature = "page-reports"))]
+#[cfg(all(target_arch = "wasm32", feature = "page-tasks"))]
 #[component]
 pub fn ReportsRoute() -> Element {
     use crate::request::{self, Answer};
     let mut window = use_signal(|| chosen(|key| crate::platform::current().load(key)));
-    let mut page = use_signal(|| None::<ReportsPage>);
+    let mut page = use_signal(|| None::<Page>);
     let mut error = use_signal(|| None::<String>);
     let mut etag = use_signal(String::new);
     let mut generation = use_signal(|| 0_u64);
@@ -928,7 +923,7 @@ pub fn ReportsRoute() -> Element {
                 match answer {
                     Ok(Answer::Same) => error.set(None),
                     Ok(Answer::Fresh(value, tag)) => {
-                        match serde_wasm_bindgen::from_value::<ReportsPage>(value) {
+                        match serde_wasm_bindgen::from_value::<Page>(value) {
                             Ok(read) => {
                                 etag.set(tag);
                                 page.set(Some(read));

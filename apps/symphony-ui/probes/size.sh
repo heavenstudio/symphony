@@ -3,7 +3,7 @@
 #
 #     cargo symphony-ui size OUT NAME...        (bin/cargo-symphony-ui, under the cargo wrapper)
 #
-# NAME is a page kind (board, tasks, docs, review, queue, reports, panel, overlay, timeline), bundled with bundle.sh's own dx
+# NAME is a page kind (board, tasks, docs, review, queue, panel, overlay, timeline), bundled with bundle.sh's own dx
 # line for that kind, or a size probe, a bin in this folder (floor_dioxus, floor_websys,
 # entry_websys), bundled the same way (dx, the wasm-release profile, wasm-opt -Oz, --debug-symbols
 # false) with the `size-probe` feature. Each goes into OUT/NAME/. For each it prints
@@ -38,7 +38,7 @@ bindgen="$DX_HOME/tools/wasm-bindgen-$bindgen_version/wasm-bindgen"
 
 for name in "$@"; do
     case "$name" in
-        board|tasks|docs|review|queue|reports|panel|overlay|timeline) ;;
+        board|tasks|docs|review|queue|panel|overlay|timeline) ;;
         *)
             if [ ! -f "$here/probes/$name.rs" ]; then
                 echo "symphony-ui size: $name is neither a page kind nor a probe in apps/symphony-ui/probes/" >&2
@@ -76,7 +76,7 @@ export CARGO_PROFILE_WASM_RELEASE_OPT_LEVEL=z
 
 for name in "$@"; do
     case "$name" in
-        board|tasks|docs|review|queue|reports|panel|overlay|timeline) stem=symphony-ui features="page-$name" ;;
+        board|tasks|docs|review|queue|panel|overlay|timeline) stem=symphony-ui features="page-$name" ;;
         *) stem="$name" features=web,size-probe ;;
     esac
     rm -rf "${out:?}/$name" "$target/dx/$stem/release/web"

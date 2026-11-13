@@ -53,6 +53,11 @@ dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "9
 symphony-api = { path = "../../crates/symphony-api" }
 serde = { version = "1", features = ["derive"] }
 
+# The host's side: what the browser's parsed JSON is on the host, for the Reports page's periods it
+# reads by path (src/reports.rs) and their tests.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serde_json = "1"
+
 # The browser's side of the app (src/live.rs, src/platform.rs). serde-wasm-bindgen reads the JSON the
 # browser has parsed into the wire types, in place of serde_json's parser: 11 KB less on a first visit.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -121,15 +126,13 @@ web-sys = { version = "0.3", features = [
 # One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
 # its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
 [features]
-default = ["web", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-reports", "overlays"]
+default = ["web", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "overlays"]
 web = ["dioxus/web"]
 page-board = []
 page-tasks = []
 page-docs = []
 page-review = []
 page-queue = []
-# The Reports page (reports.rs), its own kind.
-page-reports = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
 page-overlay = ["overlays"]
@@ -137,7 +140,7 @@ page-overlay = ["overlays"]
 page-timeline = []
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-reports", "page-panel", "page-overlay", "page-timeline"]
+devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-review", "page-queue", "page-panel", "page-overlay", "page-timeline"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

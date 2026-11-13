@@ -67,7 +67,7 @@ impl Unit {
 
 /// `value` to at most `places` decimals, with no trailing zero: `2.5`, `3`, `0.25`; a value that
 /// rounds to zero is `0`, never `-0` (an empty sum of floats is negative zero).
-fn short(value: f64, places: u8) -> String {
+pub(crate) fn short(value: f64, places: u8) -> String {
     let text = format!("{value:.*}", usize::from(places));
     let text = if text.contains('.') {
         text.trim_end_matches('0').trim_end_matches('.')
@@ -372,7 +372,7 @@ pub fn ChartCard(
                     }
                 }
             }
-            Readout { chart: chart.clone(), axis: axis.clone(), at: shown }
+            {readout(&chart, &axis, shown)}
             div { class: "chart-plot", tabindex: "0", role: "group",
                 "aria-label": "{chart.title}: the left and right arrow keys move between periods",
                 onkeydown: move |event: KeyboardEvent| {
@@ -414,7 +414,7 @@ pub fn ChartCard(
                     }
                     svg { class: "chart-lines", view_box: "0 0 {periods} 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
                         for (series, data) in chart.series.iter().enumerate().filter(|(_, data)| data.mark == Mark::Line) {
-                            LineSeries { key: "{series}", series, values: data.values.clone(), scale: scale.clone(), shown }
+                            {line_series(series, &data.values, &scale, shown)}
                         }
                     }
                 }
@@ -429,20 +429,23 @@ pub fn ChartCard(
                 if table() { "Hide the table" } else { "Show the table" }
             }
             if table() {
-                Table { chart: chart.clone(), axis: axis.clone() }
+                {self::table(&chart, &axis)}
             }
         }
     }
 }
 
-#[component]
-fn LineSeries(
+/// A line series' strokes, its dots alone between gaps and the period shown ringed: one group of
+/// the chart's SVG, keyed by its series. A function rather than a component, as are the readout,
+/// the table and the ghost: each is drawn again whenever its chart is, so a component's own props
+/// and memo would only add bytes to the module.
+fn line_series(
     series: usize,
-    values: Vec<Option<f64>>,
-    scale: Scale,
+    values: &[Option<f64>],
+    scale: &Scale,
     shown: Option<usize>,
 ) -> Element {
-    let (lines, dots) = runs(&values, &scale);
+    let (lines, dots) = runs(values, scale);
     let colour = format!("var(--chart-{})", series + 1);
     let picked = shown.and_then(|at| {
         values
@@ -452,7 +455,7 @@ fn LineSeries(
             .map(|value| (float(at) + 0.5, 100.0 - scale.at(value)))
     });
     rsx! {
-        g { stroke: "{colour}",
+        g { key: "{series}", stroke: "{colour}",
             for (n, points) in lines.iter().enumerate() {
                 polyline { key: "{n}", points: "{points}" }
             }
@@ -468,8 +471,7 @@ fn LineSeries(
 }
 
 /// The values of the period `at` shows, one line per series, in the text's own ink.
-#[component]
-fn Readout(chart: ChartData, axis: Axis, at: Option<usize>) -> Element {
+fn readout(chart: &ChartData, axis: &Axis, at: Option<usize>) -> Element {
     let Some(at) = at else {
         return rsx! { div { class: "chart-readout", "aria-live": "polite", p { class: "chart-when", "No period recorded yet" } } };
     };
@@ -506,8 +508,7 @@ fn Readout(chart: ChartData, axis: Axis, at: Option<usize>) -> Element {
 }
 
 /// Every period's values, oldest first: what the chart draws, for a reader who reads it as text.
-#[component]
-pub(crate) fn Table(chart: ChartData, axis: Axis) -> Element {
+pub(crate) fn table(chart: &ChartData, axis: &Axis) -> Element {
     rsx! {
         div { class: "chart-table",
             table {
@@ -532,8 +533,7 @@ pub(crate) fn Table(chart: ChartData, axis: Axis) -> Element {
 }
 
 /// A chart still to come: its box, a bar for its title and note, and its plot's place.
-#[component]
-pub fn GhostChart() -> Element {
+pub fn ghost_chart() -> Element {
     rsx! {
         div { class: "ghost-chart", "aria-hidden": "true",
             span { class: "bone", style: "--w:40%" }

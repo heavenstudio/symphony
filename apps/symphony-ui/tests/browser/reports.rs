@@ -1,5 +1,5 @@
-//! The Reports page (src/reports.rs, its own page kind), the release client against the stand-in
-//! server answering `/api/reports` with a fortnight by the day: a phone's width held, one tap
+//! The Reports page (src/reports.rs, in the task pages' module), the release client against the
+//! stand-in server answering `/api/reports` with a fortnight by the day: a phone's width held, one tap
 //! showing a period's every value on every chart, a day no file recorded told apart from a zero,
 //! the arrow keys moving between periods, two columns on a wide screen, the dark scheme's own
 //! colours, and the empty state saying when the first roll-up comes.

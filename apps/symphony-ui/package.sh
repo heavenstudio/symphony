@@ -25,7 +25,7 @@ mkdir -p "$stage/assets"
 # the swap: publish-client keeps the builds published just before it over the folder, as that
 # folder's builds.json names them (crates/symphony/src/cli/publish.rs).
 manifest='{}'
-for kind in board tasks docs review queue reports panel overlay timeline; do
+for kind in board tasks docs review queue panel overlay timeline; do
     module="$out/.modules/$kind"
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
@@ -111,4 +111,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: six page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: $out/public" >&2
+echo "symphony-ui: five page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: $out/public" >&2
