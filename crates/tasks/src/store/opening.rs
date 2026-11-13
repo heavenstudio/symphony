@@ -209,6 +209,7 @@ impl Store {
         how: &Opening,
     ) -> Store {
         Store {
+            lookup: None,
             client,
             clock,
             pid_alive,

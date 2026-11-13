@@ -354,8 +354,8 @@ fn one_holdings_read_is_shared_by_recipients_leases_and_idle_checks() {
         })
         .count();
     assert_eq!(
-        ordinary, 4,
-        "one sequenced callback snapshot plus three pre-existing pending_posts reads: {sent:?}"
+        ordinary, 1,
+        "one sequenced callback snapshot; each recipient's unanswered lookup takes the pass's board: {sent:?}"
     );
     assert_eq!(
         sent.iter()
@@ -377,7 +377,7 @@ fn one_holdings_read_is_shared_by_recipients_leases_and_idle_checks() {
         "one holdings observation on the idle pass: {sent:?}"
     );
     eprintln!(
-        "holdings read costs: three active recipients, one observation per pass; due pass {} RPCs (one holdings, one callback Board, three existing pending_posts Boards), idle pass {} RPCs",
+        "holdings read costs: three active recipients, one observation per pass; due pass {} RPCs (one holdings, one callback Board), idle pass {} RPCs",
         due_requests,
         sent.len()
     );

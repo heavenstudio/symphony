@@ -4,8 +4,17 @@ use super::*;
 use crate::NewTask;
 use crate::store_fixture::Fixture;
 
-#[path = "unanswered_batch.rs"]
-mod batch;
+#[path = "unanswered_reads.rs"]
+mod reads;
+
+/// Every post `handle` owes on the board as it is now.
+fn owed_by(f: &Fixture, handle: &str) -> Vec<Pending> {
+    let board = f.store.board().unwrap();
+    let asked = BTreeSet::from([handle.to_string()]);
+    f.store
+        .pending_posts(&board, Asked::Handles(&asked))
+        .unwrap()
+}
 
 fn setup() -> (Fixture, Pending) {
     let f = Fixture::empty();
@@ -19,11 +28,7 @@ fn setup() -> (Fixture, Pending) {
     f.store
         .say("work", "owner", "continue on child", Some(&worker))
         .unwrap();
-    let pending = f
-        .store
-        .pending_posts(&[f.store.get("work").unwrap()])
-        .unwrap()
-        .remove(0);
+    let pending = owed_by(&f, &worker).remove(0);
     (f, pending)
 }
 
@@ -61,14 +66,15 @@ fn final_reservation_rechecks_late_descendant_answers_and_preserves_one_attempt(
         );
         assert!(!f.store.claim_unanswered_restore(&pending).unwrap());
         assert!(!reserved(&f, &pending));
-        f.store
+        let request = f
+            .store
             .say("work", "owner", "new request", Some(&pending.handle))
             .unwrap();
-        let next = f
-            .store
-            .pending_posts(&[f.store.get("work").unwrap()])
-            .unwrap()
-            .remove(0);
+        // The reply answered the first post, on the task or under it.
+        let owed = owed_by(&f, &pending.handle);
+        assert_eq!(owed.len(), 1, "{reply_task}: {owed:?}");
+        let next = owed.into_iter().next().unwrap();
+        assert_eq!(next.post.id, request.id);
         assert!(f.store.claim_unanswered_restore(&next).unwrap());
         assert!(!f.other().claim_unanswered_restore(&next).unwrap());
     }
