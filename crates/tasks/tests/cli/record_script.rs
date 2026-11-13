@@ -190,7 +190,7 @@ const SCRIPT_PROBE_WAIT: Duration = Duration::from_secs(2);
 /// What a probe of the real recorder must answer within, from its start to the end of its answer,
 /// once at least, for the recorder to count as prompt: half of [`SCRIPT_PROBE_WAIT`]. Every other
 /// case lengthens the script's wait ([`PROBE_WAIT`]), so this is what turns a recorder grown slow
-/// to answer red. Spans measured: 12 ms to 193 ms at a load of 19 on 16 cores.
+/// to answer red. Spans measured: 12 ms to 193 ms at loads of 19 to 48 on 16 cores.
 const PROMPT_PROBE: Duration = Duration::from_secs(1);
 /// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
 const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
