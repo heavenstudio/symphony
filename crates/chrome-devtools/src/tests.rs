@@ -278,8 +278,8 @@ fn profile_cleanup_rechecks_after_helpers_and_reports_other_errors() {
     std::fs::write(profile.join("nested/data"), "profile").unwrap();
     // Announce readiness before cleanup starts. Recreate the profile only after its first
     // removal, so returning on that removal instead of waiting for helpers always leaks it.
-    let mut browser = BrowserGroup(
-        Command::new("/bin/sh")
+    let mut browser = BrowserGroup {
+        child: Command::new("/bin/sh")
             .args([
                 "-c",
                 r#"printf 'ready\n'
@@ -293,14 +293,15 @@ mkdir "$1"
             .process_group(0)
             .spawn()
             .unwrap(),
-    );
+        done: false,
+    };
     let mut ready = String::new();
-    std::io::BufReader::new(browser.0.stdout.take().unwrap())
+    std::io::BufReader::new(browser.child.stdout.take().unwrap())
         .read_line(&mut ready)
         .unwrap();
     assert_eq!(ready, "ready\n");
-    let group = browser.0.id();
-    let reaper = std::thread::spawn(move || browser.0.wait().unwrap());
+    let group = browser.child.id();
+    let reaper = std::thread::spawn(move || browser.reap().unwrap());
     let cleanup = cleanup_profile(&profile, group);
     if cleanup.is_err() {
         // A regression must also stop this owned helper instead of stranding its waiter.
@@ -317,6 +318,90 @@ mkdir "$1"
     let error = cleanup_profile(&profile, group).unwrap_err();
     std::fs::remove_file(&profile).unwrap();
     assert_eq!(error.kind(), ErrorKind::NotADirectory);
+}
+
+/// The browser ending on its own is left unreaped, its pid and group id its own, while its group
+/// is killed, helpers and all; it is reaped after, and a second end sends nothing.
+#[test]
+fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
+    let child = Command::new("/bin/sh")
+        .args(["-c", "/bin/sleep 30 & exit 0"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let group = child.id();
+    let mut browser = BrowserGroup { child, done: false };
+    let began = Instant::now();
+    while !crate::exited(group).unwrap() {
+        assert!(
+            began.elapsed() < Duration::from_secs(30),
+            "the browser ran on"
+        );
+        std::thread::sleep(POLL);
+    }
+    // SAFETY: signal 0 to this test's own unreaped child sends nothing.
+    assert_eq!(
+        unsafe { libc::kill(pid(group), 0) },
+        0,
+        "its pid is its own"
+    );
+    assert!(signal_group(group, 0).is_ok(), "its helper runs");
+    assert!(browser.end().unwrap().success());
+    let killed = Instant::now();
+    while signal_group(group, 0).is_ok() {
+        assert!(
+            killed.elapsed() < Duration::from_secs(10),
+            "its helper lives"
+        );
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        browser.end().unwrap().success(),
+        "a second end answers the same"
+    );
+}
+
+/// A browser stopped (SIGSTOP, as a test stalls one) has not ended: the leash leaves it and its
+/// group alone, and it is taken for ended only once it exits.
+#[test]
+fn a_stopped_browser_has_not_ended() {
+    let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+    let id = child.id();
+    // SAFETY: stops this test's own unreaped child.
+    let stop = unsafe { libc::kill(pid(id), libc::SIGSTOP) };
+    // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: waits for this test's own child to stop, reaping none.
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            libc::id_t::from(id),
+            &raw mut info,
+            libc::WSTOPPED | libc::WNOWAIT,
+        )
+    };
+    let stopped = crate::exited(id).unwrap();
+    // SAFETY: continues this test's own unreaped child.
+    let resume = unsafe { libc::kill(pid(id), libc::SIGCONT) };
+    let resumed = crate::exited(id).unwrap();
+    // Killed before any assertion, so a failing one leaves no stopped process behind.
+    child.kill().unwrap();
+    let began = Instant::now();
+    let mut killed = false;
+    while !killed && began.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(POLL);
+        killed = crate::exited(id).unwrap();
+    }
+    let status = child.wait().unwrap();
+    assert_eq!((stop, waited, resume), (0, 0, 0));
+    assert_eq!(info.si_code, libc::CLD_STOPPED);
+    assert!(!stopped, "a stopped child was taken for ended");
+    assert!(!resumed, "a continued child was taken for ended");
+    assert!(killed, "the kill was not seen before the reap");
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(libc::SIGKILL)
+    );
 }
 
 /// Keep a removed CPU guard from hanging its regression: end the owned group

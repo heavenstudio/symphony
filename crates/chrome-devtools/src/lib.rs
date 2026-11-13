@@ -443,7 +443,7 @@ fn leash(binary: &str, profile: &Path) -> i32 {
             .spawn()
     });
     let mut browser = match started {
-        Ok(child) => BrowserGroup(child),
+        Ok(child) => BrowserGroup { child, done: false },
         Err(error) => {
             // The launcher still holds the logs open: it reads this reason after the leash ends.
             let reason = format!("browser did not start: {binary}: {error}");
@@ -458,8 +458,8 @@ fn leash(binary: &str, profile: &Path) -> i32 {
             return 1;
         }
     };
-    let child = &mut browser.0;
-    if let Err(error) = std::fs::write(profile.join("browser.pid"), format!("{}\n", child.id())) {
+    let pid = browser.child.id();
+    if let Err(error) = std::fs::write(profile.join("browser.pid"), format!("{pid}\n")) {
         leash_report(format_args!(
             "Chrome browser.pid {}: {error}",
             profile.display()
@@ -471,9 +471,9 @@ fn leash(binary: &str, profile: &Path) -> i32 {
         let _ = send.send(());
     });
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {}
+        match exited(pid) {
+            Ok(true) => break browser.end().ok(),
+            Ok(false) => {}
             Err(error) => {
                 leash_report(format_args!("Chrome wait {}: {error}", profile.display()));
                 break None;
@@ -502,9 +502,8 @@ fn leash(binary: &str, profile: &Path) -> i32 {
         "Chrome shutdown {}: {reason}",
         profile.display()
     ));
-    let group = browser.0.id();
     drop(browser);
-    let cleanup = cleanup_profile(profile, group);
+    let cleanup = cleanup_profile(profile, pid);
     let _ = std::fs::remove_file(profile.with_extension("exit"));
     let _ = std::fs::remove_file(profile.with_extension("stderr"));
     if let Err(error) = cleanup {
@@ -741,15 +740,64 @@ fn signal_group(group: u32, signal: std::ffi::c_int) -> std::io::Result<()> {
     }
 }
 
-struct BrowserGroup(Child);
+/// The browser, leading a group of its own with its helpers. It is reaped only after the SIGKILL
+/// to its group, so the group's id is its own until then and the signal reaches no group numbered
+/// after it.
+struct BrowserGroup {
+    child: Child,
+    /// Set once its group is signalled no more: after its SIGKILL, or once its leader is reaped.
+    done: bool,
+}
+
+impl BrowserGroup {
+    /// SIGKILL to the group, its helpers with it (they must die before the leash finishes profile
+    /// cleanup or exits), then the browser reaped: how it ended.
+    fn end(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        if !self.done {
+            let _ = signal_group(self.child.id(), 9); // SIGKILL, on Darwin and Linux
+            self.done = true;
+        }
+        self.child.wait()
+    }
+
+    /// The browser waited for with no signal to its group, which is signalled no more after: a
+    /// test's wait for a browser it lets end.
+    #[cfg(test)]
+    fn reap(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.done = true;
+        self.child.wait()
+    }
+}
 
 impl Drop for BrowserGroup {
     fn drop(&mut self) {
-        // The main browser may already be reaped. Its helpers still belong to this recorded
-        // group and must die before the leash finishes profile cleanup or exits.
-        let _ = signal_group(self.0.id(), 9); // SIGKILL, on Darwin and Linux
-        let _ = self.0.wait();
+        let _ = self.end();
     }
+}
+
+/// Whether the child `pid` has ended, left unreaped (`waitid` with `WNOWAIT`): until it is reaped
+/// its pid, and the id of the group it leads, name it and no later process. A browser stopped (a
+/// test stalls one) has not ended, which macOS answers as well though only `WEXITED` is asked.
+fn exited(pid: u32) -> std::io::Result<bool> {
+    // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: asks whether this process's child `pid` ended, writing `info`, reaping none.
+    let waited = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            libc::id_t::from(pid),
+            &raw mut info,
+            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+        )
+    };
+    if waited != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(info.si_signo == libc::SIGCHLD
+        && matches!(
+            info.si_code,
+            libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+        ))
 }
 
 impl Drop for Owner {

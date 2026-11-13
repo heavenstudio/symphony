@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use symphony_board::port::Start;
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Store, port, rpc, sys};
+use symphony_server::sys::Taken;
 
 #[path = "after_reload/first_run.rs"]
 mod first_run;
@@ -243,7 +244,9 @@ struct Fixture {
     board: Store,
     database: OwnedChild,
     board_address: String,
-    generation_pids: Vec<i64>,
+    /// Each server generation seen, by the start the kernel stamped on it: the drop signals only
+    /// one its pid still names, never a process given the pid since.
+    generations: Vec<Taken>,
     began: Instant,
     /// When the last source edit landed, until a handshake answers it.
     edited: Cell<Option<Instant>>,
@@ -450,7 +453,7 @@ impl Fixture {
             board,
             database,
             board_address,
-            generation_pids: Vec::new(),
+            generations: Vec::new(),
             began: Instant::now(),
             edited: Cell::new(None),
         }
@@ -538,7 +541,7 @@ impl Fixture {
     }
     fn startup(&mut self) -> Entry {
         let entry = self.entered("startup");
-        self.generation_pids.push(entry.pid);
+        self.generations.push(Taken::of(entry.pid));
         entry
     }
     /// The next `kind` handshake; the first after an edit says how long the edit took to wake the
@@ -628,13 +631,13 @@ impl Fixture {
         // The stop message precedes runtime teardown and the reload worker's lease release.
         // EOF on both inherited generation pipes observes actual process cleanup.
         lines.closed();
-        self.generation_pids.retain(|p| *p != pid);
+        self.generations.retain(|server| server.pid != pid);
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        for &pid in &self.generation_pids {
-            symphony_server::sys::signal(pid, libc::SIGTERM);
+        for server in &self.generations {
+            server.signal(libc::SIGTERM, || {});
         }
         let _ = self.database.0.kill();
         let _ = self.database.0.wait();
@@ -1122,7 +1125,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
         !symphony_server::sys::pid_alive(failed_pid),
         "failed replacement was reaped"
     );
-    f.generation_pids.retain(|p| *p != failed_pid);
+    f.generations.retain(|server| server.pid != failed_pid);
     assert_front(address, original_pid);
     assert_eq!(
         serde_json::from_slice::<Value>(&fs::read(f.home.join("server.json")).unwrap()).unwrap()["pid"],
@@ -1215,7 +1218,7 @@ fn failed_build_and_startup_keep_serving_then_module_and_main_handover_preserve_
     assert_eq!(response(held)["ok"], true);
     // The outputs already match this save. Draining must still finish its ordinary verdict commit.
     lines.until("· Symphony server stopped");
-    f.generation_pids.retain(|p| *p != second_pid);
+    f.generations.retain(|server| server.pid != second_pid);
     assert!(
         repository(&f.root, &["show", "main:docs/TOPIC.md"])
             .contains("Main entry preserved this request.")
@@ -1296,7 +1299,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     let failed_pid = startup.pid;
     startup.release("exit");
     lines.until("replacement did not become ready");
-    f.generation_pids.retain(|p| *p != failed_pid);
+    f.generations.retain(|server| server.pid != failed_pid);
     assert_front(address, original_pid);
     assert_eq!(client_page(address), "initial client");
     assert_eq!(
@@ -1360,7 +1363,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     );
     assert_eq!(client_page(address), "shipped client");
     f.stop_generation(third_pid, &mut lines);
-    f.generation_pids.clear();
+    f.generations.clear();
     write(
         &f.home.join("client/public/index.html"),
         "manually replaced bundle",
@@ -1441,7 +1444,7 @@ fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
             !symphony_server::sys::pid_alive(held.pid),
             "cancelled {phase} was reaped"
         );
-        f.generation_pids.clear();
+        f.generations.clear();
         assert!(!f.root.join("artifacts/docs-app.port").exists());
         for name in ["server.lock", "reload-build.lock"] {
             File::open(f.home.join(name)).unwrap().try_lock().unwrap();

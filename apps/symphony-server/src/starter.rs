@@ -10,6 +10,7 @@ use symphony::machine::{self, Entry, Registry};
 use crate::home::{self, Home, Running};
 use crate::host::{Build, Handover, Verdict};
 use crate::repo::Checkout;
+use crate::sys::Taken;
 
 /// How long a replaced server is given to hand over and its successor to answer: a build's
 /// warm-up on a loaded machine.
@@ -56,12 +57,17 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
     let machine = home.dir().to_path_buf();
     let entry = Entry::of(&checkout.main)?;
     let ours = Build::this(&checkout.main);
-    let running = home.up();
+    // Its start read as soon as the look `up` makes finds it answering as its pid: the start of
+    // that server, the window between that answer and this read aside.
+    let running = home.up().map(|running| {
+        let server = Taken::of(running.pid);
+        (running, server)
+    });
     let front = running
         .as_ref()
-        .and_then(|running| crate::probe::front(running.port, Duration::from_secs(5)));
+        .and_then(|(running, _)| crate::probe::front(running.port, Duration::from_secs(5)));
     match (running, front) {
-        (Some(running), Some(front)) if front.pin == 0 => {
+        (Some((running, _)), Some(front)) if front.pin == 0 => {
             // A server from before the machine folder serves its one checkout at `/` and takes no
             // hand-off request: it updates itself from its sources, or a stop and a start replace it.
             eprintln!(
@@ -71,7 +77,7 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
             );
             Ok(Started::Serving(running, String::new()))
         }
-        (Some(running), Some(front)) => {
+        (Some((running, server)), Some(front)) => {
             let registry = Registry::read(&machine)?;
             match crate::host::judge(&Build::of(&front), &ours, &entry, &registry) {
                 Verdict::Serves => {
@@ -93,6 +99,7 @@ pub(crate) fn one(checkout: &Checkout, home: &Home, if_up: bool) -> Result<Start
                     let replaced = hand_off(
                         home,
                         &running,
+                        &server,
                         &ours,
                         &Handover {
                             exe,
@@ -118,16 +125,17 @@ fn register(machine: &Path, entry: &Entry) -> Result<(), String> {
     Registry::change(machine, |registry| registry.add(entry.clone())).map(|_| ())
 }
 
-/// Ask `running` to hand its sockets to `request`'s build and wait for the successor to answer,
-/// holding `ours`' plugins: the successor's record.
+/// Ask `running`, `server` as it was found, to hand its sockets to `request`'s build and wait for
+/// the successor to answer, holding `ours`' plugins: the successor's record.
 fn hand_off(
     home: &Home,
     running: &Running,
+    server: &Taken,
     ours: &Build,
     request: &Handover,
 ) -> Result<Running, String> {
     request.ask(home.dir())?;
-    crate::sys::signal(running.pid, libc::SIGUSR1);
+    ask(server, &request.exe)?;
     let began = Instant::now();
     while began.elapsed() < HANDOVER_PATIENCE {
         if let Some(front) = crate::probe::front(running.port, Duration::from_secs(2))
@@ -148,4 +156,64 @@ fn hand_off(
         HANDOVER_PATIENCE.as_secs(),
         home.dir().join(home::LOG).display()
     ))
+}
+
+/// SIGUSR1 to `server`, the running one, to hand over to `exe`, said on stderr first, while its pid
+/// still names it ([`Taken`]): the signal's default action ends a process that does not catch it,
+/// so a process given its pid since is sent nothing, and the start is refused.
+fn ask(server: &Taken, exe: &Path) -> Result<(), String> {
+    let said = || {
+        crate::front::tell(format_args!(
+            "· Symphony: SIGUSR1 to the server, pid {}: asked to hand over to {}",
+            server.pid,
+            exe.display()
+        ));
+    };
+    if server.signal(libc::SIGUSR1, said) {
+        return Ok(());
+    }
+    Err(format!(
+        "the running Symphony (pid {}) ended before it was asked to hand over; start again",
+        server.pid
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphony_board::sys::{Command, Start};
+
+    /// A hand-off asks only the server found: a pid whose start differs from the one recorded when
+    /// it was found is sent nothing (SIGUSR1 would end the `sleep` holding it), and the start is
+    /// refused; the process found is asked, and said.
+    #[test]
+    fn a_hand_off_is_asked_of_the_server_found_and_of_no_process_given_its_pid_since() {
+        let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let pid = i64::from(holder.id());
+        let exe = Path::new("/bin/symphony-server");
+        let since = Taken::started(pid, Start::At(1.0));
+        let (asked, told) = crate::front::told::during(|| ask(&since, exe));
+        assert_eq!(
+            asked,
+            Err(format!(
+                "the running Symphony (pid {pid}) ended before it was asked to hand over; start \
+                 again"
+            ))
+        );
+        assert!(told.is_empty(), "{told:?}");
+        assert!(holder.try_wait().unwrap().is_none(), "it was signalled");
+        let (asked, told) = crate::front::told::during(|| ask(&Taken::of(pid), exe));
+        assert_eq!(asked, Ok(()));
+        assert_eq!(
+            told,
+            [format!(
+                "· Symphony: SIGUSR1 to the server, pid {pid}: asked to hand over to \
+                 /bin/symphony-server"
+            )]
+        );
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&holder.wait().unwrap()),
+            Some(libc::SIGUSR1)
+        );
+    }
 }

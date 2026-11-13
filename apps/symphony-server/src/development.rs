@@ -5,6 +5,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,22 +15,19 @@ use symphony_board::{port, sys};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+/// The children this front door started, each leading a group of its own. A leader that has ended
+/// is left unreaped ([`crate::sys::exited`]) until the last signal to its group, so the group's id
+/// is still its own and no signal reaches a group numbered after it.
 struct Children(Vec<Child>);
 
 impl Children {
-    fn drain(children: &mut [Child], until: Instant) -> bool {
+    fn drain(children: &[Child], until: Instant) -> bool {
         loop {
-            let mut running = false;
-            for child in children.iter_mut() {
-                // Reap the leaders while waiting for descendants as well. DX can exit before
-                // cargo/rustc; its exit alone does not release the build folder safely.
-                if !child.try_wait().is_ok_and(|done| done.is_some()) {
-                    running = true;
-                }
-                if crate::sys::group_alive(i64::from(child.id())) {
-                    running = true;
-                }
-            }
+            // Each leader's group is waited for as well: DX can exit before cargo/rustc, and its
+            // exit alone does not release the build folder safely.
+            let running = children.iter().any(|child| {
+                !crate::sys::exited(child) || crate::sys::group_runs(i64::from(child.id()))
+            });
             if !running {
                 return true;
             }
@@ -40,32 +38,35 @@ impl Children {
         }
     }
 
-    fn stop(&mut self) -> Result<(), String> {
+    /// Stop every group, then reap each leader: how each child, by its pid, ended.
+    fn stop(&mut self) -> Result<Vec<(u32, ExitStatus)>, String> {
         let mut children = std::mem::take(&mut self.0);
         if children.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         for child in &children {
             crate::sys::signal_group(i64::from(child.id()), libc::SIGTERM);
         }
-        if !Self::drain(&mut children, Instant::now() + Duration::from_secs(3)) {
+        if !Self::drain(&children, Instant::now() + Duration::from_secs(3)) {
             for child in &children {
                 crate::sys::signal_group(i64::from(child.id()), libc::SIGKILL);
             }
-            if !Self::drain(&mut children, Instant::now() + Duration::from_secs(2)) {
+            if !Self::drain(&children, Instant::now() + Duration::from_secs(2)) {
                 let groups: Vec<_> = children.iter().map(Child::id).collect();
                 return Err(format!(
                     "owned child process groups {groups:?} did not stop within 5 s"
                 ));
             }
         }
+        let mut ended = Vec::new();
         for child in &mut children {
-            child
+            let status = child
                 .wait()
                 .map_err(|e| format!("reap child {}: {e}", child.id()))?;
+            ended.push((child.id(), status));
         }
         eprintln!("· symphony-ui-dev: owned child process groups stopped");
-        Ok(())
+        Ok(ended)
     }
 }
 
@@ -132,7 +133,7 @@ fn start_child(
             if cancelled.load(Ordering::Relaxed) || crate::sys::parent() != parent {
                 return Err("development startup cancelled".to_string());
             }
-            if owned.0[0].try_wait().map_err(|e| e.to_string())?.is_some() {
+            if crate::sys::exited(&owned.0[0]) {
                 owned.stop()?;
                 for reader in readers {
                     reader.join().map_err(|_| "read development child output")?;
@@ -286,10 +287,8 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
                     eprintln!("· symphony-ui-dev: parent ended, stopping owned children");
                     break Ok(());
                 }
-                for child in &mut children.0 {
-                    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-                        break 'serving Err(format!("child {} ended: {status}", child.id()));
-                    }
+                if let Some(child) = children.0.iter().find(|child| crate::sys::exited(child)) {
+                    break 'serving Err(child.id());
                 }
             }
             accepted = front.accept() => {
@@ -303,8 +302,11 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
             }
         }
     };
-    children.stop()?;
-    outcome
+    let ended = children.stop()?;
+    outcome.map_err(|pid| match ended.iter().find(|(each, _)| *each == pid) {
+        Some((_, status)) => format!("child {pid} ended: {status}"),
+        None => format!("child {pid} ended"),
+    })
 }
 
 async fn forward(
@@ -418,7 +420,7 @@ mod tests {
         fn assert_stopped(&self) {
             let pid = self.pid().expect("the spawned child recorded its pid");
             assert!(
-                !crate::sys::group_alive(pid),
+                !crate::sys::group_runs(pid),
                 "owned child group {pid} leaked"
             );
         }
@@ -428,7 +430,7 @@ mod tests {
         fn drop(&mut self) {
             // A failing cleanup assertion must still end the fake child this case started.
             if let Some(pid) = self.pid()
-                && crate::sys::group_alive(pid)
+                && crate::sys::group_runs(pid)
             {
                 crate::sys::signal_group(pid, libc::SIGKILL);
                 // SAFETY: this PID was recorded by this case's own spawned child.
@@ -626,6 +628,30 @@ mod tests {
         assert!(std::net::TcpStream::connect(addr).is_ok());
         let pid = owned.0[0].id();
         owned.stop().unwrap();
-        assert!(!crate::sys::group_alive(i64::from(pid)));
+        assert!(!crate::sys::group_runs(i64::from(pid)));
+    }
+
+    #[test]
+    fn a_stop_signals_a_group_whose_leader_ended_before_it_reaps_the_leader() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "/bin/sleep 30 </dev/null >/dev/null 2>&1 & exit 3"]);
+        let child = sessionless(&mut command).process_group(0).spawn().unwrap();
+        let pid = child.id();
+        let began = Instant::now();
+        while !crate::sys::exited(&child) {
+            assert!(
+                began.elapsed() < Duration::from_secs(30),
+                "the leader ran on"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The leader is a zombie its group still names, the sleep it left still running.
+        assert!(crate::sys::pid_alive(i64::from(pid)));
+        assert!(crate::sys::group_runs(i64::from(pid)));
+        let ended = Children(vec![child]).stop().unwrap();
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].0, pid);
+        assert_eq!(ended[0].1.code(), Some(3));
+        assert!(!crate::sys::group_runs(i64::from(pid)));
     }
 }

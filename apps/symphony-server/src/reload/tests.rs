@@ -444,6 +444,34 @@ fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
     assert_eq!(answer(&ready, || false).unwrap(), Answer::Ended);
 }
 
+/// A replacement that failed its hand-off is killed, said first with its pid and why, and reaped;
+/// one that ended already is sent nothing and nothing is said.
+#[test]
+fn a_failed_replacement_is_killed_and_said_unless_it_ended_already() {
+    use std::os::unix::process::ExitStatusExt;
+    use symphony_board::sys::Command;
+    let mut running = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    let pid = running.id();
+    let why = "replacement did not become ready: it ended";
+    let ((), told) = crate::front::told::during(|| super::end_replacement(&mut running, why));
+    assert_eq!(
+        told,
+        [format!(
+            "· Symphony reload: SIGKILL to the replacement server, pid {pid}: {why}"
+        )]
+    );
+    assert_eq!(running.wait().unwrap().signal(), Some(libc::SIGKILL));
+    let mut ended = Command::new("true").spawn().unwrap();
+    let began = Instant::now();
+    while !crate::sys::exited(&ended) {
+        assert!(began.elapsed() < Duration::from_secs(30), "true ran on");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let ((), told) = crate::front::told::during(|| super::end_replacement(&mut ended, why));
+    assert!(told.is_empty(), "{told:?}");
+    assert!(ended.wait().unwrap().success());
+}
+
 #[test]
 fn a_replacement_is_ready_once_committed_or_once_its_parent_has_gone() {
     use super::{Answer, Control, answer};
