@@ -9,10 +9,10 @@ that day. The consuming project's files were only read; nothing there was change
 
 The owner, 2026-11-11, on the board task `product/reports-and-monitoring`:
 
-- "One entire thing missing from [the consuming project] right now, is a report / monitoring
-  bucket. Things like that cumulative report view, information on build costs etc." Then: "Oh,
-  sorry, not [the consuming project], I mean from symphony". It is a Symphony feature, for every
-  project it serves.
+- A report and monitoring bucket is missing from Symphony entirely: things like the cumulative
+  report view and information on build costs. The owner first said it was missing from the
+  consuming project, then corrected that to Symphony (the owner's exact words of 2026-11-11, both
+  of them: board post #2869). It is a Symphony feature, for every project it serves.
 - "considering how symphony now behaves like CI/CD, then info on the CI/CD aspects is what I mean
   is missing." The runs come first; pipeline flow, agents and board health second.
 - "As well as general pipeline and defect pipeline information. We don't have stamp info in the UI

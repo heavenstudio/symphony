@@ -19,10 +19,13 @@ build removes an older build's client tools, since another worktree's build may 
 only the move does, run on a quiet machine at the landing window the owner picks, and it refuses
 while a process has a file open under them or works there, naming the process.
 Until the move, a build of the new code refuses on a repository whose old folders still hold its
-state, naming the move, and starts nothing there. The board database's namespace stays `sf`. The rest of this page is the inventory and plan as they stood before the verdict, except that
-the owner then asked to "completely remove [the consuming project's] direct references within
-symphony app folder": this page names that project only as the consuming project, its tools by
-what they do, and each old name by the thing it named and its new name.
+state, naming the move, and starts nothing there. The board database's namespace stays `sf`.
+
+The rest of this page is the inventory and plan as they stood before the verdict, except that the
+owner then asked, on 2026-11-11, for every direct reference to the consuming project to be removed
+from Symphony's app folder (the owner's exact words: board post #2869). So this page names that
+project only as the consuming project, its tools by what they do, and each old name by the thing
+it named and its new name.
 
 Symphony grew inside the consuming project and still carries its names: variables, state folders,
 the names of that project's own tools, and documents that name it. This is the inventory behind the
