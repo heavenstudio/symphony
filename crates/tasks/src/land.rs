@@ -2046,8 +2046,10 @@ impl Landing<'_> {
         } else {
             dir.join(path)
         };
+        // No mark it was asked for by goes with it (`sys::MARKS`): a check or a generator is the
+        // project's own command, which writes where the project says and lands nothing.
         let mut child = sys::command_with(&program, &self.env.vars);
-        for name in GIT_VARS.iter().chain([&RECIPE]) {
+        for name in GIT_VARS {
             child.env_remove(name);
         }
         // What the land runs is the task's, recorded for it and the session landing it, in a group
@@ -2512,12 +2514,12 @@ impl Landing<'_> {
     }
 
     /// `git ARGS` in the main checkout (a fetch, a push, the fast-forward), by the caller's
-    /// environment (its `PATH`, its keys, the filters' programs) less git's repository variables,
-    /// never asking for a password, in a process group of its own, which its timeout ends whole
-    /// and no terminal's signal reaches.
+    /// environment (its `PATH`, its keys, the filters' programs) less git's repository variables
+    /// and the marks the land was asked for by (`sys::MARKS`), never asking for a password, in a
+    /// process group of its own, which its timeout ends whole and no terminal's signal reaches.
     fn main_git(&self, args: &[&str]) -> sys::Command {
         let mut command = sys::command_with("git", &self.env.vars);
-        for name in GIT_VARS.iter().chain([&RECIPE]) {
+        for name in GIT_VARS {
             command.env_remove(name);
         }
         command

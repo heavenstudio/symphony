@@ -8,6 +8,7 @@ mod publish;
 
 pub(crate) use publish::{BUILDS, publish_client};
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -63,6 +64,21 @@ pub fn main(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    main_in(args, &process_env(), input, out, err)
+}
+
+/// [`main`], reading what `status`, `reply` and `ask` take from their environment out of `env`
+/// in place of this process's: the marker a recipe an agent runs unasked sets
+/// ([`symphony_board::confine::MARKER`]), which confines where each writes, the session `reply`
+/// credits (`TASKS_SESSION`) and the ask store `ASKS_DB` names. A caller whose own environment is
+/// not the command's, a test run under a recipe's or a land's, says each of them it depends on.
+pub fn main_in(
+    args: &[String],
+    env: &BTreeMap<String, String>,
+    input: &mut dyn BufRead,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let command = args.first().map(String::as_str);
     if let Some(help) = command.and_then(|name| commands::plain_help(name, &args[1..])) {
         let _ = write!(out, "{help}");
@@ -70,15 +86,15 @@ pub fn main(
     }
     match command {
         Some("--help" | "-h" | "help") => commands::help(&args[1..], out, err),
-        Some("status") => status_main(&args[1..], out, err),
-        Some("reply") => reply_main(&args[1..], out, err),
+        Some("status") => status_in(&args[1..], env, out, err),
+        Some("reply") => reply_in(&args[1..], env, out, err),
         Some("serve") => serve_main(input, out),
         Some("docs-audit") => crate::docs_audit::main(&args[1..], out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
-        Some("ask") => asks::main(&args[1..], &std::env::vars().collect(), out, err),
+        Some("ask") => asks::main(&args[1..], env, out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
         Some(other) => commands::plugin(other, &args[1..], out, err),
@@ -94,8 +110,23 @@ pub fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) ->
     2
 }
 
+/// This process's environment, each variable whose name and value are text: what [`main`] reads.
+fn process_env() -> BTreeMap<String, String> {
+    symphony_board::cli::Env::of_process().vars
+}
+
 /// `symphony status [--root ROOT] [--json] [--open] [--tidy] [--lint] [--now STAMP]`.
 pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    status_in(args, &process_env(), out, err)
+}
+
+/// [`status_main`] in the environment `env` ([`main_in`]).
+fn status_in(
+    args: &[String],
+    env: &BTreeMap<String, String>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let flags = [
         Flag {
             name: "--root",
@@ -141,7 +172,7 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     let root = PathBuf::from(parsed.value("--root").unwrap_or("."));
     if parsed.flag("--tidy") {
         // It rewrites the registers under ROOT: through `just symphony-status`, the checkout's.
-        if let Err(problem) = unasked_inside(&root) {
+        if let Err(problem) = unasked_inside(&root, env) {
             let _ = writeln!(err, "✖ {problem}");
             return 1;
         }
@@ -172,6 +203,16 @@ pub fn status_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
 /// that line; and, in a checkout, who wrote it, in the ask store ([`crate::asks::Reply`]), for the
 /// owner's ask it answers.
 pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    reply_in(args, &process_env(), out, err)
+}
+
+/// [`reply_main`] in the environment `env` ([`main_in`]).
+fn reply_in(
+    args: &[String],
+    env: &BTreeMap<String, String>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let flags = [
         Flag {
             name: "--question",
@@ -220,7 +261,7 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
         return 1;
     }
     let file = Path::new(path);
-    if let Err(problem) = unasked_inside(file) {
+    if let Err(problem) = unasked_inside(file, env) {
         let _ = writeln!(err, "✖ {problem}");
         return 1;
     }
@@ -252,10 +293,10 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     let by = parsed
         .value("--as")
         .map(str::to_string)
-        .or_else(|| std::env::var("TASKS_SESSION").ok())
+        .or_else(|| env.get("TASKS_SESSION").cloned())
         .filter(|by| !by.trim().is_empty());
     if let Some(by) = by
-        && let Err(problem) = record_reply(file, kind, &target, by.trim())
+        && let Err(problem) = record_reply(file, kind, &target, by.trim(), env)
     {
         let _ = writeln!(
             err,
@@ -273,11 +314,14 @@ pub fn reply_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
 
 /// Whether `path`, a place this process is told to write, may be written: anywhere for the binary
 /// run by itself, and under the marker the recipes an agent runs unasked set
-/// (`just symphony-reply`, `just symphony-ask`, `just symphony-status`) only in the checkout this
-/// process runs in or, from a linked worktree, the main checkout's artifacts folder, never a git
-/// folder ([`symphony_board::confine`]).
-pub(crate) fn unasked_inside(path: &Path) -> Result<(), String> {
-    if std::env::var_os(symphony_board::confine::MARKER).is_none_or(|marked| marked.is_empty()) {
+/// (`just symphony-reply`, `just symphony-ask`, `just symphony-status`), as `env` holds it, only in
+/// the checkout this process runs in or, from a linked worktree, the main checkout's artifacts
+/// folder, never a git folder ([`symphony_board::confine`]).
+pub(crate) fn unasked_inside(path: &Path, env: &BTreeMap<String, String>) -> Result<(), String> {
+    if env
+        .get(symphony_board::confine::MARKER)
+        .is_none_or(String::is_empty)
+    {
         return Ok(());
     }
     let here = std::env::current_dir().map_err(|e| format!("no folder to run in: {e}"))?;
@@ -294,14 +338,21 @@ fn comment_line(slug: &str) -> Option<usize> {
 
 /// Who answered on `target` (a card's slug, a comment's title; `kind` `card` or `comment`) of the
 /// document `file`, in the ask store its checkout's repository shares, for the owner's ask on it
-/// ([`crate::owner_asks`]). A document in no git checkout is no project's, and no ask is on it.
-fn record_reply(file: &Path, kind: &str, target: &str, by: &str) -> Result<(), String> {
+/// ([`crate::owner_asks`]), `ASKS_DB` in `env` when it names one. A document in no git checkout
+/// is no project's, and no ask is on it.
+fn record_reply(
+    file: &Path,
+    kind: &str,
+    target: &str,
+    by: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<(), String> {
     let Some((top, tree, path)) = crate::owner_asks::reply_place(file) else {
         return Ok(());
     };
     let store = AskStore::open(&asks::default_path(
         &top,
-        std::env::var("ASKS_DB").ok().as_deref(),
+        env.get("ASKS_DB").map(String::as_str),
     ))
     .map_err(|e| e.to_string())?;
     store
