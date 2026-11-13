@@ -10,6 +10,8 @@ proper isolation against a contract, so that each package/crate of symphony can 
 versioned on its own. Consumers could list an outdated package u til they are ready to update,
 allowing a phased update approach. Thoughts?"
 
+> [!comment] there should be no mention of exact words in docs. That is what decision register and tasks are for. A document should only describe intent/behavior/options etc. Not historical ledger
+
 - **Today there is one version of everything.** The consuming project names ten Symphony packages
   from one Git pin, and its lock binds them all to one commit. The machine's one server is built
   from that same pin. So the project updates everything at once or nothing, and every release
