@@ -237,7 +237,20 @@ impl Inside {
     pub(crate) fn said(&self) -> String {
         format!("process {} ({}), {}", self.pid, self.command, self.what)
     }
+
+    /// The folder it works in, relative to the tree it was found in (empty for the tree itself),
+    /// as [`inside_of`] said it; none for a process found by a file it holds open.
+    pub(crate) fn working_in(&self) -> Option<&str> {
+        if self.what == WORKING_THERE {
+            return Some("");
+        }
+        self.what.strip_prefix(WORKING_IN)
+    }
 }
+
+/// What [`inside_of`] says of a process working in the tree itself, and before a folder inside it.
+const WORKING_THERE: &str = "working there";
+const WORKING_IN: &str = "working in ";
 
 /// How long what a look finds in a folder has to leave it before it counts: what a check's killed
 /// group still runs, or the board's recorder writing down how the check ended, leaves within it.
@@ -330,8 +343,8 @@ fn inside_of(listing: &str, tree: &Path, me: u32) -> Vec<Inside> {
                 }
                 let inner = rest.trim_start_matches('/');
                 let what = match (fd == "cwd", inner.is_empty()) {
-                    (true, true) => "working there".to_string(),
-                    (true, false) => format!("working in {inner}"),
+                    (true, true) => WORKING_THERE.to_string(),
+                    (true, false) => format!("{WORKING_IN}{inner}"),
                     (false, true) => "holding . open".to_string(),
                     (false, false) => format!("holding {inner} open"),
                 };
@@ -405,6 +418,25 @@ mod tests {
             "process 11 (cargo), holding src/b.rs open"
         );
         assert!(inside_of(listing, Path::new("/elsewhere"), 1).is_empty());
+    }
+
+    #[test]
+    fn a_process_found_by_its_working_folder_says_that_folder_and_one_found_by_a_file_none() {
+        let listing = "p10\nczsh\nfcwd\nn/wt/nightly\n\
+                       p11\ncchrome_crashpad_handler\nfcwd\nn/wt/nightly/apps/symphony-ui\n\
+                       p12\ncvim\nf7r\nn/wt/nightly/apps/symphony-ui/src/a.rs\n\
+                       p13\ncsh\nfcwd\nn/wt/nightly/working in/x\n";
+        let found = inside_of(listing, Path::new("/wt/nightly"), 1);
+        let folders: Vec<Option<&str>> = found.iter().map(Inside::working_in).collect();
+        assert_eq!(
+            folders,
+            [
+                Some(""),
+                Some("apps/symphony-ui"),
+                None,
+                Some("working in/x")
+            ]
+        );
     }
 
     #[test]

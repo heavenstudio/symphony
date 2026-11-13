@@ -821,6 +821,92 @@ fn a_process_a_check_leaves_in_the_checkout_stops_the_run_after_that_check() {
 }
 
 #[test]
+fn a_red_check_that_leaves_a_process_has_each_red_step_filed_beside_the_stop() {
+    let fixture = Fixture::new();
+    fixture.land(
+        "apps/ui/Cargo.toml",
+        Some("[package]\nname = \"ui\"\n"),
+        "a package",
+    );
+    let pid_file = fixture.root.join("survivor.pid");
+    // A verify that lists its steps, its lint green and its tests red, and leaves a survivor
+    // outside its group and session working in the package's folder, as a browser test's crash
+    // handler did.
+    let check = format!(
+        "verify=perl -MPOSIX -e 'POSIX::setsid() or die; chdir \"apps/ui\" or die; \
+         open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; \
+         open(STDOUT, \">\", \"/dev/null\"); open(STDERR, \">\", \"/dev/null\"); \
+         exec \"sleep\", \"120\"' '{pid}' & \
+         while [ ! -s '{pid}' ]; do sleep 0.1; done; d=\"$SYMPHONY_CHECK_STEPS\"; \
+         echo 'lint green' > \"$d/lint.log\"; echo 'a test failed' > \"$d/tests.log\"; \
+         printf 'lint\\t0\\t1\\tlint.log\\tjust lint\\n' >> \"$d/steps.tsv\"; \
+         printf 'tests\\t101\\t1\\ttests.log\\tjust tests\\n' >> \"$d/steps.tsv\"; exit 1",
+        pid = pid_file.display()
+    );
+    let (code, out, err) = fixture.nightly_at(NOW, &["--check", &check]);
+    let survivor = written_pid(&pid_file);
+    let guard = Process(libc::pid_t::try_from(survivor).unwrap());
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "after `verify` ended red (exit 1), {} is in use by process {survivor} (sleep), \
+             working in apps/ui, where cargo runs the tests of the package ui (a test of it may \
+             have left it): what was checked may have changed, so nothing checked is released; \
+             end it",
+            fixture.worktree().display()
+        )),
+        "{err}"
+    );
+    assert!(
+        out.contains("nightly: filed tests/nightly-red-verify-tests, tests/nightly-red-run\n"),
+        "the red step is filed beside the stop, never behind it: {out}"
+    );
+    let reds = fixture.reds();
+    assert_eq!(
+        reds.keys().collect::<Vec<_>>(),
+        ["tests/nightly-red-run", "tests/nightly-red-verify-tests"],
+        "nothing for the step it found green"
+    );
+    assert!(
+        reds["tests/nightly-red-verify-tests"]
+            .body
+            .contains("a test failed"),
+        "the step's task quotes its own log"
+    );
+    let stop = &reds["tests/nightly-red-run"].body;
+    assert!(
+        stop.contains(
+            "The reds its checks found before it stopped are tasks of their own, not this \
+             one's: tests/nightly-red-verify-tests."
+        ),
+        "{stop}"
+    );
+    assert!(
+        stop.contains("Who fixes: the owner, or an orchestrator on the owner's word"),
+        "{stop}"
+    );
+    let run = fixture.runs().pop().unwrap();
+    let checks = run["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1, "{run}");
+    let steps: Vec<&str> = (checks[0]["steps"].as_array().unwrap().iter())
+        .map(|step| step["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        steps,
+        ["verify/tests"],
+        "its green counts for nothing: {run}"
+    );
+    assert!(fixture.remote_tags().is_empty(), "nothing is released");
+
+    // SAFETY: kill signals the survivor this test's check started, which the test saw running.
+    unsafe {
+        libc::kill(libc::pid_t::try_from(survivor).unwrap(), libc::SIGKILL);
+    }
+    assert!(ends_within(survivor, 20));
+    guard.ended();
+}
+
+#[test]
 fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_changed() {
     let fixture = Fixture::new();
     fixture.land("a.txt", Some("one\n"), "a.txt reads one");
