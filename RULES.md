@@ -60,10 +60,11 @@ releases. Meaning express path line followed up by another run". A candidate red
 ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
 executes it 10 minutes after it was filed. An orchestrator staffs it before anything else, and one
 agent fixes it with the smallest checks that cover the repair, starting from the failing tests or
-the failing step rerun alone as its text names them. A red is fixed in the code. A test or check
-is never loosened to turn it green (an assertion widened, a timeout or a budget raised, a test
-ignored or moved out of the release run): a fix that must change one says on its thread why the code
-was not the thing to fix, and a fresh reviewer judges that. It is filed as a fast fix
+the failing step rerun alone as its text names them. A red is fixed in the code, and a test red on
+load is discarded instead (`tests/no-test-fails-on-load`). A test or check is never loosened to
+turn it green (an assertion widened, a timeout or a budget raised, a test ignored or moved out of
+the release run): a fix that must change one says on its thread why the code was not the thing to
+fix, and a fresh reviewer judges that. It is filed as a fast fix
 (`workflow/fast-bugfixes`) under a bound the land enforces: its orchestrator's approve lands a fix
 that changes none of the project's tests and checks (`[land] check_paths`,
 [TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
@@ -152,11 +153,23 @@ stall and gives the load average. Elapsed time stays only where the product's pr
 time, with its clock injected where it can be. A test that can be none of these is proposed on
 its task's thread, with the promise it guards and why no CPU bound, count, wait or injected clock
 can stand in for it; the orchestrator puts it to the owner, and it leaves `just verify` only on the
-owner's word. Until then it stays and runs. A product's real-time promise is never dropped: a test
-the owner lets go moves to a recipe a quiet machine runs, which still runs it, and none leaves
-before that recipe exists; docs/CHECKS.md lists each with its promise and the owner's word. No
-budget or tolerance is widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
-use it: [CHECKS](docs/CHECKS.md#time-in-tests).
+owner's word. Until then it stays and runs. A test the owner lets go on such a proposal moves to a
+recipe a quiet machine runs, which still runs it, and none leaves before that recipe exists;
+docs/CHECKS.md lists each with its promise and the owner's word. No budget or tolerance is widened
+to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to use it:
+[CHECKS](docs/CHECKS.md#time-in-tests).
+
+A test that fails a release run or its rerun because of load is discarded. The owner, 2026-11-13:
+"A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
+It is load when the test passes alone, or when its failure is a wall-clock bound, a sleep-ordered
+step or a timeout under load. The red's own fix removes it from the tree, with one line on the
+red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
+what it proved. The owner's word is the approval: no card is put to them to discard such a test.
+If what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
+time or an injected clock, but the release does not wait for that. No rerun is spent on it, no
+rewrite is waited for, and nobody lowers the machine's load to help a run pass. A test that fails
+alone on what its code did, or fails the same way without load, is not this case and is fixed in
+the code.
 
 ### `a-test-that-passes-either-way-is-not-a-test`
 
