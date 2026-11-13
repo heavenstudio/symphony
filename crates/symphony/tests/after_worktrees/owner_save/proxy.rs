@@ -12,12 +12,15 @@ use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
+/// A request as the proxy read it: its headers and its CBOR body.
+type Request = (String, Vec<u8>);
+
 /// What every connection of one case shares: the CREATE held, and how many CREATEs were run.
 #[derive(Clone)]
 struct Forward {
     upstream: String,
     phase: &'static str,
-    held: Arc<Mutex<Option<(String, Vec<u8>)>>>,
+    held: Arc<Mutex<Option<Request>>>,
     ran: Arc<Mutex<usize>>,
 }
 
@@ -29,7 +32,7 @@ impl Forward {
             .is_some_and(|sql| sql.contains("CREATE type::record('task', $slug)"))
     }
 
-    fn forward(&self, mut incoming: BufReader<TcpStream>, first: (String, Vec<u8>)) {
+    fn forward(&self, mut incoming: BufReader<TcpStream>, first: Request) {
         let mut next = Some(first);
         while let Some((headers, bytes)) = next.take() {
             if *self.ran.lock().unwrap() == 0 && Self::creates_the_task(&bytes) {
@@ -64,7 +67,7 @@ impl Forward {
     }
 }
 
-fn exchange(upstream: &str, headers: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+fn exchange(upstream: &str, headers: &str, bytes: &[u8]) -> Request {
     let mut remote = TcpStream::connect(upstream).unwrap();
     remote.set_read_timeout(Some(LIMIT)).unwrap();
     remote.set_write_timeout(Some(LIMIT)).unwrap();
