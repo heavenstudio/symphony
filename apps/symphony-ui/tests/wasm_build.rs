@@ -19,8 +19,8 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-const KINDS: [&str; 8] = [
-    "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
+const KINDS: [&str; 9] = [
+    "board", "tasks", "docs", "review", "queue", "reports", "panel", "overlay", "timeline",
 ];
 
 fn crate_dir() -> PathBuf {

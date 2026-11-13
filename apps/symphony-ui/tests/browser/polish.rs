@@ -813,6 +813,7 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
         ("/agents", "/api/agent-page", json!(["board", "failed"])),
         ("/", symphony_api::BOARD_PATH, json!(["failed"])),
         ("/queue", "/api/queue", json!(["board", "failed"])),
+        ("/reports", symphony_api::REPORTS_PATH, json!(["failed"])),
     ] {
         site.fail_route(read, true);
         page.open(&site.url(route));

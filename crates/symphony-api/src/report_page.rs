@@ -205,7 +205,7 @@ pub struct BucketVerdicts {
     pub approved: u32,
 }
 
-/// The agents at work in a period, out of its agents' hour lines as docs/AGENT_ACTIVITY.md reads
+/// The agents at work in a period, out of its agents' hour lines as `docs/AGENT_ACTIVITY.md` reads
 /// an hour: seconds and counts added up, peaks the largest, means weighted by the seconds each line
 /// watched (by its snapshots where none watched any).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

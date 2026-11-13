@@ -45,8 +45,22 @@ fn selection_keeps_install_override_and_local_build_failures_authoritative() {
     );
 }
 
+/// The page kinds the client's packaging assembles, in its order: the one list, `package.sh`'s.
+fn packaged_kinds() -> Vec<&'static str> {
+    include_str!("../../../symphony-ui/package.sh")
+        .lines()
+        .find_map(|line| line.strip_prefix("for kind in "))
+        .and_then(|rest| rest.strip_suffix("; do"))
+        .expect("package.sh names the kinds it assembles")
+        .split(' ')
+        .collect()
+}
+
+/// The shipped distribution is the regenerator's, made after a land of what main holds
+/// (docs/TASKS.md, the regenerator): a branch that adds a page kind ships it only once main's
+/// distribution is made again.
 #[test]
-fn shipped_shell_references_all_eight_real_modules_and_valid_wasm() {
+fn shipped_shell_references_every_packaged_module_and_valid_wasm() {
     let shell =
         std::str::from_utf8(super::asset("index.html").expect("shipped release index")).unwrap();
     let script = shell
@@ -73,10 +87,13 @@ fn shipped_shell_references_all_eight_real_modules_and_valid_wasm() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
+    let mut kinds = packaged_kinds();
+    kinds.sort_unstable();
+    assert_eq!(keys, kinds);
     assert_eq!(
-        keys,
+        packaged_kinds(),
         [
-            "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline"
+            "board", "tasks", "docs", "review", "queue", "reports", "panel", "overlay", "timeline"
         ]
     );
     for module in manifest.as_object().unwrap().values() {

@@ -78,7 +78,7 @@ holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
-`just client-update` builds all eight real client modules and publishes their bundle
+`just client-update` builds all nine real client modules and publishes their bundle
 under `apps/symphony-server/client/public/`. A branch commits no distribution, whatever
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
 as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the

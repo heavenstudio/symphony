@@ -17,8 +17,8 @@ set -euo pipefail
 
 out="${1:?usage: bundle.sh OUT}"
 case "${2:-all}" in
-    all) kinds=(board tasks docs review queue panel overlay timeline) ;;
-    board|tasks|docs|review|queue|panel|overlay|timeline) kinds=("$2") ;;
+    all) kinds=(board tasks docs review queue reports panel overlay timeline) ;;
+    board|tasks|docs|review|queue|reports|panel|overlay|timeline) kinds=("$2") ;;
     *) echo "symphony-ui: unknown page kind $2" >&2; exit 2 ;;
 esac
 case "${3:-z}" in
