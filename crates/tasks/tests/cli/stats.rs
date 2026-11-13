@@ -238,12 +238,14 @@ fn the_window_read_holds_top_level_tasks_their_executors_and_no_posts() {
     let said: Vec<(&str, &str)> = (records[2].lines.iter())
         .map(|l| (l.kind.as_str(), l.text.as_str()))
         .collect();
-    assert_eq!(said.len(), 7, "{said:?}");
+    assert_eq!(said.len(), 8, "{said:?}");
     assert_eq!(said[0].0, "system");
     assert!(said[0].1.starts_with("created by "), "{said:?}");
+    // The orchestrator that filed it holds it from the create.
+    assert!(said[1].1.ends_with(" joined as orchestrator"), "{said:?}");
     // A verdict is cut to the word that names it.
-    assert_eq!(said[4], ("verdict", "changes: a test "));
-    assert_eq!(said[6], ("verdict", "approve"));
+    assert_eq!(said[5], ("verdict", "changes: a test "));
+    assert_eq!(said[7], ("verdict", "approve"));
     assert_eq!(records[2].created, START);
     assert_eq!(records[2].updated, START + 16.0 * H);
     assert_eq!(records[2].status, "done");

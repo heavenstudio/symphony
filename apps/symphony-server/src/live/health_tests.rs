@@ -1,4 +1,5 @@
-//! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
+//! The board's health as the hub records it: a board tick counts the open tasks nobody
+//! orchestrates in the board it read, and one whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
 //! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
 //! said unwell in its own words until a store opens it, the one server's record says the same,
@@ -128,6 +129,11 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
         (1, 0, 0)
     );
     assert!(ok.queries.count > 0, "the tick's requests are counted");
+    assert_eq!(
+        ok.unowned,
+        Some(1),
+        "the tick's board read counts its one task nobody orchestrates"
+    );
     assert_eq!(Report::read(&file).unwrap().unwrap().dispatch.ok, 1);
     assert_eq!(*hub.server_notice.borrow(), "", "a well board: no notice");
     assert_eq!(hub.health_notice(), "");

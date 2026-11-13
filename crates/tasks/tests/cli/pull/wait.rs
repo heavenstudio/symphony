@@ -62,7 +62,7 @@ fn wait_says_what_changed_since_its_last_read_once() {
     let other = c.register("orchestrator");
     // Nothing changed: nothing to say.
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
-    c.ok(&other, &["create", "sim/free", "Free"]);
+    c.ok(&other, &["create", "sim/free", "Free", "--no-role"]);
     assert_eq!(
         c.ok(&orch, &["wait", "--timeout", "0"]),
         "NEW sim/free ready — Free\nPULL ready_unstaffed=1 (was 0)\nready_unstaffed p2 sim/free — Free\n"
@@ -106,7 +106,7 @@ fn a_line_a_wait_could_not_print_is_printed_by_the_next_one() {
     let c = case("wait-closed");
     let orch = orchestrator(&c);
     let other = c.register("orchestrator");
-    c.ok(&other, &["create", "sim/free", "Free"]);
+    c.ok(&other, &["create", "sim/free", "Free", "--no-role"]);
     let mut env = c.env.clone();
     env.vars.insert("TASKS_SESSION".into(), orch.clone());
     let args: Vec<String> = ["wait", "--timeout", "0"].map(String::from).to_vec();
@@ -124,7 +124,7 @@ fn wait_blocks_until_something_changes() {
     let orch = orchestrator(&c);
     let other = c.register("orchestrator");
     let ran = wait_with(&c, &orch, &["--timeout", "30"], || {
-        c.ok(&other, &["create", "sim/late", "Late"]);
+        c.ok(&other, &["create", "sim/late", "Late", "--no-role"]);
     });
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert!(

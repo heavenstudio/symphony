@@ -473,7 +473,8 @@ fn the_heartbeat_keeps_the_session_live() {
 fn quiet_child(m: &Monitor) -> (String, String) {
     let orch = m.register("orchestrator");
     let child = m.child("worker", &orch);
-    m.ok(&orch, &["create", "sim/a", "A"]);
+    // Nobody's work: the parent files it but does not orchestrate it.
+    m.ok(&orch, &["create", "sim/a", "A", "--no-role"]);
     m.ok(&child, &["claim", "sim/a"]);
     m.now.set(m.last_seen(&child));
     (orch, child)

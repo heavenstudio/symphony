@@ -58,6 +58,15 @@ impl<'t> Owners<'t> {
     }
 }
 
+/// The unfinished tasks nobody orchestrates ([`Owners::of`] empty): every orchestrator follows them,
+/// and the owner's word on one reaches every orchestrator (`Store::inbox`). The board's health
+/// counts them (`crate::board_health::Report::unowned`).
+pub fn unowned<'t>(owners: &Owners, tasks: &'t [Task]) -> impl Iterator<Item = &'t Task> {
+    (tasks.iter())
+        .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
+        .filter(|t| owners.of(&t.slug).is_empty())
+}
+
 /// Whether session `child` reports to `handle` when it goes stale or lost: the orchestrator of a
 /// task it holds claimable work on, or, for work nobody orchestrates and a session holding none,
 /// its parent. `work`: the tasks it holds claimable work on ([`claimable_work`]).
@@ -275,6 +284,38 @@ mod tests {
         assert_eq!(reach("free"), [true, true]);
         let elsewhere = ["amber", "cobalt"].map(|handle| owners.elsewhere("a/c/d", handle));
         assert_eq!(elsewhere, [true, false]);
+    }
+
+    #[test]
+    fn the_unfinished_tasks_with_no_holding_orchestrator_on_or_above_them_are_unowned() {
+        let mut done = task("free-done", None, Vec::new());
+        done.status = "done".into();
+        let mut cancelled = task("free-cancelled", None, Vec::new());
+        cancelled.status = "cancelled".into();
+        let mut ready = task("free-ready", None, Vec::new());
+        ready.status = "ready".into();
+        let tasks = vec![
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            task("a/b", Some("a"), Vec::new()),
+            task(
+                "gone",
+                None,
+                vec![held("ghost", "orchestrator", Health::Lost)],
+            ),
+            task(
+                "gone/x",
+                Some("gone"),
+                vec![held("w", "executor", Health::Live)],
+            ),
+            task("orphan", Some("not-on-the-board"), Vec::new()),
+            done,
+            cancelled,
+            ready,
+        ];
+        let owners = Owners::new(&tasks);
+        let found: Vec<&str> = unowned(&owners, &tasks).map(|t| t.slug.as_str()).collect();
+        assert_eq!(found, ["gone", "gone/x", "orphan", "free-ready"]);
+        assert_eq!(unowned(&owners, &[]).count(), 0);
     }
 
     #[test]

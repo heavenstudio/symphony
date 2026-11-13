@@ -8,6 +8,7 @@ use super::{
 };
 use crate::health::{self, Health};
 use crate::rows::{MessageRow, SessionRow};
+use crate::stages::{ARROW, MOVED};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -20,15 +21,59 @@ pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 /// own and leaves it out of its inbox.
 pub const BOARD: &str = "board";
 
-/// Whether a message could reach `$handle`'s inbox: delivered, sent since the session connected, not
-/// its own, and from the owner, to it, to a role or a verdict (not addressed to another handle or the
-/// owner). Its fields are read under `m`: `""` for a row of the table, `"$m."` for a row of a
-/// [`super::pool::Pool`]. The roles and the tree decide the rest ([`Store::inbox_read`]).
-fn could_reach(m: &str) -> String {
+/// The owner's moves, the one record line an inbox carries: `owner moved it FROM → TO`
+/// ([`crate::stages::moved_line`]), the owner's word as its posts are. A table's row: its text is
+/// read; a [`super::pool::Pool`] holds no other record line ([`POOLED_MOVES`]).
+pub(super) static OWNER_MOVES: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "{m}ts >= $connected AND {m}kind IN $delivered AND {m}sender != $handle
+        "(kind = 'system' AND sender = '{OWNER}' AND string::starts_with(text, '{OWNER}{MOVED}'))"
+    )
+});
+
+/// [`OWNER_MOVES`] for a [`super::pool::Pool`]'s row, `$m`: the pool reads no text, and holds no
+/// record line but the owner's moves.
+static POOLED_MOVES: LazyLock<String> =
+    LazyLock::new(|| format!("($m.kind = 'system' AND $m.sender = '{OWNER}')"));
+
+/// The mark on the owner's word about a task nobody orchestrates as an orchestrator's inbox carries
+/// it ([`heard`]): every orchestrator hears it there, since none of the task's relays it. Those on
+/// the task hear it unmarked, as they did.
+const UNOWNED: &str = "[unowned: no orchestrator holds it] ";
+
+/// What the owner's move of a task to a finished status says to an inbox after the move's own line
+/// ([`heard`]): those on the task stop, without an orchestrator relaying it.
+const NO_FURTHER: &str = "; it moves no further: stop work on it";
+
+/// Whether a message could reach `$handle`'s inbox: delivered, or the owner's move (`moves`, its
+/// test for the rows read), sent since the session connected, not its own, and from the owner, to
+/// it, to a role or a verdict (not addressed to another handle or the owner). Its fields are read
+/// under `m`: `""` for a row of the table, `"$m."` for a row of a [`super::pool::Pool`]. The roles
+/// and the tree decide the rest ([`Store::inbox_read`]).
+fn could_reach(m: &str, moves: &str) -> String {
+    format!(
+        "{m}ts >= $connected AND ({m}kind IN $delivered OR {moves}) AND {m}sender != $handle
         AND ({m}sender = 'owner' OR {m}recipient = $handle OR ({m}recipient != NONE AND string::starts_with({m}recipient, '@')) OR {m}kind = 'verdict')"
     )
+}
+
+/// `message`, which reached an inbox, as the inbox carries it: the owner's move of a task to a
+/// finished status says it moves no further ([`NO_FURTHER`]), and the owner's word about a task
+/// nobody orchestrates, as an orchestrator hears it (`unowned`), is marked so ([`UNOWNED`]). The
+/// thread keeps the line as written.
+fn heard(mut message: Message, unowned: bool) -> Message {
+    if message.sender != OWNER {
+        return message;
+    }
+    let finished = |to: &str| crate::health::FINISHED.contains(&to.trim());
+    if message.kind == "system"
+        && (message.text.rsplit_once(ARROW)).is_some_and(|(_, to)| finished(to))
+    {
+        message.text.push_str(NO_FURTHER);
+    }
+    if unowned {
+        message.text.insert_str(0, UNOWNED);
+    }
+    message
 }
 
 /// The refusal of a post to `handle`, which no session has: a role's name written without its `@`
@@ -58,7 +103,7 @@ fn nobody(handle: &str) -> String {
 static INBOX: LazyLock<String> = LazyLock::new(|| {
     format!(
         "
-LET $me = (SELECT connected FROM ONLY type::record('session', $handle));
+LET $me = (SELECT connected, kind FROM ONLY type::record('session', $handle));
 LET $connected = $me.connected;
 LET $candidates = IF $me = NONE {{ [] }} ELSE IF $pool != NONE {{
     $pool.filter(|$m| $m.sid > $since AND {pooled}).map(|$m| [<string>$m.sid, type::record('message', [$m.slug, $m.sid])])
@@ -82,12 +127,13 @@ RETURN {{
     orchestrator_sessions: (SELECT * OMIT id FROM array::distinct($orchestrators.map(|$held| type::record('session', $held[1])))),
     native_presence: IF $placing {{ {NATIVE_PRESENCE} }} ELSE {{ [] }},
     known: $me != NONE,
+    orchestrating: $me.kind = 'orchestrator',
     roles: IF $placing {{ (SELECT slug, role FROM role WHERE handle = $handle) }} ELSE {{ [] }},
     tree: IF $placing {{ (SELECT VALUE [slug, parent] FROM task) }} ELSE {{ [] }},
     messages: (SELECT * OMIT id FROM $wanted ORDER BY sid),
 }};",
-        scan = could_reach(""),
-        pooled = could_reach("$m."),
+        scan = could_reach("", &OWNER_MOVES),
+        pooled = could_reach("$m.", &POOLED_MOVES),
         unread = include_str!("inbox_unread.surql"),
     )
 });
@@ -371,8 +417,10 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             .map(|_| ())
     }
 
-    /// Unread addressed messages, owner messages on its tasks, and verdicts for the executor and
-    /// orchestrators. Unaddressed agent posts remain on the thread without notifying participants.
+    /// Unread addressed messages, verdicts for the executor and orchestrators, and the owner's word
+    /// (its posts, verdicts and moves) on its tasks and the ones it orchestrates, and, for an
+    /// orchestrator, on every task nobody orchestrates, marked [`UNOWNED`] ([`heard`]). Unaddressed
+    /// agent posts remain on the thread without notifying participants.
     pub fn inbox(&self, handle: &str) -> Result<Vec<Message>, Error> {
         self.inbox_read(handle, None, None)
     }
@@ -396,6 +444,7 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             orchestrator_sessions: Vec<SessionRow>,
             native_presence: Vec<NativePresence>,
             known: bool,
+            orchestrating: bool,
             roles: Vec<Held>,
             tree: Vec<(String, Option<String>)>,
             messages: Vec<MessageRow>,
@@ -430,19 +479,27 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
         for (slug, who) in held {
             orchestrators.entry(slug).or_default().push(who);
         }
-        // @orchestrator and verdicts go to the orchestrator of the nearest task, at or above the
-        // message's, that has one still there: one orchestrator a task, never every one up the tree.
-        let nearest = |slug: &str| {
+        // The holders of the nearest task, at or above the message's, that has one still there.
+        let holders = |slug: &str| {
             std::iter::once(slug)
                 .chain(above(&tree, slug))
                 .find_map(|at| orchestrators.get(at))
-                .is_some_and(|held| held.contains(&handle))
         };
+        // @orchestrator and verdicts go to the orchestrator of that task: one orchestrator a task,
+        // never every one up the tree.
+        let nearest = |slug: &str| holders(slug).is_some_and(|held| held.contains(&handle));
+        // A task nobody orchestrates, as `Owners::of` reads it.
+        let unowned = |slug: &str| holders(slug).is_none();
+        let orchestrating = read.orchestrating;
         let reaches = |m: &MessageRow| {
             let to = m.recipient.as_deref();
             let roles = holds.get(m.slug.as_str());
+            // The owner's word, a post, a verdict or a move, reaches everyone on the task and its
+            // orchestrator; on a task nobody orchestrates, every orchestrator, since none relays it.
+            let owners_word = m.sender == OWNER
+                && (roles.is_some() || nearest(&m.slug) || (orchestrating && unowned(&m.slug)));
             to == Some(handle)
-                || (m.sender == OWNER && roles.is_some())
+                || owners_word
                 || (m.kind == "verdict"
                     && roles.is_some_and(|held| {
                         held.contains(&"executor") || held.contains(&"orchestrator")
@@ -457,7 +514,11 @@ IF $handle != NONE AND !record::exists(type::record('session', $handle)) {{ THRO
             .messages
             .into_iter()
             .filter(reaches)
-            .map(message)
+            .map(|row| {
+                // Only an orchestrator hears the mark: it is why the word reached it.
+                let unowned = orchestrating && row.sender == OWNER && unowned(&row.slug);
+                heard(message(row), unowned)
+            })
             .collect())
     }
 
@@ -530,5 +591,64 @@ RETURN $landed.filter(|$line| (SELECT VALUE sid FROM message:[$line.slug, $line.
         let slugs: Vec<String> =
             self.retrying(|| self.transact(read, json!({"delivered": DELIVERED})))?;
         Ok(slugs.into_iter().collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn said(sender: &str, kind: &str, text: &str) -> Message {
+        Message {
+            id: 1,
+            slug: "tools/x".into(),
+            sender: sender.into(),
+            recipient: None,
+            kind: kind.into(),
+            text: text.into(),
+            ts: 0.0,
+        }
+    }
+
+    fn heard_text(sender: &str, kind: &str, text: &str, unowned: bool) -> String {
+        heard(said(sender, kind, text), unowned).text
+    }
+
+    #[test]
+    fn the_owners_move_to_a_finished_status_says_it_moves_no_further() {
+        for to in ["cancelled", "done"] {
+            let moved = format!("owner moved it in_progress → {to}");
+            assert_eq!(
+                heard_text(OWNER, "system", &moved, false),
+                format!("{moved}{NO_FURTHER}")
+            );
+        }
+        let reopened = "owner moved it done → ready";
+        assert_eq!(heard_text(OWNER, "system", reopened, false), reopened);
+        let posted = "I moved it review → cancelled";
+        assert_eq!(
+            heard_text(OWNER, "msg", posted, false),
+            posted,
+            "a post, not a move"
+        );
+    }
+
+    #[test]
+    fn only_the_owners_word_on_a_task_nobody_orchestrates_is_marked() {
+        assert_eq!(
+            heard_text(OWNER, "msg", "stop", true),
+            format!("{UNOWNED}stop")
+        );
+        assert_eq!(
+            heard_text(OWNER, "system", "owner moved it ready → cancelled", true),
+            format!("{UNOWNED}owner moved it ready → cancelled{NO_FURTHER}")
+        );
+        assert_eq!(
+            heard_text(OWNER, "verdict", "approve: ok", false),
+            "approve: ok"
+        );
+        let agent = "amber moved it in_progress → cancelled";
+        assert_eq!(heard_text("amber", "system", agent, true), agent);
+        assert_eq!(heard_text("amber", "msg", "hi", true), "hi");
     }
 }

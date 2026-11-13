@@ -827,3 +827,96 @@ fn a_repository_whose_board_has_not_moved_keeps_no_record_and_one_that_moved_doe
     );
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A task of `status` at `slug` under `parent`, held by the orchestrators `held` of `health`.
+fn task(
+    slug: &str,
+    parent: Option<&str>,
+    status: &str,
+    held: &[(&str, crate::Health)],
+) -> crate::Task {
+    crate::Task {
+        branch: None,
+        id: 0,
+        slug: slug.into(),
+        title: String::new(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: parent.map(str::to_string),
+        created_by: String::new(),
+        created: 0.0,
+        updated: 0.0,
+        links: Vec::new(),
+        depends: Vec::new(),
+        roles: (held.iter())
+            .map(|(handle, health)| crate::Role {
+                handle: handle.to_string(),
+                role: "orchestrator".into(),
+                since: 0.0,
+                expires: None,
+                health: *health,
+            })
+            .collect(),
+        instruction: false,
+        fields: Default::default(),
+    }
+}
+
+#[test]
+fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read() {
+    use crate::Health::{Live, Lost};
+    let recorder = Recorder::default();
+    let report = recorder.report(T0);
+    assert_eq!(report.unowned, None, "no board read yet");
+    assert!(
+        !(report.lines(T0, &[]).iter()).any(|line| line.contains("no orchestrator")),
+        "and none said"
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("unowned").is_none(), "{json}");
+    let board = crate::Board {
+        tasks: vec![
+            task("held", None, "in_progress", &[("amber", Live)]),
+            task("held/below", Some("held"), "ready", &[]),
+            task("left", None, "review", &[("ghost", Lost)]),
+            task("free", None, "ready", &[]),
+            task("finished", None, "done", &[]),
+            task("dropped", None, "cancelled", &[]),
+        ],
+        sessions: Vec::new(),
+        latest_message: 0,
+    };
+    recorder.unowned(&board);
+    let report = recorder.report(T0 + 1.0);
+    assert_eq!(report.unowned, Some(2), "left and free");
+    let lines = report.lines(T0 + 1.0, &["it is unwell".into()]);
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            "  open tasks no orchestrator holds: 2, as of the newest board read".to_string(),
+            "⚠ it is unwell".to_string(),
+        ]
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["unowned"], 2);
+    let read: Report = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(read.unowned, Some(2));
+    let mut older = json;
+    older.as_object_mut().unwrap().remove("unowned");
+    let read: Report = serde_json::from_value(older).unwrap();
+    assert_eq!(
+        read.unowned, None,
+        "a record written before the count reads without it"
+    );
+    recorder.unowned(&crate::Board {
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        latest_message: 0,
+    });
+    assert_eq!(
+        recorder.report(T0 + 2.0).unowned,
+        Some(0),
+        "the newest board decides"
+    );
+}

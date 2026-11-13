@@ -337,6 +337,8 @@ impl Hub {
                 measured("board read", || store.clock_board()).map_err(|error| error.to_string())?
             }
         };
+        // The board's health counts the open tasks nobody orchestrates from this snapshot too.
+        self.health.unowned(&snapshot);
         // The one server's agents' day files, from this snapshot: no board read or write of its own.
         self.record_agents(&snapshot);
         let records = store.all_task_sessions().unwrap_or_default();

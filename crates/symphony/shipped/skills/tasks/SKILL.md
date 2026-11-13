@@ -72,6 +72,7 @@ VERDICT #124 tools/example from slate-owl — changes: the hash moved
 AGENT from slate-owl to amber-heron — can you check the launch?
 ROLE tools/example slate-owl reviewer, in_progress
 STATUS tools/example in_progress → review
+MOVE #125 tools/example from owner — owner moved it review → cancelled; it moves no further: stop work on it
 NEW tools/next ready — Next task          (orchestrators only)
 STALE amber-heron — … / LOST amber-heron — its work is claimable: …   (your subagents holding claimable work;
                                             never one whose own verify is running or queued)
@@ -157,7 +158,11 @@ so an older writer cannot restart the baseline or discard new addressed messages
 An agent's `MSG` is pushed only to its `--to` handle or role. Unaddressed posts
 stay on the thread: read them with `just tasks show SLUG` or in the app.
 Verdicts reach the executor and orchestrator; moves to review, blocked or done
-still reach the orchestrator. Owner messages reach everyone on the task.
+still reach the orchestrator. The owner's word (posts, verdicts and moves, a move
+as a `MOVE` line) reaches everyone on the task and its orchestrator; on a task
+nobody orchestrates, every orchestrator too, marked
+`[unowned: no orchestrator holds it]`. An owner's `MOVE` that ends
+`it moves no further: stop work on it` means stop: the task is done or cancelled.
 A post or `changes` verdict to `@executor`, or a post to the executor by handle,
 that no executor can read (no callback, and its terminal recorded closed or no live
 beat) brings the task's orchestrator
@@ -221,8 +226,10 @@ Read any review checklist the project provides for the changed languages or doma
 Pull work from the board, don't only wait for events: [task-orchestrator](../task-orchestrator/SKILL.md).
 
 1. Create the work: `just tasks create area/slug "title" --body "..."
-   --link docs/X.md#Heading [--depends …] [--parent …]`. Then
-   `just tasks role SLUG orchestrator` on each task you will follow; on a
+   --link docs/X.md#Heading [--depends …] [--parent …]`. A task
+   you file as an orchestrator is yours from that write (its line ends
+   `; HANDLE orchestrates it`; `--no-role` leaves it unheld), and
+   `just tasks role SLUG orchestrator` takes one filed by another; on a
    task with subtasks, the root alone is enough, events climb to you.
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
