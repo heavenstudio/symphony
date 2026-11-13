@@ -28,12 +28,12 @@ impl Drop for Scratch {
 fn a_development_child_and_its_listen_probe_run_without_the_starters_session() {
     if std::env::var_os(DIR).is_some() {
         let (child, _) = start_child(
-            Instant::now() + Duration::from_secs(10),
+            Instant::now() + tests::BACKSTOP,
             crate::sys::parent(),
             &AtomicBool::new(false),
             |_| {
                 let mut command = Command::new("/bin/sh");
-                command.args(["-c", &format!("{}; exec /bin/sleep 30", held("child"))]);
+                command.args(["-c", &format!("{}; exec /bin/sleep 86400", held("child"))]);
                 command
             },
         )

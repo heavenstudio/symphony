@@ -2,13 +2,17 @@
 //! with no body to a request that names it (docs/analysis/client-cache.md, "How freshness is
 //! checked").
 //!
-//! Some reads move on their own while the fixture is quiet: the agents' view says when the board
-//! tick made it. So a check that needs a read to hold still between two requests says what it
-//! saw when it did not, and asks again: a `200` to a request naming a tag is only ever sent under
-//! another tag, and two reads with the same content always share theirs.
+//! Some reads move on their own while the fixture is quiet: a view carrying the machine's work
+//! carries the sequence and age of the board tick's last scan of it, which every tick (a second)
+//! moves ([`ticking`]). On a loaded machine two requests may take longer than a tick every time,
+//! so those reads are never asked to hold still: what holds whatever the tick does is checked of
+//! them. Any other read may still move while the server takes in a change, so a check that needs it
+//! to hold still between two requests says what it saw when it did not, and asks again until it
+//! does: a `200` to a request naming a tag is only ever sent under another tag, and two reads with
+//! the same content always share theirs.
 
 use super::client::{Fixture, Response};
-use super::{DOCUMENT, LIMIT, SCOPE, write};
+use super::{DOCUMENT, LIMIT, SCOPE, stalled, write};
 use std::time::{Duration, Instant};
 
 /// The fixture's task, which `task_pages` makes before this phase runs.
@@ -37,11 +41,28 @@ fn get(f: &Fixture, route: &str, accept: &[(&str, &str)]) -> Response {
     f.request("GET", route, accept, &[]).status(200)
 }
 
-/// Waits a moment before asking again, failing once `began` is past the fixture's limit.
+/// Waits a moment before asking again, failing once `began` is past the fixture's backstop, which
+/// only a stall reaches.
 #[track_caller]
 fn again(began: Instant, route: &str, what: &str) {
-    assert!(began.elapsed() < LIMIT, "{route}: {what}");
+    assert!(
+        began.elapsed() < LIMIT,
+        "{}",
+        stalled(format!("{route}: {what}"))
+    );
     std::thread::sleep(Duration::from_millis(20));
+}
+
+/// Whether `route`'s view carries the machine's work as the board tick last scanned it: the
+/// machine work, the agents' views, a task's page and a task listing that does not leave the work
+/// out (`work=0`). Each tick moves it.
+fn ticking(route: &str) -> bool {
+    let path = route.split_once('?').map_or(route, |(path, _)| path);
+    match path {
+        "/api/machine-work" | "/api/agents" | "/api/agent-page" | "/api/task-page" => true,
+        "/api/task-board" => !route.contains("work=0"),
+        _ => false,
+    }
 }
 
 /// `route` asked naming `named`, by `method`, with gzip offered: `304`, no body, the tag and
@@ -193,26 +214,35 @@ pub(super) fn json_reads(f: &Fixture) {
         .map(|route| (route.as_str(), &[][..]))
         .chain([("/queue", &json[..])]);
     for (route, accept) in reads {
-        let read = settled(f, route, accept);
+        let read = if ticking(route) {
+            get(f, route, accept)
+        } else {
+            settled(f, route, accept)
+        };
         assert_eq!(read.header("cache-control"), "no-store", "{route}");
         assert!(
             read.header("content-type").starts_with("application/json"),
             "{route}"
         );
-        let (gzipped, plain) = between(f, route, accept, || {
-            get(f, route, &[accept, &[("Accept-Encoding", "gzip")]].concat())
-        });
-        assert_eq!(
-            tag(&gzipped, route),
-            plain,
-            "{route}: the tag names the JSON, not its encoding"
-        );
-        for method in ["GET", "HEAD"] {
-            current(f, method, route, accept, str::to_string);
-            current(f, method, route, accept, |tag| {
-                tag.strip_prefix("W/").unwrap().to_string()
+        tag(&read, route);
+        if !ticking(route) {
+            let (gzipped, plain) = between(f, route, accept, || {
+                get(f, route, &[accept, &[("Accept-Encoding", "gzip")]].concat())
             });
-            current(f, method, route, accept, |tag| format!("\"other\", {tag}"));
+            assert_eq!(
+                tag(&gzipped, route),
+                plain,
+                "{route}: the tag names the JSON, not its encoding"
+            );
+        }
+        for method in ["GET", "HEAD"] {
+            if !ticking(route) {
+                current(f, method, route, accept, str::to_string);
+                current(f, method, route, accept, |tag| {
+                    tag.strip_prefix("W/").unwrap().to_string()
+                });
+                current(f, method, route, accept, |tag| format!("\"other\", {tag}"));
+            }
             current(f, method, route, accept, |_| "*".to_string());
             let stale = f.request(
                 method,

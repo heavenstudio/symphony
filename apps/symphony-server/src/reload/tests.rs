@@ -98,22 +98,16 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
     // first attempt has ended, so the worker is waiting again.
     for edit in ["first", "second"] {
         hub.server_notice.send_replace(String::new());
-        let edited = Instant::now();
         tree.write(
             "main/symphony/apps/symphony-server/src/main.rs",
             &format!("fn main() {{ /* {edit} edit */ }}\n"),
         );
-        let failed = loop {
-            let text = hub.server_notice.borrow().clone();
-            if !text.is_empty() {
-                break text;
-            }
-            assert!(
-                edited.elapsed() < period + Duration::from_secs(30),
-                "no build for the {edit} edit"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        let failed = test_time::until(
+            format!("a build for the {edit} edit"),
+            test_time::backstop(period + Duration::from_secs(30)),
+            || Some(hub.server_notice.borrow().clone()).filter(|text| !text.is_empty()),
+        )
+        .unwrap();
         assert!(
                 failed.starts_with(
                     "Symphony server update failed; the previous server is still serving. symphony-server build exit status: 1"
@@ -376,12 +370,13 @@ fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
     std::thread::scope(|scope| {
         // Children outliving every handover, spawned beside its pipes' making through the
         // helpers, as a build or a board command is spawned beside a reload. A std spawn that
-        // skips the lock could keep a real pipe's first ends for its life.
+        // skips the lock could keep a real pipe's first ends for its life. Each lives until the
+        // test kills it.
         let other = scope.spawn(|| {
             let mut children = Children(Vec::new());
             for _ in 0..32 {
                 let child = Command::new("sleep")
-                    .arg("60")
+                    .arg("86400")
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -450,8 +445,13 @@ fn a_spawn_racing_a_handover_never_masks_the_replacements_death() {
 #[test]
 fn a_failed_replacement_is_killed_and_said_unless_it_ended_already() {
     use std::os::unix::process::ExitStatusExt;
-    use symphony_board::sys::Command;
-    let mut running = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    use symphony_board::sys::{Command, Stdio};
+    // It lives until killed, or until its input closes: a wait on one never killed ends at once,
+    // as `wait` closes that input first.
+    let mut running = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     let pid = running.id();
     let why = "replacement did not become ready: it ended";
     let ((), told) = crate::front::told::during(|| super::end_replacement(&mut running, why));
@@ -463,11 +463,12 @@ fn a_failed_replacement_is_killed_and_said_unless_it_ended_already() {
     );
     assert_eq!(running.wait().unwrap().signal(), Some(libc::SIGKILL));
     let mut ended = Command::new("true").spawn().unwrap();
-    let began = Instant::now();
-    while !crate::sys::exited(&ended) {
-        assert!(began.elapsed() < Duration::from_secs(30), "true ran on");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    test_time::until_true(
+        "true to exit",
+        test_time::backstop(Duration::from_secs(30)),
+        || crate::sys::exited(&ended),
+    )
+    .unwrap();
     let ((), told) = crate::front::told::during(|| super::end_replacement(&mut ended, why));
     assert!(told.is_empty(), "{told:?}");
     assert!(ended.wait().unwrap().success());

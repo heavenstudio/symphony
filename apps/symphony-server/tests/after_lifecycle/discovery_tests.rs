@@ -76,9 +76,8 @@ fn cold_auto_port_starts_skip_census_but_live_announcements_survive_bad_hints() 
     let listening = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let connected = TcpStream::connect(listening.local_addr().unwrap()).unwrap();
     let free = connected.local_addr().unwrap().port();
-    let refused =
-        TcpStream::connect_timeout(&([127, 0, 0, 1], free).into(), Duration::from_millis(200))
-            .unwrap_err();
+    // Nothing listens there: the connection is refused, however long a loaded machine takes.
+    let refused = TcpStream::connect(("127.0.0.1", free)).unwrap_err();
     assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
     fs::remove_file(repo.home.join("server.json")).unwrap();
     write(

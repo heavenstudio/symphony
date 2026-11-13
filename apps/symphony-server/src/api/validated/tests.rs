@@ -223,8 +223,10 @@ async fn anything_but_a_json_read_is_untouched() {
     }
 }
 
-/// The feed is answered `no-store` too, and its stream never ends: it is never collected.
-#[tokio::test]
+/// The feed is answered `no-store` too, and its stream never ends: it is never collected. The
+/// runtime's clock is paused, so the timeout below runs out only once nothing but it is left to
+/// run, as a collection of the endless stream leaves, never for the machine's load.
+#[tokio::test(start_paused = true)]
 async fn the_feeds_stream_is_never_collected() {
     let stream = futures_util::stream::pending::<Result<Vec<u8>, std::io::Error>>();
     let feed = no_store((

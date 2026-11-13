@@ -1,8 +1,9 @@
 //! A plugin answering from a process of its own (`[plugins.process]`): the seam tests' plugin
 //! served by the `symphony-test-plugin` binary, asked as a project's plugins are and answering as
-//! it does linked; its process killed, the page shows it meanwhile and a call after the pause
-//! starts it again; its process ending with its input whatever its calls do; and what its calls
-//! cost linked, through the loopback and from its process.
+//! it does linked; its process killed, a call after the pause starts it again (the lib's
+//! `plugins::process` tests show the calls meanwhile, with a pause longer than the test); its
+//! process ending with its input whatever its calls do; and what its calls cost linked, through
+//! the loopback and from its process.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read as _, Write as _};
@@ -88,13 +89,10 @@ fn said(blocks: &[Block]) -> String {
     }
 }
 
-/// Waits, up to five seconds, until `holds`.
+/// Waits until `holds`, with the backstop of five seconds.
 fn until(what: &str, holds: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !holds() {
-        assert!(Instant::now() < deadline, "{what}: not in five seconds");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    test_time::until_true(what, test_time::backstop(Duration::from_secs(5)), holds)
+        .unwrap_or_else(|stall| panic!("{stall}"));
 }
 
 #[test]
@@ -195,7 +193,7 @@ fn a_pages_components_share_one_load_in_the_plugins_process() {
 }
 
 #[test]
-fn a_killed_plugin_process_is_shown_on_the_page_meanwhile_and_starts_again_after_its_pause() {
+fn a_killed_plugin_process_starts_again_after_its_pause() {
     let tree = Tree::new();
     let project = project(&tree, "");
     let plugins = Plugins::at(&project, &tree.root);
@@ -211,18 +209,6 @@ fn a_killed_plugin_process_is_shown_on_the_page_meanwhile_and_starts_again_after
         .unwrap();
     assert!(killed.success());
     until("the plugin is down", || remote.down().is_some());
-    // Meanwhile the page shows why in the component's place, and a card kind answers as one that
-    // says nothing of the card.
-    let meanwhile = render.html(doc, "docs/A.md");
-    assert!(
-        meanwhile.contains(&format!(
-            "plugin every: its process {pid} was killed by signal 9; it starts again in a moment"
-        )),
-        "{meanwhile}"
-    );
-    with_card(CARDS[0], |card| {
-        assert!(!plugins.card_kinds()[0].recognises(card));
-    });
     // After the pause the next call starts it again, and the page is as it was.
     std::thread::sleep(PAUSE);
     assert_eq!(render.html(doc, "docs/A.md"), before);
@@ -322,20 +308,16 @@ fn a_plugins_process_ends_when_its_input_does_whatever_its_calls_are_doing() {
     };
     let line = serde_json::to_string(&Envelope::<Request, ()>::asking(1, hang.into())).unwrap();
     let mut input = child.stdin.take().unwrap();
+    // The call is read before the input's end, which the pipe gives after it.
     writeln!(input, "{line}").unwrap();
-    std::thread::sleep(Duration::from_millis(100));
-    drop(input);
     let ended = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            ended.elapsed() < Duration::from_secs(10),
-            "it outlived its input"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    drop(input);
+    let status = test_time::until(
+        "the process ended after its input",
+        test_time::backstop(Duration::from_secs(10)),
+        || child.try_wait().unwrap(),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
     assert_eq!(status.code(), Some(1));
     assert!(ended.elapsed() >= symphony_plugin::ENDING);
     let mut said = String::new();

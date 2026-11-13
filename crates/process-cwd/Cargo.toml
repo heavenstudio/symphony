@@ -10,3 +10,7 @@ authors.workspace = true
 # One bounded OS scan for both sweeps, without linking the board into the cargo wrapper.
 [dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+# The tests' waits and their backstop (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }

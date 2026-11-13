@@ -252,14 +252,19 @@ fn ask(server: &Taken, exe: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use symphony_board::sys::{Command, Start};
+    use symphony_board::sys::{Command, Start, Stdio};
 
     /// A hand-off asks only the server found: a pid whose start differs from the one recorded when
-    /// it was found is sent nothing (SIGUSR1 would end the `sleep` holding it), and the start is
+    /// it was found is sent nothing (SIGUSR1 would end the `cat` holding it), and the start is
     /// refused; the process found is asked, and said.
     #[test]
     fn a_hand_off_is_asked_of_the_server_found_and_of_no_process_given_its_pid_since() {
-        let mut holder = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        // It lives until signalled, however long the test takes, or until its input closes: a wait
+        // on one never signalled ends at once, as `wait` closes that input first.
+        let mut holder = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         let pid = i64::from(holder.id());
         let exe = Path::new("/bin/symphony-server");
         let since = Taken::started(pid, Start::At(1.0));

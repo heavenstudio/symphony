@@ -1,5 +1,5 @@
 //! What a scratch owner's parent runs before it waits, and the stages an owner reports while
-//! that parent waits within PATIENCE for it to make its whole repository (`scratch_tests`).
+//! that parent waits for it to make its whole repository (`scratch_tests`).
 
 use super::{machine_copy, prepare_app, script_source};
 use std::path::{Path, PathBuf};
@@ -52,7 +52,7 @@ pub(super) struct Images {
 
 /// Run every new image a fixture repository runs, as setup: the built app and each command
 /// script's machine copy, under no case deadline. A process that makes its own repository while
-/// this one waits on it within PATIENCE then meets no file's first run, which macOS assesses
+/// this one waits on it then meets no file's first run, which macOS assesses
 /// before its first instruction, one file at a time machine-wide; given
 /// [`PREPARED_APP_BY_PARENT`], it runs no app image at all.
 pub(super) fn prepare_images(folder: &Path) -> Images {

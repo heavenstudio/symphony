@@ -1,7 +1,7 @@
 //! The fixture's HTTP client: one request per connection to the server under test, its response
 //! read whole, and the event feed read line by line until a marker arrives.
 
-use super::LIMIT;
+use super::{LIMIT, stalled};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -161,16 +161,19 @@ impl Feed {
         let began = Instant::now();
         loop {
             let mut line = String::new();
-            assert!(
-                self.0.read_line(&mut line).unwrap() > 0,
-                "feed closed before {marker}"
-            );
+            // The stream's read timeout is the backstop: only a stall leaves a line unread.
+            let read = self
+                .0
+                .read_line(&mut line)
+                .unwrap_or_else(|e| panic!("{}", stalled(format!("the feed's {marker}: {e}"))));
+            assert!(read > 0, "feed closed before {marker}");
             if line.contains(marker) {
                 return;
             }
             assert!(
                 began.elapsed() < LIMIT,
-                "feed never delivered {marker}: {line}"
+                "{}",
+                stalled(format!("the feed's {marker}; its last line: {line}"))
             );
         }
     }

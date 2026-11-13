@@ -63,7 +63,8 @@ impl Gate {
             let mut line = String::new();
             if let Err(e) = BufReader::new(&mut stream).read_line(&mut line) {
                 panic!(
-                    "no {kind} handshake within {limit:?}: a connection sent no line: {e}; set aside: {strays:?}"
+                    "no {kind} handshake within {limit:?}: a connection sent no line: {e}; set aside: {strays:?}; {}",
+                    test_time::Load::now()
                 );
             }
             match handshake(&line) {
@@ -103,14 +104,16 @@ impl Gate {
             // poll sets no error when it times out, so the last one would name an unrelated call.
             assert!(
                 ready > 0,
-                "no {kind} handshake within {limit:?}: the deadline passed; set aside: {strays:?}"
+                "no {kind} handshake within {limit:?}: the deadline passed; set aside: {strays:?}; {}",
+                test_time::Load::now()
             );
             match self.listener.accept() {
                 Ok((stream, _)) => return stream,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     assert!(
                         began.elapsed() < limit,
-                        "no {kind} handshake; set aside: {strays:?}"
+                        "no {kind} handshake within {limit:?}; set aside: {strays:?}; {}",
+                        test_time::Load::now()
                     );
                 }
                 Err(e) => panic!("{kind}: {e}"),

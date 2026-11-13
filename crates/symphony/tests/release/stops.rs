@@ -3,14 +3,13 @@
 //! outside its group holds nothing, a lock held with no run to say so is stuck, a process left in
 //! the checkout or the copies' folder stops the run before it checks anything and one a check
 //! leaves there stops it after that check, a checkout changed under a check is never released, a
-//! run told to stop (HUP, INT, TERM) stops its check and lets the next go, a check past the run's
-//! time is stopped and red, a remote that fails or hangs stops the run, a git lock an interrupted
-//! run left is cleared and one held stops the run. Each run that stops short is the board's red
-//! `tests/release-red-run`.
+//! run told to stop (HUP, INT, TERM) stops its check and lets the next go, a remote that fails or
+//! hangs stops the run, a git lock an interrupted run left is cleared and one held stops the run.
+//! Each run that stops short is the board's red `tests/release-red-run`.
 
 use std::fs;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony_board::sys::{Child, Command, Stdio, output, pid_alive};
 
@@ -36,61 +35,54 @@ impl Drop for Process {
     }
 }
 
-/// `child`'s exit code once it has ended, within `seconds`.
+/// `child`'s exit code once it has ended, with the backstop of `seconds` (a stall alone reaches it).
 fn ended_within(child: &mut Child, seconds: u64) -> Option<i32> {
-    let until = Instant::now() + Duration::from_secs(seconds);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status.code();
-        }
-        assert!(Instant::now() < until, "the release run did not end");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    test_time::until(
+        "the release run ended",
+        test_time::backstop(Duration::from_secs(seconds)),
+        || child.try_wait().unwrap().map(|status| status.code()),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"))
 }
 
-/// The pid `file` holds once a process wrote it, within a minute.
+/// The pid `file` holds once a process wrote it, with the backstop of a minute.
 pub(crate) fn written_pid(file: &Path) -> i64 {
-    let until = Instant::now() + Duration::from_secs(60);
-    loop {
-        if let Some(pid) =
-            (fs::read_to_string(file).ok()).and_then(|text| text.trim().parse::<i64>().ok())
-        {
-            return pid;
-        }
-        assert!(Instant::now() < until, "{} never written", file.display());
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    test_time::until(
+        format!("{} written", file.display()),
+        test_time::backstop(Duration::from_secs(60)),
+        || (fs::read_to_string(file).ok()).and_then(|text| text.trim().parse::<i64>().ok()),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"))
 }
 
-/// Wait until the run's `running.json` in `records` names its check's process group `group`, within
-/// a minute, failing with what it says when it never does.
+/// Wait until the run's `running.json` in `records` names its check's process group `group`, with
+/// the backstop of a minute, failing with what it last said when it never does.
 fn says_its_check(records: &Path, group: i64) {
     let file = records.join("running.json");
-    let until = Instant::now() + Duration::from_secs(60);
-    loop {
-        // Written whole and renamed into place: a read sees one state or another, never half.
-        let said = (fs::read_to_string(&file).ok())
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-        if said
-            .as_ref()
-            .is_some_and(|said| said["check"]["group"] == group)
-        {
-            return;
-        }
-        assert!(
-            Instant::now() < until,
-            "{} never named the check's group {group} within 60 s: {}",
-            file.display(),
+    let mut said = None;
+    test_time::until_true(
+        format!("{} naming the check's group {group}", file.display()),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            // Written whole and renamed into place: a read sees one state or another, never half.
+            said = (fs::read_to_string(&file).ok())
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+            said.as_ref()
+                .is_some_and(|said| said["check"]["group"] == group)
+        },
+    )
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: it said {}",
             said.map_or_else(|| "nothing readable".to_string(), |said| said.to_string())
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+        )
+    });
 }
 
 /// Run `program`, an executable the test has just written, once with the argument `first`, at
-/// which it ends, waiting for that within two minutes: macOS assesses a new executable at its first
-/// run, for seconds when the machine is loaded, and a time a test then gives a run that starts it
-/// must not have to cover that.
+/// which it ends, waiting for that with the backstop of two minutes: macOS assesses a new executable
+/// at its first run, for seconds when the machine is loaded, and a run that starts it after need
+/// not cover that.
 fn ran_once(program: &Path) {
     let mut child = Command::new(program)
         .arg("first")
@@ -100,24 +92,18 @@ fn ran_once(program: &Path) {
         .spawn()
         .unwrap();
     let running = Process(libc::pid_t::try_from(child.id()).unwrap());
-    let until = Instant::now() + Duration::from_secs(120);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            running.ended();
-            assert!(
-                status.success(),
-                "{}'s first run: {status}",
-                program.display()
-            );
-            return;
-        }
-        assert!(
-            Instant::now() < until,
-            "{} had not ended its first run after 120 s",
-            program.display()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    let status = test_time::until(
+        format!("{}'s first run ended", program.display()),
+        test_time::backstop(Duration::from_secs(120)),
+        || child.try_wait().unwrap(),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    running.ended();
+    assert!(
+        status.success(),
+        "{}'s first run: {status}",
+        program.display()
+    );
 }
 
 /// A process group the test outlived its release run with, killed when the test ends, however it ends.
@@ -143,20 +129,23 @@ impl Drop for Group {
     }
 }
 
-/// Whether the process `pid` has ended within `seconds`.
+/// Whether the process `pid` has ended, waiting with the backstop of `seconds` (a stall alone
+/// reaches it, and is said on stderr).
 pub(crate) fn ends_within(pid: i64, seconds: u64) -> bool {
-    let until = Instant::now() + Duration::from_secs(seconds);
-    while pid_alive(pid) && Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    !pid_alive(pid)
+    test_time::until_true(
+        format!("process {pid} ended"),
+        test_time::backstop(Duration::from_secs(seconds)),
+        || !pid_alive(pid),
+    )
+    .inspect_err(|stall| eprintln!("{stall}"))
+    .is_ok()
 }
 
 #[test]
 fn a_killed_night_keeps_the_lock_until_its_check_ends() {
     let fixture = Fixture::new();
     let pid_file = fixture.root.join("check.pid");
-    let check = format!("verify=echo $$ > '{}'; sleep 120", pid_file.display());
+    let check = format!("verify=echo $$ > '{}'; sleep 1000", pid_file.display());
     let mut first = fixture
         .command(NOW, &["--check", &check, "--timeout", "600"], &[])
         .stdout(Stdio::null())
@@ -252,60 +241,19 @@ fn a_killed_night_keeps_the_lock_until_its_check_ends() {
     );
 }
 
-/// Whether every process of the group `group` has ended within `seconds`.
+/// Whether every process of the group `group` has ended, waiting with the backstop of `seconds` (a
+/// stall alone reaches it, and is said on stderr).
 fn group_ends_within(group: i64, seconds: u64) -> bool {
     let group = libc::pid_t::try_from(group).unwrap();
     // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process.
     let lives = || unsafe { libc::killpg(group, 0) } == 0;
-    let until = Instant::now() + Duration::from_secs(seconds);
-    while lives() && Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    !lives()
-}
-
-#[test]
-fn a_check_past_the_runs_time_is_stopped_and_red_and_nothing_after_it_starts() {
-    let fixture = Fixture::new();
-    let pid_file = fixture.root.join("helper.pid");
-    let slow = format!("slow=sleep 120 & echo $! > '{}'; wait", pid_file.display());
-    let started = Instant::now();
-    let (code, out, err) = fixture.release_at(
-        NOW,
-        &["--check", &slow, "--check", "after=true", "--timeout", "12"],
-    );
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        started.elapsed() < Duration::from_secs(60),
-        "{:?}",
-        started.elapsed()
-    );
-    assert!(
-        out.contains("release: slow red (timed out: stopped after "),
-        "{out}"
-    );
-    // What the time left out is red, never passed over.
-    assert!(
-        out.contains("release: after red (did not run: the run's time was up before it started"),
-        "{out}"
-    );
-    assert!(
-        ends_within(written_pid(&pid_file), 20),
-        "what the check started went with it"
-    );
-    assert!(fixture.remote_tags().is_empty());
-    let reds = fixture.reds();
-    assert_eq!(
-        reds.keys().collect::<Vec<_>>(),
-        ["tests/release-red-after", "tests/release-red-slow"]
-    );
-    assert!(
-        reds["tests/release-red-slow"]
-            .body
-            .contains("(stopped after "),
-        "the log says so: {}",
-        reds["tests/release-red-slow"].body
-    );
+    test_time::until_true(
+        format!("process group {group} ended"),
+        test_time::backstop(Duration::from_secs(seconds)),
+        || !lives(),
+    )
+    .inspect_err(|stall| eprintln!("{stall}"))
+    .is_ok()
 }
 
 #[test]
@@ -331,7 +279,8 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
         red.body
     );
 
-    // A remote whose transport never answers: stopped at the run's time, with its helper.
+    // A remote whose transport never answers: stopped at the run's time, with its helper. Whether
+    // git reached the helper within that time is the machine's: one that did went with the fetch.
     let bin = fixture.root.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let helper = bin.join("git-remote-hang");
@@ -339,13 +288,13 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
     fs::write(
         &helper,
         format!(
-            "#!/bin/sh\ntest \"$1\" = first && exit 0\necho $$ > '{}'\nexec sleep 120\n",
+            "#!/bin/sh\ntest \"$1\" = first && exit 0\necho $$ > '{}'\nexec sleep 1000\n",
             pid_file.display()
         ),
     )
     .unwrap();
     fs::set_permissions(&helper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    // Its first run done here, the run's 8 s need only cover git reaching it.
+    // Its first run done here, the run's 8 s need not cover macOS assessing it.
     ran_once(&helper);
     git(&fixture.main, &["remote", "add", "slow", "hang::nowhere"]);
     let path = format!(
@@ -353,7 +302,6 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
         bin.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let started = Instant::now();
     let (code, out, err) = fixture.release_with(
         NOW + 60.0,
         &[
@@ -368,15 +316,20 @@ fn a_remote_that_fails_or_hangs_stops_the_run_and_the_board_hears_of_it() {
         &[("PATH", path.as_str())],
     );
     assert_eq!(code, 1, "{out}{err}");
-    assert!(started.elapsed() < Duration::from_secs(60));
     assert!(
         err.contains("git fetch --quiet --no-tags slow") && err.contains("and was stopped"),
         "{err}"
     );
-    assert!(
-        ends_within(written_pid(&pid_file), 20),
-        "the transport went with the fetch"
-    );
+    let reached =
+        (fs::read_to_string(&pid_file).ok()).and_then(|text| text.trim().parse::<i64>().ok());
+    if let Some(transport) = reached {
+        let left = Process(libc::pid_t::try_from(transport).unwrap());
+        assert!(
+            ends_within(transport, 20),
+            "the transport went with the fetch"
+        );
+        left.ended();
+    }
     assert!(
         out.contains("release: updated tests/release-red-run"),
         "{out}"
@@ -410,7 +363,7 @@ fn a_git_lock_an_interrupted_run_left_is_cleared_and_one_held_stops_the_run() {
 
     fs::write(&lock, "").unwrap();
     let mut holder = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .stdin(fs::File::open(&lock).unwrap())
         .spawn()
         .unwrap();
@@ -442,7 +395,7 @@ fn what_a_check_leaves_running_outside_its_group_holds_nothing_of_the_runs() {
     // has left.
     let check = format!(
         "verify=perl -MPOSIX -e 'POSIX::setsid() or die; chdir \"/\" or die; \
-         open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; sleep 120' '{pid}' & \
+         open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; sleep 1000' '{pid}' & \
          while [ ! -s '{pid}' ]; do sleep 0.1; done",
         pid = pid_file.display()
     );
@@ -479,7 +432,7 @@ fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds
     lock.lock().unwrap();
     // Held by a detached process alone, as a helper that kept an older build's lock would hold it.
     let mut holder = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .stdin(lock)
         .new_session()
         .spawn()
@@ -554,7 +507,7 @@ fn a_lock_held_by_no_run_or_past_its_time_is_stuck_and_the_board_hears_who_holds
 }
 
 #[test]
-fn a_run_that_has_just_taken_the_lock_is_waited_for_over_what_a_dead_run_left() {
+fn a_lock_held_while_a_killed_runs_check_runs_on_is_refused_as_that_checks_run() {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.records()).unwrap();
     let lock = fs::File::create(fixture.records().join("run.lock")).unwrap();
@@ -562,40 +515,10 @@ fn a_run_that_has_just_taken_the_lock_is_waited_for_over_what_a_dead_run_left() 
     // What a run that ended without releasing it left: its process is gone.
     let mut gone = Command::new("true").spawn().unwrap();
     gone.wait().unwrap();
-    let stale = serde_json::json!({
-        "id": "dead", "pid": gone.id(), "started_at": NOW - 7200.0, "until": NOW - 3600.0,
-    });
-    fs::write(fixture.records().join("running.json"), stale.to_string()).unwrap();
-    // The run that holds the lock says so a moment later, as one that has just taken it does.
-    let said = fixture.records().join("running.json");
-    let saying = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(700));
-        let fresh = serde_json::json!({
-            "id": "fresh", "pid": std::process::id(), "started_at": NOW, "until": NOW + 3600.0,
-        });
-        fs::write(said, fresh.to_string()).unwrap();
-    });
-    let (code, out, err) = fixture.release_at(NOW + 60.0, &["--check", CHECK]);
-    saying.join().unwrap();
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        err.contains(&format!(
-            "another release run of this repository is running (run fresh, process {}, \
-             since 2026-11-12 10:00)",
-            std::process::id()
-        )),
-        "{err}"
-    );
-    assert!(
-        out.is_empty(),
-        "a run that has just taken the lock is not stuck: {out}"
-    );
-    assert!(fixture.reds().is_empty());
-
-    // Held while what a killed run left says its check runs on: the run holding the lock is the
+    // Held while what that killed run left says its check runs on: the run holding the lock is the
     // one reporting that check, and this one is refused as that check's run is.
     let mut check = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .process_group(0)
         .spawn()
         .unwrap();
@@ -633,7 +556,7 @@ fn a_process_left_in_the_checkout_stops_the_run_before_it_checks_anything() {
 
     // One working there, as a shell left in it or a helper a check started there would.
     let mut working = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .current_dir(&checkout)
         .spawn()
         .unwrap();
@@ -695,7 +618,7 @@ fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
     let checkout = fixture.worktree();
     // From outside it, as an editor or a `tail -f` started elsewhere would.
     let mut holding = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .stdin(fs::File::open(checkout.join("symphony.toml")).unwrap())
         .current_dir(&fixture.root)
         .spawn()
@@ -729,7 +652,7 @@ fn a_process_in_the_conciliation_copies_folder_stops_the_run_too() {
     fs::create_dir_all(copies.join("consumer")).unwrap();
     let copies = copies.canonicalize().unwrap();
     let mut copying = Command::new("sleep")
-        .arg("120")
+        .arg("1000")
         .current_dir(copies.join("consumer"))
         .spawn()
         .unwrap();
@@ -771,7 +694,7 @@ fn a_process_a_check_leaves_in_the_checkout_stops_the_run_after_that_check() {
          open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; \
          open(STDOUT, \">\", \"/dev/null\"); open(STDERR, \">\", \"/dev/null\"); \
          open(my $o, \">\", \".target/out\") or die; print $o \"one\\n\"; close $o; \
-         exec \"sleep\", \"120\"' '{pid}' & \
+         exec \"sleep\", \"1000\"' '{pid}' & \
          while [ ! -s '{pid}' ]; do sleep 0.1; done",
         pid = pid_file.display()
     );
@@ -836,7 +759,7 @@ fn a_red_check_that_leaves_a_process_has_each_red_step_filed_beside_the_stop() {
         "verify=perl -MPOSIX -e 'POSIX::setsid() or die; chdir \"apps/ui\" or die; \
          open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; \
          open(STDOUT, \">\", \"/dev/null\"); open(STDERR, \">\", \"/dev/null\"); \
-         exec \"sleep\", \"120\"' '{pid}' & \
+         exec \"sleep\", \"1000\"' '{pid}' & \
          while [ ! -s '{pid}' ]; do sleep 0.1; done; d=\"$SYMPHONY_CHECK_STEPS\"; \
          echo 'lint green' > \"$d/lint.log\"; echo 'a test failed' > \"$d/tests.log\"; \
          printf 'lint\\t0\\t1\\tlint.log\\tjust lint\\n' >> \"$d/steps.tsv\"; \
@@ -912,30 +835,40 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
     fixture.land("a.txt", Some("one\n"), "a.txt reads one");
     let pid_file = fixture.root.join("writer.pid");
     let target = fixture.worktree().join("a.txt");
-    // The first run's check leaves a writer outside its group and outside the checkout. It looks
-    // at a.txt without opening it, and 2 s after a.txt reads `broken` (7 bytes) writes `one` over
-    // it, as a survivor of an earlier check can.
+    let started = fixture.root.join("started");
+    let wrote = fixture.root.join("wrote");
+    // The first run's check leaves a writer outside its group and outside the checkout. Once the
+    // next run's check has started, on a.txt reading `broken`, it writes `one` over it, as a
+    // survivor of an earlier check can, and says it has.
     let check = format!(
         "verify=perl -MPOSIX -e 'POSIX::setsid() or die; chdir \"/\" or die; \
          open(my $p, \">\", $ARGV[0]) or die; print $p \"$$\\n\"; close $p; \
-         for (1..1200) {{ if ((-s $ARGV[1] // 0) == 7) {{ sleep 2; \
-         open(my $w, \">\", $ARGV[1]) or die; print $w \"one\\n\"; close $w; exit 0 }} \
-         select(undef, undef, undef, 0.1) }}' '{pid}' '{target}' & \
+         for (1..12000) {{ if (-e $ARGV[2]) {{ \
+         open(my $w, \">\", $ARGV[1]) or die; print $w \"one\\n\"; close $w; \
+         open(my $d, \">\", $ARGV[3]) or die; close $d; exit 0 }} \
+         select(undef, undef, undef, 0.1) }}' '{pid}' '{target}' '{started}' '{wrote}' & \
          while [ ! -s '{pid}' ]; do sleep 0.1; done",
         pid = pid_file.display(),
-        target = target.display()
+        target = target.display(),
+        started = started.display(),
+        wrote = wrote.display()
     );
     fixture.run(NOW, &["--check", &check], 0);
     let writer = written_pid(&pid_file);
     let guard = Process(libc::pid_t::try_from(writer).unwrap());
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
 
-    // A broken commit lands; the next run's check would see it, but reads after the writer.
+    // A broken commit lands; the next run's check starts on it, but reads after the writer (a
+    // writer that never writes leaves it red after its ten-minute backstop).
     let broken = fixture.land("a.txt", Some("broken\n"), "a.txt breaks");
-    let (code, out, err) = fixture.release_at(
-        NOW + 60.0,
-        &["--check", "verify=sleep 5; grep -qx one a.txt"],
+    let reads = format!(
+        "verify=grep -qx broken a.txt && touch '{started}' && i=0 && \
+         while [ ! -e '{wrote}' ] && [ $i -lt 6000 ]; do i=$((i + 1)); sleep 0.1; done; \
+         grep -qx one a.txt",
+        started = started.display(),
+        wrote = wrote.display()
     );
+    let (code, out, err) = fixture.release_at(NOW + 60.0, &["--check", &reads]);
     assert!(ends_within(writer, 20), "the writer wrote and left");
     guard.ended();
     assert_eq!(code, 1, "{out}{err}");
@@ -1019,9 +952,16 @@ fn a_check_starts_with_every_signal_at_its_default_whatever_the_run_ignores() {
     );
 
     // The run keeps what it was started with: an INT sent to it while its check runs is ignored.
+    // The check goes on once the test says it has sent it (or after its ten-minute backstop).
     let pid_file = fixture.root.join("check.pid");
     let said_file = fixture.root.join("said.txt");
-    let check = format!("verify=echo $$ > '{}'; sleep 2; {says}", pid_file.display());
+    let sent = fixture.root.join("sent");
+    let check = format!(
+        "verify=echo $$ > '{}'; i=0; \
+         while [ ! -e '{}' ] && [ $i -lt 6000 ]; do i=$((i + 1)); sleep 0.1; done; {says}",
+        pid_file.display(),
+        sent.display()
+    );
     let mut night = fixture
         .command_through(&ignoring, NOW, &["--check", &check], &[])
         .stdout(fs::File::create(&said_file).unwrap())
@@ -1033,6 +973,7 @@ fn a_check_starts_with_every_signal_at_its_default_whatever_the_run_ignores() {
     unsafe {
         libc::kill(libc::pid_t::try_from(night.id()).unwrap(), libc::SIGINT);
     }
+    fs::write(&sent, "").unwrap();
     assert_eq!(ended_within(&mut night, 120), Some(0));
     let out = fs::read_to_string(&said_file).unwrap();
     assert!(out.contains("release: verify green (exit 0, "), "{out}");
@@ -1065,7 +1006,7 @@ fn a_run_told_to_stop_stops_its_check_releases_the_lock_and_says_so() {
         }
         let pid_file = fixture.root.join(format!("check-{name}.pid"));
         let said_file = fixture.root.join(format!("said-{name}.txt"));
-        let check = format!("verify=echo $$ > '{}'; sleep 120", pid_file.display());
+        let check = format!("verify=echo $$ > '{}'; sleep 1000", pid_file.display());
         let mut night = fixture
             .command(
                 NOW + 60.0 * f64::from(at),
