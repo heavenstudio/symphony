@@ -27,16 +27,16 @@ const P: &str = "pine-orch";
 /// A red's filer, a session as the tools that file reds register ([`symphony_board::red::FILER`]).
 const F: &str = "flint";
 
-/// Eight open tasks, in progress and in review by turns.
+/// Eight tasks in progress, the open tasks the cap counts (work in review it does not).
 const EIGHT: [(&str, &str); 8] = [
     ("work/a", "in_progress"),
-    ("work/b", "review"),
+    ("work/b", "in_progress"),
     ("work/c", "in_progress"),
-    ("work/d", "review"),
+    ("work/d", "in_progress"),
     ("work/e", "in_progress"),
-    ("work/f", "review"),
+    ("work/f", "in_progress"),
     ("work/g", "in_progress"),
-    ("work/h", "review"),
+    ("work/h", "in_progress"),
 ];
 
 /// What a claim refused at the cap adds for the executor holding the reservation.
@@ -47,7 +47,7 @@ fn reserve_hint(slug: &str) -> String {
 }
 
 /// What O holding [`EIGHT`] is said as.
-const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (review), work/c (in_progress), work/d (review), work/e (in_progress), work/f (review), work/g (in_progress), work/h (review); a slot frees when one of them is done or cancelled";
+const HOLDS_EIGHT: &str = "olive-orch holds 8 open tasks, the cap of 8 an orchestrator holds: work/a (in_progress), work/b (in_progress), work/c (in_progress), work/d (in_progress), work/e (in_progress), work/f (in_progress), work/g (in_progress), work/h (in_progress); a slot frees when one of them goes to review or is done or cancelled";
 
 /// A board to seed: O and P orchestrators, W (O's child), K and the filer F.
 fn sessions() -> Seed {
@@ -180,16 +180,63 @@ fn up_to_the_cap_each_claim_starts_and_blocked_or_unstarted_work_holds_no_slot()
 }
 
 #[test]
-fn work_in_review_holds_a_slot() {
+fn work_in_review_takes_no_slot_and_a_refusal_names_it_apart() {
     let led: Vec<(&str, &str)> = EIGHT
         .iter()
         .map(|(slug, _)| (*slug, "review"))
         .chain([("work/next", "ready")])
         .collect();
     let f = board(&led, &[]);
-    let said = refused(capped(&f, 8).claim("work/next", K));
-    assert!(said.contains("holds 8 open tasks"), "{said}");
-    assert_eq!(said.matches("(review)").count(), 8, "{said}");
+    assert_eq!(
+        capped(&f, 1).claim("work/next", K).unwrap().status,
+        "in_progress",
+        "eight in review take none of a cap of one"
+    );
+    let f = eight_and(&[
+        ("work/i", "review"),
+        ("work/j", "review"),
+        ("work/next", "ready"),
+    ]);
+    assert_eq!(
+        refused(capped(&f, 8).claim("work/next", K)),
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as work in review takes no slot: work/i (review), work/j (review){}",
+            reserve_hint("work/next")
+        )
+    );
+}
+
+#[test]
+fn a_move_into_review_frees_a_slot_and_a_changes_verdict_returns_the_work_past_the_cap() {
+    let f = Fixture::new(
+        eight_and_seed(&[("work/next", "ready"), ("work/later", "ready")]).session("lark"),
+    );
+    let store = capped(&f, 8);
+    refused(store.claim("work/next", K));
+    assert_eq!(
+        store.move_to("work/h", "review", O).unwrap().status,
+        "review"
+    );
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    // The reviewer asks for changes: work/h was being worked already, so it goes back past the cap.
+    store.take_role("work/h", "lark", "reviewer").unwrap();
+    let back = store
+        .verdict("work/h", "lark", "changes", "one more case")
+        .unwrap();
+    assert_eq!(back.status, "in_progress");
+    // So does a move back from review, and both count from then.
+    store.move_to("work/g", "review", O).unwrap();
+    assert_eq!(
+        store.move_to("work/g", "in_progress", O).unwrap().status,
+        "in_progress"
+    );
+    let said = refused(store.claim("work/later", K));
+    assert!(
+        said.starts_with("work/later cannot start: olive-orch holds 9 open tasks"),
+        "{said}"
+    );
+    assert!(said.contains("work/h (in_progress)"), "{said}");
+    assert!(!said.contains("not counted"), "{said}");
 }
 
 #[test]
@@ -198,9 +245,10 @@ fn a_review_mirror_counts_once_with_the_task_it_reviews() {
     for (slug, status) in &EIGHT[..7] {
         seed = with(seed, slug, status, None, Some(O));
     }
-    seed = with(seed, "review/work/a", "review", None, None);
-    seed = with(seed, "work/b/review", "review", Some("work/b"), None);
-    seed = with(seed, "review-2/work/c", "review", None, Some(O));
+    // Mirrors a reviewer works in progress; in review they take no slot, as all work there.
+    seed = with(seed, "review/work/a", "in_progress", None, None);
+    seed = with(seed, "work/b/review", "in_progress", Some("work/b"), None);
+    seed = with(seed, "review-2/work/c", "in_progress", None, Some(O));
     seed = with(seed, "work/next", "ready", None, Some(O));
     seed = with(seed, "work/later", "ready", None, Some(O));
     let f = Fixture::new(seed);
@@ -209,9 +257,9 @@ fn a_review_mirror_counts_once_with_the_task_it_reviews() {
     let said = refused(store.claim("work/later", K));
     assert!(said.contains("holds 8 open tasks"), "{said}");
     for slot in [
-        "work/a (in_progress) with review/work/a (review), ",
-        "work/b (review) with work/b/review (review), ",
-        "work/c (in_progress) with review-2/work/c (review), ",
+        "work/a (in_progress) with review/work/a (in_progress), ",
+        "work/b (in_progress) with work/b/review (in_progress), ",
+        "work/c (in_progress) with review-2/work/c (in_progress), ",
     ] {
         assert!(said.contains(slot), "{slot}: {said}");
     }
@@ -223,7 +271,7 @@ fn done_or_cancelled_frees_a_slot() {
     let store = capped(&f, 8);
     refused(store.claim("work/next", K));
     let landed = store
-        .landed("work/b", O, "landed on main", false, &["review"])
+        .landed("work/b", O, "landed on main", false, &["in_progress"])
         .unwrap();
     assert_eq!(landed.task.status, "done");
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
@@ -271,7 +319,7 @@ fn a_holder_above_the_cap_keeps_its_tasks_works_them_and_starts_nothing_new() {
     ]);
     let store = capped(&f, 8);
     let said = refused(store.claim("work/next", K));
-    assert!(said.contains("olive-orch holds 10 open tasks"), "{said}");
+    assert!(said.contains("olive-orch holds 9 open tasks"), "{said}");
     assert_eq!(open(&store).len(), 10, "not retroactive: every task kept");
     assert!(
         (store.tasks(None).unwrap().iter())
@@ -285,7 +333,9 @@ fn a_holder_above_the_cap_keeps_its_tasks_works_them_and_starts_nothing_new() {
     store.move_to("work/i", "in_progress", K).unwrap();
     // Below the cap again, it starts.
     for slug in ["work/b", "work/d", "work/f"] {
-        store.landed(slug, O, "landed", false, &["review"]).unwrap();
+        store
+            .landed(slug, O, "landed", false, &["in_progress"])
+            .unwrap();
     }
     assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
 }
@@ -307,7 +357,7 @@ fn a_move_into_in_progress_from_blocked_or_ready_is_refused_at_the_cap() {
     );
     // A slot freed lets it go on.
     store
-        .landed("work/h", O, "landed", false, &["review"])
+        .landed("work/h", O, "landed", false, &["in_progress"])
         .unwrap();
     assert_eq!(
         store.move_to("work/held", "in_progress", K).unwrap().status,
@@ -326,7 +376,7 @@ fn taking_orchestrator_on_open_work_is_refused_at_the_cap_and_on_its_own_or_unst
     seed = with(seed, "work/a/part", "in_progress", Some("work/a"), None);
     seed = with(seed, "loose", "in_progress", None, None);
     seed = with(seed, "later", "ready", None, None);
-    seed = with(seed, "later/one", "review", Some("later"), None);
+    seed = with(seed, "later/one", "in_progress", Some("later"), None);
     let f = Fixture::new(seed);
     let store = capped(&f, 8);
     let holds = HOLDS_EIGHT.replace(

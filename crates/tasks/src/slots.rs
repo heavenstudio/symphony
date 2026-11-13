@@ -6,12 +6,19 @@
 //! A task is **open** while it is in progress or in review ([`OPEN`]), or blocked under a hold that
 //! keeps its slot (`Store::hold_blocked`, a landing waiting on its stamps: [`Entry::held`]); other blocked
 //! work and work not started hold no slot, and a slot frees only when its task is done or cancelled
-//! (or leaves the open statuses some other way). All descendants share their parent feature's
-//! slot, charged to that feature's owner, regardless of their instruction flag. Active work under
-//! an inactive or finished umbrella still holds that slot; accounting changes no task state.
+//! (or leaves the open statuses some other way), or moves to review (below). All descendants share
+//! their parent feature's slot, charged to that feature's owner, regardless of their instruction
+//! flag. Active work under an inactive or finished umbrella still holds that slot; accounting
+//! changes no task state.
 //!
 //! - a review mirror counts with the task it reviews: `review/BRANCH` (`review-N/BRANCH`) with the
 //!   task whose slug or recorded executor branch is `BRANCH`, and `SLUG/review` with `SLUG`.
+//!
+//! Work in review takes no slot ([`Ledger::reviews`]). The owner, 2026-11-13: "reviewer should not
+//! count as a slot. It's task based". The cap counts the tasks being built: a task frees its slot
+//! when it moves to review, and a refusal names the work in review apart, as not counted. Its return
+//! to in progress, on a changes verdict or a move, goes between open statuses and so starts nothing:
+//! never refused, it counts again from then, as it was being worked already.
 //!
 //! Red work takes no slot ([`Ledger::red`]): an open task filed for a red that stops every landing
 //! ([`crate::red`]) and the work under it, its mirrors and instructions included, start at any count
@@ -40,6 +47,8 @@ pub use change::{changed, reds, started};
 
 /// The statuses a task holds a slot in.
 pub const OPEN: [&str; 2] = ["in_progress", "review"];
+/// The open status the cap does not count: built, its work is the reviewer's ([`Ledger::reviews`]).
+pub const REVIEW: &str = "review";
 /// How a refusal names the status of blocked work a hold keeps open.
 pub const HELD: &str = "blocked, held";
 /// The key of the project file naming the cap, in `[limits]` or, where an older build reads it,
@@ -348,13 +357,20 @@ impl<'a> Ledger<'a> {
     }
 
     /// Every owner's open slots, in one pass over the open tasks: those the cap counts, then the
-    /// red work it does not.
-    fn tally(&self) -> [HashMap<&'a str, Held<'a>>; 2] {
-        let mut tally: [HashMap<&'a str, Held<'a>>; 2] = Default::default();
+    /// red work and the work in review it does not.
+    fn tally(&self) -> [HashMap<&'a str, Held<'a>>; 3] {
+        let mut tally: [HashMap<&'a str, Held<'a>>; 3] = Default::default();
         let open = self.tasks.values().filter(|t| t.open());
         for task in open {
             let place = self.place(task.slug);
-            let all = &mut tally[usize::from(self.red(task.slug))];
+            let apart = if self.red(task.slug) {
+                1
+            } else if task.status == REVIEW {
+                2
+            } else {
+                0
+            };
+            let all = &mut tally[apart];
             for owner in place.owners {
                 let slot = all.entry(owner).or_default().entry(place.key).or_default();
                 slot.push((task.slug, task.shown()));
@@ -369,17 +385,25 @@ impl<'a> Ledger<'a> {
         tally
     }
 
-    /// Every owner's open slots the cap counts: red work is not among them ([`Ledger::reds`]).
+    /// Every owner's open slots the cap counts: red work and work in review are not among them
+    /// ([`Ledger::reds`], [`Ledger::reviews`]).
     pub fn holdings(&self) -> HashMap<&'a str, Held<'a>> {
-        let [counted, _] = self.tally();
+        let [counted, ..] = self.tally();
         counted
     }
 
     /// Every owner's open red work ([`Ledger::red`]), which the cap does not count, by the task
     /// whose work each is.
     pub fn reds(&self) -> HashMap<&'a str, Held<'a>> {
-        let [_, red] = self.tally();
+        let [_, red, _] = self.tally();
         red
+    }
+
+    /// Every owner's work in review that is no red work, which the cap does not count, by the task
+    /// whose work each is.
+    pub fn reviews(&self) -> HashMap<&'a str, Held<'a>> {
+        let [.., review] = self.tally();
+        review
     }
 
     /// The open slots `handle` holds: each slot's key, and its open tasks with their status.
@@ -402,6 +426,8 @@ pub struct Full<'a> {
     pub held: Held<'a>,
     /// The open red work it holds before it, which the cap does not count ([`Ledger::reds`]).
     pub red: Held<'a>,
+    /// The work in review it holds before it, which the cap does not count ([`Ledger::reviews`]).
+    pub review: Held<'a>,
 }
 
 /// An owner's open slots as a refusal names them, one entry a slot: the task whose work it is
@@ -441,8 +467,8 @@ pub(crate) fn claim_hint(slug: &str, what: &str) -> String {
 
 /// What a start refused at the cap says: `what` cannot happen, because `full`'s owner holds `cap`
 /// open slots or more, as many as it names. When it stands in for an orchestrator as the parent of
-/// the sessions starting a task no orchestrator holds, those `children` are named. Its red work is
-/// named apart, last, as not counted.
+/// the sessions starting a task no orchestrator holds, those `children` are named. Its red work and
+/// its work in review are named apart, last, as not counted.
 pub fn refusal(what: &str, full: &Full<'_>, children: &[&str], cap: usize) -> String {
     let owner = full.owner;
     let standing = if children.is_empty() {
@@ -453,16 +479,17 @@ pub fn refusal(what: &str, full: &Full<'_>, children: &[&str], cap: usize) -> St
             children.join(", ")
         )
     };
-    let red = if full.red.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "; not counted, as red work takes no slot: {}",
-            named(&full.red)
-        )
+    let apart = |held: &Held<'_>, why: &str| {
+        if held.is_empty() {
+            String::new()
+        } else {
+            format!("; not counted, as {why} takes no slot: {}", named(held))
+        }
     };
+    let red = apart(&full.red, "red work");
+    let review = apart(&full.review, "work in review");
     format!(
-        "{what}: {owner}{standing} holds {} open tasks, the cap of {cap} an orchestrator holds: {}; a slot frees when one of them is done or cancelled{red}",
+        "{what}: {owner}{standing} holds {} open tasks, the cap of {cap} an orchestrator holds: {}; a slot frees when one of them goes to review or is done or cancelled{red}{review}",
         full.held.len(),
         named(&full.held)
     )

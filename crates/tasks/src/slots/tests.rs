@@ -103,7 +103,12 @@ fn every_subtask_and_mirror_shares_the_parent_features_slot_and_owner() {
     assert!(keys(&ledger, "p").is_empty());
     assert_eq!(
         named(&ledger.held("o")),
-        "a (in_progress) with a/b (in_progress) with a/b/c (in_progress) with a/b/fix (in_progress) with a/build (in_progress) with a/build/again (in_progress) with a/d (in_progress) with a/d/e (review) with review/a/d/e (review)"
+        "a (in_progress) with a/b (in_progress) with a/b/c (in_progress) with a/b/fix (in_progress) with a/build (in_progress) with a/build/again (in_progress) with a/d (in_progress)"
+    );
+    assert_eq!(
+        named(&ledger.reviews()["o"]),
+        "a/d/e (review) with review/a/d/e (review)",
+        "the work in review of the same slot, apart"
     );
 }
 
@@ -143,7 +148,7 @@ fn held<'a>(slug: &'a str, by: &'a str) -> Entry<'a> {
 }
 
 #[test]
-fn only_in_progress_review_and_held_blocked_work_hold_a_slot() {
+fn only_in_progress_and_held_blocked_work_hold_a_slot_and_review_is_named_apart() {
     let ledger = Ledger::new(
         [
             led("a", None, "in_progress", "o"),
@@ -168,11 +173,17 @@ fn only_in_progress_review_and_held_blocked_work_hold_a_slot() {
     );
     assert_eq!(
         named(&ledger.held("o")),
-        "a (in_progress) with a/review (review) with review/a (review), b (review), bb (blocked, held)",
+        "a (in_progress), bb (blocked, held)",
         "a hold keeps blocked work open, and only blocked work"
     );
+    assert_eq!(
+        named(&ledger.reviews()["o"]),
+        "a/review (review) with review/a (review), b (review)",
+        "work in review is open, and not counted"
+    );
     let counts = ledger.counts();
-    assert_eq!((counts["o"], counts["other"], counts.len()), (3, 1, 2));
+    assert_eq!((counts["o"], counts["other"], counts.len()), (2, 1, 2));
+    assert!(!ledger.reviews().contains_key("other"));
 }
 
 #[test]
@@ -189,13 +200,15 @@ fn work_a_hold_keeps_open_returns_without_a_new_slot_and_other_blocked_work_take
         let kept = before.changed("kept", Some(status), None, &[]);
         assert_eq!(started(&before, &kept, 2), Ok(vec!["o"]), "{status}");
         assert!(!kept.tasks["kept"].held, "a move ends the hold");
-        let freed = before.changed("freed", Some(status), None, &[]);
-        assert_eq!(
-            started(&before, &freed, 2).unwrap_err().owner,
-            "o",
-            "{status}"
-        );
     }
+    let freed = before.changed("freed", Some("in_progress"), None, &[]);
+    assert_eq!(started(&before, &freed, 2).unwrap_err().owner, "o");
+    let reviewed = before.changed("freed", Some("review"), None, &[]);
+    assert_eq!(
+        started(&before, &reviewed, 2),
+        Ok(vec![]),
+        "back to review takes no slot, at the cap too"
+    );
     let unheld = before.changed("kept", Some("blocked"), None, &[]);
     assert_eq!(
         unheld.counts()["o"],
@@ -211,7 +224,7 @@ fn a_change_of_parent_moves_the_open_work_below_to_the_new_tree() {
             led("a", None, "in_progress", "o"),
             entry("a/part", Some("a"), "in_progress"),
             entry("loose", None, "ready"),
-            entry("loose/one", Some("loose"), "review"),
+            entry("loose/one", Some("loose"), "in_progress"),
             led("other", None, "ready", "p"),
             held("kept", "o"),
         ],
@@ -284,8 +297,9 @@ fn a_start_is_refused_only_when_it_raises_an_owner_past_the_cap() {
     assert_eq!(
         started(&before, &stays, 1),
         Ok(vec!["o"]),
-        "open to open: no new slot"
+        "into review: no new slot, s1's freed"
     );
+    assert_eq!(stays.counts()["o"], 2);
     let ends = before.changed("s2", Some("done"), None, &[]);
     assert_eq!(started(&before, &ends, 1), Ok(vec!["o"]), "a slot freed");
 }
@@ -298,7 +312,7 @@ fn a_task_two_orchestrators_hold_counts_against_both_and_is_refused_if_either_is
         [
             both,
             led("o1", None, "in_progress", "o"),
-            led("o2", None, "review", "o"),
+            led("o2", None, "in_progress", "o"),
             led("p1", None, "in_progress", "p"),
         ],
         [],
@@ -322,8 +336,14 @@ fn a_task_two_orchestrators_hold_counts_against_both_and_is_refused_if_either_is
         }),
         [],
     );
-    let after = p_full.changed("both", Some("review"), None, &[]);
+    let after = p_full.changed("both", Some("in_progress"), None, &[]);
     assert_eq!(started(&p_full, &after, 2).unwrap_err().owner, "p");
+    let reviewed = p_full.changed("both", Some("review"), None, &[]);
+    assert_eq!(
+        started(&p_full, &reviewed, 2),
+        Ok(vec![]),
+        "review counts for neither"
+    );
 }
 
 #[test]
@@ -331,14 +351,20 @@ fn taking_the_role_moves_the_slots_of_the_work_below_to_the_taker() {
     let before = Ledger::new(
         [
             led("a", None, "in_progress", "o"),
-            entry("b", None, "review"),
+            entry("b", None, "in_progress"),
             entry("c", None, "ready"),
             entry("c/one", Some("c"), "in_progress"),
             entry("c/two", Some("c"), "review"),
+            entry("d", None, "review"),
         ],
         [],
     );
     let taken = |slug| before.changed(slug, None, Some("o"), &[]);
+    assert_eq!(
+        started(&before, &taken("d"), 1),
+        Ok(vec![]),
+        "work in review takes no slot"
+    );
     assert_eq!(taken("b").place("b").owners, vec!["o"]);
     assert_eq!(started(&before, &taken("b"), 1).unwrap_err().owner, "o");
     assert_eq!(started(&before, &taken("a"), 1), Ok(vec![]), "its own");
@@ -397,19 +423,28 @@ fn the_refusal_names_as_many_open_tasks_as_it_counts_and_how_a_slot_frees() {
         owner: "o",
         held: ledger.held("o"),
         red: Held::new(),
+        review: ledger.reviews().remove("o").unwrap(),
     };
-    let said = refusal("c cannot start", &full, &[], 2);
+    let said = refusal("c cannot start", &full, &[], 1);
     assert_eq!(
         said,
-        "c cannot start: o holds 2 open tasks, the cap of 2 an orchestrator holds: a (in_progress) with a/build (in_progress) with review/a (review), b (review); a slot frees when one of them is done or cancelled"
+        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: a (in_progress) with a/build (in_progress); a slot frees when one of them goes to review or is done or cancelled; not counted, as work in review takes no slot: review/a (review), b (review)"
     );
     let listed = said.split_once("holds: ").unwrap().1;
     let listed = listed.split_once("; ").unwrap().0;
     assert_eq!(listed.split(", ").count(), full.held.len(), "{said}");
     assert!(
-        refusal("c cannot start", &full, &["w"], 2).starts_with(
-            "c cannot start: o (no orchestrator holds it: o is the parent of w) holds 2"
+        refusal("c cannot start", &full, &["w"], 1).starts_with(
+            "c cannot start: o (no orchestrator holds it: o is the parent of w) holds 1"
         )
+    );
+    let nothing_in_review = Full {
+        review: Held::new(),
+        ..full
+    };
+    assert!(
+        !refusal("c cannot start", &nothing_in_review, &[], 1).contains("not counted"),
+        "no work in review, nothing named apart"
     );
 }
 
