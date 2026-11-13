@@ -1,0 +1,226 @@
+{
+  "schema": 1,
+  "project": "symphony",
+  "day": "2027-01-15",
+  "start": 1799971200.0,
+  "read": 1799977800.0,
+  "until": 1799977800.0,
+  "closed": false,
+  "hours": [
+    {
+      "start": 1799971200.0,
+      "top": {
+        "held": {
+          "in_progress": 2,
+          "ready": 3,
+          "review": 1
+        },
+        "entered": {
+          "in_progress": 1,
+          "review": 1
+        },
+        "task_hours": {
+          "in_progress": 1.75,
+          "ready": 3.0,
+          "review": 0.5
+        },
+        "unclaimed_hours": 3.0,
+        "bounces": 0
+      },
+      "subtasks": {
+        "held": {
+          "in_progress": 1
+        },
+        "entered": {
+          "in_progress": 1
+        },
+        "task_hours": {
+          "in_progress": 0.5
+        },
+        "unclaimed_hours": 0.0,
+        "bounces": 0
+      },
+      "landed": 1,
+      "reds_filed": 1,
+      "reds_closed": 0,
+      "waits": {
+        "approved_to_landed": [
+          {
+            "slug": "app/board-filter",
+            "seconds": 1260.0
+          }
+        ],
+        "review_to_reviewer": [
+          {
+            "slug": "tools/stage-times",
+            "seconds": 300.0
+          }
+        ],
+        "changes_to_resumed": [],
+        "changes_to_review": []
+      },
+      "decisions": {
+        "open": 3,
+        "answered": 1,
+        "auto_approved": 0,
+        "withdrawn": 1
+      },
+      "git": {
+        "commits": 4,
+        "merges": 1,
+        "added": 212,
+        "removed": 37,
+        "reverts": 0
+      }
+    },
+    {
+      "start": 1799974800.0,
+      "top": {
+        "held": {
+          "in_progress": 3,
+          "ready": 2,
+          "review": 1
+        },
+        "entered": {
+          "in_progress": 2
+        },
+        "task_hours": {
+          "in_progress": 2.4,
+          "ready": 1.9,
+          "review": 0.8
+        },
+        "unclaimed_hours": 1.9,
+        "bounces": 1
+      },
+      "subtasks": {
+        "held": {},
+        "entered": {
+          "done": 1
+        },
+        "task_hours": {
+          "in_progress": 0.25
+        },
+        "unclaimed_hours": 0.0,
+        "bounces": 0
+      },
+      "landed": 0,
+      "reds_filed": 0,
+      "reds_closed": 1,
+      "waits": {
+        "approved_to_landed": [],
+        "review_to_reviewer": [],
+        "changes_to_resumed": [
+          {
+            "slug": "tools/stage-times",
+            "seconds": 420.0
+          }
+        ],
+        "changes_to_review": []
+      },
+      "decisions": {
+        "open": 2,
+        "answered": 0,
+        "auto_approved": 1,
+        "withdrawn": 0
+      },
+      "git": {
+        "commits": 2,
+        "merges": 0,
+        "added": 0,
+        "removed": 0,
+        "reverts": 1
+      }
+    }
+  ],
+  "top": {
+    "lead": {
+      "n": 1,
+      "median": 20700.0,
+      "p90": 20700.0
+    },
+    "longest": [
+      {
+        "slug": "design/board-columns",
+        "status": "ready",
+        "since": 1799452800.0
+      }
+    ]
+  },
+  "subtasks": {
+    "lead": null,
+    "longest": []
+  },
+  "rounds": [
+    {
+      "number": 1,
+      "changes": 1,
+      "approved": 1
+    }
+  ],
+  "reds": [
+    {
+      "slug": "tests/main-red-12",
+      "series": "main",
+      "filed": 1799972100.0,
+      "closed": 1799975400.0,
+      "status": "done"
+    }
+  ],
+  "decisions": {
+    "open": [
+      {
+        "doc": "docs/DECISIONS.md",
+        "slug": "old-card",
+        "since": null
+      },
+      {
+        "doc": "@tools~reports-page/docs/DECISIONS.md",
+        "slug": "board-columns",
+        "since": 1799913600.0
+      }
+    ],
+    "answered": [
+      {
+        "doc": "docs/DECISIONS.md",
+        "slug": "skeleton-look",
+        "at": 1799973000.0,
+        "how": "approved"
+      }
+    ],
+    "auto_approved": [
+      {
+        "doc": "docs/DECISIONS.md",
+        "slug": "stage-names",
+        "at": 1799976000.0,
+        "how": "auto-approved"
+      }
+    ],
+    "withdrawn": [
+      {
+        "doc": "docs/DECISIONS.md",
+        "slug": "where-files-live",
+        "at": 1799973600.0,
+        "how": "dismissed"
+      }
+    ]
+  },
+  "git": {
+    "branch": "main",
+    "excluded": [
+      "apps/symphony-server/client/public/",
+      "Cargo.lock",
+      "package-lock.json",
+      "npm-shrinkwrap.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "bun.lockb",
+      "Gemfile.lock",
+      "poetry.lock",
+      "uv.lock",
+      "Pipfile.lock",
+      "composer.lock",
+      "go.sum",
+      "flake.lock"
+    ]
+  }
+}

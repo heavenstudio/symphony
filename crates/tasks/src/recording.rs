@@ -1,7 +1,9 @@
 //! When a server generation's recorders record: the one gate the Symphony server's generation
 //! holds (`front::Shared` in `apps/symphony-server`), which every project it serves and both of its
 //! recorders, the board's health hours ([`crate::board_health::hours`]) and the agents' day files
-//! (`live/agent_activity.rs`), read at each call.
+//! (`live/agent_activity.rs`), read at each call; so does the hourly roll-up at each day file it
+//! writes ([`crate::reports::write`], `live/reports.rs`), so a reload never has two generations
+//! writing one.
 //!
 //! A reload's hand-off has two generations alive at once, both counting their own ticks, so the
 //! replacement's gate is held until the hand-off commits, and the generation it replaces closes its
