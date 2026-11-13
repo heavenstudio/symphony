@@ -8,6 +8,12 @@
 //! its docs audit's recipe says nothing when it fails (`[no-exit-message]`), so no line names that
 //! one. A step's red is read from its own log. A test named before the log ended with no target
 //! after it (a run stopped at its time) is left to the log's tail.
+//!
+//! A target that found files its own build had made gone (its executable, a library it links or a
+//! build script's output: cargo's `could not execute process … (never executed)` for a missing
+//! file, rustc's `extern location for … does not exist` and `couldn't find file` in an `OUT_DIR`)
+//! and named no failed test failed for its build folder, not for a test of its own: it is no
+//! failure to rerun, and the log says while which target the files went ([`Went`]).
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -20,6 +26,21 @@ pub(crate) struct Failed {
     pub(crate) target: String,
     /// The tests libtest named failed in it, in the order it named them.
     pub(crate) tests: Vec<String>,
+    /// The files its own build had made that it found gone, as the log names them, once each: it
+    /// never ran or never compiled for them, and named no failed test. None when it failed by
+    /// itself.
+    pub(crate) gone: Vec<String>,
+}
+
+/// When the files a check's targets found gone went: while its build ran, before any target ran,
+/// or while a target ran, the last one cargo started before the first that found one gone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Went {
+    Building,
+    /// The target as cargo's line starting it names it (`Running tests/a.rs (…/a-0123)`, `Doc-tests
+    /// a`), and the arguments that select it, when the log says its package: its own failure, or
+    /// the failed targets on either side of it, of one package.
+    While(String, Option<String>),
 }
 
 /// What a red check's log says failed.
@@ -29,10 +50,25 @@ pub(crate) struct Log {
     pub(crate) targets: Vec<Failed>,
     /// Each recipe just said failed, in the log's order: the innermost first, as just says them.
     pub(crate) recipes: Vec<String>,
+    /// When the files its targets found gone went; none when none found any.
+    pub(crate) went: Option<Went>,
 }
 
 /// What follows a target's failure in cargo's line, before the arguments that rerun it.
 const RERUN: &str = ", to rerun pass `";
+
+/// The part of the log one target wrote: from cargo's line starting it to the next.
+#[derive(Default)]
+struct Segment {
+    /// Cargo's line starting it, trimmed; none for what the log says before any target started.
+    header: Option<String>,
+    /// The index in [`Log::targets`] of the first failure said in it.
+    from: usize,
+    /// The files of the build it found gone.
+    gone: Vec<String>,
+    /// A process cargo could not execute, until the log says why.
+    unexecuted: Option<String>,
+}
 
 /// What the log at `log` says failed; nothing when it cannot be read.
 pub(crate) fn read(log: &Path) -> Log {
@@ -41,6 +77,12 @@ pub(crate) fn read(log: &Path) -> Log {
     };
     let mut reader = BufReader::new(file);
     let (mut found, mut tests) = (Log::default(), Vec::new());
+    let mut segment = Segment::default();
+    // The segment before the current one, and where the files gone were first found: in the
+    // segment after which one (with where the one that found them starts), none before any
+    // target started.
+    let mut previous: Option<(String, usize)> = None;
+    let mut first_gone: Option<Option<(String, usize, usize)>> = None;
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -58,12 +100,150 @@ pub(crate) fn read(log: &Path) -> Log {
             found.targets.push(Failed {
                 target,
                 tests: std::mem::take(&mut tests),
+                gone: Vec::new(),
             });
         } else if let Some(recipe) = recipe(text) {
             found.recipes.push(recipe);
+        } else if let Some(header) = header(text) {
+            close(&mut found, &segment);
+            previous = segment.header.take().map(|header| (header, segment.from));
+            segment = Segment {
+                header: Some(header),
+                from: found.targets.len(),
+                ..Segment::default()
+            };
+        } else if let Some(file) = gone(text, &mut segment.unexecuted) {
+            if !segment.gone.contains(&file) {
+                segment.gone.push(file);
+            }
+            if first_gone.is_none() {
+                let after = (segment.header.is_some())
+                    .then(|| previous.clone())
+                    .flatten()
+                    .map(|(header, from)| (header, from, segment.from));
+                first_gone = Some(after);
+            }
         }
     }
+    close(&mut found, &segment);
+    found.went = first_gone.map(|after| match after {
+        None => Went::Building,
+        Some((header, from, until)) => {
+            let args = selected(&found.targets, &header, from, until);
+            Went::While(header, args)
+        }
+    });
     found
+}
+
+/// The files `segment` found gone given to each failure said in it that named no failed test.
+fn close(found: &mut Log, segment: &Segment) {
+    if segment.gone.is_empty() {
+        return;
+    }
+    for failed in found.targets.iter_mut().skip(segment.from) {
+        if failed.tests.is_empty() {
+            failed.gone.clone_from(&segment.gone);
+        }
+    }
+}
+
+/// The line cargo starts a target with, trimmed: `Running unittests src/lib.rs (…)`, `Running
+/// tests/a.rs (…)`, `Doc-tests NAME`.
+fn header(line: &str) -> Option<String> {
+    let line = line.trim();
+    let starts = (line.strip_prefix("Running "))
+        .is_some_and(|rest| rest.ends_with(')') && rest.contains(" ("))
+        || line
+            .strip_prefix("Doc-tests ")
+            .is_some_and(|name| !name.is_empty() && !name.contains(' '));
+    starts.then(|| line.to_string())
+}
+
+/// The file of a build that `line` says is gone: a process cargo could not execute, once the log
+/// says it was no such file (`unexecuted` holds it until then), a library rustc was told to link
+/// and found missing, or a file a build script made (in its `OUT_DIR`, `…/build/UNIT/out/`) that
+/// rustc could not find.
+fn gone(line: &str, unexecuted: &mut Option<String>) -> Option<String> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("could not execute process `") {
+        *unexecuted = rest
+            .strip_suffix("` (never executed)")
+            .map(|said| said.split(' ').next().unwrap_or(said).to_string());
+        return None;
+    }
+    if line == "No such file or directory (os error 2)" {
+        return unexecuted.take();
+    }
+    if let Some(rest) = line.strip_prefix("error: extern location for ") {
+        let (_, file) = rest.split_once(" does not exist: ")?;
+        return (!file.is_empty()).then(|| file.to_string());
+    }
+    let file = (line.strip_prefix("error: couldn't find file `"))
+        .and_then(|rest| rest.strip_suffix('`'))
+        .or_else(|| {
+            (line.strip_prefix("error: couldn't read `"))
+                .and_then(|rest| rest.split_once("`: No such file or directory"))
+                .map(|(file, _)| file)
+        })?;
+    let parts: Vec<&str> = file.split('/').collect();
+    let made = parts
+        .windows(3)
+        .any(|three| three[0] == "build" && three[2] == "out");
+    made.then(|| file.to_string())
+}
+
+/// The arguments that select the target cargo started with `header`, whose failures are said in
+/// `failed` from `from` until `until`, where the next target's start: its own failure's, or, when
+/// it failed in nothing, the package the failures on either side of it share, with the target its
+/// line names.
+fn selected(failed: &[Failed], header: &str, from: usize, until: usize) -> Option<String> {
+    if from < until {
+        return failed.get(from).map(|own| own.target.clone());
+    }
+    let before = package(&failed.get(from.checked_sub(1)?)?.target)?;
+    if package(&failed.get(from)?.target) != Some(before) {
+        return None;
+    }
+    let kind = target_of(header)?;
+    Some(format!("-p {before} {kind}"))
+}
+
+/// The package the arguments `target` select a target of: PKG of `-p PKG …`.
+fn package(target: &str) -> Option<&str> {
+    let mut words = target.split_whitespace();
+    (words.next() == Some("-p")).then(|| words.next()).flatten()
+}
+
+/// What selects, within its package, the target cargo's line `header` starts: `--lib`, `--bin
+/// NAME`, `--test NAME`, `--bench NAME` (NAME the executable's, without its hash) or `--doc`.
+fn target_of(header: &str) -> Option<String> {
+    if header.starts_with("Doc-tests ") {
+        return Some("--doc".into());
+    }
+    let rest = header.strip_prefix("Running ")?;
+    let (source, executable) = rest.rsplit_once(" (")?;
+    let file = executable.strip_suffix(')')?.rsplit('/').next()?;
+    let name = file.rsplit_once('-').map_or(file, |(name, _)| name);
+    let source = source.strip_prefix("unittests ").unwrap_or(source);
+    if source == "src/lib.rs" {
+        return Some("--lib".into());
+    }
+    let bin = (source.strip_prefix("src/bin/")).map(|rest| {
+        rest.split('/')
+            .next()
+            .unwrap_or(rest)
+            .trim_end_matches(".rs")
+    });
+    if let Some(bin) = bin.or_else(|| (source == "src/main.rs").then_some(name)) {
+        return Some(format!("--bin {bin}"));
+    }
+    let kind = match source.split('/').next()? {
+        "tests" => "--test",
+        "benches" => "--bench",
+        _ => return None,
+    };
+    Some(format!("{kind} {name}"))
 }
 
 /// The recipe a just line says failed: NAME of `error: recipe `NAME` failed …`, `Recipe` as an
@@ -103,11 +283,12 @@ fn target(line: &str) -> Option<String> {
 }
 
 /// The cargo test arguments that rerun each failure of `failed` alone: `ARGS -- NAME --exact` for
-/// each test it named, and `ARGS` for a target that named none.
+/// each test it named, and `ARGS` for a target that named none, but one that failed for files of
+/// its build gone, which no rerun of its own explains.
 pub(crate) fn arguments(failed: &[Failed]) -> Vec<String> {
     let mut each = Vec::new();
     for target in failed {
-        if target.tests.is_empty() {
+        if target.tests.is_empty() && target.gone.is_empty() {
             each.push(target.target.clone());
         }
         for test in &target.tests {
@@ -226,6 +407,7 @@ error: recipe `verify` failed on line 105 with exit code 1
             Log {
                 targets: Vec::new(),
                 recipes: recipes(&["_size-check", "size-check", "verify"]),
+                went: None,
             }
         );
         assert_eq!(step(&size.recipes).as_deref(), Some("just size-check"));
@@ -260,8 +442,320 @@ error: recipe `verify` failed on line 105 with exit code 1
 
     fn target(target: &str, tests: &[&str]) -> Failed {
         Failed {
-            target: target.into(),
             tests: tests.iter().map(|test| (*test).to_string()).collect(),
+            ..gone_from(target, &[])
+        }
+    }
+
+    fn gone_from(target: &str, files: &[&str]) -> Failed {
+        Failed {
+            target: target.into(),
+            tests: Vec::new(),
+            gone: files.iter().map(|file| (*file).to_string()).collect(),
+        }
+    }
+
+    /// The shape of the conciliation log of 2026-11-12 (run 2026-11-12T2221-57549), cut: a
+    /// project's own test emptied the build folder while it ran (`dependency_boundary`), so every
+    /// target cargo started after it found its executable gone, and the doctests a library they
+    /// link or a build script's output. Two targets failed by a test of their own before that.
+    const EMPTIED: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 43s
+     Running unittests src/lib.rs (.target/debug/deps/art-18768e759f4fccee)
+
+running 9 tests
+test hull::fidelity::tests::mount ... ok
+     Running tests/golden_card.rs (.target/debug/deps/golden_card-87ae9d016e3016ae)
+
+running 2 tests
+test help_usage ... ok
+test shared_app_discovers_branch_card ... FAILED
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.59s
+
+error: test failed, to rerun pass `-p art --test golden_card`
+     Running tests/after_tool_runner.rs (.target/debug/deps/after_tool_runner-6586517a5c7842d6)
+
+running 1 test
+test tool_runner_the_real_catalogue_agrees_with_the_budget_table ... FAILED
+
+error: test failed, to rerun pass `-p gate --test after_tool_runner`
+     Running tests/dependency_boundary.rs (.target/debug/deps/dependency_boundary-c5f610d098084456)
+
+running 1 test
+test wrappers_build_without_the_symphony_app_or_board ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 295.44s
+
+     Running tests/failure_capture.rs (.target/debug/deps/failure_capture-c2d3a9b32caa50f6)
+error: test failed, to rerun pass `-p gate --test failure_capture`
+
+Caused by:
+  could not execute process `/c/sf/.target/debug/deps/failure_capture-c2d3a9b32caa50f6` (never executed)
+
+Caused by:
+  No such file or directory (os error 2)
+     Running tests/gate/main.rs (.target/debug/deps/gate-22883f8af040c755)
+error: test failed, to rerun pass `-p gate --test gate`
+
+Caused by:
+  could not execute process `/c/sf/.target/debug/deps/gate-22883f8af040c755` (never executed)
+
+Caused by:
+  No such file or directory (os error 2)
+   Doc-tests art
+error: extern location for art_checks does not exist: /c/sf/.target/debug/deps/libart_checks-7fe7.rlib
+  --> tools/art/src/lib.rs:10:9
+error: extern location for serde_json does not exist: /c/sf/.target/debug/deps/libserde_json-ca7c.rlib
+error[E0432]: unresolved import `crate::hull::Result`
+error: extern location for art_checks does not exist: /c/sf/.target/debug/deps/libart_checks-7fe7.rlib
+error: aborting due to 3 previous errors
+
+error: doctest failed, to rerun pass `-p art --doc`
+
+Caused by:
+  process didn't exit successfully: `rustdoc --edition=2024 --crate-name art --test tools/art/src/lib.rs` (exit status: 1)
+   Doc-tests content_index
+error: couldn't find file `/c/sf/.target/debug/build/content-index-c3c4/out/index.rs`
+  --> crates/content-index/src/lib.rs:38:1
+error: aborting due to 1 previous error
+
+error: doctest failed, to rerun pass `-p content-index --doc`
+error: 6 targets failed:
+    `-p art --test golden_card`
+    `-p gate --test after_tool_runner`
+    `-p gate --test failure_capture`
+    `-p gate --test gate`
+    `-p art --doc`
+    `-p content-index --doc`
+";
+
+    #[test]
+    fn targets_that_found_their_builds_files_gone_are_told_from_failed_tests() {
+        let log = read_in(EMPTIED);
+        assert_eq!(
+            log.targets,
+            [
+                target(
+                    "-p art --test golden_card",
+                    &["shared_app_discovers_branch_card"]
+                ),
+                target(
+                    "-p gate --test after_tool_runner",
+                    &["tool_runner_the_real_catalogue_agrees_with_the_budget_table"]
+                ),
+                gone_from(
+                    "-p gate --test failure_capture",
+                    &["/c/sf/.target/debug/deps/failure_capture-c2d3a9b32caa50f6"]
+                ),
+                gone_from(
+                    "-p gate --test gate",
+                    &["/c/sf/.target/debug/deps/gate-22883f8af040c755"]
+                ),
+                gone_from(
+                    "-p art --doc",
+                    &[
+                        "/c/sf/.target/debug/deps/libart_checks-7fe7.rlib",
+                        "/c/sf/.target/debug/deps/libserde_json-ca7c.rlib"
+                    ]
+                ),
+                gone_from(
+                    "-p content-index --doc",
+                    &["/c/sf/.target/debug/build/content-index-c3c4/out/index.rs"]
+                ),
+            ]
+        );
+        assert_eq!(
+            log.went,
+            Some(Went::While(
+                "Running tests/dependency_boundary.rs \
+                 (.target/debug/deps/dependency_boundary-c5f610d098084456)"
+                    .into(),
+                Some("-p gate --test dependency_boundary".into())
+            )),
+            "they went while the target cargo started last before the first that found one gone"
+        );
+        assert_eq!(
+            arguments(&log.targets),
+            [
+                "-p art --test golden_card -- shared_app_discovers_branch_card --exact",
+                "-p gate --test after_tool_runner -- \
+                 tool_runner_the_real_catalogue_agrees_with_the_budget_table --exact",
+            ],
+            "only the failed tests are rerun"
+        );
+    }
+
+    #[test]
+    fn only_a_build_file_missing_counts_as_gone() {
+        // A process cargo could not run for another reason, and a file of the sources rustc could
+        // not find, are failures of the target's own.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+error: test failed, to rerun pass `-p p --test a`
+
+Caused by:
+  could not execute process `/t/debug/deps/a-01` (never executed)
+
+Caused by:
+  Permission denied (os error 13)
+   Doc-tests p
+error: couldn't find file `/c/p/src/data.txt`
+error: couldn't read `/c/p/src/other.txt`: No such file or directory (os error 2)
+error: doctest failed, to rerun pass `-p p --doc`
+";
+        let log = read_in(text);
+        assert_eq!(
+            log.targets,
+            [target("-p p --test a", &[]), target("-p p --doc", &[])]
+        );
+        assert_eq!(log.went, None);
+        assert_eq!(arguments(&log.targets), ["-p p --test a", "-p p --doc"]);
+        // A build script's output rustc could not read is gone; a target that named a failed
+        // test failed by it, whatever else the log says beside it.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+error: couldn't read `/c/t/debug/build/p-1/out/x.rs`: No such file or directory (os error 2)
+error: test failed, to rerun pass `-p p --test a`
+";
+        let log = read_in(text);
+        assert_eq!(log.targets, [target("-p p --test a", &["t"])]);
+        assert_eq!(
+            log.went,
+            Some(Went::Building),
+            "found in the first target cargo started: gone before any ran"
+        );
+    }
+
+    #[test]
+    fn files_found_gone_before_any_target_ran_went_while_it_built() {
+        let text = "error: extern location for a does not exist: /t/debug/deps/liba-1.rlib
+error: could not compile `p` (lib test) due to 1 previous error
+";
+        assert_eq!(read_in(text).went, Some(Went::Building));
+    }
+
+    #[test]
+    fn the_target_files_went_while_is_named_by_its_own_failure_or_its_neighbours_package() {
+        // Its own failure names it.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+error: test failed, to rerun pass `-p p --test a`
+     Running tests/b.rs (.target/debug/deps/b-02)
+error: test failed, to rerun pass `-p p --test b`
+
+Caused by:
+  could not execute process `/t/debug/deps/b-02` (never executed)
+
+Caused by:
+  No such file or directory (os error 2)
+";
+        assert_eq!(
+            read_in(text).went,
+            Some(Went::While(
+                "Running tests/a.rs (.target/debug/deps/a-01)".into(),
+                Some("-p p --test a".into())
+            ))
+        );
+        // Failures on either side of it in two packages: its package is not said.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+error: test failed, to rerun pass `-p p --test a`
+     Running tests/b.rs (.target/debug/deps/b-02)
+     Running unittests src/lib.rs (.target/debug/deps/q-03)
+error: test failed, to rerun pass `-p q --lib`
+
+Caused by:
+  could not execute process `/t/debug/deps/q-03` (never executed)
+
+Caused by:
+  No such file or directory (os error 2)
+";
+        assert_eq!(
+            read_in(text).went,
+            Some(Went::While(
+                "Running tests/b.rs (.target/debug/deps/b-02)".into(),
+                None
+            ))
+        );
+        // It passed, and the one that found them gone failed in a test of its own: the failure
+        // after it is not its.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+error: test failed, to rerun pass `-p p --test a`
+     Running tests/b.rs (.target/debug/deps/b-02)
+     Running tests/c.rs (.target/debug/deps/c-03)
+test u ... FAILED
+error: couldn't read `/t/debug/build/p-1/out/x.rs`: No such file or directory (os error 2)
+error: test failed, to rerun pass `-p p --test c`
+";
+        assert_eq!(
+            read_in(text).went,
+            Some(Went::While(
+                "Running tests/b.rs (.target/debug/deps/b-02)".into(),
+                Some("-p p --test b".into())
+            ))
+        );
+        // No failure after it at all (a log cut short): nothing to name it by.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+error: test failed, to rerun pass `-p p --test a`
+     Running tests/b.rs (.target/debug/deps/b-02)
+   Doc-tests p
+error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
+";
+        assert_eq!(
+            read_in(text).went,
+            Some(Went::While(
+                "Running tests/b.rs (.target/debug/deps/b-02)".into(),
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn a_target_is_selected_within_its_package_as_its_line_names_it() {
+        for (header, kind) in [
+            (
+                "Running unittests src/lib.rs (.target/debug/deps/art-1876)",
+                Some("--lib"),
+            ),
+            (
+                "Running unittests src/bin/art.rs (/t/debug/deps/art-4b49)",
+                Some("--bin art"),
+            ),
+            (
+                "Running unittests src/bin/tool/main.rs (t/deps/tool-1)",
+                Some("--bin tool"),
+            ),
+            (
+                "Running unittests src/main.rs (.target/debug/deps/sf_cli-12)",
+                Some("--bin sf_cli"),
+            ),
+            (
+                "Running tests/gate/main.rs (.target/debug/deps/gate-2288)",
+                Some("--test gate"),
+            ),
+            (
+                "Running tests/a_b.rs (.target/debug/deps/a_b-ff)",
+                Some("--test a_b"),
+            ),
+            (
+                "Running benches/speed.rs (.target/release/deps/speed-1)",
+                Some("--bench speed"),
+            ),
+            ("Doc-tests art_checks", Some("--doc")),
+            ("Running examples/x.rs (.target/debug/examples/x-1)", None),
+            ("Running tests/a.rs", None),
+        ] {
+            assert_eq!(target_of(header).as_deref(), kind, "{header}");
+        }
+        for (line, starts) in [
+            ("     Running tests/a.rs (.target/debug/deps/a-01)", true),
+            ("   Doc-tests art", true),
+            ("Running the numbers", false),
+            ("   Doc-tests two words", false),
+            ("   Doc-tests ", false),
+        ] {
+            assert_eq!(header(line).is_some(), starts, "{line}");
         }
     }
 

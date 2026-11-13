@@ -3,11 +3,14 @@
 //! built and tested with its Symphony moved to the candidate. It runs in a scratch copy of the
 //! project's default branch as committed, never in its checkout or on its board: a repository
 //! sharing the checkout's objects, at `NIGHTLY-conciliate/ID` beside the nightly's own checkout,
-//! marked as the nightly's when it is made ([`place::copy_at`]) and refreshed each night with its
-//! build folder kept. Every package of the candidate's workspace is patched in over each git
-//! source the project takes one from (`cargo --config patch…`, so no file of the project changes),
-//! and its packages that depend on one are tested with `cargo test`, with a machine folder of the
-//! run's own holding a copy of the registry, so no test of the project's reaches the machine's.
+//! marked as the nightly's when it is made ([`place::copy_at`]) and refreshed each night. Every
+//! package of the candidate's workspace is patched in over each git source the project takes one
+//! from (`cargo --config patch…`, so no file of the project changes), and its packages that depend
+//! on one are tested with `cargo test`, with a machine folder of the run's own holding a copy of
+//! the registry, so no test of the project's reaches the machine's. It builds in a folder of the
+//! nightly's own in the copy's `.git` ([`place::COPY_TARGET`], kept from night to night), named to
+//! cargo alone (`--target-dir`): the project's own build folder is its tooling's, which its tests
+//! run, and which may empty it while a test runs from it, as a folder no run of that tooling made.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,7 +20,7 @@ use serde_json::Value;
 use super::checks::Step;
 use super::git::{commit, git_until};
 use super::group::{Bound, Failed, output_until};
-use super::place::{self, BUILT, COPY_MARK, Copy};
+use super::place::{self, BUILT, COPY_MARK, COPY_TARGET, Copy};
 use crate::children::command;
 use crate::machine::Registry;
 use crate::project::Project;
@@ -84,11 +87,17 @@ fn make(consumer: &Consumer, scratch: &Path, until: Bound<'_>) -> Result<(), Str
         .map_err(|e| crate::text::os_error(&e, &alternates))
 }
 
+/// Where the conciliation of the copy at `scratch` builds: [`COPY_TARGET`] in its `.git`.
+pub(crate) fn target(scratch: &Path) -> PathBuf {
+    scratch.join(".git").join(COPY_TARGET)
+}
+
 /// Bring the scratch copy at `scratch` to `consumer`'s default branch as committed, by `until`: a
 /// repository of the nightly's sharing its checkout's objects the first time, fetched and reset
-/// later, untracked and ignored files gone but its build folder (`.target/`), which is cleared once
-/// it is [`place::BUILD_KEPT_DAYS`] old at `now`. A folder there that is not the nightly's copy of
-/// it is refused and left as it is. Its commit, and what it noted on the way.
+/// later, every untracked and ignored file gone, the project's own build folder too. Its
+/// conciliation's build folder, in its `.git` ([`target`]), stays, and is cleared once it is
+/// [`place::BUILD_KEPT_DAYS`] old at `now`. A folder there that is not the nightly's copy of it is
+/// refused and left as it is. Its commit, and what it noted on the way.
 pub(crate) fn prepare(
     consumer: &Consumer,
     scratch: &Path,
@@ -108,7 +117,7 @@ pub(crate) fn prepare(
             &["checkout", "--quiet", "--force", "--detach", "FETCH_HEAD"],
             until,
         )?;
-        git_until(scratch, &["clean", "-ffdxq", "-e", "/.target/"], until)?;
+        git_until(scratch, &["clean", "-ffdxq"], until)?;
         commit(scratch, "HEAD")
     };
     let mut noted = Vec::new();
@@ -116,7 +125,7 @@ pub(crate) fn prepare(
         Copy::Ours => match refresh(scratch) {
             Ok(at) => {
                 let stamp = scratch.join(".git").join(BUILT);
-                noted.extend(place::prune_build(&scratch.join(".target"), &stamp, now));
+                noted.extend(place::prune_build(&target(scratch), &stamp, now));
                 return Ok((at, noted));
             }
             Err(error) => {
@@ -237,12 +246,13 @@ fn toml_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// The command testing `plan`'s packages with every package of `candidate` patched in over each
-/// of its sources.
-pub(crate) fn argv(plan: &Plan, candidate: &[(String, PathBuf)]) -> Vec<String> {
-    let mut argv: Vec<String> = ["cargo", "test", "--no-fail-fast"]
+/// The command testing `plan`'s packages in the build folder `target` with every package of
+/// `candidate` patched in over each of its sources.
+pub(crate) fn argv(plan: &Plan, candidate: &[(String, PathBuf)], target: &Path) -> Vec<String> {
+    let mut argv: Vec<String> = ["cargo", "test", "--no-fail-fast", "--target-dir"]
         .map(String::from)
         .to_vec();
+    argv.push(target.to_string_lossy().into_owned());
     for source in &plan.sources {
         for (name, folder) in candidate {
             argv.push("--config".into());
@@ -296,6 +306,14 @@ pub(crate) struct Against<'a> {
 /// source's.
 pub(crate) const REWRITTEN: [&str; 1] = ["Cargo.lock"];
 
+/// What a conciliation's cargo, and so the tests it runs, never inherit from the run: the toolchain
+/// the run's own build chose (the project's pin chooses), and a build folder named for the run's.
+const UNSET: [&str; 3] = [
+    "RUSTUP_TOOLCHAIN",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
+];
+
 /// A project's scratch copy, ready to conciliate.
 pub(crate) struct Prepared {
     /// The check conciliating it: none when the project takes no package of the candidate's from
@@ -324,29 +342,37 @@ pub(crate) fn step(consumer: &Consumer, against: &Against<'_>) -> Result<Prepare
             noted,
         });
     }
-    let argv = argv(&plan, &candidate);
-    let step = Step {
+    Ok(Prepared {
+        step: Ok(check(consumer, against, &at, &plan, &candidate)),
+        at,
+        noted,
+    })
+}
+
+/// The check conciliating `consumer`'s copy, at the commit `at`, by `plan` against the candidate's
+/// packages `candidate`: in the copy, building in its own folder ([`target`]), which is named to
+/// cargo alone, so what the project's tests start builds where the project's own runs build and
+/// never in the conciliation's folder; with the run's machine folder.
+fn check(
+    consumer: &Consumer,
+    against: &Against<'_>,
+    at: &str,
+    plan: &Plan,
+    candidate: &[(String, PathBuf)],
+) -> Step {
+    let scratch = against.scratch;
+    let argv = argv(plan, candidate, &target(scratch));
+    Step {
         name: format!("conciliate-{}", consumer.id),
         command: format!("{} (in {} at {at})", line(&argv), scratch.display()),
         argv,
         cwd: Some(scratch.to_path_buf()),
-        set: vec![
-            (
-                "CARGO_TARGET_DIR".into(),
-                scratch.join(".target").to_string_lossy().into_owned(),
-            ),
-            (
-                "SYMPHONY_MACHINE_DIR".into(),
-                against.machine.to_string_lossy().into_owned(),
-            ),
-        ],
-        unset: vec!["RUSTUP_TOOLCHAIN".into()],
-    };
-    Ok(Prepared {
-        step: Ok(step),
-        at,
-        noted,
-    })
+        set: vec![(
+            "SYMPHONY_MACHINE_DIR".into(),
+            against.machine.to_string_lossy().into_owned(),
+        )],
+        unset: UNSET.map(String::from).to_vec(),
+    }
 }
 
 #[cfg(test)]
@@ -442,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn the_scratch_copy_takes_the_projects_committed_branch_and_keeps_its_build_folder() {
+    fn the_scratch_copy_takes_the_projects_committed_branch_and_keeps_its_own_build_folder() {
         let tree = Tree::new();
         let source = repo(&tree, "source");
         let first = commit_file(&source, "a.txt", "one");
@@ -467,7 +493,19 @@ mod tests {
             "sharing the project's objects"
         );
 
-        tree.write("wt/nightly-conciliate/source/.target/kept", "build");
+        assert_eq!(
+            target(&scratch),
+            scratch.join(".git/symphony-nightly-target"),
+            "the conciliation builds in a folder of the nightly's own, in the copy's .git"
+        );
+        tree.write(
+            "wt/nightly-conciliate/source/.git/symphony-nightly-target/kept",
+            "the conciliation's build",
+        );
+        tree.write(
+            "wt/nightly-conciliate/source/.target/made",
+            "what the project's tests built",
+        );
         tree.write("wt/nightly-conciliate/source/stray.txt", "left by a build");
         tree.write("wt/nightly-conciliate/source/a.txt", "changed in the copy");
         let third = commit_file(&source, "a.txt", "two");
@@ -481,9 +519,13 @@ mod tests {
             "the default branch, not the one checked out"
         );
         assert!(!scratch.join("stray.txt").exists());
+        assert!(
+            !scratch.join(".target").exists(),
+            "the project's own build folder is no build of the nightly's: the copy is its commit"
+        );
         assert_eq!(
-            fs::read_to_string(scratch.join(".target/kept")).unwrap(),
-            "build"
+            fs::read_to_string(target(&scratch).join("kept")).unwrap(),
+            "the conciliation's build"
         );
         assert_eq!(
             git_ok(&source, &["status", "--porcelain"]),
@@ -494,12 +536,13 @@ mod tests {
         // A week of builds later the build folder goes.
         let (at, noted) = prepare(&consumer, &scratch, soon(), NOW + 8.0 * DAY).unwrap();
         assert_eq!(at, third);
-        assert!(!scratch.join(".target").exists());
+        assert!(!target(&scratch).exists());
+        assert!(scratch.join(".git").join(COPY_MARK).is_file());
         assert_eq!(
             noted,
             [format!(
                 "cleared {}, built on for 7 days or more",
-                scratch.join(".target").display()
+                target(&scratch).display()
             )]
         );
 
@@ -652,11 +695,17 @@ mod tests {
             }
         );
         assert_eq!(
-            argv(&planned, &candidate),
+            argv(
+                &planned,
+                &candidate,
+                Path::new("/copy/.git/symphony-nightly-target")
+            ),
             [
                 "cargo",
                 "test",
                 "--no-fail-fast",
+                "--target-dir",
+                "/copy/.git/symphony-nightly-target",
                 "--config",
                 r#"patch."https://github.com/o/symphony"."symphony".path="/c/crates/symphony""#,
                 "--config",
@@ -674,6 +723,71 @@ mod tests {
         assert_eq!(
             plan(&metadata_of(json!([]), &[]), &candidate),
             Plan::default()
+        );
+    }
+
+    #[test]
+    fn a_conciliation_builds_in_its_own_folder_named_to_cargo_alone() {
+        let consumer = Consumer {
+            id: "star-foundry".into(),
+            root: PathBuf::from("/p/star-foundry"),
+            branch: "main".into(),
+        };
+        let scratch = Path::new("/wt/nightly-conciliate/star-foundry");
+        let against = Against {
+            scratch,
+            checkout: Path::new("/wt/nightly"),
+            machine: Path::new("/logs/run/machine"),
+            until: soon(),
+            now: NOW,
+        };
+        let plan = Plan {
+            sources: vec!["https://h/o/symphony".into()],
+            packages: vec!["host".into()],
+        };
+        let candidate = vec![(
+            "symphony".to_string(),
+            PathBuf::from("/wt/nightly/crates/s"),
+        )];
+        let step = check(&consumer, &against, "1a2b", &plan, &candidate);
+        assert_eq!(step.name, "conciliate-star-foundry");
+        assert_eq!(step.cwd.as_deref(), Some(scratch));
+        assert_eq!(
+            step.argv[..5],
+            [
+                "cargo",
+                "test",
+                "--no-fail-fast",
+                "--target-dir",
+                "/wt/nightly-conciliate/star-foundry/.git/symphony-nightly-target"
+            ]
+        );
+        assert!(
+            step.command.starts_with(
+                "cargo test --no-fail-fast --target-dir \
+                 /wt/nightly-conciliate/star-foundry/.git/symphony-nightly-target --config "
+            ) && step
+                .command
+                .ends_with(" -p host (in /wt/nightly-conciliate/star-foundry at 1a2b)"),
+            "{}",
+            step.command
+        );
+        // No variable names a build folder to what its tests start, whatever the run inherited:
+        // those build where the project's own runs build.
+        assert_eq!(
+            step.set,
+            [(
+                "SYMPHONY_MACHINE_DIR".to_string(),
+                "/logs/run/machine".to_string()
+            )]
+        );
+        assert_eq!(
+            step.unset,
+            [
+                "RUSTUP_TOOLCHAIN",
+                "CARGO_TARGET_DIR",
+                "CARGO_BUILD_TARGET_DIR"
+            ]
         );
     }
 

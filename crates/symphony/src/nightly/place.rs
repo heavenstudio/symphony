@@ -1,9 +1,10 @@
 //! Where a run works, and what it may take over there (docs/RELEASES.md). Its checkout is a
 //! worktree of the repository that the nightly made, locked with [`LOCK_REASON`] and marked in its
 //! admin folder with its real path ([`MARK`]); its conciliation copies are clones it made, marked in
-//! their `.git` with the project they copy ([`COPY_MARK`]). Each is outside the main checkout and
-//! every other worktree, and holds none. Anything else found in their place, a link included, is
-//! refused and left exactly as it is. A build folder it keeps is cleared once it is older than
+//! their `.git` with the project they copy ([`COPY_MARK`]), where each keeps the build folder its
+//! conciliation builds in ([`COPY_TARGET`]). Each is outside the main checkout and every other
+//! worktree, and holds none. Anything else found in their place, a link included, is refused and
+//! left exactly as it is. A build folder it keeps is cleared once it is older than
 //! [`BUILD_KEPT_DAYS`].
 
 use std::fs;
@@ -19,6 +20,11 @@ pub(crate) const LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELE
 const MARK: &str = "symphony-nightly";
 /// The marker in a copy's `.git`: the real path of the project it copies.
 pub(crate) const COPY_MARK: &str = "symphony-nightly-copy";
+/// The build folder a copy's conciliation builds in, in the copy's `.git`: the nightly's own. A
+/// project's own build folder (its `.target/`) is its tooling's, which may empty it, seed it or
+/// build in it from what its tests start, and the board's sweep reaches no copy, which is no
+/// worktree; nothing but the conciliation's cargo builds here.
+pub(crate) const COPY_TARGET: &str = "symphony-nightly-target";
 /// When a build folder the nightly keeps was last cleared, beside the folder's marker.
 pub(crate) const BUILT: &str = "symphony-nightly-built";
 /// The days a build folder the nightly keeps is built on incrementally before it is cleared.

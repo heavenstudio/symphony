@@ -143,8 +143,12 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     assert_eq!(conciliated["name"], "conciliate-consumer");
     let command = conciliated["command"].as_str().unwrap();
     assert!(
-        command.starts_with("cargo test --no-fail-fast --config 'patch."),
+        command.starts_with("cargo test --no-fail-fast --target-dir "),
         "{command}"
+    );
+    assert!(
+        command.contains("/.git/symphony-nightly-target --config 'patch."),
+        "it builds in the copy's own build folder, named to cargo: {command}"
     );
     assert!(
         command.contains(&format!(
@@ -198,6 +202,122 @@ fn a_project_the_machine_serves_is_built_and_tested_against_the_candidate() {
     );
     assert_eq!(git(&consumer, &["rev-parse", "HEAD"]), consumer_head);
     assert_eq!(git(&consumer, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn a_project_whose_tooling_empties_its_build_folder_is_conciliated_in_the_nightlys_own() {
+    let fixture = Fixture::new();
+    symphony_crate(&fixture, 42);
+    fixture.commit("the Symphony's crate");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let manifest = format!(
+        "[package]\nname = \"consumer-host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nfixture-core = {{ git = \"file://{}\", branch = \"main\" }}\n",
+        fixture.origin.display()
+    );
+    // Its first test runs its own tooling, which empties the project's build folder (`.target/`)
+    // and keeps a record of its own there, as Star Foundry's cargo wrapper does in a tree it has no
+    // record of; the test after it runs from the build. Neither is told where the build is.
+    let tooling = "#[test]\nfn its_tooling_empties_the_projects_build_folder() {\n    \
+                   let folder = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        \
+                   .join(\"../.target\");\n    \
+                   let _ = std::fs::remove_dir_all(&folder);\n    \
+                   std::fs::create_dir_all(&folder).unwrap();\n    \
+                   std::fs::write(folder.join(\"tree\"), \"its own\\n\").unwrap();\n    \
+                   assert_eq!(std::env::var_os(\"CARGO_TARGET_DIR\"), None);\n    \
+                   assert_eq!(std::env::var_os(\"CARGO_BUILD_TARGET_DIR\"), None);\n}\n";
+    let after = "#[test]\nfn the_symphony_answers_after_it() {\n    \
+                 assert_eq!(fixture_core::answer(), 42);\n}\n";
+    let toolchain = toolchain();
+    let root = project(
+        &fixture,
+        "consumer",
+        &[
+            ("rust-toolchain.toml", toolchain.as_str()),
+            (
+                "symphony.toml",
+                "[project]\nid = \"consumer\"\n\n[plugins]\ncrates = [\"consumer-plugin\"]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"host\"]\nresolver = \"2\"\n",
+            ),
+            ("host/Cargo.toml", manifest.as_str()),
+            ("host/src/lib.rs", ""),
+            ("host/tests/a_tooling.rs", tooling),
+            ("host/tests/b_after.rs", after),
+        ],
+    );
+    register(&fixture, &[("consumer", &root)]);
+    let home = fixture.root.join("cargo-home");
+    let cargo_home = home.to_string_lossy().into_owned();
+    // A build folder the caller names is the caller's, never the conciliation's.
+    let elsewhere = fixture.root.join("callers-target");
+    let elsewhere_path = elsewhere.to_string_lossy().into_owned();
+    let extra = [
+        ("CARGO_HOME", cargo_home.as_str()),
+        ("CARGO_BUILD_TARGET_DIR", elsewhere_path.as_str()),
+    ];
+
+    let (code, out, err) = fixture.nightly_with(NOW, &["--check", CHECK], &extra);
+    let run = fixture.runs().last().unwrap().clone();
+    let conciliated = &run["checks"][1];
+    let log = fs::read_to_string(conciliated["log"].as_str().unwrap()).unwrap_or_default();
+    assert_eq!(code, 0, "{out}{err}\n{log}");
+    assert!(
+        out.contains("nightly: conciliate-consumer green (exit 0"),
+        "{out}"
+    );
+    for test in [
+        "its_tooling_empties_the_projects_build_folder",
+        "the_symphony_answers_after_it",
+    ] {
+        assert!(log.contains(&format!("test {test} ... ok")), "{log}");
+    }
+    let copy = fixture.root.join("wt/nightly-conciliate/consumer");
+    assert!(
+        copy.join(".git/symphony-nightly-target/debug").is_dir(),
+        "it built in the copy's own build folder"
+    );
+    assert_eq!(
+        fs::read_to_string(copy.join(".target/tree")).unwrap(),
+        "its own\n",
+        "the project's build folder is its tooling's"
+    );
+    assert!(!elsewhere.exists(), "the caller's build folder is not used");
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+
+    // Something empties the build cargo was told while the tests run: the targets after it found
+    // their files gone, and the red says so, an environment failure, not a failed test.
+    let emptying = "#[test]\nfn something_empties_the_build() {\n    \
+                    let deps = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\"))\n        \
+                    .join(\"../.git/symphony-nightly-target/debug/deps\");\n    \
+                    std::fs::remove_dir_all(&deps).unwrap();\n}\n";
+    fs::write(root.join("host/tests/a_tooling.rs"), emptying).unwrap();
+    git(
+        &root,
+        &["commit", "-q", "-am", "a test that empties the build"],
+    );
+    fixture.commit("a night later");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let (code, out, err) = fixture.nightly_with(NOW + 3600.0, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("nightly: conciliate-consumer red (exit 101"),
+        "{out}"
+    );
+    let body = &fixture.reds()["tests/nightly-red-conciliate-consumer"].body;
+    for said in [
+        "An environment failure, not a failed test: ",
+        "`-p consumer-host --test b_after`",
+        "/.git/symphony-nightly-target/debug/deps/b_after-",
+        "They went while `Running tests/a_tooling.rs (",
+        "Its build folder, ",
+        "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+         test's to rerun, as each failed target found files of its build gone (above).",
+    ] {
+        assert!(body.contains(said), "{said:?} in:\n{body}");
+    }
 }
 
 #[test]
@@ -261,11 +381,11 @@ fn a_copy_its_conciliation_left_changed_or_in_use_is_never_released() {
     );
     let copy = fixture.root.join("wt/nightly-conciliate/consumer");
     let at = git(&copy, &["rev-parse", "HEAD"]);
-    // Its build folder and the lock its patched build wrote are passed over; what its test left
-    // is not.
+    // The lock its patched build wrote is passed over, its build being in the copy's `.git`; what
+    // its test left is not.
     assert_eq!(
         git(&copy, &["status", "--porcelain"]),
-        "?? .target/\n?? Cargo.lock\n?? host/left.txt"
+        "?? Cargo.lock\n?? host/left.txt"
     );
     assert!(
         err.contains(&format!(

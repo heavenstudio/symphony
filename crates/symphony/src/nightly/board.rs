@@ -9,7 +9,9 @@
 //! the project's tests and checks, a fresh reviewer's any other). A stop the owner clears is filed
 //! with no fast-fix mark, since nothing lands for it. Its text says what failed, the commands that
 //! rerun each failure alone ([`super::rerun`]: each failed test, else its own command, a step's
-//! included), its log and the machine's load when it ended, a step's as the step's list says it. A
+//! included), its log and the machine's load when it ended, a step's as the step's list says it,
+//! and, when files its own build had made went while it ran, that those failures are the
+//! environment's ([`super::gone`]: while which target, and what its build folder holds now). A
 //! red step filed while its check's own red is open names that one, which hears of it. A check
 //! red again while its task is open gets a line on that task; a green one closes it, when the
 //! candidate holds the commit it was red on (an out-of-cycle release of an older commit leaves it
@@ -306,17 +308,31 @@ for a package's own tests), the one its last lines name, never the whole run aga
 fn alone(ran: &Ran, night: &Night<'_>) -> String {
     let verify = ran.command == super::VERIFY.1;
     let listed = !ran.steps.is_empty();
-    let log = if listed {
-        super::rerun::Log::default()
-    } else {
-        super::rerun::read(&ran.log)
-    };
+    let log = log_of(ran);
     let each = super::rerun::arguments(&log.targets);
     let place = if conciliates(ran) {
         "in its scratch copy".to_string()
     } else {
         format!("in a checkout of {}", short(night.commit))
     };
+    if each.is_empty() && log.targets.iter().any(|failed| !failed.gone.is_empty()) {
+        let went = match &log.went {
+            Some(super::rerun::Went::While(header, selected)) => format!(
+                "the target they went while, {}",
+                selected.as_ref().map_or_else(
+                    || format!("which `{header}` names"),
+                    |args| format!("`{args}`")
+                )
+            ),
+            _ => "its build".into(),
+        };
+        return format!(
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+             test's to rerun, as each failed target found files of its build gone (above). What \
+             removes them shows in a run of {went}, {place}, with a look at its build folder \
+             after it."
+        );
+    }
     if each.is_empty() {
         let named = (verify && !listed)
             .then(|| super::rerun::step(&log.recipes))
@@ -402,9 +418,28 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
-/// A red task's body: what is red, how it ended, its log, the load it ended under, the commands
-/// that rerun its failures alone, the commits since the last green run, who fixes it, how its fix
-/// is approved, the open red `beside` it ([`beside`]) and what closes it.
+/// What a red check's own log says failed: none for a check that listed its steps, whose log is
+/// its own lines and its steps' tails, each step being read from its own.
+fn log_of(ran: &Ran) -> super::rerun::Log {
+    if ran.steps.is_empty() {
+        super::rerun::read(&ran.log)
+    } else {
+        super::rerun::Log::default()
+    }
+}
+
+/// What a red task says of the files of its build its targets found gone ([`super::gone`]), a
+/// paragraph of its own; nothing when none did.
+fn environment(ran: &Ran) -> String {
+    super::gone::said(&log_of(ran))
+        .map(|said| format!("{said}\n\n"))
+        .unwrap_or_default()
+}
+
+/// A red task's body: what is red, how it ended, its log, the load it ended under, what of it is
+/// the environment's (files of its build gone while it ran), the commands that rerun its failures
+/// alone, the commits since the last green run, who fixes it, how its fix is approved, the open red
+/// `beside` it ([`beside`]) and what closes it.
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
         "The Symphony nightly is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
@@ -412,6 +447,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          Log: {log}\n\
          {load}\n\n\
          {tail}\n\n\
+         {environment}\
          {alone}\n\n\
          {since}\n\n\
          Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
@@ -429,6 +465,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
         log = ran.log.display(),
         load = load(ran),
         tail = quoted_tail(ran),
+        environment = environment(ran),
         alone = alone(ran, night),
         since = since(night),
         key = key(&ran.name),
@@ -438,13 +475,14 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
 /// The line a red task that is still open gets on a later red night.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}{}\n\n{}",
         short(night.commit),
         night.id,
         night.when,
         ran.ended(),
         ran.log.display(),
         load(ran),
+        environment(ran),
         alone(ran, night),
         quoted_tail(ran)
     )
@@ -1874,6 +1912,142 @@ mod tests {
             !conciliates(&ran(CONCILIATE, 1)),
             "the registry's read is no project's"
         );
+    }
+
+    /// A conciliation's log, cut, whose project's own test (`dependency_boundary`) emptied its
+    /// build folder `target` while it ran: the targets after it found their executable gone, or a
+    /// build script's output. When `failed`, one before it failed in a test of its own; else that
+    /// one ran after it and found its executable gone too.
+    fn emptied_log(
+        tree: &crate::test_tree::Tree,
+        target: &std::path::Path,
+        failed: bool,
+    ) -> PathBuf {
+        let target = target.display();
+        let unexecuted = |name: &str| {
+            format!(
+                "     Running tests/{name}.rs (.target/debug/deps/{name}-c2)\n\
+                 error: test failed, to rerun pass `-p art --test {name}`\n\n\
+                 Caused by:\n  could not execute process `{target}/debug/deps/{name}-c2` (never \
+                 executed)\n\nCaused by:\n  No such file or directory (os error 2)\n"
+            )
+        };
+        let boundary = "     Running tests/dependency_boundary.rs \
+                        (.target/debug/deps/dependency_boundary-c5)\n\
+                        test wrappers_build_without_the_symphony_app_or_board ... ok\n";
+        let (before, after) = if failed {
+            (
+                "     Running tests/golden_card.rs (.target/debug/deps/golden_card-87ae)\n\
+                 test shared_app_discovers_branch_card ... FAILED\n\
+                 error: test failed, to rerun pass `-p art --test golden_card`\n"
+                    .to_string(),
+                String::new(),
+            )
+        } else {
+            (String::new(), unexecuted("golden_card"))
+        };
+        tree.write(
+            "conciliate-star-foundry.log",
+            &format!(
+                "{before}{boundary}{after}{failure_capture}   Doc-tests content_index\n\
+                 error: couldn't find file `{target}/debug/build/content-index-c3/out/index.rs`\n\
+                 error: doctest failed, to rerun pass `-p art --doc`\n",
+                failure_capture = unexecuted("failure_capture"),
+            ),
+        )
+    }
+
+    #[test]
+    fn a_conciliation_whose_build_lost_files_is_filed_as_the_environment_failure_it_is() {
+        let tree = crate::test_tree::Tree::new();
+        let target = tree.path("copies/sf/.target");
+        tree.write("copies/sf/.target/sf-tree", "the tree that emptied it");
+        let conciliation = Ran {
+            command: "cargo test --no-fail-fast --target-dir /copies/sf/.git/t -p art (in \
+                      /copies/sf at 1a2b)"
+                .into(),
+            log: emptied_log(&tree, &target, true),
+            ..ran("conciliate-star-foundry", 101)
+        };
+        let board = Fake::default();
+        report(&board, &night(&[]), std::slice::from_ref(&conciliation));
+        let filed = board
+            .thread("tests/nightly-red-conciliate-star-foundry")
+            .join("\n");
+        let paragraph = format!(
+            "\n\nAn environment failure, not a failed test: 2 of its failed targets found files \
+             its own build had made gone, and never ran or never compiled for that (`-p art --test \
+             failure_capture` and `-p art --doc`): `{target}/debug/deps/failure_capture-c2` and \
+             `{target}/debug/build/content-index-c3/out/index.rs`. They went while `Running \
+             tests/dependency_boundary.rs (.target/debug/deps/dependency_boundary-c5)` (`-p art \
+             --test dependency_boundary`) ran, the last target cargo started before the first \
+             that found one gone: what removed them ran then, that target or something it \
+             started, or something outside the run. Its build folder, {target}, holds now: \
+             `sf-tree` (made ",
+            target = target.display()
+        );
+        assert!(filed.contains(&paragraph), "{paragraph:?} in:\n{filed}");
+        assert!(
+            filed.contains(
+                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`), the \
+                 command above, in its scratch copy, with each of these in place of its `-p` \
+                 packages, as its log names each failure (1):\n- `-p art --test golden_card -- \
+                 shared_app_discovers_branch_card --exact`\n\n"
+            ),
+            "the targets that found files gone are no failures to rerun:\n{filed}"
+        );
+
+        // Red again with every target failed so: the environment's again, and no rerun but the
+        // target they went while, with a look at the build folder; with no failure before it the
+        // log says no package for it, so its line names it.
+        let gone = Ran {
+            log: emptied_log(&tree, &target, false),
+            ..conciliation
+        };
+        report(&board, &night(&[]), std::slice::from_ref(&gone));
+        let again = &board.thread("tests/nightly-red-conciliate-star-foundry")[1];
+        assert!(
+            again.contains(
+                "\n\nAn environment failure, not a failed test: 3 of its failed targets found"
+            ),
+            "{again}"
+        );
+        assert!(
+            again.contains(
+                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`): none \
+                 of its failures is a test's to rerun, as each failed target found files of its \
+                 build gone (above). What removes them shows in a run of the target they went \
+                 while, which `Running tests/dependency_boundary.rs \
+                 (.target/debug/deps/dependency_boundary-c5)` names, in its scratch copy, with a \
+                 look at its build folder after it.\n\n"
+            ),
+            "{again}"
+        );
+
+        // Gone before any target ran, in a check of main's own: its build is what to rerun.
+        let unbuilt = Ran {
+            command: "tools/cargo.sh test --workspace --locked --no-fail-fast".into(),
+            log: tree.write(
+                "unbuilt.log",
+                "error: extern location for a does not exist: /t/debug/deps/liba-1.rlib\n\
+                 error: test failed, to rerun pass `-p symphony --lib`\n",
+            ),
+            ..ran("verify/tests", 101)
+        };
+        assert_eq!(
+            alone(&unbuilt, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+             test's to rerun, as each failed target found files of its build gone (above). What \
+             removes them shows in a run of its build, in a checkout of cafe01234567, with a look \
+             at its build folder after it."
+        );
+        assert!(
+            environment(&unbuilt).ends_with("Its build folder, /t, is gone.\n\n"),
+            "{}",
+            environment(&unbuilt)
+        );
+        // A check whose targets failed by themselves says nothing of the environment.
+        assert_eq!(environment(&ran("verify", 101)), "");
     }
 
     #[test]
