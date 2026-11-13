@@ -3,10 +3,19 @@
 //! plugin (it installs none: `symphony::plugins::install`). So it links none of the SQLite a
 //! command needs to tell a board a move to SurrealDB froze (`symphony_board::cutover::frozen`), and
 //! none of the loopback that measures a compiled plugin's calls through the protocol's JSON
-//! (`symphony::plugins::measure`): the size each would add is the binary's budget's to hold
-//! (docs/CHECKS.md, "Size budgets").
+//! (`symphony::plugins::measure`). It checks no JSON Schema (`serve` refuses `validate`: a schema
+//! check is a library call, `symphony::schema::validate`), so it links none of the validator,
+//! which would add a fifth to its size. And on macOS it exports no symbol, as no other code loads
+//! it.
+//! The size each would add is the binary's budget's to hold (docs/CHECKS.md, "Size budgets").
 
+use serde_json::json;
 use symphony::plugins::measure::READ_AS_ANOTHER;
+
+// Whether a Mach-O binary exports a symbol, read from its export trie.
+#[cfg(target_os = "macos")]
+#[path = "../../../tools/test-support/macho_exports.rs"]
+mod macho_exports;
 
 /// The header every SQLite database file starts with: a string of SQLite's own C code, in any
 /// binary that links it.
@@ -35,5 +44,54 @@ fn the_binary_links_no_plugin_loopback() {
         !holds(&binary(), READ_AS_ANOTHER.as_bytes()),
         "the symphony binary links the plugins' loopback: something it runs names \
          `symphony::plugins::measure::measured` other than through `install`"
+    );
+}
+
+/// The text looked for is a refusal the validator writes (`unsupported keyword(s): `), taken from
+/// its answer at run time rather than written here, so this test's own executable, which calls the
+/// validator, holds it only by linking it, and so shows the text is there to find where it is.
+#[test]
+fn the_binary_links_no_schema_validator() {
+    let refused = symphony::schema::validate(&json!(1), &json!({"contentSchema": {}}))
+        .expect_err("the validator refuses contentSchema");
+    let text = refused
+        .0
+        .split("contentSchema")
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        text.len() >= 16,
+        "the validator's refusal no longer opens with a text of its own: {refused:?}"
+    );
+    let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+    assert!(
+        holds(&this, text.as_bytes()),
+        "this test's executable, which calls the validator, does not hold {text:?}: the text this \
+         test looks for is no longer the validator's"
+    );
+    assert!(
+        !holds(&binary(), text.as_bytes()),
+        "the symphony binary links the JSON Schema validator: something it runs reaches \
+         `symphony::schema` (`serve` refuses `validate`; a schema check is a library call)"
+    );
+}
+
+/// On macOS the binary links with `-no_exported_symbols` (crates/symphony/build.rs): no other code
+/// loads it, so the export trie a link writes by default, a name for each global symbol, would
+/// serve only a debugger reading a stripped build. This test's own executable, linked without it,
+/// exports, and so shows the reading finds a trie where there is one.
+#[test]
+#[cfg(target_os = "macos")]
+fn the_binary_exports_no_symbols() {
+    let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+    assert!(
+        macho_exports::exports_any(&this),
+        "this test's executable exports nothing: the reading no longer finds an export trie"
+    );
+    assert!(
+        !macho_exports::exports_any(&binary()),
+        "the symphony binary exports symbols: its link lost `-Wl,-no_exported_symbols` \
+         (crates/symphony/build.rs)"
     );
 }

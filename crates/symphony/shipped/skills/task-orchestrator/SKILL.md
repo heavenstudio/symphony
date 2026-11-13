@@ -44,8 +44,8 @@ and after). A reviewer reruns those tests, never the suite, judges whether the
 evidence is good enough for the change's risk, and records its approval as the
 task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
 The full verification runs on the project's main line on its own schedule, such
-as a nightly, and a red run there is filed as a task of its own. The project's
-guidance names its focused checks, its stamp and its nightly.
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
 
 
 Load the tasks skill and the project's AGENTS.md first. Follow its staffing limits,
@@ -67,11 +67,22 @@ product-specific policy or taste data.
 3. Act on the PULL digest as well as events. Pushes say only what changed; at each
    decision point (resuming, before staffing, after a verdict or landing) run
    just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
-   verdict nobody received. Staff a red (tests/main-red-*, tests/nightly-red-*) before
-   anything else. One filed as a fast fix is yours to approve when its fix changes no
-   test or check, the failing tests unchanged and green at its tip; the land refuses
-   your approve on a fix that changes a test, a check, a budget or a run step ([land]
-   check_paths), and you staff a fresh reviewer for it. Staff ready work, restore
+   verdict nobody received. Staff a red (tests/main-red-*, tests/release-red-*,
+   tests/nightly-red-*) before anything else. One filed as a fast fix is yours to
+   approve when its fix changes no test or check, the failing tests unchanged and
+   green at its tip; the land refuses your approve on a fix that changes a test, a
+   check, a budget or a run step ([land] check_paths), and you staff a fresh reviewer
+   for it. A red whose release run held its commit as the release candidate says so in
+   its text: brief its executor to start from the local branch release-candidate, never
+   main, and to merge no main before its approve; its own land moves the candidate, and
+   the land that answers the last red starts its rerun. Your approve of its fast fix
+   names the fix's full tip, the commit the candidate moves to. Rerunning or dropping a
+   candidate by hand is an orchestrator's retry the project's guidance names. A red
+   whose fix landed with another red's is closed as covered by that landing, which
+   answers it once that land moved the candidate; closed as covered by any other
+   landing, it drops the candidate, its fix on main and not in it. A red fixed outside
+   the repository is answered by cancelling its task, saying where; an approved one
+   still waits for its land. Staff ready work, restore
    orphaned work and arrange independent reviews. File gaps between approved docs and
    implementation only with evidence, complete acceptance and no existing task. Use
    the create-task skill.

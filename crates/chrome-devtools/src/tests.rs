@@ -250,6 +250,8 @@ fn browser_leash() {
         // The page under test runs at foreground priority however Chrome counts its tab.
         assert!(args.contains(&"--disable-renderer-backgrounding".into()));
         assert!(args.contains(&"--disable-backgrounding-occluded-windows".into()));
+        // No updater, whose wake leaves the browser's group and outlives the leash.
+        assert!(args.contains(&"--disable-updater-scheduler".into()));
         // A same-site visit keeps its frame, in the one list of features turned off Chrome reads.
         let disabled: Vec<_> = args
             .iter()

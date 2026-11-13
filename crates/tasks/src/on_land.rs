@@ -7,8 +7,11 @@
 //! `sf-tasks/on-land/STAMP-SLUG.log` in the git common dir (the newest [`KEPT_STARTS`] kept), and a
 //! line naming that file, or why nothing started, to `sf-tasks/on-land.log` (set aside as
 //! `on-land.log.1` past [`LOG_MOST`] bytes). The Symphony's own project names there the build of
-//! `symphony` its main checkout links, `nightly --due`: the release cadence counted in landings,
-//! which builds nothing unless a night is due (docs/RELEASES.md). A board `TASKS_SERVER` names (a
+//! `symphony` its main checkout links, as `nightly --due`: the release cadence counted in
+//! landings, which builds nothing unless a run is due. It is the command's name before the rename
+//! to `symphony release`, which a build older than the rename knows and a newer one runs as
+//! `release --due`, so a land run while the main checkout links either still counts
+//! (docs/RELEASES.md, the rename). A board `TASKS_SERVER` names (a
 //! test's) starts none unless `TASKS_ON_LAND=on`; `TASKS_ON_LAND=off` starts none anywhere.
 
 use crate::cli::Env;
@@ -169,9 +172,11 @@ fn output(starts: &Path, slug: &str, at: f64) -> std::io::Result<PathBuf> {
 }
 
 /// `args` in a session of its own, from the main checkout `main`, with `env`'s environment but the
-/// lander's session ([`sys::SESSION_VARS`]), the task the land recorded its builds for and any
-/// recorded run it ran in, its output to a file of its own the log names: what it said within
-/// [`SAYS`]. A thread reaps it when it ends later. A program that cannot start starts nothing.
+/// lander's session ([`sys::SESSION_VARS`]), the marks of how the land was asked for
+/// ([`sys::MARKS`]: a release run's checks are no command an agent ran unasked, and it lands
+/// nothing), the task the land recorded its builds for and any recorded run it ran in, its output
+/// to a file of its own the log names: what it said within [`SAYS`]. A thread reaps it when it
+/// ends later. A program that cannot start starts nothing.
 fn spawn(
     env: &Env,
     main: &Path,
@@ -197,8 +202,7 @@ fn spawn(
     command
         .env_remove(PARENT_VAR)
         .env_remove(PIPELINE_VAR)
-        .env_remove("TASKS_TASK")
-        .env_remove("SYMPHONY_LAND");
+        .env_remove("TASKS_TASK");
     // The land's children name no repository to git but the one they run in.
     for name in crate::land::GIT_VARS {
         command.env_remove(name);
@@ -356,6 +360,50 @@ mod tests {
             log.contains("] tools/x landed at abc123; sh -c echo ran")
                 && log.ends_with(&format!(" (its lines: {})\n", heard.output.display())),
             "{log}"
+        );
+        fs::remove_dir_all(&main).unwrap();
+    }
+
+    /// `just land` is `just tasks land` under the `land` recipe's mark, and the `tasks` recipe's
+    /// unasked mark with it; the command starts with neither, nor the lander's session, task,
+    /// recorded run or git repository, and with the rest of its environment.
+    #[test]
+    fn the_command_runs_without_the_marks_of_how_the_land_was_asked_for() {
+        let main = scratch("unmarked");
+        let common = main.join(".git");
+        let names = [
+            crate::confine::MARKER,
+            crate::land::RECIPE,
+            "TASKS_SESSION",
+            "TASKS_TASK",
+            PARENT_VAR,
+            PIPELINE_VAR,
+            "GIT_DIR",
+            "SF_ON_LAND_KEPT",
+        ];
+        let said: Vec<String> = (names.iter())
+            .map(|name| format!("{name}=${{{name}-unset}}"))
+            .collect();
+        fs::write(
+            main.join(MANIFEST),
+            format!(
+                "[board]\non_land = [\"sh\", \"-c\", \"echo {}\"]\n",
+                said.join(" ")
+            ),
+        )
+        .unwrap();
+        let mut pairs = vec![("PATH", "/usr/bin:/bin")];
+        pairs.extend(names.iter().map(|name| (*name, "1")));
+        let (Started::Command(_), heard) = trigger(&env(&pairs), &main, &common, "tools/x", "abc")
+        else {
+            panic!("the command starts");
+        };
+        assert_eq!(
+            holding(&heard.output, "SF_ON_LAND_KEPT="),
+            format!(
+                "SYMPHONY_UNASKED=unset SYMPHONY_LAND=unset TASKS_SESSION=unset TASKS_TASK=unset \
+                 {PARENT_VAR}=unset {PIPELINE_VAR}=unset GIT_DIR=unset SF_ON_LAND_KEPT=1\n"
+            )
         );
         fs::remove_dir_all(&main).unwrap();
     }

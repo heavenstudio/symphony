@@ -1105,11 +1105,14 @@ fn hold(
             Err(TryLockError::Error(e)) => return Err(at(&path, &e)),
         }
     }
+    // Named in place, as the lock is the file's, in one write: a land waiting meanwhile reads it
+    // empty ("another land") or whole.
     let held = sys::FileLock(file);
+    let name = format!("the land of {slug} (pid {})", std::process::id());
     let mut file = &held.0;
     let _ = file.set_len(0);
     let _ = file.seek(SeekFrom::Start(0));
-    let _ = write!(file, "the land of {slug} (pid {})", std::process::id());
+    let _ = file.write_all(name.as_bytes());
     Ok(held)
 }
 
@@ -1858,8 +1861,8 @@ impl Landing<'_> {
             self.say(&format!("land {slug}: {said}"));
         }
         // The project's `[board] on_land`, detached, and what it said at once: the release
-        // cadence, here (docs/RELEASES.md). It starts after the regenerator, so a night it starts
-        // finds that one started (`symphony nightly` waits for it).
+        // cadence, here (docs/RELEASES.md). It starts after the regenerator, so a run it starts
+        // finds that one started (`symphony release` waits for it).
         if let Ok(common) = crate::git::common_dir(&self.main) {
             match crate::on_land::trigger(self.env, &self.main, &common, slug, merge) {
                 (Started::Command(args), heard) => {
@@ -2043,8 +2046,10 @@ impl Landing<'_> {
         } else {
             dir.join(path)
         };
+        // No mark it was asked for by goes with it (`sys::MARKS`): a check or a generator is the
+        // project's own command, which writes where the project says and lands nothing.
         let mut child = sys::command_with(&program, &self.env.vars);
-        for name in GIT_VARS.iter().chain([&RECIPE]) {
+        for name in GIT_VARS {
             child.env_remove(name);
         }
         // What the land runs is the task's, recorded for it and the session landing it, in a group
@@ -2509,12 +2514,12 @@ impl Landing<'_> {
     }
 
     /// `git ARGS` in the main checkout (a fetch, a push, the fast-forward), by the caller's
-    /// environment (its `PATH`, its keys, the filters' programs) less git's repository variables,
-    /// never asking for a password, in a process group of its own, which its timeout ends whole
-    /// and no terminal's signal reaches.
+    /// environment (its `PATH`, its keys, the filters' programs) less git's repository variables
+    /// and the marks the land was asked for by (`sys::MARKS`), never asking for a password, in a
+    /// process group of its own, which its timeout ends whole and no terminal's signal reaches.
     fn main_git(&self, args: &[&str]) -> sys::Command {
         let mut command = sys::command_with("git", &self.env.vars);
-        for name in GIT_VARS.iter().chain([&RECIPE]) {
+        for name in GIT_VARS {
             command.env_remove(name);
         }
         command

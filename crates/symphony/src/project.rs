@@ -205,21 +205,36 @@ impl Default for Land {
     }
 }
 
-/// When the Symphony's own nightly (`symphony nightly`, docs/RELEASES.md) releases besides each night,
-/// and what a green release does then.
+/// When the Symphony's own release run (`symphony release`, docs/RELEASES.md) releases besides each
+/// day's, and what a green release does then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {
     /// A run on main's tip starts once this many landings reached the default branch since the
-    /// last release or the last run that checked something (`just nightly --due`); 0 starts none.
+    /// last release or the last run that checked something (`just release --due`); 0 starts none.
     pub every_landings: u32,
     /// Whether a green release refreshes the machine: each consuming project's pin and board,
     /// and the shared server through its own reload.
     pub refresh: bool,
+    /// How many reruns of a release candidate may come back red before it is dropped and main's
+    /// tip is run again; 0 holds no candidate.
+    pub candidate_reruns: u32,
+    /// How many hours a release candidate is held, from when it was first judged, before it is
+    /// dropped; 0 holds no candidate.
+    pub candidate_hours: u32,
 }
 
 impl Releases {
     /// The landings a release run waits for unless the project says: the owner's 20.
     pub const EVERY_LANDINGS: u32 = 20;
+    /// The red reruns a release candidate may take unless the project says.
+    pub const CANDIDATE_RERUNS: u32 = 3;
+    /// The hours a release candidate is held unless the project says.
+    pub const CANDIDATE_HOURS: u32 = 24;
+
+    /// Whether a red run holds its commit as the release candidate: neither bound is 0.
+    pub fn holds_candidates(&self) -> bool {
+        self.candidate_reruns > 0 && self.candidate_hours > 0
+    }
 }
 
 impl Default for Releases {
@@ -227,6 +242,8 @@ impl Default for Releases {
         Releases {
             every_landings: Releases::EVERY_LANDINGS,
             refresh: true,
+            candidate_reruns: Releases::CANDIDATE_RERUNS,
+            candidate_hours: Releases::CANDIDATE_HOURS,
         }
     }
 }
@@ -544,6 +561,8 @@ impl Project {
             releases: Releases {
                 every_landings: file.releases.every_landings,
                 refresh: file.releases.refresh,
+                candidate_reruns: file.releases.candidate_reruns,
+                candidate_hours: file.releases.candidate_hours,
             },
         };
         let reserved = project.reserved();

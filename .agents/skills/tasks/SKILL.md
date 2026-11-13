@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 4e3e6e6623c4e1ed files=SKILL.md -->
+<!-- symphony-stamp: 486e414c2493331a files=SKILL.md -->
 
 # Work from the task board
 
@@ -34,8 +34,8 @@ and after). A reviewer reruns those tests, never the suite, judges whether the
 evidence is good enough for the change's risk, and records its approval as the
 task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
 The full verification runs on the project's main line on its own schedule, such
-as a nightly, and a red run there is filed as a task of its own. The project's
-guidance names its focused checks, its stamp and its nightly.
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
 
 
 Several sessions share one Symphony board from their project checkouts. Read the

@@ -286,10 +286,11 @@ enum Started {
 /// committed `settings` name its generators, detached: `tasks regenerate` from the main checkout,
 /// by a test's `TASKS_BIN` on a test's board, else by the land's own build, else the main
 /// checkout's build of `tasks` ([`crate::builds::of_main`]), with `env`'s environment but its
-/// session, its output appended to [`LOG`]; a thread reaps it. While one runs it starts nothing
-/// and signals nothing: the default branch's ref is all a land leaves it, and the one running
-/// reads it once it ends. None when there are no generators or `env` starts none ([`enabled`]);
-/// else the line saying it started, that one runs, or why it did not start.
+/// session and the unasked recipes' mark, the land's kept, its output appended to [`LOG`]; a
+/// thread reaps it. While one runs it starts nothing and signals nothing: the default branch's ref
+/// is all a land leaves it, and the one running reads it once it ends. None when there are no
+/// generators or `env` starts none ([`enabled`]); else the line saying it started, that one runs,
+/// or why it did not start.
 pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     if settings.generators.is_empty() || !enabled(env) {
         return None;
@@ -319,6 +320,12 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
         sys::sessionless(&mut command).env_remove("TASKS_TASK");
         for name in GIT_VARS {
             command.env_remove(name);
+        }
+        // The land's mark, which no other child keeps (`sys::MARKS`): the regenerator lands what
+        // it makes, so it runs only as a land started it ([`admit`]). The unasked recipes' mark it
+        // does not keep: its generators and check write where the project says.
+        if let Some(asked) = env.var(RECIPE) {
+            command.env(RECIPE, asked);
         }
         command
             .arg("regenerate")
@@ -362,19 +369,21 @@ fn lock_file(folder: &Path) -> Result<File, String> {
 
 /// The regenerator's lock in the lands' `folder`, taken without waiting and named by this process
 /// and its start, as a land names its lock: none while another holds it. A regenerator that died
-/// leaves the file naming it, and the lock free.
+/// leaves the file naming it, and the lock free. The name is written in place, as the lock is the
+/// file's, in one write: a land reading it meanwhile finds it empty ([`holder`]) or whole.
 fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
     let file = lock_file(folder)?;
     match file.try_lock() {
         Ok(()) => {
             let pid = std::process::id();
+            let name = match started(i64::from(pid)) {
+                Some(start) => format!("the regenerator (pid {pid}, started {start})"),
+                None => format!("the regenerator (pid {pid})"),
+            };
             let mut named = &file;
             let _ = named.set_len(0);
             let _ = named.seek(SeekFrom::Start(0));
-            let _ = match started(i64::from(pid)) {
-                Some(start) => write!(named, "the regenerator (pid {pid}, started {start})"),
-                None => write!(named, "the regenerator (pid {pid})"),
-            };
+            let _ = named.write_all(name.as_bytes());
             Ok(Some(sys::FileLock(file)))
         }
         Err(TryLockError::WouldBlock) => Ok(None),
@@ -383,7 +392,8 @@ fn try_hold(folder: &Path) -> Result<Option<sys::FileLock>, String> {
 }
 
 /// Who holds the regenerator's lock in the lands' `folder`, in words, and what it makes since when;
-/// none when no process holds it, one that died included.
+/// none when no process holds it, one that died included. A lock taken and not yet named is
+/// another regenerator's.
 fn holder(folder: &Path) -> Result<Option<String>, String> {
     let mut file = lock_file(folder)?;
     match file.try_lock() {

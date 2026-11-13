@@ -259,13 +259,15 @@ impl Default for FileLand {
     }
 }
 
-/// The `[releases]` table: how often the Symphony's own nightly cuts a release besides each night,
+/// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
 /// and whether a green release refreshes the machine (docs/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileReleases {
     pub(super) every_landings: u32,
     pub(super) refresh: bool,
+    pub(super) candidate_reruns: u32,
+    pub(super) candidate_hours: u32,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -275,6 +277,8 @@ impl Default for FileReleases {
         FileReleases {
             every_landings: super::Releases::EVERY_LANDINGS,
             refresh: true,
+            candidate_reruns: super::Releases::CANDIDATE_RERUNS,
+            candidate_hours: super::Releases::CANDIDATE_HOURS,
             unknown: Unknown::new(),
         }
     }

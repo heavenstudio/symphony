@@ -112,10 +112,12 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     );
     assert_eq!(named("justfile"), ["/justfile"]);
     assert_eq!(named("symphony.just"), ["/symphony.just"]);
-    // Verify's steps among them: a fix that edits what a step runs changes a check.
+    // Verify's steps among them: a fix that edits what a step runs changes a check, and so does one
+    // that widens the names the docs audit allows after `just`.
     for tool in [
         "tools/verify.sh",
         "tools/size-budget.toml",
+        "tools/named-recipes.txt",
         "tools/cargo.sh",
         "tools/seed-clone.rs",
     ] {
@@ -157,6 +159,9 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     for checker in [
         "crates/symphony/src/cli/commands/size_budget.rs",
         "crates/symphony/src/docs_audit.rs",
+        "crates/symphony/src/release.rs",
+        "crates/symphony/src/release/checks.rs",
+        "crates/symphony/src/release/steps.rs",
         "crates/symphony/src/nightly.rs",
         "crates/symphony/src/nightly/checks.rs",
         "crates/symphony/src/nightly/steps.rs",
@@ -171,12 +176,22 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
         named("crates/tasks/src/land/check_paths.rs"),
         ["/crates/tasks/src/land/"]
     );
+    // The docs audit's modules: what pictures it judges, and the reader of the recipes a text may
+    // name, whose lists are under `tools/`.
+    for module in ["pictures.rs", "recipes.rs"] {
+        assert_eq!(
+            named(&format!("crates/symphony/src/docs_audit/{module}")),
+            ["/crates/symphony/src/docs_audit/"],
+            "{module}"
+        );
+    }
     assert_eq!(
         named("crates/tasks/src/land/tests.rs"),
         ["tests.rs", "/crates/tasks/src/land/"]
     );
     for product in [
         "crates/tasks/src/sweep.rs",
+        "crates/symphony/src/release/board.rs",
         "crates/symphony/src/nightly/board.rs",
         "crates/tasks/tools/cargo.sh",
         "docs/TASKS.md",

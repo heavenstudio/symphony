@@ -74,7 +74,7 @@ tasks run --phase build|test [--label TEXT] [--task SLUG] [--as HANDLE]
 ```
 
 It is the board's binary that runs it (`.target/bin/tasks run`, as `tools/record.sh` does for
-the recipes and the nightly, and the board's own `tasks` for a review callback), never
+the recipes and the release run, and the board's own `tasks` for a review callback), never
 `just tasks run`: the `tasks` recipe `symphony init`
 installs, and this repository's own, refuse `run` as `tasks` reads it, first after any
 `--database NAME`, and run nothing. An agent runs `just tasks` unasked under the allow rules,
@@ -114,6 +114,16 @@ directory, so every worktree of a repository records where its Symphony reads;
 `work.<database>/` for a board database other than the live one. `TASKS_WORK` names
 another folder. A board named by `TASKS_SERVER` without `TASKS_WORK` (a test's board)
 records nothing.
+
+**A test's waits.** `TASKS_RUN_WAIT_SCALE=N`, a whole number from 1 to 60, makes each
+wait the machine's speed meets N times as long: the 1 s COMMAND waits to hear its
+recorder watches it, the 1 s the board is asked its task (below) and the 0.6 s git is
+asked a run's tree ([RUNS](RUNS.md)). So a loaded machine never decides what a test's
+run records. It is taken only where the board the run reaches is on a database other
+than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
+board never takes for a live one either. A run on the `tasks` database, by whatever server
+or folder it reaches it and whether or not that server is up, or one that reaches no
+board, keeps the bounds as they are, whatever it names.
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is

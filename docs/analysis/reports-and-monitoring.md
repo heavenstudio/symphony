@@ -412,10 +412,27 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 
 ### Agents
 
-Second in line: sessions started per day by kind and model (session rows); tokens per task, role
-and review round (`tools/board-token-usage`); time working against waiting, which needs tool-call
-times the board does not keep (the token rows, one per call, give them); stale and lost counts per
-day, which the server can count as its clock says them.
+Second in line: sessions started by kind and model; tokens per task, role and review round
+(`tools/board-token-usage`); time working against waiting, which needs tool-call times the board
+does not keep (the token rows, one per call, give them); stale and lost counts and the time spent
+so, which the server counts as its clock says them.
+
+**Agents at work per hour**, beside the tasks done and in progress (the owner, 2026-11-12: "Agents
+per hour is absolutely something we need. [...] adding to that number of agents, orchestrators,
+reviewers (possibly two charts?) so that it becomes easier to understand how healthy a pipeline
+is"). An hour holds, by role (executor, reviewer, orchestrator) and model, the most at once and the
+mean of the sessions **running**, live and holding that role on a task in progress or in review,
+and of those **holding** it, live, stale or unknown: an agent waiting on a long build reads stale
+and leaves running, but still holds its work. Beside them are the **live** sessions by kind, which
+counts an orchestrator whose tasks are all ready or blocked, and the machine's load average over 1
+and 15 minutes, read at each snapshot, so delivery speed reads against the agents at work and the
+machine's load.
+
+The shared server records all of this but the tokens and the working time from the board snapshot
+its tick already makes, with no board read or write of its own: a line for each change in a
+session's health, and an hour's line with the sessions started, gone stale and gone lost, their
+time stale and lost, the running, holding and live counts and the load, in day files kept 90 days
+([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)).
 
 **Money, estimated at API prices** (the owner, 2026-11-11: "tokens are hard to measure, since
 cache vs non cache hits counts differently. This should be counted "as if we were paying API costs"
@@ -427,9 +444,10 @@ is `tools/agent-cost-estimate`, after `tools/board-token-usage`.
 
 ### Board health over days
 
-The server appends, once an hour, the hour it already holds in memory (`Recorder::report`) to a
-day file beside `health.json`: dispatch and sweep passes and failures, request counts, slow and
-unanswered requests, the slowest caller, write p50 and p90. No board request. Kept 90 days.
+The server appends, once an hour, the hour it already holds in memory (the minutes `Recorder`
+keeps) to a day file in `symphony/health/` in the git common dir: dispatch and sweep passes and
+failures, request counts, slow and unanswered requests, the slowest caller, write p50 and p90. No
+board request. Kept 90 days ([TASKS](../TASKS.md#board-health)).
 
 ### How the figures are computed
 
@@ -449,6 +467,152 @@ Not chosen:
 
 The work is on the board: `tools/reports-rollup`, `tools/reports-page`,
 `tools/board-health-history`, `tools/agent-activity-history` and `tools/red-landing-origin`.
+
+### The day files
+
+Built by `tools/reports-rollup`. The owner added to its brief on its thread: an hourly grain, the
+waits between the pipeline's hands, the decision cards, and what reached the default branch.
+
+**Where.** One file per UTC day, `symphony/reports/YYYY-MM-DD.json` in the project's git common
+dir, in the one `symphony/` folder of Symphony's state there beside the runs' day files
+([RUNS](../RUNS.md#the-day-files)), from the start, with no old name to read
+(`crates/tasks/src/reports.rs`, `folder`). Its shape is `symphony_api::ReportDay`
+(`crates/symphony-api/src/reports.rs`). A board on another database keeps
+`symphony/reports.<database>/`; `SYMPHONY_REPORTS` names another folder, and a board that
+`TASKS_SERVER` names keeps none unless it does. Only the machine's one server writes them, as
+only it writes `health.json` (`apps/symphony-server/src/live/reports.rs`); a private server writes
+none. Its board tick starts a roll-up once in each hour of its clock, the first tick after it
+starts included: the tick makes the roll-up's one board read and hands it, with the server's kept
+scan of the live branches' cards, to a thread of its own, which reads git and the documents, works
+out the figures and writes the files. That thread never holds the tick up, and a stop or a reload
+waits on none of it. One roll-up runs at a time: an hour that comes while one runs waits for it.
+It keeps to the gate the server's generation holds for its recorders (`crates/tasks/src/recording.rs`,
+as the board's health hours and the agents' day files do): a replacement rolls nothing up until its
+hand-off commits, and the generation it replaces writes no file once its gate closes, so a reload
+never has two servers writing one day file, nor an older read renamed over a newer one.
+
+**When.** Each roll-up writes today's file again with what the day held up to then, and
+yesterday's file once more while it is missing or not final: the first roll-up after midnight
+makes it final (`closed`), and nothing writes it again. A day the server never ran through is not
+filled in later, beyond that yesterday. A file is written aside and renamed, so a reader finds a
+whole one, compact JSON on one line (`jq .` indents one). Nothing is pruned: roll-ups are kept for
+good ([open question 1](#open-questions)).
+
+**From what.** One read of the board (`Store::report_records`): every task open now, however old,
+every one written since yesterday's start, and every one with a line since then, since a landing
+writes its verdict on a closed task without writing the task; each with its thread's lines (a post
+by its sender and time alone, a verdict by its first words). Two cheap reads of the default
+branch's history since then. The decision cards of the documents in the main checkout
+(`crates/symphony/src/board.rs`, `documents`), with the cards a live branch posted laid on main's
+as the owner's queue lays them (`dashboard::merge_decisions`). A board read that fails writes
+nothing, so each file stays as the last roll-up left it and the next hour tries again. Git or the
+documents failing leaves only their figures out (`null`), and the server's log says why, once
+while it lasts (`· reports: …`).
+
+**Per hour**, each hour named by its first second (`start`, in seconds since the epoch), so the
+hours of any span sum to that span's figure (a day, a week, a local day):
+
+- **Flow**, top-level tasks and subtasks apart: how many held each open status at the hour's end,
+  how many times a task took each status in the hour, the task-hours in each status and the part
+  spent before a first claim, and the moves from review back to in progress.
+- **Landings**: the `landed` lines the land writes. **Reds** filed and closed.
+- **Waits**, each counted in the hour it ended:
+  - approved to landed: the approve the landing went by, to the landing;
+  - in review to a reviewer: a move into review, to the first session that joins the task as its
+    reviewer or claims a review subtask of it while it is in review; zero when a reviewer already
+    held it (so a re-review whose reviewer kept the role, the usual case, reads zero: this wait is
+    the first round's staffing), and no wait at all when none came before the task left review;
+  - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
+    move or verdict by a session holding its executor role then, its release left out (board lines
+    alone: an executor that works without a word reads as resumed at its move to review);
+  - a `changes` verdict to the next move into review.
+- **Decisions**: `open`, the cards waiting on the owner at the hour's end, and the cards that left
+  the owner's queue in the hour, each once, by the line that took it out: `answered` by the owner's
+  own line, `auto_approved` by an agent's `auto-approved` line (or posted already auto-approved),
+  and `withdrawn` by any other agent's line, which decides nothing (a supersession's `dismissed —
+  superseded by …`, a question the agent withdrew, a card marked resolved).
+- **Git**: commits and merges that reached the branch in the hour, the lines they brought, and the
+  `Revert "` commits among them.
+
+Agents, orchestrators and reviewers at work per hour, and the sessions that started, are not in
+these files: they are the agents' day files' ([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)), whose hour
+lines name an hour by its first second as `start` too, so a page joins an hour of the two on it.
+
+**Per day**: the lead time of each close (median, p90), the ten open tasks longest in their status,
+the `changes` and `approve` verdicts by review round, each red with its filing and close, the
+cards still waiting with since when, each card that left the queue in the day with its minute and
+the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it
+left out.
+
+Three choices hold for every figure: a close as covered by another task is a move to `done` like a
+landing's and counts in the lead time; a review's instruction subtasks count among the subtasks
+beside the work's slices; and a card that leaves the queue twice in a day counts twice, as each
+leaving is an event: the owner comments on it, an agent's answer puts it back, the owner approves.
+
+**The decision cards.** Each card's dated lines are replayed one at a time, and after each the card
+is grouped as the register groups it (`crates/symphony/src/register.rs`, `Decision::thread`) over
+the lines so far and the mark they leave. It waits on the owner while it sits in *Needs your
+decision* or *Answered: approve again or comment*, the owner's queue. The line that takes it out of
+those groups is counted in the hour of its minute, by whose it is and what it says. A card an
+agent posts already out of the queue, `resolved` say, never asked the owner and is counted nowhere,
+unless it was posted auto-approved. A card waits since the line that last put it in the queue: its
+posting, an agent's answer to the owner's comment, or an agent's question. A card is named by its
+page, `docs/DECISIONS.md` for main's and `@BRANCH/docs/DECISIONS.md` for one a live branch posted;
+once its branch lands, main holds the same lines.
+
+What the register's history can tell: which line took a card out of the queue, whose it was, its
+verdict word and its minute. What it cannot tell yet:
+
+- a decision recorded as answered the way [REVIEW](../REVIEW.md#before-a-card-goes-to-the-owner)
+  prescribes, a plain agent line on the card the owner approved: the card stays in *Resolved*
+  before and after it, nothing leaves the queue, and nothing is counted;
+- why an agent auto-approved: a card the triage judged and one an earlier verdict of the owner's
+  decides are both `auto-approved`, the second with a basis naming the card that verdict is on,
+  but no fixed word in the line sets it apart, so both count alike;
+- a card on a branch whose task is done before the branch lands: the owner's queue leaves it out
+  until the landing, and so do the hours rolled up meanwhile;
+- a card with no dated line has no history: it counts as it stands now at every hour, with no
+  wait;
+- a minute is the writer's local time, read back in the server's time zone, and a line dated
+  before the one above it is read at that one's minute;
+- a mark changed with no line beside it shows only as the card's state after its last line.
+
+**What git counts** (`crates/symphony/src/reports/git.rs`). Two reads of `refs/heads/BRANCH`: its
+line of first parents since the window opened, with each commit's lines (`--first-parent --numstat
+--diff-merges=first-parent`); then every commit the branch holds that the parent of that line's
+oldest commit does not, with its parents and the paths it changed, no diff (`--name-only`). Each
+commit counts in the hour it reached the branch: the hour of the commit on the line of first
+parents that brought it there, itself or the merge that landed it. So a branch's commits made the
+day before their landing count with it, and commits, merges and lines share one time base. A merge
+on that line is a landing; a merge off it (a branch taking main in) counts as neither a commit nor
+a landing. Lines count once, on that line: a merge by what it brought against its first parent, a
+commit made on the branch itself by its own. Left out by git itself, and named in each file: each
+`[land] generators` and `[verdicts] generators` output (here the client distribution,
+`apps/symphony-server/client/public/`), and lock files by name wherever they are (`Cargo.lock`,
+`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`,
+`Gemfile.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `composer.lock`, `go.sum`,
+`flake.lock`). Their lines are not counted, and a commit that changed nothing else, such as the
+regenerator's own commit of the distribution, is no commit. A binary file has no lines.
+
+Why two reads and not one: a single read of every commit with its lines diffs each commit of each
+branch merged, only to count those lines again with the merge. Over this repository's last two
+days, read 2026-11-12 at load 120 (770 commits, 137 of them on main's line of first parents), that
+read took 15.7 s of git's CPU, and 2.3 s with the paths above left to git; the two reads took 0.24
+s.
+
+**What it costs.** Measured 2026-11-13 at load 60 by the board's perf target
+(`crates/tasks/tests/perf/reports.rs`), on its generated board of 2.2k tasks and 50k lines: the
+hourly read from yesterday's start (230 tasks, 9.7k lines) took 0.17 s of the board server's CPU
+and 0.49 s wall, in one request and no write, on the tick; the rest runs on the roll-up's own
+thread. A read of every task and line on that board would take 1.7 s. Both day files' figures took
+83 ms in a debug build, and the two files hold 26 KB, so a year of them is a few megabytes. The git
+reads are above; the documents are parsed again only where a file changed (`documents` keeps each
+by its stamp). In the server's binary, less the client it embeds, the roll-up adds 115,744 bytes
+(`just size-check`, 2026-11-13: 18,074,112 against main's 17,958,368, built the same way). The
+file grows by whole 16 KiB pages of code, about seven here, and how the compiler lays out the crates the
+roll-up touches moves the code around it by about a page from one build to the next, so it is kept
+small by its shape: no map, no sort, no derived reader of a row or of the day file, the day file
+written by hand, as serde would write it.
 
 ## Core page or plugin blocks
 
@@ -576,8 +740,10 @@ No report writes to the board. The only board load is one read per project an ho
 | a task's timeline | per view: the thread the page reads already, and that task's runs |
 | pass rates, durations, slowest suites, flakiest tests, machine minutes | hourly, from the run files |
 | flow, lead time, task-hours, bounces, defects, escape rate | hourly, one read of the window |
+| waits, decision cards, commits, landings and lines | hourly, with that read, the documents and two reads of git ([the day files](#the-day-files)) |
 | board health per hour | appended hourly from memory |
-| agents per day, tokens | hourly, from session rows and token rows |
+| agents per hour: started, stale and lost, running and holding by role and model, live by kind, the load | appended from the server's per-tick snapshot: a change line as it happens, an hour line hourly |
+| tokens | hourly, from token rows |
 
 ## The phone
 

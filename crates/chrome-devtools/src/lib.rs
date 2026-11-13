@@ -5,6 +5,8 @@
 //! A native leash owns and waits for Chrome: the launching program run again ([`Leash`]), which
 //! hands itself to [`leash_main`] first. EOF on its launcher's pipe terminates the browser even
 //! after SIGKILL, then removes its private profile. Startup failures use the same cleanup.
+//! Chrome works in that profile and wakes no updater, so what it starts outside its group (its
+//! crash handler, double-forked into a group of its own) works in no launcher's folder.
 //!
 //! Every wait is bounded by the browser's own work, not the wall: the CPU its recorded process
 //! group spends, and the observation turns it completes (a scheduler delay spends nothing). A wait
@@ -422,6 +424,11 @@ fn leash(binary: &str, profile: &Path) -> i32 {
     let started = std::fs::File::create(profile.with_extension("stderr")).and_then(|stderr| {
         Command::new(binary)
             .args(chrome_args(profile))
+            // Chrome works in its profile, never in its launcher's folder (a test's package, in a
+            // release run's checkout): what it starts that leaves its group, as its crash handler
+            // does (double-forked into a group of its own), works where it was started until it
+            // ends, and a process working in a release run's checkout stops that run.
+            .current_dir(profile)
             // Its singleton and fetch folders, which a killed Chrome leaves, go with the profile.
             .env("MAC_CHROMIUM_TMPDIR", profile)
             .env("TMPDIR", profile)
@@ -523,6 +530,12 @@ fn chrome_args(profile: &Path) -> Vec<String> {
         "--disable-backgrounding-occluded-windows",
         "--disable-component-update",
         "--disable-sync",
+        // No updater. Chrome otherwise wakes Google's updater 19 s in, once its own checks of
+        // the updater have run (`updater::SchedulePeriodicTasks`): `GoogleUpdater --wake-all`,
+        // started in a process group of its own so no signal to Chrome's group reaches it, which
+        // starts crash handlers of its own and outlives the leash by minutes, all of them working
+        // where Chrome was started.
+        "--disable-updater-scheduler",
         // A same-site visit keeps the page's frame and widget (no RenderDocument). Chrome
         // otherwise gives the visit a new frame and, a second later, tears the left document's
         // compositor down on the page's main thread, which waits there for that document's

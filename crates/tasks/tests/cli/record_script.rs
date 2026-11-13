@@ -8,8 +8,12 @@
 //! What must not be recorded is told by a recorder that logs each run of its own ([`logging`]): a
 //! command is recorded only by a recorder run before it, so a log read once the command ended says
 //! all there is, where a work folder is written by a recorder that may still be on its way.
+//!
+//! Each run names a board that cannot be reached ([`UNREACHED`]), a scratch one, so it takes the
+//! recorder tests' scale of the recorder's waits ([`SCALE`]): a loaded machine never decides
+//! whether it is recorded.
 
-use crate::recorder::{MACHINE, RUNS_VAR, day_lines, git_says, kept};
+use crate::recorder::{MACHINE, RUNS_VAR, SCALE, SCALE_VAR, UNREACHED, day_lines, git_says, kept};
 use crate::{git, scratch};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -117,7 +121,8 @@ impl Setup {
             .env("SYMPHONY_MACHINE_DIR", self.dir.join("machine"))
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
-            .env_remove("TASKS_SERVER")
+            .envs(UNREACHED)
+            .env(SCALE_VAR, SCALE)
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
@@ -439,7 +444,8 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
                 .env(LOG_VAR, &log)
                 .env_remove("TASKS_SESSION")
                 .env_remove("TASKS_TASK")
-                .env_remove("TASKS_SERVER")
+                .envs(UNREACHED)
+                .env(SCALE_VAR, SCALE)
                 .env_remove(recorded::PARENT_VAR)
                 .env_remove("TASKS_RECORDER"),
         )
@@ -500,7 +506,8 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             .env(LOG_VAR, &setup.log)
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
-            .env_remove("TASKS_SERVER")
+            .envs(UNREACHED)
+            .env(SCALE_VAR, SCALE)
             .env_remove(recorded::PARENT_VAR);
         if let Some(task) = task {
             command.env("TASKS_TASK", task);
@@ -695,7 +702,8 @@ impl Recipes {
             .env("SYMPHONY_MACHINE_DIR", &self.machine)
             .env_remove("TASKS_SESSION")
             .env_remove("TASKS_TASK")
-            .env_remove("TASKS_SERVER")
+            .envs(UNREACHED)
+            .env(SCALE_VAR, SCALE)
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
@@ -715,7 +723,7 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
         let done = recipes.just(recipe, &[]);
         assert!(done.status.success(), "{recipe}: {done:?}");
     }
-    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 5));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 5));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let said: Vec<_> = lines
         .iter()
@@ -772,10 +780,10 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(runs, 6));
+    let first = symphony_api::fold(day_lines(&recipes.work, runs, 6));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(runs, 12);
+    let lines = day_lines(&recipes.work, runs, 12);
     // A start line and an end line for each run and step, and none for the commands inside them.
     assert_eq!(lines.len(), 24, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
@@ -913,7 +921,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     );
     assert_eq!(red.status.code(), Some(1), "{red:?}");
     // Every step ran past the reds before it, each recorded as its own command ended.
-    let lines = symphony_api::fold(day_lines(&recipes.runs, 6));
+    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 6));
     let ended: Vec<_> = STEPS
         .iter()
         .map(|(step, _)| {
@@ -1062,7 +1070,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         tests.contains("\nverify: the client check did not run in this verify, so "),
         "{tests}"
     );
-    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 9));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 9));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let labels: Vec<&str> = (lines.iter())
         .filter(|line| line.step.is_none())

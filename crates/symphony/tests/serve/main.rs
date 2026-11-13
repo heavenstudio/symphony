@@ -226,16 +226,10 @@ fn the_binary_dispatches_and_refuses_an_unknown_command() {
     assert_eq!(code, 2, "{err}");
 }
 
-/// The binary's whole command line, as `symphony::cli::main` takes it: (code, stdout, stderr).
+/// The binary's whole command line, as `symphony::cli::main_in` takes it, with none of the marks a
+/// test does not set: (code, stdout, stderr).
 fn cli(args: &[&str]) -> (i32, String, String) {
-    let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = symphony::cli::main(&argv, &mut "".as_bytes(), &mut out, &mut err);
-    (
-        code,
-        String::from_utf8(out).unwrap(),
-        String::from_utf8(err).unwrap(),
-    )
+    common::cli(args)
 }
 
 #[test]
@@ -344,7 +338,7 @@ const COMMANDS: [&str; 16] = [
     "publish-client",
     "release-inputs",
     "size-budget",
-    "nightly",
+    "release",
     "serve",
 ];
 
@@ -477,26 +471,50 @@ fn a_flag_may_be_given_with_an_equals_sign_or_shortened() {
     let tree = Tree::new();
     tree.write("docs/x.md", "> [!question] why\n");
     let root = format!("--root={}", tree.root.display());
-    let mut argv = vec![root.clone(), "--op".to_string()];
-    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (code, out, err) = cli(&["status", &root, "--op"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "docs/x.md:1  question why\n");
+    // Only --tidy starts with --t.
+    let (code, _, err) = cli(&["status", &root, "--t"]);
+    assert_eq!(code, 0, "{err}");
+}
+
+/// The command a test runs reads the environment it is handed, not the test process's: under the
+/// unasked recipes' mark a reply and a tidy outside the checkout it runs in are refused and write
+/// nothing, and without it they write there, whatever the test process's own environment holds.
+#[test]
+fn a_reply_and_a_tidy_are_confined_by_the_mark_in_the_environment_they_are_handed() {
+    let tree = Tree::new();
+    let before = "- [ ] **a** — one\n";
+    let page = tree.write("docs/x.md", before);
+    let path = page.to_str().unwrap();
+    let root = tree.root.to_str().unwrap();
+    let mut marked = common::unmarked();
+    marked.insert(symphony_board::confine::MARKER.into(), "1".into());
+    let here = std::env::current_dir().unwrap();
+    let checkout = symphony_board::confine::places(&here).checkout;
+    let now = "2026-11-13 10:00";
+    let reply = ["reply", "--now", now, path, "a", "Done."];
+    let tidy = ["status", "--root", root, "--tidy", "--now", now];
+    for (args, named) in [(&reply, path), (&tidy, root)] {
+        let (code, out, err) = common::cli_in(args, &marked);
+        assert_eq!((code, out.as_str()), (1, ""), "{args:?}: {err}");
+        assert!(
+            err.starts_with(&format!("✖ {named} "))
+                && err.contains(" not a place a recipe an agent runs unasked writes: ")
+                && err.contains(&format!("only the checkout at {}", checkout.display())),
+            "{args:?}: {err}"
+        );
+        assert_eq!(tree.read("docs/x.md"), before, "{args:?}");
+    }
+    let (code, _, err) = cli(&reply);
+    assert_eq!(code, 0, "{err}");
     assert_eq!(
-        symphony::cli::status_main(&argv, &mut out, &mut err),
-        0,
-        "{}",
-        String::from_utf8_lossy(&err)
+        tree.read("docs/x.md"),
+        format!("{before}  [{now}] agent — Done.\n")
     );
-    assert_eq!(
-        String::from_utf8(out).unwrap(),
-        "docs/x.md:1  question why\n"
-    );
-    argv[1] = "--t".to_string(); // only --tidy starts with --t
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(
-        symphony::cli::status_main(&argv, &mut out, &mut err),
-        0,
-        "{}",
-        String::from_utf8_lossy(&err)
-    );
+    let (code, _, err) = cli(&tidy);
+    assert_eq!(code, 0, "{err}");
 }
 
 /// The binary itself, serving `requests` from `dir`: its answers, one per request. It ends at the end

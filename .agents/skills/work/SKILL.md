@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone. Registers (or reuses the handle the task is reserved for), claims the task, follows its description exactly, and finishes by the step the description names. An agent's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`). Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: 9633010fce7e5d03 files=SKILL.md -->
+<!-- symphony-stamp: 9ff48af701843f11 files=SKILL.md -->
 
 # /work SLUG HANDLE
 
@@ -45,8 +45,8 @@ and after). A reviewer reruns those tests, never the suite, judges whether the
 evidence is good enough for the change's risk, and records its approval as the
 task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
 The full verification runs on the project's main line on its own schedule, such
-as a nightly, and a red run there is filed as a task of its own. The project's
-guidance names its focused checks, its stamp and its nightly.
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
 
 
 Do the one task named by the prompt. Its board description supplies the scope,
