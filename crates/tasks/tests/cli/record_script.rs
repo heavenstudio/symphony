@@ -127,7 +127,8 @@ impl Setup {
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
             .env_remove(RUNS_VAR)
-            .env_remove("TASKS_RECORDER");
+            .env_remove("TASKS_RECORDER")
+            .env(PROBE_WAIT_VAR, PROBE_WAIT);
         if let Some(recorder) = recorder {
             command.env("TASKS_RECORDER", recorder);
         }
@@ -174,6 +175,11 @@ impl Setup {
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
 /// The file [`logging`] logs its runs in.
 const LOG_VAR: &str = "RECORDER_LOG";
+/// What sets, in seconds, how long `tools/record.sh` waits for its recorder's probe.
+const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
+/// The probe's wait in every case here but the one of it: the backstop of a test's wait, so a
+/// loaded machine never leaves Cargo to run unrecorded for a probe it answered late.
+const PROBE_WAIT: &str = "120";
 /// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
 const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 
@@ -368,9 +374,11 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${LOG_VAR}\"\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n"
         ),
     );
+    // The probe's own two seconds: the deadline this case is of.
     let done = setup.run(
         setup
             .command("cargo.sh", &["test"], Some(hung.to_str().unwrap()))
+            .env_remove(PROBE_WAIT_VAR)
             .env("RELEASE", &release)
             .env("ENDED", &ended),
     );
@@ -378,14 +386,12 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     cargo_said(&setup, done, &["test"]);
     assert!(!ended.exists(), "cargo waited for the probe to end");
     fs::write(&release, "").unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !ended.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the probe never ended"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the probe ended once released",
+        test_time::backstop(std::time::Duration::from_secs(30)),
+        || ended.exists(),
+    )
+    .unwrap();
     // It was asked, and never asked to record: its one run was the probe.
     assert_eq!(setup.logged(), "run --probe\n");
 }
@@ -446,6 +452,7 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
                 .env_remove("TASKS_TASK")
                 .envs(UNREACHED)
                 .env(SCALE_VAR, SCALE)
+                .env(PROBE_WAIT_VAR, PROBE_WAIT)
                 .env_remove(recorded::PARENT_VAR)
                 .env_remove("TASKS_RECORDER"),
         )
@@ -508,6 +515,7 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             .env_remove("TASKS_TASK")
             .envs(UNREACHED)
             .env(SCALE_VAR, SCALE)
+            .env(PROBE_WAIT_VAR, PROBE_WAIT)
             .env_remove(recorded::PARENT_VAR);
         if let Some(task) = task {
             command.env("TASKS_TASK", task);
@@ -704,6 +712,7 @@ impl Recipes {
             .env_remove("TASKS_TASK")
             .envs(UNREACHED)
             .env(SCALE_VAR, SCALE)
+            .env(PROBE_WAIT_VAR, PROBE_WAIT)
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
@@ -1123,14 +1132,12 @@ fn an_interrupt_stops_a_verify_once_the_step_it_reached_ends() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while !held.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the lint never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the verify's lint started",
+        test_time::backstop(std::time::Duration::from_secs(120)),
+        || held.exists(),
+    )
+    .unwrap();
     // Ctrl-C: the interrupt a terminal sends the whole foreground group.
     let group = i32::try_from(child.id()).unwrap();
     // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.

@@ -180,18 +180,27 @@ fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
     println!("inbox HTTP bytes: one unread {unread_bytes}, all acknowledged {empty_bytes}");
 }
 
+/// INBOX's selection of the unread among 70k acknowledged keys fits the 3 s every store client
+/// waits, in the CPU the server spends on it: read before and after each query from a server of the
+/// test's own, which no other test's queries reach. The client itself waits for the answer up to
+/// the backstop of that wait, however long a loaded machine keeps the server from the CPU.
 #[test]
 fn acknowledged_key_selection_fits_the_shared_store_wait() {
     use std::time::{Duration, Instant};
+    const STORE_WAIT: Duration = Duration::from_secs(3);
 
-    let f = Fixture::empty();
+    let log = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("surreal-inbox-keys-{}.log", std::process::id()));
+    let (addr, server) = crate::common::launch(&crate::common::surreal(), &log)
+        .unwrap_or_else(|why| panic!("the test's own server: {why}; its log is {}", log.display()));
+    let pid = server.server.expect("the server's shell said its pid");
     // This is INBOX's production fragment. Opaque integer references keep the CPU case data-only.
     let query = concat!(
         "LET $candidates = $candidate_entries; LET $acked = $ack_entries;\n",
         include_str!("../../../src/store/inbox_unread.surql"),
         "\nRETURN $wanted;"
     );
-    let client = f.other_client().waiting(Duration::from_secs(3));
+    let client = Client::new(&addr, "sf", "inbox_keys").waiting(test_time::backstop(STORE_WAIT));
     for count in [5_000, 10_000, 20_000, 70_000] {
         let last = 10_000_i64 + count - 1;
         let candidates: Vec<_> = (10_000..=last)
@@ -202,14 +211,21 @@ fn acknowledged_key_selection_fits_the_shared_store_wait() {
             .collect();
         let vars =
             serde_json::json!({"candidate_entries": candidates, "ack_entries": acknowledged});
-        let began = Instant::now();
+        let (before, began) = (test_time::cpu::of(pid).unwrap(), Instant::now());
         let results = client.query(query, vars).unwrap();
+        let (spent, took) = (test_time::cpu::of(pid).unwrap() - before, began.elapsed());
         assert_eq!(results.last(), Some(&serde_json::json!([last])));
         println!(
-            "{count} inbox keys, one unread reference: {:.3?}",
-            began.elapsed()
+            "{count} inbox keys, one unread reference: {spent:.3?} of the server's CPU, \
+             {took:.3?} on the wall"
+        );
+        assert!(
+            spent < STORE_WAIT,
+            "{count} keys took {spent:?} of the server's CPU, past the store's {STORE_WAIT:?} wait"
         );
     }
+    drop(server);
+    let _ = std::fs::remove_file(&log);
 }
 
 /// A recipient further behind than one dispatch pass's pool reaches (a session long unobserved,

@@ -148,8 +148,12 @@ impl Client {
         served: usize,
         first: Failure,
     ) -> Result<(u16, Vec<u8>), (bool, String)> {
+        #[cfg(test)]
+        let timeout = self.resend_timeout.unwrap_or(self.timeout);
+        #[cfg(not(test))]
+        let timeout = self.timeout;
         let (again, second) = match self.fresh(check) {
-            Ok(connection) => match self.over(connection, request) {
+            Ok(connection) => match self.over_within(connection, request, timeout) {
                 Ok(answer) => return Ok(answer),
                 Err(failed) => failed,
             },

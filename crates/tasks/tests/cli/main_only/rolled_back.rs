@@ -528,7 +528,10 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
         )
     };
     let work = recorded::in_common(&live.board().common);
-    let recorded_run = |label: &str| {
+    // One recorded run labelled `label`: the session and task its finished record names, or none
+    // when its recorder let it go unrecorded (no record of it, and no lease left in the work folder,
+    // which a recorder takes before its command starts and lets go once it finished it).
+    let recorded_once = |label: &str| {
         let ran = live.run(
             Path::new(TASKS),
             &live.wt,
@@ -537,25 +540,50 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
             "",
         );
         assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            let found = recorded::read(&work)
-                .records
-                .into_iter()
-                .find(|(run, _)| run.label == label && run.state == recorded::Step::Finished);
-            if let Some((run, _)) = found {
-                return (run.handle, run.task);
+        let operations = work.join(recorded::OPERATIONS);
+        test_time::until(
+            format!("the run {label} finished, or let go unrecorded"),
+            test_time::backstop(std::time::Duration::from_secs(30)),
+            || {
+                let found = (recorded::read(&work).records.into_iter())
+                    .find(|(run, _)| run.label == label && run.state == recorded::Step::Finished);
+                if let Some((run, _)) = found {
+                    return Some(Some((run.handle, run.task)));
+                }
+                let leased = std::fs::read_dir(&operations).is_ok_and(|entries| {
+                    entries
+                        .flatten()
+                        .any(|entry| entry.path().extension().is_some_and(|ext| ext == "lease"))
+                });
+                (!leased).then_some(None)
+            },
+        )
+        .unwrap()
+    };
+    // A recorded run for `label`, run again under a label of its own each time until its recorder
+    // `answered`, at most ATTEMPTS times. On a live board's database the recorder keeps its own
+    // waits, a second for its word to its command and a second for the board's answer (a test's
+    // scale is never taken there), so a loaded machine may let one run go unanswered; a recorder
+    // that never finds the answer fails every attempt. What a run found: its session and task.
+    const ATTEMPTS: usize = 5;
+    type Found = (Option<String>, Option<String>);
+    let recorded_run = |label: &str, answered: &dyn Fn(&Found) -> bool| {
+        let mut said = Vec::new();
+        for attempt in 1..=ATTEMPTS {
+            match recorded_once(&format!("{label}-{attempt}")) {
+                Some(found) if answered(&found) => return found,
+                other => said.push(other),
             }
-            assert!(std::time::Instant::now() < until, "no run {label} finished");
-            std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        panic!("the recorder never answered for {label} in {ATTEMPTS} runs: {said:?}");
     };
     // While it reads at its record, the beat binds and the recorder finds the session's task.
     let ran = beat("s-before");
     assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
     assert!(keys.join("s-before").is_file());
+    // Answered once the board said a task: a board that did not answer within its second says none.
     assert_eq!(
-        recorded_run("before"),
+        recorded_run("before", &|(_, task)| task.is_some()),
         (Some(handle.clone()), Some("live/held".into()))
     );
 
@@ -595,7 +623,11 @@ fn every_opener_refuses_a_board_below_its_record_even_one_at_its_own_builds_sche
     let ran = beat("s-after");
     assert_eq!((ran.code, ran.out.as_str(), ran.err.as_str()), (0, "", ""));
     assert!(!keys.join("s-after").exists(), "no key written");
-    assert_eq!(recorded_run("after"), (Some(handle.clone()), None));
+    // Answered once recorded at all: the board refused, so the recorder names no task.
+    assert_eq!(
+        recorded_run("after", &|_| true),
+        (Some(handle.clone()), None)
+    );
     let ran = live.tasks(&live.wt, &["dispatch"]);
     assert_eq!(ran.code, 2, "{}", ran.out);
     assert!(

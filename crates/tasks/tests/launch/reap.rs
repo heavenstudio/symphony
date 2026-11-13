@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::launch::hc::Hc;
@@ -298,10 +298,13 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     let before = cli::attach::observe(w.store(), &w.orch, "orchestrator").unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let (release, held) = std::sync::mpsc::channel();
+    // The server says nothing until the round is over, or until the backstop of the 5 s the round
+    // once had has passed, when it closes the connection: a round that waited for it says the
+    // server closed, not that it is slow.
+    let (release, held) = std::sync::mpsc::channel::<()>();
     let server = std::thread::spawn(move || {
         let (_stream, _) = listener.accept().unwrap();
-        held.recv().unwrap();
+        let _ = held.recv_timeout(test_time::backstop(Duration::from_secs(5)));
     });
     let now = w.f.now();
     let failed = Store::unchecked(
@@ -313,11 +316,9 @@ fn failed_or_unanswered_presence_rounds_hold_work_until_the_cap_and_confirmation
     );
     let m = w.machine();
     let how = w.reap(How::default(), &*m.processes);
-    let began = Instant::now();
     let error = presence_round(&failed, &w.hc(), &how, &mut Vec::new()).unwrap_err();
-    release.send(()).unwrap();
+    let _ = release.send(());
     server.join().unwrap();
-    assert!(began.elapsed() < Duration::from_secs(5));
     assert!(symphony_board::rpc::slow(&error.to_string()), "{error}");
 
     w.f.advance(601.0);

@@ -305,6 +305,7 @@ fn run(id: u8, label: &str, branch: &str, commit: &str, state: Step, exit: Optio
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     }
 }
 

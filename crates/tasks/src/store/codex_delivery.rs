@@ -8,7 +8,7 @@ use crate::sys::{self, Child, Stdio};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 struct Proxy {
     child: Child,
@@ -54,11 +54,13 @@ impl Proxy {
             }
             let _ = send.send(Err("codex proxy closed before its response".into()));
         });
+        // The steer's requests share the delivery's time, read where its `codex` is found.
+        let patience = crate::codex_queue::patience(&crate::cli::Env::of_process());
         Ok(Self {
             child,
             input: Some(writes),
             responses,
-            deadline: Instant::now() + Duration::from_secs(5),
+            deadline: Instant::now() + patience,
         })
     }
 

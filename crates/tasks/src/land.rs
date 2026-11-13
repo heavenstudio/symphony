@@ -1879,7 +1879,7 @@ impl Landing<'_> {
                     if !heard.ended {
                         self.say(&format!(
                             "  … it runs on past {} s, detached",
-                            crate::on_land::SAYS.as_secs()
+                            crate::on_land::says(self.env).as_secs()
                         ));
                     }
                 }

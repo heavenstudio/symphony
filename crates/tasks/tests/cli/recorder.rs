@@ -6,19 +6,22 @@
 //!
 //! Every run here is on a scratch board, and takes [`SCALE`] but one that bounds its own time by a
 //! wait it rules out: each wait of the recorder's a machine's speed meets (its word that it watches
-//! its command, the board's answer, git's) is that many times its own, so a loaded machine never
-//! decides what a run records. What the scale would hide, a recorder grown slow, the quickest of a
-//! test's several runs shows ([`QUICKEST_START`]). A wait of the tests' own that gives up says what
-//! the work folder holds ([`holds`]): never recorded, or recorded and never finished.
+//! its command, the board's answer, git's, and apart from its command another run's end and the day
+//! files' lock) is that many times its own, so a loaded machine never decides what a run records.
+//! What the scale would hide, a recorder grown slow, the quickest of a test's several runs shows
+//! ([`QUICKEST_START`]). A wait of the tests' own is on its condition, with a backstop only a stall
+//! reaches ([`patience`]), and one that gives up says what the work folder holds ([`holds`]): never
+//! recorded, or recorded and never finished.
 
 use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read as _;
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::Env;
@@ -31,8 +34,11 @@ const TASK_VAR: &str = "TASKS_TASK";
 pub(crate) const RUNS_VAR: &str = "SYMPHONY_RUNS";
 /// Names a scale of the recorder's waits, which it takes on a scratch board alone.
 pub(crate) const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
-/// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, far past
-/// what a loaded machine takes, and inside the 30 s each test waits for a record.
+/// Names a file the recorder makes once it has stamped its command's end.
+const END_MARK_VAR: &str = "TASKS_RUN_END_MARK";
+/// The tests' scale: 20 s for its recorder's word and the board's answer, 12 s for git's, 100 s for
+/// an earlier run's end and 40 s for the day files' lock, far past what a loaded machine takes, and
+/// inside the backstop each test waits for a record with ([`patience`]).
 pub(crate) const SCALE: &str = "20";
 /// A board that cannot be reached, which refuses at once, on a database of its own: a scratch
 /// board, for a test that has none to give its runs [`SCALE`].
@@ -112,8 +118,8 @@ fn held(path: &Path) -> Option<bool> {
 /// folder `work` holds.
 #[track_caller]
 pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let mut last = Vec::new();
+    let found = test_time::until(format!("{ends} runs ended"), patience(), || {
         let mut days: Vec<PathBuf> = fs::read_dir(runs)
             .map(|entries| {
                 entries
@@ -138,16 +144,22 @@ pub(crate) fn day_lines(work: &Path, runs: &Path, ends: usize) -> Vec<RunLine> {
             .collect();
         let ended = lines.iter().filter(|line| line.end.is_some()).count();
         if ended >= ends {
-            assert_eq!(ended, ends, "{lines:#?}");
-            return lines;
+            return Some(lines);
         }
-        assert!(
-            Instant::now() < deadline,
-            "{ends} runs not ended within 30 s: {lines:#?}; the work folder: {}",
-            holds(work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        last = lines;
+        None
+    });
+    let lines = found
+        .unwrap_or_else(|stall| panic!("{stall}: {last:#?}; the work folder: {}", holds(work)));
+    let ended = lines.iter().filter(|line| line.end.is_some()).count();
+    assert_eq!(ended, ends, "{lines:#?}");
+    lines
+}
+
+/// The backstop of the tests' own waits for what a run records: the 30 s they once gave it, as
+/// `test_time::backstop` makes it (RULES.md `tests/no-test-fails-on-load`).
+pub(crate) fn patience() -> Duration {
+    test_time::backstop(Duration::from_secs(30))
 }
 
 /// What `git ARGS` in `dir` prints, trimmed.
@@ -160,20 +172,19 @@ pub(crate) fn git_says(dir: &Path, args: &[&str]) -> String {
 /// The history of the work folder `work` once it keeps `count` operations.
 #[track_caller]
 pub(crate) fn kept(work: &Path, count: usize) -> Vec<Record> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let found = test_time::until(format!("{count} operations kept"), patience(), || {
         let history = recorded::history(work).unwrap_or_default();
-        if history.len() >= count {
-            assert_eq!(history.len(), count, "{history:?}");
-            return history;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{count} operations not kept within 30 s: {history:?}; the work folder: {}",
+        (history.len() >= count).then_some(history)
+    });
+    let history = found.unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: {:?}; the work folder: {}",
+            recorded::history(work),
             holds(work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+        )
+    });
+    assert_eq!(history.len(), count, "{history:?}");
+    history
 }
 
 /// A work folder and a machine folder of the test's own, under `name`.
@@ -209,21 +220,21 @@ impl Folders {
     /// reader found and what the work folder holds.
     #[track_caller]
     fn once(&self, state: Step) -> Record {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if let [one] = self.records().as_slice()
-                && one.state == state
-            {
-                return one.clone();
-            }
-            assert!(
-                Instant::now() < deadline,
-                "no operation {state:?} within 30 s: {:?}; the work folder: {}",
+        let found = test_time::until(
+            format!("one operation {state:?}"),
+            patience(),
+            || match self.records().as_slice() {
+                [one] if one.state == state => Some(one.clone()),
+                _ => None,
+            },
+        );
+        found.unwrap_or_else(|stall| {
+            panic!(
+                "{stall}: {:?}; the work folder: {}",
                 self.records(),
                 holds(&self.work)
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+            )
+        })
     }
 }
 
@@ -298,18 +309,14 @@ fn alive(pid: libc::pid_t) -> bool {
 /// The pid the command wrote to `file`, once it did.
 #[track_caller]
 fn written_pid(file: &Path) -> libc::pid_t {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Ok(pid) = fs::read_to_string(file).unwrap_or_default().trim().parse() {
-            return pid;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no pid in {} within 30 s",
-            file.display()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until(format!("a pid in {}", file.display()), patience(), || {
+        fs::read_to_string(file)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .ok()
+    })
+    .unwrap()
 }
 
 #[test]
@@ -375,15 +382,10 @@ fn a_recorded_command_keeps_its_arguments_streams_session_and_status() {
         .work
         .join(recorded::OPERATIONS)
         .join(format!("{}.lease", finished.operation_id));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while lease.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "a finished operation lets its lease go: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let gone = test_time::until_true("a finished operation lets its lease go", patience(), || {
+        !lease.exists()
+    });
+    gone.unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
 }
 
 /// Seconds since the epoch, the clock a record is stamped by.
@@ -395,10 +397,15 @@ fn now() -> f64 {
 }
 
 /// A board server that takes one connection and never answers it: once it took it, it makes the
-/// file `accepted` and tells when it took it, then when the asker gave up and closed it.
+/// file `accepted`. It tells when it took it, then when its asker was let go: by
+/// [`Silent::release`], or by the asker's own wait, which runs a minute in these tests
+/// ([`ASKED`]), so that a loaded machine never lets it go first.
 struct Silent {
     address: String,
     heard: mpsc::Receiver<(f64, f64)>,
+    held: Arc<Mutex<Option<TcpStream>>>,
+    /// Set once its asker was let go, before it reads the time it tells for that.
+    let_go: Arc<AtomicBool>,
 }
 
 impl Silent {
@@ -406,45 +413,110 @@ impl Silent {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap().to_string();
         let (tell, heard) = mpsc::channel();
+        let held = Arc::new(Mutex::new(None));
+        let holder = Arc::clone(&held);
+        let let_go = Arc::new(AtomicBool::new(false));
+        let gone = Arc::clone(&let_go);
         let accepted = accepted.to_path_buf();
         std::thread::spawn(move || {
             let (mut asked, _) = listener.accept().unwrap();
             let taken = now();
+            *holder.lock().unwrap() = Some(asked.try_clone().unwrap());
             fs::write(&accepted, "").unwrap();
             let mut said = [0; 4096];
             while matches!(asked.read(&mut said), Ok(read) if read > 0) {}
+            gone.store(true, Ordering::SeqCst);
             let _ = tell.send((taken, now()));
         });
-        Silent { address, heard }
+        Silent {
+            address,
+            heard,
+            held,
+            let_go,
+        }
     }
 
-    /// When it took the question, then when the asker gave up.
+    /// Whether it holds the question it took, its asker not let go: the time it will tell for
+    /// that is read after this.
+    fn holds(&self) -> bool {
+        self.held.lock().unwrap().is_some() && !self.let_go.load(Ordering::SeqCst)
+    }
+
+    /// The question it took closed unanswered, which lets its asker go: called once `accepted`
+    /// exists.
+    fn release(&self) {
+        if let Some(asked) = &*self.held.lock().unwrap() {
+            let _ = asked.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// When it took the question, then when its asker was let go.
     fn heard(&self) -> (f64, f64) {
-        self.heard.recv_timeout(Duration::from_secs(60)).unwrap()
+        self.heard.recv_timeout(asked_patience()).unwrap()
     }
 }
 
+/// The backstop of a wait for a run that asks a board that never answers: the minute its asker is
+/// given ([`ASKED`]), as `test_time::backstop` makes it.
+fn asked_patience() -> Duration {
+    test_time::backstop(Duration::from_secs(60))
+}
+
 /// A command that runs until `accepted` exists: until the board is being asked its task.
-fn until_asked(accepted: &Path) -> Vec<&str> {
-    vec![
+fn until_asked(accepted: &Path) -> Vec<String> {
+    [
         "/bin/sh",
         "-c",
         "while [ ! -e \"$1\" ]; do :; done",
         "sh",
         accepted.to_str().unwrap(),
     ]
+    .map(str::to_string)
+    .to_vec()
 }
 
-/// The scale of a run that asks a board that never answers: the board is asked 5 s, its own 1 s
-/// that many times, so a loaded machine stamps the command's end while it is asked, and the test
-/// waits that out once.
-const ASKED: u32 = 5;
+/// The scale of a run that asks a board that never answers: the most a scale takes, a minute for
+/// the board's own second, which the test cuts short once the recorder stamped its command's end
+/// ([`released_once_stamped`]). So the board is still asked however late a loaded machine lets the
+/// recorder stamp that end.
+const ASKED: &str = "60";
 
-/// `finished`, run while the board took the question of its task at `taken` and its asker gave up
-/// at `closed`, was stamped as it ran, not once the board answered: asked for after `called`,
-/// started before the board was asked, ended after that (its command waited for it) and before
-/// the asker gave up, which was no sooner than [`ASKED`] seconds after it was called; for its
-/// session, and no task.
+/// Once its recorder made `mark` ([`END_MARK_VAR`]), having stamped its command's end, `board`
+/// still holds the question it took, and is then made to let it go: whatever order a loaded
+/// machine runs the recorder's threads and the test's in, the end was stamped while the board was
+/// asked, and before the time the board tells for letting its asker go. A recorder that stamped
+/// the end only once the board let its asker go would make the mark only once the asker's own
+/// minute ran out ([`ASKED`]), the question let go, or stamp the end after that time.
+fn released_once_stamped(mark: &Path, board: &Silent) {
+    test_time::until_true(
+        "its recorder stamped its command's end",
+        asked_patience(),
+        || mark.exists(),
+    )
+    .unwrap();
+    assert!(
+        board.holds(),
+        "the board let its asker go before the recorder stamped its command's end"
+    );
+    board.release();
+}
+
+/// Once this process's child `pid` has ended, which is left unreaped for its own caller to reap.
+fn until_ended(pid: libc::pid_t) {
+    test_time::until_true(format!("its command {pid} ended"), patience(), || {
+        let seen = ended(pid);
+        assert_ne!(seen, None, "reaped before it was seen ended");
+        seen == Some(true)
+    })
+    .unwrap();
+}
+
+/// `finished`, run while the board took the question of its task at `taken` and let its asker go
+/// at `closed`, once its recorder stamped its command's end ([`released_once_stamped`]), was
+/// stamped as it ran, not once the board let go: asked for after `called`, started before the
+/// board was asked, ended after that (its command waited for it) and before the board let go; for
+/// its session, and no task. A recorder that stamped its end once the board let its asker go would
+/// stamp it after `closed`.
 #[track_caller]
 fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f64)) {
     let (queued, started, ended) = (
@@ -458,11 +530,7 @@ fn stamped_while_asked(finished: &Record, called: f64, (taken, closed): (f64, f6
     );
     assert!(
         taken <= ended && ended < closed,
-        "the board asked at {taken}, given up at {closed}: {finished:?}"
-    );
-    assert!(
-        closed - called >= f64::from(ASKED),
-        "the board asked as its scale says, {ASKED} s: called at {called}, given up at {closed}"
+        "the board asked at {taken}, let go at {closed}: {finished:?}"
     );
     assert_eq!(
         (finished.handle.as_deref(), finished.task.as_deref()),
@@ -479,15 +547,24 @@ fn its_times_are_stamped_as_they_come_while_a_board_that_never_answers_is_asked_
     case.env
         .vars
         .insert("TASKS_SERVER".into(), board.address.clone());
+    let command = until_asked(&accepted);
+    let mark = folders.dir.join("stamped");
     let mut args = vec!["run", "--phase", "test", "--"];
-    args.extend(until_asked(&accepted));
+    args.extend(command.iter().map(String::as_str));
     let called = now();
-    let done = output(
-        tasks(&case, &folders, Some("asks-a-silent-board"), &args)
-            .env(SCALE_VAR, ASKED.to_string())
-            .stdin(Stdio::null()),
-    )
-    .unwrap();
+    let started = tasks(&case, &folders, Some("asks-a-silent-board"), &args)
+        .env(SCALE_VAR, ASKED)
+        .env(END_MARK_VAR, &mark)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // On macOS the binary becomes its command, watched by a recorder of its own; elsewhere it is
+    // its command's parent. Either stamps the command's end while it still asks the board, which
+    // then lets it go.
+    released_once_stamped(&mark, &board);
+    let done = wait_output(started).unwrap();
     assert!(done.status.success(), "{done:?}");
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -499,20 +576,31 @@ fn in_its_callers_process_its_times_are_stamped_as_they_come_while_the_board_is_
     let accepted = folders.dir.join("accepted");
     let board = Silent::new(&accepted);
     let mut env = case.env.clone();
+    let mark = folders.dir.join("stamped");
     for (name, value) in [
         ("TASKS_SERVER", board.address.as_str()),
         ("TASKS_SESSION", "asks-a-silent-board"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
-        (SCALE_VAR, &ASKED.to_string()),
+        (SCALE_VAR, ASKED),
+        (END_MARK_VAR, mark.to_str().unwrap()),
     ] {
         env.vars.insert(name.into(), value.into());
     }
     env.cwd.clone_from(&folders.dir);
-    let mut args = vec!["run", "--phase", "test", "--"];
+    let mut args = ["run", "--phase", "test", "--"]
+        .map(str::to_string)
+        .to_vec();
     args.extend(until_asked(&accepted));
     let called = now();
-    let ran = crate::run(&env, &args, "");
+    let (tell, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = tell.send(crate::run(&env, &args, ""));
+    });
+    // Its command is this process's child, whose end its waiter stamps while the board is asked.
+    released_once_stamped(&mark, &board);
+    let ran = done.recv_timeout(asked_patience()).unwrap();
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
     stamped_while_asked(&folders.once(Step::Finished), called, board.heard());
 }
@@ -593,7 +681,7 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         ("TASKS_SESSION", "asks-a-silent-board"),
         ("TASKS_WORK", folders.work.to_str().unwrap()),
         ("SYMPHONY_MACHINE_DIR", folders.machine.to_str().unwrap()),
-        (SCALE_VAR, &ASKED.to_string()),
+        (SCALE_VAR, ASKED),
     ] {
         env.vars.insert(name.into(), value.into());
     }
@@ -618,17 +706,14 @@ fn a_command_that_ends_while_the_board_is_asked_is_left_unreaped_until_its_recor
         let _ = tell.send(crate::run(&env, &args, ""));
     });
     let pid = written_pid(&pid);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while ended(pid) != Some(true) {
-        assert_eq!(ended(pid), Some(false), "reaped before it was seen ended");
-        assert!(Instant::now() < deadline, "not ended within 30 s");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    until_ended(pid);
+    // The board lets its asker go only now: until then it is asked, however long the command took.
     assert!(
         board.heard.try_recv().is_err(),
         "the board was no longer asked once it ended"
     );
-    let ran = done.recv_timeout(Duration::from_secs(60)).unwrap();
+    board.release();
+    let ran = done.recv_timeout(asked_patience()).unwrap();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
     assert_eq!(ended(pid), None, "left unreaped");
     let finished = folders.once(Step::Finished);
@@ -785,11 +870,7 @@ fn a_signal_sent_to_the_process_its_caller_started_reaches_its_command() {
     ));
     folders.once(Step::Running);
     // Running says its command started, not that it is ready for the signal yet: it says that.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !trapped.exists() {
-        assert!(Instant::now() < deadline, "the command never set its trap");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the command set its trap", patience(), || trapped.exists()).unwrap();
     let pid = libc::pid_t::try_from(recorder.id()).unwrap();
     // SAFETY: a signal to the process this test started and has not waited for.
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
@@ -893,19 +974,11 @@ fn the_task_its_session_holds_is_its_work_while_it_runs_and_its_record_keeps_how
     assert!(running.child_pid.is_some());
     assert!(running.queued_at <= running.started_at.unwrap());
     // Its recorder says it still runs, a beat at a time.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let beaten = loop {
+    let beaten = test_time::until("a beat after it started", patience(), || {
         let now = folders.once(Step::Running);
-        if now.beat_at > running.beat_at {
-            break now;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no beat within 30 s: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    };
+        (now.beat_at > running.beat_at).then_some(now)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
     assert_eq!(beaten.started_at, running.started_at);
     fs::write(&release, "").unwrap();
     assert!(recorder.wait().unwrap().success());
@@ -1423,11 +1496,10 @@ fn the_next_run_finishes_work_whose_recorder_died_and_keeps_both_in_the_history(
     let recorder = libc::pid_t::try_from(running.pid).unwrap();
     // SAFETY: the recorder of the operation this test started.
     assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(recorder) {
-        assert!(Instant::now() < deadline, "the recorder outlived its kill");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the recorder gone after its kill", patience(), || {
+        !alive(recorder)
+    })
+    .unwrap();
     // Its command outlives it; a reader cannot say the work ended, nor that it runs.
     let found = recorded::read(&folders.work);
     assert!(found.records.is_empty(), "{found:?}");
@@ -1547,10 +1619,23 @@ fn a_command_line_of_another_command_that_is_not_text_is_refused_without_a_panic
 fn pipeline_run(
     case: &Case,
     folders: &Folders,
+    places: (&Path, &Path),
+    names: (&str, &str),
+    script: &str,
+) -> std::process::ExitStatus {
+    let done = output(pipeline_command(case, folders, places, names, script).stdin(Stdio::null()))
+        .unwrap();
+    done.status
+}
+
+/// The command [`pipeline_run`] runs.
+fn pipeline_command(
+    case: &Case,
+    folders: &Folders,
     (repo, runs): (&Path, &Path),
     (pipeline, label): (&str, &str),
     script: &str,
-) -> std::process::ExitStatus {
+) -> Command {
     let args = [
         "run",
         "--phase",
@@ -1564,14 +1649,9 @@ fn pipeline_run(
         "-c",
         script,
     ];
-    let done = output(
-        tasks(case, folders, None, &args)
-            .env(RUNS_VAR, runs)
-            .current_dir(repo)
-            .stdin(Stdio::null()),
-    )
-    .unwrap();
-    done.status
+    let mut command = tasks(case, folders, None, &args);
+    command.env(RUNS_VAR, runs).current_dir(repo);
+    command
 }
 
 /// The most the quickest of a test's runs may take from being asked for to its command starting
@@ -1833,6 +1913,11 @@ fn a_checkout_is_clean_or_dirty_as_its_command_starts_whatever_the_command_write
     assert_eq!(child.cpu_partial, None);
 }
 
+/// The scale of the case below: the most a scale takes, so a recorder apart from its caller would
+/// wait two minutes for the day files' lock before each line (`runs::LOCK_WAIT`, sixty times),
+/// which no loaded machine reaches with a recorder that never waits so.
+const LOCK_SCALE: u32 = 60;
+
 #[test]
 fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     let case = Case::new();
@@ -1842,11 +1927,10 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     fs::create_dir_all(&runs).unwrap();
     let holder = fs::File::create(runs.join("lock")).unwrap();
     holder.lock().unwrap();
-    // Its own waits, not the tests' scale: it asserts nothing git or the board decides, and their
-    // own bounds (0.6 s and 1 s, each cut off there) keep the run under the one an append that
-    // waited costs.
+    // A recorder apart from its caller waits for the lock before each line, two minutes here: one
+    // that ends sooner, the lock held throughout, never waited so.
     let mut env = in_process(&case, &folders, (&repo, &runs));
-    env.vars.remove(SCALE_VAR);
+    env.vars.insert(SCALE_VAR.into(), LOCK_SCALE.to_string());
     let began = Instant::now();
     let ran = crate::run(
         &env,
@@ -1865,9 +1949,10 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     );
     let took = began.elapsed();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
-    // An append that waited for the lock as a recorder apart from its caller does would have cost
-    // LOCK_WAIT alone.
-    assert!(took < symphony_board::runs::LOCK_WAIT, "{took:?}");
+    assert!(
+        took < symphony_board::runs::LOCK_WAIT * LOCK_SCALE,
+        "waited for the held lock as a recorder apart from its caller does: {took:?}"
+    );
     // Both lines were appended still, each whole, without the lock.
     let [ended] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
         .try_into()
@@ -1875,6 +1960,27 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     assert_eq!((ended.end, ended.exit), (Some(End::Red), Some(7)));
     assert_eq!(day_lines(&folders.work, &runs, 1).len(), 2);
     holder.unlock().unwrap();
+}
+
+/// The first reading a beat wrote into the running record of the operation labelled `label` that
+/// read `processes` processes or more; a wait that gives up says the records a reader found and
+/// what the work folder holds.
+#[cfg(target_os = "macos")]
+#[track_caller]
+fn read_at_least(folders: &Folders, label: &str, processes: u32) -> recorded::CpuReading {
+    let what = format!("a reading of {processes} processes of {label}");
+    test_time::until(what, patience(), || {
+        (folders.records().into_iter())
+            .filter(|record| record.label == label && record.state == Step::Running)
+            .find_map(|record| record.reading.filter(|read| read.processes >= processes))
+    })
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: {:?}; the work folder: {}",
+            folders.records(),
+            holds(&folders.work)
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -1893,36 +1999,55 @@ fn on_macos_a_run_says_whether_its_cpu_misses_a_process_that_left_its_command() 
     }
     let release = Release(folders.dir.join("release"));
     // A child left running when the command ends goes to the system, out of its reach: it is
-    // released once the recorder's last reading is written. It holds none of the streams the test
-    // reads to their end.
+    // released once the recorder's last reading is written. It ends too once the test's folder is
+    // gone, which a release written just before the folder's removal would leave it never to see,
+    // and by itself after six minutes of its looks, should the test be killed before either. It
+    // holds none of the streams the test reads to their end. The command then reads its stdin,
+    // starting no other process, and ends once the test closes it: once a reading its recorder
+    // wrote with a beat read two processes, the command and that child under it. However late a
+    // loaded machine lets the recorder look, the child is read before it leaves; a test that ends
+    // before closes it all the same.
     let leaves = format!(
-        "(while [ ! -e '{}' ]; do sleep 0.05; done) </dev/null >/dev/null 2>&1 & sleep 1.5",
+        "(i=0; while [ -d '{}' ] && [ ! -e '{}' ] && [ $i -lt 7200 ]; do sleep 0.05; \
+         i=$((i + 1)); done) </dev/null >/dev/null 2>&1 & read -r line; :",
+        folders.dir.display(),
         release.0.display()
     );
-    // Plain runs at once, each reaped by the test, as its own thread sees it end, before or after
-    // its recorder reads it the last time: nothing is missed either way.
+    let mut leaving =
+        pipeline_command(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+    // Plain runs at once, each reaped by the test only once every recorder wrote its end line: the
+    // last reading of each is of its command ended and not yet reaped, however late a loaded
+    // machine let its recorder look, so nothing is missed. What a caller that reaps first leaves a
+    // count, the unit tests of `cpu::Tree::reaped_first` hold.
     const PLAIN: usize = 4;
-    std::thread::scope(|scope| {
-        let mut started =
-            vec![scope.spawn(|| {
-                pipeline_run(&case, &folders, (&repo, &runs), ("test", "leaves"), &leaves)
-            })];
-        for _ in 0..PLAIN {
-            started.push(scope.spawn(|| {
-                pipeline_run(
-                    &case,
-                    &folders,
-                    (&repo, &runs),
-                    ("test", "plain"),
-                    "sleep 0.8",
-                )
-            }));
-        }
-        for each in started {
-            assert!(each.join().unwrap().success());
-        }
-    });
+    let run = |names: (&str, &str), script: &str| {
+        spawn(&mut pipeline_command(
+            &case,
+            &folders,
+            (&repo, &runs),
+            names,
+            script,
+        ))
+    };
+    let mut started: Vec<Child> = (0..PLAIN)
+        .map(|_| run(("test", "plain"), "sleep 0.8"))
+        .collect();
+    let under = read_at_least(&folders, "leaves", 2);
+    assert!(
+        !under.partial,
+        "a reading while the child is under its command misses nothing: {under:?}"
+    );
+    drop(leaving.stdin.take());
+    started.push(leaving);
     let lines = symphony_api::fold(day_lines(&folders.work, &runs, PLAIN + 1));
+    for mut each in started {
+        assert!(each.wait().unwrap().success());
+    }
     drop(release);
     let said = |label: &str| -> Vec<(bool, Option<bool>)> {
         let lines = lines.iter().filter(|line| line.label == label);
@@ -2193,28 +2318,22 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     );
     let running = folders.once(Step::Running);
     // Its start line follows its record's.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let start = loop {
-        if let [start] = day_lines(&folders.work, &runs, 0).as_slice() {
-            break start.clone();
+    let start = test_time::until("its start line", patience(), || {
+        match day_lines(&folders.work, &runs, 0).as_slice() {
+            [start] => Some(start.clone()),
+            _ => None,
         }
-        assert!(
-            Instant::now() < deadline,
-            "no start line within 30 s: {}",
-            holds(&folders.work)
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {}", holds(&folders.work)));
     assert!(start.is_start() && start.started.is_some(), "{start:?}");
     assert_eq!(start.run, running.operation_id);
     let recorder = libc::pid_t::try_from(running.pid).unwrap();
     // SAFETY: the recorder of the operation this test started.
     assert_eq!(unsafe { libc::kill(recorder, libc::SIGKILL) }, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(recorder) {
-        assert!(Instant::now() < deadline, "the recorder outlived its kill");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true("the recorder gone after its kill", patience(), || {
+        !alive(recorder)
+    })
+    .unwrap();
     // The sweeping recorder's own lines go elsewhere; the lost run's end goes where its start went.
     let elsewhere = folders.dir.join("elsewhere");
     let done = output(

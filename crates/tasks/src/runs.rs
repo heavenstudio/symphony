@@ -108,14 +108,27 @@ fn locked(folder: &Path, wait: Duration) -> io::Result<Option<FileLock>> {
     lock_within(file, wait)
 }
 
-/// `file` locked, tried again every 5 ms for at most `wait`; none when it stayed held that long.
+/// How often [`lock_within`] tries the lock again while it is held.
+const LOCK_LOOK: Duration = Duration::from_millis(5);
+
+#[cfg(test)]
+thread_local! {
+    /// The tries [`lock_within`] made on this thread: a test's count of how long it waited, which
+    /// a loaded machine can only lower.
+    static LOCK_TRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `file` locked, tried again every [`LOCK_LOOK`] for at most `wait`; none when it stayed held
+/// that long.
 pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileLock>> {
     let deadline = Instant::now() + wait;
     loop {
+        #[cfg(test)]
+        LOCK_TRIES.set(LOCK_TRIES.get() + 1);
         match file.try_lock() {
             Ok(()) => return Ok(Some(FileLock(file))),
             Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
+                std::thread::sleep(LOCK_LOOK);
             }
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Error(error)) => return Err(error),
@@ -365,6 +378,11 @@ fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// The time a test gives what it asks of git or a shell, which answers at once on a quiet
+    /// machine: the backstop of the 30 s it once had, so a loaded machine's slow start never reads
+    /// as an answer not given.
+    const PATIENT: Duration = test_time::backstop(Duration::from_secs(30));
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("symphony-runs-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -488,12 +506,14 @@ mod tests {
             .write_all(b"{\"schema\":1,\"ru")
             .unwrap();
         let began = Instant::now();
+        let tried = LOCK_TRIES.get();
         append(&dir, &ended("b", NOW, "t", false), NOW, BRIEF_WAIT).unwrap();
-        let waited = began.elapsed();
-        assert!(
-            BRIEF_WAIT <= waited && waited < Duration::from_millis(500),
-            "{waited:?}"
-        );
+        let (waited, tries) = (began.elapsed(), LOCK_TRIES.get() - tried);
+        assert!(BRIEF_WAIT <= waited, "{waited:?}");
+        // A try each look of the brief wait and one at its end: a loaded machine's looks oversleep,
+        // so only a longer wait than the one given tries more.
+        let most = usize::try_from(BRIEF_WAIT.as_millis() / LOCK_LOOK.as_millis()).unwrap() + 1;
+        assert!((2..=most).contains(&tries), "{tries} tries in {waited:?}");
         assert!(
             dir.join("2000-01-01.jsonl").exists(),
             "pruned without the lock"
@@ -625,13 +645,27 @@ mod tests {
             tree: &tree,
         };
         let day = dir.join("2026-11-11.jsonl");
-        // A FIFO named as the day's file: read at once as nothing, with no writer to wait for.
+        // A FIFO named as the day's file: read as nothing, with no writer to wait for. None ever
+        // comes, so a reader that waited on it would wait for ever: its return at all is the
+        // proof. Past the wait's backstop a writer frees one that waits, to fail and not hang.
         let fifo = std::ffi::CString::new(day.as_os_str().as_encoded_bytes()).unwrap();
         // SAFETY: a NUL-terminated path, alive through the call.
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        let began = Instant::now();
-        assert_eq!(rerun_of(&dir, same, NOW), None);
-        assert!(began.elapsed() < Duration::from_secs(1));
+        let (read, waited) = std::thread::scope(|scope| {
+            let reading = scope.spawn(|| rerun_of(&dir, same, NOW));
+            let returned = test_time::until_true(
+                "the reader returned from the FIFO",
+                test_time::backstop(Duration::from_secs(1)),
+                || reading.is_finished(),
+            );
+            let waited = returned.is_err();
+            if waited {
+                drop(OpenOptions::new().write(true).open(&day));
+            }
+            (reading.join().unwrap(), waited)
+        });
+        assert!(!waited, "the reader waited on a FIFO for a writer");
+        assert_eq!(read, None);
         fs::remove_file(&day).unwrap();
         // A link, to an endless device or to a day file, is not read.
         std::os::unix::fs::symlink("/dev/zero", &day).unwrap();
@@ -711,6 +745,7 @@ mod tests {
                 cpu_partial: Some(true),
                 runs: Some("/repo/.git/symphony/runs".into()),
             }),
+            reading: None,
         }
     }
 
@@ -778,8 +813,7 @@ mod tests {
         git(&["commit", "-q", "-m", "base"]);
         let commit = git(&["rev-parse", "HEAD"]);
         let tree = git(&["rev-parse", "HEAD^{tree}"]);
-        let said =
-            |commit: &str, checked| tree_and_dirty(&dir, commit, checked, Duration::from_secs(30));
+        let said = |commit: &str, checked| tree_and_dirty(&dir, commit, checked, PATIENT);
         assert_eq!(said(&commit, false), (Some(tree.clone()), Some(false)));
         fs::write(dir.join("ignored"), "x").unwrap();
         assert_eq!(said(&commit, false).1, Some(false));
@@ -790,7 +824,7 @@ mod tests {
         assert_eq!(said(&"0".repeat(40), true), (None, None));
         let elsewhere = scratch("tree-none");
         assert_eq!(
-            tree_and_dirty(&elsewhere, &commit, false, Duration::from_secs(30)),
+            tree_and_dirty(&elsewhere, &commit, false, PATIENT),
             (None, None)
         );
         // What git has not said in the time given is not known.
@@ -811,7 +845,7 @@ mod tests {
                 Instant::now() + within,
             )
         };
-        let long = Duration::from_secs(30);
+        let long = PATIENT;
         assert_eq!(sh("printf 'a tree'", long), Some(b"a tree".to_vec()));
         assert_eq!(sh("printf said; exit 3", long), None);
         // More than a pipe holds is read as it comes.
@@ -820,17 +854,23 @@ mod tests {
             long,
         );
         assert_eq!(much.map(|said| said.len()), Some(2000 * 101));
-        // One still running at the deadline is killed and reaped: gone, no zombie left.
+        // One still running at the deadline is killed and reaped: gone, no zombie left. Its sleep
+        // outlasts every deadline tried, so only the kill answers `None` (its own end says
+        // nothing, with success). The deadline doubles until the shell was up in time to say its
+        // pid, however long a loaded machine takes to start it.
         let pid = dir.join("pid");
-        let began = Instant::now();
-        let script = format!("echo $$ > '{}'; exec sleep 30", pid.display());
-        assert_eq!(sh(&script, Duration::from_millis(300)), None);
-        assert!(
-            began.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            began.elapsed()
-        );
-        let pid: libc::pid_t = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+        let script = format!("echo $$ > '{}'; exec sleep 600", pid.display());
+        let mut given = Duration::from_millis(300);
+        let said = loop {
+            let _ = fs::remove_file(&pid);
+            assert_eq!(sh(&script, given), None, "within {given:?}");
+            match fs::read_to_string(&pid) {
+                Ok(said) if said.ends_with('\n') => break said,
+                _ if given < Duration::from_secs(40) => given *= 2,
+                _ => panic!("the shell was not up within {given:?}"),
+            }
+        };
+        let pid: libc::pid_t = said.trim().parse().unwrap();
         // SAFETY: signal 0 only asks whether the process is there.
         let there = unsafe { libc::kill(pid, 0) };
         assert_eq!(

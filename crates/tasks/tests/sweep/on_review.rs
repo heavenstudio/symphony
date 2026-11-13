@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::on_review::{LOG, MANIFEST, Started};
 use symphony_board::sweep::trigger::folder;
@@ -52,22 +52,19 @@ fn log(r: &Repo) -> PathBuf {
     folder(&r.root.join(".git")).join(LOG)
 }
 
-/// The file at `path` once it exists: its text.
+/// The file at `path` once it exists: its text, waited for up to the backstop of the minute it
+/// once had.
 fn written(path: &Path) -> String {
-    let began = Instant::now();
-    loop {
-        if let Ok(text) = fs::read_to_string(path)
-            && text.ends_with('\n')
-        {
-            return text;
-        }
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "nothing written to {} within a minute",
-            path.display()
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    test_time::until(
+        format!("a whole line written to {}", path.display()),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            fs::read_to_string(path)
+                .ok()
+                .filter(|text| text.ends_with('\n'))
+        },
+    )
+    .unwrap()
 }
 
 /// The main checkout's manifest naming `command` as the review command.
@@ -374,30 +371,30 @@ fn a_program_that_cannot_start_starts_nothing_recorded_or_not_and_the_move_says_
     }
 }
 
-/// The day files in `runs` once they hold an end line: the one run they keep, folded.
+/// The day files in `runs` once they hold an end line: the one run they keep, folded; waited for
+/// up to the backstop of the minute it once had.
 fn ended_run(runs: &Path) -> symphony_api::RunLine {
-    let began = Instant::now();
-    loop {
-        let lines: Vec<symphony_api::RunLine> = fs::read_dir(runs)
-            .into_iter()
-            .flatten()
-            .flat_map(|entry| {
-                let text = fs::read_to_string(entry.unwrap().path()).unwrap_or_default();
-                text.lines()
-                    .map(|line| serde_json::from_str(line).unwrap())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        if lines.iter().any(|line| line.end.is_some()) {
-            let [run] = symphony_api::fold(lines).try_into().unwrap();
-            return run;
-        }
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "no run ended within a minute: {lines:?}"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    let mut lines: Vec<symphony_api::RunLine> = Vec::new();
+    let ended = test_time::until(
+        format!("a run ended in {}", runs.display()),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            lines = fs::read_dir(runs)
+                .into_iter()
+                .flatten()
+                .flat_map(|entry| {
+                    let text = fs::read_to_string(entry.unwrap().path()).unwrap_or_default();
+                    text.lines()
+                        .map(|line| serde_json::from_str(line).unwrap())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            lines.iter().any(|line| line.end.is_some()).then_some(())
+        },
+    );
+    ended.unwrap_or_else(|stall| panic!("{stall}: {lines:?}"));
+    let [run] = symphony_api::fold(lines).try_into().unwrap();
+    run
 }
 
 #[test]

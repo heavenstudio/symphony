@@ -165,6 +165,7 @@ fn made(id: &str, task: &str, state: Step, beat_at: f64) -> Record {
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     }
 }
 

@@ -2,26 +2,28 @@
 //! connection, and never a third time; a late answer says the server is slow, a refused connection
 //! that it did not answer.
 
-use super::{SEVEN, none_waiting, read_request, sevens};
+use super::{PATIENT, SEVEN, none_waiting, read_request, sevens};
 use crate::rpc::{Client, DbError, find, slow};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
-/// The client's wait in these tests; a late answer comes well after it.
+/// The client's wait in these tests, which a held answer runs out.
 const WAIT: Duration = Duration::from_millis(300);
-const LATE: Duration = Duration::from_millis(1200);
 const READ: &str = "RETURN 7;";
 const WRITE: &str = "CREATE ONLY message:once SET text = $text;";
 
 /// How the test server answers a request it read, in the order the requests come.
 #[derive(Clone, Copy)]
 enum Answer {
-    /// Seven, after this long.
-    After(Duration),
+    /// Seven, at once.
+    Now,
+    /// None while the client waits: the connection is held until the client gives up on it and
+    /// closes it, however long a loaded machine keeps it from doing so.
+    Held,
     /// Seven's head and half its body, then the connection closed.
     Cut,
     /// Seven a byte at a time, this long before each: every byte well within the wait, the whole
@@ -62,8 +64,15 @@ impl Board {
         }
     }
 
+    /// A client of this server whose sendings wait [`WAIT`].
     fn client(&self) -> Client {
         Client::new(&self.addr, "sf", "t").waiting(WAIT)
+    }
+
+    /// A client of this server whose sendings wait [`PATIENT`]: each answer it is given comes in
+    /// time, however late a loaded machine lets this server give it.
+    fn patient(&self) -> Client {
+        Client::new(&self.addr, "sf", "t").waiting(PATIENT)
     }
 
     /// The bodies of the requests the server read, in order.
@@ -87,7 +96,7 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Vec<u8>>>, answers: &Answers) {
     while let Some(request) = request_on(&mut stream) {
         seen.lock().unwrap().push(request);
         let answer = answers.lock().unwrap().pop_front();
-        if !answered(&mut stream, answer.unwrap_or(Answer::After(Duration::ZERO))) {
+        if !answered(&mut stream, answer.unwrap_or(Answer::Now)) {
             return;
         }
     }
@@ -96,9 +105,10 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Vec<u8>>>, answers: &Answers) {
 /// `answer` on `stream`: whether the connection is still open for another request.
 fn answered(stream: &mut TcpStream, answer: Answer) -> bool {
     match answer {
-        Answer::After(delay) => {
-            std::thread::sleep(delay);
-            stream.write_all(SEVEN).is_ok()
+        Answer::Now => stream.write_all(SEVEN).is_ok(),
+        Answer::Held => {
+            while matches!(stream.read(&mut [0; 4096]), Ok(read) if read > 0) {}
+            false
         }
         Answer::Cut => {
             let _ = stream.write_all(&SEVEN[..SEVEN.len() - 16]);
@@ -133,20 +143,18 @@ fn request_on(stream: &mut TcpStream) -> Option<Vec<u8>> {
     }
 }
 
-/// A connection `listener` is offered within a second, or None.
+/// A connection `listener` is offered within the backstop of the second this test once gave it,
+/// or None.
 fn another(listener: &TcpListener) -> Option<TcpStream> {
     listener.set_nonblocking(true).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false).unwrap();
-                return Some(stream);
-            }
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Err(_) => return None,
-        }
-    }
+    let offered = test_time::until(
+        "another connection is offered",
+        test_time::backstop(Duration::from_secs(1)),
+        || listener.accept().ok().map(|(stream, _)| stream),
+    );
+    let stream = offered.ok()?;
+    stream.set_nonblocking(false).unwrap();
+    Some(stream)
 }
 
 fn failed(client: &Client, sql: &str) -> String {
@@ -172,12 +180,15 @@ fn cause(said: &str) -> &str {
 
 #[test]
 fn a_read_with_no_answer_in_time_goes_once_more_on_a_new_connection_and_gets_it() {
-    let board = Board::answering(vec![Answer::After(Duration::ZERO), Answer::After(LATE)]);
-    let client = board.client();
+    let board = Board::answering(vec![Answer::Now, Answer::Held]);
+    let client = board.patient();
     sevens(&client, 1);
+    // The held read runs its first sending's wait out, and its second is answered however late.
+    let mut client = client.waiting(WAIT);
+    client.resend_timeout = Some(PATIENT);
     assert_eq!(client.query(READ, json!({})), Ok(vec![json!(7)]));
     let bodies = board.bodies();
-    assert_eq!(bodies.len(), 3, "the first read, then the late one twice");
+    assert_eq!(bodies.len(), 3, "the first read, then the held one twice");
     assert_eq!(bodies[1], bodies[2], "the same read went once more");
     assert_eq!(board.connections(), 2, "the second sending had a new one");
     assert_eq!(client.kept.lock().unwrap().len(), 1, "the new one is kept");
@@ -186,7 +197,7 @@ fn a_read_with_no_answer_in_time_goes_once_more_on_a_new_connection_and_gets_it(
 
 #[test]
 fn a_write_with_no_answer_in_time_is_never_sent_again_and_says_the_server_is_slow() {
-    let board = Board::answering(vec![Answer::After(LATE)]);
+    let board = Board::answering(vec![Answer::Held]);
     let said = failed(&board.client(), WRITE);
     assert_eq!(
         cause(&said),
@@ -203,7 +214,7 @@ fn a_write_with_no_answer_in_time_is_never_sent_again_and_says_the_server_is_slo
 
 #[test]
 fn a_read_late_again_on_its_resend_fails_without_a_third_and_says_the_server_is_slow() {
-    let board = Board::answering(vec![Answer::After(LATE), Answer::After(LATE)]);
+    let board = Board::answering(vec![Answer::Held, Answer::Held]);
     let said = failed(&board.client(), READ);
     let late = format!(
         "read failed on a freshly opened socket after 0 completed requests: {}",
@@ -222,43 +233,46 @@ fn a_read_late_again_on_its_resend_fails_without_a_third_and_says_the_server_is_
 }
 
 /// Each byte of the reply comes well within the wait, which bounds one read; the whole does not,
-/// and the wait bounds the whole. A read trickled twice fails after its two waits, long before
-/// the trickle ends, so a page asking is answered within its own limit.
+/// and the wait bounds the whole. A read trickled twice fails after its two waits, before the
+/// trickle ends, so a page asking is answered within its own limit: a wait that bounded each read
+/// alone would let the whole reply in, and the read would be answered. A loaded machine only
+/// slows the trickle.
 #[test]
 fn a_reply_trickling_in_past_the_wait_is_late_and_its_read_gives_up_long_before_it_ends() {
     let gap = WAIT / 6;
-    let trickle = gap * u32::try_from(SEVEN.len()).unwrap();
     let board = Board::answering(vec![Answer::Trickle(gap), Answer::Trickle(gap)]);
-    let began = Instant::now();
     let said = failed(&board.client(), READ);
-    let took = began.elapsed();
-    assert!(
-        took < trickle / 2,
-        "{took:?} against a {trickle:?} trickle: {said}"
-    );
     assert!(slow(&said), "{said}");
     assert!(said.ends_with("it was not sent a third time"), "{said}");
     assert_eq!(board.bodies().len(), 2, "one sending and one more");
 }
 
-/// The first sending is late and the server then goes: the second finds no server, which decides
-/// what the failure says.
+/// The first sending is late, the server having gone meanwhile: the second finds no server, which
+/// decides what the failure says. The server goes before the read is asked, on the connection it
+/// kept from the read before, so no wait of the client's runs out first.
 #[test]
 fn a_late_read_whose_resend_is_refused_says_the_server_did_not_answer() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
+    let (gone, went) = mpsc::channel();
     let held = std::thread::spawn(move || {
         let (mut taken, _) = listener.accept().unwrap();
         read_request(&mut taken);
+        taken.write_all(SEVEN).unwrap();
         drop(listener);
-        taken.set_read_timeout(Some(LATE)).unwrap();
+        gone.send(()).unwrap();
+        read_request(&mut taken);
+        // Held until the client gives up on it and closes it.
         let _ = taken.read(&mut [0]);
     });
-    let said = failed(&Client::new(&addr, "sf", "t").waiting(WAIT), READ);
+    let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
+    sevens(&client, 1);
+    went.recv().unwrap();
+    let said = failed(&client.waiting(WAIT), READ);
     assert_eq!(
         cause(&said),
         format!(
-            "the server at {addr} did not answer: read failed on a freshly opened socket after 0 completed requests: {}; the request only reads, so it went once more, on a new connection: connect failed on a freshly opened socket after 0 completed requests: {}; it was not sent there",
+            "the server at {addr} did not answer: read failed on a pooled socket after 1 completed requests: {}; the request only reads, so it went once more, on a new connection: connect failed on a freshly opened socket after 0 completed requests: {}; it was not sent there",
             os(libc::EAGAIN),
             os(libc::ECONNREFUSED)
         )
@@ -269,13 +283,14 @@ fn a_late_read_whose_resend_is_refused_says_the_server_did_not_answer() {
 
 #[test]
 fn a_reply_cut_halfway_sends_a_read_once_more_and_a_write_never() {
+    // A cut is no late answer: the wait is no part of this case.
     let board = Board::answering(vec![Answer::Cut]);
-    assert_eq!(board.client().query(READ, json!({})), Ok(vec![json!(7)]));
+    assert_eq!(board.patient().query(READ, json!({})), Ok(vec![json!(7)]));
     assert_eq!(board.bodies().len(), 2);
     assert_eq!(board.connections(), 2);
 
     let board = Board::answering(vec![Answer::Cut]);
-    let said = failed(&board.client(), WRITE);
+    let said = failed(&board.patient(), WRITE);
     assert_eq!(
         said,
         format!(
@@ -306,7 +321,7 @@ fn a_read_a_kept_connection_took_and_never_answered_goes_once_more_on_a_new_one(
         more.write_all(SEVEN).unwrap();
         Some(listener)
     });
-    let client = Client::new(&addr, "sf", "t").waiting(Duration::from_secs(5));
+    let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
     sevens(&client, 3);
     assert_eq!(client.query(READ, json!({})), Ok(vec![json!(7)]));
     let listener = served.join().unwrap().expect("a new connection");

@@ -11,12 +11,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How long `ps` may take.
-const PS_PATIENCE: Duration = Duration::from_secs(30);
+pub const PS_PATIENCE: Duration = Duration::from_secs(30);
 
 /// The command lines of everything running under `pid`, from `ps`. A table `ps` could not give is
 /// `LaunchError`: a pane is never called idle on no information.
 pub fn descendants(pid: i64) -> Result<Vec<String>, LaunchError> {
-    descendants_by(crate::sys::command("ps"), pid)
+    descendants_by(crate::sys::command("ps"), pid, PS_PATIENCE)
 }
 
 /// The process table a command in `env` reads: [`descendants`], or on a scratch board (a
@@ -54,12 +54,17 @@ pub fn listed(file: &Path, pid: i64) -> Result<Vec<String>, LaunchError> {
     })
 }
 
-/// [`descendants`], the table read from `ps` (a test's stand-in for it): `-axo pid=,ppid=,command=`
-/// is added to it. A table that lists no process `pid` is `LaunchError`, as one `ps` could not give.
-pub fn descendants_by(mut ps: Command, pid: i64) -> Result<Vec<String>, LaunchError> {
+/// [`descendants`], the table read from `ps` (a test's stand-in for it, given the time a loaded
+/// machine needs in place of [`PS_PATIENCE`]) within `patience`: `-axo pid=,ppid=,command=` is
+/// added to it. A table that lists no process `pid` is `LaunchError`, as one `ps` could not give.
+pub fn descendants_by(
+    mut ps: Command,
+    pid: i64,
+    patience: Duration,
+) -> Result<Vec<String>, LaunchError> {
     ps.args(["-axo", "pid=,ppid=,command="]);
     let done =
-        probes::within(&mut ps, PS_PATIENCE).map_err(|why| LaunchError(format!("ps: {why}")))?;
+        probes::within(&mut ps, patience).map_err(|why| LaunchError(format!("ps: {why}")))?;
     let table = String::from_utf8_lossy(&done.stdout);
     if !done.status.success() || table.trim().is_empty() {
         return Err(LaunchError("ps printed nothing".into()));
