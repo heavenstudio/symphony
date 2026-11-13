@@ -4,7 +4,9 @@
 //! their `.git` with the project they copy ([`COPY_MARK`]). Each is outside the main checkout and
 //! every other worktree, and holds none. Anything else found in their place, a link included, is
 //! refused and left exactly as it is. A build folder it keeps is cleared once it is older than
-//! [`BUILD_KEPT_DAYS`].
+//! [`BUILD_KEPT_DAYS`]. What a build older than the rename to `just release` made under its names
+//! (`nightly` and `nightly-conciliate` beside the checkout, [`LEGACY_LOCK_REASON`] and its marks) the
+//! first run of a build that knows the new names moves to them ([`moved`]).
 
 use std::fs;
 use std::io::ErrorKind;
@@ -23,6 +25,15 @@ pub(crate) const COPY_MARK: &str = "symphony-release-copy";
 pub(crate) const BUILT: &str = "symphony-release-built";
 /// The days a build folder the release run keeps is built on incrementally before it is cleared.
 pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
+/// The checkout's name before the rename, beside where it is now, and its copies' folder's
+/// `nightly-conciliate`.
+const LEGACY_NAME: &str = "nightly";
+/// The reason a build older than the rename locked the checkout with.
+pub(crate) const LEGACY_LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
+/// [`MARK`], [`COPY_MARK`] and [`BUILT`] as a build older than the rename named them.
+const LEGACY_MARK: &str = "symphony-nightly";
+const LEGACY_COPY_MARK: &str = "symphony-nightly-copy";
+const LEGACY_BUILT: &str = "symphony-nightly-built";
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
@@ -242,6 +253,128 @@ pub(crate) fn place(
     })
 }
 
+/// Move what a build older than the rename made at `nightly` beside `asked`, the run's checkout in
+/// the repository whose checkout is `root` and common dir `common`, to the names this build gives
+/// it, within `until`: the checkout unlocked, moved by git with its build folder, locked with
+/// [`LOCK_REASON`] and marked again, its build's stamp renamed; then each copy of the release run's
+/// in `nightly-conciliate`, with its marks, into the copies' folder beside `asked`. Only what that
+/// build made is moved, a checkout it locked and marked and a copy it marked, and only where
+/// nothing is in the way; anything else is left as it is. What it moved, and a checkout it left
+/// because something is where it would go.
+pub(crate) fn moved(
+    root: &Path,
+    common: &Path,
+    asked: &Path,
+    until: Bound<'_>,
+) -> Result<Vec<String>, String> {
+    let asked = normal(asked);
+    let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
+        return Ok(Vec::new());
+    };
+    if name == LEGACY_NAME {
+        return Ok(Vec::new());
+    }
+    let old = asked.with_file_name(LEGACY_NAME);
+    let mut noted = moved_checkout(root, common, &old, &asked, until)?;
+    noted.extend(moved_copies(
+        &old.with_file_name(format!("{LEGACY_NAME}-conciliate")),
+        &asked.with_file_name(format!("{name}-conciliate")),
+    ));
+    Ok(noted)
+}
+
+/// [`moved`]'s checkout: the one at `old` to `asked`.
+fn moved_checkout(
+    root: &Path,
+    common: &Path,
+    old: &Path,
+    asked: &Path,
+    until: Bound<'_>,
+) -> Result<Vec<String>, String> {
+    if is_link(old) || is_link(asked) {
+        return Ok(Vec::new());
+    }
+    let (from, to) = (real(old), real(asked));
+    let worktrees = listed(&git(root, &["worktree", "list", "--porcelain", "-z"])?);
+    let ours = (worktrees.iter())
+        .find(|tree| tree.path == from)
+        .is_some_and(|tree| tree.locked.as_deref() == Some(LEGACY_LOCK_REASON))
+        && fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
+        && admin(common, &from).is_some_and(|admin| marked(&admin.join(LEGACY_MARK), &from));
+    if !ours {
+        return Ok(Vec::new());
+    }
+    let (at, there) = (from.to_string_lossy(), to.to_string_lossy());
+    if fs::symlink_metadata(&to).is_ok() || worktrees.iter().any(|tree| tree.path == to) {
+        return Ok(vec![format!(
+            "left {at}, the checkout a build older than the rename to `just release` made: {there} \
+             is in the way"
+        )]);
+    }
+    git_until(root, &["worktree", "unlock", &at], until)?;
+    if let Err(why) = git_until(root, &["worktree", "move", &at, &there], until) {
+        let relocked = ["worktree", "lock", "--reason", LEGACY_LOCK_REASON, &at];
+        let _ = git_until(root, &relocked, until);
+        return Err(format!("cannot move {at} to {there}: {why}"));
+    }
+    let admin =
+        admin(common, &to).ok_or_else(|| format!("git kept no admin folder for {there}"))?;
+    let marker = admin.join(MARK);
+    fs::write(&marker, format!("{there}\n")).map_err(|e| crate::text::os_error(&e, &marker))?;
+    let _ = fs::remove_file(admin.join(LEGACY_MARK));
+    if fs::symlink_metadata(admin.join(LEGACY_BUILT)).is_ok() {
+        let _ = fs::rename(admin.join(LEGACY_BUILT), admin.join(BUILT));
+    }
+    git_until(
+        root,
+        &["worktree", "lock", "--reason", LOCK_REASON, &there],
+        until,
+    )?;
+    Ok(vec![format!(
+        "moved the release run's checkout from {at} to {there}, where a build older than the \
+         rename to `just release` made it"
+    )])
+}
+
+/// [`moved`]'s copies: each of the folder `old` that a build older than the rename marked, with
+/// nothing of its name in `new`, into `new`, its marks renamed; `old` goes once empty.
+fn moved_copies(old: &Path, new: &Path) -> Vec<String> {
+    if is_link(old) || is_link(new) {
+        return Vec::new();
+    }
+    let Ok(entries) = fs::read_dir(old) else {
+        return Vec::new();
+    };
+    let mut moved = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let from = entry.path();
+        let git = from.join(".git");
+        let ours = fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
+            && fs::symlink_metadata(&git).is_ok_and(|meta| meta.is_dir())
+            && fs::symlink_metadata(git.join(LEGACY_COPY_MARK)).is_ok_and(|meta| meta.is_file());
+        let to = new.join(entry.file_name());
+        if !ours || fs::symlink_metadata(&to).is_ok() {
+            continue;
+        }
+        if fs::create_dir_all(new).is_err() || fs::rename(&from, &to).is_err() {
+            continue;
+        }
+        let git = to.join(".git");
+        let _ = fs::rename(git.join(LEGACY_COPY_MARK), git.join(COPY_MARK));
+        if fs::symlink_metadata(git.join(LEGACY_BUILT)).is_ok() {
+            let _ = fs::rename(git.join(LEGACY_BUILT), git.join(BUILT));
+        }
+        moved.push(format!(
+            "moved the release run's copy {} to {}",
+            from.display(),
+            to.display()
+        ));
+    }
+    let _ = fs::remove_dir(old);
+    moved.sort();
+    moved
+}
+
 /// Remove the git locks a killed git left in the admin folder `admin`, when no process holds one
 /// open: what it removed. One held open stops the run.
 fn stale_locks(admin: &Path) -> Result<Vec<String>, String> {
@@ -303,7 +436,7 @@ pub(crate) fn prune_build(target: &Path, stamp: &Path, now: f64) -> Option<Strin
 impl Place {
     /// Bring the checkout to the commit `to`, clean, by `until`: made the first time (a detached
     /// worktree, locked and marked), later reset, every untracked and ignored file gone but its
-    /// build folder (`.target/`), which keeps a night's build incremental until it is
+    /// build folder (`.target/`), which keeps a run's build incremental until it is
     /// [`BUILD_KEPT_DAYS`] old at `now`. What it noted on the way.
     pub(crate) fn checkout(
         &mut self,

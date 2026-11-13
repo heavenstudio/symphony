@@ -27,7 +27,7 @@ fn an_agents_worktree_behind_a_link_or_named_outright_is_never_reset() {
     let status = git(&agent, &["status", "--porcelain"]);
     let files = Fixture::files(&agent);
 
-    // A link in the checkout's place, to that worktree: the night stops, and says so.
+    // A link in the checkout's place, to that worktree: the run stops, and says so.
     symlink(&agent, fixture.worktree()).unwrap();
     let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
     assert_eq!(code, 1, "{out}{err}");

@@ -3,7 +3,7 @@
 //! built and tested with its Symphony moved to the candidate. It runs in a scratch copy of the
 //! project's default branch as committed, never in its checkout or on its board: a repository
 //! sharing the checkout's objects, at `RELEASE-conciliate/ID` beside the release run's own checkout,
-//! marked as the release run's when it is made ([`place::copy_at`]) and refreshed each night with its
+//! marked as the release run's when it is made ([`place::copy_at`]) and refreshed each day with its
 //! build folder kept. Every package of the candidate's workspace is patched in over each git
 //! source the project takes one from (`cargo --config patch…`, so no file of the project changes),
 //! and its packages that depend on one are tested with `cargo test`, with a machine folder of the

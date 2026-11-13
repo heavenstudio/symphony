@@ -1,4 +1,4 @@
-//! The steps a check lists: a check of the night is given a folder of its own among the run's logs
+//! The steps a check lists: a check of the run is given a folder of its own among the run's logs
 //! ([`VAR`] names it), and one that lists the steps it ran there ([`FILE`]), as `verify` does its
 //! lint, client check, size budgets, docs audit and tests (tools/verify.sh), is told by its steps.
 //! Each listed step is a check of its own in the run's record, under the check (`verify/tests`),
@@ -168,7 +168,7 @@ pub(crate) fn beyond(ran: &Ran) -> bool {
     !(ended && ran.steps.iter().any(|step| !step.green()))
 }
 
-/// The reds of the check `ran` as the night tells them: the check itself when its red is
+/// The reds of the check `ran` as the run tells them: the check itself when its red is
 /// [`beyond`] its steps, then each red step it listed.
 pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
     let mut reds: Vec<&Ran> = Vec::new();

@@ -23,7 +23,7 @@ use super::common::older_board;
 use super::conciliation::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
-/// The release a night of the fixture's clock tags.
+/// The release a run of the fixture's clock tags.
 const RELEASE: &str = "release-2026-11-12";
 /// The branch a project's pin moves on.
 const BRANCH: &str = "symphony/release-2026-11-12";
@@ -430,7 +430,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
         &status[from..],
         format!(
             "landings: 7 on origin/main since {RELEASE} ({}); the last tools/g ({})\n\
-             next run: after 13 more landings (7 of 20), or the night's run\n\
+             next run: after 13 more landings (7 of 20), or the scheduled run\n\
              last refresh: green, of {RELEASE} by the run {}, 2026-11-12 10:00 (1 h ago)\n  \
              consumer: its pin to {RELEASE} is on the branch {BRANCH} ({made}), made through its \
              own commit gate and not pushed\n  \

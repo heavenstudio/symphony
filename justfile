@@ -99,7 +99,7 @@ _client-check OUT:
 
 # The shipped binaries, built as `cargo install` builds them (the release profile), and the client
 # the server embeds, each against its line in tools/size-budget.toml (docs/CHECKS.md, "Size
-# budgets"). The nightly's verify runs it: one release build, which no task's gate pays for.
+# budgets"). The release run's verify runs it: one release build, which no task's gate pays for.
 size-check:
     @{{record}} --pipeline size --step size-check build "just size-check" just --justfile {{quote(justfile())}} _size-check
 

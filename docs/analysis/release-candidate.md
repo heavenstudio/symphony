@@ -2,7 +2,8 @@
 
 How a red found by the full run gets fixed so that a release comes, and what the run and its
 command are called. This is a design: nothing here is built but the refresh's rule that a pin
-moves only forward, which any candidate needs (A, below). The owner chose A on its card in
+moves only forward, which any candidate needs (A, below), and the rename to `just release`
+([below](#the-names)). The owner chose A on its card in
 [DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
 corrections wait on the owner approving A again, and the three choices A leaves open are cards of
 their own there.
@@ -514,7 +515,10 @@ Their slugs keep the old word; their code uses the names on main when they merge
 
 ## The implementation tasks
 
-The first is built (`tools/refresh-moves-pins-forward`); none other is filed. In the order above:
+The first two are built (`tools/refresh-moves-pins-forward`, `tools/release-rename`); none other
+is filed. The rename keeps `on_land` naming `nightly --due`, which the new build runs as `release
+--due`, since a build older than it refuses `release` ([RELEASES](../RELEASES.md#the-rename)). In
+the order above:
 
 1. **The refresh moves a pin only forward.** A consumer whose pin neither holds the release nor is
    held by it is left, named in the step's output, its record and `--status`, and moved by the

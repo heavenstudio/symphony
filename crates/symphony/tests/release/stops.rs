@@ -245,7 +245,7 @@ fn a_killed_night_keeps_the_lock_until_its_check_ends() {
         .join("verify.log");
     assert!(log.exists(), "its log is kept: {}", log.display());
     let status = fixture.run(late + 120.0, &["--status"], 0);
-    assert!(status.contains("last night: green, "), "{status}");
+    assert!(status.contains("last run: green, "), "{status}");
     assert!(
         status.contains("last interrupted run: interrupted, 2026-11-12 10:00 (28 min ago), on "),
         "{status}"
@@ -826,7 +826,7 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
     fixture.land("a.txt", Some("one\n"), "a.txt reads one");
     let pid_file = fixture.root.join("writer.pid");
     let target = fixture.worktree().join("a.txt");
-    // The first night's check leaves a writer outside its group and outside the checkout. It looks
+    // The first run's check leaves a writer outside its group and outside the checkout. It looks
     // at a.txt without opening it, and 2 s after a.txt reads `broken` (7 bytes) writes `one` over
     // it, as a survivor of an earlier check can.
     let check = format!(
@@ -844,7 +844,7 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
     let guard = Process(libc::pid_t::try_from(writer).unwrap());
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
 
-    // A broken commit lands; the next night's check would see it, but reads after the writer.
+    // A broken commit lands; the next run's check would see it, but reads after the writer.
     let broken = fixture.land("a.txt", Some("broken\n"), "a.txt breaks");
     let (code, out, err) = fixture.release_at(
         NOW + 60.0,
@@ -888,7 +888,7 @@ fn a_checkout_changed_under_a_check_is_never_released_and_the_board_hears_what_c
         "the board hears what changed"
     );
 
-    // Fixed on main, the next night is green and closes the red.
+    // Fixed on main, the next run is green and closes the red.
     fixture.land("a.txt", Some("one\n"), "a.txt reads one again");
     let out = fixture.run(NOW + 120.0, &["--check", "verify=grep -qx one a.txt"], 0);
     assert!(

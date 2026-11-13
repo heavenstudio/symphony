@@ -1,5 +1,5 @@
 //! The release cadence counted in landings: `--due`, which a landing's `on_land` command runs,
-//! starts a night on main's tip once `[releases] every_landings` tasks have landed since the last
+//! starts a run on main's tip once `[releases] every_landings` tasks have landed since the last
 //! release or the last run that checked something, never while a run is in progress; `--status`
 //! says the count and what the next run waits for.
 
@@ -12,7 +12,7 @@ use symphony_board::sys::Stdio;
 use super::{CHECK, DAY, Fixture, NOW, git};
 
 /// The fixture counting every `every` landings.
-fn counting(every: u32) -> Fixture {
+pub(super) fn counting(every: u32) -> Fixture {
     let fixture = Fixture::new();
     fixture.land(
         "symphony.toml",
@@ -69,7 +69,7 @@ fn due(fixture: &Fixture, now: f64, landed: &str, code: i32) -> String {
     )
 }
 
-/// The two cadence lines `--status` ends its night lines with.
+/// The two cadence lines `--status` ends its run lines with.
 fn cadence_lines(fixture: &Fixture, now: f64) -> String {
     let status = fixture.run(now, &["--status"], 0);
     status
@@ -89,7 +89,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
         cadence_lines(&fixture, NOW),
         format!(
             "landings: 0 on origin/main since {START}\n\
-             next run: after 3 more landings (0 of 3), or the night's run\n"
+             next run: after 3 more landings (0 of 3), or the scheduled run\n"
         )
     );
     landing(&fixture, "tools/one");
@@ -98,7 +98,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     assert!(
         out.starts_with(&format!(
             "release: tools/last landed ({})\nlandings: 2 on origin/main since {START}; the last \
-             tools/two ({})\nnext run: after 1 more landing (2 of 3), or the night's run\n",
+             tools/two ({})\nnext run: after 1 more landing (2 of 3), or the scheduled run\n",
             &second[..12],
             &second[..12]
         )),
@@ -125,7 +125,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     assert!(
         out.contains(
             "release: due: the first count, 3 landings from origin/main's start with no release \
-             and no run on record: a night on its tip starts now\n"
+             and no run on record: a run on its tip starts now\n"
         ),
         "{out}"
     );
@@ -136,7 +136,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
     assert_eq!(fixture.tagged("release-2026-11-12"), third);
     let run = fixture.runs().pop().unwrap();
-    assert_eq!(run["kind"], "release", "a night like the schedule's");
+    assert_eq!(run["kind"], "release", "a run like the schedule's");
     assert_eq!(
         run["cause"],
         format!("3 landings since {START}, the last tools/three")
@@ -148,7 +148,7 @@ fn a_night_starts_once_enough_tasks_have_landed_since_the_last_release() {
     assert!(
         status.contains(&format!(
             "landings: 0 on origin/main since release-2026-11-12 ({tagged})\nnext run: after 3 \
-             more landings (0 of 3), or the night's run\n"
+             more landings (0 of 3), or the scheduled run\n"
         )),
         "{status}"
     );
@@ -252,7 +252,7 @@ fn a_run_in_progress_is_never_doubled() {
     assert!(fixture.runs().is_empty(), "nothing ran beside it: {out}");
     assert!(!fixture.worktree().exists(), "nor was its checkout touched");
 
-    // Once it ends, the count is due and the next landing's command starts the night.
+    // Once it ends, the count is due and the next landing's command starts the run.
     lock.unlock().unwrap();
     let out = due(&fixture, NOW + 120.0, &landed, 0);
     assert!(
@@ -282,7 +282,7 @@ fn a_night_run_by_hand_holds_the_lock_so_a_due_count_starts_no_second() {
     while !fs::read_to_string(&running).is_ok_and(|text| text.contains("\"verify\"")) {
         assert!(
             began.elapsed() < Duration::from_secs(60),
-            "the night never ran its check"
+            "the run never ran its check"
         );
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -293,7 +293,7 @@ fn a_night_run_by_hand_holds_the_lock_so_a_due_count_starts_no_second() {
     );
     fs::write(&go, "").unwrap();
     assert!(by_hand.wait().unwrap().success());
-    assert_eq!(fixture.runs().len(), 1, "one night, the one run by hand");
+    assert_eq!(fixture.runs().len(), 1, "one run, the one run by hand");
     // Its release is what the next count starts from: nothing is due.
     let out = due(&fixture, NOW + 120.0, &landed, 0);
     assert!(
@@ -386,7 +386,7 @@ fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_release_runs_
     );
     assert!(
         out.contains(&format!(
-            "release: the night runs from {}, built in its own checkout\n",
+            "release: the run goes on from {}, built in its own checkout\n",
             super::BIN
         )),
         "{out}"
@@ -403,7 +403,7 @@ fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_release_runs_
         !fixture.main.join(".target").exists(),
         "the main checkout's build folder is never touched"
     );
-    assert_eq!(fixture.runs().len(), 1, "one night");
+    assert_eq!(fixture.runs().len(), 1, "one run");
     assert!(!fixture.records().join("running.json").exists());
 }
 
@@ -428,7 +428,7 @@ fn a_due_tip_that_does_not_build_says_why_and_its_night_runs_from_the_linked_bui
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "error: the tip does not build\nrelease: the night runs from this build: the build of \
+            "error: the tip does not build\nrelease: the run goes on from this build: the build of \
              its tip in {} failed (exit status: 1)\n",
             fixture.worktree().display()
         )),
@@ -438,7 +438,7 @@ fn a_due_tip_that_does_not_build_says_why_and_its_night_runs_from_the_linked_bui
         out.contains("release: green; tagged release-2026-11-12"),
         "{out}"
     );
-    assert_eq!(fixture.runs().len(), 1, "one night");
+    assert_eq!(fixture.runs().len(), 1, "one run");
     assert!(!fixture.records().join("running.json").exists());
 }
 
@@ -449,7 +449,7 @@ fn a_cadence_of_none_starts_no_run_and_says_the_night_still_runs() {
     let out = due(&fixture, NOW, &landed, 0);
     assert!(
         out.contains(
-            "next run: off ([releases] every_landings = 0): only the night's run or `just \
+            "next run: off ([releases] every_landings = 0): only the scheduled run or `just \
              release`\n"
         ),
         "{out}"

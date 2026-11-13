@@ -130,6 +130,11 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     if name == "release" {
         return crate::release::main(args, out, err);
     }
+    // Its name before the rename, unlisted: what a landing's on_land and a build older than the
+    // rename still run (`nightly --due`), and a refusal naming the new one.
+    if name == crate::release::LEGACY {
+        return crate::release::legacy(args, out, err);
+    }
     // Measured as the project the command runs in says, the nearest above the current folder.
     let root = std::env::current_dir()
         .ok()

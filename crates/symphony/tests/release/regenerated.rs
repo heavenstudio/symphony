@@ -1,4 +1,4 @@
-//! A night on a main whose generated files the regenerator a land starts makes after it: it waits
+//! A run on a main whose generated files the regenerator a land starts makes after it: it waits
 //! while one makes them, gives one a land has just started its time to take main, follows main
 //! when what it made lands, releases nothing of a main whose committed files are behind its
 //! sources, and files nothing for it, the regenerator's own red being the task; `--status` says
@@ -65,7 +65,7 @@ fn ended() -> i64 {
     i64::from(child.id())
 }
 
-/// A night with the stand-in check, `extra` in its environment, started in the background, its
+/// A run with the stand-in check, `extra` in its environment, started in the background, its
 /// stdout to `said`.
 fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) -> Child {
     fixture
@@ -77,7 +77,7 @@ fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) ->
         .unwrap()
 }
 
-/// Wait until the night started with its stdout to `said` has said `line`, still running.
+/// Wait until the run started with its stdout to `said` has said `line`, still running.
 fn until_said(night: &mut Child, said: &std::path::Path, line: &str) {
     let until = Instant::now() + Duration::from_secs(60);
     while !fs::read_to_string(said).unwrap_or_default().contains(line) {
@@ -102,7 +102,7 @@ fn ended_with(night: &mut Child) -> Option<i32> {
         if let Some(status) = night.try_wait().unwrap() {
             break status.code();
         }
-        assert!(Instant::now() < until, "the night never ended");
+        assert!(Instant::now() < until, "the run never ended");
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -183,7 +183,7 @@ fn a_night_on_a_main_with_no_generators_or_another_tip_waits_for_nothing() {
     let fixture = Fixture::new();
     let status = fixture.run(NOW, &["--status"], 0);
     assert!(!status.contains("regenerator"), "{status}");
-    // Behind, but on a commit of this checkout's that the remote's main is not: the night checks
+    // Behind, but on a commit of this checkout's that the remote's main is not: the run checks
     // the remote's, whose own check says.
     let tip = generating(&fixture);
     regenerator(&fixture, "red", &tip, 1);
@@ -301,7 +301,7 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     assert_eq!(code, Some(0), "{out}");
     assert!(
         out.contains(&format!(
-            "release: origin/main moved on to {} while the night waited for the regenerator: \
+            "release: origin/main moved on to {} while the run waited for the regenerator: \
              that is what it checks",
             &landed[..12]
         )),

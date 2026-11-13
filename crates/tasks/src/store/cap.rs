@@ -16,7 +16,7 @@
 //!
 //! A red's close ([`closing`]) is read so too: never refused, it raises the counts of the open work
 //! under the red, and holds the counters a start would, whether the closing store caps starts or
-//! not (the nightly's does not), since a store that does may have decided on the board before it. A
+//! not (the release run's does not), since a store that does may have decided on the board before it. A
 //! red's own counter (`counter:['red', SLUG]`) is held by its close and by every start that takes
 //! no slot under it ([`crate::slots::reds`]).
 //!

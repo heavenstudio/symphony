@@ -207,7 +207,7 @@ fn a_push_the_remote_refuses_keeps_the_tag_here_and_fails_the_run() {
         )),
         "{err}"
     );
-    // The refused push filed the run's red; this night adds to it.
+    // The refused push filed the run's red; this run adds to it.
     assert!(
         fixture.reds()["tests/release-red-run"].body.contains(push),
         "{:?}",
@@ -222,7 +222,7 @@ fn a_push_the_remote_refuses_keeps_the_tag_here_and_fails_the_run() {
     let status = fixture.run(NOW + 180.0, &["--status"], 0);
     assert!(status.contains("not on origin"), "{status}");
 
-    // Delivered, the next night finds it there: nothing to say, and the red closed.
+    // Delivered, the next run finds it there: nothing to say, and the red closed.
     std::fs::remove_file(&hook).unwrap();
     git(
         &fixture.main,
@@ -271,7 +271,7 @@ fn a_release_only_moves_forward() {
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
     assert_eq!(fixture.runs().len(), runs, "a refusal records no run");
 
-    // Main moved back on the remote: the night stops, tags nothing, and the board hears of it.
+    // Main moved back on the remote: the run stops, tags nothing, and the board hears of it.
     git(
         &fixture.main,
         &[
@@ -363,7 +363,7 @@ fn a_second_night_resets_the_checkout_and_keeps_only_its_build_folder() {
         "!! .target/"
     );
 
-    // A week of nights later the build folder is cleared before the night builds.
+    // A week of runs later the build folder is cleared before the run builds.
     fixture.land("notes.txt", Some("later"), "later");
     let out = fixture.night(NOW + 8.0 * DAY, 0);
     assert!(
@@ -423,7 +423,7 @@ fn out_of_cycle_a_commit_of_the_remotes_main_is_released_after_the_same_checks()
 
     let out = fixture.run(NOW + 3600.0, &["--check", CHECK, "--commit", &fix], 0);
     assert!(
-        out.contains(&format!("release: release of {}", &fix[..12])),
+        out.contains(&format!("release: out-of-cycle of {}", &fix[..12])),
         "{out}"
     );
     assert_eq!(fixture.tagged("release-2026-11-12.2"), fix);
@@ -469,10 +469,10 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     let out = fixture.run(NOW, &["--status"], 0);
     assert_eq!(
         out,
-        "newest release: none yet\nlast night: never run\nlast green: none recorded\n\
+        "newest release: none yet\nlast run: none yet\nlast green: none recorded\n\
          landings: 0 on origin/main since the line's start: no release and no run on record, so \
          every landing counts\n\
-         next run: after 20 more landings (0 of 20), or the night's run\n\
+         next run: after 20 more landings (0 of 20), or the scheduled run\n\
          last refresh: none recorded\n"
     );
     fixture.night(NOW, 0);
@@ -495,7 +495,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
         format!("newest release: release-2026-11-12.2 ({})", &green[..12])
     );
     assert!(
-        lines[1].starts_with("last night: red, 2026-11-12 12:00 (3 h ago), on "),
+        lines[1].starts_with("last run: red, 2026-11-12 12:00 (3 h ago), on "),
         "{out}"
     );
     assert!(
@@ -520,7 +520,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
                 &red["commit"].as_str().unwrap()[..12]
             )
             .as_str(),
-            "next run: after 20 more landings (0 of 20), or the night's run",
+            "next run: after 20 more landings (0 of 20), or the scheduled run",
             "last refresh: none recorded",
         ]
     );

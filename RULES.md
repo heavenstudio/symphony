@@ -34,10 +34,10 @@ the task's stamp (the task `tools/review-as-stamps` records it on the task). A s
 judged in its parent's review, and a fix whose recorded risk calls for no reviewer
 (`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
 Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
-whatever a brief asks: it is the nightly's (`just nightly`, [RELEASES](docs/RELEASES.md)), on
-main's tip, and a red night is filed as a task naming the commits since the last green one. A
-night runs once `[releases] every_landings` tasks have landed (the cadence, started by the land
-itself), and each night once the owner installs its schedule, so a break no task's focused tests
+whatever a brief asks: it is the release run's (`just release`, [RELEASES](docs/RELEASES.md)), on
+main's tip, and a red release run is filed as a task naming the commits since the last green one.
+A run starts once `[releases] every_landings` tasks have landed (the cadence, started by the land
+itself), and each day once the owner installs its schedule, so a break no task's focused tests
 reach is found within that many landings. Evidence by kind of change, how to pick the tests and
 worked examples: [CHECKS](docs/CHECKS.md).
 
@@ -50,26 +50,26 @@ follow-up task, never claiming green or loosening a test. After recovery another
 bounded postmortem (root cause, the class of recurrence, a shared API or refactor that would
 prevent it), reusing an existing analysis task; it blocks nothing.
 
-### `workflow/nightly-reds-first`
+### `workflow/release-reds-first`
 
-A red the nightly files blocks every release, so it is fixed first, the way a bug fix is. The
+A red the release run files blocks every release, so it is fixed first, the way a bug fix is. The
 owner, 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block
-releases. Meaning express path line followed up by another run". A night's red
-(`tests/nightly-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot,
+releases. Meaning express path line followed up by another run". A candidate red
+(`tests/release-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot,
 `just tasks next` offers it before other work of its priority, and the PULL digest lists it among
 ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
 executes it 10 minutes after it was filed. An orchestrator staffs it before anything else, and one
 agent fixes it with the smallest checks that cover the repair, starting from the failing tests or
 the failing step rerun alone as its text names them. A red is fixed in the code. A test or check
 is never loosened to turn it green (an assertion widened, a timeout or a budget raised, a test
-ignored or moved out of the nightly): a fix that must change one says on its thread why the code
+ignored or moved out of the release run): a fix that must change one says on its thread why the code
 was not the thing to fix, and a fresh reviewer judges that. It is filed as a fast fix
 (`workflow/fast-bugfixes`) under a bound the land enforces: its orchestrator's approve lands a fix
 that changes none of the project's tests and checks (`[land] check_paths`,
 [TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
 a fix that changes a test, a check, a budget or a run step lands only on a fresh reviewer's
-approve. A fix that lands starts no night of its own: the next is the cadence's or the schedule's
-([RELEASES](docs/RELEASES.md#the-nightly)).
+approve. A fix that lands starts no run of its own: the next is the cadence's or the schedule's
+([RELEASES](docs/RELEASES.md#the-release-run)).
 
 ### `workflow/shared-data-lands-first`
 

@@ -45,8 +45,12 @@ fn the_board_sweep_knows_the_checkouts_lock_and_how_long_its_build_is_kept() {
     // The sweep keeps the checkout this lock marks, and clears its build only once it is older
     // than the release run would keep it: both say the same, or the sweep removes what the release run
     // builds on.
-    use symphony_board::sweep::holder::{RELEASE_BUILD_DAYS, RELEASE_LOCK};
+    use symphony_board::sweep::holder::{LEGACY_LOCK, RELEASE_BUILD_DAYS, RELEASE_LOCK};
     assert_eq!(RELEASE_LOCK, LOCK_REASON);
+    assert_eq!(
+        LEGACY_LOCK, LEGACY_LOCK_REASON,
+        "and the one a build older than the rename left"
+    );
     assert_eq!(RELEASE_BUILD_DAYS, BUILD_KEPT_DAYS);
 }
 
@@ -438,4 +442,180 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
         [format!("HEAD is {}", short(&moved))]
     );
     assert!(changed(&tree.path("nowhere"), &head, &[], soon()).is_err());
+}
+
+/// The checkout a build older than the rename made at `path`: a detached worktree of `head`
+/// locked with `reason`, marked as that build marked it when `mark`, with its build stamp and a
+/// build folder.
+fn old_checkout(main: &Path, common: &Path, path: &Path, reason: &str, mark: bool, head: &str) {
+    let at = path.to_string_lossy();
+    git_ok(
+        main,
+        &[
+            "worktree", "add", "-q", "--detach", "--lock", "--reason", reason, &at, head,
+        ],
+    );
+    let real = path.canonicalize().unwrap();
+    let admin = admin(common, &real).unwrap();
+    if mark {
+        fs::write(admin.join(LEGACY_MARK), format!("{}\n", real.display())).unwrap();
+    }
+    fs::write(admin.join(LEGACY_BUILT), format!("{NOW}\n")).unwrap();
+    fs::create_dir_all(path.join(".target/debug")).unwrap();
+    fs::write(path.join(".target/debug/kept"), "build\n").unwrap();
+}
+
+/// A copy a build older than the rename made at `path` of the project at `project`, marked as
+/// that build marked it when `mark`, with its build stamp and a build folder.
+fn old_copy(path: &Path, project: &Path, mark: bool) {
+    fs::create_dir_all(path.join(".git")).unwrap();
+    fs::create_dir_all(path.join(".target")).unwrap();
+    fs::write(path.join(".target/kept"), "build\n").unwrap();
+    if mark {
+        fs::write(
+            path.join(".git").join(LEGACY_COPY_MARK),
+            format!("{}\n", project.display()),
+        )
+        .unwrap();
+        fs::write(path.join(".git").join(LEGACY_BUILT), format!("{NOW}\n")).unwrap();
+    }
+}
+
+#[test]
+fn the_checkout_and_copies_an_older_build_made_move_to_the_new_names_with_their_builds() {
+    let tree = Tree::new();
+    let (main, common, head) = repo(&tree);
+    let wt = main.parent().unwrap().join("wt");
+    let (old, asked) = (wt.join("nightly"), wt.join("release"));
+    old_checkout(&main, &common, &old, LEGACY_LOCK_REASON, true, &head);
+    let project = tree.path("alpha");
+    fs::create_dir_all(&project).unwrap();
+    let project = project.canonicalize().unwrap();
+    old_copy(&wt.join("nightly-conciliate/alpha"), &project, true);
+    // A folder that build did not mark, and a copy with something where it would go, stay.
+    old_copy(&wt.join("nightly-conciliate/stranger"), &project, false);
+    old_copy(&wt.join("nightly-conciliate/beta"), &project, true);
+    fs::create_dir_all(wt.join("release-conciliate/beta")).unwrap();
+
+    let noted = moved(&main, &common, &asked, soon()).unwrap();
+    assert_eq!(
+        noted,
+        [
+            format!(
+                "moved the release run's checkout from {} to {}, where a build older than the \
+                 rename to `just release` made it",
+                old.display(),
+                asked.display()
+            ),
+            format!(
+                "moved the release run's copy {} to {}",
+                wt.join("nightly-conciliate/alpha").display(),
+                wt.join("release-conciliate/alpha").display()
+            ),
+        ]
+    );
+    // The checkout: moved by git with its build, locked with the new reason and marked again.
+    assert!(!old.exists());
+    assert_eq!(
+        fs::read_to_string(asked.join(".target/debug/kept")).unwrap(),
+        "build\n"
+    );
+    let listed = git_ok(&main, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains(&format!(
+            "worktree {}\nHEAD {head}\ndetached\nlocked {LOCK_REASON}",
+            asked.display()
+        )),
+        "{listed}"
+    );
+    let admin = admin(&common, &asked).unwrap();
+    assert_eq!(
+        fs::read_to_string(admin.join(MARK)).unwrap(),
+        format!("{}\n", asked.display())
+    );
+    assert_eq!(
+        fs::read_to_string(admin.join(BUILT)).unwrap(),
+        format!("{NOW}\n")
+    );
+    assert!(!admin.join(LEGACY_MARK).exists() && !admin.join(LEGACY_BUILT).exists());
+    // The release run takes it as its own, and its build stays through the next checkout.
+    let mut place = place(&main, &main, &common, &asked).unwrap();
+    assert_eq!(place.admin.as_ref(), Some(&admin));
+    place.checkout(&main, &common, &head, soon(), NOW).unwrap();
+    assert!(asked.join(".target/debug/kept").exists());
+    // The copy: moved with its build, its marks renamed, the release run's own.
+    let copy = wt.join("release-conciliate/alpha");
+    assert_eq!(copy_at(&copy, &project), Ok(Copy::Ours));
+    assert!(copy.join(".target/kept").exists());
+    assert_eq!(
+        fs::read_to_string(copy.join(".git").join(BUILT)).unwrap(),
+        format!("{NOW}\n")
+    );
+    assert!(!copy.join(".git").join(LEGACY_COPY_MARK).exists());
+    assert_eq!(tree.names("wt/nightly-conciliate"), ["beta", "stranger"]);
+    assert!(tree.names("wt/release-conciliate/beta").is_empty());
+
+    // Once moved, nothing is left to move.
+    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
+}
+
+#[test]
+fn what_an_older_build_did_not_make_or_cannot_move_is_left_as_it_is() {
+    let tree = Tree::new();
+    let (main, common, head) = repo(&tree);
+    let root = main.parent().unwrap().to_path_buf();
+    let still = |old: &Path, reason: &str| {
+        let listed = git_ok(&main, &["worktree", "list", "--porcelain"]);
+        assert!(
+            listed.contains(&format!(
+                "worktree {}\nHEAD {head}\ndetached\nlocked {reason}",
+                old.display()
+            )),
+            "{listed}"
+        );
+        assert!(old.join(".target/debug/kept").exists());
+    };
+    // Nothing there.
+    assert_eq!(
+        moved(&main, &common, &root.join("none/release"), soon()),
+        Ok(Vec::new())
+    );
+    // Locked by someone else.
+    let other = root.join("other/nightly");
+    old_checkout(&main, &common, &other, "on a USB disk", true, &head);
+    let asked = root.join("other/release");
+    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
+    still(&other, "on a USB disk");
+    assert!(!asked.exists());
+    // Locked with that build's reason but never marked.
+    let unmarked = root.join("unmarked/nightly");
+    old_checkout(&main, &common, &unmarked, LEGACY_LOCK_REASON, false, &head);
+    let asked = root.join("unmarked/release");
+    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
+    still(&unmarked, LEGACY_LOCK_REASON);
+    // That build's own, with a folder where it would go.
+    let blocked = root.join("blocked/nightly");
+    old_checkout(&main, &common, &blocked, LEGACY_LOCK_REASON, true, &head);
+    let asked = root.join("blocked/release");
+    fs::create_dir_all(&asked).unwrap();
+    assert_eq!(
+        moved(&main, &common, &asked, soon()),
+        Ok(vec![format!(
+            "left {}, the checkout a build older than the rename to `just release` made: {} is \
+             in the way",
+            blocked.display(),
+            asked.display()
+        )])
+    );
+    still(&blocked, LEGACY_LOCK_REASON);
+    // Asked for by its old name, or through a link: nothing to move.
+    assert_eq!(moved(&main, &common, &blocked, soon()), Ok(Vec::new()));
+    let linked = root.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    symlink(&blocked, linked.join("nightly")).unwrap();
+    assert_eq!(
+        moved(&main, &common, &linked.join("release"), soon()),
+        Ok(Vec::new())
+    );
+    still(&blocked, LEGACY_LOCK_REASON);
 }

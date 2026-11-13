@@ -1,4 +1,4 @@
-//! Each check of a night is one test operation of the board's recorder (`tasks run`), through the
+//! Each check of a run is one test operation of the board's recorder (`tasks run`), through the
 //! candidate's own `tools/record.sh`: the record a Symphony reads for its Build and Test columns,
 //! labelled `release NAME`, with how the check ended.
 
@@ -70,6 +70,6 @@ fn each_check_is_recorded_by_the_boards_recorder_as_a_test_of_its_own() {
             fixture.worktree().to_string_lossy(),
             "recorded in the run's own checkout: {op}"
         );
-        assert!(op["task"].is_null(), "a night is no task's: {op}");
+        assert!(op["task"].is_null(), "a run is no task's: {op}");
     }
 }

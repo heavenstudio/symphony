@@ -203,11 +203,11 @@ impl Cadence {
         match self.since {
             Since::Start => format!(
                 "release: due: the first count, {} landings from {}'s start with no release and no \
-                 run on record: a night on its tip starts now\n",
+                 run on record: a run on its tip starts now\n",
                 self.landings.len(),
                 self.line
             ),
-            _ => format!("release: due: a night on {}'s tip starts\n", self.line),
+            _ => format!("release: due: a run on {}'s tip starts\n", self.line),
         }
     }
 
@@ -227,7 +227,8 @@ impl Cadence {
         let every = usize::try_from(self.every).unwrap_or(usize::MAX);
         let next = match &self.running {
             _ if self.every == 0 => {
-                "off ([releases] every_landings = 0): only the night's run or `just release`".into()
+                "off ([releases] every_landings = 0): only the scheduled run or `just release`"
+                    .into()
             }
             Some(running) => format!(
                 "in progress: the run {} (process {}, since {}); the count waits for it",
@@ -242,7 +243,7 @@ impl Cadence {
             None => {
                 let more = every - count;
                 format!(
-                    "after {more} more {} ({count} of {}), or the night's run",
+                    "after {more} more {} ({count} of {}), or the scheduled run",
                     if more == 1 { "landing" } else { "landings" },
                     self.every
                 )
@@ -411,7 +412,7 @@ mod tests {
 
     fn run_on(id: &str, commit: &str, result: &str, checked: bool) -> Run {
         Run {
-            version: 1,
+            version: record::VERSION,
             id: id.into(),
             kind: "release".into(),
             commit: commit.into(),
@@ -550,6 +551,7 @@ mod tests {
         assert!(cadence(20, 25, None).due(), "past the count, still due");
         assert!(!cadence(0, 25, None).due(), "off");
         let running = Running {
+            version: record::VERSION,
             id: "r1".into(),
             kind: "release".into(),
             pid: 7,
@@ -574,7 +576,7 @@ mod tests {
             cadence(20, 7, None).lines(),
             "landings: 7 on origin/main since release-2026-11-12 (aaaaaaaaaaaa); the last \
              tools/task-0 (000000000000)\n\
-             next run: after 13 more landings (7 of 20), or the night's run\n"
+             next run: after 13 more landings (7 of 20), or the scheduled run\n"
         );
         assert!(
             cadence(20, 19, None)
@@ -608,17 +610,17 @@ mod tests {
     }
 
     #[test]
-    fn the_first_count_says_it_starts_a_night_from_the_lines_whole_history() {
+    fn the_first_count_says_it_starts_a_run_from_the_lines_whole_history() {
         let mut first = cadence(20, 86, None);
         first.since = Since::Start;
         assert_eq!(
             first.starts(),
             "release: due: the first count, 86 landings from origin/main's start with no release \
-             and no run on record: a night on its tip starts now\n"
+             and no run on record: a run on its tip starts now\n"
         );
         assert_eq!(
             cadence(20, 20, None).starts(),
-            "release: due: a night on origin/main's tip starts\n"
+            "release: due: a run on origin/main's tip starts\n"
         );
     }
 

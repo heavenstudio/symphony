@@ -1,6 +1,6 @@
 //! Conciliation with a project the machine serves: a consumer of the fixture's Symphony, built and
 //! tested by Cargo with its Symphony moved to the candidate, in a scratch copy of its own. A
-//! candidate that breaks it is a red night and a red task; its checkout never changes.
+//! candidate that breaks it is a red run and a red task; its checkout never changes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -384,7 +384,7 @@ fn a_project_that_takes_nothing_from_the_symphony_is_passed_over_and_one_unread_
     );
     assert!(fixture.remote_tags().is_empty());
 
-    // Read again, the night is green, closes that red, and its tag says what it left out.
+    // Read again, the run is green, closes that red, and its tag says what it left out.
     register(&fixture, &[("alone", &alone)]);
     let (code, out, err) = fixture.release_with(NOW + 120.0, &["--check", CHECK], &extra);
     assert_eq!(code, 0, "{out}{err}");

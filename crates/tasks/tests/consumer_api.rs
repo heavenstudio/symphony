@@ -4,7 +4,7 @@
 //! implemented with the methods it writes, a struct it builds by the fields it names and fills from
 //! `Default` or a constructor built by those. Nothing here runs; it is compiled by the test build and
 //! by `just lint-rs` (clippy over every target), so a change that would break a consumer fails a
-//! task's gate rather than a night later. A field it reads or a method it calls on a value that is
+//! task's gate rather than a run later. A field it reads or a method it calls on a value that is
 //! not named here the nightly's conciliation (`crates/symphony/src/nightly/conciliate.rs`, which
 //! builds each project the machine serves on the candidate) alone catches; the other packages'
 //! guards are named in `crates/symphony/tests/consumer_api.rs`.

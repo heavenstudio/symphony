@@ -20,8 +20,8 @@ and headless Chrome acceptance. The toolchain includes the wasm target. The clie
 Git, Bash, jq, curl and a C/C++ build toolchain; native board fixtures need lsof. Install Chrome
 or name it with `SF_CHROME`. Local acceptance requires Chrome explicitly so a missing browser
 cannot pass as unexecuted acceptance. No game engine, display server or window is required.
-Verification is local; hosted GitHub CI is not required. It is the nightly's full verification of
-main; a task proves its own change with the tests closest to it ([CHECKS](docs/CHECKS.md)).
+Verification is local; hosted GitHub CI is not required. It is the release run's full verification
+of main; a task proves its own change with the tests closest to it ([CHECKS](docs/CHECKS.md)).
 
 After changing SDK source inputs, run `just client-update` and commit
 `apps/symphony-server/client/public` with the source. `just client-check` rebuilds into an

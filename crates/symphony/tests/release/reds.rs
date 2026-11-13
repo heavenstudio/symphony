@@ -1,5 +1,5 @@
 //! A red check leaves no tag and files one red task on the board, with the failing step and its
-//! log; a second red night updates it; a green rerun closes it and releases.
+//! log; a second red run updates it; a green rerun closes it and releases.
 
 use super::{CHECK, Fixture, NOW, git};
 use symphony_board::{NewSession, NewTask};
@@ -9,7 +9,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     let fixture = Fixture::new();
     let green = git(&fixture.main, &["rev-parse", "HEAD"]);
     fixture.night(NOW, 0);
-    assert!(fixture.reds().is_empty(), "a green night files nothing");
+    assert!(fixture.reds().is_empty(), "a green run files nothing");
     let planted = fixture.land("red", Some("planted"), "a change that turns the check red");
 
     let out = fixture.night(NOW + 3600.0, 1);
@@ -166,7 +166,7 @@ fn a_nights_red_is_offered_first_and_starts_past_an_orchestrators_cap() {
             ..NewSession::new("worker")
         })
     };
-    // Urgent work filed before the night, and the orchestrator's one slot taken by a feature.
+    // Urgent work filed before the run, and the orchestrator's one slot taken by a feature.
     for slug in ["work/older", "work/feature"] {
         let urgent = NewTask {
             priority: 0,
@@ -301,7 +301,7 @@ fn a_release_of_a_commit_before_a_red_leaves_that_red_open() {
         fixture.thread("tests/release-red-verify")
     );
 
-    // Fixed on main, the night closes it.
+    // Fixed on main, the run closes it.
     fixture.land("red", None, "the fix");
     let out = fixture.night(NOW + 10_800.0, 0);
     assert!(

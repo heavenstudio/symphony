@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: d559a96b7b1c272e files=SKILL.md -->
+<!-- symphony-stamp: d0a3e28e0ccf28ca files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -45,8 +45,8 @@ and after). A reviewer reruns those tests, never the suite, judges whether the
 evidence is good enough for the change's risk, and records its approval as the
 task's stamp. Higher risk asks for stronger evidence, never for the whole suite.
 The full verification runs on the project's main line on its own schedule, such
-as a nightly, and a red run there is filed as a task of its own. The project's
-guidance names its focused checks, its stamp and its nightly.
+as a release run or a nightly, and a red run there is filed as a task of its own. The
+project's guidance names its focused checks, its stamp and that schedule.
 
 
 Load the tasks skill and the project's AGENTS.md first. Follow its staffing limits,
@@ -66,11 +66,12 @@ product-specific policy or taste data.
 3. Act on the PULL digest as well as events. Pushes say only what changed; at each
    decision point (resuming, before staffing, after a verdict or landing) run
    just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
-   verdict nobody received. Staff a red (tests/main-red-*, tests/nightly-red-*) before
-   anything else. One filed as a fast fix is yours to approve when its fix changes no
-   test or check, the failing tests unchanged and green at its tip; the land refuses
-   your approve on a fix that changes a test, a check, a budget or a run step ([land]
-   check_paths), and you staff a fresh reviewer for it. Staff ready work, restore
+   verdict nobody received. Staff a red (tests/main-red-*, tests/release-red-*,
+   tests/nightly-red-*) before anything else. One filed as a fast fix is yours to
+   approve when its fix changes no test or check, the failing tests unchanged and
+   green at its tip; the land refuses your approve on a fix that changes a test, a
+   check, a budget or a run step ([land] check_paths), and you staff a fresh reviewer
+   for it. Staff ready work, restore
    orphaned work and arrange independent reviews. File gaps between approved docs and
    implementation only with evidence, complete acceptance and no existing task. Use
    the create-task skill.

@@ -6,7 +6,7 @@
 //! the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`])
 //! and pushes that one tag. `--commit COMMIT` does the same out of cycle for a commit already on
 //! the remote's main and past the newest release. Each run is recorded in the git common dir
-//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each night
+//! ([`record`]), which `--status` reads; `--schedule` prints the entry that runs it each day
 //! ([`schedule`]), which the owner installs.
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
@@ -40,7 +40,7 @@ mod schedule;
 mod steps;
 mod tags;
 
-use std::fs::{self, OpenOptions, TryLockError};
+use std::fs::{self, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,21 +85,21 @@ options:
   --timeout SECONDS     the run's time: a check still running then is stopped, and it and every
                         check not yet started are red (default: 36000, ten hours; at most
                         86400)
-  --status              print the newest release, the last night and its age, the landings since
+  --status              print the newest release, the last run and its age, the landings since
                         the last release and what the next run waits for, and the last refresh;
                         run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)
-  --due [SLUG COMMIT]   run a night only when [releases] every_landings tasks have landed since the
-                        last release or the last run that checked something, and no run is in
-                        progress; else say what it waits for and run nothing, counting with git
-                        and building nothing. A due night runs from a build of the tip made in
-                        the run's own checkout. A landing's on_land command runs it, naming the
-                        task and its merge
+  --due [SLUG COMMIT]   start a run only when [releases] every_landings tasks have landed since
+                        the last release or the last run that checked something, and no run is
+                        in progress; else say what it waits for and run nothing, counting with
+                        git and building nothing. A due run goes on from a build of the tip made
+                        in the run's own checkout. A landing's on_land command runs it, naming
+                        the task and its merge
   --refresh             refresh the machine to the newest release here again, checking nothing:
                         an orchestrator's retry of a red or interrupted refresh";
 
-/// The checks a night runs unless told others: the full verification.
+/// The checks a run runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
 /// The run's time unless `--timeout` says otherwise.
 const RUN_SECONDS: u64 = 10 * 3600;
@@ -357,34 +357,60 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     run(&repo, &options, out, err)
 }
 
-/// What a run a due count handed its night to is told ([`hand_off`]): the build it is.
+/// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
-/// The time the checkout and the build a due count's night runs from have.
+/// What a build older than the rename tells the build it hands a due count's run to, which may be
+/// this one ([`legacy`]): the same as [`DRIVER`].
+const LEGACY_DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
+/// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
-/// A due count's night, handed to a build of the tip it verifies. The count ran on the build the
+/// The command's name before the rename to `symphony release`, which a build older than it runs
+/// ([`legacy`]).
+pub const LEGACY: &str = "nightly";
+
+/// `symphony nightly ARGS`, the command's name before the rename: its exit code. A landing's
+/// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
+/// handing a due count's run to a build of the tip (which may be this one), run it as `release
+/// --due` would; anything else is refused, saying the new name, exit 2.
+pub fn legacy(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.iter().any(|arg| arg == "--due") {
+        return main(args, out, err);
+    }
+    let _ = writeln!(err, "`symphony {LEGACY}` is now `symphony release`");
+    2
+}
+
+/// Whether this process is the build a due count handed its run to, by this build or by one older
+/// than the rename.
+fn driven() -> bool {
+    [DRIVER, LEGACY_DRIVER]
+        .into_iter()
+        .any(|name| std::env::var_os(name).is_some())
+}
+
+/// Say each line of `noted` on `out`, as a run says what it did on the way.
+fn note(out: &mut dyn Write, noted: &[String]) {
+    for line in noted {
+        let _ = writeln!(out, "release: {line}");
+    }
+}
+
+/// A due count's run, handed to a build of the tip it verifies. The count ran on the build the
 /// main checkout links, building nothing; now, the lock held, the release run's own checkout is brought
 /// to the line's tip, `tools/rs-bin.sh --build symphony` builds there, in that checkout's own build
 /// folder and never the main checkout's (where a landing's `just tasks` would wait on its lock), and
-/// this process becomes that build, with `args` as given. None when the night runs here: this is
+/// this process becomes that build, with `args` as given. None when the run goes on here: this is
 /// that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or the build failed,
-/// which is said and which the night then meets as it would. An exit code when a run holds the lock:
+/// which is said and which the run then meets as it would. An exit code when a run holds the lock:
 /// the count waits for it and nothing more runs.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     use std::os::unix::process::CommandExt as _;
-    if std::env::var_os(DRIVER).is_some() {
+    if driven() {
         return None;
     }
-    let folder = record::folder(&repo.common);
-    fs::create_dir_all(&folder).ok()?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(folder.join("run.lock"))
-        .ok()?;
-    match lock.try_lock() {
+    let lock = record::lock(&repo.common).ok()?;
+    match lock.taken {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
             let _ = writeln!(
@@ -395,8 +421,11 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         }
         Err(TryLockError::Error(_)) => return None,
     }
-    // Said while it builds, so a count or a night started meanwhile hears who holds the lock.
+    note(out, lock.moved.as_slice());
+    let folder = lock.folder.clone();
+    // Said while it builds, so a count or a run started meanwhile hears who holds the lock.
     let building = Running {
+        version: record::VERSION,
         id: format!("build-{}", std::process::id()),
         kind: "release".into(),
         pid: std::process::id(),
@@ -407,19 +436,19 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
     let _ = record::hold(&folder, &building);
     let built = driver(repo, options, out);
     record::release(&folder, &building.id);
-    let _ = lock.unlock();
+    let _ = lock.file.unlock();
     drop(lock);
     let driver = match built {
         Ok(Some(driver)) => driver,
         Ok(None) => return None,
         Err(why) => {
-            let _ = writeln!(out, "release: the night runs from this build: {why}");
+            let _ = writeln!(out, "release: the run goes on from this build: {why}");
             return None;
         }
     };
     let _ = writeln!(
         out,
-        "release: the night runs from {}, built in its own checkout",
+        "release: the run goes on from {}, built in its own checkout",
         driver.display()
     );
     let _ = out.flush();
@@ -430,17 +459,21 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         .exec();
     let _ = writeln!(
         out,
-        "release: {} cannot run ({error}): the night runs from this build",
+        "release: {} cannot run ({error}): the run goes on from this build",
         driver.display()
     );
     None
 }
 
-/// The build of `symphony` a due count's night runs from: the release run's checkout brought to the
-/// line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
+/// The build of `symphony` a due count's run starts from: the release run's checkout brought to
+/// the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
 /// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
+    note(
+        out,
+        &place::moved(&repo.root, &repo.common, &options.worktree, until)?,
+    );
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
     let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
     let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
@@ -458,7 +491,8 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         .args(["--build", "symphony"])
         .current_dir(&place.checkout)
         .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER);
+        .env_remove(DRIVER)
+        .env_remove(LEGACY_DRIVER);
     let done = group::output_until(&mut build, until).map_err(|failed| match failed {
         group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
         group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
@@ -571,7 +605,7 @@ fn default_worktree(repo: &Repo) -> PathBuf {
     normal(&folder.join("release"))
 }
 
-/// `--status`: the newest release, the last night and the last green run, the landings on
+/// `--status`: the newest release, the last run and the last green run, the landings on
 /// `remote`'s `branch` since the last release and what the next run waits for, and the last
 /// refresh, read from the record, the local tags and the refs as last fetched; nothing is written
 /// or fetched.
@@ -590,10 +624,10 @@ fn status(
             return 1;
         }
     };
-    let folder = record::folder(&repo.common);
+    let folder = record::kept(&repo.common);
     let runs = record::read(&folder);
     let _ = write!(out, "{}", record::status(&runs, &ordered, now));
-    // What a night waits for before it checks main ([`regenerated`]), in a project that has any.
+    // What a run waits for before it checks main ([`regenerated`]), in a project that has any.
     let generates = symphony_board::land::Settings::of(&repo.main)
         .is_ok_and(|settings| !settings.generators.is_empty());
     if generates && let Ok(standing) = symphony_board::land::regenerate::status(&at_main(repo)) {
@@ -630,7 +664,7 @@ fn cadence_of(repo: &Repo, remote: &str, branch: &str) -> Result<cadence::Cadenc
     let ordered = ordered_releases(&repo.root)?;
     cadence::of(
         &repo.root,
-        &record::folder(&repo.common),
+        &record::kept(&repo.common),
         &ordered,
         repo.project.releases.every_landings,
         remote,
@@ -671,39 +705,21 @@ enum Stop {
     InUse(String),
 }
 
-/// A night, or an out-of-cycle release: its exit code.
+/// A release run, an out-of-cycle release or a refresh: its exit code.
 fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let folder = record::folder(&repo.common);
-    if let Err(e) = fs::create_dir_all(&folder) {
-        let _ = writeln!(
-            err,
-            "symphony release: {}",
-            crate::text::os_error(&e, &folder)
-        );
-        return 1;
-    }
-    let lock_path = folder.join("run.lock");
-    let opened = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path);
-    let lock = match opened {
+    let lock = match record::lock(&repo.common) {
         Ok(lock) => lock,
-        Err(e) => {
-            let _ = writeln!(
-                err,
-                "symphony release: {}",
-                crate::text::os_error(&e, &lock_path)
-            );
+        Err(problem) => {
+            let _ = writeln!(err, "symphony release: {problem}");
             return 1;
         }
     };
+    let folder = lock.folder.clone();
+    let lock_path = lock.path.clone();
     let started = Instant::now();
     let when = local(options.now);
     let mut record = Run {
-        version: 1,
+        version: record::VERSION,
         id: format!(
             "{}-{}",
             when.replace(' ', "T").replace(':', ""),
@@ -738,18 +754,19 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     // the lock; a signal this process was started ignoring stays ignored.
     let interrupts = Interrupts::listen().ok();
     let heard = || interrupts.as_ref().is_some_and(Interrupts::received);
-    match lock.try_lock() {
+    match &lock.taken {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return held(repo, options, &folder, record, out, err),
         Err(TryLockError::Error(e)) => {
             let _ = writeln!(
                 err,
                 "symphony release: {}",
-                crate::text::os_error(&e, &lock_path)
+                crate::text::os_error(e, &lock_path)
             );
             return 1;
         }
     }
+    note(out, lock.moved.as_slice());
     // A run killed while its check ran left that said; while that check's group lives, it runs on.
     let earlier = record::holder(&folder).filter(|earlier| earlier.id != record.id);
     if let Some(earlier) = &earlier
@@ -759,6 +776,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         return outlived(repo, options, &folder, record, earlier, check, out, err);
     }
     let running = Running {
+        version: record::VERSION,
         id: record.id.clone(),
         kind: record.kind.clone(),
         pid: std::process::id(),
@@ -1110,7 +1128,7 @@ fn red_in(run: &Run, key: &str) -> bool {
 
 /// Whether this run (`record`), green in `key`, closes that key's open red: its candidate holds the
 /// commit the newest of the `earlier` runs red in it was on. With no such run recorded, only a
-/// night closes it, never an out-of-cycle release.
+/// run of main's tip closes it, never an out-of-cycle release.
 fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
     match earlier.iter().rev().find(|run| red_in(run, key)) {
         None => record.kind == "release",
@@ -1216,14 +1234,19 @@ fn night(
     within: Within<'_>,
 ) -> Result<Vec<&'static str>, Stop> {
     let until = within.bound;
+    let placed = |why: String| {
+        if options.named {
+            Stop::Refused(why)
+        } else {
+            Stop::Error(why)
+        }
+    };
+    note(
+        out,
+        &place::moved(&repo.root, &repo.common, &options.worktree, until).map_err(placed)?,
+    );
     let mut place =
-        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(|why| {
-            if options.named {
-                Stop::Refused(why)
-            } else {
-                Stop::Error(why)
-            }
-        })?;
+        place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();
     let tracking = format!("refs/remotes/{remote}/{}", options.branch);
     git_until(
@@ -1474,23 +1497,23 @@ fn at_main(repo: &Repo) -> symphony_board::cli::Env {
 }
 
 /// Main's generated outputs, the client distribution among them, as the regenerator a land starts
-/// makes them after it (`just tasks regenerate --status`), when the night's `candidate` is the
+/// makes them after it (`just tasks regenerate --status`), when the run's `candidate` is the
 /// main checkout's branch: the run waits, within its time, while a regenerator makes them, and
 /// releases nothing of a main whose committed outputs are behind its sources (its `just
 /// client-check` would be red), filing nothing, since the regenerator's own red is the task then.
 /// A repository with no generators, or none the regenerator reads, has nothing to wait for.
 ///
-/// What the regenerator last wrote refuses the night at once only when it is of the candidate
+/// What the regenerator last wrote refuses the run at once only when it is of the candidate
 /// (red or stopped on it, or ended there without a word). A land starts the regenerator just
-/// before the `[board] on_land` that starts a night of the cadence, so one may not have written
+/// before the `[board] on_land` that starts a run of the cadence, so one may not have written
 /// anything yet, its state of an earlier tip or none at all: while nothing makes them and nothing
-/// was written of the candidate, the night gives it [`REGENERATOR`] (the tests'
+/// was written of the candidate, the run gives it [`REGENERATOR`] (the tests'
 /// [`REGENERATOR_SECONDS`]) to take the candidate before it refuses.
 ///
-/// Main moving on in the main checkout while the night waits (the regenerator landed what it made,
+/// Main moving on in the main checkout while the run waits (the regenerator landed what it made,
 /// or a land came in) is followed: `remote`'s branch fetched again, what it moved to, a descendant
-/// of the candidate, is the night's `candidate` from then on, in its `record` too, and waited for
-/// in its turn. A move that does not reach the remote within [`REGENERATOR`] refuses the night as
+/// of the candidate, is the run's `candidate` from then on, in its `record` too, and waited for
+/// in its turn. A move that does not reach the remote within [`REGENERATOR`] refuses the run as
 /// a candidate seen behind does, filing nothing: the regenerator was last seen not to have made
 /// the candidate's files.
 fn regenerated(
@@ -1513,7 +1536,7 @@ fn regenerated(
         std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
     };
     // Whether the main checkout's branch was the candidate at a look: from then on its moves are
-    // the night's to follow.
+    // the run's to follow.
     let mut followed = false;
     let mut said = false;
     // Since when nothing has made them while nothing was written of the candidate.
@@ -1524,14 +1547,14 @@ fn regenerated(
         let local = commit(&repo.main, &format!("refs/heads/{branch}")).ok();
         if local.as_deref() != Some(candidate.as_str()) {
             if !followed {
-                // Its standing is of another commit than the one the night checks, whose own
+                // Its standing is of another commit than the one the run checks, whose own
                 // `just client-check` says.
                 return Ok(());
             }
             if let Some(tip) = moved_on(repo, remote, branch, candidate, until)? {
                 let _ = writeln!(
                     out,
-                    "release: {remote}/{branch} moved on to {} while the night waited for the \
+                    "release: {remote}/{branch} moved on to {} while the run waited for the \
                      regenerator: that is what it checks",
                     short(&tip)
                 );
@@ -2071,7 +2094,7 @@ mod tests {
 
     fn run_of(id: &str, kind: &str, commit: &str) -> Run {
         Run {
-            version: 1,
+            version: record::VERSION,
             id: id.into(),
             kind: kind.into(),
             commit: commit.into(),
@@ -2219,7 +2242,7 @@ mod tests {
         );
         assert!(
             closes(&root, &earlier, &run_of("d", "release", &older), "lint"),
-            "a red no run recorded: a night closes it"
+            "a red no run recorded: a run of main's tip closes it"
         );
         assert!(
             !closes(&root, &earlier, &release_of(&fixed), "lint"),

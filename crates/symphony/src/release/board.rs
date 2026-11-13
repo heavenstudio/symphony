@@ -1,4 +1,4 @@
-//! A night's checks on Symphony's own board: one task per red step of a check that lists its steps
+//! A run's checks on Symphony's own board: one task per red step of a check that lists its steps
 //! ([`super::steps`]: `verify`'s lint, client check, size budgets, docs audit and tests), and per
 //! red check that lists none or is red beyond its steps, `tests/release-red-KEY` (KEY the check's
 //! name, a step's under its check's: `verify-size-check`), filed at p0, marked red
@@ -16,7 +16,7 @@
 //! open). A run that stopped short of deciding (it could not fetch, check out, finish in time or
 //! push) is the red [`RUN`], which the next run that gets through closes. A closed task's key is
 //! filed again under the next generation (`-2`, `-3`). The run acts as a session of kind filer, the
-//! one kind the board takes a red mark from, which it registers for the night and leaves; a night
+//! one kind the board takes a red mark from, which it registers for the run and leaves; a run
 //! with nothing to file, update or close writes nothing.
 
 use serde_json::{Value, json};
@@ -26,8 +26,11 @@ use super::git::short;
 use super::record::Board;
 use crate::taskcli::CliBoard;
 
-/// The series a night's reds are filed in: [`symphony_board::red::SERIES`]'s nightly one.
+/// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
 pub(crate) const SERIES: &str = "tests/release-red-";
+/// The series a build older than the rename filed them in ([`symphony_board::red::SERIES`]'s last),
+/// read while a red of it is open ([`generation`]).
+pub(crate) const LEGACY_SERIES: &str = "tests/nightly-red-";
 /// The key of a run that stopped short of deciding, which no check takes.
 pub(crate) const RUN: &str = "run";
 /// The key of a conciliation that could not read the machine's registry, which no check takes.
@@ -44,7 +47,7 @@ const TAIL_BYTES: u64 = 6000;
 /// The commits since the last green run a red task lists at most.
 const SINCE_LISTED: usize = 50;
 
-/// The board, as far as a night's reds need it.
+/// The board, as far as a run's reds need it.
 pub(crate) trait Reds {
     /// A session of kind filer: its handle.
     fn register(&self) -> Result<String, String>;
@@ -139,7 +142,7 @@ impl Reds for CliBoard {
     }
 }
 
-/// The night the reds are of.
+/// The run the reds are of.
 pub(crate) struct Night<'a> {
     /// The run's id and when it started, as this machine's local minute.
     pub(crate) id: &'a str,
@@ -157,10 +160,10 @@ pub(crate) struct Night<'a> {
     pub(crate) for_owner: bool,
     /// The keys this run found green beyond its checks: [`CONCILIATE`] once the registry read.
     pub(crate) cleared: &'a [&'a str],
-    /// Whether a green this night closes the open red of a key: the candidate holds what it was
+    /// Whether a green this run closes the open red of a key: the candidate holds what it was
     /// red on.
     pub(crate) closes: &'a dyn Fn(&str) -> bool,
-    /// Whether the run checked a candidate (a night or a release), so its getting through closes the
+    /// Whether the run checked a candidate (a run or a release), so its getting through closes the
     /// red [`RUN`]; a `--refresh` checks none, and answers for its refresh steps alone.
     pub(crate) whole: bool,
 }
@@ -188,10 +191,21 @@ fn closed(status: &str) -> bool {
     matches!(status, "done" | "cancelled")
 }
 
-/// The task `key`'s reds go in now: the first of its generations that is open (true) or not on the
-/// board (false); a closed one is passed over.
+/// The task `key`'s reds go in now: an open red a build older than the rename filed for it in
+/// [`LEGACY_SERIES`], so it is updated and closed as it would have been, never left open beside a
+/// new one; else the first of its generations in [`SERIES`] that is open (true) or not on the board
+/// (false), a closed one passed over.
 fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
-    let base = format!("{SERIES}{key}");
+    let (old, open) = first(board, LEGACY_SERIES, key)?;
+    if open {
+        return Ok((old, true));
+    }
+    first(board, SERIES, key)
+}
+
+/// The first of `key`'s generations in `series` that is open (true) or not on the board (false).
+fn first(board: &dyn Reds, series: &str, key: &str) -> Result<(String, bool), String> {
+    let base = format!("{series}{key}");
     for n in 1..=GENERATIONS {
         let slug = if n == 1 {
             base.clone()
@@ -435,7 +449,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     )
 }
 
-/// The line a red task that is still open gets on a later red night.
+/// The line a red task that is still open gets on a later red run.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     format!(
         "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
@@ -532,7 +546,7 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
         "The Symphony release run stopped {on} (run {id}, {when}) short of a release: {why}\n\n\
          Until a run gets through, main goes unverified and unreleased. The run's record is \
          `symphony/release/runs/{id}.json` in the git common dir, and `just release --status` \
-         says the last night.\n\n\
+         says the last run.\n\n\
          {who} The next run that gets through closes this task.\n\n\
          key: {RUN}\ncheck: {RUN}",
         on = on(night),
@@ -546,7 +560,7 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
     )
 }
 
-/// What a key that is red files: the task's title and body, the line a later red night adds, and
+/// What a key that is red files: the task's title and body, the line a later red run adds, and
 /// whether it is filed as a fast fix ([`symphony_board::fast_fix::RED`]): every red but a stop the
 /// owner clears, for which nothing lands.
 struct Red {
@@ -556,7 +570,7 @@ struct Red {
     fast_fix: bool,
 }
 
-/// What a night does to one key's task.
+/// What a run does to one key's task.
 enum Act {
     /// File the red `slug`; its later line goes on it instead in case another run filed it.
     File { slug: String, red: Red },
@@ -630,7 +644,7 @@ fn beside(slug: &str, check: &str) -> String {
     )
 }
 
-/// The line the open red of a check gets on a night it is red in its steps alone, each a task of
+/// The line the open red of a check gets on a run it is red in its steps alone, each a task of
 /// its own ([`super::steps`]): `held`, each red step with its task.
 fn in_steps(ran: &Ran, night: &Night<'_>, held: &[String]) -> String {
     format!(
@@ -645,7 +659,7 @@ fn in_steps(ran: &Ran, night: &Night<'_>, held: &[String]) -> String {
     )
 }
 
-/// What the night does to the tasks of the check `ran` and of each step it listed, in that order
+/// What the run does to the tasks of the check `ran` and of each step it listed, in that order
 /// but the check's last, with what the board refused. A check red in its steps alone files nothing
 /// of its own: its open red, if it has one, hears each red step's task, and a red step filed now
 /// names it on its own ([`beside`]), so two tasks for one red are linked both ways.
@@ -689,9 +703,9 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
 
 /// File or update the red task of each red check of `checks` and of the run when it stopped, and
 /// close the open one of each green check, of the run when it got through and of each key the
-/// night cleared: what it did on the board, with every refusal it met. Each step a check listed is
+/// run cleared: what it did on the board, with every refusal it met. Each step a check listed is
 /// a check here; a check red in its steps alone files nothing of its own, and its open red, if it
-/// has one, hears which ([`super::steps::beyond`]). A night with nothing to write registers no
+/// has one, hears which ([`super::steps::beyond`]). A run with nothing to write registers no
 /// session.
 pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Board {
     let mut done = Board::default();
@@ -1319,7 +1333,7 @@ mod tests {
         assert_eq!(
             done.closed,
             ["tests/release-red-run"],
-            "a night that got through does"
+            "a run that got through does"
         );
     }
 
@@ -1339,6 +1353,11 @@ mod tests {
             key("a/b c")
         )));
         assert_eq!(SERIES, symphony_board::red::SERIES[1]);
+        assert_eq!(LEGACY_SERIES, symphony_board::red::SERIES[2]);
+        assert!(symphony_board::red::filed(&format!(
+            "{LEGACY_SERIES}{}",
+            key("a/b c")
+        )));
     }
 
     #[test]
@@ -1415,6 +1434,44 @@ mod tests {
         assert_eq!(done.updated, ["tests/release-red-verify-3"]);
         let done = report(&board, &night(&[]), &[ran("verify", 0)]);
         assert_eq!(done.closed, ["tests/release-red-verify-3"]);
+    }
+
+    #[test]
+    fn an_open_red_a_build_older_than_the_rename_filed_is_updated_and_closed_never_orphaned() {
+        let board = Fake::with(&[
+            ("tests/nightly-red-verify", "cancelled"),
+            ("tests/nightly-red-verify-2", "in_progress"),
+            ("tests/nightly-red-lint", "review"),
+            ("tests/nightly-red-run", "ready"),
+            ("tests/nightly-red-docs", "done"),
+        ]);
+        // Red again: its old task hears of it, and nothing is filed beside it.
+        let done = report(&board, &night(&[]), &[ran("verify", 1), ran("lint", 0)]);
+        assert_eq!(done.updated, ["tests/nightly-red-verify-2"]);
+        assert_eq!(
+            done.closed,
+            ["tests/nightly-red-lint", "tests/nightly-red-run"]
+        );
+        assert!(done.filed.is_empty() && done.error.is_none(), "{done:?}");
+        assert!(
+            board.thread("tests/nightly-red-verify-2")[0].starts_with(
+                "Still red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00): exit 1."
+            ),
+            "{:?}",
+            board.thread("tests/nightly-red-verify-2")
+        );
+        assert_eq!(board.status_of("tests/nightly-red-lint"), "cancelled");
+        assert!(board.thread("tests/nightly-red-lint")[0].starts_with("Green on cafe01234567"));
+        assert_eq!(board.status_of("tests/nightly-red-run"), "cancelled");
+        // Green: it closes. Red once more: the new series' first, the old one being all closed.
+        let done = report(&board, &night(&[]), &[ran("verify", 0)]);
+        assert_eq!(done.closed, ["tests/nightly-red-verify-2"]);
+        let done = report(&board, &night(&[]), &[ran("verify", 1), ran("docs", 1)]);
+        assert_eq!(
+            done.filed,
+            ["tests/release-red-verify", "tests/release-red-docs"]
+        );
+        assert_eq!(board.status_of("tests/nightly-red-docs"), "done");
     }
 
     #[test]
@@ -1587,7 +1644,7 @@ mod tests {
         }
         assert_eq!(*board.fast_fixes.borrow(), ["tests/release-red-verify"]);
 
-        // Red again: the line says the load and the reruns of this night.
+        // Red again: the line says the load and the reruns of this run.
         let later = Ran {
             log: cargo_log(&tree, 1),
             load: None,
