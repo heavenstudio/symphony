@@ -1491,7 +1491,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
   "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/nightly.rs",
+  "/crates/symphony/src/docs_audit/recipes.rs", "/crates/symphony/src/nightly.rs",
   "/crates/symphony/src/nightly/checks.rs",
   "/crates/symphony/src/nightly/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
