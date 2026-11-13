@@ -82,6 +82,13 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 text: hit.text.clone(),
             });
     }
+    // Rows as `list --json` lists them, when each task took its status too.
+    let since = if p.flag("json") {
+        let named: Vec<String> = hits.iter().map(|(hit, _)| hit.slug.clone()).collect();
+        store.in_status_since(&named)?
+    } else {
+        BTreeMap::new()
+    };
     let mut json = Vec::new();
     for (hit, task) in hits {
         let source = sources.get(&hit.slug).ok_or_else(|| {
@@ -97,8 +104,8 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         };
         let snippet = excerpt(text, query);
         if p.flag("json") {
-            let Py::Obj(mut fields) = shape::task(task) else {
-                unreachable!("shape::task is an object");
+            let Py::Obj(mut fields) = shape::listed(task, since.get(&task.slug).copied()) else {
+                unreachable!("shape::listed is an object");
             };
             fields.push(("score".into(), Py::Float(hit.score)));
             fields.push(("snippet".into(), Py::str(&snippet)));

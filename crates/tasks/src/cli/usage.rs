@@ -402,7 +402,8 @@ options:
   --mine                only tasks you hold a role on
   --doubled             only tasks holding two or more orchestrators
   --all                 done and cancelled tasks too
-  --json
+  --json                the task records, each with in_status_since: when it
+                        took the status it holds
 "#,
     ),
     (
