@@ -1,6 +1,6 @@
 //! What a red check's log says failed, read from logs cut from a release run's (run
-//! 2026-11-13T0900-61777: its tests' step, its client check, a step stopped at the run's time) and
-//! from logs of the other shapes a step's red takes.
+//! 2026-11-13T0900-61777: its tests' step, its client check, its size check made red, a step and a
+//! test run stopped at the run's time) and from logs of the other shapes a step's red takes.
 
 use super::*;
 use crate::test_tree::Tree;
@@ -14,6 +14,12 @@ const TESTS_RED: &str = include_str!("fixtures/tests-red.log");
 const CLIENT_CHECK_RED: &str = include_str!("fixtures/client-check-red.log");
 /// A step stopped at the run's time while it built, which says no failure of its own.
 const NO_FAILURE: &str = include_str!("fixtures/no-failure.log");
+/// Its tests' step stopped at the run's time before a test failed: passing tests, one whose own
+/// output says a refusal and a recipe failed, a browser's lines saying a file missing.
+const TESTS_STOPPED: &str = include_str!("fixtures/tests-stopped.log");
+/// Its size check, made red: cargo's release build (among its crates `gix-error`), then the size
+/// budget's lines, one binary past its line, and just's.
+const SIZE_CHECK_RED: &str = include_str!("fixtures/size-check-red.log");
 
 fn read_in(text: &str) -> Failures {
     let tree = Tree::new();
@@ -77,6 +83,14 @@ fn a_log_that_says_no_failure_it_knows_names_nothing() {
             NO_FAILURE,
             "a step stopped at the run's time while it built",
         ),
+        (
+            TESTS_STOPPED,
+            "a test run stopped at the run's time before a test failed",
+        ),
+        (
+            &TESTS_RED[..TESTS_RED.find(" ... FAILED").unwrap()],
+            "a test run cut before its first failed test",
+        ),
         ("", "an empty log"),
         ("\n\n  \n", "blank lines"),
         (
@@ -114,6 +128,119 @@ error: recipe `size-check` failed on line 96 with exit code 1
             "size-budget: tasks            23.2 MiB of 23.6 MiB",
             "error: recipe `_size-check` failed on line 101 with exit code 1",
             "error: recipe `size-check` failed on line 96 with exit code 1",
+        ]
+    );
+}
+
+#[test]
+fn a_size_checks_red_names_its_tools_lines_and_never_a_crate_cargo_built() {
+    let lines = quoted_lines(SIZE_CHECK_RED).unwrap();
+    assert_eq!(
+        lines[..4],
+        [
+            "size-budget: agent-send       3.2 MiB of 5.0 MiB; its line comes down to 3,540,000 \
+             (3,404,752 bytes plus 4 %)",
+            "size-budget: symphony         13.6 MiB of 13.9 MiB",
+            "size-budget: symphony-server  17.3 MiB of 17.7 MiB (36.6 MiB with the embedded \
+             client)",
+            "size-budget: embedded client  19.4 MiB of 19.8 MiB (111 files)",
+        ],
+        "{lines:#?}"
+    );
+    assert!(
+        lines[4].starts_with(
+            "size-budget: tasks is 23.7 MiB (24,851,000 bytes), 0.1 MiB past its budget of 23.6 \
+             MiB (24,746,000 bytes) in tools/size-budget.toml."
+        ) && lines[4].ends_with('…'),
+        "the binary past its line, cut at the width: {lines:#?}"
+    );
+    assert_eq!(
+        lines[5..],
+        [
+            "error: recipe `_size-check` failed on line 108 with exit code 1",
+            "error: recipe `size-check` failed on line 104 with exit code 1",
+        ],
+        "never `   Compiling gix-error v0.3.2`, nor another line of cargo's: {lines:#?}"
+    );
+}
+
+#[test]
+fn a_line_of_cargos_progress_is_its_word_right_aligned_in_twelve_columns() {
+    for (line, said) in [
+        ("   Compiling gix-error v0.3.2", true),
+        ("    Checking gix-error v0.3.2", true),
+        (
+            "    Finished `release` profile [optimized] target(s) in 18m 51s",
+            true,
+        ),
+        ("  Downloaded gix-error v0.3.2", true),
+        (" Documenting symphony v0.1.0 (/w/crates/symphony)", true),
+        (
+            "     Running unittests src/lib.rs (.target/debug/deps/p-01)",
+            true,
+        ),
+        ("   Doc-tests symphony", true),
+        (
+            "    Blocking waiting for file lock on build directory",
+            true,
+        ),
+        ("Compiling gix-error v0.3.2", false),
+        ("  Compiling gix-error v0.3.2", false),
+        ("   Compiling", false),
+        ("       Error refused the push", false),
+        ("error: could not compile `gix-error`", false),
+        ("", false),
+        ("é", false),
+    ] {
+        assert_eq!(progress(line), said, "{line:?}");
+    }
+    // So a lint run's `Checking` of such a crate is not named, its error is.
+    let log = "    Checking gix-error v0.3.2\n    Checking my-error v0.1.0 (/w/crates/my-error)\n\
+               error: unused variable: `x`\nerror: recipe `lint-rs` failed on line 1\n";
+    assert_eq!(
+        quoted_lines(log).unwrap(),
+        [
+            "error: unused variable: `x`",
+            "error: recipe `lint-rs` failed on line 1"
+        ]
+    );
+}
+
+#[test]
+fn a_test_run_that_names_no_failure_names_only_what_its_build_said_before_its_first_target() {
+    let log = "   Compiling x v0.1.0 (/w/x)
+error[E0425]: cannot find value `y` in this scope
+  --> src/lib.rs:3:5
+error: could not compile `x` (lib test) due to 1 previous error
+     Running unittests src/a.rs (.target/debug/deps/a-01)
+
+running 1 test
+the server refused: error 3
+test t ... ok
+error: recipe `test-rs` failed on line 1 with exit code 101
+";
+    assert_eq!(
+        quoted_lines(log).unwrap(),
+        [
+            "error[E0425]: cannot find value `y` in this scope",
+            "  --> src/lib.rs:3:5",
+            "error: could not compile `x` (lib test) due to 1 previous error",
+        ]
+    );
+    // A log that quotes cargo's line, indented, as a check quotes its step's tail, is no test run.
+    let log = "verify: tests: red, exit 101 (4741 s); its last lines:
+       Doc-tests test_time
+    error: 2 targets failed:
+verify: red in tests
+error: recipe `_verify` failed on line 120 with exit code 1
+";
+    assert_eq!(
+        quoted_lines(log).unwrap(),
+        [
+            "verify: tests: red, exit 101 (4741 s); its last lines:",
+            "    error: 2 targets failed:",
+            "verify: red in tests",
+            "error: recipe `_verify` failed on line 120 with exit code 1",
         ]
     );
 }
@@ -174,12 +301,24 @@ fn a_word_counts_when_it_starts_with_the_stem_never_inside_another() {
         ("error[E0425]: cannot find value", "error", true),
         ("2 Errors", "error", true),
         ("  0.00s ERROR dx failed", "error", true),
-        ("an-error here", "error", true),
         ("(error)", "error", true),
+        ("level=ERROR", "error", true),
+        ("\"error\": \"x\"", "error", true),
         ("Compiled [ 49/167]: thiserror", "error", false),
         ("thiserror_impl", "error", false),
         ("my_error", "error", false),
         ("errno", "error", false),
+        // A word joined to another by `-`, `.`, `/` or `:` is part of a name.
+        ("   Compiling gix-error v0.3.2", "error", false),
+        ("an-error here", "error", false),
+        ("rustc --error-format=json", "error", false),
+        ("  --> src/error.rs:3:5", "error", false),
+        ("self.error", "error", false),
+        (
+            "warning: unused import: `std::error::Error`",
+            "error",
+            false,
+        ),
         ("the push was refused", "refus", true),
         ("a refusal", "refus", true),
         ("unrefused", "refus", false),
@@ -333,6 +472,11 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- older stdout ----
 thread 'older' panicked at 'boom', tests/b.rs:8:3
+
+failures:
+    older
+    same
+
 test result: FAILED. 0 passed; 2 failed
 
 error: test failed, to rerun pass `-p p --test b`
@@ -358,7 +502,8 @@ error: test failed, to rerun pass `-p p --test b`
     // A panic that says nothing on its next line has nothing added, and one of a thread no failed
     // test is named for goes to none.
     let log = "thread 'other' panicked at src/a.rs:1:1:\n\ntest t ... FAILED\n---- t stdout ----\n\
-               thread 't' panicked at src/a.rs:2:2:\n\nerror: test failed, to rerun pass `--lib`\n";
+               thread 't' panicked at src/a.rs:2:2:\n\nfailures:\n    t\n\n\
+               error: test failed, to rerun pass `--lib`\n";
     assert_eq!(
         quoted_lines(log).unwrap(),
         [
@@ -366,6 +511,104 @@ error: test failed, to rerun pass `-p p --test b`
             "    panicked at src/a.rs:2:2:",
             "error: test failed, to rerun pass `--lib`"
         ]
+    );
+}
+
+#[test]
+fn what_a_failed_test_printed_is_never_the_runs_and_its_own_threads_panic_is_its() {
+    // A test that printed a run of its own (a nested cargo test, a red task's body it filed): that
+    // run's target, failed test, list and panic are not the log's; the test's own thread's panic,
+    // said after a thread's it started, is the test's.
+    let log = "     Running tests/a.rs (.target/debug/deps/a-01)
+test nests ... FAILED
+test plain ... FAILED
+
+failures:
+
+---- nests stdout ----
+     Running unittests src/lib.rs (/tmp/fx/target/debug/deps/fx-02)
+test inner ... FAILED
+
+failures:
+
+---- inner stdout ----
+thread 'inner' panicked at src/lib.rs:1:1:
+the inner one's
+
+failures:
+    inner
+
+test result: FAILED. 0 passed; 1 failed
+error: test failed, to rerun pass `-p fx --lib`
+error: 1 target failed:
+    `-p fx --lib`
+thread 'nests' panicked at tests/a.rs:5:5:
+the nested run failed
+
+---- plain stdout ----
+thread '<unnamed>' panicked at tests/a.rs:8:8:
+a thread it started
+thread 'plain' (9) panicked at tests/a.rs:9:9:
+its own
+thread '<unnamed>' panicked at tests/a.rs:10:10:
+another after it
+
+failures:
+    nests
+    plain
+
+test result: FAILED. 0 passed; 2 failed
+
+error: test failed, to rerun pass `-p p --test a`
+";
+    assert_eq!(
+        quoted_lines(log).unwrap(),
+        [
+            "test nests ... FAILED",
+            "    panicked at tests/a.rs:5:5: the nested run failed",
+            "test plain ... FAILED",
+            "    panicked at tests/a.rs:9:9: its own",
+            "error: test failed, to rerun pass `-p p --test a`",
+        ]
+    );
+    // A list the test printed that names none of the failed tests does not end its block, which
+    // libtest's own list ends.
+    let log = "test t ... FAILED
+
+failures:
+
+---- t stdout ----
+failures:
+    inner
+error: test failed, to rerun pass `-p fx --lib`
+thread 't' panicked at src/a.rs:1:1:
+its own
+
+failures:
+    t
+
+error: test failed, to rerun pass `-p p --lib`
+";
+    assert_eq!(
+        quoted_lines(log).unwrap(),
+        [
+            "test t ... FAILED",
+            "    panicked at src/a.rs:1:1: its own",
+            "error: test failed, to rerun pass `-p p --lib`",
+        ]
+    );
+}
+
+#[test]
+fn a_quote_is_fenced_longer_than_any_run_of_backticks_in_it() {
+    assert_eq!(fenced("a"), "```\na\n```");
+    assert_eq!(fenced("a `b` ``c``"), "```\na `b` ``c``\n```");
+    assert_eq!(fenced("```\nx"), "````\n```\nx\n````");
+    assert_eq!(fenced("a ````` b"), "``````\na ````` b\n``````");
+    let named = read_in("error: a line of ```\n```\n").quoted().unwrap();
+    assert_eq!(
+        named,
+        "What failed, as its log says it:\n\n````\nerror: a line of ```\n````"
     );
 }
 

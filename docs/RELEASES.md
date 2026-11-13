@@ -202,14 +202,21 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      its record;
    - what the log names failed (`crates/symphony/src/release/failures.rs`), then a few of its last
      lines; its last 40 lines alone when it names nothing it knows, and for a check that listed its
-     steps, whose log is its own lines and its steps' tails. A test run's names each test libtest
-     said `FAILED`, with where it panicked and the first line of what it said, then cargo's list of
-     the targets that failed (`error: N targets failed:`, or each target's own `to rerun pass` line
-     when there is no list), and nothing else of it, as the tests' own output says the errors of
-     what they run. Any other log names each line with a word starting `error` or `refus`, or the
-     docs audit's `✖`, a compiler's `-->` line after an error, and the step's own last word, the
-     line before just's saying its recipe failed (`client-check: …`), with each line its tool
-     starts the same way (`size-budget: …`). Each stops at 40, then says how many more;
+     steps, whose log is its own lines and its steps' tails. A test run's, a log in which cargo
+     started a test target, names each test libtest said `FAILED`, with where it panicked (its own
+     thread's panic before that of a thread it started) and the first line of what it said, then
+     cargo's list of the targets that failed (`error: N targets failed:`, or each target's own `to
+     rerun pass` line when there is no list), and nothing else of it: the tests' own output, what
+     a failed test printed among it, says the errors, refusals and failed tests of what they run.
+     One that names no failed test or target (stopped at the run's time, hung or ended by a
+     signal) names only the errors its build said before cargo started its first target, so its
+     last lines say where it stopped. Any other log names each line with a word starting `error`
+     or `refus` (never one inside a name: `thiserror`, `gix-error`, `std::error`), or the docs
+     audit's `✖`, a compiler's `-->` line after an error, and the step's own last word, the line
+     before just's saying its recipe failed (`client-check: …`), with each line its tool starts
+     the same way (`size-budget: …`), and never a line of cargo's progress (`Compiling gix-error
+     v0.3.2`). Each stops at 40, then says how many more, and a quote is fenced past every run of
+     backticks its lines hold;
    - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
      named no failed test and never ran or never compiled because a file its own build had made
      was gone (its executable, cargo's `could not execute process … (never executed)` for no such

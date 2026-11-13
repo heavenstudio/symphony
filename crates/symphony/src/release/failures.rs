@@ -1,17 +1,23 @@
 //! What a red check's log says failed, as its task names it before the log's last lines
 //! (docs/RELEASES.md, a red's text), read from the log ([`read`]):
 //!
-//! - a test run's, a log in which libtest named a test `FAILED` or cargo said a target failed: each
-//!   test named `FAILED`, with where it panicked and the first line of what its panic said, then
-//!   cargo's list of the targets that failed (`error: N targets failed:` and its lines; with no
-//!   list, as when one target failed or the run was cut short, each target's own `error: test
-//!   failed, to rerun pass …`). Nothing else of such a log is named: the tests' own output says the
-//!   errors and refusals of the commands they run, as their cases;
+//! - a test run's, a log in which cargo started a test target (`     Running …`, `   Doc-tests …`)
+//!   or said one failed, or libtest named a test `FAILED`: each test libtest named `FAILED`, with
+//!   where it panicked (its own thread's panic before one of a thread it started) and the first
+//!   line of what its panic said, then cargo's list of the targets that failed (`error: N targets
+//!   failed:` and its lines; with no list, as when one target failed or the run was cut short, each
+//!   target's own `error: test failed, to rerun pass …`). Nothing else of such a log is named, and
+//!   nothing of what a failed test printed (its block, `---- NAME stdout ----`) but its panic: the
+//!   tests' own output says the errors, refusals and failed tests of the commands they run, as
+//!   their cases. A test run that names no failed test or target (one stopped at the run's time,
+//!   hung or ended by a signal) names only what [`other`] finds before cargo started its first
+//!   target, where a build's errors are;
 //! - any other log's: each line with a word that starts `error` or `refus` (any case: `error:`,
-//!   `error[E0425]`, `refused`, never `thiserror`) or the docs audit's mark `✖`, an error's with the
-//!   `-->` line a compiler gives its place on, and the step's own last word, the line it printed
-//!   last before just said its recipe failed (`client-check: …`), with each line its tool starts
-//!   with the same `NAME: ` (`size-budget: …`, so the binary past its line is among them).
+//!   `error[E0425]`, `refused`, never `thiserror`, `gix-error` or `std::error`) or the docs audit's
+//!   mark `✖`, an error's with the `-->` line a compiler gives its place on, and the step's own last
+//!   word, the line it printed last before just said its recipe failed (`client-check: …`), with
+//!   each line its tool starts with the same `NAME: ` (`size-budget: …`, so the binary past its line
+//!   is among them); never a line of cargo's progress (`   Compiling gix-error v0.3.2`).
 //!
 //! Each list stops at [`LISTED`] and says how many more the log holds; a line is cut at [`WIDTH`]
 //! characters; a terminal's colour codes are taken out. A log that says none of these, or cannot be
@@ -36,6 +42,9 @@ const WIDTH: usize = 240;
 struct Test {
     name: String,
     panic: Option<String>,
+    /// Whether the panic is its own thread's, the one libtest names for it, which no panic of a
+    /// thread it started replaces.
+    own: bool,
 }
 
 /// What a red check's log says failed.
@@ -63,8 +72,15 @@ struct Reading {
     tests: Vec<Test>,
     /// Where the target cargo started last begins in `tests`.
     from: usize,
-    /// The failed test whose block of output (`---- NAME stdout ----`) the log is in.
+    /// The failed test whose block of output (`---- NAME stdout ----`) the log is in, and whether
+    /// it is past a `failures:` line there, which starts libtest's list of the failed tests that
+    /// ends the blocks, or a list a test printed.
     section: Option<usize>,
+    ending: bool,
+    /// The lines read, and the number of the first in which cargo started a test target, as cargo
+    /// says it ([`progress`]), not a line that quotes it.
+    count: usize,
+    started: Option<usize>,
     /// The panic whose next line is what it said.
     said: Option<Said>,
     /// The panics of the target cargo started last outside every block, by the thread's name.
@@ -83,12 +99,17 @@ struct Reading {
 
 impl Reading {
     fn line(&mut self, line: &str) {
+        self.count += 1;
         self.own_word(line);
         if let Some(said) = self.said.take()
             && !line.trim().is_empty()
             && !line.starts_with("note: run with `RUST_BACKTRACE")
         {
             self.say(said, line.trim());
+        }
+        if self.section.is_some() {
+            self.in_block(line);
+            return;
         }
         if self.listing {
             let entry = line.trim();
@@ -99,8 +120,12 @@ impl Reading {
             self.listing = false;
         }
         if let Some(name) = rerun::failed_test(line) {
-            if !self.tests[self.from..].iter().any(|test| test.name == name) {
-                self.tests.push(Test { name, panic: None });
+            if self.failed(&name).is_none() {
+                self.tests.push(Test {
+                    name,
+                    panic: None,
+                    own: false,
+                });
             }
         } else if rerun::target(line).is_some() {
             if !self.each.iter().any(|each| each == line) {
@@ -112,16 +137,46 @@ impl Reading {
         } else if rerun::header(line).is_some() {
             self.close();
             self.from = self.tests.len();
-            self.section = None;
+            if progress(line) {
+                self.started.get_or_insert(self.count);
+            }
         } else if let Some(name) = section(line) {
-            self.section = (self.tests[self.from..].iter())
-                .position(|test| test.name == name)
-                .map(|at| self.from + at);
-        } else if line == "failures:" || line.starts_with("test result: ") {
-            self.section = None;
+            self.section = self.failed(name);
         } else if let Some((thread, panic)) = panicked(line) {
             self.panicked(thread, panic);
         }
+    }
+
+    /// A line of a failed test's block of output, which is what the test printed: its panic, the
+    /// next failed test's block, or libtest's list of the failed tests that ends the blocks
+    /// (`failures:`, then the names, this test's among them), and nothing else, so a run, a test or
+    /// a list the test printed is never the log's own.
+    fn in_block(&mut self, line: &str) {
+        if self.ending {
+            match line.strip_prefix("    ") {
+                _ if line.trim().is_empty() => return,
+                Some(name) if self.failed(name).is_some() => {
+                    (self.section, self.ending) = (None, false);
+                    return;
+                }
+                Some(_) => return,
+                None => self.ending = false,
+            }
+        }
+        if line == "failures:" {
+            self.ending = true;
+        } else if let Some(at) = section(line).and_then(|name| self.failed(name)) {
+            self.section = Some(at);
+        } else if let Some((thread, panic)) = panicked(line) {
+            self.panicked(thread, panic);
+        }
+    }
+
+    /// Where the test `name` is among the failed tests of the target cargo started last.
+    fn failed(&self, name: &str) -> Option<usize> {
+        (self.tests[self.from..].iter())
+            .position(|test| test.name == name)
+            .map(|at| self.from + at)
     }
 
     /// The step's own last word: the line before the last lines in which just said a recipe
@@ -143,12 +198,15 @@ impl Reading {
         }
     }
 
-    /// A panic, `thread` its thread's name: the failed test's whose block the log is in, else the
-    /// thread's, which [`Reading::close`] gives the failed test of its name.
+    /// A panic, `thread` its thread's name: the failed test's whose block the log is in, the first
+    /// there or its own thread's, which libtest names for it, before any thread's it started; else
+    /// the thread's, which [`Reading::close`] gives the failed test of its name.
     fn panicked(&mut self, thread: &str, panic: &str) {
         if let Some(at) = self.section {
-            if self.tests[at].panic.is_none() {
-                self.tests[at].panic = Some(panic.to_string());
+            let test = &mut self.tests[at];
+            let own = test.name == thread;
+            if test.panic.is_none() || (own && !test.own) {
+                (test.panic, test.own) = (Some(panic.to_string()), own);
                 self.said = panic.ends_with(':').then_some(Said::Test(at));
             }
         } else if !self.threads.iter().any(|(name, _)| name == thread) {
@@ -179,6 +237,7 @@ impl Reading {
                 test.panic = (self.threads.iter())
                     .find(|(thread, _)| *thread == test.name)
                     .map(|(_, panic)| panic.clone());
+                test.own = test.panic.is_some();
             }
         }
         self.threads.clear();
@@ -204,20 +263,31 @@ pub(crate) fn read(log: &Path) -> Failures {
             lines: Vec::new(),
         };
     }
+    // A test run that names no failure, stopped, hung or ended by a signal: what its build said
+    // before cargo started its first target, never what its tests printed nor its last line.
+    let lines = match reading.started {
+        Some(first) => other(log, None, first),
+        None => other(log, reading.verdict.as_deref(), usize::MAX),
+    };
     Failures {
-        lines: other(log, reading.verdict.as_deref()),
+        lines,
         ..Failures::default()
     }
 }
 
-/// The lines of a log that is no test run's that say what failed, each once: an error, a refusal or
-/// the mark `✖` ([`says`]), the `-->` line after an error's, the step's own last word `verdict`
-/// and each line its tool starts the same way ([`tool`]).
-fn other(log: &Path, verdict: Option<&str>) -> Vec<String> {
+/// The lines of a log that is no test run's that say what failed, each once, of its lines before
+/// the line numbered `before`: an error, a refusal or the mark `✖` ([`says`]), the `-->` line
+/// after an error's, the step's own last word `verdict` and each line its tool starts the same way
+/// ([`tool`]); never a line of cargo's progress ([`progress`]).
+fn other(log: &Path, verdict: Option<&str>, before: usize) -> Vec<String> {
     let tool = verdict.and_then(tool).map(|name| format!("{name}: "));
     let (mut lines, mut seen) = (Vec::new(), HashSet::new());
-    let mut after_error = false;
+    let (mut count, mut after_error) = (0, false);
     each_line(log, |line| {
+        count += 1;
+        if count >= before || progress(line) {
+            return;
+        }
         let error = says(line, "error");
         let named = error
             || says(line, "refus")
@@ -277,12 +347,55 @@ fn panicked(line: &str) -> Option<(&str, &str)> {
 }
 
 /// Whether `line` holds a word that starts with `stem` (lower case), in any case: `error:`,
-/// `error[E0425]` and `Errors` for `error`, never `thiserror`.
+/// `error[E0425]` and `Errors` for `error`; never one inside a name, after a letter, a digit, `_`,
+/// `-`, `.`, `/` or `:` (`thiserror`, `my_error`, `gix-error`, `--error-format`, `self.error`,
+/// `src/error.rs`, `std::error::Error`).
 fn says(line: &str, stem: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower.match_indices(stem).any(|(at, _)| {
-        (lower[..at].chars().next_back()).is_none_or(|c| !c.is_alphanumeric() && c != '_')
+        (lower[..at].chars().next_back())
+            .is_none_or(|c| !c.is_alphanumeric() && !"_-./:".contains(c))
     })
+}
+
+/// The words cargo says its progress with, right-aligned in its first [`PROGRESS_WIDTH`] columns.
+const PROGRESS: [&str; 24] = [
+    "Adding",
+    "Blocking",
+    "Building",
+    "Checking",
+    "Compiling",
+    "Dirty",
+    "Doc-tests",
+    "Documenting",
+    "Downloaded",
+    "Downloading",
+    "Finished",
+    "Fresh",
+    "Installed",
+    "Installing",
+    "Locking",
+    "Packaging",
+    "Removing",
+    "Replacing",
+    "Running",
+    "Scraping",
+    "Unpacking",
+    "Updating",
+    "Verifying",
+    "Waiting",
+];
+const PROGRESS_WIDTH: usize = 12;
+
+/// Whether cargo said `line` as its progress, one of its words ([`PROGRESS`]) right-aligned in its
+/// first [`PROGRESS_WIDTH`] columns, then what it is at: `   Compiling gix-error v0.3.2`,
+/// `    Checking …`, `    Finished …`. What it names there is a crate, a profile or a file, never
+/// what failed.
+fn progress(line: &str) -> bool {
+    line.split_at_checked(PROGRESS_WIDTH)
+        .is_some_and(|(word, rest)| {
+            rest.starts_with(' ') && PROGRESS.contains(&word.trim_start_matches(' '))
+        })
 }
 
 /// The tool that printed `line`, NAME of `NAME: …`, a word of letters, digits, `-` and `_` from the
@@ -361,10 +474,18 @@ impl Failures {
             return None;
         }
         Some(format!(
-            "What failed, as its log says it:\n\n```\n{}\n```",
-            said.join("\n")
+            "What failed, as its log says it:\n\n{}",
+            fenced(&said.join("\n"))
         ))
     }
+}
+
+/// `text` as a block of code that no line of it closes: fenced with one backtick more than the
+/// longest run of them in it, three at least.
+pub(super) fn fenced(text: &str) -> String {
+    let longest = (text.split(|c| c != '`')).map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}\n{text}\n{fence}")
 }
 
 #[cfg(test)]

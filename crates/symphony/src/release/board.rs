@@ -264,7 +264,7 @@ fn quoted_tail(ran: &Ran, lines: usize, bytes: u64) -> String {
     if tail.is_empty() {
         return "Its log is empty or cannot be read.".into();
     }
-    format!("Its last lines:\n\n```\n{tail}\n```")
+    format!("Its last lines:\n\n{}", super::failures::fenced(&tail))
 }
 
 /// What the commits since the last green run are, as a red task says them.
@@ -2414,6 +2414,23 @@ mod tests {
             quoted(&red),
             format!("Its last lines:\n\n```\n{}\n```", stopped.trim_end())
         );
+        // So does a test run stopped at the run's time before a test failed: nothing its passing
+        // tests printed (a refusal, a recipe failed, a file missing) is named as what failed.
+        let stopped = include_str!("fixtures/tests-stopped.log");
+        let red = Ran {
+            log: tree.write("tests.log", stopped),
+            ..ran("verify/tests", 1)
+        };
+        assert_eq!(
+            quoted(&red),
+            format!("Its last lines:\n\n```\n{}\n```", stopped.trim_end())
+        );
+        // A line of the log that is a fence of its own does not close the quote's.
+        let red = Ran {
+            log: tree.write("fence.log", "a\n```\nb\n"),
+            ..ran("verify", 1)
+        };
+        assert_eq!(quoted(&red), "Its last lines:\n\n````\na\n```\nb\n````");
     }
 
     /// The fence after `heading` in `body`, its lines.
