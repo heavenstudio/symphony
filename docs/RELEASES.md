@@ -12,7 +12,7 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 
 - **Its name** is `release-YYYY-MM-DD`, the day's date on the machine that cut it, and
   `release-YYYY-MM-DD.N` for that day's Nth release, N from 2. Releases sort by day, then by
-  number, so `.10` follows `.9` (`crates/symphony/src/nightly/tags.rs`).
+  number, so `.10` follows `.9` (`crates/symphony/src/release/tags.rs`).
 - **Its message** begins `NAME: Symphony main at COMMIT`, then a `Board schema N` line and a
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
@@ -24,10 +24,10 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
   commit.
 
-## The nightly
+## The release run
 
-`just nightly` (`symphony nightly`, `crates/symphony/src/nightly.rs`) cuts the releases, and is the
-one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
+`just release` (`symphony release`, `crates/symphony/src/release.rs`) cuts the releases, and is the
+one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip. A tip that is a release already
@@ -39,7 +39,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    once they are current it goes on; red or stopped on the candidate, it is refused at once,
    recorded nowhere and filing nothing, since a main whose committed client is behind its
    sources is no release and the regenerator's own red is the task. A land starts the
-   regenerator just before the `[board] on_land` that starts the cadence's night, so what the
+   regenerator just before the `[board] on_land` that starts the cadence's run, so what the
    regenerator last wrote may be of an earlier tip, or nothing at all: with none making them
    and nothing written of the candidate, the run gives it a minute to take the candidate before
    it is refused the same way. Main moving on in the main checkout while the run waits (the
@@ -50,11 +50,11 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    project with no generators waits for nothing, and so does a candidate the main checkout does
    not hold as its main, whose own client check says. An out-of-cycle release (below) does not
    ask.
-2. **Its own checkout.** It checks the candidate out at `../symphony-wt/nightly` (`nightly` in the
+2. **Its own checkout.** It checks the candidate out at `../symphony-wt/release` (`release` in the
    `[agents] worktrees` folder of `symphony.toml`, or `--worktree PATH`): a detached worktree it
-   made itself, locked with its own reason (`the Symphony nightly's checkout`) so the board's
+   made itself, locked with its own reason (`the Symphony release run's checkout`) so the board's
    worktree sweep leaves it (its `.target/` the sweep clears only once nothing touched the
-   checkout for 7 days), and marked in its git admin folder (`symphony-nightly`, holding the
+   checkout for 7 days), and marked in its git admin folder (`symphony-release`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
    is cleared. It resets nothing else. A link in that place, a path that is, holds or lies inside
@@ -64,10 +64,13 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    removed when `lsof` finds no process holding it; one held stops the run. Before it resets
    anything, any process but the run's own that `lsof` sees working in the checkout or in the
    conciliation copies' folder (below), or holding a file inside one open, stops the run. The run
-   names it by its pid and command: it could change those folders under the run's checks. It may
-   be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a `tail -f` left
-   there counts as much as what an earlier check left. So the red `run` it files is the owner's,
-   not an executor's, since an executor ends only a process it started (RULES.md
+   names it by its pid and command, and one working in a package's folder by that package too,
+   since cargo runs a package's tests there and what one of them left works there (`working in
+   apps/symphony-ui, where cargo runs the tests of the package symphony-ui`): that is as near to
+   the test that left it as the run can tell. It could change those folders under the run's
+   checks. It may be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a
+   `tail -f` left there counts as much as what an earlier check left. So the red `run` it files is
+   the owner's, not an executor's, since an executor ends only a process it started (RULES.md
    `delete-by-name`). End the process, or move it out of that folder, and the next run goes. A
    process found is listed again for up to 5 s, and counts only if it is still there, so one on
    its way out is not counted. This look sees a process only while it works in those folders or
@@ -77,16 +80,16 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit and every test target of the
    workspace, the board's `perf` and `child_guard` among them. Each check goes through the
    checkout's `tools/record.sh` as one test operation of the board's recorder, labelled
-   `nightly NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
+   `release NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
 
    **Its steps.** Each check is given a folder of its own among the run's logs
    (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
-   with its exit status and a log of its own ([CHECKS](CHECKS.md#the-nightly)). The run records
+   with its exit status and a log of its own ([CHECKS](CHECKS.md#the-release-run)). The run records
    each listed step under its check (`verify/tests`) and tells a check by its steps
-   (`crates/symphony/src/nightly/steps.rs`): each red step is a red of its own (step 5), keyed by
-   the check and the step, `tests/nightly-red-verify-tests`, with that step's log; the check files
+   (`crates/symphony/src/release/steps.rs`): each red step is a red of its own (step 5), keyed by
+   the check and the step, `tests/release-red-verify-tests`, with that step's log; the check files
    a red of its own only for a red no step it listed holds, when it was stopped, ended by a signal,
    never ran, or ended red with every step green. While its steps hold its red, an open red of the
    check gets a line naming them, and it closes once the check is green; a step's red filed while
@@ -108,10 +111,12 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
 
    Before it tags, nothing has run in the checkout since the last look, so only HEAD and
    `git status` are looked at again. Anything else stops the run, naming what changed and what
-   is there. The check that has ended counts for nothing, green or red, since it may have checked
-   other bytes, and nothing is tagged. A process found makes the red `run` the owner's, as at the
-   start. A change with no process there is an executor's: a check that leaves a file outside the
-   ignored folders wants an ignore rule.
+   is there, and nothing is tagged. Nothing the check that has ended found green counts, since it
+   may have checked other bytes, and it closes nothing. Each red it found is still filed, a red
+   step as a task of its own (step 5), before the stop ends the run, and the red `run` names
+   them, so no red hides behind the stop. A process found makes the red `run` the owner's, as at
+   the start. A change with no process there is an executor's: a check that leaves a file outside
+   the ignored folders wants an ignore rule.
 
    **What the looks do not see.** Each look sees one moment, and only what git does not ignore:
    - **Ignored files.** A file git ignores (`build/`, `artifacts/`, `.target/`) is never named,
@@ -122,7 +127,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    So a process that rewrites an ignored file a check reads, or that changes a tracked file and
    puts it back before the check ends, can make a check pass on other bytes, and the commit is
    still released. In practice the run is protected from both in three ways:
-   - the checkout is the nightly's own, made, locked and marked by it, outside every other
+   - the checkout is the release run's own, made, locked and marked by it, outside every other
      checkout, so nothing else works there by design;
    - each check runs in a process group of its own that is ended with it, so nothing it started
      in that group outlives it;
@@ -136,15 +141,15 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `tools/release-nightly`): each project in the machine's registry (`projects.json`) whose
    `symphony.toml` names plugins, other than this repository, is built and tested with its
    Symphony moved to the candidate. That runs in a scratch copy at
-   `../symphony-wt/nightly-conciliate/ID`, a repository the nightly made (marked
-   `symphony-nightly-copy`, borrowing the project's objects) at the project's default branch as
+   `../symphony-wt/release-conciliate/ID`, a repository the release run made (marked
+   `symphony-release-copy`, borrowing the project's objects) at the project's default branch as
    committed, never in its checkout or on its board. Every package of the candidate's
    workspace is patched in over each git source the project takes one from
    (`cargo --config 'patch."URL".NAME.path=…'`, so no file of the project changes), and
    `cargo test --no-fail-fast` runs its packages that depend on one, under its own toolchain pin,
    as the check `conciliate-ID`, with `SYMPHONY_MACHINE_DIR` naming a folder that holds a copy of
    the registry (in the run's logs), not the machine's own. A folder in a copy's place that the
-   nightly did not make, unless empty, is left as it is, and that project's check is red; a copy
+   release run did not make, unless empty, is left as it is, and that project's check is red; a copy
    whose project left the registry is removed, and a copy's `.target/` built on for 7 days is
    cleared. A registry that cannot be read is the red check `conciliate`: nothing is conciliated,
    so nothing is released. A registered project whose checkout is gone, or that takes nothing of the
@@ -161,10 +166,10 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
    `Fragment`), and a field read or a method called on a value that no guard names, are caught
    only here, by the conciliation.
 5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a
-   task on this repository's board, `tests/nightly-red-NAME`, filed at p0 and marked red, so it
+   task on this repository's board, `tests/release-red-NAME`, filed at p0 and marked red, so it
    takes no orchestrator slot and is offered before other work of its priority
    ([TASKS](TASKS.md#slots)). It is staffed before anything else (RULES.md
-   `workflow/nightly-reds-first`), fixed in the code and never by a loosened test or check, and
+   `workflow/release-reds-first`), fixed in the code and never by a loosened test or check, and
    filed as a fast fix whose recorded risk is the bound the land holds a red's fix to
    (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that changes none of
    the project's tests and checks (`[land] check_paths`), the failing tests unchanged and green at
@@ -177,7 +182,7 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
    - the log's last lines;
-   - the commands that rerun each failure alone (`crates/symphony/src/nightly/rerun.rs`), never
+   - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
      it named none, at most 12 lines. A log naming no failed target reruns by what it ran: a step,
@@ -190,27 +195,27 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-nightly)):
      command in its scratch copy, and any other check's its own command;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
 
-   A check red again while its task is open adds a line to that task, with that night's load and
+   A check red again while its task is open adds a line to that task, with that run's load and
    reruns; a run green in it closes the task (`cancelled`, saying the check passed) when its
    candidate holds the commit the check was last found red on. The next red of a closed task's
-   check is `tests/nightly-red-NAME-2`, then `-3`. A fix that lands starts no night of its own:
+   check is `tests/release-red-NAME-2`, then `-3`. A fix that lands starts no run of its own:
    the next is the cadence's or the schedule's.
 6. **Stopped short:** a run that ends without deciding (a fetch that fails or does not answer, a
    checkout it cannot take, a git lock held, a process in the run's folders, a checkout or copy
    changed under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
-   `tests/nightly-red-run`, filed, updated and closed by the next run that gets through, as a
+   `tests/release-red-run`, filed, updated and closed by the next run that gets through, as a
    check's is, and filed the same way, but with no fast-fix mark when a process stopped it, since
    nothing lands for that. Its body says who fixes it: the owner when a process stopped it, else
    any free executor, then how a check's red is staffed and approved. A command
    line or
-   `--release`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
+   `--commit`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
 7. **Green:** it tags the candidate `release-<today>` as above and pushes that one tag:
    `git push --no-follow-tags --recurse-submodules=no origin refs/tags/NAME:refs/tags/NAME`, an
    explicit refspec, so a user configuration that pushes more (`push.followTags`, a
    `remote.origin.push` list) adds nothing to it. `--no-push` keeps the tag here. A push that
-   fails keeps the tag here and is the red `run`; a later night on that same commit fails the same
+   fails keeps the tag here and is the red `run`; a later run on that same commit fails the same
    way, naming the push that delivers it, and `--status` names each release here that the last run
    found missing from the remote. No run pushes an older tag. A pushed release then refreshes the
    machine ([below](#the-refresh)).
@@ -246,28 +251,29 @@ logs while it ran (`logs/ID/run.json`): what it was doing (the check that ran, o
 ended), when it was last heard of and how it was found. The run says so, and the record keeps its
 logs among the newest 14 runs'; nothing is filed for it.
 
-Each run is recorded in the git common dir: `.git/symphony/nightly/runs/ID.json` (the commit,
+Each run is recorded in the git common dir: `.git/symphony/release/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's
 log under `logs/ID/`. The newest 60 records and the logs of the newest 14 runs stay. Its exit is 0
 green (or nothing new), 1 red, stopped short or refused, 2 a command line refused.
 
 ## Out of cycle
 
-`just nightly --release COMMIT` releases an urgent fix without waiting for the night: the same
+`just release --commit COMMIT` releases an urgent fix without waiting for the next run: the same
 checks and conciliation on COMMIT, then the same tag. It refuses a commit that is not on
 `origin/main`, one released already and one that does not descend from the newest release, and
-tags nothing when a check is red (filing its red as a night does). A green release closes a red
-only when COMMIT holds the commit that red was found on, so an urgent fix from before a red leaves
-it open.
+tags nothing when a check is red (filing its red as a release run does). A green release closes a
+red only when COMMIT holds the commit that red was found on, so an urgent fix from before a red
+leaves it open.
 
 ## The cadence
 
 The owner, 2026-11-12: "Given the pace, It would be nice to release a new version every given
-number of tasks done, say 20 and refresh server/clients. Random number I know." So a night also
-runs once enough tasks have landed, whatever the hour (`crates/symphony/src/nightly/cadence.rs`):
+number of tasks done, say 20 and refresh server/clients. Random number I know." So a release run
+also starts once enough tasks have landed, whatever the hour
+(`crates/symphony/src/release/cadence.rs`):
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
-  turns the cadence off, and then only the night's run or `just nightly` releases.
+  turns the cadence off, and then only the scheduled run or `just release` releases.
 - **A landing** is a merge on the main line's first-parent line whose subject names a branch:
   "Merge branch 'SLUG'", the merge `just land` makes, or "Merge branch 'SLUG' into BRANCH", git's
   own made by hand. A merge of the default branch itself ("Merge branch 'main' into SLUG", a task
@@ -279,37 +285,38 @@ runs once enough tasks have landed, whatever the hour (`crates/symphony/src/nigh
   as a release is: the landings after it count afresh, and the next landing does not start the
   same red run again.
 - **The first count.** With no release and no run on record, the count is from the line's start,
-  so the first landing after the cadence lands takes the line's whole history and starts a night
-  at once: the owner wants a release. It says so, in the land's output as in `--status`: "the
-  first count, N landings from origin/main's start with no release and no run on record: a night
-  on its tip starts now".
+  so the first landing after the cadence lands takes the line's whole history and starts a run at
+  once: the owner wants a release. It says so, in the land's output as in `--status`: "the first
+  count, N landings from origin/main's start with no release and no run on record: a run on its
+  tip starts now".
 - **The line** is `origin/main` (`--remote`, `--branch`) as this checkout last fetched or pushed
   it, which a land's push moves; with no such ref, the local `main`. The count reads that ref, the
   release tags here and the run records with git and the files alone. It fetches, builds and
   writes nothing.
 - **The trigger.** A land runs `[board] on_land` once the task is closed and pushed, after it
-  started the regenerator ([TASKS](TASKS.md#the-default-landing)), which the night it starts
+  started the regenerator ([TASKS](TASKS.md#the-default-landing)), which the run it starts
   waits for (*The candidate*, above), and shows what it said within its first seconds. This
   repository names there the build of `symphony` its main checkout links,
-  `.target/bin/symphony nightly --due`, and the land appends the task's slug and its merge commit.
-  Nothing slow sits on or behind a land: short of the count, `--due` prints the count and what the
-  next run waits for and exits 0, having run git alone, no cargo and no recipe, so no `just tasks`
-  or `just land` waits on a build lock of its. Once the count is reached it takes the lock, brings
-  the nightly's own checkout (`../symphony-wt/nightly`) to `origin/main`'s tip, builds `symphony`
-  there with `tools/rs-bin.sh --build symphony` in that checkout's own build folder, never the main
-  checkout's, and becomes that build, which runs a night exactly as `just nightly` does: the full
-  verification, the conciliation, the tag and its push, each red filed, then the refresh. A tip
-  that cannot be built so is said, and its night runs from the linked build, which meets the same
-  red in its checks. The record names what started it (`cause`: `20 landings since release-…, the
-  last SLUG`). A red run files its reds, as a night does, and holds no later count back. A linked
-  build older than the cadence knows no `--due`: the land shows its refusal, and
-  `tools/rs-bin.sh --link symphony` in the main checkout renews the link.
-- **One run at a time.** While a run holds the lock (a night's, one run by hand, an out-of-cycle
-  release's, a refresh's or another landing's, its build included), `--due` starts nothing and
-  says the count waits for it. The landings it saw meanwhile are not lost: once that run has
-  checked a commit, the count starts again from it, and the next landing that brings it to the
-  count starts the next run. Between `--due`'s look and the run's start, a run that took the lock
-  first refuses the second, which is not doubled either (*One run at a time*, above).
+  `.target/bin/symphony nightly --due` (the command's name before the rename, which a build of
+  either side runs; [the rename](#the-rename)), and the land appends the task's slug and its merge
+  commit. Nothing slow sits on or behind a land: short of the count, `--due` prints the count and
+  what the next run waits for and exits 0, having run git alone, no cargo and no recipe, so no
+  `just tasks` or `just land` waits on a build lock of its. Once the count is reached it takes the
+  lock, brings the release run's own checkout (`../symphony-wt/release`) to `origin/main`'s tip,
+  builds `symphony` there with `tools/rs-bin.sh --build symphony` in that checkout's own build
+  folder, never the main checkout's, and becomes that build, which runs exactly as `just release`
+  does: the full verification, the conciliation, the tag and its push, each red filed, then the
+  refresh. A tip that cannot be built so is said, and its run goes on from the linked build, which
+  meets the same red in its checks. The record names what started it (`cause`: `20 landings since
+  release-…, the last SLUG`). A red run files its reds, as any release run does, and holds no
+  later count back. A linked build older than the cadence knows no `--due`: the land shows its
+  refusal, and `tools/rs-bin.sh --link symphony` in the main checkout renews the link.
+- **One run at a time.** While a run holds the lock (a scheduled run's, one run by hand, an
+  out-of-cycle release's, a refresh's or another landing's, its build included), `--due` starts
+  nothing and says the count waits for it. The landings it saw meanwhile are not lost: once that
+  run has checked a commit, the count starts again from it, and the next landing that brings it to
+  the count starts the next run. Between `--due`'s look and the run's start, a run that took the
+  lock first refuses the second, which is not doubled either (*One run at a time*, above).
 
 ## The refresh
 
@@ -318,12 +325,12 @@ release should refresh". The clients are the projects the machine serves, Star F
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project the conciliation covers (step 4 above: registered, its `symphony.toml` naming plugins, this
 repository aside) whose packages take one of the Symphony's from git
-(`crates/symphony/src/nightly/refresh.rs`). A step moves what it can and nothing more:
+(`crates/symphony/src/release/refresh.rs`). A step moves what it can and nothing more:
 
 - **Its pin.** While the project's default branch locks an older Symphony, one the release
   descends from, the move to the release is made in a worktree of the project's repository at
-  `../symphony-wt/nightly-refresh/ID`, detached at that branch's tip and locked (`the Symphony
-  nightly's refresh`), never in its checkout. Each manifest of its workspace that takes the
+  `../symphony-wt/release-refresh/ID`, detached at that branch's tip and locked (`the Symphony
+  release run's refresh`), never in its checkout. Each manifest of its workspace that takes the
   Symphony's git source names the release's tag (`tag = "release-…"` in place of `branch`, `tag`
   or `rev`), and `cargo update --workspace` moves the lock. Only `Cargo.toml` and `Cargo.lock`
   files may change, and each Symphony package must end at the release's commit. That is committed
@@ -389,7 +396,7 @@ A step that is red says what it found, the release stands (its tag is pushed), a
 1. A red before its main moved leaves that main as it was, with the
 branch made and its board moved only to the pin that main already locks; a migrate that fails
 leaves the snapshot taken before it. It is filed as
-`tests/nightly-red-refresh-ID` (`tests/nightly-red-refresh` when the registry cannot be read),
+`tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be read),
 saying what was left as it was and who fixes it, and filed as a fast fix as a check's red is: the
 bound holds for a fix of the Symphony's landed on it, while a red in a consuming project's own
 gate, hooks or code is fixed by a task on that project's board. A refresh green for it closes the
@@ -400,7 +407,7 @@ What stays by hand, said under a red refresh in `--status` too:
 - a project whose own gate or hooks refuse the move (Star Foundry's guard lets only its own
   landing move its main): it lands `symphony/RELEASE` through its own landing;
 - a main checkout off its default branch or with tracked edits: its owner puts it right;
-- then the retry, `just nightly --refresh`: an orchestrator's act, the owner having authorised the
+- then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself. It runs the refresh again for the newest release here, as a run of its own under
   the lock, checking nothing, and finishes what the red step did not: the fast-forward, the board's
   move and the wait for the server.
@@ -410,29 +417,29 @@ project's step logs every command it ran (`logs/ID/refresh-ID.log`).
 
 ## Who runs it
 
-The nightly is the one thing that pushes a tag to `origin`: the release that run cut, and
+The release run is the one thing that pushes a tag to `origin`: the release that run cut, and
 nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md)). A release
-cannot be taken back once a project fetches it, so running `just nightly` or
-`just nightly --release` by hand and installing its schedule are the owner's call: an orchestrator
+cannot be taken back once a project fetches it, so running `just release` or
+`just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run is that word, given on 2026-11-12 (*The
 cadence*, above): a land starts `--due` without asking, and the release it runs is automatic. A
 green release's refresh is that word too ("yes, a green release should refresh"), so its retry,
-`just nightly --refresh`, is an orchestrator's act, run on a red refresh's task without asking.
+`just release --refresh`, is an orchestrator's act, run on a red refresh's task without asking.
 Running `--due` by hand starts a release, and stays the owner's call.
 
 ## Status
 
-`just nightly --status` prints the newest release, the last night (its result, when, how long ago,
+`just release --status` prints the newest release, the last run (its result, when, how long ago,
 what was red and the tasks filed), a later out-of-cycle release when there is one, the last
 interrupted run while its logs are kept, the last green run, and the releases here that the last
 run found missing from the remote, with the push that delivers one, and, in a project with
-`[land] generators`, where the regenerator stands (`regenerator: …`). A night older than 36 hours
-is marked overdue. Then it prints the cadence, the landings since what it counts from and what the
-next run waits for, and the last refresh, with each line it said and each red step:
+`[land] generators`, where the regenerator stands (`regenerator: …`). A release run older than 36
+hours is marked overdue. Then it prints the cadence, the landings since what it counts from and
+what the next run waits for, and the last refresh, with each line it said and each red step:
 
 ```text
 landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
-next run: after 13 more landings (7 of 20), or the night's run
+next run: after 13 more landings (7 of 20), or the scheduled run
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
@@ -448,30 +455,79 @@ fetches nothing and writes nothing.
 ## The schedule
 
 Installing the schedule is the owner's call: nothing installs it, and an orchestrator installs it
-only on the owner's word. The full run may be scheduled more often than nightly; the entry
-`just nightly --schedule` prints runs once a day, and a schedule of more times than one is the
+only on the owner's word. The full run may be scheduled more often than daily; the entry
+`just release --schedule` prints runs once a day, and a schedule of more times than one is the
 owner's to install as well: a run does not check again a tip released already, and one started
-while another runs is refused (*One run at a time*, above). `just nightly --schedule` prints the
+while another runs is refused (*One run at a time*, above). `just release --schedule` prints the
 entry and makes nothing; `--at HH:MM` sets its time (03:00 when unsaid). On macOS it is a launchd
-agent, `symphony.nightly.ID`, which once a day, or on waking when the Mac slept through the hour, runs one `sh -c` line with the `PATH`
-of the shell that printed it: make the record folder, then `just nightly` in the main checkout,
-appending what it prints to `.git/symphony/nightly/scheduled.log`. Elsewhere it is a crontab line
-running the same. That line runs `just nightly` in the foreground, never as a background job, so
+agent, `symphony.release.ID`, which once a day, or on waking when the Mac slept through the hour, runs one `sh -c` line with the `PATH`
+of the shell that printed it: make the record folder, then `just release` in the main checkout,
+appending what it prints to `.git/symphony/release/scheduled.log`. Elsewhere it is a crontab line
+running the same. That line runs `just release` in the foreground, never as a background job, so
 the run itself starts with every signal at its default too.
 
 ```sh
-just nightly --schedule > ~/Library/LaunchAgents/symphony.nightly.symphony.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/symphony.nightly.symphony.plist
-launchctl bootout gui/$(id -u)/symphony.nightly.symphony   # to remove it
+just release --schedule > ~/Library/LaunchAgents/symphony.release.symphony.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/symphony.release.symphony.plist
+launchctl bootout gui/$(id -u)/symphony.release.symphony   # to remove it
 ```
 
 Until it is installed, only the cadence runs `just verify` on main.
 
+## The rename
+
+`just nightly`, `symphony nightly` and `--release COMMIT` are the release run's old names ([the
+names](analysis/release-candidate.md#the-names)). A build that knows only them, an older build,
+may be the one the main checkout links, and what it left on disk is this build's to take over
+(`crates/symphony/src/release.rs`, `release/record.rs`, `release/place.rs`):
+
+- **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
+  exit 2, until the first release `just release` cuts; then it goes.
+- **The old command.** `symphony nightly --due …` runs as `symphony release --due …` does, so a
+  landing's `on_land` that names it goes on, and so does an older build handing a due count's run
+  to a build of the tip (`SYMPHONY_NIGHTLY_DRIVER` counts as `SYMPHONY_RELEASE_DRIVER`). Anything
+  else it refuses, saying "`symphony nightly` is now `symphony release`", exit 2, and `symphony
+  release --release COMMIT` says "`--release COMMIT` is now `--commit COMMIT`", exit 2; neither
+  runs anything. This repository's `on_land` names `nightly --due`, which an older build knows,
+  while the main checkout may link one: a landing of this build links it (`tools/rs-bin.sh --link
+  symphony` and `--link tasks` in the main checkout), and `on_land` names `release --due` once the
+  link is newer.
+- **The records.** Until a run moves them, `--status` and the cadence read the records where an
+  older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
+  lock before it decides anything, so no older build's run, and no second run starting at the same
+  time, goes beside it, and renames the folder to `.git/symphony/release/` while it holds it: a
+  lock is the open file's, not its name's, so a run that opens it after, at either name, finds it
+  held, and one that opened it before and takes it once let go finds it in the new folder and
+  moves nothing. A folder that cannot be renamed is recorded in where it is, which the run says.
+- **The checkout and its copies.** An older build's checkout is `../symphony-wt/nightly`, locked
+  with `the Symphony nightly's checkout` and marked `symphony-nightly`, and its copies are in
+  `nightly-conciliate`, marked `symphony-nightly-copy`. While a process works in either, or holds
+  a file there open, the run moves nothing and stops as the look before it resets its checkout
+  ([above](#the-release-run)) stops it; else it moves the checkout (unlocked, moved by `git
+  worktree move` with its `.target/`, locked with the new reason and marked again, its build's
+  stamp renamed) and each copy into `release-conciliate` with its marks renamed. A checkout or
+  copy that build did not make, or one with something where it would go, is left as it is, the
+  checkout said. The board's sweep keeps a checkout locked with either reason, and clears its build
+  after a week.
+- **Records of an older build.** One of version 1 reads as this build's (version 2): its kind
+  `nightly` as `release`, its `release` (an out-of-cycle release) as `out-of-cycle`, and each log
+  under the old folder where the move put it. The Runs page's day files keep the label `nightly
+  NAME` a check of an older build is recorded under, a label nothing reads more of. No schedule is
+  installed, so none moves.
+- **Open reds.** The board's red series keeps `tests/nightly-red-` beside `tests/release-red-`
+  (`symphony_board::red::SERIES`) while a red of the old name is open: the run writes to, and
+  closes, a key's open red of the old name before it looks at the new, so the next green closes it
+  and nothing is filed beside it. The old prefix goes once none is open.
+
+An older build that runs a count after a newer one moved the folder finds no record there, and a
+due run of it makes the old folder and checkout again; so a landing of this build is followed at
+once by the links above.
+
 ## Never
 
-The nightly never tags a commit that is not on `origin/main`, that does not descend from the newest
-release or that a check found red, never moves or deletes a tag, and pushes nothing but its new
-tag. It resets and cleans no checkout but its own, removes no folder it did not make, and itself
+The release run never tags a commit that is not on `origin/main`, that does not descend from the
+newest release or that a check found red, never moves or deletes a tag, and pushes nothing but its
+new tag. It resets and cleans no checkout but its own, removes no folder it did not make, and itself
 writes nothing to a consuming project's checkout; what a project's own tests do in its scratch
 copy is theirs. Its refresh writes to a project only the branch its pin moves on, made through the
 project's own commit gate, the worktree that makes it, removed after, the fast-forward of its main
@@ -482,9 +538,9 @@ pushes a project's branch, makes a merge commit in a project, bypasses a project
 starts, signals, stops or restarts a board's database or a server; past its time it stops only
 the `surreal export` client it started. Its tests run on a repository of their own with a bare
 repository for its remote and a user git configuration that asks every push for more, a scratch
-board and a machine folder of their own, with stand-in checks (`crates/symphony/tests/nightly/`),
-and shorten the refresh's wait for the shared server with `SYMPHONY_NIGHTLY_RELOAD_SECONDS`,
-which no flag sets. They set its clock with `SYMPHONY_NIGHTLY_NOW`, which no flag sets either: a
+board and a machine folder of their own, with stand-in checks (`crates/symphony/tests/release/`),
+and shorten the refresh's wait for the shared server with `SYMPHONY_RELEASE_RELOAD_SECONDS`,
+which no flag sets. They set its clock with `SYMPHONY_RELEASE_NOW`, which no flag sets either: a
 run on it is refused unless it pushes nothing (`--no-push`) or every place its remote pushes to
 is a folder on this machine, so a release named for another day than the machine's never leaves
 it.

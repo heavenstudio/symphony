@@ -320,6 +320,29 @@ fn the_project_the_page_inlines_reads_and_writes_back_as_the_same_json() {
     assert_eq!(plain.entrypoints(), ["docs"], "none sent is the convention");
 }
 
+/// An hour of the board's health as the shared server appends it, a line of a day file in
+/// `symphony/health/`: what the Reports page reads.
+#[test]
+fn an_hour_of_the_boards_health_reads_and_writes_back_as_the_same_json() {
+    use symphony_api::{HEALTH_SCHEMA, HealthHour, HourPasses};
+    let (written, fixture) = round_trip::<HealthHour>("health-hour.json");
+    assert_eq!(written, fixture);
+    let hour: HealthHour = serde_json::from_str(&self::fixture("health-hour.json")).unwrap();
+    assert_eq!(
+        (hour.schema, hour.day().as_str()),
+        (HEALTH_SCHEMA, "2027-01-15")
+    );
+    let older: HealthHour = serde_json::from_str(
+        r#"{"schema":1,"at":1.0,"pid":1,"generation":1.0,"start":0.0,"from":0.0,"to":3600.0,"partial":false}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (older.dispatch, older.requests.slowest, older.writes.p50_ms),
+        (HourPasses::default(), None, None),
+        "a line written before a field was added reads with it empty"
+    );
+}
+
 #[test]
 fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
     let project: symphony_api::ProjectView =
@@ -401,4 +424,106 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     }
     assert_eq!(spec.documents_href(), "/");
     assert_eq!(spec.readme_route(), "README.md");
+}
+
+/// A project's day file (`symphony/reports/YYYY-MM-DD.json` in its git common dir), as the hourly
+/// roll-up writes it and the Reports page reads it: every figure of the hours and the day reads and
+/// writes back, each hour is named by its first second, and the hours sum to a span's figure.
+#[test]
+fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_span() {
+    use symphony_api::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
+    let (written, fixture) = round_trip::<ReportDay>("report-day.json");
+    assert_eq!(written, fixture);
+    let day: ReportDay = serde_json::from_str(&self::fixture("report-day.json")).unwrap();
+    assert_eq!(
+        (day.schema, report_file(&day.day)),
+        (REPORT_SCHEMA, "2027-01-15.json".into())
+    );
+    assert_eq!(symphony_api::run_day(day.start), day.day);
+    assert_eq!(
+        day.hours.iter().map(|h| h.start).collect::<Vec<_>>(),
+        [day.start, day.start + 3_600.0],
+        "each hour by its first second, the key the other day files join on"
+    );
+    let sum = |pick: fn(&ReportHour) -> u64| -> u64 { day.hours.iter().map(pick).sum() };
+    assert_eq!(sum(|h| h.git.unwrap().added), 212);
+    assert_eq!(sum(|h| u64::from(h.decisions.unwrap().auto_approved)), 1);
+    assert_eq!(sum(|h| u64::from(h.decisions.unwrap().withdrawn)), 1);
+    assert_eq!(sum(|h| u64::from(h.landed)), 1);
+    let decisions = day.decisions.unwrap();
+    assert_eq!(
+        decisions.open[0].since, None,
+        "a card with no dated line has no wait to tell"
+    );
+    assert_eq!(
+        (decisions.auto_approved.len(), decisions.withdrawn.len()),
+        (1, 1)
+    );
+    assert_eq!(day.subtasks.lead, None);
+}
+
+/// A figure per status is written as a map of the statuses whose figure is not zero, by name, as a
+/// map of names would be: none written for an hour where nothing moved, a name that is no status
+/// left out when read, and no figure for it.
+#[test]
+fn a_figure_per_status_writes_the_statuses_that_have_one_by_name() {
+    use symphony_api::reports::ByStatus;
+    let mut held = ByStatus::<u32>::default();
+    assert_eq!(serde_json::to_string(&held).unwrap(), "{}");
+    for status in ["review", "in_progress", "backlog", "review"] {
+        *held.get_mut(status).unwrap() += 1;
+    }
+    assert_eq!(held.get_mut("open"), None, "no status of the board's");
+    assert_eq!(
+        serde_json::to_string(&held).unwrap(),
+        r#"{"backlog":1,"in_progress":1,"review":2}"#
+    );
+    let read: ByStatus<u32> =
+        serde_json::from_str(r#"{"review":2,"open":5,"backlog":1,"in_progress":1}"#).unwrap();
+    assert_eq!(read, held);
+    let hours = ByStatus {
+        ready: 0.5,
+        cancelled: 0.0,
+        ..ByStatus::default()
+    };
+    assert_eq!(serde_json::to_string(&hours).unwrap(), r#"{"ready":0.5}"#);
+    let names: Vec<&str> = hours.each().iter().map(|(name, _)| *name).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "written in the order of their names");
+    let mut each = hours;
+    for name in names {
+        assert!(each.get_mut(name).is_some(), "{name}");
+    }
+}
+
+/// A day file written before a figure was added reads with that figure empty: none for the
+/// decisions and git, no hours, no auto-approval or withdrawal in an hour's decisions.
+#[test]
+fn a_day_file_without_its_later_figures_reads_with_them_empty() {
+    use symphony_api::reports::ByStatus;
+    use symphony_api::{ReportDay, ReportHour};
+    let day: ReportDay = serde_json::from_str(
+        r#"{"schema":1,"project":"p","day":"2027-01-15","start":1799971200.0,
+            "read":1800057600.0,"until":1800057600.0,"closed":true}"#,
+    )
+    .unwrap();
+    assert!(day.closed && day.hours.is_empty() && day.rounds.is_empty());
+    assert_eq!((day.decisions, day.git), (None, None));
+    let hour: ReportHour = serde_json::from_str(r#"{"start":1799982000.0}"#).unwrap();
+    assert_eq!((hour.landed, hour.decisions, hour.git), (0, None, None));
+    assert!(hour.top.held == ByStatus::default() && hour.waits.approved_to_landed.is_empty());
+    let hour: ReportHour =
+        serde_json::from_str(r#"{"start":1799982000.0,"decisions":{"open":2,"answered":1}}"#)
+            .unwrap();
+    let counts = hour.decisions.unwrap();
+    assert_eq!(
+        (
+            counts.open,
+            counts.answered,
+            counts.auto_approved,
+            counts.withdrawn
+        ),
+        (2, 1, 0, 0)
+    );
 }
