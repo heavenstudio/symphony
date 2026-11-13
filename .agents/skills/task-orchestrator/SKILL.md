@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: c46db395e0bd3aac files=SKILL.md -->
+<!-- symphony-stamp: 5b05ec21e076f23c files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -50,7 +50,9 @@ guidance names its focused checks, its stamp and its nightly.
 
 
 Load the tasks skill and the project's AGENTS.md first. Follow its staffing limits,
-model choices, verification and landing rules. Generic integration supplies no
+model choices, verification and landing rules. The limits and each role's model are
+settings, `[limits]` and `[agents.models]` in its `symphony.toml`: `just tasks limits`
+prints those in force and where each came from. Generic integration supplies no
 product-specific policy or taste data.
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
@@ -66,10 +68,14 @@ product-specific policy or taste data.
 3. Act on the PULL digest as well as events. Pushes say only what changed; at each
    decision point (resuming, before staffing, after a verdict or landing) run
    just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
-   verdict nobody received. Staff ready work, restore orphaned work and arrange
-   independent reviews. File gaps between approved docs and implementation only
-   with evidence, complete acceptance and no existing task. Use the create-task
-   skill.
+   verdict nobody received. Staff a red (tests/main-red-*, tests/nightly-red-*) before
+   anything else. One filed as a fast fix is yours to approve when its fix changes no
+   test or check, the failing tests unchanged and green at its tip; the land refuses
+   your approve on a fix that changes a test, a check, a budget or a run step ([land]
+   check_paths), and you staff a fresh reviewer for it. Staff ready work, restore
+   orphaned work and arrange independent reviews. File gaps between approved docs and
+   implementation only with evidence, complete acceptance and no existing task. Use
+   the create-task skill.
 4. Follow the project's integration and dependency policy before starting. Honor
    explicit stacking and source-availability rules in the task. Coordinate file
    ownership and record actual conflicts on the thread.
@@ -78,8 +84,9 @@ product-specific policy or taste data.
    it only $work SLUG HANDLE (Claude: /work SLUG HANDLE). The work skill owns
    claiming, milestones and finishing. Use a separate checkout per executor.
 6. Choose a supported launch method under project policy: an in-process agent,
-   a headless run, or just tasks launch SLUG --kind claude|codex. Pass its required
-   model and effort. A terminal is for work needing a terminal or outliving your
+   a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
+   just tasks limits names for its role, and its required effort. A terminal is for
+   work needing a terminal or outliving your
    session. Never run tests in another agent's terminal. Launch records retain
    conversations for restore.
 7. Full-session workers register their own callbacks. In-process workers must
@@ -106,6 +113,11 @@ product-specific policy or taste data.
    TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
    posted evidence, naming the tip, and land it. One you executed yourself is
    approved by a fresh reviewer, as any other task.
+   A task whose work landed with another task's branch, leaving none of its own,
+   is closed by its executor, or by you holding its orchestrator role, with just
+   tasks done SLUG "what landed, where" --covered-by OTHER, never a verdict of
+   yours: it is no approve, and a land refuses it. Cancel work no longer wanted
+   with just tasks move SLUG cancelled --reason "why".
 9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
    question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.

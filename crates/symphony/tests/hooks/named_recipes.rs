@@ -17,7 +17,8 @@ const CONSUMERS: [&str; 5] = [
 ];
 
 /// Words that follow "just" in prose, never a recipe.
-const PROSE: [&str; 20] = [
+const PROSE: [&str; 21] = [
+    "a",
     "above",
     "after",
     "as",
@@ -41,22 +42,34 @@ const PROSE: [&str; 20] = [
 ];
 
 /// Text of this repository's own development, which names recipes of its own justfile: a source
-/// kit's client build, which no project runs, the checks a task here proves its work with, and its
-/// releases, which the nightly cuts and no project runs.
-const OWN: [(&str, &str); 14] = [
+/// kit's client build, which no project runs, the checks a task here proves its work with, its
+/// size budgets, its measurements, and its releases, which the nightly cuts and no project runs,
+/// with the test targets a red night's task reruns alone.
+const OWN: [(&str, &str); 22] = [
     ("apps/symphony-server/src/api/client.rs", "symphony-ui-dist"),
     ("apps/symphony-server/src/development.rs", "symphony-ui-dev"),
+    (
+        "crates/symphony/src/cli/commands/size_budget.rs",
+        "size-check",
+    ),
     ("crates/symphony/src/nightly.rs", "nightly"),
     ("crates/symphony/src/nightly.rs", "verify"),
     ("crates/symphony/src/nightly/board.rs", "nightly"),
+    ("crates/symphony/src/nightly/board.rs", "test-rs"),
+    ("crates/symphony/src/nightly/cadence.rs", "nightly"),
+    ("crates/symphony/src/nightly/record.rs", "nightly"),
+    ("crates/symphony/src/nightly/refresh.rs", "nightly"),
     ("crates/symphony/src/nightly/schedule.rs", "nightly"),
     ("docs/CHECKS.md", "client-check"),
     ("docs/CHECKS.md", "client-update"),
     ("docs/CHECKS.md", "lint-rs"),
     ("docs/CHECKS.md", "nightly"),
+    ("docs/CHECKS.md", "size-check"),
     ("docs/CHECKS.md", "test-rs"),
     ("docs/CHECKS.md", "verify"),
+    ("docs/PLUGIN_PROTOCOL.md", "test-rs"),
     ("docs/RELEASES.md", "nightly"),
+    ("docs/RELEASES.md", "test-rs"),
     ("docs/RELEASES.md", "verify"),
 ];
 
@@ -411,14 +424,13 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
     let installed = installed();
     // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
-    // shared server, before `just symphony-cli`, which reaches `serve`, `init` and
-    // `publish-client`, and before `just land`, which moves and pushes the default branch: they
-    // stay installed, and no rule allows them.
-    let asked: BTreeSet<String> = ["symphony", "symphony-cli", "land"]
-        .map(String::from)
-        .into();
+    // shared server, and before `just symphony-cli`, which reaches `serve`, `init` and
+    // `publish-client`: they stay installed, and no rule allows them. `just land` is allowed: what
+    // it lands its approval check decides.
+    let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
+    assert!(allowed_here.contains("land"), "{allowed_here:?}");
     let tree = super::support::Tree::new();
     let done = std::process::Command::new(super::common::BIN)
         .args(["init", "--root"])
@@ -428,8 +440,9 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert!(done.status.success(), "{done:?}");
     let settings: serde_json::Value =
         serde_json::from_str(&tree.read(".claude/settings.json")).unwrap();
-    let rule =
-        Regex::new(r"^Bash\((?:TASKS_SESSION=\* )?just ([a-z][a-z0-9_-]*)(?::\*| \*)\)$").unwrap();
+    // A recipe's words, then the rule's one `*`: an env prefix's `*` would match any text,
+    // another program included.
+    let rule = Regex::new(r"^Bash\(just ([a-z][a-z0-9_-]*):\*\)$").unwrap();
     let allowed: BTreeSet<String> = settings["permissions"]["allow"]
         .as_array()
         .unwrap()
@@ -451,80 +464,18 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
         .collect();
     assert_eq!(codex, allowed_here);
 
-    // `just tasks` is allowed, and `tasks land` refuses without the marker only the `land` recipe
-    // sets: a command naming the marker is asked before, whatever allows it, as is `just tasks
-    // land` itself, bare or after the handle an allow rule passes, with or without the options
-    // `tasks` reads before its command (`just tasks --as H land S`); Codex prompts for `just tasks
-    // land` and for a board command whose first word is one of those options, and no Codex rule
-    // allows a command with an env prefix.
+    // Init writes no ask rule, and Codex prompts for nothing: `tasks land` refuses without the
+    // marker only the `land` recipe sets, and what an approved land lands its approval check
+    // decides, never a wait on the owner. No Codex rule allows a command with an env prefix.
     let marker = symphony_board::land::RECIPE;
-    let ask: Vec<&str> = settings["permissions"]["ask"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|rule| rule.as_str().unwrap())
-        .collect();
-    assert_eq!(
-        ask,
-        [
-            format!("Bash(*{marker}*)"),
-            "Bash(just tasks land)".into(),
-            "Bash(just tasks land *)".into(),
-            "Bash(just tasks -* land)".into(),
-            "Bash(just tasks -* land *)".into(),
-            "Bash(TASKS_SESSION=* just tasks land)".into(),
-            "Bash(TASKS_SESSION=* just tasks land *)".into(),
-            "Bash(TASKS_SESSION=* just tasks -* land)".into(),
-            "Bash(TASKS_SESSION=* just tasks -* land *)".into(),
-        ]
-    );
-    // Each way of running a land the board's parser takes, an option first included, is asked
-    // before; a board command that is no land, its handle last as agents run them, is not.
-    let glob = |rule: &str, command: &str| {
-        let body = rule
-            .strip_prefix("Bash(")
-            .and_then(|rule| rule.strip_suffix(')'))
-            .unwrap();
-        let pattern = format!(
-            "^{}$",
-            body.split('*')
-                .map(regex::escape)
-                .collect::<Vec<_>>()
-                .join(".*")
-        );
-        Regex::new(&pattern).unwrap().is_match(command)
-    };
-    let asked = |command: &str| ask.iter().any(|rule| glob(rule, command));
-    for command in [
-        "just tasks land sim/jump",
-        "just tasks land sim/jump --as umber-raven",
-        "just tasks --as umber-raven land sim/jump",
-        "just tasks --as=umber-raven land sim/jump",
-        "just tasks --as a --as b land sim/jump",
-        "just tasks --database scratch --as a land sim/jump",
-        "TASKS_SESSION=umber-raven just tasks --as umber-raven land sim/jump",
-    ] {
-        assert!(asked(command), "{command} is asked before");
-    }
-    for command in [
-        "just tasks say tools/land-command \"done\" --as umber-raven",
-        "just tasks show tools/land-interrupt-safety",
-        "just tasks landed",
-    ] {
-        assert!(!asked(command), "{command} is not asked before");
-    }
+    assert!(settings["permissions"].get("ask").is_none(), "{settings:#}");
     assert!(!codex_rules.contains(marker));
-    let prompted: Vec<&str> = codex_rules
-        .lines()
-        .filter(|line| line.starts_with("prefix_rule") && !line.ends_with("decision=\"allow\")"))
-        .collect();
-    assert_eq!(
-        prompted,
-        [
-            "prefix_rule(pattern=[\"just\", \"tasks\", \"land\"], decision=\"prompt\")",
-            "prefix_rule(pattern=[\"just\", \"tasks\", [\"--as\", \"--database\"]], \
-             decision=\"prompt\")",
-        ]
+    assert!(
+        codex_rules
+            .lines()
+            .filter(|line| line.starts_with("prefix_rule"))
+            .all(|line| line.ends_with("decision=\"allow\")")),
+        "{codex_rules}"
     );
     assert!(
         codex_rules

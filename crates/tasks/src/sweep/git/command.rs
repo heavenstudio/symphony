@@ -30,12 +30,12 @@ fn command(dir: &Path) -> Command {
 }
 
 /// What `git ARGS` printed, when it succeeded.
-pub(in crate::sweep) fn stdout(dir: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn stdout(dir: &Path, args: &[&str]) -> Option<String> {
     read(dir, args).map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
 }
 
 /// A read's original bytes, including NUL-delimited names, without refreshing the writer's index.
-pub(in crate::sweep) fn read(dir: &Path, args: &[&str]) -> Option<Output> {
+pub(crate) fn read(dir: &Path, args: &[&str]) -> Option<Output> {
     // These reads inspect other agents' trees. A diff can refresh the index even when
     // optional locks are disabled, so both settings are needed to leave the writer's index alone.
     crate::sys::output(

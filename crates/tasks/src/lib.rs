@@ -48,6 +48,8 @@ pub mod builds;
 pub mod cbor;
 pub mod cli;
 mod codex_queue;
+pub mod confine;
+pub mod covering;
 pub mod embedding;
 pub mod fast_fix;
 pub mod folders;
@@ -55,7 +57,9 @@ pub mod git;
 pub mod health;
 pub mod land;
 pub mod launch;
+pub mod limits;
 pub mod live;
+pub mod on_land;
 pub mod on_review;
 pub mod orchestration;
 pub mod port;
@@ -80,11 +84,12 @@ pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
-    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board,
-    Callback, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS, Landed,
-    Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick, Presence,
-    ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, Unfresh,
-    VectorHit, VectorSearchProfile, approved, can_transition,
+    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
+    Callback, CoveredLine, EmbeddingStats, Error, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
+    Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
+    Presence, ROLES, Role, SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task,
+    Unfresh, VectorHit, VectorSearchProfile, approved, can_transition, covered_by, covered_line,
+    landing,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -167,15 +172,24 @@ fn copy(
         return Ok(None);
     }
     let opening = Opening::write().scratch(COPY_SCRATCH);
-    let (client, dumping) = match args {
-        [board] if board == "--board" => (cli::board_client(env)?, false),
-        [board, dump] if board == "--board" && dump == "--out" => (cli::board_client(env)?, true),
-        [addr] if named(addr) => (rpc::Client::new(addr, NAMESPACE, DATABASE), false),
+    // Either way the store opens a live board as one, so a board that went back is refused it
+    // ([`live::seen`]): the board this run reaches, or the one whose server an address names.
+    let board = || {
+        cli::writable_board(env).map(|reached| (reached.opening(opening.clone()), reached.client))
+    };
+    let server = |addr: &str, db: &str| {
+        let how = opening.clone().live(live::find_here(addr, db));
+        (how, rpc::Client::new(addr, NAMESPACE, db))
+    };
+    let ((opening, client), dumping) = match args {
+        [board_word] if board_word == "--board" => (board()?, false),
+        [board_word, dump] if board_word == "--board" && dump == "--out" => (board()?, true),
+        [addr] if named(addr) => (server(addr, DATABASE), false),
         [addr, db] if named(addr) && named(db) => {
             if !rpc::plain(db) {
                 return Err(format!("{db:?} is not a plain name for a database"));
             }
-            (rpc::Client::new(addr, NAMESPACE, db), false)
+            (server(addr, db), false)
         }
         _ => return Err(COPY_USAGE.into()),
     };
@@ -247,12 +261,13 @@ pub fn reclaim_main(
             let _ = writeln!(
                 out,
                 "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
-                 exported the same from both stores; their exports are in {}; the board's server is \
-                 pid {} at {}",
+                 exported the same from both stores; their exports are in {}; {}; the board's \
+                 server is pid {} at {}",
                 size(done.before),
                 size(done.after),
                 done.databases.len(),
                 done.exports.display(),
+                old_store_kept(&done.kept),
                 done.running.pid,
                 done.running.addr
             );
@@ -265,8 +280,34 @@ pub fn reclaim_main(
     }
 }
 
+/// Where `tasks-reclaim` says the old store is kept, and until when: a snapshot, kept as any is
+/// ([`server::snapshot`]), the room it takes freed only once it is removed.
+fn old_store_kept(kept: &server::Kept) -> String {
+    let path = kept.path();
+    let how = match kept {
+        server::Kept::Cloned(_) => "a copy-on-write clone",
+        server::Kept::Copied(_) => "a plain copy, as this volume cannot clone",
+        server::Kept::Already(_) => "a snapshot taken before, which holds it as it was",
+    };
+    let until = if server::snapshot::holds_log(path) {
+        "its write-ahead log holds writes, so it is kept until the owner removes it".to_string()
+    } else {
+        format!(
+            "its log is empty, so it is kept among the newest {} such snapshots, which later \
+             starts' snapshots prune, unless the owner removes it first",
+            server::snapshot::KEEP
+        )
+    };
+    format!(
+        "the old store is kept at {} ({how}): {until} (`rm -rf {}`), and the room it takes comes \
+         back only then",
+        path.display(),
+        path.display()
+    )
+}
+
 /// `bytes` as a person reads it, to a tenth: GiB from one on, else MiB.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     let mib = bytes as f64 / f64::from(1 << 20);
     if mib >= 1024.0 {
         format!("{:.1} GiB", mib / 1024.0)

@@ -72,7 +72,7 @@ fn log(env: &Env) -> Option<File> {
 /// `err` with the minute, for the dispatch log.
 pub(super) fn run(env: &Env, err: &mut dyn Write) -> i32 {
     let store =
-        Clock::of(env).and_then(|clock| Ok(open_unchecked(reach(env, &env.cwd, false)?, &clock)));
+        Clock::of(env).and_then(|clock| open_unchecked(reach(env, &env.cwd, false)?, &clock));
     match store.and_then(|store| store.dispatch_detached().map_err(|e| e.to_string())) {
         Ok(_) => 0,
         Err(why) => {

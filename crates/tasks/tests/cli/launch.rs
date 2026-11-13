@@ -435,6 +435,133 @@ fn a_project_launch_table_it_cannot_read_refuses_the_launch_and_starts_nothing()
 }
 
 #[test]
+fn a_launch_takes_the_model_agents_models_names_for_its_role_and_flags_win_over_it() {
+    let manifest = "[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n\n\
+                    [agents.models]\nexecutor = \"sonnet\"\nreviewer = \"fable\"\n";
+    for (name, flags, agent, model) in [
+        ("executor", &[][..], "claude", "sonnet"),
+        ("reviewer", &["--role", "reviewer"][..], "claude", "fable"),
+        ("flag", &["--model", "haiku"][..], "claude", "haiku"),
+        // A role's model is the project's agent's: another agent takes the board's own.
+        ("codex", &["--kind", "codex"][..], "codex", "gpt-6.1-sol"),
+    ] {
+        let p = Terminals::new(&format!("role-model-{name}"));
+        p.manifest(manifest);
+        let orch = p.orchestrator();
+        let (_, s) = p.launch_with(&orch, flags);
+        let (started, started_model, _) = p.started_agent();
+        assert_eq!(
+            (started.as_str(), started_model.as_str()),
+            (agent, model),
+            "{name}"
+        );
+        assert_eq!(s.model, model, "{name}");
+    }
+}
+
+/// `count` live agent terminals of the machine, none of this board's (another project's, a
+/// session started by hand), and the Herdr app's space `lamp-works`.
+fn running_agents(p: &Terminals, count: usize) {
+    let terminals: Vec<Value> = (0..count)
+        .map(|n| {
+            json!({
+                "address": format!("x{n}"), "name": format!("elsewhere-{n}"), "state": "live",
+                "status": "working", "agent": "claude-code", "pid": NO_PID, "cwd": "/elsewhere",
+            })
+        })
+        .collect();
+    p.set_state(json!({"terminals": terminals, "layout": {"spaces": [
+        {"id": "sp-lamp", "name": "lamp-works", "tabs": []},
+    ]}}));
+}
+
+#[test]
+fn a_launch_at_the_machines_agent_limit_is_refused_and_starts_nothing_until_the_limit_is_raised() {
+    let p = Terminals::new("machine-agents");
+    p.manifest("[limits]\nmachine_agents = 2\n");
+    // One agent's terminal, and the orchestrator's session, live with no terminal of its own.
+    let orch = p.orchestrator();
+    running_agents(&p, 1);
+    let ran = p.as_(&orch, &["launch", "sim/jump"]);
+    let path = p.env.cwd.join("symphony.toml").canonicalize().unwrap();
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (
+            1,
+            "",
+            format!(
+                "✖ no launch: this machine runs 2 agents, at its limit of 2 ([limits] \
+                 machine_agents in {})\n",
+                path.display()
+            )
+        )
+    );
+    assert!(p.calls_of("run").is_empty(), "{:?}", p.calls());
+    assert!(p.board().task_sessions("sim/jump").unwrap().is_empty());
+    // Raised in the file, the next launch goes ahead.
+    p.manifest("[limits]\nmachine_agents = 3\n");
+    let (ran, s) = p.launch_with(&orch, &[]);
+    assert!(
+        ran.out
+            .starts_with(&format!("launched {} on sim/jump", s.handle)),
+        "{}",
+        ran.out
+    );
+}
+
+#[test]
+fn next_past_the_machines_agent_limit_warns_and_still_names_the_task() {
+    let mut p = Terminals::new("machine-agents-next");
+    p.orchestrator();
+    let worker = p
+        .board()
+        .register(&NewSession::new("worker"))
+        .unwrap()
+        .row
+        .handle;
+    // One agent's terminal, and the orchestrator's and the worker's sessions, live with none.
+    running_agents(&p, 1);
+    // No limit written: nothing is counted, nothing said.
+    assert_eq!(
+        (p.as_(&worker, &["next"]).out, p.as_(&worker, &["next"]).err),
+        ("sim/jump  p2  Jump\n".to_string(), String::new())
+    );
+    p.manifest("[limits]\nmachine_agents = 3\n");
+    let at = p.as_(&worker, &["next"]);
+    assert_eq!(
+        (at.code, at.out.as_str(), at.err.as_str()),
+        (0, "sim/jump  p2  Jump\n", "")
+    );
+    p.manifest("[limits]\nmachine_agents = 2\n");
+    let past = p.as_(&worker, &["next"]);
+    let path = p.env.cwd.join("symphony.toml").canonicalize().unwrap();
+    assert_eq!(
+        (past.code, past.out.as_str(), past.err),
+        (
+            0,
+            "sim/jump  p2  Jump\n",
+            format!(
+                "⚠ this machine runs 3 agents, past its limit of 2 ([limits] machine_agents in \
+                 {}): no more start until some finish\n",
+                path.display()
+            )
+        )
+    );
+    // hc not there: the count cannot be made, which is said, and the task still named.
+    p.set("HC_BIN", "/nonexistent/hc");
+    let unknown = p.as_(&worker, &["next"]);
+    assert_eq!(
+        (unknown.code, unknown.out.as_str()),
+        (0, "sim/jump  p2  Jump\n")
+    );
+    assert!(
+        unknown.err.starts_with("⚠ hc cannot be asked, so the agents this machine runs cannot be counted: [limits] machine_agents in "),
+        "{}",
+        unknown.err
+    );
+}
+
+#[test]
 fn launch_help_says_what_a_bare_launch_starts_in_the_project_it_runs_in() {
     let p = Terminals::new("help");
     let path = p.env.cwd.join("symphony.toml").display().to_string();
@@ -443,7 +570,7 @@ fn launch_help_says_what_a_bare_launch_starts_in_the_project_it_runs_in() {
         assert_eq!((ran.code, ran.err.as_str()), (0, ""));
         assert!(
             ran.out.contains(
-                "--model MODEL         default the model of the project's [agents] launch for"
+                "--model MODEL         default the model the project's [agents.models] names"
             ),
             "{}",
             ran.out

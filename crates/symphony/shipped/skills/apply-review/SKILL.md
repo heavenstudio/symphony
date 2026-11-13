@@ -53,7 +53,11 @@ do not treat it as approval, and change documents only when it asks for that.
    indented four spaces). Never edit the owner's words
    or marker, and never rewrite an earlier line: history is append-only. Plain words; explain jargon the owner asked about. A reply may use
    markdown links and images (the web app renders them), which is how to answer
-   "show me side by side" with an existing picture under `artifacts/`.
+   "show me side by side" with an existing picture. A card's picture is a file
+   committed beside its document under `docs/`, so a clone shows it: copy one
+   from the ignored `artifacts/` folder there and commit it, never link into
+   `artifacts/` or an owner's upload. `just symphony-cli docs-audit --check`
+   refuses a card picture git does not track.
    Keep any hidden `review:unseen-owner` comment: it prevents a reply that had not seen a stale owner save from closing that save.
    Write each line with `just symphony-reply PATH SLUG "<reply>" --as <handle>`,
    and resolve an owner callout with `just symphony-reply PATH L<line> "<answer>"
@@ -71,6 +75,24 @@ do not treat it as approval, and change documents only when it asks for that.
    own words pointless: a card must ask for a real choice (a proposal they did
    not write, missing detail, or pictures to judge). Where two verdicts conflict, add a card that
    asks, and do not choose. Do not propose beyond what the notes call for.
+
+   **Never reopen an approved card with a question on it.** A consequence of
+   the approved choice, whatever follows from it while the option chosen stays
+   the one the card described (a correction, a name it implied, a cost or a
+   trade it did not state), is a plain agent line on that card, quoting the
+   owner's words it rests on and answering any owner note still open there; the
+   card stays resolved. Only a change that would make the option chosen another
+   than the one described is a new card of its own that links the approved one.
+   **Before adding any card, check the owner's earlier verdicts.** A card the
+   owner approved decides a later card only when the choice it approved already
+   answers what the later card asks, and each of the later card's other options
+   would change that choice. A recommendation that leaves alone something the
+   approved card never addressed decides nothing, and that card is asked. An
+   auto-approved card, or a line an agent recorded as answered, is not the
+   owner's approval and decides no further card. A decided card is not asked
+   but recorded as answered on the card the owner approved, quoting their words
+   and naming the card they are on. A card that is asked opens with what changes
+   for the owner in one or two plain sentences, before any option.
 
 5. **Find the documents that disagree.** Start from the `[[FILE#Heading]]`
    links on rejected and noted cards, then grep `docs/` for the rejected

@@ -443,6 +443,418 @@ fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scro
     assert_eq!(Picture::read(&out).width, 1440);
 }
 
+/// A page whose click target, a folded list's summary far below the fold, moves down 240 px on the
+/// frames after it is scrolled into view, with the page's scroll position unchanged: an element
+/// above it grows on the frame after the first scroll (+60), and three placeholders above it are
+/// filled once they come within 600 px of the view (+60 each), as the client's `NearViewport` fills
+/// its own. Every pointer event is recorded with the element it reached, and the summary's top as
+/// the first scroll left it.
+const SETTLING: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  .filler { height: 2400px; }
+  #grows { height: 0; }
+  .slot { height: 20px; }
+  .slot.mounted { height: 80px; }
+</style>
+<main>
+  <div class="filler">top</div>
+  <div id="grows"></div>
+  <div class="slot"></div><div class="slot"></div><div class="slot"></div>
+  <details id="finished"><summary>3 finished</summary><p>one, two, three</p></details>
+  <div class="filler">bottom</div>
+</main>
+<script>
+  const summary = document.querySelector('summary');
+  window.landed = [];
+  for (const kind of ['pointerdown', 'pointerup', 'click']) {
+    addEventListener(kind, event => landed.push([kind, event.target.tagName]), true);
+  }
+  addEventListener('scroll', () => {
+    window.scrolledTo = summary.getBoundingClientRect().top;
+    requestAnimationFrame(() => { document.getElementById('grows').style.height = '60px'; });
+  }, {once: true});
+  const near = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('mounted');
+      entry.target.textContent = 'a row';
+      near.unobserve(entry.target);
+    }
+  }, {rootMargin: '600px'});
+  for (const slot of document.querySelectorAll('.slot')) near.observe(slot);
+</script>"#;
+
+#[test]
+fn a_click_aims_at_its_target_once_what_the_scroll_mounted_above_it_has_moved_it() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file("/settling.html", SETTLING.as_bytes().to_vec(), "text/html");
+    let scratch = Scratch::new("settling");
+    let out = scratch.join("settling.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/settling.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--click",
+            "#finished summary",
+            "--eval",
+            "[document.getElementById('finished').open, landed, summary.getBoundingClientRect().top - scrolledTo, document.querySelectorAll('.slot.mounted').length]",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    // The summary moved 240 px after the scroll, every placeholder filled: a click at the middle
+    // the scroll first left it at lands on what grew above it.
+    assert_eq!(after[2], json!(240), "{after}");
+    assert_eq!(after[3], json!(3), "{after}");
+    // The press, the release and so the click all reached the summary, which opened its list.
+    assert_eq!(
+        after[1],
+        json!([
+            ["pointerdown", "SUMMARY"],
+            ["pointerup", "SUMMARY"],
+            ["click", "SUMMARY"]
+        ]),
+        "{after}"
+    );
+    assert_eq!(after[0], json!(true), "{after}");
+}
+
+#[test]
+fn a_click_on_a_target_that_never_holds_still_fails_naming_it_and_presses_nothing() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    // A button that moves down a pixel on every frame, its middle always in view (a cycle of 400
+    // frames, longer than the five seconds the click waits), on a page that asks for `/pressed` on
+    // any press anywhere.
+    let site = site();
+    site.set_file(
+        "/runaway.html",
+        br#"<!doctype html>
+<style>body { margin: 0; } #runaway { position: relative; width: 200px; height: 40px; }</style>
+<main style="height: 3000px"><button id="runaway">run</button></main>
+<script>
+  addEventListener('pointerdown', () => fetch('/pressed'), true);
+  const runaway = document.getElementById('runaway');
+  let frame = 0;
+  requestAnimationFrame(function step() {
+    runaway.style.top = (frame++ % 400) + 'px';
+    requestAnimationFrame(step);
+  });
+</script>"#
+            .to_vec(),
+        "text/html",
+    );
+    let scratch = Scratch::new("runaway");
+    let out = scratch.join("runaway.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/runaway.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--timeout",
+            "5",
+            "--click",
+            "#runaway",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", said(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.trim_end(),
+        "symphony shot: --click #runaway kept moving: no two reads in a row, each in an animation \
+         frame, found its box in one place within 5s",
+        "{}",
+        said(&output)
+    );
+    assert!(
+        !site.requests().iter().any(|path| path == "/pressed"),
+        "the shot pressed somewhere: {:?}",
+        site.requests()
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
+/// What a page that records where the pointer lands keeps: each press, release and click with
+/// the id of the element it reached (`landed`), what is on top at the target's middle (`on_top()`),
+/// and, once every row above the target has mounted, what was on top there a frame later
+/// (`pushed`): where an aim that trusted a box held still in the viewport would press.
+const LANDING: &str = r#"
+  const target = document.getElementById('target');
+  const on_top = () => { const b = target.getBoundingClientRect(); const at = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); return at && at.id; };
+  window.landed = [];
+  for (const kind of ['pointerdown', 'pointerup', 'click']) {
+    addEventListener(kind, event => landed.push([kind, event.target.id]), true);
+  }
+  const rows = document.querySelectorAll('.slot');
+  const near = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('mounted');
+      near.unobserve(entry.target);
+    }
+    if (document.querySelectorAll('.slot.mounted').length === rows.length && !('pushed' in window)) {
+      window.pushed = undefined;
+      requestAnimationFrame(() => { window.pushed = on_top(); });
+    }
+  }, {rootMargin: '600px'});
+  for (const row of rows) near.observe(row);
+"#;
+
+/// A page whose click target sits in a scrolling container, below three placeholders that grow by
+/// 120 px each once they come into the container's view, as a `NearViewport` fills its own: the
+/// scroll that brings the target to the container's middle mounts them, pushing it past the
+/// container's lower edge while its middle stays in the window's view, over `#below`.
+fn contained() -> String {
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; }}
+  #top {{ height: 100px; }}
+  #box {{ height: 300px; overflow: auto; }}
+  .filler {{ height: 1200px; }}
+  .slot {{ height: 20px; }}
+  .slot.mounted {{ height: 140px; }}
+  #below {{ height: 2000px; }}
+</style>
+<div id="top">top</div>
+<div id="box">
+  <div class="filler">inner top</div>
+  <div class="slot"></div><div class="slot"></div><div class="slot"></div>
+  <button id="target">target</button>
+  <div class="filler">inner bottom</div>
+</div>
+<div id="below">below the container</div>
+<script>{LANDING}</script>"#
+    )
+}
+
+/// A page whose click target sits below a sticky header 120 px tall and four placeholders that
+/// shrink by 90 px each once they come within 600 px of the view: the scroll that brings the
+/// target to the middle of the view mounts them, pulling it up 360 px, under the header.
+fn sticky() -> String {
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; }}
+  header {{ position: sticky; top: 0; height: 120px; background: #ccc; z-index: 1; }}
+  .filler {{ height: 2400px; }}
+  .slot {{ height: 130px; }}
+  .slot.mounted {{ height: 40px; }}
+</style>
+<header id="header">sticky header</header>
+<div class="filler">top</div>
+<div class="slot"></div><div class="slot"></div><div class="slot"></div><div class="slot"></div>
+<button id="target">target</button>
+<div class="filler">bottom</div>
+<script>{LANDING}</script>"#
+    )
+}
+
+/// `--click #target` on `page`, then where the pointer landed, as [`LANDING`] keeps it:
+/// `[landed, pushed, rows mounted, on_top()]`.
+fn click_landing(name: &str, page: String) -> Value {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return Value::Null;
+    };
+    let site = site();
+    let path = format!("/{name}.html");
+    site.set_file(&path, page.into_bytes(), "text/html");
+    let scratch = Scratch::new(name);
+    let out = scratch.join(format!("{name}.png").as_str());
+    let output = shot(
+        &chrome,
+        &[
+            &site.url(&path),
+            "--out",
+            out.to_str().unwrap(),
+            "--click",
+            "#target",
+            "--eval",
+            "[landed, pushed, document.querySelectorAll('.slot.mounted').length, on_top()]",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(Picture::read(&out).width, 1440);
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    after.clone()
+}
+
+/// The press, the release and the click, each on the target.
+fn on_the_target() -> Value {
+    json!([
+        ["pointerdown", "target"],
+        ["pointerup", "target"],
+        ["click", "target"]
+    ])
+}
+
+#[test]
+fn a_click_on_a_target_pushed_out_of_its_scrolling_container_scrolls_it_back_and_lands_on_it() {
+    let after = click_landing("contained", contained());
+    if after.is_null() {
+        return;
+    }
+    // Every placeholder mounted, and once they had, what was on top at the target's middle, held
+    // still in the window's view, was the page below the container.
+    assert_eq!(after[2], json!(3), "{after}");
+    assert_eq!(after[1], json!("below"), "{after}");
+    // Scrolled again within its container, the target took the press, the release and the click.
+    assert_eq!(after[0], on_the_target(), "{after}");
+    assert_eq!(after[3], json!("target"), "{after}");
+}
+
+#[test]
+fn a_click_on_a_target_pushed_under_a_sticky_header_scrolls_it_clear_and_lands_on_it() {
+    let after = click_landing("sticky", sticky());
+    if after.is_null() {
+        return;
+    }
+    assert_eq!(after[2], json!(4), "{after}");
+    assert_eq!(after[1], json!("header"), "{after}");
+    assert_eq!(after[0], on_the_target(), "{after}");
+    assert_eq!(after[3], json!("target"), "{after}");
+}
+
+/// A page whose button and text field lie under a fixed veil that never lifts, a bare `div` in a
+/// `section` with an id and four classes, and whose other button is fixed above the top of the
+/// view, where no scroll brings it. Any pointer movement or press asks for `/pointed`.
+const VEILED: &[u8] = br#"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  main { height: 3000px; }
+  #veil > div { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+  #away { position: fixed; top: -200px; }
+</style>
+<main><button id="target">target</button> <input id="field"> <button id="away">away</button></main>
+<section id="veil" class="modal dim backdrop open"><div></div></section>
+<script>
+  for (const kind of ['pointermove', 'pointerdown']) addEventListener(kind, () => fetch('/pointed'), true);
+</script>"#;
+
+/// `symphony shot` on [`VEILED`] with `--timeout 5` and `steps`.
+fn veiled(name: &str, steps: &[&str]) -> Option<(Output, PathBuf, Vec<String>, Scratch)> {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return None;
+    };
+    let site = site();
+    site.set_file("/veiled.html", VEILED.to_vec(), "text/html");
+    let scratch = Scratch::new(name);
+    let out = scratch.join(format!("{name}.png").as_str());
+    let output = shot(
+        &chrome,
+        &[
+            &[
+                site.url("/veiled.html").as_str(),
+                "--out",
+                out.to_str().unwrap(),
+                "--timeout",
+                "5",
+            ][..],
+            steps,
+        ]
+        .concat(),
+    )
+    .output()
+    .unwrap();
+    Some((output, out, site.requests(), scratch))
+}
+
+#[test]
+fn a_click_or_a_hover_on_a_target_that_stays_covered_fails_naming_the_cover_and_typing_reaches_it()
+{
+    for flag in ["--click", "--hover"] {
+        let Some((output, out, requests, _scratch)) =
+            veiled(&format!("veiled{flag}"), &[flag, "#target"])
+        else {
+            return;
+        };
+        assert_eq!(output.status.code(), Some(1), "{flag}: {}", said(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "symphony shot: {flag} #target stayed covered: section#veil.modal.dim.backdrop > \
+                 div was on top at its middle after every scroll within 5s"
+            ),
+            "{}",
+            said(&output)
+        );
+        assert!(
+            !requests.iter().any(|path| path == "/pointed"),
+            "{flag} moved the pointer or pressed: {requests:?}"
+        );
+        assert!(!out.exists(), "{flag}: a failed shot left a picture");
+    }
+    // Typing takes no aim: it focuses the field by script, and the veil takes none of the text.
+    let Some((output, out, requests, _scratch)) = veiled(
+        "veiled-type",
+        &[
+            "--type",
+            "#field=under the veil",
+            "--eval",
+            "document.getElementById('field').value",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), [json!("under the veil")]);
+    assert!(
+        !requests.iter().any(|path| path == "/pointed"),
+        "{requests:?}"
+    );
+    assert_eq!(Picture::read(&out).width, 1440);
+}
+
+#[test]
+fn a_target_that_stays_out_of_view_fails_naming_it_not_the_settle_after_its_last_scroll() {
+    // Each scroll of the fixed button changes nothing, and the page settles after each one, so the
+    // wait most often runs out in a settle: the failure still says what the button's last read found.
+    let Some((output, out, requests, _scratch)) = veiled("away", &["--click", "#away"]) else {
+        return;
+    };
+    assert_eq!(output.status.code(), Some(1), "{}", said(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        "symphony shot: --click #away stayed out of view: its middle was outside the viewport \
+         after every scroll within 5s",
+        "{}",
+        said(&output)
+    );
+    assert!(
+        !requests.iter().any(|path| path == "/pointed"),
+        "{requests:?}"
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
 /// A stand-in for Chrome that records its process id and arguments in `SHOT_RECORDS`, one file
 /// per launch named by its id, then becomes the real Chrome (`SHOT_REAL_CHROME`) in place.
 fn recording_chrome(scratch: &Scratch) -> (PathBuf, PathBuf) {

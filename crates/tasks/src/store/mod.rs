@@ -70,8 +70,9 @@ pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES,
-    Unfresh, approved, can_transition,
+    BEFORE_WORK, COVERED, CoveredLine, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE,
+    ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by, covered_line,
+    landing,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -200,11 +201,11 @@ pub struct Store {
     hand_off: Option<HandOff>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
-    /// The open tasks an orchestrator may hold before a start is refused ([`crate::slots`]); none
-    /// caps nothing.
-    slots: Option<usize>,
-    /// When the pipeline alarm the PULL digest says raises and clears ([`crate::alarm`]).
-    alarm: crate::alarm::Thresholds,
+    /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an
+    /// orchestrator may hold before a start is refused, the low-volume threshold, the agents a
+    /// machine runs and when the pipeline alarm raises and clears; set, or the project file's as
+    /// it is now.
+    limits: crate::limits::Held,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
     /// What a write on a board at another version is refused with, naming the board's project.
@@ -387,7 +388,7 @@ impl Store {
     /// work is refused when it would raise an orchestrator's open tasks past the store's cap
     /// ([`crate::slots`]).
     pub fn claim(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.ruling(slug, handle, self.slots.is_some(), |view| {
+        self.ruling(slug, handle, true, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if !EXECUTING.contains(&task.status.as_str()) {
@@ -572,19 +573,24 @@ impl Store {
         Ok(task)
     }
 
-    /// A slice's executor closes it with its integration result; only the parent lands.
+    /// A slice's executor closes it with its integration result; only the parent lands. A task of
+    /// any kind whose work landed with another's closes as covered by that landing instead
+    /// ([`Store::close_covered`]), which the refusal of a top-level task names.
     pub fn done(&self, slug: &str, handle: &str, note: &str) -> Result<Task, Error> {
         if note.trim().is_empty() {
             return Err(refused(
                 "closing a task needs a note saying what came of it".into(),
             ));
         }
+        let board = self.board_command();
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
             if task.parent.is_none() {
                 return Err(refused(format!(
-                    "{slug} is not a subtask; it closes by a verdict or a landing"
+                    "{slug} is not a subtask; it closes by a verdict or a landing, or, when its \
+                     work landed with another task's, as covered by that landing: {}",
+                    work::covered_command(&board, slug)
                 )));
             }
             if task.status != "in_progress" {
@@ -621,6 +627,7 @@ impl Store {
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
     /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
+    /// The cap is read once, so a project file changed meanwhile never splits one decision.
     fn ruling(
         &self,
         slug: &str,
@@ -628,26 +635,30 @@ impl Store {
         starts: bool,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
-        let which = if starts {
+        let cap = self.slots();
+        let which = if starts && cap.is_some() {
             Which::Starting(slug)
         } else {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let ruled = self.ruled(&which, slug, &decide)?;
+            let ruled = self.ruled(&which, slug, cap, &decide)?;
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let mut body = if change.status.is_some() {
-                format!(
-                    "{WRITE}{}\n{}",
+            let mut body = String::from(WRITE);
+            if change.reason.is_some() {
+                body.push('\n');
+                body.push_str(&work::reason_written());
+            }
+            if change.status.is_some() {
+                body.push_str(&format!(
+                    "{}\n{}",
                     cap::HOLDING,
                     work::block_cancelled_dependencies(
                         change.status.as_deref() == Some("cancelled")
                     )
-                )
-            } else {
-                WRITE.into()
-            };
+                ));
+            }
             if !ruled.slots.is_empty() {
                 body.push_str(cap::GUARD);
             }
@@ -1003,6 +1014,9 @@ struct Change {
     /// The move is a hold, which keeps the task's slot while it is blocked ([`cap`]).
     hold: bool,
     say: Option<Say>,
+    /// A post of the actor's after `say`, in the same write: a move's reason
+    /// (`work::reason_line`).
+    reason: Option<String>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
 }
@@ -1075,6 +1089,7 @@ impl Change {
             "hold": self.hold,
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
+            "move_reason": self.reason,
         })
     }
 }

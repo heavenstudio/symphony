@@ -21,6 +21,9 @@ pub fn shown(command: Option<&str>, env: &Env) -> String {
     if name == super::migrate::COMMAND {
         return super::migrate::HELP.to_string();
     }
+    if name == super::database::COMMAND {
+        return super::database::HELP.to_string();
+    }
     let help = COMMANDS
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -119,6 +122,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the board's health: failed dispatches, slow requests, writes",
             ),
             (
+                "limits",
+                "the limits and models in force here, and where each came from",
+            ),
+            (
                 "asks",
                 "what the owner waits on an agent for, and who holds each",
             ),
@@ -153,7 +160,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "handover",
                 "hand a task's orchestrator role to another session",
             ),
-            ("move", "move a task to another status"),
+            ("move", "move a task to another status, --reason saying why"),
             (
                 "say",
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
@@ -162,10 +169,17 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "verdict",
                 "as its reviewer: approve (done) or changes (back to work)",
             ),
-            ("done", "close an instruction subtask with what came of it"),
+            (
+                "done",
+                "close a subtask, or a task covered by another's landing",
+            ),
             (
                 "land",
                 "land an approved branch and push it; `just land SLUG` runs it",
+            ),
+            (
+                "regenerate",
+                "make [land] generators' outputs of main after a land; --status",
             ),
         ],
     ),
@@ -209,8 +223,20 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "move the board forward to this build's schema, or make it",
             ),
             (
+                "database",
+                "hold the board's database stopped for maintenance, or release it",
+            ),
+            (
+                "schema",
+                "the board's schema and the highest it was seen at; --accept",
+            ),
+            (
+                "snapshot",
+                "clone the board's store while no server runs on it; --list",
+            ),
+            (
                 "run",
-                "run a build or test, recorded for the Build and Test columns",
+                "record a build or test, by the binary: `just tasks` refuses it",
             ),
             ("help", "this list, or a command's own help: help COMMAND"),
         ],
@@ -221,7 +247,11 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
 /// own parser and help, which [`shown`] answers `help COMMAND` with: the tests hold the dispatch
 /// and the help to them.
 #[cfg(test)]
-pub const BEFORE_TABLE: [&str; 2] = [super::recorder::COMMAND, super::migrate::COMMAND];
+pub const BEFORE_TABLE: [&str; 3] = [
+    super::recorder::COMMAND,
+    super::migrate::COMMAND,
+    super::database::COMMAND,
+];
 
 /// What `command` does, in one line.
 pub fn summary(command: &str) -> Option<&'static str> {
@@ -433,6 +463,32 @@ options:
 "#,
         r#"usage: just tasks next [-h] [--as ACTOR]
 
+The task to take next: your reservation, else the most urgent ready one you
+may take. Past the project's [limits] machine_agents it warns on stderr, and
+still names the task: you run already.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "limits",
+        r#"usage: just tasks limits [-h] [--as ACTOR]
+"#,
+        r#"usage: just tasks limits [-h] [--as ACTOR]
+
+The limits a command here is held to and the model each role runs on, read
+from the main checkout's symphony.toml as it is now, each with where it came
+from: its table, key and line, or the default. [limits] holds
+orchestrator_slots (no cap unwritten; [board] orchestrator_slots is read where
+[limits] names none), low_volume (4) and machine_agents (no limit unwritten,
+then this machine's count of agents); [board] holds the pipeline alarm's
+thresholds; [agents.models] names the model of the orchestrator, executor and
+reviewer. A key of [limits] this build does not know is listed, left out. An
+edit to the file holds from the next command, and on a running server from
+its next read.
+
 options:
   -h, --help  show this help message and exit
   --as ACTOR
@@ -624,17 +680,30 @@ options:
     ),
     (
         "done",
-        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+        r#"usage: just tasks done [-h] [--as ACTOR] [--covered-by OTHER] slug note
 "#,
-        r#"usage: just tasks done [-h] [--as ACTOR] slug note
+        r#"usage: just tasks done [-h] [--as ACTOR] [--covered-by OTHER] slug note
+
+Close a subtask, by its executor, with what came of it. With --covered-by, close
+a task whose work landed with another task's branch, by its executor or
+orchestrator, with no reviewer's verdict: OTHER is done and landed, its merge
+on the default branch. It refuses while the task has work the default branch
+lacks where the board records its executors working: commits on the branch
+named as its slug, on a launch's branch or on an in-process executor's (as
+tasks agents shows it), at the HEAD of such a worktree, detached too, or
+changes there no commit has. It does not read the main checkout's changes, an
+executor's earlier checkouts, where one whose session left worked, stashes or
+other branches: check those. The thread names OTHER, the commit and who closed
+it; the close is no approve, so no landing goes by it.
 
 positional arguments:
   slug
-  note
+  note                what came of it
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help          show this help message and exit
   --as ACTOR
+  --covered-by OTHER  close it as covered by OTHER's landing
 "#,
     ),
     (
@@ -673,11 +742,11 @@ options:
     ),
     (
         "move",
-        r#"usage: just tasks move [-h] [--as ACTOR]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 "#,
-        r#"usage: just tasks move [-h] [--as ACTOR]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 
@@ -688,6 +757,8 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
+  --reason REASON       why it moves (a cancel's, say), posted on its thread
+                        after the move's line, in the same write
 "#,
     ),
     (
@@ -785,6 +856,56 @@ options:
   -h, --help  show this help message and exit
   --as ACTOR
   --json      the record as /api/health answers it, the file and the warnings
+"#,
+    ),
+    (
+        "schema",
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+"#,
+        r#"usage: just tasks schema [-h] [--as ACTOR] [--accept VERSION]
+
+the board's schema, and the highest it was seen at, which
+symphony/tasks/schema-seen.log in the git common dir records beside the store,
+outside the database. A live board that reads below it went back: its store
+lost what was written since, and every command that opens it refuses it,
+`tasks migrate` included (exit 1 here). The owner, and only the owner,
+accepts a board older on purpose (a fresh store, a restore they chose) with
+--accept, naming the schema it holds: docs/TASKS.md, A board that went back,
+says how to recover one first.
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR
+  --accept VERSION   record VERSION (none: no board) as the board's, refused
+                     unless the board holds exactly that
+"#,
+    ),
+    (
+        "snapshot",
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+"#,
+        r#"usage: just tasks snapshot [-h] [--as ACTOR] [--list]
+
+take a snapshot of the board's store now: a copy-on-write clone of
+symphony/tasks/data in symphony/tasks/snapshots/, named by its UTC time. Taken
+only while no process serves the store, under the lock every start of its
+server takes and holding the store's own LOCK, never of files a server is
+writing: refused while any server has the store open. The launcher takes one
+before each start of the server too, outside a scratch place, and on every
+board before a replay of its log, which never runs without it, and
+tasks-reclaim one of the old store before its own servers start on it. A
+volume that cannot clone takes none, but before a replay or a reclaim a plain
+copy. One whose write-ahead log holds writes not yet in its tables (taken
+after an unclean end, before a replay, or of a store that went back) is kept
+until the owner removes it (rm -rf its folder); of the others the newest 3 are
+kept. Each grows towards the whole store's size as the store moves on, and the
+room a reclaim frees comes back only once the snapshots of the old store are
+removed: docs/TASKS.md, Snapshots.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --list      the snapshots kept, the newest first, and where each is
 "#,
     ),
     (
@@ -929,11 +1050,13 @@ options:
 
 Land the task's branch, named as its slug, on the default branch: the approve
 of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
-verdict and cover the branch's tip; the branch is merged (--no-ff) and
-checked ([verdicts] check, after [land] generators) in a worktree of its own;
-main moves there, is pushed to origin (unless [land] push = false), and the
-task closes with its `landed` line. It runs only as `just land SLUG`, which
-asks first, and never where the project's own `land` recipe replaces it.
+verdict and cover the branch's tip; the branch is merged (--no-ff) in a
+worktree of its own, main's side of each generated path kept, and checked by
+[verdicts] check unless [land] check = false; main moves there, is pushed to
+origin (unless [land] push = false), the task closes with its `landed` line,
+and the regenerator starts. It runs only as `just land SLUG`, whose recipe
+sets the marker it needs, and never where the project's own `land` recipe
+replaces it.
 
 positional arguments:
   slug
@@ -941,6 +1064,27 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "regenerate",
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
+"#,
+        r#"usage: just tasks regenerate [-h] [--as ACTOR] [--status] [--wait]
+
+Make what [land] generators make of main's newest tip, in a worktree of its
+own, and land it as one commit; one regenerator at a time, which makes main's
+newest tip again once it ends while main moved. A land starts it, detached,
+unless one runs; a red round files tests/main-red-regenerate. It runs only as
+a land starts it.
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --status    say whether the generated outputs are current on main, and
+              exit 1 when they are not; run nothing
+  --wait      as --status, after waiting while the regenerator makes them: a
+              pin to a commit of main moves once it exits 0
 "#,
     ),
 ];

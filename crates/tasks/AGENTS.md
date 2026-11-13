@@ -64,7 +64,8 @@ ends, however it ends, when the watchdog reads the end of that process's
 lifeline pipe (`src/server/scratch.rs`). A test that starts a fixture board
 leaves no database running under init. The supervisor's command line holds the
 server's words (`start`, `--bind`, the data) among its own arguments, so a
-server the record does not name, which `ensure` adopts and a reclaim ends, is
+server the record does not name, which `ensure` adopts (never a private
+replay's, below) and a reclaim ends, is
 read from the process table only as the board's `surreal` itself, binding an
 address, on the data as its last argument (`server_on`); a recorded pid counts
 only with the data as its last argument too.
@@ -140,7 +141,7 @@ A process Cargo runs (`CARGO_MANIFEST_DIR` set: a test, an example, `cargo
 run`) is refused the live board of the repository it runs from before anything
 is read, and before the server is started when the command line, the
 Symphony or `tasks-copy --board` reaches it
-(`live::cargo_refusal`, `cli::board_client`): a test's board is a scratch one or
+(`live::cargo_refusal`, `cli::writable_board`): a test's board is a scratch one or
 a fixture repository's in a temporary folder. So is every process that runs
 under one Cargo or nextest started, whatever environment it was handed, by the
 folder that one works in, which for a test is its package's (`live::cargo_here`:
@@ -158,6 +159,46 @@ that opens no store (`cli::raw_client`, `search_bench`'s) is not refused there.
 `tests/cli/main_only.rs` holds every entry to this on a scratch
 repository. The rule holds from builds that carry it: a build of a commit before
 it moves a live board as it always did.
+
+A live board that reads below the highest schema it was seen at went back (`src/live/seen.rs`).
+The record is `symphony/tasks/schema-seen.log` beside the data, never in the database: a line `VERSION
+SECONDS seen DATE` appended for each version first seen, in one write, so two openers at once
+each write a whole line; its highest line since the last `VERSION SECONDS accepted DATE` is the
+record, and a line that reads as none (cut short, edited by hand) is passed over, raising and
+lowering nothing. An append to a record whose last byte is not a newline writes one first, in the
+same write, so a new line never continues a cut one. `Store::opening` reads it after its one read
+of `meta:schema` and before `schema::decide`, for the live board `Opening::live` names: the
+command line's `reach_board` and the Symphony's `connect_in` name it, `Reached::opening` passes it
+to `tasks-copy --board`, and `tasks-copy ADDR` names the board
+`live::find_here` finds there. An opening that names none reads it only on a migrate, for the
+board `live::find_here` finds. A board below the record, or a store with no board (level 0) where
+one was seen, is refused in `seen::Rollback::refusal`'s words before anything is decided, read or
+written. `tasks migrate` reads it (`seen::checked`) before `in_main`, so a worktree's refusal is
+the rollback's. The stores that take the tables as they are read it too: `cli::open_unchecked`
+(the recorder's `on_board`, the detached dispatcher) reads the schema once when a record exists
+(`seen::checked`), and `cli::open_beating` (the heartbeat) only when the record is above its
+build's schema (`seen::past_guard`), since below it the schema guard refuses the beat's write;
+each refusal is quiet where its caller is (the beat binds nothing and writes no key, the recorder
+runs its command unattributed), and the dispatcher's goes to the dispatch log. `cli::board_client`,
+which hands a consumer's own code a bare client to open its store on (`Store::open`, which names no
+live board), reads it as `cli::open_unchecked` does before it returns the client; it is kept, with
+its signature, for consumers' code, and new code opens by `writable_board` and `Reached::opening`.
+The board's public names consumers call are held by `tests/consumer_api.rs` (the other packages'
+by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to the nightly's
+conciliation): a release's refresh moves a consumer's pin and no code, so one changes only with a
+consumer release plan. `Home::reclaim`
+reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
+through the running server before `halt`, and through the reclaim's own server on the store
+before any export. `tasks snapshot` and raw reads read no record. Otherwise an
+opening that names the live board appends the version it found when it is higher, and any opening
+the version it migrated a live board to. `tasks schema`
+(`src/cli/schema.rs`) says the board's schema and the record, exit 1 in the rollback's words;
+`--accept VERSION` (`none` is 0) appends an `accepted` line only when the board holds exactly that
+version. A scratch board keeps no record. The Symphony's hub reads `Rollback::line_in` out of a
+reconnect's error into `board_health::Recorder::went_back`, which the pages' notice and the
+picker say in place of the dispatch's words (`apps/symphony-server/src/live/health.rs`) and the
+record writes as `rollback`; the next store that opens clears it.
+(`tests/cli/main_only/rolled_back.rs`, `apps/symphony-server/src/live/health_tests.rs`.)
 A branch's
 build run by its path (`.target/debug/tasks`, `rs-bin.sh --build`) skips the
 launcher's rule, though not the board's: run it only on a scratch board.
@@ -324,13 +365,14 @@ perf suite times one at scale (`timings`, `wait`); docs/TASKS.md says the cost p
 A finished idle terminal still closes under the original cleanup rules, retiring its
 registration; an executor of a task in review is not finished, and keeps its terminal until it
 has sat idle at its prompt an hour (`reap::IDLE_HOUR`), as every role on open work does.
-An orchestrator below four canonical open slots receives a recipient-scoped `low_volume`
-PULL condition, advising disjoint ready work or resolution of owned blockers. The existing
-slot cap still governs starts. Each attach or callback pass shares one successful
-`slot_holdings` observation across scheduling, recipient scoping and idle checks. A changed
-canonical count invalidates an otherwise unchanged observation; a failed read reports the
-error and preserves pending delivery. The condition uses the ordinary durable acknowledgement
-account, so a count change within the low band does not repeat an acknowledged warning.
+An orchestrator below `[limits] low_volume` canonical open slots (4 unwritten, 0 says it to
+none: `limits.rs`) receives a recipient-scoped `low_volume` PULL condition, advising disjoint
+ready work or resolution of owned blockers. The existing slot cap still governs starts. Each
+attach or callback pass shares one successful `slot_holdings` observation across scheduling,
+recipient scoping and idle checks. A changed canonical count invalidates an otherwise
+unchanged observation; a failed read reports the error and preserves pending delivery. The
+condition uses the ordinary durable acknowledgement account, so a count change within the low
+band does not repeat an acknowledged warning.
 
 PULL's `unanswered` category lists a missing executor on `in_progress`, `blocked` or `review`,
 or a missing reviewer on `review`, after an addressed post has waited thirty minutes. Each line
@@ -694,9 +736,14 @@ Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `symphony/tasks/`. Its idle reviewer pick (`idle_for`)
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
 board would refuse. A launch, the CLI's and staffing's, starts
-the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names
-(`src/launch/defaults.rs`), else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
-and the project's model and effort go with its agent only. The legacy `claude_session` storage
+the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
+the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`),
+else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
+and the project's models and effort go with its agent only. `src/launch/running.rs` counts the
+agents the machine runs, as staffing's cap always has: `launch` refuses at `[limits]
+machine_agents`, `next` warns past it, and staffing holds to the lower of it and `max_sessions`.
+`tasks limits` (`src/cli/commands/limits.rs`) prints each limit and role's model with where it
+came from. The legacy `claude_session` storage
 column keeps Claude ids as before and Codex ids prefixed with `codex:`; restore dispatches on
 that prefix, and the agents API strips it from the conversation id.
 
@@ -716,19 +763,57 @@ conditional/per-worktree configuration, attributes and unreadable policy decline
 Fresh unavailable HEAD/removal guards retain a tree before lookup; eligible removal
 holds its removal lease through both fresh final status guards and deletion. Regenerable `.target/`,
 `symphony/.target/` (and a seed's or a clear's staging beside each, `.target.seed.PID`,
-`.target.clear.PID`), `symphony/build/` and `.codex/hooks*` go with a merged tree;
-`artifacts/<handle>/` keeps it. Foreground `--task` visits only that task's
-finished worktrees and asks for a detached full pass. `sweep/build_output.rs` clears
-those build folders, the worktree staying, from a worktree the sweep keeps once its
-work is finished (its rules in its module doc): every tied task done or cancelled, one
-done; no beat or tool call by an agent bound there, and no touch of its git files,
-within the hour; its HEAD merged work, not a commit of main's first-parent line unless
-its reflog says it was committed there, so a branch with no commits ahead of main
-keeps its build; no process inside. Right before each removal it decides again on a new
-listing and board read and asks `occupied` again; then it takes every Cargo build lock in
-the folder without waiting (one held keeps it), renames the folder aside under them and
-removes that. It never follows a link out of the worktree, and a stale staging whose
-process is gone goes with the folder (`tests/sweep/build_output.rs`).
+`.target.clear.PID`), `symphony/build/` and `.codex/hooks*` go with a merged tree. The
+project's artifacts folder (`[project] artifacts`, which `project::artifacts` reads, as the
+board cannot link `crates/symphony`; `artifacts/` when the manifest names none) keeps it while
+a task tied to it is open; once its work is finished, `sweep/aside.rs` moves what git ignores
+there into the main checkout's `FOLDER/swept/NAME/` right before git removes the tree, whatever
+came there up to then, and back if git refuses. A move it cannot make (another disk, a name
+taken, a folder it cannot write) keeps the tree, saying why; it never copies and never
+replaces, the rename itself refusing a name taken (`renamex_np`'s `RENAME_EXCL`, `renameat2`'s
+`RENAME_NOREPLACE`). Build output there (a folder whose `CACHEDIR.TAG` begins with the
+convention's signature, a file of compiled code by its first bytes) is never set aside and goes
+with the tree. An entry there it cannot read (its record, a folder's listing or an entry of one)
+keeps the tree, saying why, as it would otherwise go with it. The first look reads every file's
+first bytes; the look right before the removal, under the tree's HEAD and branch locks, opens only
+the files new or changed since (`aside::Seen`, by device, inode, length and times). Nothing
+empties `FOLDER/swept/`: `sweep/kept.rs`
+measures it against `[board] swept_cap_gb` (read here, as `slots.rs` reads its key; 5 GB
+unwritten) and keeps the measure in `symphony/tasks/swept.json` beside the tasks each folder came from.
+Past the cap the sweep (in `symphony/tasks/sweep.log` for one started detached, a land's among them)
+and a dry run say it in one line and `tasks status` warns from
+that record, until a sweep measures again (a dry run records nothing), which its warning says; both
+name the largest folders, each in use (an open task tied to it, an open task's
+post or a `docs/` file on main naming a path under it, looked up once a measure past the cap by
+`sweep::mentions`) or with no reference found, and suggest only the latter; under it a dry run
+says what it holds. `sweep/holder.rs` reads a
+lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
+so a live one lets the tree go only once the board shows its agent finished
+(`Index::agent_finished`); a land's goes once the process it names (and its start) is gone; the nightly's
+(`NIGHTLY_LOCK`, which `crates/symphony`'s nightly tests compare with its own) and any other
+keep it. Foreground `--task` visits only that task's finished worktrees (its closed
+launches', its executors' and reviewers' sessions' once none is live or stale, and those on
+its branch) and asks for a detached full pass. A removed tree's merged branch is deleted with
+it, unless a land's record of its merge names it, under its name or the dashed one an earlier
+land kept it by (`just land SLUG` run again finishes from the record and the branch, in a
+worktree of its own), or its task is done by an approve no landing
+closed (the guard against moving it back to review reads the branch's tip): the sweep says
+which keeps it.
+`sweep/build_output.rs` clears those Cargo folders and what git ignores in `build/` and
+`symphony/build/`, the worktree staying, from a worktree the sweep keeps once its work is past
+its executor (its rules in its module doc): every tied task in review, done or cancelled,
+merged or not, an in-process agent's tree tied to its task by its session; the worktree a land
+that ended left, or the nightly's after a week; a tree tied to no task keeps it. Nothing ran
+there within the hour: no beat or tool call by an agent bound there, no build or test the
+recorder recorded there, no touch of its git files; no process inside; a holder that lets it
+(a live land and an unknown lock keep it).
+Right before each removal it decides again on a new listing, board read and the recorder's
+records, and asks `occupied` again; then it takes every Cargo build lock in the folder without
+waiting (one held keeps it), renames the folder aside under them and removes that. It never
+follows a link out of the worktree, and a stale staging whose process is gone goes with the
+folder (`tests/sweep/build_output.rs`). `sweep/size.rs` measures what each removal and clear
+frees and `sweep/report.rs` says a dry run's line per worktree; `tests/sweep/causes.rs` holds
+the worktrees of in-process agents, as this repository's board has them, to these rules.
 `trigger.rs` owns
 the detached sweeps work finishing starts (`done`, `move`,
 `verdict`, `leave`, `reap`, and `inbox` once an hour). Those run the main
@@ -751,14 +836,26 @@ prefix) and that branch's tip appended, its output appended to
 `symphony/tasks/on-review.log`; a slug naming no branch starts nothing and the log
 says so. A board `TASKS_SERVER` names starts none unless `TASKS_ON_REVIEW=on`,
 and `off` starts none anywhere (`tests/sweep/on_review.rs`).
+`on_land.rs` owns the command a landing starts, the same way: `[board] on_land` in the
+main checkout's `symphony.toml` (none by default), run by `land.rs` once the task is
+closed, last, after the sweep and the regenerator are started (so a night it starts finds the
+regenerator started), detached from the main checkout with the task's slug and the landed
+merge appended, with none of git's repository variables, listened to for `on_land::SAYS` (3 s) and never waited on longer, the land
+showing what it said by then; its output goes to `symphony/tasks/on-land/STAMP-SLUG.log` (the newest
+`KEPT_STARTS` kept), named by a line in `symphony/tasks/on-land.log` (set aside past `LOG_MOST`); this
+repository names the nightly's release cadence there, which builds nothing short of due. A board
+`TASKS_SERVER` names starts none unless `TASKS_ON_LAND=on`, and `off` starts none anywhere
+(`tests/sweep/land.rs`).
 `land.rs` is `tasks land`, the Symphony's default `just land SLUG` (its steps in its
 module doc and [TASKS](../../docs/TASKS.md#the-default-landing)): it reads its
 settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
-`[land] generators`, `push` and `timeout_seconds`, any other `[land]` key refused)
+`[land] check`, `generators`, `keys` (a generator's key by its name, `land::keyed`), `push`, `timeout_seconds`
+and `check_paths` (`land/check_paths.rs`, its default `check_paths::DEFAULT`), any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
 justfile runs a `land` of its own (`just --show land`): a guard against accident, the
-approval check being the gate. It goes by the last verdict's `approve`
+approval check being the gate, so `symphony init` allows `just land` with no permission
+prompt. It goes by the last verdict's `approve`
 (`store::approved`) only when a session that never executed the task or a work subtask
 of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
@@ -770,10 +867,12 @@ the work (`Held::requested`), so the approve the land refuses for whose it is is
 board's. The approve covers the tip by name, else by time
 within the review; one that does not do sends the task back to review (`Store::move_to`
 takes an approved, unlanded task from done to review), a conflict or a red is said to
-`@executor`; a conflict confined to the generators' outputs (`land::owns`: the path, or
-inside the folder, never a neighbour named alike) takes the default branch's side there
-(`Landing::take_ours`), the merge's second parent still the approved tip, and every
-generator owning one of those paths runs, `when_changed` or not, before the check. It
+`@executor`. A land runs no generator: every path inside the generators' outputs
+(`land::owns`: the path, or inside the folder, never a neighbour named alike) the tip
+changed, in a conflict or not, takes the default branch's side (`Landing::take_ours`),
+the merge's second parent still the approved tip, and so does a conflict confined to them
+in what `origin` gained; a conflict in any other path goes back. With `[land] check =
+false` it runs no check. It
 merges and checks in a worktree of its own locked with the reason `symphony land: SLUG
 (pid N, started S)` (so the sweep keeps it, and a later land replaces it only once N no
 longer names the process of start S, `land::started`, and `lsof` finds no process in
@@ -783,7 +882,10 @@ writing a `land::Record` of the merge (`symphony/tasks/land/SLUG.merged`, the sl
 `land::file_stem`, a dashed name of an earlier land's read as its own slug's alone) and
 saying it on the thread, pushes the checked commit by name, closes the task through
 `landed` (from `done`: a task sent back to review since stays there), drops the record
-and runs the sweep for it. The fast-forward is `git merge --ff-only` in a process group
+and starts the sweep for it detached (`sweep::trigger::trigger`, its lines in
+`symphony/tasks/sweep.log`), never under its lock. Its merge of the tip is
+`Landing::integrate` with `Merging::Tip`, the one step a hosted pull request's merge
+would replace. The fast-forward is `git merge --ff-only` in a process group
 of its own to which the land forwards no signal (`watched` with no `Interrupts`), named
 in `symphony/tasks/land/moving` (`land::Moving`) while it runs; the branch's place once git
 ends decides: moved, the record stays; where it was, `Landing::restore` puts back each
@@ -797,7 +899,7 @@ commit; with none it is merged outside land, and refused, the line saying how to
 by hand a land whose record was lost. Its children are `sys::command_with` of the
 caller's `Env`, with none of git's repository variables nor the marker, and with
 `TASKS_SESSION` and `TASKS_TASK` naming the land, so what the check builds is recorded
-for the task; each generator, check, fetch, push and the fast-forward runs in a
+for the task; each check, fetch, push and the fast-forward runs in a
 process group of its own, named in `symphony/tasks/land/running` while it runs with its first
 process's start (`land::Named`; a later land refuses while that group lives, and says
 to end it only while that first process is the one of that start, to wait for it when
@@ -805,16 +907,87 @@ it is the fast-forward), which the timeout ends whole (`sys::end_group`), a fetc
 push within five minutes. SIGINT, SIGTERM and SIGHUP reach the land alone (a
 `sys::Interrupts` scope records them): its watchdog ends the running group but the
 fast-forward, the land stops at its next step with one line, its worktree removed, and
-the command line ends by the same signal (`land::interrupted`, `sys::end_by`). Its tests
+the command line ends by the same signal (`land::interrupted`, `sys::end_by`). A land
+waits for another's lock with no timeout, naming it, and a signal ends that wait with
+nothing landed. Its tests
 (`tests/sweep/land.rs`, `land_approval.rs`, `land_generated.rs`, `land_limits.rs`,
 `land_signals.rs`, the last running the `tasks` binary and signalling it, a smudge filter
 or a hook holding git mid-move) land in scratch repositories on a board of their own and
 push to a scratch bare remote.
-`slots.rs` owns the cap on an orchestrator's open tasks: `[board]
-orchestrator_slots`, read from the main checkout's `symphony.toml` from the
-`.git` files alone (no `git` process: every command reads it) when the CLI or
-the Symphony opens its store (`cli::capped`, `Store::capping`); a store opened
-without it caps nothing. A rule that may start work reads, in its view's
+`covering.rs` is `just tasks done SLUG NOTE --covered-by OTHER` ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)),
+the close of a task whose work landed with another task's branch, by its executor or its
+orchestrator, with no reviewer's verdict; the API's `done` takes `covered_by` the same way. It
+reads the repository first, from a checkout of it as `land::reopenable` does, refusing from
+outside one: the commit OTHER's landing names (`store::landing`: OTHER's last verdict starting
+`landed `, the first commit after its first ` at `) resolved on the default branch, and work of
+the task's own that branch lacks, named in the refusal, where the board records its executors
+working (`covering::places`: each executor launch's worktree and branch, and the in-process
+binding, `callback_state:['binding', AGENT]` `worktree`/`branch` as `agent_bindings` reads it, of
+each session `ever_executed` names): commits on its slug's branch and on those branches, and in
+those linked worktrees of this repository still there, commits at HEAD (a detached one too) and
+changes no commit has (`git status` read without refreshing the index, `sweep::git::stdout`). The
+main checkout's changes, earlier checkouts and a left session's pruned binding are not read, and
+the docs, `done --help` and the `work` skill say so. Then `Store::close_covered`
+(`store/work/covered.rs`) decides on the board:
+the closer holds executor or orchestrator on the task, the task is open, OTHER is done with that
+landing, and it writes `covered_line` (starting `COVERED`) as the task's verdict with the move to
+done. It is no approve: being the last verdict it leaves none standing (`approved`), so
+`land::approval` refuses a covered task and `move_to` takes it nowhere; `alarm::Step::Covered`
+closes whatever status the line before it left, and `stages` reads it as any closing verdict. A
+refused `done` of a top-level task and a refused move to done name the command
+(`covered_command`). `Store::move_with` is `move --reason`: the mover's post `STATUS: WHY`
+(`reason_line`) written right after the move's line in its one write (`$move_reason`), the owner's
+moves included, so a cancel says why. The task page's review gate shows a covered close as
+itself (`gates::review_of` in crates/symphony, reading `covered_by`): waived, "Covered by OTHER,
+landed at SHA". Their tests: `tests/store/covered.rs`, `tests/store/cancel.rs`,
+`tests/store/slots.rs` (its slot frees), `tests/sweep/land_covered.rs` (scratch repositories,
+the command line run in process) and `tests/cli/api.rs`.
+`land/regenerate.rs` is `tasks regenerate`, the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)):
+a land that closed its task starts it detached (`regenerate::start`, the test's build
+`TASKS_BIN` names, else the running one, else the main checkout's), only on the
+repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
+one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`symphony/tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
+start that finds the lock held (`holder`) starts nothing and signals nothing, and one
+whose holder died finds it free. A round is never cut short; once it lets go of the lock
+it reads main once and builds the newest tip only, and a tip a round finished with
+(`State::finished`) is not built again. It keeps its round in `regenerate.json`
+(`regenerate::State`, with the commit main's outputs were last current at), the keys it
+passed on in `regenerated.json` (`regenerate::Passed`, 64 at most) and its worktree
+locked from the sweep. Its commit is main's tree at the land's lock with the outputs
+alone replaced (`replaced`, through an index of its own), made on a main that moved only
+when what the generators read is the same there (`Regenerator::stale`: no path outside
+the outputs changed, or each key read again on main's tip matches), else discarded as
+stale, and landed by the land's own fast-forward and push. A red files or extends the
+one open `tests/main-red-regenerate` (`red::SERIES`) through a session of its own, and a
+pass closes it. Where `[land] check = false` (`Settings::main_check`), each round that neither
+stopped nor was discarded then runs `[verdicts] check` on what it left main holding (the commit
+it landed, a land during the build in it, else the tip it took), in its worktree, after its
+commit landed (`Regenerator::check`): a red, one late or that cannot run included, files or
+extends `tests/main-red-check` (`RED_CHECK`; each series a `Series`, each text a `Filed` saying
+no more than is known) and a pass closes it, a signal ends the regenerator with nothing judged,
+and `regenerate-check.json` (`Checked`, with its pid while it checks) keeps what it came to,
+which `--status` adds to its line, its exit the outputs' alone.
+`regenerate::status` is `--status`, nonzero but when current;
+`regenerate::settled` is `--wait`, which a pin runs, and the nightly waits likewise. Its
+tests (`tests/sweep/land_regenerate.rs`) run rounds in scratch repositories on a board
+of their own: through a land that starts it detached, three lands during one build, a
+builder killed and replaced, two starts at once, and the check on landed, red, dropped,
+stopped and signalled rounds, a land during the build, one late and one that cannot run.
+`limits.rs` reads the project's limits: `[limits] orchestrator_slots` (else `[board]`'s,
+which builds before `[limits]` read), `low_volume` and `machine_agents`, and the alarm's
+`[board]` thresholds, from the main checkout's `symphony.toml` found from the `.git` files
+alone (no `git` process: every command reads it) when the CLI or the Symphony opens its store
+(`cli::capped`, `Store::watching`). The store holds a `limits::Watched` that reads the file
+again whenever its length or time changes, so a store kept open (the server's) follows an
+edit at its next read; a value it cannot read is said with its line and takes its default, and
+a key of `[limits]` it does not know is left out, named by `tasks limits` (the Symphony's own
+reading refuses both). A write reads the cap once (`Store::ruling`), so an edit mid-write
+cannot split a decision. A store opened without a file, or held by `Store::limiting`, keeps
+what it was given.
+`slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
+A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
 tasks through `task_status`, the holds (`counter:['hold', SLUG]`) and their
 tasks, and their roles through `role_slug`; then the tasks above them and the
@@ -825,8 +998,18 @@ two starts at once are one retry, not two slots (`tests/store/slots.rs` and its
 `moves` and `cost` modules, `tests/cli/slots.rs`). Red work takes no slot: an open task
 `create`'s `red` marks (`fields._board.red`, `red.rs`, api 7, which the cap's reads
 project beside each task) and the work under it, judged by the task whose work it is;
-a refusal names it apart, and PULL lists a red nobody executes 10 minutes after filing
-first, as `red_unstaffed`, before any cancelled dependency of its. Only a session of
+a refusal names it apart, PULL lists a red nobody executes 10 minutes after filing
+first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
+(`Store::next_for`) offers a red before other work of its priority (`tests/store/next.rs`).
+A red a tool files may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
+nightly's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
+approve to that bound, since the board cannot read the repository: `land::independent` gives it
+`Scope::ChecksUnchanged`, keyed on that recorded risk, which no session clears, by the opening
+every wording of it keeps (`fast_fix::RED_OPENING`, pinned by a test, `fast_fix::bounds`), as well
+as on the red mark, which its filer can lift (`unmark_red`), and `land::unchanged_checks` refuses it when
+`check_paths::touched` finds the fix changing a test or a check, or cannot say: a path git fails to
+read or more than one merge base (`land/check_paths.rs`, `tests/sweep/land_approval.rs`).
+Only a session of
 kind `filer` marks, on `create` or later with `mark_red` (`store/work/red.rs`, whose
 checks are read in its write's transaction), only a series' own task
 (`red::filed`, never one named under it: the nightly's board and land's standing reds
@@ -850,7 +1033,7 @@ dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
-(`cli::capped`, `Store::alarming`). It writes only where rework ended (below):
+(`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):
 each digest reads the
 status lines of the lookback window through `message_ts` (`store/history.rs`),
 walks each task's back from its status now and replays the counts
@@ -954,7 +1137,13 @@ board into a server, replacing what it held, in one transaction: `tasks-copy ADD
 and changes nothing. On `surrealkv://` every row of that transaction costs the
 same, as long as no event UPSERTs a record (`src/schema.rs`): the board of
 2026-11-04, 28 MB of dump, copies in 20 s (`tests/server/copy.rs`, a quarter of
-it). On the in-memory
+it). `Home::schema` reads a running board's schema version and `Home::export` writes
+its `surreal export` to a file (written aside, then renamed), both only while the
+database runs as its record says: a board that is not running is refused, never started.
+An export has `EXPORT_LIMIT` (5 minutes): past it the `surreal export` client it started is
+stopped and nothing is written, the database never signalled (`src/server/export.rs`,
+`tests/server/export.rs`). The Symphony nightly's refresh snapshots a
+project's store with them before its schema moves. On the in-memory
 engine a transaction that big costs more than linearly (a whole board in one
 transaction: 39 server CPU-s, against 1.5 on `surrealkv://`).
 
@@ -977,9 +1166,12 @@ index of one of them under a filter, or a subquery in a predicate, fails it
 `DEFINE INDEX`, a condition rewritten past it) fails there, naming the
 statement and its plan. Its timings run say, claim, inbox and those api calls
 three times each, each median of the CPU a run cost (the `tasks` process's own,
-from its reap, and the board's server's while it ran, `tests/perf/cpu.rs`, each
-run started once the server is quiet, `Board::quiet`, so what it still did for
-the writes before is not counted) within a bound stated once in
+from its reap, and what the board's server took for it, `tests/perf/cpu.rs`, from
+quiet before the run to quiet again after it, `Board::bill`, so what the server
+still did for the writes before is not counted and what it does for the run
+after its answer is; quiet is under 20 ms a second of a look's measured length,
+or no move at all on Linux's 10 ms ticks, and a server not quiet within 300 s
+fails the test, every wait after it at once) within a bound stated once in
 `tests/perf/timings.rs`, so a loaded machine, which stretches a wall, does not
 fail them; the walls are printed beside. Its looks of `tasks wait` are each
 bounded by what the look before them left to do: the whole digest, or what
@@ -995,29 +1187,245 @@ queries or the api. `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build on th
 same board. A run leaves its folder in the temporary directory; the next run
 removes each such folder whose process has ended.
 
+`server::Home` never kills a board's server. A stop (`Home::stop`, the hold, a
+reclaim's halt, an older version's replacement) waits until the server answers,
+sends one SIGTERM, and waits up to ten minutes (`CLOSING`) while SurrealDB writes
+its memtable to an sstable and empties its write-ahead log; one still running
+then is left to finish and the stop refused, naming it, the ask's file, what the
+owner does (hold, `kill -9 PID`, release) and docs/TASKS.md's "Stuck servers". It
+never sends a second: SurrealDB 3.3 takes one for an immediate shutdown ("A
+second signal will force an immediate shutdown"), before its store is closed.
+`Home::end` (`src/server/ending.rs`) writes the ask down first, whole (a temporary
+file renamed), `symphony/tasks/ending/PID` holding `{"at", "started"}`: when, and when
+the process asked started (`Home::process_start`, the kernel's stamp that
+`sys::process_starts` reads: libproc's to the microsecond on macOS, `/proc`'s
+ticks after boot on Linux); it makes none it cannot write down. A later `end` of that pid, from any process,
+only waits (saying when it was asked), and a scratch board's supervisor
+(`OWNED_START`, given that folder as `$4`) sends no SIGTERM of its own on its
+lifeline's end to a server that folder names. A file goes when its server is
+seen to end, when any `end` finds its pid gone or held by a process that started
+at another time (a pid reused: an ask left behind never holds up a later
+server, so no start waits ten minutes on one), and when a start makes a new
+process of that pid (`Home::started`); one that does not read, or whose process's
+start the kernel does not say, stays. A server that has not
+answered is never signalled: until its handlers are set a SIGTERM ends it as a
+kill would, in the middle of its replay. A start that does not answer within the
+patience (60 s) is left running and its caller refused, saying so; each later
+`ensure` finds it, recorded or by its data (`server_on`), and waits for it again,
+never starting a second server on that data. Each refusal of a server that has
+not answered (`Home::unanswered`) says how long it has run and on how much CPU
+(`ps -o etime=,time=`), the log its store holds, that a replay works the CPU all
+along while a server whose CPU time stands still across a minute hangs, and what
+the owner does with one that hangs: hold the board, end that pid, release. The
+board itself never ends it: at `--log warn` a replay that fits its memtable logs
+nothing, so nothing else tells the two apart. The server starts with no signal
+blocked and every one at its default (`Command::default_signals`) but SIGINT and
+SIGQUIT, which `sh` ignores in a background job until SurrealDB sets its own
+handlers, in a session of its own with no terminal, its input `/dev/null` and its
+output appended to `symphony/tasks/server.log` at `--log warn`, so neither a closed
+pane's hangup nor a starter's mask reaches it; a SIGHUP sent to its pid still
+ends it. At that level the log shows no flush, and "No runtime available for
+closing the store correctly" is SurrealDB's line at every shutdown, clean ones
+included.
+
+Every start, stop, hold, release and reclaim takes the starters' lock
+(`symphony/tasks/lock`, `src/server/starters.rs`), and its holder writes what it does in
+`symphony/tasks/lock.json` (`{"pid", "doing", "at", "logged"}`: a start, a private
+replay and its log's bytes, a stop, the hold's stop, a release, a reclaim),
+removed before the lock goes. A caller that finds the lock held tries it every
+50 ms, and after a second says what it waits on through `Home::telling` (stderr
+unless a caller says), then every 30 s; a holder whose note is missing or names
+an ended process is "a starter that says nothing of what it does", as an older
+build is. A caller with a bound (`Home::waiting_at_most`: the Symphony's reads,
+`cli::reach_board`'s `Reaching::Read`, 5 s) says nothing and is refused once it
+passes, naming the same, and waits no longer than its bound for a server on the
+data that runs and does not answer (`Home::answer_wait`: a replay whose starter
+has gone, as a Symphony restarted while its start ran apart leaves; the refusal
+says how to tell it from a hang). The same reads start apart (`Home::starting_apart`,
+`src/server/apart.rs`): a start of theirs whose log is to be replayed runs on a
+thread of its own (`Home::start_apart`, a clone of the `Home` with no bound,
+which takes the lock once its caller lets it go and starts as any start does),
+and the read is refused at once, naming the replay; each read after it, by a
+process-wide map of the board folders this process starts apart, is refused the
+same way at once until the start is through, and the read after a start that
+failed is told why, once (the failure is told through `Home::telling` too), the
+one after starting it again. So the Symphony's data worker's thread, which
+serves its pages too, is never held by a replay of minutes, its own start's or
+another's; its pages answer 503 and its dispatch passes fail, and while a reach
+is refused for a replay (`server::replaying_in`, the words of `starters::REPLAYING`
+and its size) every page's notice and the picker say the board is starting
+(`apps/symphony-server/src/live/health.rs`). `just tasks database` says the note
+while a holder runs, and names a private replay's server as such, one its starter
+left running too, and says of a server on the data while a replay's record stands
+whether the record names it (`Home::left_replay_told`); while what runs cannot be
+told it says why, that the next command is refused, and what the owner does
+(`Home::untold_rule`), never that the next command starts a server.
+
+A start first measures the store's write-ahead log (`data/wal/*.wal`, empty
+after a clean close). When twice it is more than the memtable of the board's
+`Storage`, it replays the log in a private server on a port the record does not
+name, under a memtable of twice the log (at most `u32::MAX` bytes, the largest
+SurrealKV makes), waited for ten patiences, and stops that server cleanly before
+it starts the board's own. SurrealKV 0.21, replaying a log larger than its
+memtable, records the whole log as written to sstables at its first flush while
+the rest is only in memory, so a server that ends before its next flush leaves
+the following start to skip that rest (`tests/server/hold.rs` holds the case); the
+private replay fills no memtable, and its clean stop leaves nothing to replay.
+SurrealDB syncs the log at every commit, so a write the board answered for
+survives a kill or a power cut, and the next start replays it.
+
+Before the private replay's server starts, the start keeps the store
+(`Home::keep`, `src/server/snapshot.rs`): the snapshot every start takes, on
+every board, scratch or not, in `symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` as
+below; where the volume cannot clone it is a plain copy (`cp -R -p`), said as
+one, which needs free room equal to the whole store, as the refusal says with its
+size; where neither works the start is refused and nothing replayed. The library's
+tests run the plain copy by a clone made to fail on their own thread
+(`snapshot::CLONE_FAILS`), and a test that expects a clone or a copy asks the
+volume (`snapshot::clones`, one clone of a probe folder), never the system: APFS,
+btrfs and XFS clone, HFS+ and ext4 do not. A store that
+went back (a split replay ended before its next flush: an older build's kill, or
+a crash in a replay of a log over 2 GiB, which the replay's `u32::MAX` memtable
+splits too) holds a segment below its manifest's log number: every server skips
+it and its clean stop removes it, so the replay's stop would have removed it
+before the board's server came up; the snapshot keeps it byte for byte
+(`tests/server/hold.rs`, `a_store_that_went_back_…`). Its `wal/` holds the log,
+so it is never pruned. In `server.log` the replay says itself between that
+snapshot's line and the board's server's lines (`server::replay_begins`, then
+`REPLAY_ENDS` once its server closed the store), so its clean stop's `Goodbye!`
+is never read as the board's server's in the recovery's step 1. The start says
+where the store is kept and that the
+replay is through, through `Home::telling`, and the snapshot in `server.log`.
+`just tasks database` lists every snapshot that holds a log (`Home::kept`), and
+a clone cut short. A start whose store's `wal/` and `manifest/` are a
+snapshot's, file for file (path, length, time written, which a clone and a copy
+keep), takes none more (`Kept::Already`), so a replay that keeps failing does
+not pile them up. A start whose `surreal` is not there is refused before
+anything is kept.
+
+A replay's server is never the board's (`src/server/left.rs`). Once the store is
+kept and before the private server starts, `Home::replay` writes
+`symphony/tasks/replay.json` (`{"by", "at", "logged", "memtable", "server",
+"started"}`, whole), again with that server's pid and address, and when its
+process started (`Home::process_start`), as soon as each start of it says them
+(`spawn_as`'s `on_start`, whose error refuses the start, the server left
+running), and removes it once that server has closed the store. A replay whose
+start failed removes it only once none of the servers it started runs and the
+record is settled as gone (`Home::settle_failed_replay`). A record still
+there is a starter that did not see its replay through, killed in the middle of
+it (a Symphony stopped while its start ran apart) or given up after ten
+patiences. Its server, detached, finishes alone under the replay's memtable on a
+port no record names, and `ensure` once adopted it (`Home::unrecorded`) as soon
+as it answered: the board then ran under a memtable no build starts it with
+(883 MB for a 421 MiB log), and its log could grow past what a start under the
+board's memtable replays whole. Every `ensure`, whose fast path takes no recorded
+server while the record stands, and every `stop_serving` (the hold's, a reclaim's
+halt) settles the record first, under the starters' lock
+(`Home::left_replay_through`). While it stands every server on the data is the
+replay's (`Home::left_server`, a `LeftReplay` saying whether the record names
+it): the pid the record names while it runs (`Home::named_runs`: its process
+started at the second the record wrote down, or the record wrote none) and serves
+the data, else whichever server
+on the data `Home::listed` (`ps -axo`) finds first, the one `server.json` names
+included, as a start retried on another port whose starter ended before the
+record named the retry, or a name that could not be written, leaves the record
+naming a pid that is not it. One still starting is never signalled, and the
+caller is refused in `starters::REPLAYING`'s words, so the Symphony's pages say
+starting; one that answers is stopped cleanly, once (`Home::stop_left_replay`),
+between a line of its own in `server.log` (`LEFT_STOPS`, then which server: the
+one the record names or another, and whether `server.json` names it) and
+`REPLAY_THROUGH`'s (`REPLAY_ENDS` at a start), and the start goes on to the
+board's own server under the board's memtable, the log empty. A caller starting
+apart has that stop and start run apart (`Home::start_apart`). The record is
+removed only once the server it names has ended (no process has its pid, or the
+one that has it started at another time: a pid since reused) or it names none,
+and every `ps -axo` for a second (`GONE_FOR`, or the caller's shorter bound) ran
+and listed no server on the data, so a server seen between two programs (the
+tests' wrappers run `surreal` by `exec`, and no listing names a process a server
+in between) is found at the next look; `server.log` then says the replay was not
+said through (`left::GONE`). A `ps` that fails (`serves` says no then too, so a
+no is never taken for an end), a named pid's process whose start the kernel does
+not say, and a named server that runs while nothing is on the data (between
+programs) cannot be told: asked again for up to two seconds (`TELLING`,
+or the caller's shorter bound), then the caller is refused (`cannot_tell`, with
+`Home::untold_rule`: the rule, and the hand removal should it last), nothing
+adopted, started or removed. The library's tests make `ps` fail on their own
+thread (`server::PS_FAILS`, a countdown).
+`tests/server/left_replay.rs` kills a starter process in the middle of its replay
+on a scratch store and holds a command's start, the Symphony's apart read and the
+hold, a start that gave up, a replay whose server ended at once, a record naming
+an ended pid while the replay's server runs unnamed, and one naming the board's
+recorded server.
+
+The hold (`just tasks database hold "WHY" --as HANDLE`, `Home::hold`) writes
+`symphony/tasks/hold` (`{"by", "why", "at", "pid"}`, whole, under the starters' lock),
+then stops every server on the data as above and removes `server.json`. While it
+is there `Home::ensure`, `stop`, `reclaim` and every start refuse with
+`ServerError::Held`, and every reach of the board (`cli::reach_board`: the
+command line, `tasks api`, the Symphony's reads, `tasks-copy`)
+is refused, naming who holds it, since when and why, and that only its holder
+releases it (a release pasted from it by another handle is refused). A hold
+file that does not read still holds. Another handle's hold is refused; its setter's again finishes a stop
+left waiting, and a stop that waits on a server that has not answered leaves the
+hold in place and says how to tell its replay from a hang. The release
+(`Home::release(by, of)`) is its holder's, or another handle's naming the holder
+(`--of HOLDER`, said on stderr), else refused with `ServerError::NotHolder`; any
+handle's for a hold that does not read, which names none. No role decides it: the
+board, which holds the roles, is not read while it is held. Each hold and release
+is a JSON line of `symphony/tasks/hold.log`, written before the hold file changes, which
+nothing removes. The release starts nothing, and `just tasks database` says the
+hold, the server on the data, what the lock's holder does and the snapshots kept
+until the owner removes them. The marker's `pid` is the command that set it, which ends once
+its stop is done. The command (`src/cli/database.rs`) opens no board, and refuses
+`TASKS_SERVER`, a scratch database, which shares the board's server, and a process
+Cargo runs from the board's repository. Only builds that carry it honour the
+hold: docs/TASKS.md names the builds to rebuild or restart. The hold, its release
+and `tasks database` read no record of the schema the board was seen at
+(`live::seen`): the hold is step 2 of the recovery of a board that went back, so
+it stops one as any other. A clean stop removes the log segments the store's
+manifest counts as written, so on a store that went back, whose manifest counts a
+segment it never applied, the log is kept first: the snapshot taken before the
+start on the older state, else a clone of the data (`cp -c -R`) made while its
+server still runs.
+
 Every server `server::Home` starts gets `server::Storage` as its environment
 (`SURREAL_SURREALKV_VLOG_THRESHOLD`, `SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`).
 Each value stays beside its key in the sstables, where compaction drops the
-versions a rewrite leaves, and the write-ahead log holds at most 256 MiB.
+versions a rewrite leaves, and the write-ahead log holds at most 256 MiB. A
+server started without that environment, by hand, keeps SurrealKV's own
+memtable, 4 GiB on a 64 GiB machine, and its log grows that large before it
+moves to an sstable: the board's server is started only by `Home`.
 SurrealKV's own threshold, 4 KiB, sent large values to a value log. It deletes a
 value-log file only once no sstable points into it, so a row rewritten in place
 kept every version: 102 GiB for a 0.5 GiB board (tools/tasks-db-space). Never
 set `SURREAL_SURREALKV_ENABLE_VLOG=false`: a store with values in its log then
 cannot read them. `tasks-reclaim` (the owner's) is
-`Home::reclaim`. Under the starters' lock it ends the board's server and starts
-an unrecorded one on the store. It exports every namespace's every database with
+`Home::reclaim`. Under the starters' lock it ends the board's server, keeps the
+store (`Home::keep` with `Before::Reclaim`, on every board: a clone in
+`snapshots/`, a plain copy where the volume cannot clone, which needs free room
+equal to the whole store beside the exports and the new store, else the reclaim
+refused, `ServerError::Reclaim` in the keep's words with the store's size, nothing
+exported and the old store served again), and only then starts an unrecorded one on the store, so a
+store no server ran on, which ended uncleanly or went back, keeps the log that
+server's replay and clean stop would remove. It exports every namespace's every database with
 `surreal export` and imports them into `reclaim/data` under `Storage`, each
 database's file named by its place among them (`0002.ns.tasks.surql`), so two
 names differing only in case never share one on macOS's case-folding
 filesystem. Then it re-exports, compares each file byte for byte along with the root's and
 namespaces' users and accesses, swaps the stores, starts the board's server and
-removes the old store; the exports stay. The one line it reads once where an export
+removes the old store, which the snapshot keeps (`Reclaimed::kept`; `tasks-reclaim`
+says where and until when: a snapshot like any other, the owner's to remove while
+its log holds writes, else among the newest `KEEP` whose log is empty, pruned by
+later starts' snapshots); the exports stay. The one line it reads once where an export
 repeats it is a definition of an array field's elements (`NAME.*`): SurrealDB 3.3.0's
 import defines those twice for an array field named by a SurrealQL word, as schema
 17's `before ON ask` is, and the new store's export prints the line twice
-(`same_export`). It refuses a store without `sf/tasks` and an `INFO` answer
-without its namespaces or databases object, which would otherwise carry nothing
-and remove the store. Its private servers never take a
+(`same_export`). It refuses a board that went back below the record beside its
+store (`seen::FILE` in the folder) in the rollback's words: before it ends a
+running server, which is left serving, and else on its own server before any
+export, once the store is kept. It refuses a store without `sf/tasks`
+and an `INFO` answer without its namespaces or databases object, which would
+otherwise carry nothing and remove the store. Its private servers never take a
 port the halted server had, which a monitor may still hold as the board's. A
 failure before the swap restarts the old store untouched, and says the restart's
 own failure beside the reclaim's. A failure after it ends every server on the
@@ -1029,6 +1437,31 @@ Without arguments it reclaims the board of the repository it runs in; `--dir
 FOLDER` reclaims a board folder elsewhere, as its tests and a rehearsal on a
 clone do (an APFS clone of `symphony/tasks/data`: 102.8 GiB to 1.5 GiB, the server
 down 8 min).
+
+`Home::snapshot` (`src/server/snapshot.rs`, `tasks snapshot`, `src/cli/snapshot.rs`) clones
+`symphony/tasks/data` to `symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (UTC, `.N` after another in the same
+second) under the starters' lock (`Doing::Snapshotting` in its note), refused while the recorded
+server or an unrecorded one serves the data (`Home::serving`), and holding the store's own
+`data/LOCK` (`hold_store`: `File::try_lock`, the exclusive `flock` SurrealKV takes, so a server on
+any spelling of the path is seen, and none opens the store while the clone is made; the holder's
+pid is read from the file). A snapshot whose `wal/` holds a segment with anything in it
+(`snapshot::holds_log`, `Snapshot::log`: taken after an unclean end, before a replay, or of a
+store that went back) is never pruned; of the others the newest `snapshot::KEEP` (3) are kept,
+older ones removed by name; only folders named that way count. The clone is one `clonefile`
+(`CLONE_NOFOLLOW`) on macOS and `cp -R --reflink=always` on Linux, a plain copy only in
+`Home::keep` (before a replay or a reclaim, `snapshot::Before`, which words what the server's log
+and a refusal say), made at `snapshots/.taking` and renamed once whole; a `.taking` left behind is
+removed by the next. `Home::start`, under the lock its callers hold, refuses a held board and a
+missing `surreal`, then takes its snapshot before anything is spawned: `Home::keep` inside
+`Home::replay` when the log is to be replayed (above), else `snapshot_before_start`, where a board
+outside a scratch place takes one of the store the last server left, and says it, or why not, in
+`server.log` (`snapshot::KEPT` after one that holds a log), never failing the start;
+`Home::snapshotting` sets it for a test. Neither takes one when a snapshot already holds the
+store's log and manifest as they are (`log_and_manifest`). `Home::reclaim` calls `Home::keep`
+once it has stopped the board's server, before its own servers start on the store, and says
+`· a snapshot of the store before this reclaim` in `server.log`. `tasks snapshot` opens no
+board, so a hold of the database does not refuse it, and refuses a board `TASKS_SERVER` names.
+(`tests/server/snapshot.rs`.)
 
 `tasks search` keeps keyword ranking by default, including exact slugs. `--mode
 vector` uses BGE chunk neighbours; `--mode hybrid` offers reciprocal rank fusion;

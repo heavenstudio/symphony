@@ -402,6 +402,62 @@ fn an_agent_counts_the_open_tasks_it_follows_in_words_and_following_none_offers_
     assert!(two.contains(">Following 2 open tasks</summary>"), "{two}");
 }
 
+/// An agent's Following list orders its tasks as the server pages them, numbers by their value,
+/// so the rows Load more brings (`ready-24` on) come after the first page's (`ready-23`), never
+/// among them, and a task the board shows it orchestrating takes its place in that order.
+#[test]
+fn the_following_list_orders_slugs_by_their_numbers_as_the_server_pages_them() {
+    use serde_json::json;
+    let task = |slug: &str, priority: i64, status: &str, orchestrator: Option<&str>| -> Task {
+        let roles: Vec<_> = orchestrator
+            .map(|handle| json!({"handle":handle,"role":"orchestrator","since":0.0,"expires":null,"health":"live"}))
+            .into_iter()
+            .collect();
+        serde_json::from_value(json!({
+            "slug":slug,"title":slug,"body":"","status":status,"priority":priority,
+            "parent":null,"created_by":"fixture","created":1.0,"updated":1.0,
+            "links":[],"depends":[],"roles":roles,"instruction":false,
+        }))
+        .unwrap()
+    };
+    let page = |numbers: std::ops::RangeInclusive<u32>| -> Vec<Task> {
+        numbers
+            .map(|n| task(&format!("bulk/ready-{n}"), 3, "ready", None))
+            .collect()
+    };
+    let board = vec![
+        task("bulk/ready-5", 3, "review", Some("cobalt-otter")),
+        task("app/urgent", 1, "ready", Some("cobalt-otter")),
+        task("bulk/ready-12", 3, "done", Some("cobalt-otter")),
+        task("bulk/ready-40", 3, "ready", Some("someone-else")),
+    ];
+    let slugs = |rows: Vec<Task>| {
+        followed_tasks(rows, &board, "cobalt-otter")
+            .into_iter()
+            .map(|t| (t.slug, t.status))
+            .collect::<Vec<_>>()
+    };
+    let expected = |numbers: &[u32]| {
+        std::iter::once(("app/urgent".to_string(), "ready".to_string()))
+            .chain(numbers.iter().map(|n| {
+                let status = if *n == 5 { "review" } else { "ready" };
+                (format!("bulk/ready-{n}"), status.to_string())
+            }))
+            .collect::<Vec<_>>()
+    };
+    let first: Vec<u32> = (1..=23).filter(|n| *n != 12).collect();
+    assert_eq!(slugs(page(1..=23)), expected(&first));
+    let mut both = page(1..=23);
+    both.extend(page(24..=36));
+    let all: Vec<u32> = (1..=36).filter(|n| *n != 12).collect();
+    assert_eq!(
+        slugs(both),
+        expected(&all),
+        "the second page follows the first"
+    );
+    assert_eq!(slugs(Vec::new()), expected(&[5]), "the board's own, alone");
+}
+
 #[test]
 fn an_agents_line_names_only_what_is_known_and_its_finished_tasks_end_without_a_dot() {
     // The meta line's parts, empty ones left out.
@@ -593,4 +649,80 @@ fn a_chunk_cut_from_another_revision_is_not_joined_to_the_part_shown() {
         (1, 124_000, "offline"),
         "a failed read keeps what was read and says why"
     );
+}
+
+/// A head's ghost kept as drawn holds its title and facts at their heights, with a bar for each
+/// line they may hold; one not kept guesses a title of one line wide (two on a phone) and a fact.
+#[test]
+fn a_head_s_ghost_holds_its_title_and_facts_at_the_heights_kept() {
+    let kept = dioxus_ssr::render_element(
+        rsx! { GhostHead { height: Some(311), title: Some(97), facts: Some(67) } },
+    );
+    assert!(kept.contains("height:311px"), "{kept}");
+    assert!(
+        kept.contains(r#"class="ghost-title kept" style="height:97px""#),
+        "{kept}"
+    );
+    assert!(
+        kept.contains(r#"class="ghost-meta ghost-facts" style="height:67px""#),
+        "{kept}"
+    );
+    let bars = |html: &str, part: &str| {
+        let start = html.find(part).unwrap();
+        let end = start
+            + html[start..]
+                .find("ghost-pill")
+                .unwrap_or(html.len() - start);
+        html[start..end].matches("class=\"bone\"").count()
+    };
+    assert_eq!(bars(&kept, "ghost-title kept"), 6, "{kept}");
+    assert_eq!(bars(&kept, "ghost-facts"), 6, "{kept}");
+    let guessed =
+        dioxus_ssr::render_element(rsx! { GhostHead { height: None, title: None, facts: None } });
+    assert!(
+        !guessed.contains("kept") && !guessed.contains("ghost-facts"),
+        "{guessed}"
+    );
+    assert!(!guessed.contains("height:"), "{guessed}");
+    assert_eq!(bars(&guessed, "ghost-title"), 2, "{guessed}");
+}
+
+/// A brief's ghost kept shorter than its two paragraphs of bars draws only the bars its box shows
+/// whole, the first paragraph's first; one with no height kept, or tall enough, draws them all.
+#[test]
+fn a_brief_s_ghost_draws_only_the_bars_its_kept_box_shows_whole() {
+    // The bars of each paragraph the ghost draws, and the box's style.
+    let drawn = |height: Option<u32>| {
+        let html = dioxus_ssr::render_element(rsx! { GhostBrief { height } });
+        let paragraphs: Vec<usize> = html
+            .split(r#"class="skeleton""#)
+            .skip(1)
+            .map(|paragraph| paragraph.matches(r#"class="bone""#).count())
+            .collect();
+        (paragraphs, html)
+    };
+    let (paragraphs, html) = drawn(None);
+    assert_eq!(paragraphs, [4, 3], "{html}");
+    assert!(!html.contains("height:"), "{html}");
+    for (height, bars) in [
+        (0, &[][..]),
+        (52, &[]),
+        (53, &[1]),
+        (71, &[1]),
+        (72, &[2]),
+        (91, &[3]),
+        (109, &[3]),
+        (110, &[4]),
+        (137, &[4]),
+        (138, &[4, 1]),
+        (157, &[4, 2]),
+        (175, &[4, 2]),
+        (176, &[4, 3]),
+        (900, &[4, 3]),
+        (u32::MAX, &[4, 3]),
+    ] {
+        let (paragraphs, html) = drawn(Some(height));
+        assert_eq!(paragraphs, bars, "a box {height} px tall: {html}");
+        assert!(html.contains(&format!("height:{height}px")), "{html}");
+    }
 }

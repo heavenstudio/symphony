@@ -8,7 +8,7 @@ use crate::common::{Scratch, exists, script};
 use serde_json::{Value, json};
 use std::path::Path;
 use symphony_board::rpc::Client;
-use symphony_board::server::{Home, Running, ServerError, Storage, bytes};
+use symphony_board::server::{Home, Kept, Running, ServerError, Storage, bytes};
 use symphony_board::{NAMESPACE, NewAsk, NewSession, NewTask, Store};
 
 /// A memtable small enough that a test's writes flush and compact many times over.
@@ -189,9 +189,140 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
         "{exported:?}"
     );
     assert!(!exists(&work.join("old")) && !exists(&work.join("check")));
+    // The old store it removed is kept, a snapshot taken before any server of the reclaim started
+    // on it, that serves what the board held.
+    let kept = reclaimed.kept.path();
+    // A clone where the volume clones (APFS, btrfs, XFS), a plain copy where it cannot.
+    assert_eq!(
+        matches!(reclaimed.kept, Kept::Cloned(_)),
+        symphony_board::server::snapshot::clones(&home.snapshots_folder()),
+        "{:?}",
+        reclaimed.kept
+    );
+    assert_eq!(kept.parent(), Some(home.snapshots_folder().as_path()));
+    assert!(
+        home.snapshots().unwrap().iter().any(|one| one.path == kept),
+        "{:?}",
+        home.snapshots()
+    );
+    let log = std::fs::read_to_string(home.dir().join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· a snapshot of the store before this reclaim: {}",
+            kept.display()
+        )),
+        "{log}"
+    );
+    let recovered = served_from(&s, kept, GREW_UNDER);
+    assert_eq!(
+        holdings(&board(&recovered.ensure().unwrap(), "tasks")),
+        held
+    );
+    recovered.stop().unwrap();
     // What the board writes after the reclaim stays beside its keys too.
     rewrite(&live, 64);
     assert!(bytes(&data(&home).join("vlog")) < 65536);
+}
+
+/// A board of its own in `s`'s folder, its store a clone of `kept` (never the snapshot itself), its
+/// servers under `storage`.
+fn served_from(s: &Scratch, kept: &Path, storage: Storage) -> Home {
+    let dir = s.dir.join("recovered");
+    std::fs::create_dir_all(&dir).unwrap();
+    let cloned = symphony_board::sys::output(
+        symphony_board::sys::Command::new("cp")
+            .args(["-c", "-R"])
+            .arg(kept)
+            .arg(dir.join("data")),
+    )
+    .unwrap();
+    assert!(cloned.status.success(), "{cloned:?}");
+    Home::new(&dir, s.surreal()).storage(storage)
+}
+
+/// A store whose server ended uncleanly holds the writes its tables lack in its log, which the
+/// reclaim's own server replays and its clean stop removes: the reclaim keeps the store before that
+/// server starts, the log byte for byte, on a board whose starts take no snapshot, and the snapshot
+/// is kept until the owner removes it. The reclaim carries every row.
+#[test]
+fn a_reclaim_with_no_server_running_keeps_the_store_and_its_log_before_its_own_server_starts() {
+    use symphony_board::sys::pid_alive;
+    let s = Scratch::new("reclaim-unclean");
+    let running = s.home().ensure().unwrap();
+    let store = board(&running, "tasks");
+    for n in 0..20 {
+        store
+            .create(&NewTask::new(
+                &format!("sim/kept-{n:02}"),
+                "Kept by the log",
+                "owner",
+            ))
+            .unwrap();
+    }
+    let held = holdings(&store);
+    crate::common::signal(running.pid, "KILL");
+    assert!(crate::common::gone(running.pid));
+    let wal = data(&s.home()).join("wal");
+    let logged: Vec<(std::ffi::OsString, Vec<u8>)> = std::fs::read_dir(&wal)
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (entry.file_name(), std::fs::read(entry.path()).unwrap())
+        })
+        .filter(|(_, bytes)| !bytes.is_empty())
+        .collect();
+    assert!(!logged.is_empty(), "the kill left no log");
+
+    let home = s.home().snapshotting(false);
+    let reclaimed = home.reclaim().unwrap();
+    assert!(!pid_alive(running.pid));
+    assert_eq!(holdings(&board(&reclaimed.running, "tasks")), held);
+    let kept = reclaimed.kept.path();
+    for (name, bytes) in &logged {
+        assert_eq!(
+            &std::fs::read(kept.join("wal").join(name)).unwrap(),
+            bytes,
+            "{name:?}"
+        );
+    }
+    let snapshots = home.snapshots().unwrap();
+    assert_eq!(snapshots.len(), 1, "only the reclaim's: {snapshots:?}");
+    assert!(snapshots[0].log, "it holds the log, so it is never pruned");
+    assert_eq!(home.kept().0, vec![kept.to_path_buf()]);
+    home.stop().unwrap();
+}
+
+/// A store that can be neither cloned nor copied is never reclaimed: refused before anything is
+/// exported, in the keep's words, and the board's server started again on its store, untouched.
+#[test]
+fn a_store_that_cannot_be_kept_is_not_reclaimed_and_is_served_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("reclaim-unkept");
+    let home = s.home().snapshotting(false);
+    let running = home.ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+        .unwrap();
+    let held = holdings(&board(&running, "tasks"));
+    let folder = home.snapshots_folder();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let error = home.reclaim();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = error.unwrap_err();
+    assert!(
+        matches!(&error, ServerError::Reclaim(said) if said.starts_with(&format!(
+            "the board's store at {} could not be kept before its reclaim: it could not be cloned (",
+            data(&home).display()
+        )) && said.contains("it was not reclaimed, and nothing was exported or removed")),
+        "{error}"
+    );
+    assert!(!exists(&home.dir().join("reclaim")), "nothing exported");
+    assert!(home.snapshots().unwrap().is_empty());
+    let again = home.recorded().expect("the board's server runs again");
+    assert_ne!(again.pid, running.pid);
+    assert_eq!(holdings(&board(&again, "tasks")), held);
+    home.stop().unwrap();
 }
 
 /// A reclaim `prepare` makes refuse, on a board of database `db`: refused saying each of `why`, the
@@ -498,9 +629,26 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
     let said = String::from_utf8(out).unwrap();
     let again = s.home().recorded().unwrap();
     let exports = s.dir.join("reclaim").join("exports");
+    // The old store, stopped cleanly by the reclaim, holds no log: kept as a snapshot, the first
+    // the reclaim took, among the newest whose log is empty.
+    let snapshots = s.home().snapshots().unwrap();
+    let old = snapshots.last().expect("the old store is kept");
+    assert!(!old.log, "{snapshots:?}");
+    let how = if symphony_board::server::snapshot::clones(&s.home().snapshots_folder()) {
+        "a copy-on-write clone"
+    } else {
+        "a plain copy, as this volume cannot clone"
+    };
     for part in [
         "tasks-reclaim: the board's store took ".to_string(),
         format!("their exports are in {}", exports.display()),
+        format!(
+            "; the old store is kept at {} ({how}): its log is empty, so it is kept among the \
+             newest 3 such snapshots, which later starts' snapshots prune, unless the owner \
+             removes it first (`rm -rf {}`), and the room it takes comes back only then; ",
+            old.path.display(),
+            old.path.display()
+        ),
         format!(
             "the board's server is pid {} at {}\n",
             again.pid, again.addr
@@ -572,4 +720,65 @@ fn bytes_counts_what_a_folder_holds_and_nothing_for_what_is_not_there() {
         "{counted}"
     );
     assert_eq!(bytes(Path::new("/nowhere/at/all")), 0);
+}
+
+/// A board that went back below the record of the schema it was seen at, kept beside its store, is
+/// never reclaimed: refused while its server runs, which is left running, before the halt's clean
+/// stop could remove a log segment its store never applied; and with none running, by the reclaim's
+/// own start on the store, once the reclaim has kept the store, then serves it again.
+#[test]
+fn a_reclaim_of_a_board_below_its_record_is_refused_and_its_server_left_serving_it() {
+    use symphony_board::live::{self, seen};
+    let s = Scratch::new("reclaim-went-back");
+    let home = s.home().snapshotting(true);
+    let running = home.ensure().unwrap();
+    board(&running, "tasks")
+        .create(&NewTask::new("sim/kept", "Kept by the refusal", "owner"))
+        .unwrap();
+    let this = symphony_board::Schema::this_build().version();
+    let record = s.dir.join(seen::FILE);
+    std::fs::write(&record, format!("{} 1800000000 seen x\n", this + 1)).unwrap();
+    let why = format!(
+        "the reclaim stopped and the board runs on its old store, untouched: {}",
+        seen::Rollback {
+            project: live::project_of(s.dir.parent().unwrap()),
+            from: this + 1,
+            since: 1_800_000_000.0,
+            to: Some(this),
+            record: record.clone(),
+        }
+        .refusal()
+    );
+
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    assert_eq!(home.recorded(), Some(running.clone()), "never halted");
+    assert!(symphony_board::sys::pid_alive(running.pid));
+    assert!(!exists(&s.dir.join("reclaim")), "nothing exported");
+    assert!(home.snapshots().unwrap().is_empty());
+
+    home.stop().unwrap();
+    let error = home.reclaim().unwrap_err();
+    assert_eq!(error.to_string(), why);
+    let kept = home.snapshots().unwrap();
+    assert_eq!(
+        kept.len(),
+        2,
+        "the reclaim's and the one before the start serving it again: {kept:?}"
+    );
+    let log = std::fs::read_to_string(s.dir.join("server.log")).unwrap();
+    assert!(
+        log.contains(&format!(
+            "· a snapshot of the store before this reclaim: {}",
+            kept[1].path.display()
+        )),
+        "{log}"
+    );
+    assert!(!exists(&s.dir.join("reclaim/data")), "no new store");
+    let again = home.recorded().expect("the board's server runs again");
+    assert_eq!(
+        board(&again, "tasks").get("sim/kept").unwrap().slug,
+        "sim/kept"
+    );
+    home.stop().unwrap();
 }

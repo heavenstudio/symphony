@@ -32,6 +32,8 @@ pub(super) struct File {
     pub(super) verdicts: FileVerdicts,
     pub(super) land: FileLand,
     pub(super) board: FileBoard,
+    pub(super) releases: FileReleases,
+    pub(super) limits: FileLimits,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
@@ -59,7 +61,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 8] = [
+        let tables: [(&str, &[&str], &Unknown); 11] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -69,9 +71,16 @@ impl File {
                 &["agents", "launch"],
                 &self.agents.launch.unknown,
             ),
+            (
+                "[agents.models]",
+                &["agents", "models"],
+                &self.agents.models.unknown,
+            ),
             ("[verdicts]", &["verdicts"], &self.verdicts.unknown),
             ("[land]", &["land"], &self.land.unknown),
             ("[board]", &["board"], &self.board.unknown),
+            ("[releases]", &["releases"], &self.releases.unknown),
+            ("[limits]", &["limits"], &self.limits.unknown),
         ];
         for (table, path, unknown) in tables {
             names.extend(
@@ -147,6 +156,8 @@ pub(super) struct FileEntrypoint {
 #[serde(default)]
 pub(super) struct FilePlugins {
     pub(super) crates: Vec<String>,
+    /// `[plugins.process]`: a plugin's name and the command that starts its process.
+    pub(super) process: BTreeMap<String, Vec<String>>,
     pub(super) timing: bool,
     pub(super) loopback: bool,
     #[serde(flatten)]
@@ -161,6 +172,34 @@ pub(super) struct FileAgents {
     pub(super) panes: Option<String>,
     pub(super) worktrees: Option<String>,
     pub(super) launch: FileLaunch,
+    pub(super) models: FileModels,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[agents.models]` table: the model each role runs on, which a board launch reads itself
+/// (`symphony_board::launch::Defaults`).
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileModels {
+    pub(super) orchestrator: Option<String>,
+    pub(super) executor: Option<String>,
+    pub(super) reviewer: Option<String>,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[limits]` table: the work-in-progress limits the board reads from the file itself
+/// (`symphony_board::limits`), each known here by name so a misspelt one is refused. Their values
+/// are any the file writes, so one the board cannot read leaves the rest of the project read
+/// ([`super::Project::of`]); [`super::Project::parse`] refuses it with its line, as the board reads
+/// it.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileLimits {
+    pub(super) orchestrator_slots: Option<toml::Value>,
+    pub(super) low_volume: Option<toml::Value>,
+    pub(super) machine_agents: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -188,15 +227,21 @@ pub(super) struct FileVerdicts {
     pub(super) unknown: Unknown,
 }
 
-/// The `[land]` table: what the Symphony's default `just land` regenerates, whether it pushes and
-/// how long each command it runs may take
+/// The `[land]` table: what the regenerator the Symphony's default `just land` starts makes, whether
+/// a land pushes and runs `[verdicts] check`, and how long each command it runs may take
 /// (`symphony_board::land`, which reads it from the default branch itself).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileLand {
     pub(super) generators: Vec<Generator>,
+    /// Each generator's key, by its name (`symphony_board::land::keyed`).
+    pub(super) keys: BTreeMap<String, Vec<String>>,
     pub(super) push: bool,
     pub(super) timeout_seconds: u64,
+    pub(super) check: bool,
+    /// What holds the project's tests and checks, which a red's fix its orchestrator approves
+    /// changes none of (`symphony_board::land::check_paths`); its defaults when left out.
+    pub(super) check_paths: Option<Vec<String>>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -205,8 +250,32 @@ impl Default for FileLand {
     fn default() -> FileLand {
         FileLand {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
+            check_paths: None,
+            unknown: Unknown::new(),
+        }
+    }
+}
+
+/// The `[releases]` table: how often the Symphony's own nightly cuts a release besides each night,
+/// and whether a green release refreshes the machine (docs/RELEASES.md).
+#[derive(Deserialize)]
+#[serde(default)]
+pub(super) struct FileReleases {
+    pub(super) every_landings: u32,
+    pub(super) refresh: bool,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+impl Default for FileReleases {
+    fn default() -> FileReleases {
+        FileReleases {
+            every_landings: super::Releases::EVERY_LANDINGS,
+            refresh: true,
             unknown: Unknown::new(),
         }
     }

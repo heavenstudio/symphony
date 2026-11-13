@@ -87,8 +87,12 @@ line that contains `**<slug>**`: other cards name slugs in bold in their text
 ("Replaced by **x**"), and a reply appended there lands on the wrong card.
 Continuation lines are indented four spaces. Use the real local time
 (`date +%H:%M`). A reply may use markdown, links, `[[FILE#Heading]]` and
-images under `/artifacts/`; the app renders them. Keep it short and plain: the
-app is a chat, not a report.
+pictures; the app renders them. A card's picture is a file committed beside its
+document under `docs/`, so a clone shows it: never a path into the ignored
+`artifacts/` folder, and never an owner's upload (copy the file beside the
+document and commit it). `just symphony-cli docs-audit --check` refuses a card
+picture git does not track. Keep it short and plain: the app is a chat, not a
+report.
 
 - **Chat message** (`/api/message`): reply in conversation. If it asks a question,
   answer it; if it asks for something (a picture, a rewrite, a new option),
@@ -99,6 +103,12 @@ app is a chat, not a report.
   document rewrites).
 - **Plain approval**: nothing to reply; `just symphony-status --tidy` resolves it.
   Update any document that still calls the card pending.
+- **After any approval**, never ask again on that card. A consequence of the
+  choice the owner made (a correction, or a cost or trade it did not state) is
+  a plain line on it, quoting their words. A change that would make the chosen
+  option another, or a question the choice does not answer, is a new card
+  linking it, put to the owner only if no earlier verdict of theirs decides it
+  (the `apply-review` skill, step 4).
 - **Plain rejection or question**: reply with what you will do next, or ask
   what the owner wants when it is not clear.
 - **Callout**: resolve it with `just symphony-reply PATH L<line> "<answer>" --as <handle>`,
@@ -124,7 +134,8 @@ just symphony-ask list --open                       # anything still waiting
 Read the section it points at first (`<path>`, then the `#anchor` heading or
 card), and the quote in `show` if there is one. Answer short and
 conversational, like a chat reply: a few sentences, `[[FILE#Heading]]` links
-and `/artifacts/` images render as in card replies. A follow-up arrives as
+and pictures render as in card replies, `/artifacts/` ones too, as an ask is
+never committed. A follow-up arrives as
 another `ASK` line with the same id; `show` it for the context.
 
 Asks are ephemeral: they live a day in `artifacts/asks/` and are never

@@ -10,7 +10,7 @@ use super::{checked, run};
 fn git_ending_before_it_reads_its_input_is_heard_before_the_write() {
     let tree = crate::test_tree::Tree::new();
     let input = "x".repeat(4 << 20);
-    let ran = |args: &[&str]| run(&tree.root, args, Some(&input), None).and_then(checked);
+    let ran = |args: &[&str]| run(&tree.root, args, Some(input.as_bytes()), None).and_then(checked);
     let refused = ran(&["hash-object", "--symphony-unknown", "--stdin"]).unwrap_err();
     assert!(
         refused.starts_with("error: unknown option `symphony-unknown'\nusage: git hash-object"),

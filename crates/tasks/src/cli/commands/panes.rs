@@ -7,32 +7,39 @@ use super::{Context, Stop};
 use crate::Store;
 use crate::launch::hc::Binary;
 use crate::launch::reap::{self, REAP_SECONDS, Reap};
-use crate::launch::{self, Ask, Defaults, Machine, procs};
+use crate::launch::{self, Ask, Defaults, Machine, procs, running};
 use std::collections::HashSet;
 
-/// `launch SLUG --model M ...`: the agent and model named, else the project's `[agents] launch`
-/// ([`Defaults`]), else the board's own.
+/// `launch SLUG --model M ...`: the agent and model named, else the project's `[agents] launch` on
+/// the model `[agents.models]` names for the role ([`Defaults`]), else the board's own. Refused
+/// while this machine runs as many agents as `[limits] machine_agents` allows, or they cannot be
+/// counted under it ([`running::refusing_launch`]).
 pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     let actor = c.actor()?;
     let machine = Machine::of(c.env);
+    let role = p.or("role", "executor");
     let resolved = Defaults::configured(&machine.root)
         .map_err(Stop::Refused)?
-        .resolve(p.get("kind"), p.get("model"));
+        .resolve_as(Some(role), p.get("kind"), p.get("model"));
+    let hc = Binary::of(c.env);
+    if let Some(why) = running::refusing_launch(store, c.env, &hc) {
+        return Err(Stop::Refused(format!("no launch: {why}")));
+    }
     let ask = Ask {
         slug: c.arg("slug"),
         actor,
         model: resolved.model.clone(),
         effort: resolved.effort.clone(),
         kind: Some(p.get("kind").unwrap_or(resolved.agent).to_string()),
-        role: p.or("role", "executor").into(),
+        role: role.into(),
         branch: p.get("branch").map(str::to_string),
         detached: p.flag("detached"),
         worktree: p.get("worktree").map(|w| c.env.cwd.join(w)),
         prompt: p.or("prompt", "").into(),
         tab: p.get("tab").map(str::to_string),
     };
-    let started = launch::launch(store, &Binary::of(c.env), &machine, &ask)?;
+    let started = launch::launch(store, &hc, &machine, &ask)?;
     let s = &started.row;
     c.say(&format!(
         "launched {} on {} as {}: {}, pane {}, agent session {}, worktree {}",

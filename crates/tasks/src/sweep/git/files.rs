@@ -8,8 +8,9 @@ use std::{
 };
 
 /// Ignored files that go with a merged worktree, as `land` lets them go with a landed one: caches a
-/// checkout rebuilds, export output, and the logs and golden images verify writes.
-pub const DISPOSABLE: [&str; 19] = [
+/// checkout rebuilds, export output, and the golden images verify writes. The logs verify writes at
+/// the top of the project's artifacts folder go too ([`left_behind`]).
+pub const DISPOSABLE: [&str; 18] = [
     ".godot/",
     ".godot/*",
     ".target/",
@@ -24,14 +25,15 @@ pub const DISPOSABLE: [&str; 19] = [
     "*.pyc",
     "*.import",
     ".DS_Store",
-    "artifacts/*.log",
     "*/.DS_Store",
     "tests/golden/*.actual.png",
     "tests/golden/*.expected.png",
     "tests/golden/*.diff.png",
 ];
 
-/// Additional cache paths released when the worktree's task is finished.
+/// Additional cache paths released when the worktree's work is finished (every task tied to it done
+/// or cancelled, or none). What it ignores under the project's artifacts folder is released too,
+/// set aside in the main checkout before the worktree goes (`sweep::aside`).
 pub const FINISHED_OUTPUT: [&str; 3] = [".godot/*", ".venv/*", ".target/*"];
 
 /// Build output, untracked or ignored, that goes with a worktree: its build folders, what a seed
@@ -82,10 +84,12 @@ pub fn fnmatch(pattern: &str, text: &str) -> bool {
 }
 
 /// What in worktree `path` did not land: tracked changes, untracked files, and ignored files that
-/// are not disposable. A worktree whose work is `finished` lets its caches go too
-/// ([`FINISHED_OUTPUT`]). A status git cannot give is something left behind: it keeps the worktree.
-pub fn left_behind(path: &Path, finished: bool) -> Vec<String> {
-    file_status(path, finished).left
+/// are not disposable. `artifacts` is the project's artifacts folder (none: the project file does
+/// not say, and nothing under any folder is evidence): the logs at its top go, and a worktree whose
+/// work is `finished` lets what is ignored in it go, as it does its caches ([`FINISHED_OUTPUT`]). A
+/// status git cannot give is something left behind: it keeps the worktree.
+pub fn left_behind(path: &Path, finished: bool, artifacts: Option<&str>) -> Vec<String> {
+    file_status(path, finished, artifacts).left
 }
 
 /// Keep the native ignored-directory decisions beside the verdict, so a clean proof can prune
@@ -108,16 +112,27 @@ pub(in crate::sweep) fn regenerable(name: &str) -> bool {
     REGENERABLE.iter().any(|pattern| fnmatch(pattern, name))
 }
 
-fn ignored_disposable(name: &str, finished: bool) -> bool {
-    let root_log = name
-        .strip_prefix("artifacts/")
-        .is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
+fn ignored_disposable(name: &str, finished: bool, artifacts: Option<&str>) -> bool {
+    // What is below the artifacts folder, `` for the folder itself.
+    let below = artifacts.and_then(|folder| {
+        let rest = name.strip_prefix(folder)?;
+        if rest.is_empty() || rest == "/" {
+            Some("")
+        } else {
+            rest.strip_prefix('/')
+        }
+    });
+    let root_log = below.is_some_and(|tail| !tail.contains('/') && tail.ends_with(".log"));
     let goes = |patterns: &[&str]| patterns.iter().any(|pattern| fnmatch(pattern, name));
-    let disposable = !name.starts_with("artifacts/") && goes(&DISPOSABLE);
-    root_log || disposable || (finished && goes(&FINISHED_OUTPUT))
+    let disposable = below.is_none() && goes(&DISPOSABLE);
+    root_log || disposable || (finished && (goes(&FINISHED_OUTPUT) || below.is_some()))
 }
 
-pub(in crate::sweep) fn file_status(path: &Path, finished: bool) -> FileStatus {
+pub(in crate::sweep) fn file_status(
+    path: &Path,
+    finished: bool,
+    artifacts: Option<&str>,
+) -> FileStatus {
     let Some(text) = stdout(
         path,
         &[
@@ -138,7 +153,7 @@ pub(in crate::sweep) fn file_status(path: &Path, finished: bool) -> FileStatus {
         let raw = line.get(3..).unwrap_or("");
         let named = raw.trim_matches('"');
         if (matches!(status, "!!" | "??") && regenerable(named))
-            || (status == "!!" && ignored_disposable(named, finished))
+            || (status == "!!" && ignored_disposable(named, finished, artifacts))
         {
             // Quoted or non-ASCII status paths need a lossless decoder before they can justify
             // pruning. Leave those for the bounded inventory to read or conservatively refuse.
@@ -266,6 +281,30 @@ mod tests {
         ] {
             assert!(!fnmatch(pattern, text), "{pattern} {text}");
         }
+    }
+
+    #[test]
+    fn the_projects_artifacts_folder_is_evidence_and_its_top_logs_go() {
+        for folder in ["artifacts", "out/shots"] {
+            let at = |rest: &str| format!("{folder}{rest}");
+            let goes = |name: &str, finished| ignored_disposable(name, finished, Some(folder));
+            assert!(goes(&at("/verify.log"), false), "{folder}: a top log goes");
+            assert!(!goes(&at("/deep/verify.log"), false), "{folder}");
+            assert!(!goes(&at("/a.png"), false), "{folder}: open work keeps it");
+            for name in [at(""), at("/"), at("/a.png"), at("/deep/x/")] {
+                assert!(goes(&name, true), "{folder}: finished work releases {name}");
+            }
+            assert!(!goes(&at("x/a.png"), true), "{folder}x is another folder");
+        }
+        // The folder is the project's alone: another one named artifacts is none of it.
+        let other = |name: &str| ignored_disposable(name, true, Some("out/shots"));
+        assert!(!other("artifacts/a.png"));
+        assert!(!other("artifacts/verify.log"));
+        // With no folder the project file names, nothing is evidence.
+        for name in ["artifacts/a.png", "artifacts/verify.log"] {
+            assert!(!ignored_disposable(name, true, None), "{name}");
+        }
+        assert!(ignored_disposable(".DS_Store", false, None));
     }
 
     #[test]

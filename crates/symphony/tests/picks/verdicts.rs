@@ -11,7 +11,7 @@ use symphony::owner_asks::{self, Reading};
 use symphony::verdicts::{self, Board, TURNED, VerdictError, epoch};
 
 use super::board;
-use super::common::{Tree, tasks_binary};
+use super::common::{Tree, older_board, tasks_binary};
 
 /// The variables that reach a board of its own: a database of its own on the tests' SurrealDB server,
 /// its clock at `board::NOW`.
@@ -869,6 +869,7 @@ mod real {
     //! The binary a recipe runs, on a board of its own.
 
     use super::*;
+    use symphony_board::live::seen;
 
     fn review(tree: &Tree, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
         review_in(&tree.root, env, args)
@@ -969,26 +970,17 @@ mod real {
     fn verdict_asks_moves_a_live_board_only_from_its_main_checkout() {
         let b = Branched::new();
         let wt = b.branch("pic/x", REGISTER);
-        // The repository's own board: the server on its common dir's data, which is how an
-        // address is known for the live board's (`symphony_board::live::served`).
-        let server = Serving(symphony_board::server::Home::in_common(
-            &b.tree.root.join(".git"),
-            Some(&board::surreal()),
-        ));
-        let addr = server.0.ensure().unwrap().addr;
-        let env = [
-            ("TASKS_SERVER".to_string(), addr.clone()),
-            ("TASKS_DATABASE".to_string(), "tasks".to_string()),
-        ];
-        // The board as the build before asks left it: one schema behind this build's.
+        let (_server, env) = live_board(&b);
+        // The board as the build before asks left it: made at the schema one behind this build's,
+        // and seen at no other, as its record says.
         let version = symphony_board::schema::VERSION;
-        let live = rpc::Client::new(&addr, "sf", "tasks");
-        fixture_store(&env);
-        live.query(
-            &format!("UPDATE meta:schema SET version = {};", version - 1),
-            serde_json::json!({}),
-        )
-        .unwrap();
+        older_board(live_client(&env), version - 1, board::NOW);
+        let record = || seen::read(&b.tree.root.join(".git"));
+        let behind = Some(seen::Seen {
+            version: version - 1,
+            at: board::NOW,
+        });
+        assert_eq!(record(), behind);
         let (code, out, err) = review_in(&wt, &env, &["verdict-asks"]);
         assert_eq!((code, out.as_str()), (2, ""), "{err}");
         assert!(
@@ -1006,15 +998,8 @@ mod real {
             )) && err.contains("`just tasks migrate` in the main checkout"),
             "{err}"
         );
-        let after = live
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema); \
-                 RETURN count(SELECT * FROM session); RETURN count(SELECT * FROM ask);",
-                serde_json::json!({}),
-            )
-            .unwrap();
         assert_eq!(
-            after,
+            held(&env),
             [
                 serde_json::json!(version - 1),
                 serde_json::json!(0),
@@ -1022,6 +1007,90 @@ mod real {
             ],
             "the board stayed behind, and nothing was written"
         );
+        assert_eq!(record(), behind, "nor was its record");
+    }
+
+    /// A live board that went back, seen at this build's schema and its store put back one schema,
+    /// is no board awaiting `just tasks migrate`: from the main checkout it is refused in the
+    /// rollback's own words (`symphony_board::live::seen`), and nothing is read or written, its
+    /// record included.
+    #[test]
+    fn verdict_asks_refuses_a_live_board_that_went_back_as_the_rollback_it_is() {
+        let b = Branched::new();
+        let (_server, env) = live_board(&b);
+        // Made by this build, whose opening records its schema; then its store goes back one.
+        let version = symphony_board::schema::VERSION;
+        fixture_store(&env);
+        live_client(&env)
+            .query(
+                &format!("UPDATE meta:schema SET version = {};", version - 1),
+                serde_json::json!({}),
+            )
+            .unwrap();
+        let common = b.tree.root.join(".git");
+        let why = seen::Rollback {
+            project: b.tree.root.file_name().unwrap().to_string_lossy().into(),
+            from: version,
+            since: board::NOW,
+            to: Some(version - 1),
+            record: seen::path(&common),
+        }
+        .refusal();
+        let (code, out, err) = review_in(&b.tree.root, &env, &["verdict-asks"]);
+        assert_eq!(
+            (code, out.as_str(), err.as_str()),
+            (2, "", format!("✖ {why}\n").as_str())
+        );
+        assert_eq!(
+            held(&env),
+            [
+                serde_json::json!(version - 1),
+                serde_json::json!(0),
+                serde_json::json!(0)
+            ],
+            "the board stayed where it went back to, and nothing was written"
+        );
+        assert_eq!(
+            seen::read(&common),
+            Some(seen::Seen {
+                version,
+                at: board::NOW
+            }),
+            "and its record still says where it was"
+        );
+    }
+
+    /// The fixture repository's own board, `b`'s main checkout's: the server on its common dir's
+    /// data, which is how an address is known for the live board's
+    /// (`symphony_board::live::served`), and the variables that reach it.
+    fn live_board(b: &Branched) -> (Serving, [(String, String); 2]) {
+        let server = Serving(symphony_board::server::Home::in_common(
+            &b.tree.root.join(".git"),
+            Some(&board::surreal()),
+        ));
+        let addr = server.0.ensure().unwrap().addr;
+        let env = [
+            ("TASKS_SERVER".to_string(), addr),
+            ("TASKS_DATABASE".to_string(), "tasks".to_string()),
+        ];
+        (server, env)
+    }
+
+    /// A raw client of the board `env` reaches, which reads no record and opens no store.
+    fn live_client(env: &[(String, String)]) -> rpc::Client {
+        rpc::Client::new(&env[0].1, "sf", "tasks")
+    }
+
+    /// What a refused run must leave on the board `env` reaches as it was: its schema, and how
+    /// many sessions and asks it holds.
+    fn held(env: &[(String, String)]) -> Vec<serde_json::Value> {
+        live_client(env)
+            .query(
+                "RETURN (SELECT VALUE version FROM ONLY meta:schema); \
+                 RETURN count(SELECT * FROM session); RETURN count(SELECT * FROM ask);",
+                serde_json::json!({}),
+            )
+            .unwrap()
     }
 
     /// A board server this test started, stopped when the test ends, however it ends.

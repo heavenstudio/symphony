@@ -76,10 +76,54 @@ fn every_line_the_board_writes_on_a_change_of_status_says_which() {
             ),
             Step::Landed { taken_back: true },
         ),
+        (
+            verdict(
+                "covered by sim/b, whose landing at 75b4516a0123 holds its work; closed by x: its fix",
+            ),
+            Step::Covered,
+        ),
     ];
     for (line, expected) in cases {
         assert_eq!(step(&line), expected, "{}", line.text);
     }
+}
+
+/// A covered close closes whatever open status the line before it left, not review as a landing
+/// does, so a task closed so from progress spent no time in review.
+#[test]
+fn a_covered_close_closes_the_status_the_line_before_it_left() {
+    let lines = [
+        line("sim/a", 1, 1.0 * HOUR, "system", "x claimed it"),
+        line(
+            "sim/a",
+            2,
+            3.0 * HOUR,
+            "verdict",
+            "covered by sim/b, whose landing at 75b4516a0123 holds its work; closed by x: y",
+        ),
+    ];
+    let refs: Vec<&Line> = lines.iter().collect();
+    assert_eq!(
+        timeline("done", 0.0, &refs, 0.0, None),
+        vec![
+            (0.0, Some("ready")),
+            (1.0 * HOUR, Some("in_progress")),
+            (3.0 * HOUR, Some("done")),
+        ]
+    );
+    // Closed with no change on record before it, it closes the status work is filed in.
+    let alone = [&lines[1]];
+    assert_eq!(
+        timeline("done", 0.0, &alone, 0.0, None),
+        vec![(0.0, Some("ready")), (3.0 * HOUR, Some("done"))]
+    );
+    // Or the one its thread said before the window opened.
+    assert_eq!(
+        timeline("done", 0.0, &alone, 0.0, Some("blocked")),
+        vec![(0.0, Some("blocked")), (3.0 * HOUR, Some("done"))]
+    );
+    assert!(rests_on_before("done", &alone));
+    assert_eq!(opening(&alone).status, Some("done"));
 }
 
 #[test]
@@ -102,6 +146,21 @@ fn a_line_that_changes_no_status_is_unchanged() {
             "amber-heron moved it ready → review",
         ),
         line("sim/a", 1, 0.0, "msg", "approve: looks fine"),
+        // A move's reason is a post beside its line.
+        line(
+            "sim/a",
+            1,
+            0.0,
+            "msg",
+            "cancelled: its work landed with sim/b",
+        ),
+        line(
+            "sim/a",
+            1,
+            0.0,
+            "msg",
+            "covered by sim/b, whose landing at 75b4516",
+        ),
     ] {
         assert_eq!(step(&line), Step::Unchanged, "{}", line.text);
     }
@@ -506,61 +565,6 @@ fn held_since_is_the_start_of_the_last_unbroken_run_of_the_status() {
     ]);
     let since = held_since(&timelines, "review");
     assert_eq!(since, HashMap::from([("a", 20.0), ("b", 0.0), ("d", 5.0)]));
-}
-
-#[test]
-fn the_manifest_names_the_thresholds_or_takes_the_defaults_and_a_broken_one_is_an_error() {
-    let dir = std::env::temp_dir().join(format!("alarm-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let defaults = Thresholds::default();
-    assert_eq!(configured(&dir), Ok(defaults), "no manifest");
-    for (text, expected) in [
-        ("[project]\nname = \"x\"\n", defaults),
-        ("[board]\norchestrator_slots = 8\n", defaults),
-        (
-            "[board]\nreview_alarm_ratio = 3\n",
-            Thresholds {
-                ratio: 3,
-                ..defaults
-            },
-        ),
-        (
-            "[board]\nreview_alarm_ratio = 2\nreview_alarm_hours = 6\nreview_alarm_clear_hours = 2\n",
-            Thresholds {
-                ratio: 2,
-                raise_hours: 6,
-                clear_hours: 2,
-            },
-        ),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        assert_eq!(configured(&dir), Ok(expected), "{text}");
-    }
-    for (text, said) in [
-        (
-            "[board]\nreview_alarm_ratio = 0\n",
-            "[board] review_alarm_ratio is 0; it is at least 1",
-        ),
-        (
-            "[board]\nreview_alarm_hours = -1\n",
-            "[board] review_alarm_hours is -1; it is at least 1",
-        ),
-        (
-            "[board]\nreview_alarm_clear_hours = 1.5\n",
-            "review_alarm_clear_hours",
-        ),
-        (
-            "[board]\nreview_alarm_ratio = \"two\"\n",
-            "review_alarm_ratio",
-        ),
-    ] {
-        std::fs::write(dir.join(MANIFEST), text).unwrap();
-        let error = configured(&dir).unwrap_err();
-        assert!(error.contains(said), "{text}: {error}");
-        assert!(error.contains(MANIFEST), "{text}: {error}");
-    }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The line the landing tool writes recording `text` as what a landing waits on.

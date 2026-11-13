@@ -807,8 +807,92 @@ fn helper_start_and_exit() {
         } else {
             home
         };
+        // A starter that blocks SIGTERM, as a signal-masking parent may start one: its server is
+        // started with nothing blocked, else a stop's SIGTERM would wait in its mask for ever.
+        if std::env::var_os("SYMPHONY_TEST_SERVER_MASKED").is_some() {
+            // SAFETY: the set is initialised by sigemptyset before it is read; the call changes
+            // only this thread's mask, the one a spawn from it hands its child.
+            unsafe {
+                let mut blocked: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&raw mut blocked);
+                libc::sigaddset(&raw mut blocked, libc::SIGTERM);
+                assert_eq!(
+                    libc::pthread_sigmask(
+                        libc::SIG_BLOCK,
+                        &raw const blocked,
+                        std::ptr::null_mut()
+                    ),
+                    0
+                );
+            }
+        }
         home.ensure().unwrap();
     }
+}
+
+/// The signals `pid` blocks, as `ps` says them: a set in hex, signal N its bit N - 1.
+fn blocked_by(pid: i64) -> u64 {
+    let out =
+        sys::output(Command::new("ps").args(["-o", "blocked=", "-p", &pid.to_string()])).unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    u64::from_str_radix(said.trim().trim_start_matches("0x"), 16).unwrap()
+}
+
+/// A server started by a starter that blocks SIGTERM blocks nothing: it ends when it is asked to,
+/// cleanly. It has no terminal and its input is `/dev/null`.
+#[test]
+fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
+    let s = Scratch::new("masked");
+    let out = symphony_board::sys::output(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "home::helper_start_and_exit",
+                "--test-threads=1",
+            ])
+            .env("SYMPHONY_TEST_SERVER_DIR", &s.dir)
+            .env("SYMPHONY_TEST_SERVER_MASKED", "1")
+            .env("SYMPHONY_SURREAL", s.surreal()),
+    )
+    .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let running = s.home().recorded().unwrap();
+    let blocked = blocked_by(running.pid);
+    assert_eq!(
+        blocked & (1 << (libc::SIGTERM - 1)),
+        0,
+        "SIGTERM blocked: {blocked:#x}"
+    );
+    let tty = sys::output(Command::new("ps").args(["-o", "tty=", "-p", &running.pid.to_string()]))
+        .unwrap();
+    let tty = String::from_utf8_lossy(&tty.stdout);
+    assert!(matches!(tty.trim(), "??" | "?"), "a terminal: {tty}");
+    let input = sys::output(Command::new("lsof").args([
+        "-a",
+        "-p",
+        &running.pid.to_string(),
+        "-d",
+        "0",
+        "-Fn",
+    ]))
+    .unwrap();
+    assert!(
+        String::from_utf8_lossy(&input.stdout).contains("n/dev/null"),
+        "{}",
+        String::from_utf8_lossy(&input.stdout)
+    );
+    let began = Instant::now();
+    assert_eq!(
+        s.home().closing(Duration::from_secs(30)).stop().unwrap(),
+        Some(running.clone())
+    );
+    assert!(!pid_alive(running.pid));
+    assert!(began.elapsed() < Duration::from_secs(30));
 }
 
 #[test]

@@ -21,7 +21,7 @@ fn new_meter(path: &Path, loopback: bool) -> Meter {
     }
 }
 
-fn validate(value: FieldData) -> Validate {
+fn validate(value: FieldValue) -> Validate {
     Validate {
         field: "effort".into(),
         value,
@@ -40,33 +40,46 @@ fn a_duration_is_written_in_microseconds_to_the_nanosecond() {
 fn a_call_that_survives_json_answers_what_its_far_side_answered_and_costs_both_ways() {
     let trip = round_trip(
         || panic!("the linked call is not made when the request reads back"),
-        || validate(FieldData::Text(" 3 ".into())),
+        || validate(FieldValue::Text(" 3 ".into())),
         |asked: Validate| {
-            assert_eq!(asked.value, FieldData::Text(" 3 ".into()));
-            Ok(FieldData::Number(3.0))
+            assert_eq!(asked.value, FieldValue::Text(" 3 ".into()));
+            Ok(FieldValue::Number(3.0))
         },
     );
-    assert_eq!(trip.answer, Ok(FieldData::Number(3.0)));
+    assert_eq!(trip.answer, Ok(FieldValue::Number(3.0)));
     assert_eq!(trip.lost, None);
-    let request: Request = validate(FieldData::Text(" 3 ".into())).into();
+    let request: Request = validate(FieldValue::Text(" 3 ".into())).into();
     assert_eq!(
         trip.request_bytes,
         Some(serde_json::to_string(&request).unwrap().len())
     );
-    assert_eq!(trip.answer_bytes, Some(r#"{"Ok":{"Number":3.0}}"#.len()));
+    // The answer goes as the wire carries it: an answer, not a refusal.
+    assert_eq!(trip.answer_bytes, Some(r#"{"answer":{"Ok":3.0}}"#.len()));
     assert!(trip.round_trip.unwrap() >= trip.call);
+}
+
+#[test]
+fn what_did_not_survive_is_said_after_what_already_had() {
+    let mut lost = None;
+    lose(&mut lost, "the request read back otherwise".into());
+    assert_eq!(lost.as_deref(), Some("the request read back otherwise"));
+    lose(&mut lost, "the answer: no".into());
+    assert_eq!(
+        lost.as_deref(),
+        Some("the request read back otherwise; the answer: no")
+    );
 }
 
 #[test]
 fn an_answer_that_does_not_read_back_is_named_and_the_plugins_own_is_kept() {
     let trip = round_trip(
         || panic!("the request reads back"),
-        || validate(FieldData::Text("x".into())),
-        |_: Validate| Ok(FieldData::Number(f64::NAN)),
+        || validate(FieldValue::Text("x".into())),
+        |_: Validate| Ok(FieldValue::Number(f64::NAN)),
     );
     let lost = trip.lost.unwrap();
     assert!(lost.starts_with("the answer: "), "{lost}");
-    assert!(matches!(trip.answer, Ok(FieldData::Number(n)) if n.is_nan()));
+    assert!(matches!(trip.answer, Ok(FieldValue::Number(n)) if n.is_nan()));
     assert!(trip.round_trip.is_some());
 }
 
@@ -131,23 +144,23 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let looped = new_meter(&path, true);
     let slow_answer = || {
         std::thread::sleep(SLEPT);
-        Ok(FieldData::Text("x".into()))
+        Ok(FieldValue::Text("x".into()))
     };
     let slow = looped.call(
         "slow",
         || panic!("the request reads back"),
-        || validate(FieldData::Text("x".into())),
+        || validate(FieldValue::Text("x".into())),
         |_| slow_answer(),
     );
-    assert_eq!(slow, Ok(FieldData::Text("x".into())));
+    assert_eq!(slow, Ok(FieldValue::Text("x".into())));
     let big = "y".repeat(1_000_000);
     let big_answer = looped.call(
         "big",
         || panic!("the request reads back"),
-        || validate(FieldData::Text(big.clone())),
-        |_| Ok(FieldData::Text(big.clone())),
+        || validate(FieldValue::Text(big.clone())),
+        |_| Ok(FieldValue::Text(big.clone())),
     );
-    assert_eq!(big_answer, Ok(FieldData::Text(big)));
+    assert_eq!(big_answer, Ok(FieldValue::Text(big)));
     let lines = lines(&path);
     let us = |n: usize| lines[n]["us"].as_f64().unwrap();
     let slept = micros(SLEPT);
@@ -169,11 +182,11 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     let meter = new_meter(&path, false);
     let answer = meter.call(
         "effort",
-        || Ok(FieldData::Number(1.0)),
+        || Ok(FieldValue::Number(1.0)),
         || panic!("no request is built for a linked call"),
         |_: Validate| panic!("no far side for a linked call"),
     );
-    assert_eq!(answer, Ok(FieldData::Number(1.0)));
+    assert_eq!(answer, Ok(FieldValue::Number(1.0)));
     let lines = lines(&path);
     assert_eq!(lines.len(), 1);
     let line = lines[0].as_object().unwrap();
@@ -181,8 +194,11 @@ fn a_timed_call_writes_its_seam_call_name_and_time_and_nothing_of_a_round_trip()
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["at_ms", "call", "name", "pid", "plugin", "seam", "us"]
+        [
+            "at_ms", "call", "name", "path", "pid", "plugin", "seam", "us"
+        ]
     );
+    assert_eq!(line["path"], "linked");
     assert_eq!(line["plugin"], "fixture");
     assert_eq!(line["seam"], "board_fields");
     assert_eq!(line["call"], "validate");
@@ -197,24 +213,26 @@ fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
     let tree = Tree::new();
     let path = tree.path("out/calls.jsonl");
     let meter = new_meter(&path, true);
-    let ask = || validate(FieldData::Text("2".into()));
+    let ask = || validate(FieldValue::Text("2".into()));
     let kept = meter.call(
         "effort",
         || panic!("the request reads back"),
         ask,
-        |_| Ok(FieldData::Number(2.0)),
+        |_| Ok(FieldValue::Number(2.0)),
     );
-    assert_eq!(kept, Ok(FieldData::Number(2.0)));
+    assert_eq!(kept, Ok(FieldValue::Number(2.0)));
     let lost = meter.call(
         "effort",
         || panic!("the request reads back"),
         ask,
-        |_| Ok(FieldData::Number(f64::INFINITY)),
+        |_| Ok(FieldValue::Number(f64::INFINITY)),
     );
-    assert!(matches!(lost, Ok(FieldData::Number(n)) if n.is_infinite()));
+    assert!(matches!(lost, Ok(FieldValue::Number(n)) if n.is_infinite()));
     let lines = lines(&path);
     assert_eq!(lines.len(), 2);
     for line in &lines {
+        assert_eq!(line["path"], "loopback");
+        assert!(line.get("failed").is_none());
         assert!(line["round_trip_us"].as_f64().unwrap() >= line["us"].as_f64().unwrap());
         assert!(line["request_bytes"].as_u64().unwrap() > 0);
         assert!(line["answer_bytes"].as_u64().unwrap() > 0);
@@ -230,6 +248,66 @@ fn a_looped_call_writes_both_times_its_bytes_and_what_it_lost() {
     );
     // Stderr names a call's loss once; the record names every one.
     assert!(meter.said.lock().unwrap().contains("board_fields.validate"));
+}
+
+/// One timed line written into `record`.
+fn timed_into(record: &'static Record) {
+    let meter = Meter {
+        plugin: "fixture",
+        loopback: false,
+        record,
+        said: Mutex::new(BTreeSet::new()),
+    };
+    meter.time::<Validate, _>("effort", || ());
+}
+
+#[test]
+fn a_record_past_its_cap_is_rolled_to_its_one_and_begun_again() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/plugin-calls.jsonl");
+    let roll = tree.path("artifacts/plugin-calls.1.jsonl");
+    assert_eq!(rolled(&path), roll);
+    assert_eq!(rolled(Path::new("/a/calls")), Path::new("/a/calls.1"));
+    // A cap of two lines and a half: three fill it, and the fourth begins the next.
+    let sized = tree.path("sized.jsonl");
+    timed_into(Box::leak(Box::new(Record::new(&sized, CAP))));
+    let cap = std::fs::metadata(&sized).unwrap().len() * 5 / 2;
+    let record: &'static Record = Box::leak(Box::new(Record::new(&path, cap)));
+    for _ in 0..3 {
+        timed_into(record);
+    }
+    assert_eq!(lines(&path).len(), 3);
+    assert!(!roll.exists());
+    timed_into(record);
+    assert_eq!((lines(&roll).len(), lines(&path).len()), (3, 1));
+    for _ in 0..3 {
+        timed_into(record);
+    }
+    // The roll before is replaced: the record and its roll hold twice the cap at most.
+    assert_eq!((lines(&roll).len(), lines(&path).len()), (3, 1));
+    assert!(std::fs::metadata(&path).unwrap().len() < cap);
+    assert_eq!(CAP, 32 * 1024 * 1024);
+}
+
+#[test]
+fn a_record_removed_and_made_again_by_another_is_the_one_written_to() {
+    let tree = Tree::new();
+    let path = tree.path("artifacts/plugin-calls.jsonl");
+    let record: &'static Record = Box::leak(Box::new(Record::new(&path, CAP)));
+    timed_into(record);
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 2);
+    // Another process removes it and begins its own: this one's next line goes there, where the
+    // path names, not to the file it held.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "").unwrap();
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 1);
+    // And one moved aside (as a roll by another process does) leaves the path to a new file.
+    std::fs::rename(&path, tree.path("aside.jsonl")).unwrap();
+    timed_into(record);
+    assert_eq!(lines(&path).len(), 1);
+    assert_eq!(lines(&tree.path("aside.jsonl")).len(), 1);
 }
 
 #[test]

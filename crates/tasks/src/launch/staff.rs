@@ -308,10 +308,9 @@ fn pass_inner(
     };
     let hc = Binary::of(env);
     let machine = Machine::of(env);
-    // What a launch here starts: the project's `[agents] launch`, else the board's own.
-    let launching = Defaults::configured(&machine.root)
-        .map_err(refused)?
-        .resolve(None, None);
+    // What a launch here starts: the project's `[agents] launch`, on the model `[agents.models]`
+    // names for the role, else the board's own.
+    let defaults = Defaults::configured(&machine.root).map_err(refused)?;
     let mut candidates = store.board()?.tasks;
     candidates.retain(|t| matches!(t.status.as_str(), "ready" | "review"));
     candidates.sort_by(|a, b| {
@@ -350,31 +349,13 @@ fn pass_inner(
             ));
         }
         // The cap counts every agent of the machine, whoever started it.
-        let global_agents: Vec<_> = hc
-            .live()?
-            .into_iter()
-            .filter(|t| hc::agent(t).is_some())
-            .collect();
-        let live = global_agents.len()
-            + view
-                .agents
-                .iter()
-                .filter(|a| {
-                    a.health == Health::Live
-                        && a.agent.is_none()
-                        && matches!(a.kind.as_str(), "worker" | "reviewer" | "orchestrator")
-                        && !global_agents.iter().any(|p| {
-                            text_of(p, "name") == a.handle
-                                || a.pane.as_deref() == Some(text_of(p, "address").as_str())
-                        })
-                })
-                .count()
-            + projected;
+        let live = super::running::counted(&view.agents, &hc.live()?) + projected;
         let role = if task.status == "review" {
             "reviewer"
         } else {
             "executor"
         };
+        let launching = defaults.resolve_as(Some(role), None, None);
         // Who may not review it, by the rule the verdict and the land hold (`Held::unfresh`).
         let held = if role == "reviewer" {
             store.ever_held(&task.slug)?
@@ -383,8 +364,13 @@ fn pass_inner(
         };
         let idle = idle_for(&view.agents, &board, task, role, &used, &held);
         let memory = free_memory_gib()?;
+        let machine_agents = store.limits().machine_agents;
         let blocked = if idle.is_none() && live >= config.max_sessions {
             Some(format!("session cap {live}/{}", config.max_sessions))
+        } else if let Some(most) = machine_agents.filter(|most| idle.is_none() && live >= *most) {
+            Some(format!(
+                "machine agents {live}/{most}, [limits] machine_agents"
+            ))
         } else if memory < config.min_free_memory_gib {
             Some(format!(
                 "free memory {memory:.1} GiB below {:.1} GiB",

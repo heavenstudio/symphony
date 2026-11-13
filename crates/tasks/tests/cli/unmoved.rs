@@ -127,6 +127,36 @@ fn a_board_command_from_either_checkout_refuses_naming_the_move_and_starts_no_bo
 }
 
 #[test]
+fn the_database_and_snapshot_commands_which_open_no_board_refuse_naming_the_move() {
+    let u = Unmoved::new("unmoved-database");
+    let refusal = u.refusal(symphony_board::server::FOLDER);
+    for cwd in [&u.main, &u.wt] {
+        for args in [
+            &["database"][..],
+            &["database", "hold", "a swap", "--as", "someone"],
+            &["database", "release", "--as", "someone"],
+            &["snapshot"],
+            &["snapshot", "--list"],
+        ] {
+            let ran = u.tasks(cwd, args, "");
+            assert_eq!(
+                (ran.code, ran.out.as_str(), ran.err.as_str()),
+                (2, "", format!("✖ {refusal}\n").as_str()),
+                "{args:?} in {}",
+                cwd.display()
+            );
+            u.untouched(&format!("{args:?}"));
+        }
+    }
+    let (_, old) = symphony_board::unmoved::OLD[0];
+    assert_eq!(
+        fs::read_to_string(u.common.join(old).join("kept")).unwrap(),
+        format!("{old}\n"),
+        "the older build's board as it was"
+    );
+}
+
+#[test]
 fn the_heartbeat_and_the_recorder_make_nothing_and_the_recorded_command_still_runs() {
     let u = Unmoved::new("unmoved-quiet");
     let event = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
@@ -153,6 +183,16 @@ fn the_board_library_refuses_its_start_and_stop_naming_the_move() {
     let refusal = u.refusal(symphony_board::server::FOLDER);
     assert_eq!(u.home().ensure().unwrap_err().to_string(), refusal);
     assert_eq!(u.home().stop().unwrap_err().to_string(), refusal);
+    // The hold, its release and a snapshot each take the starters' lock first, as a start does.
+    assert_eq!(
+        u.home().hold("someone", "a swap").unwrap_err().to_string(),
+        refusal
+    );
+    assert_eq!(
+        u.home().release("someone", None).unwrap_err().to_string(),
+        refusal
+    );
+    assert_eq!(u.home().snapshot(NOW).unwrap_err(), refusal);
     u.untouched("the library");
     // A board folder named by hand (a reclaim's rehearsal on a copy) is no repository's.
     let elsewhere = u.base.join("copy");

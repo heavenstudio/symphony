@@ -1,8 +1,8 @@
 //! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
-//! every other tick, a tick that cannot reach the board is a failed
-//! pass, the one server's record says the same, and `/api/health` answers it from the hub's memory,
-//! with no board read.
+//! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
+//! said unwell in its own words until a store opens it, the one server's record says the same, and
+//! `/api/health` answers it from the hub's memory, with no board read.
 
 use super::Hub;
 use crate::front::Shared;
@@ -401,6 +401,167 @@ fn a_tick_that_cannot_reach_the_board_is_a_failed_pass() {
     );
     assert_eq!(report.warnings.len(), 1);
     assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+}
+
+#[test]
+fn a_board_that_went_back_is_said_unwell_with_its_line_on_every_page_until_a_store_opens_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    let refusal = symphony_board::live::seen::Rollback {
+        project: "alpha".into(),
+        from: 16,
+        since: NOW,
+        to: Some(13),
+        record: tree.path(".git/symphony/tasks/schema-seen.log"),
+    }
+    .refusal();
+    let went_back = "The task board is unwell: it went back from schema 16 to 13, so what was \
+                     written since is lost: nothing was written; do not run `just tasks migrate`; \
+                     the Symphony's docs/TASKS.md#a-board-that-went-back says how to recover it.";
+
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(refusal.clone()))
+            .is_none()
+    );
+    assert_eq!(
+        *hub.server_notice.borrow(),
+        went_back,
+        "not the dispatch's words"
+    );
+    assert_eq!(
+        hub.health_notice(),
+        went_back,
+        "and the picker says the same"
+    );
+    let report = hub.health.report(clock.now());
+    assert_eq!(
+        report.warnings[0],
+        format!(
+            "the task board is unwell: {}",
+            &went_back["The task board is unwell: ".len()..went_back.len() - 1]
+        )
+    );
+    assert_eq!(
+        Report::read(&file).unwrap().unwrap().rollback,
+        report.rollback,
+        "the one server's record, which `tasks status` reads, says it too"
+    );
+
+    // Accepted or recovered, the next store that opens it clears it; the failed pass stays a
+    // minute, as any does.
+    let fixture = Fixture::new(Seed::default());
+    clock.pass(1.0);
+    let opened = hub.reconnect(&mut |_: &Path| {
+        symphony_board::Store::with(
+            Client::new(
+                fixture.store.client().addr(),
+                "sf",
+                fixture.store.client().database(),
+            ),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+        )
+        .map_err(|e| e.to_string())
+    });
+    assert!(opened.is_some());
+    assert_eq!(hub.health.rollback(), None);
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert_eq!(Report::read(&file).unwrap().unwrap().rollback, None);
+}
+
+/// While a reach of the board is refused because a start replays its store's log, this server's
+/// own, run apart from its reads, or another's it waited on, every page and the picker say the
+/// board is starting, with the log's size, in place of the dispatch's words; the failed pass is
+/// counted all the same. A refusal holding no replay, or a store that opens, ends it.
+#[test]
+fn a_board_replaying_its_log_is_said_starting_on_every_page_until_a_reach_finds_no_replay() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let clock = Clock::at(now());
+    let hub = hub(&root, &tree.path("health.json"), &clock);
+    let log = tree.path(".git/symphony/tasks/server.log");
+    let apart = format!(
+        "the board's server is started apart from this read, by pid 4242, since 10:00: a private \
+         replay of the store's log of 412.4 MiB before the board's server starts: a log of \
+         gigabytes takes minutes, and its server's lines go to {}; this read does not wait for it, \
+         and the next one asks again",
+        log.display()
+    );
+    let starting = "The task board is starting: its store's log of 412.4 MiB is replayed in a \
+                    private server before the board's server starts (a log of gigabytes takes \
+                    minutes), and the board answers once that is through.";
+    assert!(hub.reconnect(&mut |_: &Path| Err(apart.clone())).is_none());
+    assert_eq!(
+        *hub.server_notice.borrow(),
+        starting,
+        "not the dispatch's words"
+    );
+    assert_eq!(
+        hub.health_notice(),
+        starting,
+        "and the picker says the same"
+    );
+    let report = hub.health.report(clock.now());
+    assert_eq!(report.dispatch.failed, 1, "a failed pass all the same");
+    assert!(
+        report
+            .dispatch
+            .error
+            .as_deref()
+            .is_some_and(|error| error.ends_with(&apart)),
+        "`tasks status` says why: {report:?}"
+    );
+
+    // Another's replay, the read refused once it waited its bound.
+    let waited = format!(
+        "the board's starters' lock ({}) is held by pid 77, since 10:01: a private replay of the \
+         store's log of 1.0 GiB before the board's server starts: a log of gigabytes takes \
+         minutes, and its server's lines go to {}; this read waits at most 5 s for it, and the \
+         next one tries again",
+        tree.path(".git/symphony/tasks/lock").display(),
+        log.display()
+    );
+    clock.pass(1.0);
+    assert!(hub.reconnect(&mut |_: &Path| Err(waited.clone())).is_none());
+    assert_eq!(
+        *hub.server_notice.borrow(),
+        starting.replace("412.4 MiB", "1.0 GiB")
+    );
+
+    // A refusal that holds no replay: the dispatch's words again.
+    clock.pass(1.0);
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err("connection refused".to_string()))
+            .is_none()
+    );
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+
+    // A store that opens ends it; the failed passes stay a minute, as any do.
+    clock.pass(1.0);
+    assert!(hub.reconnect(&mut |_: &Path| Err(apart.clone())).is_none());
+    assert_eq!(*hub.server_notice.borrow(), starting);
+    let fixture = Fixture::new(Seed::default());
+    clock.pass(1.0);
+    let opened = hub.reconnect(&mut |_: &Path| {
+        symphony_board::Store::with(
+            Client::new(
+                fixture.store.client().addr(),
+                "sf",
+                fixture.store.client().database(),
+            ),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+        )
+        .map_err(|e| e.to_string())
+    });
+    assert!(opened.is_some());
+    assert_eq!(*hub.server_notice.borrow(), DISPATCH_FAILING);
+    assert_eq!(hub.health_notice(), DISPATCH_FAILING);
 }
 
 #[test]

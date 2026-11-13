@@ -11,12 +11,15 @@
 mod common;
 mod copy;
 mod dispatch;
+mod export;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
 mod fixture_script;
 mod git;
 mod helper;
+mod hold;
 mod home;
 mod home_fixture;
+mod left_replay;
 /// The recipients' Unix sockets, served by this process (the perf tests').
 #[path = "../perf/listeners.rs"]
 mod listeners;
@@ -24,6 +27,7 @@ mod own_board;
 mod port;
 mod reclaim;
 mod sessionless;
+mod snapshot;
 /// The store's tests' helpers, for the one way the tests find the pinned `surreal`.
 #[path = "../store/common.rs"]
 #[allow(dead_code)]

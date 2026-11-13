@@ -4,7 +4,12 @@
 #     tools/move-state.sh [--dry-run] [CHECKOUT]     (CHECKOUT: the current folder when not given)
 #
 # Run once per repository, from any checkout of it, with the board and the shared server stopped
-# (the owner's word, since both stop). Each move is a rename on one disk, never a copy:
+# (the owner's word, since both stop): the board by its hold (`tasks database hold`), whose record
+# moves with the board's folder and holds the new build's board until its holder releases it. So do
+# the board's other records of processes, each naming one by its pid and when it started: a private
+# replay's (replay.json) and each ask to end a server (ending/PID). The new build reads them as its
+# own, and as the move refuses while a server they name runs, none is adopted or asked twice.
+# Each move is a rename on one disk, never a copy:
 #
 #     sf-tasks/                         symphony/tasks/            the board, its keys and records
 #     sf-surreal/                       symphony/surreal/          the pinned SurrealDB (VERSION/surreal)

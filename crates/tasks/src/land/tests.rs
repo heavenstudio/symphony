@@ -83,6 +83,7 @@ generators = [
   { name = "the shades", outputs = "shades/", command = ["just", "shades"] },
   { name = "the index", outputs = "index.md", command = ["just", "index"], when_changed = true },
 ]
+keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
@@ -94,6 +95,7 @@ on_review = ["just", "review"]
         Settings {
             default_branch: "trunk".into(),
             check: vec!["just".into(), "verify".into()],
+            main_check: Vec::new(),
             worktrees: Some("../lamps-wt".into()),
             generators: vec![
                 Generator {
@@ -109,8 +111,10 @@ on_review = ["just", "review"]
                     when_changed: true,
                 },
             ],
+            keys: BTreeMap::from([("the index".into(), vec!["tools/index-key".into()])]),
             push: false,
             timeout: TIMEOUT,
+            check_paths: check_paths::defaults(),
         }
     );
 }
@@ -174,7 +178,7 @@ fn a_generator_or_branch_a_land_cannot_use_is_refused_by_name() {
 #[test]
 fn a_land_key_it_does_not_know_is_refused_by_its_name() {
     let refused = |text: &str| Settings::parse(text).unwrap_err();
-    for key in ["pushh", "timeout", "check"] {
+    for key in ["pushh", "timeout", "checks"] {
         let said = refused(&format!("[land]\n{key} = 1\n"));
         assert!(
             said.starts_with("symphony.toml: ") && said.contains(&format!("unknown field `{key}`")),
@@ -186,6 +190,126 @@ fn a_land_key_it_does_not_know_is_refused_by_its_name() {
         Settings::parse("[project]\nname = \"x\"\nwhatever = 1\n[agents]\nlaunch = []\n").unwrap(),
         Settings::default()
     );
+}
+
+#[test]
+fn a_project_turns_the_lands_check_off_and_keeps_it_for_its_verdicts() {
+    let text = "[verdicts]\ncheck = [\"just\", \"audit\"]\n";
+    let audit = ["just".to_string(), "audit".to_string()];
+    let default = Settings::parse(text).unwrap();
+    assert_eq!(default.check, audit);
+    assert!(default.main_check.is_empty(), "{default:?}");
+    // Off, the land runs none and the regenerator runs it on the default branch's tip instead.
+    let off = Settings::parse(&format!("{text}[land]\ncheck = false\n")).unwrap();
+    assert!(off.check.is_empty(), "{off:?}");
+    assert_eq!(off.main_check, audit);
+    let on = Settings::parse(&format!("{text}[land]\ncheck = true\n")).unwrap();
+    assert_eq!(on.check.len(), 2);
+    assert!(on.main_check.is_empty(), "{on:?}");
+    // Off with no check to run: neither runs one.
+    let none = Settings::parse("[land]\ncheck = false\n").unwrap();
+    assert!(
+        none.check.is_empty() && none.main_check.is_empty(),
+        "{none:?}"
+    );
+    assert!(
+        Settings::parse("[land]\ncheck = 1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: "),
+        "check is a boolean"
+    );
+}
+
+#[test]
+fn generated_paths_taken_are_named_each_when_few_else_by_their_outputs() {
+    let generators = Settings::parse(
+        "[land]\ngenerators = [\n  { name = \"a\", outputs = \"gen/\", command = [\"true\"] },\n  \
+         { name = \"b\", outputs = \"dist\", command = [\"true\"] },\n]\n",
+    )
+    .unwrap()
+    .generators;
+    let paths = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(taken_said(&[], "main", &generators), "");
+    assert_eq!(
+        taken_said(&paths(&["gen/x"]), "main", &generators),
+        ", its generated paths (gen/x) taken from main, for the regenerator to make"
+    );
+    assert_eq!(
+        generated_named(&paths(&["dist/a", "gen/x", "gen/y"]), &generators),
+        "dist/a, gen/x, gen/y"
+    );
+    // Past three, each generator's outputs once, in the order their paths came.
+    assert_eq!(
+        generated_named(
+            &paths(&["dist/a", "gen/x", "gen/y", "dist/b", "gen/z"]),
+            &generators
+        ),
+        "dist, gen/"
+    );
+    // A path no generator holds (none should be) is named as it is.
+    assert_eq!(
+        generated_named(&paths(&["gen/x", "gen/y", "gen/z", "other"]), &generators),
+        "gen/, other"
+    );
+}
+
+#[test]
+fn a_generators_key_is_a_command_named_in_land_keys_or_none() {
+    let parsed = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"y\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+    };
+    let unkeyed = parsed("").unwrap();
+    assert_eq!(unkeyed.generators.len(), 2);
+    assert!(unkeyed.keys.is_empty());
+    let keyed = parsed("keys = { x = [\"tools/key.sh\", \"--short\"] }\n").unwrap();
+    assert_eq!(
+        keyed.keys,
+        BTreeMap::from([(
+            "x".to_string(),
+            vec!["tools/key.sh".to_string(), "--short".to_string()]
+        )]),
+        "y has none"
+    );
+    // The generators read as they read with no keys: a key is not one of a generator's fields.
+    assert_eq!(keyed.generators, unkeyed.generators);
+    for (keys, refusal) in [
+        (
+            "keys = { x = [] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { x = [\"\"] }\n",
+            "symphony.toml: [land] keys gives the generator x a key with no command",
+        ),
+        (
+            "keys = { z = [\"true\"] }\n",
+            "symphony.toml: [land] keys names \"z\", which no [land] generator is",
+        ),
+    ] {
+        assert_eq!(parsed(keys).unwrap_err(), refusal, "{keys}");
+    }
+    // A key names one generator: two of one name are refused, keyed or not.
+    let twice = |keys: &str| {
+        Settings::parse(&format!(
+            "[land]\ngenerators = [\n  {{ name = \"x\", outputs = \"o/\", command = [\"true\"] }},\n  \
+             {{ name = \"x\", outputs = \"p/\", command = [\"true\"] }},\n]\n{keys}"
+        ))
+        .unwrap_err()
+    };
+    let refusal =
+        "symphony.toml: [land] generators names \"x\" twice: give each generator a name of its own";
+    assert_eq!(twice(""), refusal);
+    assert_eq!(twice("keys = { x = [\"tools/key.sh\"] }\n"), refusal);
+    // In the generator's own table it is not a key: an older Symphony would refuse the file.
+    let inline = Settings::parse(
+        "[land]\ngenerators = [{ name = \"x\", outputs = \"o/\", command = [\"true\"], key = \
+         [\"k\"] }]\n",
+    )
+    .unwrap_err();
+    assert!(inline.contains("unknown field `key`"), "{inline}");
 }
 
 #[test]
@@ -336,7 +460,10 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     let plain = holding(&roles, None);
     let fast = holding(&roles, Some("a one-line fix"));
     for task in [&plain, &fast] {
-        assert_eq!(independent(task, &approval_by("slate"), &held), Ok(()));
+        assert_eq!(
+            independent(task, &approval_by("slate"), &held),
+            Ok(Scope::Whole)
+        );
         // Who executed it never approves it, whatever it holds now: a fast fix its orchestrator
         // executed is approved by a fresh reviewer too.
         assert_eq!(
@@ -369,8 +496,136 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
          orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
     );
     for by in ["ochre", "taupe"] {
-        assert_eq!(independent(&fast, &approval_by(by), &held), Ok(()));
+        assert_eq!(
+            independent(&fast, &approval_by(by), &held),
+            Ok(Scope::Whole)
+        );
     }
+}
+
+/// `holding`'s task marked red as well, as a tool files one.
+fn red(roles: &[(&str, &str)], fast_fix: Option<&str>) -> Task {
+    let mut task = holding(roles, fast_fix);
+    task.fields
+        .entry(crate::red::FIELDS.into())
+        .or_default()
+        .insert(crate::red::MARK.into(), "nightly".into());
+    task
+}
+
+#[test]
+fn a_reds_orchestrator_approves_only_a_fix_changing_no_check_and_a_fresh_reviewer_any() {
+    let held = Held {
+        executed: BTreeSet::from(["amber".to_string()]),
+        orchestrated: BTreeSet::from(["ochre".to_string()]),
+    };
+    let roles = [("ochre", "orchestrator"), ("slate", "reviewer")];
+    let marked = red(&roles, Some(crate::fast_fix::RED));
+    assert!(marked.red() && marked.fast_fix().is_some());
+    // A fresh reviewer's approve stands whatever the fix changes; its orchestrator's and its
+    // filer's only on a fix that changes no check; its executor's never.
+    assert_eq!(
+        independent(&marked, &approval_by("slate"), &held),
+        Ok(Scope::Whole)
+    );
+    assert_eq!(
+        independent(&marked, &approval_by("ochre"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
+    );
+    assert_eq!(
+        independent(&marked, &approval_by("owner"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Filed))
+    );
+    assert!(independent(&marked, &approval_by("amber"), &held).is_err());
+    // A filer lifts the red mark; the risk no session clears holds it to the same bound.
+    let lifted = holding(&roles, Some(crate::fast_fix::RED));
+    assert!(!lifted.red() && lifted.fast_fix() == Some(crate::fast_fix::RED));
+    assert_eq!(
+        independent(&lifted, &approval_by("ochre"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
+    );
+    assert_eq!(
+        independent(&lifted, &approval_by("slate"), &held),
+        Ok(Scope::Whole)
+    );
+    // So is one filed with an older wording of the risk, by the opening every wording keeps.
+    let older = holding(
+        &roles,
+        Some("a red is fixed as a bug fix is: an older wording of it"),
+    );
+    assert_eq!(
+        independent(&older, &approval_by("ochre"), &held),
+        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
+    );
+    // A red with no fast-fix mark, as the regenerator files, is approved as any task is.
+    let unmarked = red(&roles, None);
+    assert!(
+        independent(&unmarked, &approval_by("ochre"), &held)
+            .unwrap_err()
+            .contains("which orchestrated it: a fresh reviewer approves it")
+    );
+    let tip = "0123456789abcdef0123456789abcdef01234567";
+    let ochre = approval_by("ochre");
+    let stands = |touched| unchanged_checks(&marked, &ochre, Unfresh::Orchestrated, tip, touched);
+    assert_eq!(stands(Ok(Vec::new())), Ok(()));
+    assert_eq!(
+        stands(Ok(vec![
+            "tools/size-budget.toml".into(),
+            "src/lib.rs (#[cfg(test)] code at line 9)".into()
+        ]))
+        .unwrap_err(),
+        "tools/lamp's approve is ochre's, which orchestrated it, which lands a red filed as a fast \
+         fix only when the fix changes none of the project's tests and checks (`[land] \
+         check_paths`), and 0123456 changes tools/size-budget.toml, src/lib.rs (#[cfg(test)] code \
+         at line 9): a fresh reviewer approves a fix that changes a test or a check"
+    );
+    let many: Vec<String> = (1..=10).map(|n| format!("tests/t{n}.rs")).collect();
+    assert!(stands(Ok(many)).unwrap_err().contains(
+        "changes tests/t1.rs, tests/t2.rs, tests/t3.rs, tests/t4.rs, tests/t5.rs, \
+                       tests/t6.rs, tests/t7.rs, tests/t8.rs and 2 more: a fresh reviewer"
+    ));
+    assert!(
+        unchanged_checks(
+            &marked,
+            &approval_by("owner"),
+            Unfresh::Filed,
+            tip,
+            Err("git cannot run".into())
+        )
+        .unwrap_err()
+        .contains(
+            "which filed it, which lands a red filed as a fast fix only when the fix \
+                       changes none of the project's tests and checks (`[land] check_paths`), and \
+                       what 0123456 changes cannot be read (git cannot run)"
+        )
+    );
+}
+
+#[test]
+fn a_project_names_its_own_check_paths_or_has_the_default() {
+    assert_eq!(
+        Settings::parse("").unwrap().check_paths,
+        check_paths::defaults()
+    );
+    let own = Settings::parse("[land]\ncheck_paths = [\"tests/\", \"/tools/\"]\n").unwrap();
+    assert_eq!(
+        own.check_paths
+            .iter()
+            .map(|e| e.written.as_str())
+            .collect::<Vec<_>>(),
+        ["tests/", "/tools/"]
+    );
+    assert_eq!(
+        Settings::parse("[land]\ncheck_paths = []\n")
+            .unwrap()
+            .check_paths,
+        [],
+        "a project may name none"
+    );
+    assert_eq!(
+        Settings::parse("[land]\ncheck_paths = [\"../x\"]\n").unwrap_err(),
+        "symphony.toml: [land] check_paths names \"../x\", which is no path inside the project"
+    );
 }
 
 #[test]
@@ -734,7 +989,7 @@ fn a_land_runs_only_by_its_recipe() {
     };
     assert_eq!(
         admit(&env).unwrap_err(),
-        "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the default \
+        "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the default \
          branch"
     );
     let empty = Env {
@@ -822,5 +1077,67 @@ fn two_names_of_one_place_are_the_same_and_others_are_not() {
     assert!(same(&dir.join("gone/land"), &dir.join("gone/land")));
     assert!(!same(&dir.join("gone/land"), &dir.join("gone/other")));
     assert!(!same(&dir.join("link/other"), &real));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_land_starts_the_regenerator_on_its_own_board_alone_unless_told() {
+    let env = |vars: &[(&str, &str)]| Env {
+        vars: vars
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        cwd: PathBuf::from("/"),
+    };
+    assert!(regenerate::enabled(&env(&[])));
+    assert!(!regenerate::enabled(&env(&[(
+        "TASKS_SERVER",
+        "127.0.0.1:1"
+    )])));
+    assert!(regenerate::enabled(&env(&[
+        ("TASKS_SERVER", "127.0.0.1:1"),
+        ("TASKS_REGENERATE", "on")
+    ])));
+    assert!(!regenerate::enabled(&env(&[("TASKS_REGENERATE", "off")])));
+    // Anything else is no word: the board decides.
+    assert!(regenerate::enabled(&env(&[("TASKS_REGENERATE", "yes")])));
+    // With no generators there is nothing to start, whatever it is told.
+    let none = Settings::default();
+    assert_eq!(
+        regenerate::start(&env(&[("TASKS_REGENERATE", "on")]), Path::new("/"), &none),
+        None
+    );
+}
+
+#[test]
+fn the_pairs_passed_keep_the_newest_first_once_each_and_no_more_than_kept() {
+    use regenerate::{Pair, Passed};
+    let pair = |n: usize| Pair {
+        generator: "the client".into(),
+        key: format!("key-{n}"),
+        outputs: format!("tree-{n}"),
+    };
+    let mut passed = Passed::default();
+    for n in 0..70 {
+        passed.add(pair(n));
+    }
+    assert_eq!(passed.pairs.len(), 64);
+    assert_eq!(passed.pairs[0], pair(69));
+    assert!(passed.holds(&pair(6)) && !passed.holds(&pair(5)));
+    passed.add(pair(30));
+    assert_eq!(passed.pairs[0], pair(30));
+    assert_eq!(passed.pairs.iter().filter(|p| **p == pair(30)).count(), 1);
+    assert!(!passed.holds(&Pair {
+        outputs: "tree-other".into(),
+        ..pair(30)
+    }));
+    // Kept whole in a folder, and read back; a folder with none or a file unread holds none.
+    let dir = std::env::temp_dir().join(format!("symphony-land-passed-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
+    passed.write(&dir).unwrap();
+    assert_eq!(Passed::read(&dir), passed);
+    fs::write(dir.join(regenerate::PASSED), "not json").unwrap();
+    assert_eq!(Passed::read(&dir), Passed::default());
     fs::remove_dir_all(&dir).unwrap();
 }

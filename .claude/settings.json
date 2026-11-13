@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(just tasks:*)",
-      "Bash(TASKS_SESSION=* just tasks *)",
       "Bash(just symphony-status:*)",
       "Bash(just symphony-reply:*)",
       "Bash(just symphony-ask:*)",

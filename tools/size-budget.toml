@@ -1,0 +1,18 @@
+# The most bytes each binary this workspace ships may weigh, built as `cargo install` builds it
+# (the workspace's release profile) for aarch64-apple-darwin, and the most the client distribution
+# the server embeds may weigh. `just size-check` builds the binaries and checks every line
+# (`symphony size-budget`, docs/CHECKS.md "Size budgets"); the nightly's `just verify` runs it.
+#
+# A line is set a few percent above what it measured when it was set. Raise one only in the commit
+# that needs it, saying why there; lower it in the commit of a reduction.
+
+# Every regular file under apps/symphony-server/client/public, as the server's build script embeds
+# them: the generations `symphony publish-client` keeps.
+client = 20_750_000
+
+# Each binary's file; symphony-server's less the client above, which it embeds.
+[binaries]
+symphony-server = 18_600_000
+symphony = 18_000_000
+tasks = 24_700_000
+agent-send = 5_250_000

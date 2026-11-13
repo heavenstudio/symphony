@@ -4,11 +4,22 @@
 //! [`CODEX_EFFORT`], Claude on [`CLAUDE_MODEL`] at its own effort. A `--kind` or `--model` the caller
 //! gives wins. The project's model and effort go with its agent (Codex when it names none): a caller
 //! naming the other agent gets the board's model and effort for that one, never a model the other
-//! agent does not run. Only that table is read; the rest of the file is the Symphony's.
+//! agent does not run.
+//!
+//! The model each role runs on is `[agents.models]` (`orchestrator`, `executor`, `reviewer`, each
+//! a model of the project's agent): a launch of an executor or a reviewer takes its role's, else
+//! `[agents] launch`'s model, else the board's own; `just tasks limits` prints each role's and
+//! where it came from ([`Defaults::model_of`]), so an agent starting a subagent reads the setting.
+//! A board launch never starts an orchestrator: with no model written for it, whoever starts one
+//! chooses. Only those two tables are read; the rest of the file is the Symphony's, which refuses a
+//! role it does not know.
 
 use crate::on_review::MANIFEST;
 use serde::Deserialize;
 use std::path::Path;
+
+/// The roles a model is written for, in the order `tasks limits` prints them.
+pub const ROLES: [&str; 3] = ["orchestrator", "executor", "reviewer"];
 
 /// The agents a launch can start, the first the board's own.
 pub const AGENTS: [&str; 2] = ["codex", "claude"];
@@ -19,13 +30,49 @@ pub const CLAUDE_MODEL: &str = "sonnet";
 /// The board's effort for Codex; Claude keeps its own unless the project names one.
 pub const CODEX_EFFORT: &str = "xhigh";
 
-/// The project's `[agents] launch`: each `None` leaves the board's own.
+/// The project's `[agents] launch` and `[agents.models]`: each `None` leaves the board's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Defaults {
     /// One of [`AGENTS`].
     pub agent: Option<&'static str>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// `[agents.models]`: the model each role runs on.
+    pub models: Models,
+}
+
+/// `[agents.models]`: the model of the project's agent each role runs on; `None` is no model
+/// written for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Models {
+    pub orchestrator: Option<String>,
+    pub executor: Option<String>,
+    pub reviewer: Option<String>,
+}
+
+impl Models {
+    /// The model written for `role`, one of [`ROLES`]; none for another word.
+    pub fn of(&self, role: &str) -> Option<&str> {
+        match role {
+            "orchestrator" => self.orchestrator.as_deref(),
+            "executor" => self.executor.as_deref(),
+            "reviewer" => self.reviewer.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+/// Where a role's model comes from ([`Defaults::model_of`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// `[agents.models] ROLE`.
+    Role,
+    /// `[agents] launch`'s model: what a board launch starts.
+    Launch,
+    /// The board's own model for the agent ([`CODEX_MODEL`], [`CLAUDE_MODEL`]).
+    Board,
+    /// None: whoever starts it chooses (an orchestrator, which no board launch starts).
+    Starter,
 }
 
 /// What a launch starts: the agent, its model and its effort, `None` leaving the agent's own.
@@ -66,9 +113,39 @@ struct Launch {
     effort: Option<String>,
 }
 
+/// `[agents.models]` as written, read apart from `[agents] launch`, so a problem with either names
+/// its own table.
+#[derive(Default, Deserialize)]
+struct ModelsManifest {
+    #[serde(default)]
+    agents: ModelsAgents,
+}
+
+#[derive(Default, Deserialize)]
+struct ModelsAgents {
+    #[serde(default)]
+    models: WrittenModels,
+}
+
+#[derive(Default, Deserialize)]
+struct WrittenModels {
+    orchestrator: Option<String>,
+    executor: Option<String>,
+    reviewer: Option<String>,
+}
+
 /// A value written empty is none.
 fn given(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
+}
+
+/// The board's own model for `agent`.
+fn board_model(agent: &str) -> &'static str {
+    if agent == "codex" {
+        CODEX_MODEL
+    } else {
+        CLAUDE_MODEL
+    }
 }
 
 impl Defaults {
@@ -85,7 +162,7 @@ impl Defaults {
     }
 
     /// `text`, the manifest at `path`, as [`Defaults::configured`] reads it.
-    fn parse(path: &str, text: &str) -> Result<Defaults, String> {
+    pub(crate) fn parse(path: &str, text: &str) -> Result<Defaults, String> {
         let manifest: Manifest =
             toml::from_str(text).map_err(|error| format!("{path}: [agents] launch: {error}"))?;
         let launch = manifest.agents.launch;
@@ -102,10 +179,18 @@ impl Defaults {
                     })
             })
             .transpose()?;
+        let written: ModelsManifest =
+            toml::from_str(text).map_err(|error| format!("{path}: [agents.models]: {error}"))?;
+        let models = written.agents.models;
         Ok(Defaults {
             agent,
             model: given(launch.model),
             effort: given(launch.effort),
+            models: Models {
+                orchestrator: given(models.orchestrator),
+                executor: given(models.executor),
+                reviewer: given(models.reviewer),
+            },
         })
     }
 
@@ -117,6 +202,18 @@ impl Defaults {
     /// What a launch asking for `kind` (`--kind`: `claude`, `worker` and `reviewer` are Claude,
     /// any other Codex) and `model` (`--model`; empty is none) starts here.
     pub fn resolve(&self, kind: Option<&str>, model: Option<&str>) -> Resolved {
+        self.resolve_as(None, kind, model)
+    }
+
+    /// [`Defaults::resolve`] for a launch taking `role` on its task: the model `[agents.models]`
+    /// writes for the role, when the launch starts the project's agent and its caller names none,
+    /// else `[agents] launch`'s, else the board's own.
+    pub fn resolve_as(
+        &self,
+        role: Option<&str>,
+        kind: Option<&str>,
+        model: Option<&str>,
+    ) -> Resolved {
         let own = self.agent.unwrap_or(AGENTS[0]);
         let agent = match kind {
             None => own,
@@ -124,18 +221,15 @@ impl Defaults {
             Some(_) => "codex",
         };
         let ours = agent == own;
+        let role_model = role
+            .and_then(|role| self.models.of(role))
+            .map(str::to_string);
         let model = model
             .filter(|m| !m.trim().is_empty())
             .map(str::to_string)
+            .or_else(|| role_model.filter(|_| ours))
             .or_else(|| self.model.clone().filter(|_| ours))
-            .unwrap_or_else(|| {
-                if agent == "codex" {
-                    CODEX_MODEL
-                } else {
-                    CLAUDE_MODEL
-                }
-                .to_string()
-            });
+            .unwrap_or_else(|| board_model(agent).to_string());
         let effort = self
             .effort
             .clone()
@@ -145,6 +239,24 @@ impl Defaults {
             agent,
             model,
             effort,
+        }
+    }
+
+    /// The project's agent, the model `role` (one of [`ROLES`]) runs on with it, and where that
+    /// comes from: `[agents.models] ROLE`; else, for an executor or a reviewer, which a board launch
+    /// starts, `[agents] launch`'s model, then the board's own; for an orchestrator, none, as whoever
+    /// starts one chooses. What `just tasks limits` prints, and an agent starting a subagent passes.
+    pub fn model_of(&self, role: &str) -> (&'static str, Option<String>, Chosen) {
+        let agent = self.agent.unwrap_or(AGENTS[0]);
+        if let Some(model) = self.models.of(role) {
+            return (agent, Some(model.to_string()), Chosen::Role);
+        }
+        if role == ROLES[0] {
+            return (agent, None, Chosen::Starter);
+        }
+        match &self.model {
+            Some(model) => (agent, Some(model.clone()), Chosen::Launch),
+            None => (agent, Some(board_model(agent).to_string()), Chosen::Board),
         }
     }
 
@@ -200,6 +312,7 @@ mod tests {
                     agent: Some("claude"),
                     model: Some("opus".into()),
                     effort: None,
+                    models: Models::default(),
                 },
             ),
             (
@@ -208,6 +321,7 @@ mod tests {
                     agent: Some("codex"),
                     model: None,
                     effort: Some("high".into()),
+                    models: Models::default(),
                 },
             ),
         ] {
@@ -274,6 +388,7 @@ mod tests {
             agent: Some("claude"),
             model: Some("opus".into()),
             effort: Some("high".into()),
+            models: Models::default(),
         };
         for (kind, model, expected) in [
             (None, None, resolved("claude", "opus", Some("high"))),
@@ -377,5 +492,123 @@ mod tests {
             )
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_models_table_names_each_roles_model_and_an_empty_one_is_none() {
+        assert_eq!(parsed("").models, Models::default());
+        let models = parsed(
+            "[agents.models]\norchestrator = \"fable\"\nexecutor = \"opus\"\nreviewer = \" \"\nother = \"x\"\n",
+        )
+        .models;
+        assert_eq!(
+            models,
+            Models {
+                orchestrator: Some("fable".into()),
+                executor: Some("opus".into()),
+                reviewer: None,
+            }
+        );
+        assert_eq!(models.of("executor"), Some("opus"));
+        assert_eq!(models.of("reviewer"), None);
+        assert_eq!(models.of("worker"), None, "no role of that name");
+        let problem =
+            Defaults::parse("/r/symphony.toml", "[agents.models]\nexecutor = 4\n").unwrap_err();
+        assert!(
+            problem.starts_with("/r/symphony.toml: [agents.models]: "),
+            "{problem}"
+        );
+    }
+
+    #[test]
+    fn a_launch_takes_its_roles_model_then_the_launch_model_then_the_boards() {
+        let project = parsed(
+            "[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n[agents.models]\nexecutor = \"fable\"\n",
+        );
+        for (role, kind, model, expected) in [
+            (
+                Some("executor"),
+                None,
+                None,
+                resolved("claude", "fable", None),
+            ),
+            (
+                Some("reviewer"),
+                None,
+                None,
+                resolved("claude", "opus", None),
+            ),
+            (None, None, None, resolved("claude", "opus", None)),
+            (
+                Some("executor"),
+                None,
+                Some("sonnet"),
+                resolved("claude", "sonnet", None),
+            ),
+            (
+                Some("executor"),
+                Some("worker"),
+                None,
+                resolved("claude", "fable", None),
+            ),
+            // Another agent never takes the project's role model: it is the project's agent's.
+            (
+                Some("executor"),
+                Some("codex"),
+                None,
+                resolved("codex", CODEX_MODEL, Some(CODEX_EFFORT)),
+            ),
+        ] {
+            assert_eq!(
+                project.resolve_as(role, kind, model),
+                expected,
+                "{role:?} {kind:?} {model:?}"
+            );
+        }
+        // No model written for the role nor the launch: the board's own.
+        let bare = parsed("[agents.models]\nreviewer = \"gpt-x\"\n");
+        assert_eq!(
+            bare.resolve_as(Some("executor"), None, None),
+            resolved("codex", CODEX_MODEL, Some(CODEX_EFFORT))
+        );
+        assert_eq!(
+            bare.resolve_as(Some("reviewer"), None, None),
+            resolved("codex", "gpt-x", Some(CODEX_EFFORT))
+        );
+    }
+
+    #[test]
+    fn each_roles_model_is_said_with_where_it_comes_from() {
+        let project = parsed(
+            "[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n[agents.models]\nreviewer = \"sonnet\"\n",
+        );
+        assert_eq!(
+            project.model_of("orchestrator"),
+            ("claude", None, Chosen::Starter)
+        );
+        assert_eq!(
+            project.model_of("executor"),
+            ("claude", Some("opus".into()), Chosen::Launch)
+        );
+        assert_eq!(
+            project.model_of("reviewer"),
+            ("claude", Some("sonnet".into()), Chosen::Role)
+        );
+        let none = Defaults::default();
+        assert_eq!(
+            none.model_of("executor"),
+            ("codex", Some(CODEX_MODEL.into()), Chosen::Board)
+        );
+        let claude = parsed(
+            "[agents.launch]\ndefault = \"claude\"\n[agents.models]\norchestrator = \"fable\"\n",
+        );
+        assert_eq!(
+            claude.model_of("reviewer"),
+            ("claude", Some(CLAUDE_MODEL.into()), Chosen::Board)
+        );
+        assert_eq!(
+            claude.model_of("orchestrator"),
+            ("claude", Some("fable".into()), Chosen::Role)
+        );
     }
 }

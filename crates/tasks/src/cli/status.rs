@@ -3,12 +3,15 @@
 //! so a board too slow to answer, or a server that stopped, is still said. Its warnings are the
 //! record's read at this run's time, and that the server stopped recording when it did, and the
 //! free disk where the record is kept, read now, when it is under `SYMPHONY_LOW_DISK_GB`
-//! ([`board_health::disk`]; a setting that is not a number is said, and the default taken).
-//! `--json` prints the record as `/api/health` answers it, beside the file, the disk and those
-//! warnings.
+//! ([`board_health::disk`]; a setting that is not a number is said, and the default taken), and
+//! the evidence the main checkout keeps of removed worktrees while the last sweep measured it past
+//! its cap ([`kept`]), with its largest folders and their tasks, so an agent checks it by hand.
+//! `--json` prints the record as `/api/health` answers it, beside the file, the disk, the evidence
+//! set aside and those warnings.
 
 use super::{Clock, Env, args::Parsed};
 use crate::board_health::{self, Report, disk};
+use crate::sweep::kept;
 use crate::sys;
 use std::io::Write;
 
@@ -47,12 +50,24 @@ pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn
     {
         warnings.push(low.warning());
     }
+    // The evidence the main checkout keeps, as the last sweep measured it: warned of while it is
+    // past its cap, until a sweep measures it under.
+    let set_aside = crate::git::read(&env.cwd)
+        .and_then(|common| kept::Record::read(&kept::path(&common)).measured);
+    if let Some(measured) = set_aside.as_ref().filter(|measured| measured.over()) {
+        warnings.push(measured.warning(&board_health::ago(now - measured.at)));
+    }
     let text = if parsed.flag("json") {
         let disk = free.map(|(path, bytes)| {
             serde_json::json!({"path": path, "free_bytes": bytes, "threshold_gb": threshold})
         });
-        let json =
-            serde_json::json!({"file": file, "report": report, "disk": disk, "warnings": warnings});
+        let json = serde_json::json!({
+            "file": file,
+            "report": report,
+            "disk": disk,
+            "set_aside": set_aside,
+            "warnings": warnings
+        });
         serde_json::to_string_pretty(&json).unwrap_or_default()
     } else {
         match &report {

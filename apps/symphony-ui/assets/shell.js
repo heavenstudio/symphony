@@ -92,6 +92,37 @@ async function initialize(kind) {
     } catch (error) { failed.add(kind); throw error; }
 }
 
+// Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
+// that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
+// those numbers on its own. A root inside another's (the timeline's, in a task page's box) would
+// have its events taken by the outer module too, for whatever element of its own bears the same
+// number (the timeline's Show all and the page's +). So what listens on a module's root hears only
+// the events of that module's own part of the page, the ones whose nearest module root on their
+// path is that root.
+// Nothing is stopped: the inner module hears the event at its own root, and the document and the
+// window after, as before.
+const moduleRoots = new WeakSet();
+function scope(mount) {
+    moduleRoots.add(mount);
+    const add = mount.addEventListener, remove = mount.removeEventListener, scoped = new WeakMap();
+    const own = event => event.composedPath().find(node => moduleRoots.has(node)) === mount;
+    mount.addEventListener = function (type, listener, options) {
+        if (!listener) return add.call(this, type, listener, options);
+        let heard = scoped.get(listener);
+        if (!heard) {
+            heard = function (event) {
+                if (!own(event)) return;
+                return typeof listener === "function" ? listener.call(this, event) : listener.handleEvent(event);
+            };
+            scoped.set(listener, heard);
+        }
+        return add.call(this, type, heard, options);
+    };
+    mount.removeEventListener = function (type, listener, options) {
+        return remove.call(this, type, (listener && scoped.get(listener)) || listener, options);
+    };
+}
+
 function mountFor(kind) {
     const shared = PERSISTENT[kind];
     const id = shared ? shared.root : `review-root-${kind}`;
@@ -102,6 +133,7 @@ function mountFor(kind) {
         mount.hidden = !shared;
         (shared ? document.body : document.getElementById("main")).append(mount);
     }
+    if (!moduleRoots.has(mount)) scope(mount);
     return mount;
 }
 
@@ -204,6 +236,52 @@ window.reviewOverlay = request => {
     }
     window.reviewOverlayRequest = request;
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
+};
+
+// A live update about to be drawn keeps what the reader looks at in place: the focused field on
+// the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
+// scrolls around it once it is off its top, else the page once it is. One at its top shows
+// what lands at the top. Each frame, until four pass with nothing moved and no reserved box within
+// 600 px of the screen waiting to draw (its `.viewport-sentinel`'s reach), thirty at most, the
+// box and then the page scroll by however far it moved. The reader's own scroll, click or key
+// (typing in a field aside) ends the hold.
+window.reviewHoldPlace = rows => {
+    const scrollerOf = node => {
+        while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
+        return node;
+    };
+    const shows = node => {
+        const top = node.getBoundingClientRect().top, box = scrollerOf(node)?.getBoundingClientRect();
+        return top >= 0 && top < innerHeight && (!box || (top >= box.top && top < box.bottom));
+    };
+    const field = document.activeElement;
+    const anchor = field?.matches("input, textarea, select") && shows(field) ? field : [...document.querySelectorAll(rows)].find(shows);
+    if (!anchor) return;
+    const scroller = scrollerOf(anchor), page = scrollY > 0;
+    if (scroller ? scroller.scrollTop <= 0 : !page) return;
+    const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+    let stopped = false, frame = 0, quiet = 0;
+    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
+    const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
+        const r = box.getBoundingClientRect();
+        return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
+    });
+    const hold = () => {
+        if (!stopped && anchor.isConnected) {
+            let moved = anchor.getBoundingClientRect().top - top;
+            quiet = Math.abs(moved) >= 0.5 || near() ? 0 : quiet + 1;
+            if (Math.abs(moved) >= 0.5 && scroller) {
+                const before = scroller.scrollTop;
+                scroller.scrollTop = before + Math.round(moved);
+                moved -= scroller.scrollTop - before;
+            }
+            if (Math.abs(moved) >= 0.5 && page) scrollBy(0, moved);
+            if (++frame < 30 && quiet < 4) return requestAnimationFrame(hold);
+        }
+        gestures.forEach(kind => removeEventListener(kind, gesture, true));
+    };
+    gestures.forEach(kind => addEventListener(kind, gesture, true));
+    requestAnimationFrame(hold);
 };
 
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the

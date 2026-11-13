@@ -1,6 +1,5 @@
-//! What bounds a land: its timeout over each generator and check, its fetch and its push, and its
-//! wait for another land; and what its push sends, the checked commit by name, never forced, no
-//! tag.
+//! What bounds a land: its timeout over its check, its fetch and its push, and none over its wait
+//! for another land; and what its push sends, the checked commit by name, never forced, no tag.
 
 use super::*;
 use std::os::unix::fs::PermissionsExt;
@@ -53,36 +52,6 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
 }
 
 #[test]
-fn a_generator_past_the_timeout_is_refused() {
-    let r = Repo::new();
-    manifest(
-        &r,
-        "\n[land]\ntimeout_seconds = 1\ngenerators = [\n  { name = \"the slow one\", outputs = \"gen/\", command = [\"sleep\", \"30\"] },\n]\n",
-    );
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let before = head(&r.root, "main");
-    let began = Instant::now();
-    let (_, result) = landed(&r, SLUG, &people.orch);
-    assert!(
-        began.elapsed() < Duration::from_secs(20),
-        "{:?}",
-        began.elapsed()
-    );
-    let log = r.root.join(".git/symphony/tasks/land/sim%2Fjump.log");
-    let line = format!(
-        "the generator the slow one ran past the land's timeout ([land] timeout_seconds, 1 s) on \
-         {SLUG} merged into main; its output is in {}",
-        log.canonicalize().unwrap().display()
-    );
-    assert_refused(&r, &result, &line, &before);
-    assert!(
-        runs(&r).is_empty(),
-        "no check after a generator that did not finish"
-    );
-}
-
-#[test]
 fn an_origin_that_does_not_answer_is_a_push_to_retry_within_the_timeout() {
     let r = Repo::new();
     manifest(&r, &timed(2));
@@ -123,7 +92,7 @@ fn an_origin_that_does_not_answer_is_a_push_to_retry_within_the_timeout() {
 }
 
 #[test]
-fn a_land_waits_for_another_a_bounded_time_naming_it() {
+fn a_land_waits_for_another_past_its_timeout_naming_it_and_lands_once_it_ends() {
     let r = Repo::new();
     manifest(&r, &timed(1));
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
@@ -134,29 +103,41 @@ fn a_land_waits_for_another_a_bounded_time_naming_it() {
     held.lock().unwrap();
     held.write_all(b"the land of sim/fall (pid 4242)").unwrap();
     let before = head(&r.root, "main");
-    let began = Instant::now();
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    assert!(
-        began.elapsed() < Duration::from_secs(10),
-        "{:?}",
-        began.elapsed()
-    );
+    let said = Arc::new(Mutex::new(Vec::new()));
+    let line = std::thread::scope(|scope| {
+        let other = r.board.other();
+        let env = r.env(&r.root);
+        let shared = Shared(Arc::clone(&said));
+        let orch = people.orch.clone();
+        let waiting = scope.spawn(move || {
+            let mut out = shared;
+            land(&other, &env, SLUG, &orch, None, &mut out).map_err(refusal)
+        });
+        wait_for(|| {
+            String::from_utf8_lossy(&said.lock().unwrap())
+                .contains("waiting for the land of sim/fall (pid 4242) to finish")
+        });
+        // Past the land's timeout, which bounds its check and not its wait, it waits on.
+        std::thread::sleep(Duration::from_millis(2500));
+        assert!(!waiting.is_finished(), "it waits with no timeout");
+        assert_eq!(head(&r.root, "main"), before);
+        drop(held);
+        waiting.join().unwrap()
+    });
+    let merge = head(&r.root, "main");
     assert_eq!(
-        said,
-        format!("land {SLUG}: waiting for the land of sim/fall (pid 4242) to finish\n")
-    );
-    assert_eq!(
-        result.unwrap_err(),
+        line.unwrap(),
         format!(
-            "the land of sim/fall (pid 4242) has held {} for 1 s, this land's timeout: run the \
-             land of {SLUG} again once it ends",
-            path.canonicalize().unwrap().display()
+            "landed {SLUG} on main at {}; not pushed: no origin remote",
+            &merge[..12]
         )
     );
-    assert_eq!(head(&r.root, "main"), before);
-    // Once the other ends, it lands.
-    drop(held);
-    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert!(
+        String::from_utf8_lossy(&said.lock().unwrap()).starts_with(&format!(
+            "land {SLUG}: waiting for the land of sim/fall (pid 4242) to finish\n"
+        )),
+        "said once"
+    );
 }
 
 #[test]

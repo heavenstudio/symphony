@@ -32,10 +32,18 @@ struct Inputs {
     head_file: Stamp,
     commondir: Option<Stamp>,
     config: String,
+    /// The project's artifacts folder the verdict was read with.
+    #[serde(default)]
+    artifacts: Option<String>,
 }
 
 impl Inputs {
-    fn read(entry: &git::Listed, finished: bool, policy: &Policy) -> Option<Self> {
+    fn read(
+        entry: &git::Listed,
+        finished: bool,
+        artifacts: Option<&str>,
+        policy: &Policy,
+    ) -> Option<Self> {
         let admin = git::admin(&entry.path)?;
         admin_safe(&entry.path).ok()?;
         let commondir = match fs::metadata(admin.join("commondir")) {
@@ -52,6 +60,7 @@ impl Inputs {
             head_file: stamp(&admin.join("HEAD"))?,
             commondir,
             config: policy.config.clone(),
+            artifacts: artifacts.map(str::to_string),
         })
     }
 }
@@ -109,14 +118,17 @@ fn witnesses(root: &Path, verdict: &Verdict) -> Option<Vec<(PathBuf, Stamp)>> {
 pub(super) struct Verdicts {
     dry_run: bool,
     root: PathBuf,
+    /// The project's artifacts folder ([`git::left_behind`]).
+    artifacts: Option<String>,
     policy: OnceCell<Option<Policy>>,
 }
 
 impl Verdicts {
-    pub fn new(root: &Path, dry_run: bool) -> Self {
+    pub fn new(root: &Path, dry_run: bool, artifacts: Option<&str>) -> Self {
         Self {
             dry_run,
             root: root.into(),
+            artifacts: artifacts.map(str::to_string),
             policy: OnceCell::new(),
         }
     }
@@ -126,7 +138,8 @@ impl Verdicts {
             .policy
             .get_or_init(|| Policy::read(&self.root))
             .as_ref();
-        let inputs = policy.and_then(|policy| Inputs::read(entry, finished, policy));
+        let inputs = policy
+            .and_then(|policy| Inputs::read(entry, finished, self.artifacts.as_deref(), policy));
         let path = git::admin(&entry.path).map(|dir| dir.join("symphony-sweep-verdict.json"));
         if let (Some(inputs), Some(path), Some(policy)) = (&inputs, &path, policy)
             && let Some(saved) = fs::read(path)
@@ -157,8 +170,9 @@ impl Verdicts {
         proof: CleanProof,
     ) -> Verdict {
         let began = SystemTime::now();
-        let inputs = policy.and_then(|policy| Inputs::read(entry, finished, policy));
-        let status = git::file_status(&entry.path, finished);
+        let inputs = policy
+            .and_then(|policy| Inputs::read(entry, finished, self.artifacts.as_deref(), policy));
+        let status = git::file_status(&entry.path, finished, self.artifacts.as_deref());
         let owner = if status
             .left
             .iter()
@@ -206,7 +220,8 @@ impl Verdicts {
             inventory,
         };
         let current = saved.policy_now(&entry.path, policy);
-        let stable = Inputs::read(entry, finished, policy).as_ref() == Some(&saved.inputs)
+        let stable = Inputs::read(entry, finished, self.artifacts.as_deref(), policy).as_ref()
+            == Some(&saved.inputs)
             && saved.witnesses.iter().all(|(path, value)| {
                 value.predates(began) && entry_stamp(path).as_ref() == Some(value)
             })

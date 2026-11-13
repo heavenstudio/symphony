@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
+<title id="title">Proposed: an artifact is attached by its content and kept while anything names it</title>
+<desc id="desc">An agent attaches a file from its worktree with one command, which copies it into the main checkout's artifacts/uploads store under its SHA-256, the store the owner's uploads already use, and prints the line to post. That name is read the same on every page, every branch's view and the phone, and a swept worktree takes nothing with it. A reference index lists what names each file: cards not resolved, tasks not closed, documents on the default branch, every thread post and open asks. When the folder passes the 5 GB cap, the check lists only what nothing names, largest first, for an agent to remove; never a timer. Nothing reaches git: a clone of main and a consumer's Cargo fetch add nothing.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--like:#2e7d4f;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--like:#6cc08b;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.good{fill:none;stroke:var(--like);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.green{fill:var(--like)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="page" width="1000" height="540"/>
+<text class="t" x="24" y="34">Proposed (E): attached by its content, kept while anything names it</text>
+<text class="m" x="24" y="56">The store your uploads already use, opened to agents; nothing reaches git</text>
+
+<rect class="card" x="24" y="74" width="270" height="196" rx="8"/>
+<text class="h" x="40" y="100">An agent's worktree</text>
+<text class="mono" x="40" y="124">artifacts/…/board-phone.png</text>
+<rect class="inner" x="40" y="140" width="238" height="62" rx="5"/>
+<text class="mono" x="50" y="160">symphony-cli attach FILE</text>
+<text class="m" x="50" y="178" font-size="11">copies it into the store and prints</text>
+<text class="m" x="50" y="192" font-size="11">the line to post on the thread or card</text>
+<text class="m" x="40" y="228" font-size="12">Swept later, it takes nothing</text>
+<text class="m" x="40" y="246" font-size="12">a link names</text>
+
+<path class="arrow" d="M294,170 L336,170"/>
+
+<rect class="card" x="338" y="74" width="300" height="196" rx="8"/>
+<text class="h" x="354" y="100">The main checkout's store</text>
+<rect class="inner" x="354" y="114" width="268" height="44" rx="5"/>
+<text class="mono" x="364" y="134">artifacts/uploads/</text>
+<text class="mono" x="364" y="150">&lt;sha256&gt;.png</text>
+<rect class="good" x="354" y="114" width="268" height="44" rx="5"/>
+<text x="354" y="182">one copy per content; the name never</text>
+<text x="354" y="200">moves, whatever happens to a worktree</text>
+<text class="m" x="354" y="226" font-size="12">removing a file gives its space back</text>
+<text class="m" x="354" y="244" font-size="12">PNG, JPEG, GIF, WebP, documents; 10 MiB</text>
+
+<path class="arrow" d="M638,170 L680,170"/>
+
+<rect class="card" x="682" y="74" width="294" height="196" rx="8"/>
+<text class="h" x="698" y="100">Read the same everywhere</text>
+<text x="698" y="126">· every page of the project</text>
+<text x="698" y="148">· every branch's view, /@tree/…</text>
+<text x="698" y="170">· the phone, over the tailnet</text>
+<text class="green" x="698" y="196">no link breaks when a tree goes</text>
+<text class="m" x="698" y="226" font-size="12">another machine serving the board:</text>
+<text class="m" x="698" y="244" font-size="12">later, its server asks this one</text>
+
+<rect class="card" x="24" y="290" width="614" height="152" rx="8"/>
+<text class="h" x="40" y="316">The reference index: what still names each file</text>
+<rect class="inner" x="40" y="330" width="110" height="44" rx="5"/><text x="52" y="350">cards not</text><text x="52" y="366">resolved</text>
+<rect class="inner" x="158" y="330" width="110" height="44" rx="5"/><text x="170" y="350">tasks not</text><text x="170" y="366">closed</text>
+<rect class="inner" x="276" y="330" width="110" height="44" rx="5"/><text x="288" y="350">documents</text><text x="288" y="366">on main</text>
+<rect class="inner" x="394" y="330" width="110" height="44" rx="5"/><text x="406" y="350">every thread</text><text x="406" y="366">post</text>
+<rect class="inner" x="512" y="330" width="110" height="44" rx="5"/><text x="524" y="350">open asks</text>
+<text class="m" x="40" y="400" font-size="12">One file per project, rebuilt from what Symphony already reads, updated by difference:</text>
+<text class="m" x="40" y="418" font-size="12">changed documents, new posts. A full scan of Star Foundry's 143 documents: about 0.1 s.</text>
+
+<path class="arrow" d="M638,366 L680,366"/>
+
+<rect class="card" x="682" y="290" width="294" height="152" rx="8"/>
+<text class="h" x="698" y="316">Past the 5 GB cap</text>
+<text x="698" y="342">the check lists only what nothing</text>
+<text x="698" y="362">names, largest first;</text>
+<text x="698" y="382">an agent looks and removes</text>
+<text class="green" x="698" y="408">never a timer</text>
+<text class="m" x="698" y="428" font-size="12">referenced files are refused</text>
+
+<rect class="card" x="24" y="462" width="952" height="58" rx="8"/>
+<text class="h" x="40" y="488">Git carries none of it</text>
+<text x="40" y="508">A clone of main: +0. A consumer's Cargo fetch: +0. No host quota, no pointer committed, no copy per worktree.</text>
+</svg>

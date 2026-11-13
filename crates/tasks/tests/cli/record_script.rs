@@ -169,6 +169,8 @@ impl Setup {
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
 /// The file [`logging`] logs its runs in.
 const LOG_VAR: &str = "RECORDER_LOG";
+/// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
+const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 
 /// The recorder run once, before any script probes it: the first run of a binary just built can wait
 /// seconds on the system's scan of it, longer than a probe waits for its answer.
@@ -596,9 +598,39 @@ fn a_step_inside_a_run_is_recorded_as_one_and_a_first_version_recorder_records_n
     assert_eq!(prepared.history(2)[1].run, None);
 }
 
+/// The client check's stand-in: it builds the client (an `index.html` in the folder it is handed)
+/// unless `NO_CLIENT` is set, and is red under `FAIL_CLIENT`.
+const CLIENT_CHECK: &str = r#"#!/bin/sh
+if [ -z "${NO_CLIENT:-}" ]; then mkdir -p "$1" && echo built > "$1/index.html"; fi
+if [ -n "${FAIL_CLIENT:-}" ]; then echo 'client-check stand-in: differs'; exit 1; fi
+exit 0
+"#;
+
+/// `tools/rs-bin.sh`'s stand-in: red under `FAIL_PUBLISH`, and the size budgets under `FAIL_SIZE`.
+const RS_BIN: &str = r#"#!/bin/sh
+if [ -n "${FAIL_PUBLISH:-}" ]; then exit 4; fi
+if [ "$2" = size-budget ] && [ -n "${FAIL_SIZE:-}" ]; then echo 'size stand-in: past its budget'; exit 3; fi
+exit 0
+"#;
+
+/// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
+/// made the file that names; `test` saying the client it was handed and the steps folder it sees,
+/// red under `FAIL_TESTS`.
+const RECIPES_CARGO: &str = r#"#!/bin/sh
+if [ "$1" = fmt ] && [ -n "${HOLD_LINT:-}" ]; then : > "$HOLD_LINT"; sleep 60; fi
+if [ "$1" = fmt ] && [ -n "${FAIL_LINT:-}" ]; then echo 'fmt stand-in: a diff'; exit 8; fi
+if [ "$1" = test ]; then
+    echo "client=${SYMPHONY_UI_DIST-unset}"
+    echo "steps=${SYMPHONY_CHECK_STEPS-unset}"
+    if [ -n "${FAIL_TESTS:-}" ]; then exit 9; fi
+fi
+exit 0
+"#;
+
 /// A repository of the test's own holding this workspace's justfile and the scripts its recipes
-/// run, with stand-ins for Cargo (which fails the tests under `FAIL_TESTS`), the client check and
-/// `tools/rs-bin.sh` (which fails under `FAIL_PUBLISH`): the recipes recorded by [`RECORDER`].
+/// run, ignoring `build/` as this one does, with stand-ins for Cargo ([`RECIPES_CARGO`]), the client
+/// check ([`CLIENT_CHECK`]) and `tools/rs-bin.sh` ([`RS_BIN`]): the recipes recorded by
+/// [`RECORDER`].
 struct Recipes {
     tree: PathBuf,
     cargo: PathBuf,
@@ -614,23 +646,18 @@ impl Recipes {
         for name in ["justfile", "symphony.just"] {
             fs::copy(tool("..").join(name), tree.join(name)).unwrap();
         }
-        for name in ["cargo.sh", "record.sh"] {
+        for name in ["cargo.sh", "record.sh", "verify.sh"] {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
-        executable(&tree.join("tools/client-check.sh"), "#!/bin/sh\nexit 0\n");
-        executable(
-            &tree.join("tools/rs-bin.sh"),
-            "#!/bin/sh\nif [ -n \"${FAIL_PUBLISH:-}\" ]; then exit 4; fi\nexit 0\n",
-        );
+        executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
+        executable(&tree.join("tools/rs-bin.sh"), RS_BIN);
         fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
+        fs::write(tree.join(".gitignore"), "/build/\n").unwrap();
         git(&tree, &["init", "-q", "-b", "main"]);
         git(&tree, &["add", "-A"]);
         git(&tree, &["commit", "-q", "-m", "base"]);
         let cargo = setup.dir.join("cargo");
-        executable(
-            &cargo,
-            "#!/bin/sh\nif [ \"$1\" = test ] && [ -n \"${FAIL_TESTS:-}\" ]; then exit 9; fi\nexit 0\n",
-        );
+        executable(&cargo, RECIPES_CARGO);
         let machine = setup.dir.join("machine");
         fs::create_dir_all(&machine).unwrap();
         fs::write(machine.join("machine-id"), format!("1\t{MACHINE}\n")).unwrap();
@@ -645,10 +672,22 @@ impl Recipes {
 
     /// `just RECIPE` in the tree at top level, with `vars` set: what it did.
     fn just(&self, recipe: &str, vars: &[(&str, &str)]) -> Output {
+        self.just_with(&[recipe], vars)
+    }
+
+    /// `just ARGS` in the tree at top level, with `vars` set and no steps folder named but one
+    /// `vars` names: what it did.
+    fn just_with(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
+        output(self.command(args, vars).stdin(Stdio::null())).unwrap()
+    }
+
+    /// The command [`Recipes::just_with`] runs.
+    fn command(&self, args: &[&str], vars: &[(&str, &str)]) -> Command {
         let mut command = Command::new("just");
         command
-            .arg(recipe)
+            .args(args)
             .current_dir(&self.tree)
+            .env_remove(STEPS_VAR)
             .env("CARGO", &self.cargo)
             .env("TASKS_WORK", &self.work)
             .env(RUNS_VAR, &self.runs)
@@ -660,22 +699,23 @@ impl Recipes {
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
+            .env_remove("CDPATH")
             .envs(vars.iter().copied());
-        output(command.stdin(Stdio::null())).unwrap()
+        command
     }
 }
 
 #[test]
-fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
+fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
     let setup = Setup::new("record-script-recipe-runs");
     let recipes = Recipes::new(&setup);
     let update = recipes.just("client-update", &[("FAIL_PUBLISH", "yes")]);
     assert!(!update.status.success(), "{update:?}");
-    for recipe in ["client-check", "lint-rs", "client-check"] {
+    for recipe in ["client-check", "lint-rs", "client-check", "size-check"] {
         let done = recipes.just(recipe, &[]);
         assert!(done.status.success(), "{recipe}: {done:?}");
     }
-    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 4));
+    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 5));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let said: Vec<_> = lines
         .iter()
@@ -696,6 +736,7 @@ fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_t
             ("just client-check", "client", None, None, Some(End::Green)),
             ("just lint-rs", "lint", None, None, Some(End::Green)),
             ("just client-check", "client", None, None, Some(End::Green)),
+            ("just size-check", "size", None, None, Some(End::Green)),
         ]
     );
     // A client check on the tree a client update failed on repeats no update; the next client
@@ -707,8 +748,17 @@ fn the_lint_and_client_recipes_are_runs_of_their_own_pipelines_and_repeat_only_t
     assert_eq!(lines[3].rerun_of.as_deref(), Some(lines[1].run.as_str()));
 }
 
+/// The steps of a verify, in the order it runs them, each with the label its record keeps.
+const STEPS: [(&str, &str); 5] = [
+    ("lint", "just lint-rs"),
+    ("client-check", "just client-check"),
+    ("size-check", "just size-check"),
+    ("docs-audit", "docs audit"),
+    ("tests", "tests"),
+];
+
 #[test]
-fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tests() {
+fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_and_tests() {
     let setup = Setup::new("record-script-verify");
     let recipes = Recipes::new(&setup);
     let (tree, runs) = (&recipes.tree, &recipes.runs);
@@ -722,12 +772,12 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(runs, 4));
+    let first = symphony_api::fold(day_lines(runs, 6));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(runs, 8);
+    let lines = day_lines(runs, 12);
     // A start line and an end line for each run and step, and none for the commands inside them.
-    assert_eq!(lines.len(), 16, "{lines:#?}");
+    assert_eq!(lines.len(), 24, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
         .into_iter()
         .filter(|line| first.iter().all(|earlier| earlier.run != line.run))
@@ -741,7 +791,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     let commit = git_says(tree, &["rev-parse", "HEAD"]);
     let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
-        assert_eq!(runs.len(), 4, "{runs:#?}");
+        assert_eq!(runs.len(), 6, "{runs:#?}");
         let verify = named(runs, None);
         assert_eq!(
             (
@@ -752,17 +802,14 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
             ("verify", "just verify", None)
         );
         assert_eq!(verify.end, Some(end));
-        for (step, label, ended) in [
-            ("lint", "just lint-rs", End::Green),
-            ("client-check", "just client-check", End::Green),
-            ("tests", "tests", end),
-        ] {
+        for (step, label) in STEPS {
             let line = named(runs, Some(step));
             assert_eq!(
                 (line.pipeline.as_str(), line.label.as_str()),
                 ("verify", label)
             );
             assert_eq!(line.parent.as_deref(), Some(verify.run.as_str()), "{step}");
+            let ended = if step == "tests" { end } else { End::Green };
             assert_eq!(line.end, Some(ended), "{step}");
         }
         for line in runs {
@@ -786,7 +833,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
     assert_eq!(red_tests.exit, Some(9));
     assert_eq!(named(&first, None).exit, red.status.code());
     // The second verify, on the same tree after a red, repeats the first, and each step its own.
-    for step in [None, Some("lint"), Some("client-check"), Some("tests")] {
+    for step in std::iter::once(None).chain(STEPS.map(|(step, _)| Some(step))) {
         assert_eq!(
             named(&second, step).rerun_of,
             Some(named(&first, step).run),
@@ -794,7 +841,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
         );
     }
     // Each step's operation is a child of its run's; the commands inside them are none.
-    let history = setup.history(8);
+    let history = setup.history(12);
     for record in &history {
         let line = second
             .iter()
@@ -803,4 +850,293 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_the_client_check_and_the_tes
             .unwrap();
         assert_eq!(record.parent_id, line.parent);
     }
+}
+
+/// The steps a verify listed in `folder`'s `steps.tsv`, each its name, exit status, log and
+/// command, its seconds a whole number and the machine's load as it ended its last field: the load
+/// averages over 1, 5 and 15 minutes and the processors.
+fn listed(folder: &Path) -> Vec<(String, i32, PathBuf, String)> {
+    let text = fs::read_to_string(folder.join("steps.tsv")).unwrap();
+    text.lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 6, "{line:?}");
+            assert!(fields[2].parse::<u64>().is_ok(), "{line:?}");
+            let load: Vec<&str> = fields[5].split(' ').collect();
+            assert_eq!(load.len(), 4, "{line:?}");
+            assert!(
+                load[..3].iter().all(|n| n.parse::<f64>().is_ok())
+                    && load[3].parse::<usize>().is_ok_and(|n| n > 0),
+                "{line:?}"
+            );
+            (
+                fields[0].to_string(),
+                fields[1].parse().unwrap(),
+                PathBuf::from(fields[3]),
+                fields[4].to_string(),
+            )
+        })
+        .collect()
+}
+
+/// The client a tests step's log says it was handed, its real path; `unset` for none.
+fn served(log: &str) -> String {
+    let client = log.lines().next().unwrap().strip_prefix("client=").unwrap();
+    if client == "unset" {
+        return client.into();
+    }
+    Path::new(client)
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string()
+}
+
+#[test]
+fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log() {
+    let setup = Setup::new("record-script-verify-every-step");
+    let recipes = Recipes::new(&setup);
+    let tree = &recipes.tree;
+    // A client an earlier check left behind, which no later verify serves.
+    let stale = tree.join("build/verified-client/public");
+    fs::create_dir_all(&stale).unwrap();
+    fs::write(stale.join("index.html"), "stale").unwrap();
+    let red = recipes.just(
+        "verify",
+        &[
+            ("FAIL_LINT", "yes"),
+            ("FAIL_CLIENT", "yes"),
+            ("NO_CLIENT", "yes"),
+            ("FAIL_SIZE", "yes"),
+            ("FAIL_TESTS", "yes"),
+        ],
+    );
+    assert_eq!(red.status.code(), Some(1), "{red:?}");
+    // Every step ran past the reds before it, each recorded as its own command ended.
+    let lines = symphony_api::fold(day_lines(&recipes.runs, 6));
+    let ended: Vec<_> = STEPS
+        .iter()
+        .map(|(step, _)| {
+            let line = (lines.iter())
+                .find(|line| line.step.as_deref() == Some(*step))
+                .unwrap_or_else(|| panic!("no step {step}: {lines:#?}"));
+            (*step, line.end, line.exit)
+        })
+        .collect();
+    assert_eq!(
+        ended,
+        [
+            ("lint", Some(End::Red), Some(8)),
+            ("client-check", Some(End::Red), Some(1)),
+            ("size-check", Some(End::Red), Some(3)),
+            ("docs-audit", Some(End::Green), Some(0)),
+            ("tests", Some(End::Red), Some(9)),
+        ]
+    );
+    // Each step's output is in a log of its own, which the list names with its status.
+    let folder = tree.join("build/verify");
+    let steps = listed(&folder);
+    let said: Vec<(&str, i32, &str)> = (steps.iter())
+        .map(|(name, code, _, command)| (name.as_str(), *code, command.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("lint", 8, "just lint-rs"),
+            ("client-check", 1, "just client-check build/verified-client"),
+            ("size-check", 3, "just size-check"),
+            ("docs-audit", 0, "just symphony-cli docs-audit --check"),
+            (
+                "tests",
+                9,
+                "tools/cargo.sh test --workspace --locked --no-fail-fast"
+            ),
+        ]
+    );
+    let path = |name: &str| steps.iter().find(|step| step.0 == name).unwrap().2.clone();
+    let log = |name: &str| {
+        assert_eq!(
+            path(name).canonicalize().unwrap(),
+            folder.join(format!("{name}.log")).canonicalize().unwrap()
+        );
+        fs::read_to_string(path(name)).unwrap()
+    };
+    assert!(log("lint").starts_with("fmt stand-in: a diff\n"));
+    assert!(log("client-check").contains("client-check stand-in: differs\n"));
+    assert!(log("size-check").starts_with("size stand-in: past its budget\n"));
+    // The stale client is gone, and the tests say they were served none.
+    assert!(!stale.exists(), "the client check's folder was cleared");
+    let tests = log("tests");
+    let none = "the client check built no client, so SYMPHONY_UI_DIST was unset: the browser \
+                tests built the client themselves (build/symphony-ui), red if that build failed";
+    assert_eq!(served(&tests), "unset", "{tests}");
+    assert!(tests.contains("\nsteps=unset\n"), "{tests}");
+    assert!(tests.ends_with(&format!("\nverify: {none}\n")), "{tests}");
+    // What it said names each red step and its log, then the reds together.
+    let out = String::from_utf8(red.stdout).unwrap();
+    for (name, code) in [
+        ("lint", 8),
+        ("client-check", 1),
+        ("size-check", 3),
+        ("tests", 9),
+    ] {
+        let head = format!("verify: {name} red, exit {code} (");
+        let tail = format!(" s); log {}", path(name).display());
+        assert!(
+            out.lines()
+                .any(|line| line.starts_with(&head) && line.contains(&tail)),
+            "{name} in:\n{out}"
+        );
+    }
+    assert!(out.contains("\nverify: docs-audit green ("), "{out}");
+    assert!(out.contains(&format!("; {none}\n")), "{out}");
+    assert!(
+        out.ends_with("\nverify: red in lint, client-check, size-check, tests\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
+    let setup = Setup::new("record-script-verify-told");
+    let recipes = Recipes::new(&setup);
+    let tree = &recipes.tree;
+    let folder = setup.dir.join("steps of a check");
+    // The client check red on a client it built: the tests are served that one, and say so.
+    let red = recipes.just(
+        "verify",
+        &[
+            (STEPS_VAR, folder.to_str().unwrap()),
+            ("FAIL_CLIENT", "yes"),
+        ],
+    );
+    assert_eq!(red.status.code(), Some(1), "{red:?}");
+    let steps = listed(&folder);
+    let codes: Vec<(&str, i32)> = (steps.iter())
+        .map(|(name, code, _, _)| (name.as_str(), *code))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            ("lint", 0),
+            ("client-check", 1),
+            ("size-check", 0),
+            ("docs-audit", 0),
+            ("tests", 0)
+        ]
+    );
+    assert!(!tree.join("build/verify").exists(), "nothing in the tree");
+    let tests = fs::read_to_string(folder.join("tests.log")).unwrap();
+    let built = tree.join("build/verified-client/public").canonicalize();
+    assert_eq!(served(&tests), built.unwrap().display().to_string());
+    // What a step runs is not told the folder: a verify it runs lists its steps elsewhere.
+    assert!(tests.contains("\nsteps=unset\n"), "{tests}");
+    assert!(
+        tests.contains(
+            "\nverify: the client check is red: the tests ran against the client it built from \
+             this tree, "
+        ) && tests.ends_with(", not the committed one\n"),
+        "{tests}"
+    );
+    assert_eq!(
+        steps[4].3,
+        "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh test \
+         --workspace --locked --no-fail-fast"
+    );
+    assert!(
+        String::from_utf8(red.stdout)
+            .unwrap()
+            .ends_with("\nverify: red in client-check\n")
+    );
+
+    // Named steps run alone, in the verify's order; with no client check, the tests build their
+    // own client.
+    let some = recipes.just_with(&["verify", "tests", "docs-audit"], &[]);
+    assert!(some.status.success(), "{some:?}");
+    let steps = listed(&tree.join("build/verify"));
+    let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
+    assert_eq!(names, ["docs-audit", "tests"]);
+    let tests = fs::read_to_string(tree.join("build/verify/tests.log")).unwrap();
+    assert_eq!(served(&tests), "unset", "{tests}");
+    assert!(
+        tests.contains("\nverify: the client check did not run in this verify, so "),
+        "{tests}"
+    );
+    let mut lines = symphony_api::fold(day_lines(&recipes.runs, 9));
+    lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    let labels: Vec<&str> = (lines.iter())
+        .filter(|line| line.step.is_none())
+        .map(|line| line.label.as_str())
+        .collect();
+    assert_eq!(labels, ["just verify", "just verify tests docs-audit"]);
+    assert_eq!(
+        String::from_utf8(some.stdout).unwrap().lines().last(),
+        Some("verify: green: docs-audit tests")
+    );
+
+    // A step it does not know runs nothing.
+    let unknown = recipes.just_with(&["verify", "tests", "nothing"], &[]);
+    assert_eq!(unknown.status.code(), Some(2), "{unknown:?}");
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).starts_with(
+            "verify: no step nothing; the steps are lint client-check size-check docs-audit tests\n"
+        ),
+        "{unknown:?}"
+    );
+    assert_eq!(listed(&tree.join("build/verify")).len(), 2, "as it was");
+}
+
+#[test]
+fn a_verify_finds_its_steps_folder_whatever_cdpath_says() {
+    let setup = Setup::new("record-script-verify-cdpath");
+    let recipes = Recipes::new(&setup);
+    // A CDPATH that leads `cd build/verify` there, so cd prints the folder it went to.
+    let done = recipes.just_with(&["verify", "docs-audit"], &[("CDPATH", ".")]);
+    assert!(done.status.success(), "{done:?}");
+    let steps = listed(&recipes.tree.join("build/verify"));
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(
+        (steps[0].0.as_str(), steps[0].1),
+        ("docs-audit", 0),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn an_interrupt_stops_a_verify_once_the_step_it_reached_ends() {
+    let setup = Setup::new("record-script-verify-interrupt");
+    let recipes = Recipes::new(&setup);
+    let held = setup.dir.join("lint held");
+    let mut command = recipes.command(&["verify"], &[("HOLD_LINT", held.to_str().unwrap())]);
+    let child = command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !held.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the lint never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Ctrl-C: the interrupt a terminal sends the whole foreground group.
+    let group = i32::try_from(child.id()).unwrap();
+    // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.
+    assert_eq!(unsafe { libc::kill(-group, libc::SIGINT) }, 0);
+    let done = wait_output(child).unwrap();
+    assert_eq!(done.status.code(), Some(130), "{done:?}");
+    let steps = listed(&recipes.tree.join("build/verify"));
+    let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
+    assert_eq!(names, ["lint"], "no step after the one it reached");
+    assert!(
+        String::from_utf8(done.stdout)
+            .unwrap()
+            .ends_with("\nverify: interrupted in lint: no step after it ran\n"),
+        "{:?}",
+        String::from_utf8_lossy(&done.stderr)
+    );
 }

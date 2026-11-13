@@ -312,6 +312,7 @@ fn property(value: &JsValue, key: &str) -> JsValue {
 
 /// Apply the additional task regions without teaching the front page's wire enum about them.
 pub fn apply(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> {
+    crate::viewport::hold_place("[id^=message-], [id^=child-], [data-slug]");
     let generation = data.read().generation + 1;
     {
         let mut shown = data.write();

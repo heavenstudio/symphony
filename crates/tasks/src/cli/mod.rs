@@ -9,6 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
+mod database;
 mod detached;
 mod embedding;
 mod field;
@@ -17,8 +18,10 @@ mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
+mod schema;
 mod search;
 mod shape;
+mod snapshot;
 mod status;
 mod sweep;
 mod text;
@@ -175,7 +178,10 @@ fn run(
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }
-    // Before the board's argument table: what follows `--` is another program's command line.
+    // Before the board's argument table: what follows `--` is another program's command line. Only
+    // here, first after any `--database NAME`, which the `tasks` recipe `symphony init` installs
+    // refuses in the same spelling (`shipped/symphony.just`): it runs any command, and the allow
+    // rules pass `just tasks` unasked. Any other word before it is the table's, which has no `run`.
     if args.first().is_some_and(|arg| arg == recorder::COMMAND) {
         let words: Vec<std::ffi::OsString> = args[1..].iter().map(Into::into).collect();
         return recorder::run(&words, env, out, err, program.is_some());
@@ -184,6 +190,11 @@ fn run(
     // checkout holds no board source.
     if args.first().is_some_and(|arg| arg == migrate::COMMAND) {
         return migrate::run(&args[1..], env, out, err);
+    }
+    // Before the board's argument table, and without opening the board: what holds its database
+    // stopped never starts it.
+    if args.first().is_some_and(|arg| arg == database::COMMAND) {
+        return database::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {
@@ -216,6 +227,12 @@ fn run(
     }
     if parsed.command == "status" {
         return status::run(&parsed, env, out, err);
+    }
+    if parsed.command == "schema" {
+        return schema::run(&parsed, env, out, err);
+    }
+    if parsed.command == "snapshot" {
+        return snapshot::run(&parsed, env, out, err);
     }
     let reached = Clock::of(env).and_then(|clock| {
         let store = open(reach(env, &env.cwd, true)?, &clock)?;
@@ -311,35 +328,27 @@ pub fn connect(env: &Env) -> Result<Store, String> {
     ))
 }
 
-/// `store`, its starts held to the cap on each orchestrator's open tasks that the main checkout of
-/// `env`'s repository configures ([`crate::slots::of_env`]), and its pipeline alarm raised at the
-/// thresholds it configures beside it ([`crate::alarm::of_env`]). A cap that cannot be read is said
-/// on stderr and caps nothing, and thresholds that cannot be read are said and the defaults apply: a
-/// broken project file must not stop the board, nor the landing that mends it.
+/// `store`, held to the limits the main checkout of `env`'s repository writes ([`crate::limits`]):
+/// the cap on each orchestrator's open tasks, the low-volume threshold, the agents a machine runs
+/// and the pipeline alarm's thresholds, as its `symphony.toml` is at each read, so a store kept
+/// open follows a change to the file. A value that cannot be read is said on stderr and takes its
+/// default: a broken project file must not stop the board, nor the landing that mends it. Outside
+/// a repository, every default.
 pub fn capped(store: Store, env: &Env) -> Store {
     capped_saying(store, env, &mut |problem| eprintln!("tasks: {problem}"))
 }
 
-/// As [`capped`], what is wrong with the cap or the thresholds said by `say`.
+/// As [`capped`], what is wrong with the file as it is now said by `say`; a later version of it,
+/// read again by the store, on stderr ([`crate::limits::Watched`]).
 fn capped_saying(store: Store, env: &Env, say: &mut dyn FnMut(&str)) -> Store {
-    let store = match crate::alarm::of_env(env) {
-        Ok(thresholds) => store.alarming(thresholds),
-        Err(problem) => {
-            say(&format!(
-                "{problem}; the pipeline alarm takes its default thresholds"
-            ));
-            store
-        }
+    let Some(path) = crate::limits::file_of(env) else {
+        return store.limiting(crate::limits::Limits::default());
     };
-    match crate::slots::of_env(env) {
-        Ok(slots) => store.capping(slots),
-        Err(problem) => {
-            say(&format!(
-                "{problem}; no cap on an orchestrator's open tasks applies"
-            ));
-            store
-        }
+    let (watched, read) = crate::limits::Watched::new(path);
+    for problem in &read.problems {
+        say(problem);
     }
+    store.watching(watched)
 }
 
 /// `store`, its writes handing their dispatch to a detached `program dispatch` when a `program` runs,
@@ -419,15 +428,29 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
     })
 }
 
-/// The board `env` reaches, its server started if it is down: what `tasks-copy --board` writes
-/// into. A process Cargo runs from the live board's repository, or one it runs under, is refused it
-/// before its server is started ([`crate::live::cargo_refusal`]); the store each opens on it judges
-/// whether it may move it ([`crate::live`]).
-pub fn board_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Client).map(|reached| reached.client)
+/// The board `env` reaches, its server started if it is down: what `tasks-copy --board` reads and
+/// writes, opening its store as the live board it is ([`Reached::opening`]), so one that went back
+/// is refused it. A process Cargo runs from the live board's repository, or one it runs under, is
+/// refused it before its server is started ([`crate::live::cargo_refusal`]); the store each opens
+/// on it judges whether it may move it ([`crate::live`]).
+pub fn writable_board(env: &Env) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Client)
 }
 
-/// As [`board_client`], refused nothing here: a raw read of the live board that opens no store
+/// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
+/// ([`crate::Store::open`]): kept, with this signature, for consumers' code, which a release's
+/// refresh never changes (it moves their pin alone). New code uses [`writable_board`] and opens its
+/// store by [`Reached::opening`]. A store opened on a bare client names no live board, so a live
+/// board that went back below its record is refused here instead, in the rollback's words, before
+/// the client is returned, its schema read once when there is a record, as [`open_unchecked`] does
+/// ([`crate::live::seen::checked`]).
+pub fn board_client(env: &Env) -> Result<Client, String> {
+    let reached = writable_board(env)?;
+    not_gone_back(&reached)?;
+    Ok(reached.client)
+}
+
+/// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
 /// (`search_bench`'s), which a process Cargo runs may make.
 pub fn raw_client(env: &Env) -> Result<Client, String> {
     reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
@@ -442,10 +465,18 @@ pub struct Reached {
     pub live: Option<crate::live::Live>,
 }
 
+impl Reached {
+    /// `how`, naming this board's project and opening it as the live board it is, if it is one: a
+    /// store opened by it refuses a live board that went back ([`crate::live::seen`]).
+    pub fn opening(&self, how: crate::Opening) -> crate::Opening {
+        how.of(self.project.as_deref()).live(self.live.clone())
+    }
+}
+
 /// The board of the project `env`'s working directory is in ([`crate::project::find`]), its
 /// server started if it is down, or the one `TASKS_SERVER` and `TASKS_DATABASE` name, as
-/// [`board_client`] reaches it: what the Symphony reads a project's board from. A process Cargo runs
-/// from that project's repository is refused its live board before the server is started.
+/// [`writable_board`] reaches it: what the Symphony reads a project's board from. A process Cargo
+/// runs from that project's repository is refused its live board before the server is started.
 pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Read)
 }
@@ -459,15 +490,12 @@ pub fn running_board(env: &Env) -> Result<Reached, String> {
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
 /// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
-    reach_board(
-        env,
-        cwd,
-        if start {
-            Reaching::Command
-        } else {
-            Reaching::Running
-        },
-    )
+    let how = if start {
+        Reaching::Command
+    } else {
+        Reaching::Running
+    };
+    reach_board(env, cwd, how)
 }
 
 /// How a run reaches its board.
@@ -487,6 +515,10 @@ enum Reaching {
     /// process Cargo runs.
     Raw,
 }
+
+/// How long the Symphony's read waits on another's start of the board's server (the starters'
+/// lock) before it is refused, naming that start: a start without a replay takes about a second.
+const READ_WAIT: Duration = Duration::from_secs(5);
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
 fn machine(env: &Env) -> Option<PathBuf> {
@@ -535,7 +567,17 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         common: common.clone(),
     });
     guard(&live)?;
-    let home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
+    let mut home = Home::in_common(common, env.read(symphony_env::SURREAL).map(Path::new));
+    if how == Reaching::Read {
+        // The Symphony's thread that reads the board serves its pages too: it is refused, naming
+        // the start under way, rather than wait out a replay of minutes, another's or its own,
+        // which runs on a thread of its own.
+        home = home.waiting_at_most(READ_WAIT).starting_apart();
+    }
+    // Held, every reach is refused naming the hold, one that would only read the record too.
+    if let Some(hold) = home.held() {
+        return Err(crate::server::ServerError::Held(hold).to_string());
+    }
     let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
         home.ensure().map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
@@ -577,9 +619,43 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
         .map_err(|e| e.to_string())
 }
 
-/// The board `reached`, read by `clock`, its tables taken as they are: the heartbeat's one request.
-/// Its write still meets this build's schema guard, which names the project.
-fn open_unchecked(reached: Reached, clock: &Clock) -> Store {
+/// The board `reached`, read by `clock`, its tables taken as they are: the recorder's and the
+/// detached dispatcher's. Its writes still meet this build's schema guard, which names the project.
+/// A live board that went back below its record is refused in the rollback's words, its schema read
+/// once when there is a record ([`crate::live::seen::checked`]).
+fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    not_gone_back(&reached)?;
+    Ok(unchecked(reached, clock))
+}
+
+/// Refused in the rollback's words when `reached` is a live board that went back below its record,
+/// its schema read once when there is a record ([`crate::live::seen::checked`]); no record, no read.
+fn not_gone_back(reached: &Reached) -> Result<(), String> {
+    if let Some(live) = &reached.live
+        && let Some(back) = crate::live::seen::checked(live, || migrate::version(&reached.client))?
+    {
+        return Err(back.refusal());
+    }
+    Ok(())
+}
+
+/// As [`open_unchecked`], for the heartbeat's one request: the board's schema is read only when the
+/// record is above this build's ([`crate::live::seen::past_guard`]), since below it the schema guard
+/// refuses the beat's write to a board that went back.
+fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    if let Some(live) = &reached.live
+        && let Some(back) =
+            crate::live::seen::past_guard(live, crate::Schema::this_build().version(), || {
+                migrate::version(&reached.client)
+            })?
+    {
+        return Err(back.refusal());
+    }
+    Ok(unchecked(reached, clock))
+}
+
+/// The board `reached`, its tables taken as they are, by no check of its own.
+fn unchecked(reached: Reached, clock: &Clock) -> Store {
     let (clock, probe, host) = parts(clock);
     let how = crate::Opening::write()
         .of(reached.project.as_deref())
@@ -651,6 +727,78 @@ mod tests {
             board(&[("TASKS_SERVER", "a b"), ("TASKS_DATABASE", "it's")]),
             r"TASKS_SERVER='a b' just tasks --database 'it'\''s'"
         );
+    }
+
+    /// The recorder runs only first, or after `--database NAME` options, the spelling the `tasks`
+    /// recipe `symphony init` installs refuses (`shipped/symphony.just`, `_symphony_board`): any
+    /// other word before `run`, an option of the table's or not, is the table's, which has no `run`,
+    /// so the command after it never starts.
+    #[test]
+    fn the_recorder_runs_only_first_or_after_database_options_as_the_board_recipe_reads_it() {
+        let dir =
+            std::env::temp_dir().join(format!("symphony-recorder-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let env = Env {
+            vars: BTreeMap::new(),
+            cwd: dir.clone(),
+        };
+        let called = |words: &[&str]| {
+            let args: Vec<String> = words.iter().map(|word| word.to_string()).collect();
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = main(&args, &env, &mut std::io::empty(), &mut out, &mut err);
+            (code, String::from_utf8(out).unwrap())
+        };
+        let probe = format!("{}\n", recorder::PROBE);
+        for words in [
+            &["run", "--probe"][..],
+            &["--database", "scratch1", "run", "--probe"],
+            &["--database", "a", "--database", "b", "run", "--probe"],
+            // A database named `run` is a value, the command after it the recorder still.
+            &["--database", "run", "run", "--probe"],
+        ] {
+            assert_eq!(called(words), (0, probe.clone()), "{words:?}");
+        }
+        let ran = dir.join("ran");
+        let touch = format!("touch '{}'", ran.display());
+        for lead in [
+            &["--as", "h"][..],
+            &["--as=h"],
+            &["--database=scratch1"],
+            &["--database", "a b"],
+            &["--"],
+        ] {
+            let words: Vec<&str> = lead
+                .iter()
+                .copied()
+                .chain(["run", "--phase", "test", "--", "sh", "-c", &touch])
+                .collect();
+            assert_eq!(called(&words), (2, String::new()), "{words:?}");
+            assert!(!ran.exists(), "{words:?} ran its command");
+        }
+        // The same command first does run, so the words above are what kept it from running.
+        let words = ["run", "--phase", "test", "--", "sh", "-c", &touch];
+        let mut recording = env.clone();
+        recording.vars.insert("PATH".into(), "/usr/bin:/bin".into());
+        recording.vars.insert(
+            "TASKS_WORK".into(),
+            dir.join("work").to_string_lossy().into_owned(),
+        );
+        recording.vars.insert(
+            "SYMPHONY_MACHINE_DIR".into(),
+            dir.join("machine").to_string_lossy().into_owned(),
+        );
+        let args: Vec<String> = words.iter().map(|word| word.to_string()).collect();
+        let code = main(
+            &args,
+            &recording,
+            &mut std::io::empty(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        assert_eq!(code, 0);
+        assert!(ran.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

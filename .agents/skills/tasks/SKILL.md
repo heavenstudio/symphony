@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 85fbcbc3413eb22c files=SKILL.md -->
+<!-- symphony-stamp: 239c4730d0481527 files=SKILL.md -->
 
 # Work from the task board
 
@@ -48,9 +48,9 @@ to register your native channel so messages can start a turn directly.
 
 1. **Register** with `just tasks register --kind <worker|orchestrator|reviewer>`
    (or reuse the handle you were given). Pass it on every later command as
-   `TASKS_SESSION=<handle> just tasks …` or
-   `just tasks … --as <handle>`. A Codex agent uses only the second form; see
-   [Commands from Codex](#commands-from-codex).
+   `just tasks … --as <handle>`, Claude and Codex alike: no allow rule passes a
+   command with an env prefix, so `TASKS_SESSION=<handle> just tasks …` stops
+   at a prompt. See [Commands from Codex](#commands-from-codex).
 
 2. **Register the callback** with `just tasks callback --as <handle>`. It detects
    the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket`
@@ -186,6 +186,8 @@ Act on requests without an acknowledgement post.
 4. When a teammate needs something, tell them on the thread. When you are
    stuck, `just tasks move SLUG blocked` and say why on the thread.
 5. Done and green: `just tasks move SLUG review`. **Never review your own task.**
+   Work that landed with another task's branch, leaving none of its own, closes
+   instead with `just tasks done SLUG "what landed, where" --covered-by OTHER`.
 6. `VERDICT … changes`: it is back with you in `in_progress`. Fix it and move it
    to `review` again.
 7. To book the follow-up in your area before anyone else takes it:
@@ -193,7 +195,8 @@ Act on requests without an acknowledgement post.
 
 ## Review (reviewer)
 
-Choose reviewer families, models and launch methods under the project's policy.
+Choose reviewer families, models and launch methods under the project's policy;
+`just tasks limits` names the reviewer's model the project sets.
 Reviewers must be independent of the author and use the project's required stamps.
 
 `just tasks role SLUG reviewer` on a task in `review`, then read the diff and
@@ -245,7 +248,7 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    reviewer also takes the reviewer role on its parent), starts that agent in
    its own terminal and worktree, and records its session.
    Its prompt is `/work SLUG HANDLE` and nothing else: the work skill tells it
-   to run every command as `TASKS_SESSION=<its handle> just tasks …`, claim
+   to run every command as `just tasks … --as <its handle>`, claim
    exactly that task, post what another agent needs
    with `just tasks say`, and use `just tasks inbox --as HANDLE` between steps
    as an in-process subagent. Its parent resumes it (`SendMessage`) with news
@@ -262,8 +265,8 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    valid registration holds is refused, including while idle. UDS registration
    belongs to the listener's pid and start time; a dead or replaced process
    loses it. A handle bound to an in-process agent cannot register a callback.
-   Its first `just tasks …` command run as its handle (a leading
-   `TASKS_SESSION=<handle>`, or that command's own `--as <handle>`) binds it,
+   Its first `just tasks …` command run as its handle (that command's own
+   `--as <handle>`) binds it,
    and from then on each of its tool calls is its heartbeat (the project hooks,
    `just tasks beat`): an agent coding or running tests reads live.
    A handle only mentioned in a command binds nothing, and a session with its
@@ -289,7 +292,11 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   A given checkout with a live or stale executor is refused. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
   configured multiplexer's project space. Explicit flags and the destination
-  project's launch configuration select the agent, model and effort. Launch
+  project's launch configuration select the agent, model and effort: its
+  `[agents] launch`, on the model its `[agents.models]` names for the role. It is
+  refused while the machine runs as many agents as the project's `[limits]
+  machine_agents` allows. `just tasks limits` prints the limits and each role's
+  model in force, and where each came from. Launch
   records the handle, role, conversation, checkout, branch, terminal and start time.
   Its prompt uses the work skill with the task slug and registered handle.
   Always pass `--kind`. Choose a terminal reviewer only when the project's

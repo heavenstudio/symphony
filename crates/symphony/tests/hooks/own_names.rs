@@ -7,7 +7,9 @@
 //!   lines, so a new old name anywhere fails here.
 //! - The first consuming project's name is in no file's text or path: in any case, its two words
 //!   joined by nothing, a space, `-`, `_` or `.`, or parted at a line's end (a comment's or a
-//!   quote's marks before the second), and inside any identifier built from it.
+//!   quote's marks before the second), and inside any identifier built from it. The documents that
+//!   keep what was measured on that project as measured are the exception, each named below with
+//!   why and pinned by how many times it names it.
 
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -21,7 +23,7 @@ const OLD: &str = "sf[-_.]";
 const HERE: &str = "crates/symphony/tests/hooks/own_names.rs";
 
 /// Each file that may still name an old name, how many of its lines do, and why.
-const FENCES: [(&str, usize, &str); 6] = [
+const FENCES: [(&str, usize, &str); 7] = [
     (
         "tools/move-state.sh",
         47,
@@ -29,7 +31,7 @@ const FENCES: [(&str, usize, &str); 6] = [
     ),
     (
         "crates/tasks/tests/launcher/move_state.rs",
-        165,
+        170,
         "the move command's tests: the old folders it moves, as fixtures and expected output",
     ),
     (
@@ -52,11 +54,61 @@ const FENCES: [(&str, usize, &str); 6] = [
         9,
         "the tools script's tests: those copies, as fixtures and expected output",
     ),
+    (
+        "docs/history/board-went-back-2026-11-12.md",
+        1,
+        "a past incident on the consuming project's board: the old folder it happened in",
+    ),
 ];
 
 /// The consuming project's name, its two words each spelled backwards so that this file names it
 /// nowhere.
 const NAME_BACKWARDS: [&str; 2] = ["rats", "yrdnuof"];
+
+/// Each file that may name the consuming project, how many times it does, and why: a document that
+/// keeps what was measured on that project as it was measured.
+const MEASURED: [(&str, usize, &str); 8] = [
+    (
+        "docs/DECISIONS.md",
+        17,
+        "the owner's cards: figures measured on that project, as they were put to the owner",
+    ),
+    (
+        "docs/analysis/attached-artifacts.md",
+        37,
+        "an analysis measured on that project's documents and pictures",
+    ),
+    (
+        "docs/analysis/attached-artifacts/proposed.svg",
+        1,
+        "that analysis's picture, labelled with what it measured",
+    ),
+    (
+        "docs/analysis/attached-artifacts/split.svg",
+        2,
+        "that analysis's picture, labelled with what it measured",
+    ),
+    (
+        "docs/analysis/attached-artifacts/today.svg",
+        2,
+        "that analysis's picture, labelled with what it measured",
+    ),
+    (
+        "docs/analysis/release-candidate.md",
+        8,
+        "a night's record: the step, the tasks and the lint it measured on that project",
+    ),
+    (
+        "docs/history/README.md",
+        1,
+        "the history's index: an incident on that project's board",
+    ),
+    (
+        "docs/history/board-went-back-2026-11-12.md",
+        2,
+        "an incident on that project's board, as it happened",
+    ),
+];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -160,6 +212,31 @@ fn in_tree(root: &Path) -> Vec<String> {
     found
 }
 
+/// What of `found` (as [`in_tree`] says it) the `measured` files do not allow: each place that is
+/// not in one of their texts, then a line for each of them that names the name other than its
+/// count of times.
+fn unmeasured(found: &[String], measured: &BTreeMap<&str, usize>) -> Vec<String> {
+    let mut counted: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut strays = Vec::new();
+    for place in found {
+        let (path, rest) = place.split_once(':').expect("PATH: …");
+        if measured.contains_key(path) && rest.starts_with(|c: char| c.is_ascii_digit()) {
+            *counted.entry(path).or_default() += 1;
+        } else {
+            strays.push(place.clone());
+        }
+    }
+    for (path, allowed) in measured {
+        let times = counted.get(path).copied().unwrap_or(0);
+        if times != *allowed {
+            strays.push(format!(
+                "{path}: names it {times} times, its measure says {allowed}"
+            ));
+        }
+    }
+    strays
+}
+
 /// The text at `file`: none for a folder (or a link to one), a file holding a NUL byte or one gone
 /// from the checkout; other bytes lossily.
 fn text(file: &Path) -> String {
@@ -199,6 +276,17 @@ fn every_fence_is_one_file_with_lines_and_a_reason() {
     for (file, lines, why) in FENCES {
         assert!(lines > 0, "{file}: a fence of no lines");
         assert!(!why.trim().is_empty(), "{file}: a fence without its reason");
+    }
+    let mut measured: Vec<&str> = MEASURED.iter().map(|(file, _, _)| *file).collect();
+    measured.sort_unstable();
+    measured.dedup();
+    assert_eq!(measured.len(), MEASURED.len(), "one measure per file");
+    for (file, times, why) in MEASURED {
+        assert!(times > 0, "{file}: a measure of no times");
+        assert!(
+            !why.trim().is_empty(),
+            "{file}: a measure without its reason"
+        );
     }
 }
 
@@ -259,11 +347,39 @@ fn the_pattern_finds_each_form_of_an_old_name_and_not_symphonys_own() {
 
 #[test]
 fn no_tracked_file_or_path_names_the_consuming_project() {
-    let found = in_tree(&workspace());
+    let measured: BTreeMap<&str, usize> = MEASURED
+        .iter()
+        .map(|(file, times, _)| (*file, *times))
+        .collect();
+    let found = unmeasured(&in_tree(&workspace()), &measured);
     assert!(
         found.is_empty(),
-        "the consuming project's name: say \"the consuming project\" instead:\n{}",
+        "the consuming project's name: say \"the consuming project\" instead, or measure a \
+         document that keeps what was measured on it here with why (and its count):\n{}",
         found.join("\n")
+    );
+}
+
+#[test]
+fn a_measured_document_names_it_its_count_of_times_in_its_text_and_never_in_its_path() {
+    let found = [
+        "a.md:3: X",
+        "a.md:9: X",
+        "b.md:1: X",
+        "c.md:2: X",
+        "c.md:4: X",
+        "docs/a.md-list.md: named X",
+    ]
+    .map(String::from);
+    let measured: BTreeMap<&str, usize> = [("a.md", 2), ("c.md", 1), ("d.md", 1)].into();
+    assert_eq!(
+        unmeasured(&found, &measured),
+        [
+            "b.md:1: X",
+            "docs/a.md-list.md: named X",
+            "c.md: names it 2 times, its measure says 1",
+            "d.md: names it 0 times, its measure says 1",
+        ]
     );
 }
 

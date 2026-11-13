@@ -169,18 +169,23 @@ fn refuse(common: &Path, slug: &str, why: &str) -> Started {
     Started::Refused(why.to_string())
 }
 
-/// The log, opened to append.
-fn open_log(dir: &Path) -> std::io::Result<File> {
+/// The log `name` in `dir`, opened to append.
+pub(crate) fn open_log_named(dir: &Path, name: &str) -> std::io::Result<File> {
     fs::create_dir_all(dir)?;
     OpenOptions::new()
         .append(true)
         .create(true)
-        .open(dir.join(LOG))
+        .open(dir.join(name))
+}
+
+/// The log, opened to append.
+fn open_log(dir: &Path) -> std::io::Result<File> {
+    open_log_named(dir, LOG)
 }
 
 /// The program `args[0]` names, as the command runs it from `root`: a path with a folder in it is
 /// the main checkout's own; a bare name is found on `PATH`.
-fn program(root: &Path, name: &str) -> PathBuf {
+pub(crate) fn program(root: &Path, name: &str) -> PathBuf {
     let path = Path::new(name);
     if path.is_absolute() || path.components().count() < 2 {
         path.to_path_buf()
@@ -193,7 +198,7 @@ fn program(root: &Path, name: &str) -> PathBuf {
 /// file it may execute, a bare name one along `env`'s `PATH` (`/usr/bin:/bin` without one). Else
 /// the error a spawn of it answers: what the lookup said, or that it may not be run. A recorder
 /// would start whatever its command is, so this is asked before it is handed one.
-fn startable(root: &Path, program: &Path, env: &Env) -> std::io::Result<()> {
+pub(crate) fn startable(root: &Path, program: &Path, env: &Env) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt as _;
     let runnable = |path: &Path| -> std::io::Result<()> {
         let found = fs::metadata(path)?;

@@ -5,20 +5,20 @@
 //! A measured plugin is the plugin behind a wrapper of the same seams: every call into a seam's
 //! object (a component's render, a card kind's slot, a watch's change…) goes through its
 //! meter, which times it and appends one line to the project's record ([`RECORD`], under its
-//! artifacts folder). What a plugin declares (its names, markers, paths, navigation, generators
-//! and theme) is read from the plugin itself: a protocol sends it once, at the start
-//! ([`Declare`]), and the loopback times that once per wrapper. A wrapper is made once for each
-//! plugin, record and setting, and kept for the process's life, so a seam's object it hands out
-//! lives as long as the plugin's own.
+//! artifacts folder, rolled at [`CAP`]). What a plugin declares (its names, markers, paths,
+//! navigation, generators and theme) is read from the plugin itself: a protocol sends it once, at
+//! the start ([`Declare`]), and the loopback times that once per wrapper. A wrapper is made once
+//! for each plugin, record and setting, and kept for the process's life, so a seam's object it
+//! hands out lives as long as the plugin's own.
 //!
 //! The loopback sends each call as a protocol would ([`symphony_plugin::protocol`]): the request
 //! built from the call's arguments, written as JSON and read back as a [`Request`]; the call made
-//! with what was read; its answer written and read back. What comes back is the answer the seam
-//! gives. A value that does not survive (it fails to write or read, or reads back otherwise) is
-//! named on the call's line and on stderr: a request that does not read back leaves the call
-//! linked, and an answer that does not leaves the plugin's own. A page's render and a doc check's
-//! reading of `docs/` stay the server's own on the plugin's side, as a protocol's plugin keeps its
-//! own for one render or check.
+//! with what was read; its answer written as an [`Answered`] and read back. What comes back is the
+//! answer the seam gives. A value that does not survive (it fails to write or read, or reads back
+//! otherwise) is named on the call's line and on stderr: a request that does not read back leaves
+//! the call linked, and an answer that does not leaves the plugin's own. A page's render and a doc
+//! check's reading of `docs/` stay the server's own on the plugin's side, as a protocol's plugin
+//! keeps its own for one render or check.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -29,11 +29,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use symphony_plugin::protocol::{
-    Alive, AnswerGates, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData, CardGates,
-    Changed, CheckDocs, CheckProse, Chosen, Declaration, Declare, Deliver, DocComponents, Draw,
-    FieldData, FileData, Forget, KeptWhile, Offer, PageData, Pictures, ProblemData, Recognises,
-    RegisterAgent, Render, Request, Resolve, RunCommand, Serve, ShowRegion, Slot, Submit, TaskData,
-    TriageCategory, Validate,
+    Alive, AnswerGates, Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData,
+    CardGates, Changed, CheckDocs, CheckProse, Chosen, Declaration, Declare, Deliver,
+    DocComponents, Draw, FileData, Forget, KeptWhile, Offer, PROTOCOL, PageData, Pictures,
+    ProblemData, Recognises, RegisterAgent, Render, Request, Resolve, RunCommand, Serve,
+    ShowRegion, Slot, Submit, TaskData, TriageCategory, Validate,
 };
 use symphony_plugin::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use symphony_plugin::{
@@ -86,44 +86,81 @@ pub(super) fn measured(
     measured
 }
 
+/// The size at which a record is rolled: renamed to its `.1` (`plugin-calls.1.jsonl`), replacing
+/// the one before, and begun again, so a record and its roll hold twice this at most.
+pub const CAP: u64 = 32 * 1024 * 1024;
+
+/// Where a record at `path` is rolled to: `plugin-calls.1.jsonl` beside `plugin-calls.jsonl`; and a
+/// plugin's log, `NAME.1.log` beside `NAME.log` ([`super::process`]).
+pub(super) fn rolled(path: &Path) -> PathBuf {
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    match path.extension() {
+        Some(extension) => path.with_file_name(format!("{stem}.1.{}", extension.to_string_lossy())),
+        None => path.with_file_name(format!("{stem}.1")),
+    }
+}
+
+/// A file's device and inode: what tells the file a path names from another put in its place.
+type Identity = (u64, u64);
+
+fn identity(metadata: &std::fs::Metadata) -> Identity {
+    use std::os::unix::fs::MetadataExt as _;
+    (metadata.dev(), metadata.ino())
+}
+
 /// The file a record is appended to, one per path in the process.
-struct Record {
+pub(super) struct Record {
     path: PathBuf,
-    /// The file as last opened; opened again when it is gone, so a record removed starts over.
-    file: Mutex<Option<std::fs::File>>,
+    /// The size past which it is rolled.
+    cap: u64,
+    /// The file as last opened, and which file that was. Another at the path (the one removed, or
+    /// removed and made again by another process) is opened in its place, so no line goes to a
+    /// file no path names.
+    file: Mutex<Option<(std::fs::File, Identity)>>,
     /// Whether a write failed and was said on stderr: said once.
     warned: AtomicBool,
 }
 
 impl Record {
-    fn at(path: &Path) -> &'static Record {
+    /// The record at `path`, the one this process writes there.
+    pub(super) fn at(path: &Path) -> &'static Record {
         static RECORDS: LazyLock<Mutex<Vec<&'static Record>>> =
             LazyLock::new(|| Mutex::new(Vec::new()));
         let mut records = RECORDS.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(found) = records.iter().find(|record| record.path == path) {
             return found;
         }
-        let record: &'static Record = Box::leak(Box::new(Record {
-            path: path.to_path_buf(),
-            file: Mutex::new(None),
-            warned: AtomicBool::new(false),
-        }));
+        let record: &'static Record = Box::leak(Box::new(Record::new(path, CAP)));
         records.push(record);
         record
     }
 
-    /// `line` appended, in one write.
-    fn write(&self, line: &Line<'_>) {
+    fn new(path: &Path, cap: u64) -> Record {
+        Record {
+            path: path.to_path_buf(),
+            cap,
+            file: Mutex::new(None),
+            warned: AtomicBool::new(false),
+        }
+    }
+
+    /// `line` appended, in one write: to the file at the path now, rolled first when it is full.
+    pub(super) fn write(&self, line: &Line<'_>) {
         let Ok(mut text) = serde_json::to_string(line) else {
             return;
         };
         text.push('\n');
         let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        if file.is_none() || !self.path.exists() {
+        let now = std::fs::metadata(&self.path).ok();
+        let held = file.as_ref().map(|(_, held)| *held);
+        if held.is_none() || now.as_ref().map(identity) != held {
+            *file = self.open();
+        } else if now.is_some_and(|now| now.len() >= self.cap) {
+            let _ = std::fs::rename(&self.path, rolled(&self.path));
             *file = self.open();
         }
         let written = match file.as_mut() {
-            Some(open) => open.write_all(text.as_bytes()).map_err(|e| e.to_string()),
+            Some((open, _)) => open.write_all(text.as_bytes()).map_err(|e| e.to_string()),
             None => Err("it cannot be opened".to_string()),
         };
         if let Err(why) = written {
@@ -137,46 +174,76 @@ impl Record {
         }
     }
 
-    fn open(&self) -> Option<std::fs::File> {
+    fn open(&self) -> Option<(std::fs::File, Identity)> {
         if let Some(folder) = self.path.parent() {
             let _ = std::fs::create_dir_all(folder);
         }
-        std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
-            .ok()
+            .ok()?;
+        let opened = identity(&file.metadata().ok()?);
+        Some((file, opened))
     }
 }
 
 /// One call's line in the record.
 #[derive(Serialize)]
-struct Line<'a> {
+pub(super) struct Line<'a> {
     /// When it was written, in milliseconds since the epoch.
-    at_ms: u64,
-    pid: u32,
-    plugin: &'a str,
-    seam: &'a str,
+    pub(super) at_ms: u64,
+    pub(super) pid: u32,
+    pub(super) plugin: &'a str,
+    /// How the call went: [`LINKED`], [`LOOPBACK`] or [`PROCESS`].
+    pub(super) path: &'static str,
+    pub(super) seam: &'a str,
     /// The seam's object: its name, a route's path, a region's id, a watch's paths.
-    name: &'a str,
-    call: &'a str,
-    /// The plugin's own call, in microseconds.
-    us: f64,
+    pub(super) name: &'a str,
+    pub(super) call: &'a str,
+    /// The plugin's own call, in microseconds: under a process as the plugin says it, absent when
+    /// it said nothing or the call had no answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) us: Option<f64>,
     /// Under the loopback, the whole round trip: the request built, written and read, the call,
-    /// its answer written and read.
+    /// its answer written and read. Under a process, the call as the host waits for it: its line
+    /// built and written, the plugin's answer read back.
     #[serde(skip_serializing_if = "Option::is_none")]
-    round_trip_us: Option<f64>,
+    pub(super) round_trip_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    request_bytes: Option<usize>,
+    pub(super) request_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    answer_bytes: Option<usize>,
+    pub(super) answer_bytes: Option<usize>,
     /// What did not survive JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
-    lost: Option<String>,
+    pub(super) lost: Option<String>,
+    /// Under a process, why the call had no answer: the process down, no answer in time, a
+    /// refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) failed: Option<String>,
+}
+
+/// A call made linked and timed.
+pub const LINKED: &str = "linked";
+/// A call sent through JSON inside the process.
+pub const LOOPBACK: &str = "loopback";
+/// A call answered by a plugin's process of its own.
+pub const PROCESS: &str = "process";
+/// What a loopback call's line says when its request reads back from JSON as another call. The
+/// loopback's round trip alone writes it, so a binary that links no loopback holds no such text.
+pub const READ_AS_ANOTHER: &str = "the request read back as another call";
+
+/// Now, in milliseconds since the epoch.
+pub(super) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// A duration in microseconds, to the nanosecond.
-fn micros(duration: Duration) -> f64 {
+pub(super) fn micros(duration: Duration) -> f64 {
     (duration.as_secs_f64() * 1e9).round() / 1e3
 }
 
@@ -262,7 +329,12 @@ impl Meter {
     /// What the plugin declares, sent once through the loopback and recorded.
     fn declared(&self, plugin: &'static dyn Plugin) {
         let declared = || Declaration::of(plugin);
-        self.trip::<Declare>(plugin.name(), declared, || Declare {}, |_| declared());
+        self.trip::<Declare>(
+            plugin.name(),
+            declared,
+            || Declare { protocol: PROTOCOL },
+            |_| declared(),
+        );
     }
 
     fn write<A: Ask>(
@@ -275,23 +347,20 @@ impl Meter {
         lost: Option<String>,
     ) {
         let (seam, call_name) = A::names();
-        let at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            });
         self.record.write(&Line {
-            at_ms,
+            at_ms: now_ms(),
             pid: std::process::id(),
             plugin: self.plugin,
+            path: if self.loopback { LOOPBACK } else { LINKED },
             seam,
             name,
             call: call_name,
-            us: micros(call),
+            us: Some(micros(call)),
             round_trip_us: round_trip.map(micros),
             request_bytes,
             answer_bytes,
             lost,
+            failed: None,
         });
     }
 }
@@ -319,28 +388,31 @@ fn round_trip<A: Ask>(
     };
     let mut lost = (read != request).then(|| "the request read back otherwise".to_string());
     let Some(asked) = A::from_request(read) else {
-        return linked_trip(linked, "the request read back as another call".into());
+        return linked_trip(linked, READ_AS_ANOTHER.into());
     };
     let start = Instant::now();
     let answer = far(asked);
     let call = start.elapsed();
     let start = Instant::now();
-    let written = serde_json::to_string(&answer);
+    let written = serde_json::to_string(&Answered::Answer(&answer));
     let read = written
         .as_deref()
         .map_err(ToString::to_string)
-        .and_then(|text| serde_json::from_str::<A::Answer>(text).map_err(|e| e.to_string()));
+        .and_then(|text| {
+            serde_json::from_str::<Answered<A::Answer>>(text).map_err(|e| e.to_string())
+        })
+        .and_then(Answered::shown);
     let answering = start.elapsed();
     let answer_bytes = written.as_ref().map(String::len).ok();
     let answer = match read {
         Ok(read) => {
-            if read != answer && lost.is_none() {
-                lost = Some("the answer read back otherwise".into());
+            if read != answer {
+                lose(&mut lost, "the answer read back otherwise".into());
             }
             read
         }
         Err(why) => {
-            lost = Some(format!("the answer: {why}"));
+            lose(&mut lost, format!("the answer: {why}"));
             answer
         }
     };
@@ -352,6 +424,15 @@ fn round_trip<A: Ask>(
         answer_bytes,
         lost,
     }
+}
+
+/// `what` did not survive JSON, said after what `lost` already says: both are said when the request
+/// and then the answer did not survive.
+fn lose(lost: &mut Option<String>, what: String) {
+    *lost = Some(match lost.take() {
+        Some(before) => format!("{before}; {what}"),
+        None => what,
+    });
 }
 
 /// The call made linked, timed, for a request that did not survive JSON (`lost`).
@@ -742,23 +823,15 @@ impl BoardField for On<dyn BoardField> {
         self.inner.required()
     }
     fn validate(&self, value: &FieldValue) -> Result<FieldValue, String> {
-        if !self.meter.loopback {
-            return self
-                .meter
-                .time::<Validate, _>(&self.name, || self.inner.validate(value));
-        }
-        let validate = |value: &FieldValue| self.inner.validate(value).map(FieldData::from);
-        self.meter
-            .trip(
-                &self.name,
-                || validate(value),
-                || Validate {
-                    field: self.name.clone(),
-                    value: value.clone().into(),
-                },
-                |asked| validate(&asked.value.into()),
-            )
-            .map(FieldValue::from)
+        self.meter.call(
+            &self.name,
+            || self.inner.validate(value),
+            || Validate {
+                field: self.name.clone(),
+                value: value.clone(),
+            },
+            |asked| self.inner.validate(&asked.value),
+        )
     }
 }
 

@@ -59,9 +59,13 @@ _client-update:
 symphony-cli *ARGS:
     @tools/rs-bin.sh symphony "$@"
 
+# The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
+# records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
+# `_symphony_unasked` admits (its checkout, from a worktree main's artifacts), as an agent runs it
+# unasked.
 [no-exit-message]
 tasks *ARGS:
-    @tools/rs-bin.sh tasks "$@"
+    @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"
 
 # Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
 # clean checkout outside this folder and conciliated with the projects this machine serves; each
@@ -87,10 +91,24 @@ _client-check OUT:
     @just symphony-ui-dist {{quote(OUT)}}
     @bash tools/client-check.sh {{quote(OUT)}}/public
 
-# The native browser harness runs headless Chrome; no game engine or display is needed.
-verify:
-    @{{record}} --pipeline verify test "just verify" just --justfile {{quote(justfile())}} _verify
+# The shipped binaries, built as `cargo install` builds them (the release profile), and the client
+# the server embeds, each against its line in tools/size-budget.toml (docs/CHECKS.md, "Size
+# budgets"). The nightly's verify runs it: one release build, which no task's gate pays for.
+size-check:
+    @{{record}} --pipeline size --step size-check build "just size-check" just --justfile {{quote(justfile())}} _size-check
 
 [private]
-_verify: lint-rs client-check
-    @SYMPHONY_UI_DIST="$PWD/build/verified-client/public" {{record}} --step tests test "tests" tools/cargo.sh test --workspace --locked --no-fail-fast
+_size-check:
+    @tools/cargo.sh build --release --locked -p symphony-server -p symphony -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
+    @tools/rs-bin.sh symphony size-budget . "${CARGO_TARGET_DIR:-.target}/release"
+
+# The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit
+# and every test target, each a step of this run with a log of its own, run whatever the ones before
+# it did; red when any step is, naming each. `just verify STEP...` runs those steps alone. The native
+# browser harness runs headless Chrome; no game engine or display is needed.
+verify *STEPS:
+    @{{record}} --pipeline verify test "just verify${*:+ $*}" just --justfile {{quote(justfile())}} _verify "$@"
+
+[private]
+_verify *STEPS:
+    @bash tools/verify.sh {{quote(justfile())}} "$@"

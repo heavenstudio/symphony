@@ -407,6 +407,31 @@ fn the_docs_audit_refuses_a_card_whose_pictures_do_not_load() {
 }
 
 #[test]
+fn the_docs_audit_refuses_a_card_picture_this_checkout_wrote_that_git_does_not_track() {
+    audit::a_cards_picture_is_a_file_git_tracks();
+}
+
+#[test]
+fn with_no_fork_the_docs_audit_warns_of_an_untracked_card_picture() {
+    audit::with_no_fork_an_untracked_picture_is_warned_of();
+}
+
+#[test]
+fn the_docs_audit_refuses_a_documents_own_picture_this_checkout_wrote_that_git_does_not_track() {
+    audit::a_documents_own_picture_is_a_file_git_tracks();
+}
+
+#[test]
+fn the_docs_audit_reads_every_form_of_a_picture() {
+    audit::every_form_of_a_picture_is_read();
+}
+
+#[test]
+fn the_docs_audit_of_a_clone_warns_of_a_picture_git_never_tracked() {
+    audit::a_clone_is_warned_of_a_picture_git_never_tracked();
+}
+
+#[test]
 fn an_owner_line_counts_wherever_it_was_saved_until_an_agent_answers() {
     owner::owner_lines_count_until_an_agent_answers();
 }

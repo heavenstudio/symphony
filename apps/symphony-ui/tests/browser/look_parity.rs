@@ -769,9 +769,12 @@ fn history_pictures_keep_their_original_caps_outside_the_inner_decision() {
             "document.querySelector('.doc-card .history img').scrollIntoView({block:'center'})",
         );
         assert!(browser.wait_for(
-            // DocumentPicture omits src until its visibility latch fires. An image with
-            // no src is already complete; wait for revelation as well as load completion.
-            "(() => { const image=document.querySelector('.doc-card .history img'); return image.getAttribute('src') !== null && image.complete; })()",
+            // DocumentPicture holds the waiting picture until its visibility latch fires, and
+            // that is already complete; wait for revelation as well as load completion.
+            &format!(
+                "(() => {{ const image=document.querySelector('.doc-card .history img'); return image.getAttribute('src') !== {} && image.complete; }})()",
+                json!(symphony_ui::media::WAITING)
+            ),
             SHOWN
         ));
         assert_eq!(
@@ -1018,7 +1021,7 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         json!("4px")
     );
     assert_eq!(browser.eval("getComputedStyle(document.querySelector('.chip.health-live'),'::before').backgroundColor"),json!("rgb(46, 125, 79)"));
-    super::components::choose(&mut browser, ".filters button[aria-label=Status]", "ready");
+    super::components::choose(&mut browser, ".filters button[aria-label=Status]", "Ready");
     assert!(browser.wait_for("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status=ready]') !== null",SHOWN));
     assert_eq!(browser.eval("Math.abs(document.querySelector('.pipeline').getBoundingClientRect().width-document.querySelector('.column[data-status=ready]').getBoundingClientRect().width)<1"),json!(true));
     super::components::choose(
@@ -1214,12 +1217,15 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         json!(14),
         "the state and priority row keeps its gap above task facts"
     );
-    // Facts and owner controls can put the lazy thread below the viewport.
-    browser.eval("document.getElementById('task-thread').scrollIntoView({block:'center'})");
+    // The head, the gates and the timeline's box can put the lazy thread below the window and past
+    // its look-ahead: scroll to its place, always in the page, as a person would.
+    browser.eval(
+        "document.getElementById('thread-region-visual/in-progress').scrollIntoView({block:'center'})",
+    );
     assert!(
         browser.wait_for("document.querySelector('.entry.owner') !== null", SHOWN),
         "task thread: {}",
-        browser.eval("document.getElementById('task-thread').outerHTML")
+        browser.eval("document.getElementById('thread-region-visual/in-progress').outerHTML")
     );
     assert_eq!(
         browser.eval(

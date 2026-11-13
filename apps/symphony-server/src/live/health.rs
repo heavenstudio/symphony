@@ -1,9 +1,14 @@
 //! What the pages and the project picker say of the board's health: while its callback dispatch or
 //! its idle sweep is failing ([`symphony_board::board_health::Recorder::failing`]), every page of
 //! the project says so on the server's notice, beside whatever else that notice says, and the
-//! picker says so under the project's name. While the disk holding the project has less free than
-//! `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]), every page says that too. None
-//! of it reads the board.
+//! picker says so under the project's name. A board that went back below the schema it was seen at
+//! ([`symphony_board::board_health::Recorder::went_back`]) is said unwell in those places with that
+//! line alone, which names what not to run and where the recovery is. A board that cannot be reached
+//! while a start replays its store's log ([`symphony_board::server::replaying_in`]: this server's
+//! own, run apart from its reads, or another's) is said to be starting there, with the log's size,
+//! in place of the dispatch's words, until a reach finds no replay. While the disk holding the
+//! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
+//! every page says that too. None of it reads the board.
 
 use super::Hub;
 use std::collections::BTreeMap;
@@ -76,10 +81,10 @@ impl Hub {
         (self.clock)()
     }
 
-    /// Tell every page, on the server's notice, whether the board's dispatch or sweep is failing
-    /// at `now`, and whether the disk is low, when either changes.
+    /// Tell every page, on the server's notice, whether the board went back, or its dispatch or
+    /// sweep is failing at `now`, and whether the disk is low, when either changes.
     pub(crate) fn tell_health(&self, now: f64) {
-        let health = notice(self.health.failing(now));
+        let health = self.board_notice(now);
         let disk = (self.low_disk)()
             .map(|low| low.notice())
             .unwrap_or_default();
@@ -101,8 +106,38 @@ impl Hub {
 
     /// What the project picker says of this project's board now: nothing while it is well.
     pub(crate) fn health_notice(&self) -> String {
-        notice(self.health.failing(self.now()))
+        self.board_notice(self.now())
     }
+
+    /// What a page says of the board at `now`: that it went back, which is why nothing else of it
+    /// is read; else that it is starting, while a replay of its store's log keeps it from being
+    /// reached ([`Hub::reconnect`]); else whether its dispatch or sweep is failing ([`notice`]).
+    fn board_notice(&self, now: f64) -> String {
+        if let Some(line) = self.health.rollback() {
+            return went_back(&line);
+        }
+        let replaying = self
+            .replaying
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        match replaying {
+            Some(line) => starting(&line),
+            None => notice(self.health.failing(now)),
+        }
+    }
+}
+
+/// What a page says of a board that cannot be reached while a start replays its store's log, `line`
+/// the board's words for it ([`symphony_board::server::replaying_in`]).
+pub(crate) fn starting(line: &str) -> String {
+    format!("The task board is starting: {line}.")
+}
+
+/// What a page says of a board that went back below the schema it was seen at, `line` the
+/// board's health's words for it ([`symphony_board::live::seen::Rollback::line_in`]).
+pub(crate) fn went_back(line: &str) -> String {
+    format!("The task board is unwell: {line}.")
 }
 
 /// What a page says of a board whose dispatch, sweep, or both, are failing; nothing while

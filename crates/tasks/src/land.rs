@@ -9,7 +9,9 @@
 //!    reviewer: never a session that ever executed the task or one of its work subtasks (an
 //!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
 //!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
-//!    orchestrator's approve it goes by ([`independent`]). The approval covers the branch's tip:
+//!    orchestrator's approve it goes by ([`independent`]), on a red filed as one only where the
+//!    fix changes none of the project's tests and checks ([`check_paths`],
+//!    [`unchanged_checks`]). The approval covers the branch's tip:
 //!    the commit the verdict names, else, when it names none of the branch's, every commit of the
 //!    branch made before it and before the task last went to review (the board records no tip, so
 //!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
@@ -23,12 +25,15 @@
 //! 2. **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
 //!    worktrees`, else `symphony/tasks/land/worktree` in the git common dir), never the main
 //!    checkout: one `--no-ff` merge commit, "Merge branch 'SLUG'", of the tip into the default
-//!    branch; the project's `[land] generators`, whose changes, inside their outputs alone, are one
-//!    commit after it; then `[verdicts] check`, which must pass on that tree. A conflict confined
-//!    to the generators' outputs (a distribution each branch committed of its own) takes the
-//!    default branch's side there, and the generators that own those paths run whatever else
-//!    changed, so the check judges what they make of the merge ([`Landing::take_ours`]); the tip
-//!    merged stays the one approved. Any other conflict, or a red, refuses.
+//!    branch, which keeps the default branch's side of every path inside the project's `[land]
+//!    generators`' outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]):
+//!    what they make is the regenerator's, of the default branch's own sources, so no branch's
+//!    build of it lands. The tip merged stays the one approved. Any other conflict refuses. Then
+//!    `[verdicts] check`, unless `[land] check = false`, must pass on the merge; with it off, a
+//!    project's regenerator runs it on the default branch's tip after the land
+//!    ([`Settings::main_check`]). A land runs no generator. This merge is one step,
+//!    [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted pull-request merge would
+//!    replace.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
 //!    `symphony/tasks/land/` and on the thread; then the main checkout, with no staged or tracked
 //!    edit and on the default branch, fast-forwards to what passed, so the default branch's new
@@ -41,45 +46,53 @@
 //!    When the default branch moved meanwhile, the merge and the check run again on its new tip,
 //!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator.
 //! 4. **Pushed.** Unless `[land] push = false` or there is no `origin`: the default branch is
-//!    fetched from `origin`; what it gained there is merged in the same way, generators and check
-//!    again, never forced; then the default branch alone is pushed, no other branch and no tag. A
-//!    push that fails leaves the landing done here and says so, with the command to retry.
-//! 5. **Closed and swept.** The board's `landed` writes `landed SLUG on main at SHA` on the
-//!    thread and closes the task (an approved one stays done), and the sweep removes its finished
-//!    worktrees.
+//!    fetched from `origin`; what it gained there is merged in the same way and checked again,
+//!    never forced, its generated paths kept but where they conflict; then the default branch
+//!    alone is pushed, no other branch and no tag. A push that fails leaves the landing done here
+//!    and says so, with the command to retry.
+//! 5. **Closed.** The board's `landed` writes `landed SLUG on main at SHA` on the thread and
+//!    closes the task (an approved one stays done). What is slow is then started detached, and the
+//!    land waits for nothing it does: the sweep of the task's finished worktrees
+//!    ([`trigger::trigger`]) and, in a project with generators, the regenerator
+//!    ([`regenerate::start`]), neither under the land's lock; then, last, the project's
+//!    `[board] on_land` ([`crate::on_land`]), which so finds the regenerator started.
 //!
 //! Two lands of one repository wait for each other ([`LOCK`] in `symphony/tasks/` of the common
-//! dir), for the land's timeout at most. Each generator and the check run in a process group of
-//! their own, ended whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and
-//! a fetch or a push within [`NETWORK`]; what is left of a group once its first process ends is
-//! ended too.
+//! dir), with no timeout: the lock guards a merge, a check and a push, and is freed when its
+//! holder's process ends however it ends. The check runs in a process group of its own, ended
+//! whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or a push
+//! within [`NETWORK`]; what is left of a group once its first process ends is ended too.
 //! A hang-up, an interrupt or a terminate signal (a terminal's Ctrl-C, `kill`) ends the group
-//! running, but the fast-forward, which it waits for, removes the land's worktree and ends the
-//! land by that signal: before the default branch moved nothing landed, and after it a run again
-//! finishes it. The group running is named in [`RUNNING`] meanwhile, with when its first process
-//! started, so a land killed outright leaves its name: the next land refuses while that group
-//! lives, or while any process works in the worktree it left, and tells how to end the group only
-//! while its first process is the one the land started ([`Landing::leftover_group`]). What the
-//! generators and the check print goes to `symphony/tasks/land/SLUG.log`, the slug's `/` as
-//! `%2F` ([`file_stem`]). The settings are read from the default branch as the main checkout has
-//! it committed, never from the branch landing, so a branch cannot change its own check.
+//! running, or a land waiting for the lock, but the fast-forward, which it waits for, removes the
+//! land's worktree and ends the land by that signal: before the default branch moved nothing
+//! landed, and after it a run again finishes it. The group running is named in [`RUNNING`]
+//! meanwhile, with when its first process started, so a land killed outright leaves its name: the
+//! next land refuses while that group lives, or while any process works in the worktree it left,
+//! and tells how to end the group only while its first process is the one the land started
+//! ([`Landing::leftover_group`]). What the check prints goes to `symphony/tasks/land/SLUG.log`,
+//! the slug's `/` as `%2F` ([`file_stem`]). The settings are read from the default branch as the
+//! main checkout has it committed, never from the branch landing, so a branch cannot change its own
+//! check.
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
 use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
-use crate::sweep::{self, trigger};
+use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{Error, Held, Message, Store, Task, Unfresh};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod check_paths;
 mod moving;
 use moving::Move;
 pub use moving::Moving;
+pub mod regenerate;
 
 /// What a main checkout with staged or tracked edits refuses with; the verdict publisher reads it.
 pub const DIRTY_MAIN: &str = "has staged or tracked edits; refusing publication";
@@ -93,8 +106,9 @@ pub const MANIFEST: &str = "symphony.toml";
 pub const TRIES: usize = 3;
 /// The remote a land pushes to.
 pub const REMOTE: &str = "origin";
-/// The start of the reason a land's worktree is locked with, which keeps it from the sweep.
-const REASON: &str = "symphony land";
+/// The start of the reason a land's worktree is locked with, which keeps it from the sweep while
+/// the land it names runs.
+pub(crate) const REASON: &str = "symphony land";
 /// What the `land` recipe `symphony init` installs sets, by which `tasks land` knows `just land`
 /// runs it: the board's commands, which an agent may run unasked, never land by accident. It is a
 /// guard against a reflex, not a barrier: a command that sets it lands, and the approval
@@ -129,8 +143,9 @@ fn signal_name(signal: i32) -> String {
         other => format!("signal {other}"),
     }
 }
-/// What names a repository to git: a child run in the land's worktree inherits none of them.
-const GIT_VARS: [&str; 8] = [
+/// What names a repository to git: a child run in the land's worktree inherits none of them, nor
+/// does the command `[board] on_land` names ([`crate::on_land`]).
+pub(crate) const GIT_VARS: [&str; 8] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -141,8 +156,14 @@ const GIT_VARS: [&str; 8] = [
     "GIT_PREFIX",
 ];
 
-/// A command a land runs on the merge before its check, whose changes inside `outputs` are
-/// committed with it; a project names its own in `[land] generators`, as `[verdicts] generators`.
+/// A command the regenerator ([`regenerate`]) runs on the default branch's newest tip after a land,
+/// whose changes inside `outputs` it commits and lands; a project names its own in `[land]
+/// generators`, as `[verdicts] generators`. A land runs none, and keeps the default branch's side
+/// of each path inside `outputs` a task's branch changed.
+///
+/// Consumers' code builds one by its fields (a project's test of its own manifest), and a release's
+/// refresh never changes that code (it moves their pin alone): a field added here breaks it, so what
+/// a generator gains goes beside it, as its key does ([`Settings::keys`]).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generator {
@@ -154,26 +175,74 @@ pub struct Generator {
     pub when_changed: bool,
 }
 
+/// `keys` (`[land] keys`, a generator's name to its key's command) checked against `generators`:
+/// a name no generator has, or a key with no command, is refused by its name. A generator is named
+/// by its name alone, in its key and in what the regenerator says, so two of one name are refused
+/// first, keyed or not.
+pub fn keyed(
+    generators: &[Generator],
+    keys: BTreeMap<String, Vec<String>>,
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let mut named = std::collections::BTreeSet::new();
+    if let Some(twice) = generators.iter().find(|g| !named.insert(&g.name)) {
+        return Err(format!(
+            "[land] generators names {:?} twice: give each generator a name of its own",
+            twice.name
+        ));
+    }
+    for (name, key) in &keys {
+        if !generators.iter().any(|g| &g.name == name) {
+            return Err(format!(
+                "[land] keys names {name:?}, which no [land] generator is"
+            ));
+        }
+        if key.first().is_none_or(String::is_empty) {
+            return Err(format!(
+                "[land] keys gives the generator {name} a key with no command"
+            ));
+        }
+    }
+    Ok(keys)
+}
+
 /// What a land reads from the project's file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// `[project] default_branch`.
     pub default_branch: String,
-    /// `[verdicts] check`: what must pass on the merge; empty runs none.
+    /// `[verdicts] check`: what must pass on the merge; empty runs none, as `[land] check = false`
+    /// makes it.
     pub check: Vec<String>,
+    /// `[verdicts] check` where `[land] check = false` keeps it out of the land: what the
+    /// regenerator runs instead on what each round made of the default branch's tip
+    /// ([`regenerate`]), so a red there is found after the land that brought it; empty where the
+    /// land runs it.
+    pub main_check: Vec<String>,
     /// `[agents] worktrees`, relative to the root.
     pub worktrees: Option<String>,
-    /// `[land] generators`, in order.
+    /// `[land] generators`, in order: run after a land by the regenerator ([`regenerate`]), never
+    /// by the land.
     pub generators: Vec<Generator>,
+    /// `[land] keys`, a generator's name to its key: a command printing, as its last line, a key of
+    /// everything the generator reads. On a tip whose key and outputs are a pair the generator
+    /// passed on before, the regenerator does not run it ([`regenerate::Passed`]); a generator with
+    /// none runs on every tip. Never in the generator's own table, so a Symphony older than keys,
+    /// which refuses a key it does not know in a generator, leaves the table out and still reads
+    /// the file ([`keyed`]).
+    pub keys: BTreeMap<String, Vec<String>>,
     /// `[land] push`: whether a landing pushes the default branch to `origin`.
     pub push: bool,
-    /// `[land] timeout_seconds`: how long each generator and the check may run, and a land waits
-    /// for another; a fetch or a push has [`NETWORK`] at most.
+    /// `[land] timeout_seconds`: how long each generator and the check may run; a fetch or a push
+    /// has [`NETWORK`] at most. A land waits for another with no timeout ([`hold`]).
     pub timeout: Duration,
+    /// `[land] check_paths`: what holds the project's tests and checks, which a red's fix its
+    /// orchestrator approves changes none of ([`check_paths`]); [`check_paths::DEFAULT`] unless
+    /// the project names its own.
+    pub check_paths: Vec<check_paths::Entry>,
 }
 
-/// How long a land's generators, check and wait for another land take at most, unless the project
-/// names another `[land] timeout_seconds`: an hour.
+/// How long a generator or a land's check takes at most, unless the project names another `[land]
+/// timeout_seconds`: an hour.
 pub const TIMEOUT: Duration = Duration::from_secs(3600);
 /// How long a fetch or a push may take at most, the project's timeout when shorter: five minutes.
 pub const NETWORK: Duration = Duration::from_secs(300);
@@ -183,10 +252,13 @@ impl Default for Settings {
         Settings {
             default_branch: "main".into(),
             check: Vec::new(),
+            main_check: Vec::new(),
             worktrees: None,
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout: TIMEOUT,
+            check_paths: check_paths::defaults(),
         }
     }
 }
@@ -195,7 +267,8 @@ impl Settings {
     /// `text` as a project file: only the keys a land reads, the rest left to the Symphony's own
     /// reading, but the whole of `[land]`, which is the land's alone: a key it does not know there
     /// (a typo of `push`, say) is refused by its name, as is a generator with a key it does not
-    /// know, no command or no outputs, and a timeout of no time.
+    /// know, no command or no outputs, a timeout of no time and a `check_paths` entry naming
+    /// nothing inside the project ([`check_paths::Entry::parse`]).
     pub fn parse(text: &str) -> Result<Settings, String> {
         #[derive(Default, Deserialize)]
         #[serde(default)]
@@ -224,15 +297,21 @@ impl Settings {
         #[serde(default, deny_unknown_fields)]
         struct Land {
             generators: Vec<Generator>,
+            keys: BTreeMap<String, Vec<String>>,
             push: bool,
             timeout_seconds: u64,
+            check: bool,
+            check_paths: Option<Vec<String>>,
         }
         impl Default for Land {
             fn default() -> Land {
                 Land {
                     generators: Vec::new(),
+                    keys: BTreeMap::new(),
                     push: true,
                     timeout_seconds: TIMEOUT.as_secs(),
+                    check: true,
+                    check_paths: None,
                 }
             }
         }
@@ -257,18 +336,34 @@ impl Settings {
                 )
             })?;
         }
+        let keys =
+            keyed(&generators, file.land.keys).map_err(|why| format!("{MANIFEST}: {why}"))?;
         if file.land.timeout_seconds == 0 {
             return Err(format!(
                 "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
             ));
         }
+        let (check, main_check) = if file.land.check {
+            (file.verdicts.check, Vec::new())
+        } else {
+            (Vec::new(), file.verdicts.check)
+        };
+        let check_paths = match &file.land.check_paths {
+            Some(written) => {
+                check_paths::parse(written).map_err(|why| format!("{MANIFEST}: {why}"))?
+            }
+            None => check_paths::defaults(),
+        };
         Ok(Settings {
             default_branch,
-            check: file.verdicts.check,
+            check,
+            main_check,
             worktrees: file.agents.worktrees,
             generators,
+            keys,
             push: file.land.push,
             timeout: Duration::from_secs(file.land.timeout_seconds),
+            check_paths,
         })
     }
 
@@ -365,20 +460,43 @@ pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     }
 }
 
+/// How far an approve the land goes by ([`independent`]) stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// On whatever the branch changes: a fresh reviewer's, or a fast fix's orchestrator's.
+    Whole,
+    /// On a branch that changes none of the project's tests and checks ([`check_paths`]) alone:
+    /// the approve of a red's orchestrator or filer (which of the two it is), on a red filed as a
+    /// fast fix ([`crate::fast_fix::RED`]), since a loosened test or check is how a red turns green
+    /// unfixed and needs a reader that did not ask for the fix.
+    ChecksUnchanged(Unfresh),
+}
+
 /// Whether `approval` is one the land goes by on `task`, whose roles `held` says who ever held
 /// ([`Store::ever_held`]), by the rule the board's verdict holds a reviewer to ([`Held::unfresh`]):
 /// never the approve of a session that executed it or a work subtask under it, though the reviewer
 /// that claimed its review instruction may give it (RULES.md `workflow/reviewers-not-the-owner`),
 /// and never of one that orchestrated it, now or before, or filed it, but on a fast fix
 /// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
-/// execute it. The board refuses those verdicts itself, so such an approve is one an older board
-/// took. Otherwise the one line saying whose approve it is and whose it must be.
-pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), String> {
+/// execute it, and, on a red ([`crate::red`]) filed as one, only for a fix that changes none of the
+/// project's checks ([`Scope::ChecksUnchanged`], which the land reads from the branch:
+/// [`unchanged_checks`]). A fast fix whose risk is a red's, by the opening every wording of it keeps
+/// ([`crate::fast_fix::bounds`]), is held to that bound with its red mark or without it: a filer
+/// lifts the mark (`Store::unmark_red`), and no session clears the risk. The board refuses those
+/// verdicts itself, so such an approve is one an older board took. Otherwise the one line saying
+/// whose approve it is and whose it must be.
+pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scope, String> {
     let (slug, by) = (&task.slug, &approval.by);
     let orchestrates = task.holders("orchestrator").contains(&by.as_str());
     let fast = task.fast_fix().is_some();
+    let bound = fast && (task.red() || task.fast_fix().is_some_and(crate::fast_fix::bounds));
     let whose = match held.unfresh(by, &task.created_by, orchestrates, fast) {
-        None => return Ok(()),
+        None if bound => {
+            return Ok(held
+                .requested(by, &task.created_by, orchestrates, false)
+                .map_or(Scope::Whole, Scope::ChecksUnchanged));
+        }
+        None => return Ok(Scope::Whole),
         Some(Unfresh::Executed) => {
             return Err(format!(
                 "{slug}'s approve is {by}'s, which executed it or work under it: a fresh \
@@ -391,6 +509,49 @@ pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), 
     Err(format!(
         "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
          only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+    ))
+}
+
+/// How many of what a red's fix changes of the checks a refusal names.
+const TOUCHED_NAMED: usize = 8;
+
+/// Whether `approval`, standing on the red `task` only where its fix changes none of the project's
+/// checks ([`Scope::ChecksUnchanged`], `why` it is no fresh reviewer's), stands on the tip `tip`,
+/// which `touched` ([`check_paths::touched`]) says changes those named, or why it cannot say:
+/// otherwise the one line naming them and whose approve that needs.
+pub fn unchanged_checks(
+    task: &Task,
+    approval: &Approval,
+    why: Unfresh,
+    tip: &str,
+    touched: Result<Vec<String>, String>,
+) -> Result<(), String> {
+    let (slug, by) = (&task.slug, &approval.by);
+    let whose = match why {
+        Unfresh::Executed => "which executed it or work under it",
+        Unfresh::Orchestrated => "which orchestrated it",
+        Unfresh::Filed => "which filed it",
+    };
+    let changes = match touched {
+        Ok(touched) if touched.is_empty() => return Ok(()),
+        Ok(touched) => {
+            let mut named = touched
+                .iter()
+                .take(TOUCHED_NAMED)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if touched.len() > TOUCHED_NAMED {
+                named.push_str(&format!(" and {} more", touched.len() - TOUCHED_NAMED));
+            }
+            format!("{} changes {named}", short(tip))
+        }
+        Err(cannot) => format!("what {} changes cannot be read ({cannot})", short(tip)),
+    };
+    Err(format!(
+        "{slug}'s approve is {by}'s, {whose}, which lands a red filed as a fast fix only when the \
+         fix changes none of the project's tests and checks (`[land] check_paths`), and {changes}: \
+         a fresh reviewer approves a fix that changes a test or a check"
     ))
 }
 
@@ -573,7 +734,7 @@ impl Record {
 
     /// Where a land before [`file_stem`] kept it: the slug's slashes as dashes, a name two slugs
     /// can share, so the record there counts only as the one its `slug` names.
-    fn dashed(folder: &Path, slug: &str) -> PathBuf {
+    pub(crate) fn dashed(folder: &Path, slug: &str) -> PathBuf {
         folder.join(format!("{}.merged", slug.replace('/', "-")))
     }
 
@@ -713,21 +874,11 @@ pub fn land(
         }
         stop
     };
-    let _held = hold(&common, slug, settings.timeout, interrupts.as_ref(), out)
-        .map_err(|line| ended(Stop::Refused(line)))?;
+    let _held =
+        hold(&common, slug, interrupts.as_ref(), out).map_err(|line| ended(Stop::Refused(line)))?;
     let folder = trigger::folder(&common).join(FOLDER);
     fs::create_dir_all(&folder).map_err(|e| Stop::Refused(at(&folder, &e)))?;
-    let tree = match &settings.worktrees {
-        Some(worktrees) => {
-            let parent = main.join(worktrees);
-            fs::create_dir_all(&parent).map_err(|e| Stop::Refused(at(&parent, &e)))?;
-            parent
-                .canonicalize()
-                .map_err(|e| Stop::Refused(at(&parent, &e)))?
-                .join(FOLDER)
-        }
-        None => folder.join("worktree"),
-    };
+    let tree = worktree(&main, &settings, &folder, FOLDER, "worktree").map_err(Stop::Refused)?;
     let log = folder.join(format!("{}.log", file_stem(slug)));
     File::create(&log).map_err(|e| Stop::Refused(at(&log, &e)))?;
     let landed = Landing {
@@ -737,6 +888,8 @@ pub fn land(
         actor,
         main,
         settings,
+        running: folder.join(RUNNING),
+        task: true,
         folder,
         tree,
         log,
@@ -750,6 +903,28 @@ pub fn land(
 
 fn at(path: &Path, error: &std::io::Error) -> String {
     format!("{}: {error}", path.display())
+}
+
+/// Where the worktree `name` of the main checkout `main` goes: in the project's `[agents]
+/// worktrees` folder, made when missing, else as `fallback` in the lands' `folder`.
+fn worktree(
+    main: &Path,
+    settings: &Settings,
+    folder: &Path,
+    name: &str,
+    fallback: &str,
+) -> Result<PathBuf, String> {
+    match &settings.worktrees {
+        Some(worktrees) => {
+            let parent = main.join(worktrees);
+            fs::create_dir_all(&parent).map_err(|e| at(&parent, &e))?;
+            Ok(parent
+                .canonicalize()
+                .map_err(|e| at(&parent, &e))?
+                .join(name))
+        }
+        None => Ok(folder.join(fallback)),
+    }
 }
 
 /// Whether `slug` may go back to review, a move asked from where `env` runs (none: from no
@@ -792,7 +967,7 @@ pub fn reopenable(store: &Store, env: Option<&Env>, slug: &str) -> Result<(), Er
 pub fn admit(env: &Env) -> Result<(), String> {
     if env.var(RECIPE).is_none() {
         return Err(
-            "`tasks land` runs as `just land SLUG`, which asks before it moves and pushes the \
+            "`tasks land` runs only as `just land SLUG`, the recipe that moves and pushes the \
              default branch"
                 .into(),
         );
@@ -877,12 +1052,12 @@ pub fn own_land(main: &Path, env: &Env) -> Result<Option<PathBuf>, String> {
 }
 
 /// The lock in `common` for the land of `slug`: taken at once, or once the land holding it ends,
-/// within `patience`; past it, or once `interrupts` took a signal, the line naming the land that
-/// holds it.
+/// however long that is, since it is freed when its holder's process ends and a land holds it
+/// for its merge, its move and its push alone; once `interrupts` took a signal, the line naming
+/// the land that holds it.
 fn hold(
     common: &Path,
     slug: &str,
-    patience: Duration,
     interrupts: Option<&sys::Interrupts>,
     out: &mut dyn Write,
 ) -> Result<sys::FileLock, String> {
@@ -905,20 +1080,10 @@ fn hold(
             holder => holder.to_string(),
         }
     };
-    let began = Instant::now();
     let mut said = false;
     loop {
         match file.try_lock() {
             Ok(()) => break,
-            Err(TryLockError::WouldBlock) if began.elapsed() >= patience => {
-                return Err(format!(
-                    "{} has held {} for {} s, this land's timeout: run the land of {slug} again \
-                     once it ends",
-                    holder(&mut file),
-                    path.display(),
-                    patience.as_secs()
-                ));
-            }
             Err(TryLockError::WouldBlock) => {
                 if let Some(signal) = interrupts.and_then(sys::Interrupts::signal) {
                     return Err(format!(
@@ -992,30 +1157,54 @@ fn and(names: &[&str]) -> String {
 
 /// What one merge and check ended in.
 enum Attempt {
-    /// The default branch moved to `top`, whose first commit made here is `merge`; `regenerated`
-    /// names the generators' commit and what they regenerated, when they changed anything.
+    /// The default branch moved to `top`, whose first commit made here is `merge`.
     Moved {
         merge: String,
         top: String,
-        regenerated: Option<(String, String)>,
-        /// The generated paths whose conflict the merge took from the default branch.
+        /// The generated paths the merge took from the default branch.
         taken: Vec<String>,
     },
     /// The default branch moved under it, to this commit: nothing changed.
     Raced(String),
 }
 
-/// What a land says of the generated paths whose conflict its merge took from the default branch
-/// `default`, to regenerate: after the merge's name on the thread, nothing when there are none.
-fn taken_said(taken: &[String], default: &str) -> String {
+/// What a land says of the generated paths `taken` its merge took from the default branch
+/// `default`, inside the `generators`' outputs, which the regenerator makes: after the merge's
+/// name on the thread, nothing when there are none. A generator's outputs are named whole, the
+/// paths themselves when there are few.
+fn taken_said(taken: &[String], default: &str, generators: &[Generator]) -> String {
     if taken.is_empty() {
         return String::new();
     }
     format!(
-        ", its conflicts in generated paths ({}) taken from {default} and regenerated",
-        and(&taken.iter().map(String::as_str).collect::<Vec<_>>())
+        ", its generated paths ({}) taken from {default}, for the regenerator to make",
+        generated_named(taken, generators)
     )
 }
+
+/// The generated paths `taken` as a list, as a conflict names its files: each, when there are few,
+/// else the `generators`' outputs that hold them.
+fn generated_named(taken: &[String], generators: &[Generator]) -> String {
+    let named: Vec<&str> = if taken.len() <= NAMED_PATHS {
+        taken.iter().map(String::as_str).collect()
+    } else {
+        let mut outputs: Vec<&str> = Vec::new();
+        for path in taken {
+            let output = generators
+                .iter()
+                .find(|g| owns(&g.outputs, path))
+                .map_or(path.as_str(), |g| g.outputs.as_str());
+            if !outputs.contains(&output) {
+                outputs.push(output);
+            }
+        }
+        outputs
+    };
+    named.join(", ")
+}
+
+/// How many generated paths a land names one by one before it names the outputs that hold them.
+const NAMED_PATHS: usize = 3;
 
 /// Why a land refused, and where it is said.
 struct Refusal {
@@ -1178,8 +1367,8 @@ fn end_leftovers(group: u32) {
 
 /// The pid a land's worktree lock reason names (`symphony land: SLUG (pid N, started S)`), and
 /// when that process started ([`started`]): none when the land could not read it, or the reason is
-/// an earlier land's (`(pid N)`), which wrote no start.
-fn locked_by(reason: &str) -> Option<(i64, Option<String>)> {
+/// an earlier land's (`(pid N)`), which wrote no start. The sweep reads a land's lock by it too.
+pub(crate) fn locked_by(reason: &str) -> Option<(i64, Option<String>)> {
     let (_, held) = reason.rsplit_once("(pid ")?;
     let held = held.strip_suffix(')')?;
     match held.split_once(", started ") {
@@ -1288,6 +1477,12 @@ struct Landing<'a> {
     folder: PathBuf,
     tree: PathBuf,
     log: PathBuf,
+    /// The file naming the group it runs while it runs ([`RUNNING`] in the lands' folder, for a
+    /// land and for the regenerator's move of the default branch).
+    running: PathBuf,
+    /// Whether `slug` is a task: its thread hears the land, and what the land runs is recorded
+    /// for it. The regenerator's is none.
+    task: bool,
     /// The signals the land takes, when it holds the process's one scope.
     interrupts: Option<&'a sys::Interrupts>,
     /// The `tasks` running the land, which records a review command it starts.
@@ -1342,12 +1537,12 @@ impl Landing<'_> {
             waits,
             command: command.into(),
         };
-        let _ = fs::write(self.folder.join(RUNNING), named.line());
+        let _ = fs::write(&self.running, named.line());
     }
 
     /// The group named in [`RUNNING`] is gone.
     fn ran(&self) {
-        let _ = fs::remove_file(self.folder.join(RUNNING));
+        let _ = fs::remove_file(&self.running);
     }
 
     /// The group a land killed outright left named in [`RUNNING`], while any process of it lives: the
@@ -1358,7 +1553,7 @@ impl Landing<'_> {
     /// process gone, or its start never read, the processes in the group may be anyone's, and the
     /// line says how to look. One that ended is forgotten.
     fn leftover_group(&self) -> Result<(), String> {
-        let path = self.folder.join(RUNNING);
+        let path = self.running.clone();
         let Some(named) = fs::read_to_string(&path)
             .ok()
             .and_then(|text| Named::parse(&text))
@@ -1409,7 +1604,7 @@ impl Landing<'_> {
     /// Say `refusal` where it goes, the task sent back to review first when its approve does not
     /// do; the stop it makes.
     fn refuse(&self, refusal: Refusal) -> Stop {
-        if !refusal.thread {
+        if !refusal.thread || !self.task {
             return Stop::Refused(refusal.line);
         }
         let slug = self.slug;
@@ -1445,7 +1640,9 @@ impl Landing<'_> {
     }
 
     fn post(&self, text: &str, to: Option<&str>) {
-        let _ = self.store.say(self.slug, self.actor, text, to);
+        if self.task {
+            let _ = self.store.say(self.slug, self.actor, text, to);
+        }
     }
 
     fn land(mut self) -> Result<String, Stop> {
@@ -1457,13 +1654,15 @@ impl Landing<'_> {
         let approval =
             approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
         let held = self.store.ever_held(slug)?;
-        independent(&task, &approval, &held).map_err(|line| {
-            self.refuse(Refusal::reopening(
+        let staff = |line: String| {
+            Refusal::reopening(
                 line,
                 "@orchestrator",
                 "Staff a fresh reviewer, which approves naming the tip it read".into(),
-            ))
-        })?;
+            )
+        };
+        let scope =
+            independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
         let tip = rev(&self.main, &format!("refs/heads/{slug}"))
             .ok_or_else(|| self.refuse(Refusal::thread(format!("no branch {slug} to land"))))?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
@@ -1482,6 +1681,11 @@ impl Landing<'_> {
                 ),
             ))
         })?;
+        if let Scope::ChecksUnchanged(why) = scope {
+            let touched = check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
+            unchanged_checks(&task, &approval, why, &tip, touched)
+                .map_err(|line| self.refuse(staff(line)))?;
+        }
         self.say(&format!(
             "land {slug}: approved by {} at {}, {}",
             approval.by,
@@ -1498,13 +1702,8 @@ impl Landing<'_> {
                 .integrate(&base, &Merging::Tip(&tip), attempt > 0)
                 .map_err(|refusal| self.refuse(refusal))?
             {
-                Attempt::Moved {
-                    merge,
-                    top,
-                    regenerated,
-                    taken,
-                } => {
-                    landed = Some((merge, top, regenerated, taken));
+                Attempt::Moved { merge, top, taken } => {
+                    landed = Some((merge, top, taken));
                     break;
                 }
                 Attempt::Raced(now) => {
@@ -1519,14 +1718,14 @@ impl Landing<'_> {
                 }
             }
         }
-        let Some((merge, top, regenerated, taken)) = landed else {
+        let Some((merge, top, taken)) = landed else {
             let line = format!(
-                "{default} moved {TRIES} times while {slug} was checked; nothing landed: run the \
+                "{default} moved {TRIES} times while {slug} was merged; nothing landed: run the \
                  land again"
             );
             return Err(self.refuse(Refusal::here(line)));
         };
-        self.close(&merge, &top, regenerated.as_ref(), &taken, &covered, false)
+        self.close(&merge, &top, &taken, &covered, false)
     }
 
     /// The land of a tip the default branch holds already: only one this command started and
@@ -1581,7 +1780,6 @@ impl Landing<'_> {
         self.close(
             &record.merge,
             &record.checked,
-            None,
             &record.regenerated,
             &covered,
             true,
@@ -1589,13 +1787,12 @@ impl Landing<'_> {
     }
 
     /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
-    /// landed line closing the task, and the sweep; the line saying where it landed. `taken` are
-    /// the generated paths whose conflict the merge took from the default branch.
+    /// landed line closing the task, the sweep and the regenerator's start; the line saying where
+    /// it landed. `taken` are the generated paths the merge took from the default branch.
     fn close(
         &mut self,
         merge: &str,
         top: &str,
-        regenerated: Option<&(String, String)>,
         taken: &[String],
         covered: &Covered,
         finishing: bool,
@@ -1608,10 +1805,7 @@ impl Landing<'_> {
         if finishing {
             landed.push_str(", finishing a land interrupted after its merge");
         }
-        landed.push_str(&taken_said(taken, &default));
-        if let Some((commit, names)) = regenerated {
-            landed.push_str(&format!(", {names} regenerated in {}", short(commit)));
-        }
+        landed.push_str(&taken_said(taken, &default, &self.settings.generators));
         // A signal from here on stops the land with its record kept, which a run again finishes.
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
         let pushed = match self.push(top) {
@@ -1644,24 +1838,51 @@ impl Landing<'_> {
         }
         // Closed: nothing is left to finish.
         Record::drop_in(&self.folder, slug);
-        let at_main = Env {
-            vars: self.env.vars.clone(),
-            cwd: self.main.clone(),
-        };
-        let request = sweep::Request {
-            tasks: vec![slug],
-            ..sweep::Request::default()
-        };
-        match sweep::command(self.store, &at_main, &request) {
-            Ok(lines) => {
-                for swept in lines
-                    .iter()
-                    .filter(|l| l.starts_with("removed ") || l.starts_with("worktree sweep:"))
-                {
-                    self.say(swept);
+        // The task's finished worktrees go by a sweep started detached, as work finishing starts
+        // one ([`trigger`]): it may walk and remove whole trees, which neither the land nor its
+        // lock waits for.
+        if trigger::trigger(
+            self.env,
+            &self.main,
+            &format!("the land of {slug}"),
+            Some(slug),
+        ) {
+            self.say(&format!(
+                "land {slug}: its finished worktrees are swept in the background (its log \
+                 {}/{})",
+                crate::server::FOLDER,
+                trigger::LOG
+            ));
+        }
+        // What the generators make of the default branch is the regenerator's, which nothing here
+        // waits for.
+        if let Some(said) = regenerate::start(self.env, &self.main, &self.settings) {
+            self.say(&format!("land {slug}: {said}"));
+        }
+        // The project's `[board] on_land`, detached, and what it said at once: the release
+        // cadence, here (docs/RELEASES.md). It starts after the regenerator, so a night it starts
+        // finds that one started (`symphony nightly` waits for it).
+        if let Ok(common) = crate::git::common_dir(&self.main) {
+            match crate::on_land::trigger(self.env, &self.main, &common, slug, merge) {
+                (Started::Command(args), heard) => {
+                    self.say(&format!(
+                        "on_land: started {} (its lines go to {})",
+                        args.join(" "),
+                        heard.output.display()
+                    ));
+                    for line in &heard.lines {
+                        self.say(&format!("  {line}"));
+                    }
+                    if !heard.ended {
+                        self.say(&format!(
+                            "  … it runs on past {} s, detached",
+                            crate::on_land::SAYS.as_secs()
+                        ));
+                    }
                 }
+                (Started::Refused(why), _) => self.say(&format!("⚠ on_land: {why}")),
+                (Started::None, _) => {}
             }
-            Err(why) => self.say(&format!("⚠ worktree sweep: {why}")),
         }
         Ok(line)
     }
@@ -1800,6 +2021,17 @@ impl Landing<'_> {
     /// Run `command` in `dir`, as this land's actor for this task, its output in the log, within
     /// the land's timeout: what it came to, or why it could not run.
     fn logged(&self, command: &[String], dir: &Path) -> Result<Ran, String> {
+        self.logged_reading(command, dir, false).map(|(ran, _)| ran)
+    }
+
+    /// [`Landing::logged`], what `command` prints on its standard output read when `read`, else
+    /// in the log with the rest.
+    fn logged_reading(
+        &self,
+        command: &[String],
+        dir: &Path,
+        read: bool,
+    ) -> Result<(Ran, String), String> {
         let (program, args) = command.split_first().ok_or("an empty command")?;
         let mut log = OpenOptions::new()
             .append(true)
@@ -1818,18 +2050,28 @@ impl Landing<'_> {
             child.env_remove(name);
         }
         // What the land runs is the task's, recorded for it and the session landing it, in a group
-        // of its own, which its timeout ends whole.
+        // of its own, which its timeout ends whole. The regenerator's is no task's or session's.
+        if self.task {
+            child
+                .env("TASKS_SESSION", self.actor)
+                .env("TASKS_TASK", self.slug);
+        } else {
+            sys::sessionless(&mut child).env_remove("TASKS_TASK");
+        }
+        let stdout = if read {
+            Stdio::piped()
+        } else {
+            log.try_clone().map_err(|e| at(&self.log, &e))?.into()
+        };
         child
             .args(args)
             .current_dir(dir)
-            .env("TASKS_SESSION", self.actor)
-            .env("TASKS_TASK", self.slug)
             .process_group(0)
             .stdin(Stdio::null())
-            .stdout(log.try_clone().map_err(|e| at(&self.log, &e))?)
+            .stdout(stdout)
             .stderr(log.try_clone().map_err(|e| at(&self.log, &e))?);
         if let Some(signal) = self.interrupted() {
-            return Ok(Ran::Interrupted(signal));
+            return Ok((Ran::Interrupted(signal), String::new()));
         }
         let mut child = child
             .spawn()
@@ -1837,26 +2079,33 @@ impl Landing<'_> {
         let group = child.id();
         self.running(group, &command.join(" "), false);
         let limit = self.settings.timeout;
-        let (status, ended) = watched(group, limit, self.interrupts, || child.wait());
+        let mut printed = Vec::new();
+        let (status, ended) = watched(group, limit, self.interrupts, || {
+            if let Some(mut stdout) = child.stdout.take() {
+                let _ = stdout.read_to_end(&mut printed);
+            }
+            child.wait()
+        });
         self.ran();
         let status = status.map_err(|e| format!("{}: {e}", command.join(" ")))?;
+        let printed = String::from_utf8_lossy(&printed).into_owned();
+        if read {
+            let _ = write!(log, "{printed}");
+        }
         let _ = writeln!(log, "exit {}", status.code().unwrap_or(-1));
-        match ended {
+        let ran = match ended {
             Ended::Late => {
                 let _ = writeln!(log, "ended: it ran past the land's {} s", limit.as_secs());
-                return Ok(Ran::Late);
+                Ran::Late
             }
             Ended::Interrupted(signal) => {
                 let _ = writeln!(log, "ended: the land took {}", signal_name(signal));
-                return Ok(Ran::Interrupted(signal));
+                Ran::Interrupted(signal)
             }
-            Ended::No => {}
-        }
-        Ok(if status.success() {
-            Ran::Passed
-        } else {
-            Ran::Failed
-        })
+            Ended::No if status.success() => Ran::Passed,
+            Ended::No => Ran::Failed,
+        };
+        Ok((ran, printed))
     }
 
     /// What `command` came to that is said of a refusal: `failed`, or ran past the timeout.
@@ -1871,8 +2120,12 @@ impl Landing<'_> {
         }
     }
 
-    /// Merge `merging` into `base` in the land's worktree, regenerate and check, then move the
-    /// default branch there when it is still at `base`. `again` is a run after it moved.
+    /// Merge `merging` into `base` in the land's worktree, keeping the default branch's side of the
+    /// generated paths a task's tip changed, and check, then move the default branch there when it
+    /// is still at `base`. `again` is a run after it moved. Its merge of a task's tip
+    /// ([`Merging::Tip`]) is the one place a task's branch is merged: the seam a hosted
+    /// pull-request merge would replace, the approval before it and the record, move, push and
+    /// close after it staying as they are.
     fn integrate(
         &mut self,
         base: &str,
@@ -1899,49 +2152,79 @@ impl Landing<'_> {
             short(base),
             path.display()
         ));
-        let mut taken = Vec::new();
-        if git(
+        let merged = git(
             &path,
-            &["merge", "--no-ff", "--no-edit", "-m", &message, what],
+            &["merge", "--no-ff", "--no-commit", "--no-edit", what],
         )
-        .is_none_or(|done| !done.status.success())
-        {
-            let files =
-                git_z(&path, &["diff", "--name-only", "-z", "--diff-filter=U"]).unwrap_or_default();
-            // Conflicts in the generators' outputs alone are theirs to settle: the default
-            // branch's side, regenerated below from the merge's sources, and judged by the check.
-            let generated = |file: &String| {
-                self.settings
-                    .generators
-                    .iter()
-                    .any(|g| owns(&g.outputs, file))
-            };
-            let settled = !files.is_empty()
-                && files.iter().all(generated)
-                && match self.take_ours(&path, &files, &message) {
-                    Ok(()) => true,
-                    Err(why) => {
-                        self.say(&format!(
-                            "land {slug}: the conflicts in generated paths could not be taken \
-                             from {default}: {why}"
-                        ));
-                        false
-                    }
-                };
-            if settled {
-                self.say(&format!(
-                    "land {slug}: {} conflicted, generated paths alone: taking {default}'s side \
-                     there, to regenerate",
-                    and(&files.iter().map(String::as_str).collect::<Vec<_>>())
-                ));
-                taken = files;
-            } else {
+        .is_some_and(|done| done.status.success());
+        let files =
+            git_z(&path, &["diff", "--name-only", "-z", "--diff-filter=U"]).unwrap_or_default();
+        let generated = |file: &String| {
+            self.settings
+                .generators
+                .iter()
+                .any(|g| owns(&g.outputs, file))
+        };
+        // Conflicts in the generators' outputs alone are theirs to settle; any other refuses, and
+        // so does a merge git would not begin.
+        let begun = succeeds(&path, &["rev-parse", "--verify", "--quiet", "MERGE_HEAD"]);
+        if !begun || (!merged && (files.is_empty() || !files.iter().all(generated))) {
+            let _ = git(&path, &["merge", "--abort"]);
+            return Err(self.unmerged(merging, what, base, &files));
+        }
+        // What the generators make is the regenerator's, from the default branch's own sources:
+        // the merge of a task's tip keeps the default branch's side of each generated path, in a
+        // conflict or not, so no branch's own build of them lands. What origin gained there is
+        // the default branch's own (a regenerator's commit pushed elsewhere), kept but where it
+        // conflicts.
+        let tip = matches!(merging, Merging::Tip(_));
+        let mut taken = match if tip {
+            self.generated_changes(&path)
+        } else {
+            Ok(Vec::new())
+        } {
+            Ok(taken) => taken,
+            Err(why) => {
                 let _ = git(&path, &["merge", "--abort"]);
-                return Err(self.unmerged(merging, what, base, &files));
+                return Err(why.into());
+            }
+        };
+        for file in &files {
+            if !taken.contains(file) {
+                taken.push(file.clone());
             }
         }
+        taken.sort();
+        if !taken.is_empty() {
+            if let Err(why) = self.take_ours(&path, &taken) {
+                let _ = git(&path, &["merge", "--abort"]);
+                if files.is_empty() {
+                    return Err(format!(
+                        "the generated paths {slug} changed could not be taken from {default}: \
+                         {why}"
+                    )
+                    .into());
+                }
+                self.say(&format!(
+                    "land {slug}: the conflicts in generated paths could not be taken from \
+                     {default}: {why}"
+                ));
+                return Err(self.unmerged(merging, what, base, &files));
+            }
+            self.say(&format!(
+                "land {slug}: {} generated paths ({}): taking {default}'s side there, for the \
+                 regenerator to make",
+                match merging {
+                    Merging::Origin(_) => format!("what {REMOTE}/{default} gained conflicts in"),
+                    Merging::Tip(_) if files.is_empty() => "it changed its".into(),
+                    Merging::Tip(_) => "it conflicts in its".into(),
+                },
+                generated_named(&taken, &self.settings.generators)
+            ));
+        }
+        run_git(&path, &["commit", "--quiet", "--no-verify", "-m", &message])
+            .map_err(Refusal::here)?;
         let merge = rev(&path, "HEAD").ok_or("the merge left no HEAD")?;
-        let regenerated = self.generate(&path, &taken)?;
         if !self.settings.check.is_empty() {
             let check = self.settings.check.join(" ");
             self.say(&format!("land {slug}: checking ({check})"));
@@ -1994,7 +2277,7 @@ impl Landing<'_> {
                 &format!(
                     "land {slug}: merged {tip} as {merge}{}, checked at {top}; moving {default} \
                      there",
-                    taken_said(&taken, &default)
+                    taken_said(&taken, &default, &self.settings.generators)
                 ),
                 None,
             );
@@ -2044,12 +2327,7 @@ impl Landing<'_> {
                 let _ = record.write(&self.folder);
             }
         }
-        Ok(Attempt::Moved {
-            merge,
-            top,
-            regenerated,
-            taken,
-        })
+        Ok(Attempt::Moved { merge, top, taken })
     }
 
     /// The refusal of a merge of `what` (`merging`) into `base` that did not go, `files` its
@@ -2079,11 +2357,40 @@ impl Landing<'_> {
         }
     }
 
-    /// End the merge in `path`, whose conflicts are `files`, each inside a generator's outputs, by
-    /// the default branch's side of each (the worktree's `HEAD`): its file where it has one, none
-    /// where it has none; then commit it as `message`, both parents kept, so the merge's second
-    /// parent is still the tip merged.
-    fn take_ours(&self, path: &Path, files: &[String], message: &str) -> Result<(), String> {
+    /// The generated paths the merge begun in `path` changes or leaves in conflict against the
+    /// default branch's side (the worktree's `HEAD`): every path inside a generator's outputs that
+    /// the index holds otherwise than `HEAD` does.
+    fn generated_changes(&self, path: &Path) -> Result<Vec<String>, String> {
+        if self.settings.generators.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args = vec![
+            "--literal-pathspecs",
+            "diff",
+            "--cached",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+        ];
+        args.extend(self.settings.generators.iter().map(|g| g.outputs.as_str()));
+        let mut changed = git_z(path, &args)?;
+        changed.retain(|file| {
+            self.settings
+                .generators
+                .iter()
+                .any(|g| owns(&g.outputs, file))
+        });
+        changed.dedup();
+        Ok(changed)
+    }
+
+    /// Settle each of `files`, inside a generator's outputs, in the merge begun in `path` by the
+    /// default branch's side (the worktree's `HEAD`): its file where it has one, none where it has
+    /// none, a conflict there resolved so. The merge is committed after, both parents kept, so its
+    /// second parent is still the tip merged.
+    fn take_ours(&self, path: &Path, files: &[String]) -> Result<(), String> {
         let mut held = Vec::new();
         for share in files.chunks(PATHS_AT_ONCE) {
             let mut args = vec![
@@ -2110,78 +2417,7 @@ impl Landing<'_> {
         if let Some(file) = left.first() {
             return Err(format!("{file} is still unmerged"));
         }
-        run_git(path, &["commit", "--quiet", "--no-verify", "-m", message])?;
         Ok(())
-    }
-
-    /// Run the project's generators in `path`, its merge checked out; commit what they changed,
-    /// inside their outputs alone: that commit and the names of what changed. A generator owning
-    /// one of the paths `taken` from the default branch in a conflict runs whatever ran before it,
-    /// so what it owns is made from the merge.
-    fn generate(
-        &mut self,
-        path: &Path,
-        taken: &[String],
-    ) -> Result<Option<(String, String)>, Refusal> {
-        let generators = self.settings.generators.clone();
-        if generators.is_empty() {
-            return Ok(None);
-        }
-        let slug = self.slug;
-        let mut wrote = false;
-        for generator in &generators {
-            let owes = taken.iter().any(|file| owns(&generator.outputs, file));
-            if generator.when_changed && !wrote && !owes {
-                continue;
-            }
-            self.say(&format!(
-                "land {slug}: regenerating {} ({})",
-                generator.name,
-                generator.command.join(" ")
-            ));
-            let ran = self.logged(&generator.command, path)?;
-            if let Ran::Interrupted(signal) = ran {
-                return Err(Refusal::here(self.halted(signal, None)));
-            }
-            if ran != Ran::Passed {
-                return Err(Refusal::thread(format!(
-                    "the generator {} {} on {slug} merged into {}; its output is in {}",
-                    generator.name,
-                    self.failed(ran),
-                    self.settings.default_branch,
-                    self.log.display()
-                )));
-            }
-            wrote |= changed(path)?
-                .iter()
-                .any(|name| owns(&generator.outputs, name));
-        }
-        let made = changed(path)?;
-        if made.is_empty() {
-            return Ok(None);
-        }
-        if let Some(stray) = made
-            .iter()
-            .find(|name| !generators.iter().any(|g| owns(&g.outputs, name)))
-        {
-            return Err(Refusal::thread(format!(
-                "the generators changed {stray}, outside their outputs, on {slug} merged into {}",
-                self.settings.default_branch
-            )));
-        }
-        let names: Vec<&str> = generators
-            .iter()
-            .filter(|g| made.iter().any(|name| owns(&g.outputs, name)))
-            .map(|g| g.name.as_str())
-            .collect();
-        let names = and(&names);
-        // What changed, each inside an output: an output folder no generator wrote, absent from
-        // the tree, is no path for git to add.
-        on_paths(path, &["add", "-A"], &made)?;
-        let message = format!("Regenerate {names} after {slug}");
-        run_git(path, &["commit", "--quiet", "--no-verify", "-m", &message])?;
-        let commit = rev(path, "HEAD").ok_or("the commit left no HEAD")?;
-        Ok(Some((commit, names)))
     }
 
     /// Push the default branch, at `top` here (the commit a check passed on), to `origin`: what it

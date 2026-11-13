@@ -4,7 +4,7 @@
 use super::agents::{describe, table};
 use super::args::Parsed;
 use super::attach::{Watch, watch};
-use super::text::{columns, event, export_markdown, message_line, roles_text};
+use super::text::{SNAPSHOT_TITLE, columns, event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
 use crate::pyjson::{self, Py};
@@ -23,6 +23,7 @@ const PULL_SECONDS: f64 = 600.0;
 
 mod asks;
 mod finish;
+mod limits;
 mod list;
 mod panes;
 mod stats;
@@ -130,7 +131,7 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     let (handle, kind) = (&session.row.handle, &session.row.kind);
     c.say(&format!(
-        "ATTACHED {handle} {kind} — run commands with TASKS_SESSION={handle} (or --as {handle})"
+        "ATTACHED {handle} {kind} — run commands with --as {handle}"
     ));
     let env = c.env;
     let probes = probes::machine(env);
@@ -282,9 +283,15 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "next" => {
             if let Some(t) = store.next_for(&c.actor()?)? {
+                // Past `[limits] machine_agents` the task is still named: its asker runs already.
+                let hc = crate::launch::hc::Binary::of(c.env);
+                if let Some(warning) = crate::launch::running::warning_next(store, c.env, &hc) {
+                    let _ = writeln!(c.err, "⚠ {warning}");
+                }
                 c.say(&format!("{}  p{}  {}", t.slug, t.priority, t.title));
             }
         }
+        "limits" => limits::run(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;
@@ -327,8 +334,13 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("{} depends on {on} and is {}", t.slug, t.status));
         }
         "done" => {
-            let slug = c.arg("slug");
-            let t = store.done(&slug, &c.actor()?, &c.arg("note"))?;
+            let (slug, note) = (c.arg("slug"), c.arg("note"));
+            let t = match p.get("covered_by") {
+                Some(other) => {
+                    crate::covering::close(store, Some(c.env), &slug, other, &c.actor()?, &note)?
+                }
+                None => store.done(&slug, &c.actor()?, &note)?,
+            };
             c.say(&format!("{slug} is {}", t.status));
             finish::after_finish(store, c, &t);
         }
@@ -360,7 +372,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if status == "review" {
                 crate::land::reopenable(store, Some(c.env), &slug)?;
             }
-            let t = store.move_to(&slug, &status, &c.actor()?)?;
+            let t = store.move_with(&slug, &status, &c.actor()?, p.get("reason"))?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }
@@ -398,6 +410,29 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                     crate::land::Stop::Board(error) => Stop::from(error),
                 })?;
             c.say(&line);
+        }
+        "regenerate" => {
+            use crate::land::regenerate;
+            if p.flag("status") || p.flag("wait") {
+                let (env, wait) = (c.env, p.flag("wait"));
+                let mut said = false;
+                let standing = regenerate::settled(env, regenerate::WAITING, &mut |standing| {
+                    if wait && !said {
+                        c.say(&format!("waiting: {}", standing.line));
+                        said = true;
+                    }
+                    wait
+                })
+                .map_err(Stop::Refused)?;
+                if !standing.current {
+                    return Err(Stop::Refused(standing.line));
+                }
+                c.say(&standing.line);
+            } else {
+                regenerate::admit(c.env).map_err(Stop::Refused)?;
+                let line = regenerate::run(store, c.env, &mut *c.out).map_err(Stop::Refused)?;
+                c.say(&line);
+            }
         }
         "show" => show(store, c)?,
         "who" => who(store, c)?,
@@ -446,7 +481,18 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "export" => {
             let named = p.or("out", EXPORT_PATH).to_string();
-            let path = c.env.cwd.join(&named);
+            // Through `just tasks`, which an agent runs unasked, the snapshot stays in the project.
+            let marked = c.env.var(crate::confine::MARKER).is_some();
+            let path = crate::confine::checked(marked, &c.env.cwd, Path::new(&named))
+                .map_err(Stop::Refused)?;
+            // ...and replaces only an earlier snapshot, never a file of the project's own.
+            if marked && path.symlink_metadata().is_ok() && !snapshot(&path) {
+                return Err(Stop::Refused(format!(
+                    "{named} holds something other than an earlier snapshot: the board recipe, \
+                     which an agent runs unasked, replaces only a file whose first line is \
+                     `{SNAPSHOT_TITLE}`, and the binary run by itself anything"
+                )));
+            }
             let text = export_markdown(&store.tasks(None)?, store.now());
             let written = path
                 .parent()
@@ -459,6 +505,20 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         other => return Err(Stop::Refused(format!("no command {other}"))),
     }
     Ok(())
+}
+
+/// Whether the file at `path` is a snapshot `tasks export` wrote: its first line is
+/// [`SNAPSHOT_TITLE`]. Only that much of it is read.
+fn snapshot(path: &Path) -> bool {
+    let mut head = Vec::new();
+    let read = std::fs::File::open(path).and_then(|file| {
+        file.take(SNAPSHOT_TITLE.len() as u64 + 1)
+            .read_to_end(&mut head)
+    });
+    read.is_ok()
+        && head
+            .strip_prefix(SNAPSHOT_TITLE.as_bytes())
+            .is_some_and(|rest| matches!(rest, [] | [b'\n'] | [b'\r']))
 }
 
 /// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;

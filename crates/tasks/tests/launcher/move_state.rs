@@ -726,6 +726,111 @@ fn a_process_naming_the_old_folders_refuses_with_its_pid() {
     s.moved();
 }
 
+/// An older build's private replay's record (`replay.json`) and its ask to end a server
+/// (`ending/PID`), each naming a server on the old folder's data and when its process started: the
+/// move is refused while either server runs, and signals neither. Once they have ended, the record
+/// and the ask move whole, byte for byte, and the new build reads them as its own: no server on
+/// its data to take for the replay's, none adopted as the board's, and nothing left to ask again.
+/// The hold the move is made under, an older build's too, holds the new build's board after it
+/// until its holder releases it.
+#[test]
+fn an_older_builds_replay_record_ask_to_end_and_hold_stand_across_the_move() {
+    let s = State::new("move-replay");
+    s.fill();
+    let common = s.common.to_str().unwrap();
+    let given = common.strip_prefix("/private").unwrap_or(common);
+    let data = format!("surrealkv://{given}/sf-tasks/data");
+    // Its private replay's server, which its starter left running.
+    let (replaying, replay_line) = program(
+        &format!("surreal start --bind 127.0.0.1:4100 {data}"),
+        &s.main,
+    );
+    // A server it asked to end, still closing its store, counting each SIGTERM it takes.
+    let terms = s.main.parent().unwrap().join("terms");
+    let closing = Started(
+        Command::new("bash")
+            .args([
+                "-c",
+                "trap 'echo term >> \"$1\"' TERM; while :; do sleep 0.05; done",
+                "closing",
+            ])
+            .arg(&terms)
+            .arg(format!("surreal start --bind 127.0.0.1:4101 {data}"))
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let (replay_pid, closing_pid) = (replaying.0.id(), closing.0.id());
+    let begun = Instant::now();
+    while !command_of(closing_pid).ends_with(&data) {
+        assert!(begun.elapsed() < Duration::from_secs(60), "never ran");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let started = |pid: u32| symphony_board::server::Home::process_start(pid.into()).unwrap();
+    let record = format!(
+        "{{\"by\":{},\"at\":1794469500.5,\"logged\":441648764,\"memtable\":883297528,\"server\":\
+         {{\"addr\":\"127.0.0.1:4100\",\"pid\":{replay_pid},\"version\":\"3.3.0\"}},\
+         \"started\":\"{}\"}}",
+        dead_pid(),
+        started(replay_pid)
+    );
+    let ask = format!(
+        "{{\"at\":1794469501.25,\"started\":\"{}\"}}",
+        started(closing_pid)
+    );
+    s.write("sf-tasks/replay.json", &record);
+    s.write(&format!("sf-tasks/ending/{closing_pid}"), &ask);
+    // The hold its `database hold` left, its command ended.
+    let hold = format!(
+        "{{\"by\":\"keen-stoat\",\"why\":\"the folder move\",\"at\":1794469400,\"pid\":{}}}",
+        dead_pid()
+    );
+    s.write("sf-tasks/hold", &hold);
+    let closing_line = command_of(closing_pid);
+
+    let before = s.tree();
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.out.as_str()), (1, ""), "{}", done.err);
+    for (pid, line) in [(replay_pid, &replay_line), (closing_pid, &closing_line)] {
+        let refused = refusal(&format!(
+            "pid {pid} ({line}) runs on this repository's state: stop it and run this again"
+        ));
+        assert!(done.err.contains(&refused), "{refused}in {}", done.err);
+    }
+    assert_eq!(s.tree(), before);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!terms.exists(), "the move signalled a server");
+
+    drop(replaying);
+    drop(closing);
+    let done = s.run(&[]);
+    assert_eq!((done.code, done.err.as_str()), (0, ""), "{}", done.out);
+    s.moved();
+    let after = s.tree();
+    assert_eq!(after["symphony/tasks/replay.json"], record);
+    assert_eq!(after[&format!("symphony/tasks/ending/{closing_pid}")], ask);
+    assert_eq!(after["symphony/tasks/hold"], hold);
+    assert_eq!(after["sf-tasks"], fence("symphony/tasks"));
+    // The new build's board, in the folder the move made: the record it carried names a server
+    // that has ended, and nothing serves the data, so nothing is taken for the replay's or adopted.
+    let home = symphony_board::server::Home::in_common(&s.common, None);
+    assert_eq!(home.left_replay_told(), Ok(None));
+    assert_eq!(home.serving(), None);
+    assert!(!terms.exists(), "a server was signalled");
+    // The hold it carried holds: another holds nothing, and its holder releases it.
+    let held = home.held().expect("the hold the move carried");
+    assert_eq!(
+        (held.by.as_str(), held.why.as_str(), held.at),
+        ("keen-stoat", "the folder move", 1_794_469_400)
+    );
+    assert_eq!(
+        home.hold("ivory-plover", "a snapshot").err(),
+        Some(symphony_board::server::ServerError::Held(held.clone()))
+    );
+    assert_eq!(home.release("keen-stoat", None), Ok(Some(held)));
+    assert_eq!(home.held(), None);
+}
+
 #[test]
 fn a_live_server_in_either_record_refuses_and_a_dead_one_does_not() {
     let s = State::new("move-records");

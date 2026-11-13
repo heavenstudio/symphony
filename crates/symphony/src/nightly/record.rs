@@ -72,6 +72,31 @@ pub(crate) struct Run {
     pub(crate) remote: String,
     #[serde(default)]
     pub(crate) unpushed: Option<Vec<String>>,
+    /// What started it, when the cadence did (docs/RELEASES.md): the landings it counted.
+    #[serde(default)]
+    pub(crate) cause: Option<String>,
+    /// What the release it tagged, or the release a `--refresh` named, refreshed on the machine
+    /// (docs/RELEASES.md).
+    #[serde(default)]
+    pub(crate) refreshed: Option<Refresh>,
+}
+
+/// A release's refresh: the release, one step for each project the machine serves that builds on
+/// the Symphony (its pin and its board), and what it said, the shared server's line last.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Refresh {
+    pub(crate) release: String,
+    #[serde(default)]
+    pub(crate) steps: Vec<Ran>,
+    #[serde(default)]
+    pub(crate) said: Vec<String>,
+}
+
+impl Refresh {
+    /// Whether every step of it is green.
+    pub(crate) fn green(&self) -> bool {
+        self.steps.iter().all(Ran::green)
+    }
 }
 
 /// The run holding the lock: which, of which kind, its process, when it started and when its time
@@ -219,6 +244,8 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         board: Board::default(),
         remote: String::new(),
         unpushed: None,
+        cause: None,
+        refreshed: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -358,7 +385,7 @@ fn line(run: &Run, now: f64) -> String {
         short(&run.commit)
     );
     let red: Vec<String> = (run.checks.iter())
-        .filter(|ran| !ran.green())
+        .flat_map(super::steps::reds)
         .map(|ran| format!("{} ({})", ran.name, ran.ended()))
         .collect();
     if !red.is_empty() {
@@ -440,6 +467,46 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
     text
 }
 
+/// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
+/// it and when, then each line it said (a project's pin and board, the shared server) and each red
+/// step with how it ended.
+pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
+    let Some((run, refresh)) =
+        (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
+    else {
+        return "last refresh: none recorded\n".into();
+    };
+    let verdict = if refresh.green() { "green" } else { "red" };
+    let mut text = format!(
+        "last refresh: {verdict}, of {} by the run {}, {} ({})\n",
+        refresh.release,
+        run.id,
+        local(run.started_at),
+        age(now, run.started_at)
+    );
+    for said in &refresh.said {
+        text.push_str(&format!("  {said}\n"));
+    }
+    for red in refresh.steps.iter().filter(|ran| !ran.green()) {
+        text.push_str(&format!(
+            "  {} red: {}; log {}\n",
+            red.name,
+            red.ended(),
+            red.log.display()
+        ));
+    }
+    if !refresh.green() {
+        text.push_str(BY_HAND);
+    }
+    text
+}
+
+/// What a red refresh leaves to people, which `--status` says under it.
+const BY_HAND: &str = "  by hand: a project whose own gate or hooks refuse the move lands its \
+                       branch symphony/RELEASE through its own landing; a main checkout off its \
+                       default branch or with tracked edits is put right by its owner; then an \
+                       orchestrator's `just nightly --refresh` finishes the rest\n";
+
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
     format!("`git push --no-follow-tags {remote} refs/tags/{tag}:refs/tags/{tag}`")
@@ -471,6 +538,8 @@ mod tests {
             board: Board::default(),
             remote: "origin".into(),
             unpushed: None,
+            cause: None,
+            refreshed: None,
         }
     }
 
@@ -482,9 +551,11 @@ mod tests {
             signal: None,
             seconds: 3.0,
             log: PathBuf::from("/l"),
+            steps: Vec::new(),
             error: None,
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 
@@ -634,6 +705,36 @@ mod tests {
         assert!(lines[2].starts_with("last green: "), "{said}");
         assert!(lines[2].ends_with("(27 h ago), on green0000000"), "{said}");
         assert_eq!(lines.len(), 3, "{said}");
+    }
+
+    #[test]
+    fn the_status_names_the_red_steps_of_a_check_red_in_its_steps() {
+        let step = |name: &str, code: i32| Ran {
+            name: format!("verify/{name}"),
+            exit_code: Some(code),
+            ..red_check("x")
+        };
+        let mut night = run("night", "nightly", "red", NOW - 3600.0);
+        night.checks = vec![Ran {
+            exit_code: Some(1),
+            steps: vec![step("lint", 0), step("size-check", 1), step("tests", 101)],
+            ..red_check("verify")
+        }];
+        let said = status(&[night.clone()], &[], NOW);
+        assert!(
+            said.contains("; red: verify/size-check (exit 1), verify/tests (exit 101)\n"),
+            "{said}"
+        );
+        // Stopped while it ran: the check itself too.
+        night.checks[0].timed_out = true;
+        let said = status(&[night], &[], NOW);
+        assert!(
+            said.contains(
+                "; red: verify (timed out: stopped after 3 s, when the run's time was up), \
+                 verify/size-check (exit 1), verify/tests (exit 101)\n"
+            ),
+            "{said}"
+        );
     }
 
     #[test]
@@ -873,5 +974,46 @@ mod tests {
             said.contains("last night: error, ") && said.contains("; cannot fetch origin\n"),
             "{said}"
         );
+    }
+
+    #[test]
+    fn the_newest_refresh_is_said_with_each_line_and_each_red_step() {
+        assert_eq!(refresh_status(&[], NOW), "last refresh: none recorded\n");
+        let mut older = run("older", "nightly", "green", NOW - 7200.0);
+        older.refreshed = Some(Refresh {
+            release: "release-2026-11-11".into(),
+            steps: Vec::new(),
+            said: vec!["an older line".into()],
+        });
+        let mut newer = run("newer", "nightly", "green", NOW - 3600.0);
+        let mut green = red_check("refresh-alpha");
+        green.exit_code = Some(0);
+        newer.refreshed = Some(Refresh {
+            release: "release-2026-11-12".into(),
+            steps: vec![green, red_check("refresh-beta")],
+            said: vec!["alpha: its pin is on the branch symphony/release-2026-11-12".into()],
+        });
+        let after = run("after", "nightly", "red", NOW - 60.0);
+        assert_eq!(
+            refresh_status(&[older, newer, after], NOW),
+            format!(
+                "last refresh: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
+                 alpha: its pin is on the branch symphony/release-2026-11-12\n  \
+                 refresh-beta red: exit 101; log /l\n  \
+                 by hand: a project whose own gate or hooks refuse the move lands its branch \
+                 symphony/RELEASE through its own landing; a main checkout off its default \
+                 branch or with tracked edits is put right by its owner; then an orchestrator's \
+                 `just nightly --refresh` finishes the rest\n",
+                local(NOW - 3600.0)
+            )
+        );
+        // A green one leaves nothing by hand.
+        let mut green = run("green", "nightly", "green", NOW - 60.0);
+        green.refreshed = Some(Refresh {
+            release: "release-2026-11-12".into(),
+            steps: Vec::new(),
+            said: vec!["alpha: its board is at schema 17, its pin's: nothing to move".into()],
+        });
+        assert!(!refresh_status(&[green], NOW).contains("by hand"));
     }
 }

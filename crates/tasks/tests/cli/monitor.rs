@@ -617,11 +617,10 @@ fn attach_registers_and_prints_the_handle_first() {
     assert_eq!(ran.code, 0, "{}", ran.err);
     let first = ran.out.lines().next().unwrap_or_default();
     let handle = first.split_whitespace().nth(1).unwrap_or_default();
+    // The handle goes on each command as its own flag: no allow rule passes an env prefix.
     assert_eq!(
         first,
-        format!(
-            "ATTACHED {handle} worker — run commands with TASKS_SESSION={handle} (or --as {handle})"
-        )
+        format!("ATTACHED {handle} worker — run commands with --as {handle}")
     );
     let s = m.board().session(handle).unwrap().row;
     assert_eq!(

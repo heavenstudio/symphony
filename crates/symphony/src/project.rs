@@ -4,15 +4,15 @@
 //! as the project's name and its slug as the id (`project` when the folder's has no letter or
 //! digit), one entrypoint serving `docs/` at `/docs/` with `docs/history` skipped, the register
 //! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme,
-//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown table or key is refused by
-//! name where the project is loaded or linted ([`Project::load`]) and, where the Symphony runs with
-//! the file as it is ([`Project::of`]), left out by name with the rest read, so a misspelt setting
-//! never passes for its default unsaid, and a file a newer Symphony wrote keeps its settings under
-//! an older one. An `[[entrypoints]]` table and a generator's are strict: a key there the Symphony
-//! does not know refuses the file wherever it is read, since a misspelt one would change what is
-//! served or built. An unknown renderer, a path outside the project (an entrypoint's folder
-//! leading out of it through a link too), and an entrypoint or a file of one on a route another
-//! answers are refused by name, so no file is hidden.
+//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown
+//! table or key is refused by name where the project is loaded or linted ([`Project::load`]) and,
+//! where the Symphony runs with the file as it is ([`Project::of`]), left out by name with the rest
+//! read, so a misspelt setting never passes for its default unsaid, and a file a newer Symphony
+//! wrote keeps its settings under an older one. An `[[entrypoints]]` table and a generator's are
+//! strict: a key there the Symphony does not know refuses the file wherever it is read, since a
+//! misspelt one would change what is served or built. An unknown renderer, a path outside the
+//! project (an entrypoint's folder leading out of it through a link too), and an entrypoint or a
+//! file of one on a route another answers are refused by name, so no file is hidden.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -65,6 +65,9 @@ pub struct Project {
     pub cargo: Vec<String>,
     /// The plugins the project uses, by crate name.
     pub plugins: Vec<String>,
+    /// The ones of them that answer from a process of their own (`[plugins.process]`), by name; the
+    /// rest are linked into the host.
+    pub plugin_processes: BTreeMap<String, PluginProcess>,
     /// How its plugins' calls are measured.
     pub plugin_calls: PluginCalls,
     pub theme: Theme,
@@ -72,6 +75,19 @@ pub struct Project {
     pub verdicts: Verdicts,
     pub land: Land,
     pub board: Board,
+    pub releases: Releases,
+}
+
+/// How a plugin that answers from a process of its own is started (`[plugins.process]`,
+/// docs/PLUGIN_PROTOCOL.md): its command, a program the file names by a relative path holding a `/`
+/// taken under the project's root, run in that root without the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginProcess {
+    pub command: Vec<String>,
+    /// The project's root, where it runs.
+    pub root: PathBuf,
+    /// Where its stderr goes, and its starts and ends: `plugins/NAME.log` in the artifacts folder.
+    pub log: PathBuf,
 }
 
 /// How a project's plugin calls are measured, both off unless its file turns them on
@@ -89,6 +105,32 @@ impl PluginCalls {
     pub fn recorded(self) -> bool {
         self.timing || self.loopback
     }
+
+    /// The two settings of the `symphony.toml` at `root`, read alone and quietly: nothing else in
+    /// the file is read or checked and nothing is said of it, and a file that does not parse, a
+    /// setting that is not `true` or `false`, or no file, turns neither on. What a plugin command
+    /// reads before it runs ([`crate::plugins::command`]), so with both off it loads no project.
+    pub fn read(root: &Path) -> PluginCalls {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Settings {
+            plugins: PluginSettings,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PluginSettings {
+            timing: bool,
+            loopback: bool,
+        }
+        std::fs::read_to_string(root.join(FILE))
+            .ok()
+            .and_then(|text| toml::from_str::<Settings>(&text).ok())
+            .map(|settings| PluginCalls {
+                timing: settings.plugins.timing,
+                loopback: settings.plugins.loopback,
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +140,7 @@ pub struct Agents {
     /// Where agents' worktrees go, relative to the root (it may lie outside it).
     pub worktrees: Option<String>,
     pub launch: Launch,
+    pub models: Models,
 }
 
 /// The defaults a launch takes when it names none; `None` leaves the board's own.
@@ -106,6 +149,17 @@ pub struct Launch {
     pub default: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+/// `[agents.models]`: the model of the project's agent each role runs on, which a board launch and
+/// `just tasks limits` read themselves (`symphony_board::launch::Defaults`); `None` leaves
+/// `[agents] launch`'s model, else the board's own, and for an orchestrator whoever starts it
+/// chooses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Models {
+    pub orchestrator: Option<String>,
+    pub executor: Option<String>,
+    pub reviewer: Option<String>,
 }
 
 /// How the owner's edits are committed to the default branch: straight on it when no generator
@@ -124,25 +178,59 @@ pub struct Verdicts {
 
 pub use crate::landing::Generator;
 
-/// What the Symphony's default `just land` does besides merging and checking
-/// (`symphony_board::land`, which reads the same table from the default branch).
+/// What the Symphony's default `just land` does besides merging, and what the regenerator it starts
+/// makes (`symphony_board::land`, which reads the same table from the default branch).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Land {
-    /// Run on the merge before its check; what they change inside their outputs is committed.
+    /// Run on the default branch's newest tip by the regenerator a land starts, never by the
+    /// land; what they change inside their outputs is committed and landed.
     pub generators: Vec<Generator>,
+    /// `[land] keys`: a generator's name to the command printing its key, beside the generators,
+    /// never one of their fields (`symphony_board::land::Settings::keys`).
+    pub keys: BTreeMap<String, Vec<String>>,
     /// Whether a landing pushes the default branch to `origin`.
     pub push: bool,
-    /// How long each generator and the check may run, and a land waits for another, in seconds;
-    /// a fetch or a push takes five minutes at most.
+    /// How long each generator and the check may run, in seconds; a fetch or a push takes five
+    /// minutes at most, and a land waits for another with no timeout.
     pub timeout_seconds: u64,
+    /// Whether a land runs `[verdicts] check` on its merge.
+    pub check: bool,
 }
 
 impl Default for Land {
     fn default() -> Land {
         Land {
             generators: Vec::new(),
+            keys: BTreeMap::new(),
             push: true,
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
+            check: true,
+        }
+    }
+}
+
+/// When the Symphony's own nightly (`symphony nightly`, docs/RELEASES.md) releases besides each night,
+/// and what a green release does then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Releases {
+    /// A run on main's tip starts once this many landings reached the default branch since the
+    /// last release or the last run that checked something (`just nightly --due`); 0 starts none.
+    pub every_landings: u32,
+    /// Whether a green release refreshes the machine: each consuming project's pin and board,
+    /// and the shared server through its own reload.
+    pub refresh: bool,
+}
+
+impl Releases {
+    /// The landings a release run waits for unless the project says: the owner's 20.
+    pub const EVERY_LANDINGS: u32 = 20;
+}
+
+impl Default for Releases {
+    fn default() -> Releases {
+        Releases {
+            every_landings: Releases::EVERY_LANDINGS,
+            refresh: true,
         }
     }
 }
@@ -209,14 +297,21 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name and line. The files its entrypoints hold are [`Project::load`]'s to
+    /// know refused by name and line, and a `[limits]` value the board cannot read refused as the
+    /// board says it, with its line. The files its entrypoints hold are [`Project::load`]'s to
     /// look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
-        Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))
+        let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
+        // The board reads `[limits]` itself and takes a default for a value it cannot read, so the
+        // board runs on whatever the file says; the lint and a load refuse that value here.
+        if let Some(problem) = symphony_board::limits::parse(FILE, text).problems.first() {
+            return Err(problem.clone());
+        }
+        Ok(project)
     }
 
     /// The file at `root` as [`Project::of`] reads it, before its entrypoints' files are looked
@@ -397,13 +492,22 @@ impl Project {
                 model: a.launch.model,
                 effort: a.launch.effort,
             },
+            models: Models {
+                orchestrator: a.models.orchestrator,
+                executor: a.models.executor,
+                reviewer: a.models.reviewer,
+            },
         };
         let mut v = file.verdicts;
         checked_generators("[verdicts]", &mut v.generators)?;
         let mut land = file.land;
         checked_generators("[land]", &mut land.generators)?;
+        let keys = symphony_board::land::keyed(&land.generators, std::mem::take(&mut land.keys))?;
         if land.timeout_seconds == 0 {
             return Err("[land] timeout_seconds is 0, which no generator or check runs in".into());
+        }
+        if let Some(written) = &land.check_paths {
+            symphony_board::land::check_paths::parse(written)?;
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
@@ -421,6 +525,8 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
+        let plugin_processes =
+            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let board = Board::from_file(file.board)?;
         let project = Project {
             name,
@@ -430,6 +536,7 @@ impl Project {
             artifacts,
             default_branch,
             cargo,
+            plugin_processes,
             plugins: file.plugins.crates,
             plugin_calls: PluginCalls {
                 timing: file.plugins.timing,
@@ -440,10 +547,16 @@ impl Project {
             verdicts,
             land: Land {
                 generators: land.generators,
+                keys,
                 push: land.push,
                 timeout_seconds: land.timeout_seconds,
+                check: land.check,
             },
             board,
+            releases: Releases {
+                every_landings: file.releases.every_landings,
+                refresh: file.releases.refresh,
+            },
         };
         let reserved = project.reserved();
         let uploads = project.artifact(crate::uploads::DIR);
@@ -936,6 +1049,56 @@ impl Project {
     }
 }
 
+/// The `[plugins.process]` table of the project at `root`: each plugin's command, its program
+/// resolved under the root when it is a relative path, and its log in the artifacts folder. A name
+/// `[plugins] crates` does not list, a command with no program, or a relative program with a `..`
+/// part, which could leave the checkout, is refused by name.
+fn plugin_processes(
+    root: &Path,
+    artifacts: &str,
+    plugins: &[String],
+    written: BTreeMap<String, Vec<String>>,
+) -> Result<BTreeMap<String, PluginProcess>, String> {
+    written
+        .into_iter()
+        .map(|(name, mut command)| {
+            if !plugins.contains(&name) {
+                return Err(format!(
+                    "[plugins.process] names {name}, which [plugins] crates does not list"
+                ));
+            }
+            let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
+                return Err(format!("[plugins.process] {name} names no program"));
+            };
+            if program.contains('/') && Path::new(program.as_str()).is_relative() {
+                let parts = Path::new(program.as_str()).components();
+                if parts
+                    .into_iter()
+                    .any(|part| part == std::path::Component::ParentDir)
+                {
+                    return Err(format!(
+                        "[plugins.process] {name} names {program:?}: a relative program is a \
+                         path inside the checkout, with no `..`"
+                    ));
+                }
+                // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
+                let under: PathBuf = root.join(program.as_str()).components().collect();
+                *program = under.to_string_lossy().into_owned();
+            }
+            let log = root
+                .join(artifacts)
+                .join("plugins")
+                .join(format!("{name}.log"));
+            let process = PluginProcess {
+                command,
+                root: root.to_path_buf(),
+                log,
+            };
+            Ok((name, process))
+        })
+        .collect()
+}
+
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
 /// `plugins` (refused when two of those share a name), or the convention when there are none.
 fn entrypoints(
@@ -1108,12 +1271,13 @@ pub fn slug(name: &str) -> String {
 }
 
 /// A path's length and modification time, its own and then what it leads to (which differ for a
-/// link), each nothing when it is absent.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp([Option<(u64, SystemTime)>; 2]);
+/// link), each nothing when it is absent: what tells a file from the one before it at that path, as
+/// a project's file or a plugin's program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp([Option<(u64, SystemTime)>; 2]);
 
 impl Stamp {
-    fn of(path: &Path) -> Self {
+    pub(crate) fn of(path: &Path) -> Self {
         let held = |m: std::fs::Metadata| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
         Self([
             std::fs::symlink_metadata(path).ok().map(held),
