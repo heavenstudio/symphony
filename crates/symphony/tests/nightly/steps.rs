@@ -1,7 +1,7 @@
 //! A check that lists its steps, as `just verify` does, is told by them: each red step is a task of
 //! its own with its own log, closed when that step is green, and the check files nothing of its own
-//! while its steps hold its red; a red of the check filed before it listed steps hears which steps
-//! are red, and closes once the check is green.
+//! while its steps hold its red; a red of the check filed before it listed steps and each red step's
+//! name each other, and the check's closes once the check is green.
 
 use super::{Fixture, NOW};
 
@@ -136,13 +136,25 @@ fn a_red_of_the_check_filed_before_it_listed_steps_hears_of_them_and_closes_when
     assert_eq!(
         thread.last().unwrap(),
         &format!(
-            "Red on {} (run {run}, 2026-11-12 11:00) in its steps `verify/tests` (exit 1), each \
-             filed as a task of its own in tests/nightly-red-verify-*. This task closes once \
-             `verify` is green.",
+            "Red on {} (run {run}, 2026-11-12 11:00) in its steps alone, each a task of its own: \
+             `verify/tests` (exit 1) in tests/nightly-red-verify-tests. Whoever holds this task \
+             reads those first, as one can be this same failure. This task closes once `verify` \
+             is green.",
             &red[..12]
         )
     );
     assert_eq!(fixture.reds()["tests/nightly-red-verify"].status, "ready");
+    // The step's red names the check's, as the two can be one failure.
+    assert!(
+        fixture.reds()["tests/nightly-red-verify-tests"]
+            .body
+            .contains(
+                "The open red of `verify` itself, tests/nightly-red-verify, was filed before this \
+                 one"
+            ),
+        "{}",
+        fixture.reds()["tests/nightly-red-verify-tests"].body
+    );
 
     fixture.land("red-tests", None, "the test fixed");
     let out = fixture.run(NOW + 7200.0, &["--check", VERIFY], 0);
