@@ -24,12 +24,12 @@ const HERE: &str = "crates/symphony/tests/hooks/own_names.rs";
 const FENCES: [(&str, usize, &str); 7] = [
     (
         "tools/move-state.sh",
-        50,
+        49,
         "the move command: the old folders it renames into symphony/",
     ),
     (
         "crates/tasks/tests/launcher/move_state.rs",
-        185,
+        187,
         "the move command's tests: the old folders it moves, as fixtures and expected output",
     ),
     (

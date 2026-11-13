@@ -524,8 +524,9 @@ a server. The hold still holds the board after the move, so the script's closing
 to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
 otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
 
-Each old folder that moved is left a one-line file of its name saying where it went, so a build
-from before the move fails there instead of starting an empty board beside the moved state. Such
+The board's, SurrealDB's, the server's and the model's old folders, once moved, each leave a
+one-line file of their name saying where they went, so a build from before the move fails there
+instead of starting an empty board or fetching SurrealDB beside the moved state. Such
 a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
 setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
 20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,

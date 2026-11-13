@@ -526,20 +526,19 @@ for pair in "${folders[@]}"; do
     case "$old" in
         sf-tasks | sf-symphony)
             what_it_is="this repository's state"
+            short="$what_it_is"
             then_what="stop it and run this again"
             ;;
         sf-cargo/*)
             what_it_is="an older build's copy of the client's build tools"
+            short="the client's build tools"
             then_what="let it end and run this again"
             ;;
         *) continue ;;
     esac
     planned "$old" || continue
     if ! command -v lsof >/dev/null 2>&1; then
-        case "$old" in
-            sf-cargo/*) refuse "lsof is needed to rule out a process with a file open under $old, the client's build tools" ;;
-            *) refuse "lsof is needed to rule out a process with a file open under $old, $what_it_is" ;;
-        esac
+        refuse "lsof is needed to rule out a process with a file open under $old, $short"
         continue
     fi
     while IFS=$'\t' read -r pid fd file; do

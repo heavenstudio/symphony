@@ -1707,14 +1707,17 @@ fn path_without(dir: &Path, left_out: &str) -> String {
 }
 
 #[test]
-fn without_lsof_nothing_under_the_old_client_tools_or_working_in_the_repository_can_be_ruled_out() {
+fn without_lsof_no_holder_of_a_moving_folder_nor_a_program_in_the_repository_can_be_ruled_out() {
     let s = State::new("move-no-lsof");
+    s.put("sf-tasks/health.json");
     s.put("sf-cargo/dx-0.7.10/bin/dx");
     s.put("sf-cargo/dx-home/tools/esbuild/esbuild");
     // A program of the board's, which only lsof can say where it works.
     let (_tasks, _) = program("tasks", &s.machine);
     let path = path_without(&s.main.parent().unwrap().join("no-lsof"), "lsof");
     let refused = [
+        "lsof is needed to rule out a process with a file open under sf-tasks, this repository's \
+         state",
         "lsof is needed to rule out a process with a file open under sf-cargo/dx-0.7.10, the \
          client's build tools",
         "lsof is needed to rule out a process with a file open under sf-cargo/dx-home, the \
