@@ -97,11 +97,19 @@ impl Listener {
         value["message"]["content"].as_str().unwrap().to_string()
     }
 
-    /// A real delivery barrier proves absence without a timing-based empty receive.
+    /// A real delivery barrier proves absence without a timing-based empty receive. The barrier is
+    /// delivered within the write that sends it, as `send_agent` answers: the guard on how fast a
+    /// post reaches its recipient, a count and not a time, so the listener's own waits on what is
+    /// in its socket already can be backstops without letting a slower delivery pass.
     pub(super) fn drain(&self, f: &Fixture, sender: &str, handle: &str) -> Vec<String> {
-        f.store
+        let delivered = f
+            .store
             .send_agent(sender, handle, "delivery-barrier")
             .unwrap();
+        assert!(
+            delivered,
+            "the barrier to {handle} was left undelivered by its write"
+        );
         let barrier = format!("AGENT from {sender} to {handle} — delivery-barrier");
         let mut lines = Vec::new();
         loop {

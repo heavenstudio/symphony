@@ -374,6 +374,11 @@ fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// The time a test gives what it asks of git or a shell, which answers at once on a quiet
+    /// machine: the backstop of the 30 s it once had, six times over, so a loaded machine's slow
+    /// start never reads as an answer not given.
+    const PATIENT: Duration = Duration::from_secs(180);
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("symphony-runs-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -636,13 +641,26 @@ mod tests {
             tree: &tree,
         };
         let day = dir.join("2026-11-11.jsonl");
-        // A FIFO named as the day's file: read at once as nothing, with no writer to wait for.
+        // A FIFO named as the day's file: read as nothing, with no writer to wait for. None ever
+        // comes, so a reader that waited on it would wait for ever: its return at all is the
+        // proof. Past the wait's backstop a writer frees one that waits, to fail and not hang.
         let fifo = std::ffi::CString::new(day.as_os_str().as_encoded_bytes()).unwrap();
         // SAFETY: a NUL-terminated path, alive through the call.
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        let began = Instant::now();
-        assert_eq!(rerun_of(&dir, same, NOW), None);
-        assert!(began.elapsed() < Duration::from_secs(1));
+        let (read, waited) = std::thread::scope(|scope| {
+            let reading = scope.spawn(|| rerun_of(&dir, same, NOW));
+            let until = Instant::now() + Duration::from_secs(120);
+            while !reading.is_finished() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let waited = !reading.is_finished();
+            if waited {
+                drop(OpenOptions::new().write(true).open(&day));
+            }
+            (reading.join().unwrap(), waited)
+        });
+        assert!(!waited, "the reader waited on a FIFO for a writer");
+        assert_eq!(read, None);
         fs::remove_file(&day).unwrap();
         // A link, to an endless device or to a day file, is not read.
         std::os::unix::fs::symlink("/dev/zero", &day).unwrap();
@@ -789,8 +807,7 @@ mod tests {
         git(&["commit", "-q", "-m", "base"]);
         let commit = git(&["rev-parse", "HEAD"]);
         let tree = git(&["rev-parse", "HEAD^{tree}"]);
-        let said =
-            |commit: &str, checked| tree_and_dirty(&dir, commit, checked, Duration::from_secs(30));
+        let said = |commit: &str, checked| tree_and_dirty(&dir, commit, checked, PATIENT);
         assert_eq!(said(&commit, false), (Some(tree.clone()), Some(false)));
         fs::write(dir.join("ignored"), "x").unwrap();
         assert_eq!(said(&commit, false).1, Some(false));
@@ -801,7 +818,7 @@ mod tests {
         assert_eq!(said(&"0".repeat(40), true), (None, None));
         let elsewhere = scratch("tree-none");
         assert_eq!(
-            tree_and_dirty(&elsewhere, &commit, false, Duration::from_secs(30)),
+            tree_and_dirty(&elsewhere, &commit, false, PATIENT),
             (None, None)
         );
         // What git has not said in the time given is not known.
@@ -822,7 +839,7 @@ mod tests {
                 Instant::now() + within,
             )
         };
-        let long = Duration::from_secs(30);
+        let long = PATIENT;
         assert_eq!(sh("printf 'a tree'", long), Some(b"a tree".to_vec()));
         assert_eq!(sh("printf said; exit 3", long), None);
         // More than a pipe holds is read as it comes.
