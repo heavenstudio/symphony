@@ -14,7 +14,7 @@ The server prints its loopback URL. `just symphony-cli` prints the document CLI 
 they require no containing-project gate executable. See [the workspace guide](AGENTS.md) for
 command ownership and [the server guide](apps/symphony-server/README.md) for project configuration.
 
-`just verify` checks formatting, host and wasm clippy, rebuilds all eight real client modules,
+`just verify` checks formatting, host and wasm clippy, rebuilds the client's modules and program,
 compares their paths and bytes with the committed client, then runs the workspace's native tests
 and headless Chrome acceptance. The toolchain includes the wasm target. The client build needs
 Git, Bash, jq, curl and a C/C++ build toolchain; native board fixtures need lsof. Install Chrome

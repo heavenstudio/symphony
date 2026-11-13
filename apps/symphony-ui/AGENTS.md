@@ -36,11 +36,20 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue, deferred panel, overlay and task timeline modules, then
-  assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
-  it against the other kinds already in that output folder. Dioxus's native
-  splitter retained shared exports and increased the measured initial payload;
-  these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
+  board, document, review-home and queue modules and the program, then
+  assemble their content-hashed assets with `package.sh`. Naming a kind (`program` among
+  them) rebuilds it against the other kinds already in that output folder. The program
+  (`page-program`, `src/split.rs`; the owner's option A on client-shared-runtime) is one
+  `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
+  the task timeline: one script and main module, and a chunk for each, which
+  `symphony split-repair` puts right after dx (crates/symphony/src/cli/commands/split_repair.rs)
+  and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
+  the shell's `gone` state, never a page left waiting, follows. A chunk mounts its kind's root
+  in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
+  of their own, under their 300,000-byte caps, which a program shared with them would pass. The
+  shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
+  each the program's styles another kind loads too and its own by name, and refuses a style no
+  kind takes. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
   bundle.sh runs when one is missing. Until `tools/move-state.sh` moves a
@@ -410,10 +419,10 @@ never the whole target, which the release run runs.
   `queue_filter.rs` derives counts from the complete snapshot and stores the selected
   owner category through `Platform` on this device. Chips use the shared Button;
   an absent saved category displays All without hiding new work.
-- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, drawn by the task pages'
-  module (`page-tasks`) as the Agents page is, which already holds the runtime, frame and
-  components it uses: a module of its own would weigh some 560 KB in each build the
-  distribution keeps, against the client's line. Its style is `assets/reports.css`. It reads
+- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, the program's `reports`
+  kind: a chunk of its own over the runtime, frame and components the program's main module
+  holds for the task pages too, so a move between them fetches the other's chunk alone. Its
+  style is `assets/reports.css`, which only its kind loads. It reads
   the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
   once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
   phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
@@ -485,23 +494,25 @@ never the whole target, which the release run runs.
   focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
   its opener; its status is filled a frame after the sheet is in the page, so a
   screen reader announces it. The panel's own sheet takes the focus over. A
-  select's popup and the picture viewer are drawn by the overlay module
+  select's popup and the picture viewer are drawn by the overlay kind
   (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. A task page's timeline is a persistent module too
-  (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
+  never the chat's. The chat, the menus and the timeline are kinds of the program, each a
+  chunk the shell names in the manifest (`chunk`) and mounts in its root; a page of the
+  program that has them already fetches the chunk alone. A task page's timeline is a
+  persistent kind too (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
   never warmed, loaded only once a task page's box asks for it and the page has its
   data and is idle, its root moved into that box and parked hidden at the body's
   end when the box goes. What listens on a module's root, as each module's Dioxus
   does, hears only the events of that module's own part of the page (`assets/shell.js`
   `scope`): Dioxus finds an event's element by a number each module counts on its
   own, so without it, a click in the timeline would run the page's control of the same number.
-  The shell requests a module's script, its wasm (a `fetch`
+  The shell requests a module's script, its wasm and a program kind's chunk (each a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is
-  idle, it prefetches the persistent modules' script,
-  wasm and styles at the lowest priority, nothing evaluated: the chat's first, the
-  menus' once the chat's wasm (or the chat's own load, when a click came first) is
+  idle, it prefetches the persistent kinds' script,
+  wasm, chunk and styles at the lowest priority, nothing evaluated: the chat's first, the
+  menus' once the chat's chunk (or the chat's own load, when a click came first) is
   in, so no two share a slow link. A browser asking to save data, or reporting a
   2g link, warms nothing; the browser tests count those prefetches apart from a
   first visit. `index.html` in the crate is dx's build template (`{app_title}`), and

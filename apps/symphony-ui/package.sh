@@ -25,35 +25,83 @@ mkdir -p "$stage/assets"
 # the swap: publish-client keeps the builds published just before it over the folder, as that
 # folder's builds.json names them (crates/symphony/src/cli/publish.rs).
 manifest='{}'
-for kind in board tasks docs review queue panel overlay timeline; do
-    module="$out/.modules/$kind"
+# The minifier dx fetched to minify each module's glue: the program's chunk loader and the shell go
+# through it too.
+esbuild="$(find "${DX_HOME:?package.sh runs from bundle.sh, which names DX_HOME}/tools" -path '*/esbuild-*/esbuild')"
+if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1 ] || [ ! -x "$esbuild" ]; then
+    echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
+    exit 2
+fi
+# The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
+program_kinds=(tasks reports panel overlay timeline)
+# The program last: its styles are placed by what the other kinds load.
+for module_kind in board docs review queue program; do
+    module="$out/.modules/$module_kind"
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
     original="$(basename "$script")"
-    # dx starts the generated module itself. Expose that one promise to the shell, and make the
-    # splitter's initSync reference local to this ESM instead of overwriting another kind's.
+    wasm="$prefix/assets/$(find "$module/public/assets" -name 'symphony-ui_bg*.wasm' -exec basename {} \;)"
+    ready="globalThis.reviewModuleReady_$module_kind="
+    if [ "$module_kind" = program ]; then
+        ready=""
+        chunks='{}'
+        for kind in "${program_kinds[@]}"; do
+            ready="${ready}globalThis.reviewModuleReady_$kind="
+            chunk="$(find "$module/public/assets" -name "module_*_$kind-*.wasm" -exec basename {} \;)"
+            if [ -z "$chunk" ] || [ "$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')" != 1 ]; then
+                echo "symphony-ui: expected one chunk of $kind in the program, found: ${chunk:-none}" >&2
+                exit 2
+            fi
+            chunks="$(jq -c --arg kind "$kind" --arg chunk "$prefix/assets/$chunk" '. + {($kind): $chunk}' <<< "$chunks")"
+        done
+    fi
+    # dx starts the generated module itself. Expose that one promise to the shell (to each of the
+    # program's kinds), and make the splitter's initSync reference local to this ESM instead of
+    # overwriting another kind's. The program's chunk loader follows, with its chunks' names.
     {
         printf 'let __reviewInitSync;\n'
         sed -E -e 's/globalThis\.__wasm_split_main_initSync/__reviewInitSync/g' \
-            -e "s/[[:alnum:]_\$]+\\(\\{module_or_path:\"[^\"]+\"\\}\\)\\.then\\(/globalThis.reviewModuleReady_$kind=&/" \
+            -e "s/[[:alnum:]_\$]+\\(\\{module_or_path:\"[^\"]+\"\\}\\)\\.then\\(/$ready&/" \
             "$module/public/assets/$original"
-    } > "$stage/module-$kind.js"
-    if [ "$(grep -o "globalThis.reviewModuleReady_$kind=" "$stage/module-$kind.js" | wc -l | tr -d ' ')" != 1 ]; then
-        echo "symphony-ui: $kind has no unique dx initializer; refusing to package it" >&2
+        if [ "$module_kind" = program ]; then
+            printf '\n'
+            sed "s#__CHUNKS__#$chunks#" assets/chunks.js | "$esbuild" --minify --format=esm --log-level=warning
+        fi
+    } > "$stage/module-$module_kind.js"
+    if [ "$(grep -F -o "$ready" "$stage/module-$module_kind.js" | wc -l | tr -d ' ')" != 1 ]; then
+        echo "symphony-ui: $module_kind has no unique dx initializer; refusing to package it" >&2
         exit 2
     fi
-    script_hash="$(shasum -a 256 "$stage/module-$kind.js" | cut -c1-16)"
-    script="$prefix/assets/$kind-$script_hash.js"
-    mv "$stage/module-$kind.js" "$stage/assets/$kind-$script_hash.js"
+    script_hash="$(shasum -a 256 "$stage/module-$module_kind.js" | cut -c1-16)"
+    script="$prefix/assets/$module_kind-$script_hash.js"
+    mv "$stage/module-$module_kind.js" "$stage/assets/$module_kind-$script_hash.js"
     rm -f "$stage/assets/$original"
-    wasm="$prefix/assets/$(find "$module/public/assets" -name 'symphony-ui_bg*.wasm' -exec basename {} \;)"
     styles="$(find "$module/public/assets" -name '*.css' -exec basename {} \; | sort | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s .)"
     # The summary board has no media nodes. The persistent panel loads these styles when
     # opened; documents and the review page keep them with their visible pictures.
-    if [ "$kind" = board ]; then
+    if [ "$module_kind" = board ]; then
         styles="$(jq 'map(select(contains("/media-") | not))' <<< "$styles")"
     fi
-    manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
+    if [ "$module_kind" != program ]; then
+        manifest="$(jq --arg kind "$module_kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
+        continue
+    fi
+    # Each program kind's styles, of the program's: those another kind loads too (the frame's, the
+    # pictures'), then its own: Reports' and the timeline's by their names, the shared controls'
+    # (`style-`, components/) for the chat and the menus. A style none of these places is refused.
+    others="$(jq -c '[.[].styles[]] | unique' <<< "$manifest")"
+    for kind in "${program_kinds[@]}"; do
+        own="$(jq -c --arg kind "$kind" --argjson others "$others" '
+            (({reports: ["reports-"], timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) as $names
+            | map(select(. as $style | ($others | index($style)) != null
+                or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
+        manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
+    done
+    unplaced="$(jq -r --argjson styles "$styles" '$styles - [.[].styles[]] | .[]' <<< "$manifest")"
+    if [ -n "$unplaced" ]; then
+        echo "symphony-ui: no program kind takes these styles, refusing to package them: $unplaced" >&2
+        exit 2
+    fi
 done
 # The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
 # a first visit asks for it once instead of once per file, and every kind still caches the same
@@ -76,11 +124,6 @@ fi
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
 # the client cache's store (`assets/cache.js`, which every page kind shares) and then the shell,
 # is minified by the esbuild dx fetched to minify each module's glue (every first visit loads it).
-esbuild="$(find "${DX_HOME:?package.sh runs from bundle.sh, which names DX_HOME}/tools" -path '*/esbuild-*/esbuild')"
-if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1 ] || [ ! -x "$esbuild" ]; then
-    echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
-    exit 2
-fi
 if [ "$(grep -cx 'const modules = __MODULES__;' assets/shell.js)" != 1 ]; then
     echo "symphony-ui: assets/shell.js needs its manifest line, const modules = __MODULES__;" >&2
     exit 2
@@ -111,4 +154,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: five page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: $out/public" >&2
+echo "symphony-ui: home, the board, the documents and the queue as modules of their own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, one SPA shell: $out/public" >&2

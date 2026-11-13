@@ -126,8 +126,15 @@ pub fn App() -> Element {
     let page = match current.path.as_str() {
         #[cfg(feature = "page-board")]
         "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
-        #[cfg(feature = "page-tasks")]
+        #[cfg(all(feature = "page-tasks", not(feature = "page-program")))]
         "reports" => rsx! { crate::reports::ReportsRoute { key: "{current.scope}" } },
+        // The program's pages are in their chunks (src/split.rs).
+        #[cfg(feature = "page-program")]
+        "reports" => rsx! { crate::split::ReportsPart { key: "{current.scope}" } },
+        #[cfg(feature = "page-program")]
+        _ => {
+            rsx! { crate::split::TasksPart { key: "{current.scope}", route: task_route, scope: current.scope.clone() } }
+        }
         #[cfg(feature = "page-docs")]
         _ if current.document => {
             rsx! { main {
@@ -138,10 +145,13 @@ pub fn App() -> Element {
                 }
             } }
         }
-        #[cfg(any(
-            feature = "page-tasks",
-            feature = "page-review",
-            feature = "page-queue"
+        #[cfg(all(
+            any(
+                feature = "page-tasks",
+                feature = "page-review",
+                feature = "page-queue"
+            ),
+            not(feature = "page-program")
         ))]
         _ => {
             rsx! { BoardPage { key: "{current.scope}", route: task_route, scope: current.scope.clone() } }
@@ -356,7 +366,7 @@ struct PageBoard {
     feature = "page-queue"
 ))]
 #[component]
-fn BoardPage(route: Memo<String>, scope: String) -> Element {
+pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let frame = use_context::<crate::frame::FrameRefresh>();
     let board = use_signal(|| None::<PageBoard>);
     let stale = use_signal(|| false);

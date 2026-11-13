@@ -599,15 +599,116 @@ fn a_passive_segment_keeps_its_index_while_the_active_ones_take_their_order() {
     );
 }
 
+/// What a chunk's active segments put in each place once its segments are written in order: of a
+/// memory (`wasm::DATA`), a byte; of a table, a function index as encoded.
+fn places(chunk: &[u8], id: u8) -> std::collections::BTreeMap<(u32, u32), Vec<u8>> {
+    let mut places = std::collections::BTreeMap::new();
+    let module = wasm::Module::read(chunk).unwrap();
+    let Some(section) = module.section(id) else {
+        return places;
+    };
+    let segments = if id == wasm::DATA {
+        wasm::data_segments(section.body())
+    } else {
+        wasm::element_segments(section.body())
+    };
+    for segment in segments.unwrap() {
+        let wasm::Mode::Active {
+            index,
+            offset: Some(start),
+        } = segment.mode
+        else {
+            continue;
+        };
+        let slots: Vec<Vec<u8>> = match segment.fill {
+            wasm::Fill::Bytes(bytes) => bytes.iter().map(|byte| vec![*byte]).collect(),
+            wasm::Fill::Items(items) => items.iter().map(|item| item.to_vec()).collect(),
+        };
+        for (at, slot) in slots.into_iter().enumerate() {
+            places.insert((index, start as u32 + at as u32), slot);
+        }
+    }
+    places
+}
+
+/// The count a chunk's data count section holds.
+fn data_count(chunk: &[u8]) -> u32 {
+    let module = wasm::Module::read(chunk).unwrap();
+    let body = module.section(wasm::DATA_COUNT).unwrap().body();
+    wasm::Reader::new(body).u32().unwrap()
+}
+
 #[test]
-fn segments_that_fill_one_place_alike_are_ordered_and_otherwise_refused() {
-    // Two symbols the linker merged, each written whole by the chunk: the same bytes where they meet.
-    let alike = [active(0x405, b"/{}"), active(0x402, b"@{}/{}")];
-    let ordered = order::order(&chunk(&alike, &[])).unwrap();
+fn segments_that_touch_or_overlap_are_joined_into_one_that_fills_the_same_places() {
+    // As the splitter writes a chunk: a segment a symbol, side by side or one over another, and a
+    // table entry a function, in slots that follow one another.
+    let data = [
+        active(0x405, b"/{}"),
+        active(0x410, b"far"),
+        active(0x400, b"ok"),
+        active(0x402, b"@{}/{}"),
+        active(0x408, b""),
+    ];
+    let elements = [entries(5, &[2, 3]), entries(9, &[4]), entries(4, &[1])];
+    let split = chunk(&data, &elements);
+    let ordered = order::order(&split).unwrap();
     assert_eq!(
         segments_of(&ordered.bytes, wasm::DATA),
-        [alike[1].clone(), alike[0].clone()]
+        [active(0x400, b"ok@{}/{}"), active(0x410, b"far")]
     );
+    assert_eq!(
+        segments_of(&ordered.bytes, wasm::ELEMENT),
+        [entries(4, &[1, 2, 3]), entries(9, &[4])]
+    );
+    assert_eq!(data_count(&ordered.bytes), 2);
+    assert_eq!((ordered.segments, ordered.joined), (8, 4));
+    for id in [wasm::DATA, wasm::ELEMENT] {
+        assert_eq!(places(&ordered.bytes, id), places(&split, id));
+    }
+    assert!(ordered.bytes.len() < split.len());
+    // Joined once, nothing is left to join or move.
+    let again = order::order(&ordered.bytes).unwrap();
+    assert_eq!((again.moved, again.joined), (0, 0));
+    assert_eq!(again.bytes, ordered.bytes);
+}
+
+#[test]
+fn segments_are_joined_only_where_every_one_of_the_section_is_active_in_the_short_form() {
+    // A passive segment, which an instruction names by its index: the others keep theirs.
+    let with_passive = [active(0x401, b"b"), passive(b"later"), active(0x400, b"a")];
+    let ordered = order::order(&chunk(&with_passive, &[])).unwrap();
+    assert_eq!(
+        segments_of(&ordered.bytes, wasm::DATA),
+        [
+            with_passive[2].clone(),
+            with_passive[1].clone(),
+            with_passive[0].clone()
+        ]
+    );
+    assert_eq!((ordered.joined, data_count(&ordered.bytes)), (0, 3));
+    // Touching segments of memory 1, or of memory 0 with one in the long form, are ordered and left
+    // apart.
+    for data in [
+        [active_in(1, 0x401, b"b"), active_in(1, 0x400, b"a")],
+        [active_in(0, 0x401, b"b"), active(0x400, b"a")],
+    ] {
+        let ordered = order::order(&chunk(&data, &[])).unwrap();
+        assert_eq!((ordered.moved, ordered.joined), (2, 0));
+        assert_eq!(
+            segments_of(&ordered.bytes, wasm::DATA),
+            [data[1].clone(), data[0].clone()]
+        );
+    }
+}
+
+#[test]
+fn segments_that_fill_one_place_alike_are_ordered_and_otherwise_refused() {
+    // Two symbols the linker merged, each written whole by the chunk: the same bytes where they meet,
+    // so one segment of the outer one writes both.
+    let alike = [active(0x405, b"/{}"), active(0x402, b"@{}/{}")];
+    let ordered = order::order(&chunk(&alike, &[])).unwrap();
+    assert_eq!(segments_of(&ordered.bytes, wasm::DATA), [alike[1].clone()]);
+    assert_eq!((ordered.moved, ordered.joined), (2, 1));
     let unlike = [active(0x405, b"/{}"), active(0x402, b"@{}/()")];
     assert_eq!(
         unsafe_why(order::order(&chunk(&unlike, &[]))),
@@ -826,8 +927,9 @@ fn two_builds_differing_in_chunk_order_and_dx_s_names_are_the_same_files_once_re
         report,
         format!(
             "main module symphony-ui_bg-dxh1a2b.wasm -> {}: 1 merged constants written back, 3 \
-             bytes\nchunk chunk_0_split-dxhc0.wasm -> {}: 0 of its 0 segments put in order\n\
-             chunk module_0_TasksKind-dxhaa11.wasm -> {}: 5 of its 6 segments put in order\n\
+             bytes\nchunk chunk_0_split-dxhc0.wasm -> {}: 0 of its 0 segments put in order, 0 \
+             joined to the one before\nchunk module_0_TasksKind-dxhaa11.wasm -> {}: 5 of its 6 \
+             segments put in order, 0 joined to the one before\n\
              script symphony-ui-dxhaa11.js -> {}\n",
             short(main),
             short(empty),
@@ -852,8 +954,8 @@ fn a_second_run_changes_nothing() {
         report,
         format!(
             "main module {}: 0 merged constants written back, 0 bytes\n\
-             chunk {}: 0 of its 0 segments put in order\n\
-             chunk {}: 0 of its 6 segments put in order\n",
+             chunk {}: 0 of its 0 segments put in order, 0 joined to the one before\n\
+             chunk {}: 0 of its 6 segments put in order, 0 joined to the one before\n",
             short("symphony-ui_bg-"),
             short("chunk_0_split-"),
             short("module_0_TasksKind-")

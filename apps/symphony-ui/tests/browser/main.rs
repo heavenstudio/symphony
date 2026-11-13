@@ -48,6 +48,7 @@ mod owner_save;
 mod panel_open;
 mod phone;
 mod polish;
+mod program;
 mod projects;
 mod reports;
 mod restored;
@@ -183,11 +184,11 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     for (path, kind, ready, budgeted) in [
         ("/", "review", ".hero-title", true),
         ("/tasks", "board", "[data-slug='tools/example']", true),
-        ("/agents", "tasks", ".agents", false),
+        ("/agents", "program", ".agents", false),
         ("/docs/", "docs", "[data-ready=folder]", false),
         ("/queue", "queue", "[data-ready=queue]", false),
-        ("/reports", "tasks", "[data-ready=reports]", false),
-        ("/task/visual/in-progress", "tasks", "article.task", false),
+        ("/reports", "program", "[data-ready=reports]", false),
+        ("/task/visual/in-progress", "program", "article.task", false),
         ("/docs/look-parity.md", "docs", ".doc-card", false),
     ] {
         let Some(mut chrome) = chrome() else { return };
@@ -200,8 +201,8 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        // A task page's timeline is its own module, loaded into its box once the page has drawn
-        // and is idle: reported beside the first visit, which never waits for it.
+        // A task page's timeline is the program's chunk of its own, loaded into its box once the
+        // page has drawn and is idle: reported beside the first visit, which never waits for it.
         if path.starts_with("/task/") {
             assert!(
                 chrome.wait_for(
@@ -293,8 +294,9 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     }
 }
 
-/// Whether `request` is the task timeline's: its module's files (all but the style sheets the task
-/// page's own module loads already) or its read.
+/// Whether `request` is the task timeline's: its chunk, the style sheets of its own (not those the
+/// task page loads already) or its read. Its script and main module are the task page's own, the
+/// program's.
 fn timeline_file(request: &chrome::Request) -> bool {
     static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
         std::sync::OnceLock::new();
@@ -311,8 +313,7 @@ fn timeline_file(request: &chrome::Request) -> bool {
             rest.find('/').map_or("", |at| &rest[at..])
         });
     path.starts_with(symphony_api::TASK_TIMELINE_PATH)
-        || path == module.script
-        || path == module.wasm
+        || path == module.chunk()
         || module
             .styles
             .iter()

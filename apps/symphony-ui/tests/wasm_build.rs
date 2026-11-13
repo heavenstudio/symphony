@@ -19,9 +19,10 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-const KINDS: [&str; 8] = [
-    "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
-];
+/// What bundle.sh builds, each with its own dx run: four page kinds, and the program.
+const KINDS: [&str; 5] = ["board", "docs", "review", "queue", "program"];
+/// The program's kinds (src/split.rs), each a chunk of it, in the order of its split points' names.
+const PROGRAM: [&str; 5] = ["overlay", "panel", "reports", "tasks", "timeline"];
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -191,14 +192,38 @@ if [ "$bin" != symphony-ui ]; then kind="$bin"; fi
 mkdir -p "$capture" "$out/public/assets"
 printf '%s\n' "${args[@]}" > "$capture/$kind"
 printf '%s\n' "$0" > "$capture/$kind.dx"
+if [ "$kind" = program ]; then
+    # dx --wasm-split's output, which the real split-repair reads: the program dx linked, with its
+    # linking section; a main module that defines its memory and holds the program's data ("ok",
+    # or PROGRAM_DATA when a case asks for another); an empty chunk for each split point and the
+    # empty shared one; a script naming every module; the page naming the script.
+    assets="$out/public/assets"
+    linked="$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release"
+    mkdir -p "$linked"
+    printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2ok\0\11\7linking\2' > "$linked/symphony-ui.wasm"
+    printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
+    {
+        printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
+        for chunk in chunk_0_split module_0_overlay module_1_panel module_2_reports module_3_tasks module_4_timeline; do
+            printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
+            printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
+        done
+    } > "$assets/symphony-ui-dxh2.js"
+    printf '<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n' > "$out/public/index.html"
+    # Styles the other kinds load too, and the program kinds' own; and PROGRAM_STYLE, one no kind
+    # takes, when a case asks for it.
+    printf '.a{}' > "$assets/a-shared.css"
+    printf '.z{}\n' > "$assets/z-shared.css"
+    for own in reports task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
+    exit 0
+fi
 printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind" > "$out/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/%s_bg-%s.wasm"}).then(()=>{});\n' "$bin" "$kind" > "$out/public/assets/$bin-$kind.js"
 printf '\0asm\1\0\0\0' > "$out/public/assets/${bin}_bg-$kind.wasm"
 printf 'body{}' > "$out/public/assets/board-$kind.css"
-# Every page kind's two shared stylesheets, one sorting before its own and one after; the task
-# timeline, which carries few of the pages' styles, has only the first.
+# Every page kind's two shared stylesheets, one sorting before its own and one after.
 printf '.a{}' > "$out/public/assets/a-shared.css"
-if [ "$kind" != timeline ]; then printf '.z{}\n' > "$out/public/assets/z-shared.css"; fi
+printf '.z{}\n' > "$out/public/assets/z-shared.css"
 "#.replace("__CAPTURE__", &capture),
     );
     executable(
@@ -265,6 +290,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert_eq!(argument("--features"), format!("page-{kind}"));
         assert_eq!(argument("--debug-symbols"), "false");
         assert!(args.contains(&"--no-default-features"));
+        // Only the program is cut by dx's splitter.
+        assert_eq!(args.contains(&"--wasm-split"), kind == "program", "{kind}");
     }
     let index = fs::read_to_string(out.join("public/index.html")).unwrap();
     let shell = index
@@ -281,7 +308,11 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+    // The four kinds built alone, and each of the program's.
+    assert_eq!(
+        manifest.as_object().unwrap().len(),
+        KINDS.len() - 1 + PROGRAM.len()
+    );
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
     let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
     let minified = format!(
@@ -307,24 +338,124 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         ".a{}\n.z{}\n\n",
         "the shared stylesheets in their order, each ending its line"
     );
-    for kind in KINDS {
+    let file = |path: &str| {
+        fs::read(out.join("public").join(path.trim_start_matches('/')))
+            .unwrap_or_else(|e| panic!("{path}: {e}"))
+    };
+    for kind in &KINDS[..4] {
         for key in ["script", "wasm"] {
-            let path = manifest[kind][key].as_str().unwrap();
-            assert!(
-                out.join("public")
-                    .join(path.trim_start_matches('/'))
-                    .is_file(),
-                "{kind} {key}: {path}"
-            );
+            file(manifest[kind][key].as_str().unwrap());
         }
-        // The task timeline, which lacks one of the pages' shared styles, does not narrow the
-        // shared file: it is made from the pages' lists alone, and the timeline names it too.
         assert_eq!(
             manifest[kind]["styles"],
             serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
             "{kind} loads the shared stylesheet, then its own"
         );
+        assert!(manifest[kind].get("chunk").is_none(), "{kind}");
     }
+    // The program's kinds: its one script and main module, which split-repair named by their bytes,
+    // and a chunk each, preloaded beside them.
+    let script = manifest["tasks"]["script"].as_str().unwrap();
+    let wasm = manifest["tasks"]["wasm"].as_str().unwrap();
+    assert!(script.starts_with("/assets/program-"), "{script}");
+    assert!(
+        wasm.starts_with("/assets/symphony-ui_bg-") && !wasm.contains("dxh"),
+        "{wasm}"
+    );
+    let program = String::from_utf8(file(script)).unwrap();
+    let chunks = fs::read_to_string(crate_dir().join("assets/chunks.js")).unwrap();
+    let (loader, map) = chunks.split_once("__CHUNKS__").unwrap();
+    assert!(
+        program.contains(&format!(
+            "/*esbuild --minify --format=esm --log-level=warning*/\n{loader}"
+        )) && program.trim_end().ends_with(map.trim_end()),
+        "the program's script ends with its chunk loader, through the minifier: {program}"
+    );
+    assert!(
+        program.contains(
+            "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_reports=\
+             globalThis.reviewModuleReady_panel=globalThis.reviewModuleReady_overlay=\
+             globalThis.reviewModuleReady_timeline=init({module_or_path:"
+        ),
+        "every program kind is ready when its one initializer is: {program}"
+    );
+    for (at, kind) in PROGRAM.iter().enumerate() {
+        assert_eq!(manifest[kind]["script"], script, "{kind}");
+        assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
+        let chunk = manifest[kind]["chunk"].as_str().unwrap();
+        assert!(
+            chunk.starts_with(&format!("/assets/module_{at}_{kind}-")) && !chunk.contains("dxh"),
+            "{kind}: {chunk}"
+        );
+        assert_eq!(file(chunk), b"\0asm\x01\0\0\0", "{kind}");
+        assert!(
+            program.contains(&format!("\"{kind}\":\"{chunk}\"")),
+            "the loader names {kind}'s chunk: {program}"
+        );
+        // Every program kind takes the styles the other kinds load too, then its own.
+        let own = match *kind {
+            "reports" => vec!["/assets/reports-program.css"],
+            "timeline" => vec!["/assets/task-timeline-program.css"],
+            "panel" | "overlay" => vec!["/assets/style-program.css"],
+            _ => vec![],
+        };
+        assert_eq!(
+            manifest[kind]["styles"],
+            serde_json::json!([vec![shared], own].concat()),
+            "{kind}"
+        );
+    }
+}
+
+/// `cargo symphony-ui dist build/ui` run with the stand-in tools and `vars`, as the dist test runs
+/// it: its output, and where it would publish.
+fn dist_with(scratch: &Scratch, vars: &[(&str, &str)]) -> (std::process::Output, PathBuf) {
+    let common = scratch.0.join("common");
+    stand_in_tools(&common, &scratch.0.join("dx-said"));
+    let stand = client_tools(scratch);
+    let mut dist = cargo_symphony_ui(&["dist", "build/ui"]);
+    dist.current_dir(&scratch.0)
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
+        .env("CARGO_TARGET_DIR", common.join("symphony/tools/target"))
+        .env("SYMPHONY_CLIENT_TOOLS", &stand);
+    for (name, value) in vars {
+        dist.env(name, value);
+    }
+    (
+        dist.output().expect("run cargo-symphony-ui"),
+        scratch.0.join("build/ui/public"),
+    )
+}
+
+/// A main module split-repair cannot stand behind (here, other data than the program's) fails the
+/// build before anything is packaged: nothing is published.
+#[test]
+fn a_program_split_repair_refuses_fails_the_build_and_publishes_nothing() {
+    let scratch = Scratch::new("wasm-build-repair");
+    let (done, public) = dist_with(&scratch, &[("PROGRAM_DATA", "no")]);
+    let said = String::from_utf8_lossy(&done.stderr);
+    assert!(!done.status.success(), "{said}");
+    assert!(
+        said.contains("symphony split-repair: symphony-ui_bg-dxh0.wasm: the main module holds"),
+        "{said}"
+    );
+    assert!(!public.exists());
+}
+
+/// A style of the program's that none of its kinds takes is refused, never left out of a page.
+#[test]
+fn a_program_style_no_kind_takes_fails_the_package_and_publishes_nothing() {
+    let scratch = Scratch::new("wasm-build-style");
+    let (done, public) = dist_with(&scratch, &[("PROGRAM_STYLE", "odd")]);
+    let said = String::from_utf8_lossy(&done.stderr);
+    assert!(!done.status.success(), "{said}");
+    assert!(
+        said.contains(
+            "no program kind takes these styles, refusing to package them: /assets/odd-program.css"
+        ),
+        "{said}"
+    );
+    assert!(!public.exists());
 }
 
 /// The lines a stand-in that records its arguments wrote, one call per line.
