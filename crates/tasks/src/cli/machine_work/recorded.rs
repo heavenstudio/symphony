@@ -47,7 +47,7 @@ pub const PARENT_VAR: &str = "TASKS_RUN_PARENT";
 /// that command starts with `--step` records a step of that pipeline. Removed from the environment
 /// of any other recorded command.
 pub const PIPELINE_VAR: &str = "SYMPHONY_RUN_PIPELINE";
-/// What started a run when it was no session: `nightly`, `land`, `on_review`, set by what starts it.
+/// What started a run when it was no session: `release`, `land`, `on_review`, set by what starts it.
 pub const TRIGGER_VAR: &str = "SYMPHONY_RUN_TRIGGER";
 /// The longest record file read.
 const MAX_BYTES: u64 = 65_536;

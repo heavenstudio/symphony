@@ -9,17 +9,22 @@
 //!   started at S (`crate::land::started`), or, written by an earlier land with no start
 //!   (`(pid N)`), once N is not running; dead, it marks the worktree of a land that ended without
 //!   removing it;
-//! * the nightly's ([`NIGHTLY_LOCK`]) marks the checkout it reuses each night, which keeps it;
+//! * the release run's ([`RELEASE_LOCK`], or [`LEGACY_LOCK`] where a build older than the rename
+//!   locked it and no run has moved it yet) marks the checkout it reuses on each run, which keeps
+//!   it;
 //! * any other lock, or one in doubt, keeps its worktree.
 
 use super::process::{self, Claude};
 
-/// The reason the nightly's checkout is locked with (`symphony::nightly::place::LOCK_REASON`).
-pub const NIGHTLY_LOCK: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
-/// How long the nightly builds incrementally in its checkout before it clears the build itself
-/// (`symphony::nightly::place::BUILD_KEPT_DAYS`): the sweep clears it once nothing touched the
-/// checkout for that long, a nightly no longer running.
-pub const NIGHTLY_BUILD_DAYS: f64 = 7.0;
+/// The reason the release run's checkout is locked with (`symphony::release::place::LOCK_REASON`).
+pub const RELEASE_LOCK: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
+/// The reason a build older than the rename locked that checkout with, at `nightly` beside where it
+/// is now (`symphony::release::place::LEGACY_LOCK_REASON`): the same checkout until a run moves it.
+pub const LEGACY_LOCK: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
+/// How long the release run builds incrementally in its checkout before it clears the build itself
+/// (`symphony::release::place::BUILD_KEPT_DAYS`): the sweep clears it once nothing touched the
+/// checkout for that long, a release run no longer running.
+pub const RELEASE_BUILD_DAYS: f64 = 7.0;
 
 /// A worktree's holder, as its lock says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,8 +39,8 @@ pub enum Holder {
     Land(i64),
     /// A land's lock whose process is gone: the worktree of a land that ended without removing it.
     LandEnded(i64),
-    /// The nightly's checkout.
-    Nightly,
+    /// The release run's checkout.
+    Release,
     /// Any other lock, or one in doubt: its reason.
     Foreign(String),
 }
@@ -57,8 +62,8 @@ impl Holder {
                 _ => Holder::Foreign(reason.to_string()),
             };
         }
-        if reason.trim() == NIGHTLY_LOCK {
-            return Holder::Nightly;
+        if [RELEASE_LOCK, LEGACY_LOCK].contains(&reason.trim()) {
+            return Holder::Release;
         }
         if reason.starts_with(crate::land::REASON) {
             // A pid no process could have is not a land's: a lock we do not understand.
@@ -113,7 +118,8 @@ mod tests {
         let land = "symphony land: sim/jump (pid 77)";
         assert_eq!(of(Some(land), true), Holder::Land(77));
         assert_eq!(of(Some(land), false), Holder::LandEnded(77));
-        assert_eq!(of(Some(NIGHTLY_LOCK), false), Holder::Nightly);
+        assert_eq!(of(Some(RELEASE_LOCK), false), Holder::Release);
+        assert_eq!(of(Some(LEGACY_LOCK), false), Holder::Release);
         for foreign in [
             "",
             "on a USB disk",

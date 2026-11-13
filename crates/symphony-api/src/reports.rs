@@ -55,7 +55,7 @@ pub struct ReportDay {
     /// first round first.
     #[serde(default)]
     pub rounds: Vec<Round>,
-    /// Each red task filed, closed or open in the day: the board's main and nightly reds.
+    /// Each red task filed, closed or open in the day: the board's main and release reds.
     #[serde(default)]
     pub reds: Vec<Red>,
     /// The decision cards of the project's registers over the day, a live branch's posted cards
@@ -261,11 +261,12 @@ pub struct Round {
     pub approved: u32,
 }
 
-/// A red task: a project's main line or nightly run gone red.
+/// A red task: a project's main line or release run gone red.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Red {
     pub slug: String,
-    /// `main` or `nightly`, by the series it is filed in; `red` for a red the board marked
+    /// `main` or `release`, by the series it is filed in (a release run's in either of its two,
+    /// `tests/release-red-` and the one before its rename); `red` for a red the board marked
     /// outside them.
     pub series: String,
     /// When it was filed.

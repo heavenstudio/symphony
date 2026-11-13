@@ -4,7 +4,7 @@
 //! runs: queued, running once it started, said again every [`BEAT`] while it runs, then kept in the
 //! history and finished with how it ended. A build or test it records puts the task it ran for in
 //! the board's Build or Test column (docs/MACHINE_WORK.md). A build wrapper runs it by the board's
-//! binary (`tools/record.sh`, a review callback, the nightly): the `tasks` recipe `symphony init`
+//! binary (`tools/record.sh`, a review callback, the release run): the `tasks` recipe `symphony init`
 //! installs refuses it, as an agent runs `just tasks` unasked and this runs any command.
 //!
 //! On macOS the `tasks` process becomes COMMAND (`execvp`): the process its caller started, waits
@@ -380,8 +380,10 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     };
     command.args(&asked.command[1..]);
     // The command is the caller's own, not a child the board starts: it keeps the caller's
-    // session (its board handle and hc terminal), which its own board commands and hc calls need.
-    for name in sys::SESSION_VARS {
+    // session (its board handle and hc terminal), which its own board commands and hc calls need,
+    // and the marks of how the caller was asked for ([`sys::MARKS`]), as on macOS, where this
+    // process becomes the command with its caller's whole environment.
+    for name in sys::SESSION_VARS.into_iter().chain(sys::MARKS) {
         if let Some(value) = env.vars.get(name) {
             command.env(name, value);
         }

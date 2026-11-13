@@ -20,6 +20,7 @@ use crate::branches::BranchCard;
 use std::path::Path;
 use symphony_api::reports::GitRead;
 use symphony_board::ReportRead;
+use symphony_board::recording::{Gate, State};
 pub use symphony_board::reports::{DAY, HOUR, day_start};
 
 /// What one roll-up wrote.
@@ -47,7 +48,14 @@ pub fn due(folder: &Path, now: f64) -> Vec<f64> {
 /// Roll the project at `root`, its id `project`, up into `folder` at `now`: the day files of
 /// `days` ([`due`]), their board figures from `read`, the board's one read of everything since the
 /// first of them began, their cards from the documents with `branch_cards` (the server's kept scan
-/// of the live branches' cards). A file that cannot be written is the error.
+/// of the live branches' cards). Each file is written while `gate`, its server generation's
+/// ([`symphony_board::recording`]), stands open, and held open meanwhile: once a reload's hand-off
+/// closes it, nothing more is written, and the generation that replaces it writes them. A file that
+/// cannot be written is the error.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each is one of the roll-up's inputs, handed over from the server's tick as they are"
+)]
 pub fn roll_up(
     root: &Path,
     project: &str,
@@ -56,6 +64,7 @@ pub fn roll_up(
     days: &[f64],
     read: &ReportRead,
     branch_cards: &[BranchCard],
+    gate: &Gate,
 ) -> Result<Rolled, String> {
     let mut rolled = Rolled::default();
     let Some(since) = days.first().copied() else {
@@ -91,7 +100,13 @@ pub fn roll_up(
                 },
             );
         }
-        symphony_board::reports::write(folder, &day)?;
+        let open = gate.with(|state| match state {
+            State::Open { .. } => symphony_board::reports::write(folder, &day).map(|()| true),
+            State::Held | State::Closed(_) => Ok(false),
+        })?;
+        if !open {
+            break;
+        }
         rolled.written.push(day.day);
     }
     Ok(rolled)

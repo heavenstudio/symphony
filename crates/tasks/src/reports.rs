@@ -109,7 +109,7 @@ struct Replayed<'a> {
     stages: Stages,
     /// Who held its executor and reviewer roles.
     holds: Vec<Hold>,
-    /// The series of reds it is filed in, `main`, `nightly`, or `red` for one marked outside them;
+    /// The series of reds it is filed in, `main` or `release`, or `red` for one marked outside them;
     /// none for a task that is no red.
     series: Option<&'static str>,
 }
@@ -151,11 +151,12 @@ fn replay(task: &ReportTask, now: f64) -> Replayed<'_> {
         created: task.created,
         updated: task.updated,
     };
+    // The release run's reds are `release` in the series they were filed in before its rename too.
     let series = if let Some(series) = red::SERIES.iter().find(|s| red::filed_in(s, &task.slug)) {
         Some(if *series == red::SERIES[0] {
             "main"
         } else {
-            "nightly"
+            "release"
         })
     } else {
         task.marked_red.then_some("red")

@@ -5,7 +5,7 @@
 //! worktree tied to no task, a task in progress, ready, blocked, in concept or design, an agent that
 //! beat within the hour, a build or test the recorder recorded there within the hour, a land that
 //! runs, a lock the sweep does not know, or a process working inside it, as read again right before
-//! the clear; the nightly's checkout only after a week untouched; never a folder a Cargo holds the
+//! the clear; the release run's checkout only after a week untouched; never a folder a Cargo holds the
 //! lock of, never what git tracks, and never one reached through a link.
 
 use crate::common::{GONE, NOW, Seed, session};
@@ -15,7 +15,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::sweep::Sweep;
-use symphony_board::sweep::holder::NIGHTLY_LOCK;
+use symphony_board::sweep::holder::{LEGACY_LOCK, RELEASE_LOCK};
 use symphony_board::sweep::size;
 use symphony_board::sweep::trigger::now;
 
@@ -553,25 +553,32 @@ fn a_land_that_runs_keeps_it_and_one_gone_does_not() {
 }
 
 #[test]
-fn the_nightlys_checkout_keeps_its_build_a_week() {
+fn the_release_runs_checkout_keeps_its_build_a_week() {
+    // Locked as the run locks it now, and as a build older than the rename locked it.
+    for (name, reason) in [("release", RELEASE_LOCK), ("nightly", LEGACY_LOCK)] {
+        a_week_kept(name, reason);
+    }
+}
+
+fn a_week_kept(name: &str, reason: &str) {
     let r = Repo::new();
-    let nightly = r.detached("nightly");
-    r.lock(&nightly, NIGHTLY_LOCK);
-    let folders = built(&nightly);
-    // Touched hours ago, by the machine's clock: the nightly builds on it night after night.
+    let checkout = r.detached(name);
+    r.lock(&checkout, reason);
+    let folders = built(&checkout);
+    // Touched hours ago, by the machine's clock: the release run builds on it run after run.
     let hours_ago = r.sweep_with(|o| o.now = Box::new(now));
-    assert_untouched(&r, &nightly, &folders, &hours_ago);
-    // Untouched for a week: no nightly runs there now.
-    Repo::age(&nightly, 7.0 * 24.0 + 1.0);
+    assert_untouched(&r, &checkout, &folders, &hours_ago);
+    // Untouched for a week: no release run runs there now.
+    Repo::age(&checkout, 7.0 * 24.0 + 1.0);
     let done = r.sweep_now(|o| o.now = Box::new(now));
     let said = text(&done);
-    r.assert_kept(&nightly, &said);
+    r.assert_kept(&checkout, &said);
     assert_eq!(cleared(&done), folders, "{said}");
     assert!(folders.iter().all(|f| !f.exists()), "{said}");
     assert!(
         done.cleared
             .iter()
-            .all(|c| c.why == "the nightly's checkout; nothing touched it for 7 days"),
+            .all(|c| c.why == "the release run's checkout; nothing touched it for 7 days"),
         "{said}"
     );
 }

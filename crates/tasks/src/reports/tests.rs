@@ -108,14 +108,14 @@ fn board() -> ReportRead {
         -48.0,
         Thread::default().made(-48.0, orch),
     );
-    let mut nightly = task(
-        "tests/nightly-red-2",
+    let mut release = task(
+        "tests/release-red-2",
         -24.0,
         "ready",
         -24.0,
         Thread::default().made(-24.0, "filer"),
     );
-    nightly.marked_red = true;
+    release.marked_red = true;
     let a = task(
         "sim/a",
         1.0,
@@ -179,7 +179,7 @@ fn board() -> ReportRead {
         ),
     );
     ReportRead {
-        tasks: vec![old, nightly, a, b, c, main_red, review],
+        tasks: vec![old, release, a, b, c, main_red, review],
     }
 }
 
@@ -258,7 +258,7 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
             .collect::<Vec<_>>(),
         [
             ("sim/old", "ready", -48.0),
-            ("tests/nightly-red-2", "ready", -24.0),
+            ("tests/release-red-2", "ready", -24.0),
             ("sim/c", "review", 11.0)
         ]
     );
@@ -287,8 +287,8 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
         day.reds,
         [
             Red {
-                slug: "tests/nightly-red-2".into(),
-                series: "nightly".into(),
+                slug: "tests/release-red-2".into(),
+                series: "release".into(),
                 filed: at(-24.0),
                 closed: None,
                 status: "ready".into(),
@@ -325,7 +325,7 @@ fn a_day_read_after_it_ended_is_closed_with_all_its_hours_and_nothing_after_it()
         .sum();
     assert_eq!(
         entered, 1,
-        "the nightly red made in the day; nothing of the next day"
+        "the release red made in the day; nothing of the next day"
     );
     assert_eq!(day.reds.len(), 1, "the main red was filed the next day");
     assert!(day.rounds.is_empty());

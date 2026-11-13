@@ -8,12 +8,19 @@
 //! each is written aside and renamed. One roll-up runs at a time; an hour that comes while one runs
 //! waits for it. A roll-up that fails, the board unreachable or its read refused, writes nothing
 //! and is said once; the files stay as the last one left them, and the next hour tries again.
+//!
+//! It keeps to its server generation's gate ([`symphony_board::recording`]), as the recorders do:
+//! a reload never has two generations writing a day file. A replacement rolls nothing up before its
+//! hand-off commits and then rolls the hour up, and the generation it replaces writes no file after
+//! its gate closes, so a roll-up of the old generation still under way never renames an older read
+//! over the new one's.
 
 use super::Hub;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use symphony::reports::HOUR;
+use symphony_board::recording::State;
 
 /// Where the shared server keeps the project's day files, the hour it last rolled them up in and
 /// the roll-up under way.
@@ -85,12 +92,22 @@ pub(super) fn say(said: &Mutex<Option<String>>, what: Option<String>) -> bool {
 
 impl Hub {
     /// The roll-up of this hour, when one is due and this is the shared server, from the board
-    /// `board` (none when the tick could not reach it): its read here, the rest on a thread.
+    /// `board` (none when the tick could not reach it): its read here, the rest on a thread. It
+    /// keeps to its server generation's gate, as the recorders do ([`Hub::gate_recorders`]): none
+    /// until the gate is given, and none while a reload holds it (a replacement before its hand-off
+    /// commits, which rolls the hour up once it does) or has closed it (the generation it
+    /// replaced); a roll-up under way writes no file once the gate closes.
     pub(super) fn reports_tick(&self, board: Option<&symphony_board::Store>) {
         let mut rollup = self.reports.lock().unwrap_or_else(|e| e.into_inner());
         let Some(rollup) = rollup.as_mut() else {
             return;
         };
+        let Some(gate) = self.recording_gate.get() else {
+            return;
+        };
+        if !matches!(gate.stands(), State::Open { .. }) {
+            return;
+        }
         let now = self.now();
         let Some(hour) = rollup.due(now) else {
             return;
@@ -125,16 +142,21 @@ impl Hub {
         let root = self.root.clone();
         let folder = rollup.folder.clone();
         let said = Arc::clone(&rollup.said);
+        let gate = Arc::clone(gate);
         let started = std::thread::Builder::new()
             .name("reports".into())
             .spawn(move || {
                 let project = symphony::project::Project::of(&root).id.clone();
-                let rolled =
-                    symphony::reports::roll_up(&root, &project, now, &folder, &days, &read, &cards);
+                let rolled = symphony::reports::roll_up(
+                    &root, &project, now, &folder, &days, &read, &cards, &gate,
+                );
                 say(
                     &said,
                     match rolled {
-                        Ok(rolled) if rolled.problems.is_empty() => None,
+                        // Nothing written is a reload's: the generation replacing this one writes.
+                        Ok(rolled) if rolled.problems.is_empty() || rolled.written.is_empty() => {
+                            None
+                        }
                         Ok(rolled) => Some(format!(
                             "{} written without {}",
                             rolled.written.join(" and "),

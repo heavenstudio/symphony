@@ -15,6 +15,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use symphony_api::{ReportDay, ReportHour};
 use symphony_board::board_health::queries_of;
+use symphony_board::recording::Gate;
 use symphony_board::reports::{DAY, HOUR, day_start};
 use symphony_board::sweep::trigger::now;
 
@@ -28,12 +29,20 @@ impl Clock {
     }
 }
 
-/// A hub of the repository at `root` that rolls up into `folder` on `clock`, as the shared one does.
-fn shared(root: &Path, folder: &Path, clock: &Clock) -> Hub {
+/// A hub of the repository at `root` that rolls up into `folder` on `clock`, as the shared one does,
+/// its server generation's gate not given yet.
+fn ungated(root: &Path, folder: &Path, clock: &Clock) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     *hub.reports.get_mut().unwrap() = Some(Rollup::new(folder.to_path_buf()));
     let clock = clock.clone();
     hub.clock = Box::new(move || *clock.0.lock().unwrap());
+    hub
+}
+
+/// [`ungated`] with the open gate of a generation no reload is handing over.
+fn shared(root: &Path, folder: &Path, clock: &Clock) -> Hub {
+    let hub = ungated(root, folder, clock);
+    hub.gate_recorders(Arc::new(Gate::default()));
     hub
 }
 
@@ -370,6 +379,41 @@ fn a_day_file_that_cannot_be_written_is_said_and_the_next_hour_writes_it() {
         "the next hour writes it"
     );
     assert_eq!(said(), None, "right again");
+}
+
+#[test]
+fn the_roll_up_keeps_to_its_generation_s_gate_as_a_reload_moves_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("reports");
+    let fixture = report_board();
+    let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
+    let hub = ungated(&root, &folder, &clock);
+    tick(&hub, Some(&fixture.store));
+    assert!(!folder.exists(), "no gate given yet: nothing is recorded");
+    let gate = Arc::new(Gate::default());
+    gate.hold();
+    hub.gate_recorders(Arc::clone(&gate));
+    tick(&hub, Some(&fixture.store));
+    assert!(
+        !folder.exists(),
+        "a replacement's, before its hand-off commits"
+    );
+    gate.open(midnight() + 10.5 * HOUR);
+    tick(&hub, Some(&fixture.store));
+    let today = bytes(&folder, midnight());
+    assert!(
+        today.is_some(),
+        "the hour rolled up once the hand-off committed, in the same hour"
+    );
+    clock.set(midnight() + 11.0 * HOUR);
+    gate.close(midnight() + 11.0 * HOUR - 1.0);
+    tick(&hub, Some(&fixture.store));
+    assert_eq!(
+        bytes(&folder, midnight()),
+        today,
+        "the generation a reload replaced writes nothing more"
+    );
 }
 
 #[test]

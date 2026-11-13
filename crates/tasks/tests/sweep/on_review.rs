@@ -156,7 +156,7 @@ fn a_task_moved_to_review_starts_the_manifests_command_from_the_main_checkout_wi
 }
 
 #[test]
-fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task() {
+fn the_review_command_runs_without_the_session_or_the_marks_of_the_agent_that_moved_the_task() {
     let repo = executing("sim/jump", "amber-heron");
     branch(&repo, "sim/jump");
     let record = repo.dir.join("record");
@@ -164,9 +164,10 @@ fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task(
         &repo.root,
         "tools/on-review.sh",
         &format!(
-            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s\\n' \"${{TASKS_SESSION-unset}}\" \
+            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s|%s|%s\\n' \"${{TASKS_SESSION-unset}}\" \
              \"${{HC_TERMINAL_ID-unset}}\" \"${{HC_TERMINAL_SOCKET-unset}}\" \"${{HC_SESSION-unset}}\" \
-             \"${{HC_SCOPE-unset}}\" \"${{TASKS_ON_REVIEW-unset}}\" > '{record}.part'\n\
+             \"${{HC_SCOPE-unset}}\" \"${{SYMPHONY_UNASKED-unset}}\" \"${{SYMPHONY_LAND-unset}}\" \
+             \"${{TASKS_ON_REVIEW-unset}}\" > '{record}.part'\n\
              mv '{record}.part' '{record}'\n",
             record = record.display()
         ),
@@ -177,7 +178,10 @@ fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task(
     )
     .unwrap();
     manifest(&repo, &["tools/on-review.sh"]);
-    // The mover's: its handle (`run` sets it) and the hc terminal, socket, core and scope it runs in.
+    // The mover's: its handle (`run` sets it) and the hc terminal, socket, core and scope it runs in,
+    // and the marks of how the move was asked for (`sys::MARKS`): the `tasks` recipe's, which an
+    // agent's move runs under, and the `land` recipe's, under which a land moves its task. The
+    // command is the project's own, which writes where the project says and lands nothing.
     run(
         &repo,
         "amber-heron",
@@ -189,13 +193,18 @@ fn the_review_command_runs_without_the_session_of_the_agent_that_moved_the_task(
                 ("HC_TERMINAL_SOCKET", "/fixture/hc/t7.sock"),
                 ("HC_SESSION", "fixture-core"),
                 ("HC_SCOPE", "fixture-scope"),
+                ("SYMPHONY_UNASKED", "1"),
+                ("SYMPHONY_LAND", "1"),
             ] {
                 vars.insert(key.into(), value.into());
             }
         },
     );
     // The rest of the mover's environment is the command's.
-    assert_eq!(written(&record), "unset|unset|unset|unset|unset|on\n");
+    assert_eq!(
+        written(&record),
+        "unset|unset|unset|unset|unset|unset|unset|on\n"
+    );
 }
 
 #[test]

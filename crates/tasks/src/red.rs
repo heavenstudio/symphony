@@ -1,5 +1,5 @@
 //! A red task: work filed for a red that stops every landing, such as a project's verification of
-//! its main line or its nightly run going red. Its filer marks it where it files it
+//! its main line or its release run going red. Its filer marks it where it files it
 //! ([`crate::NewTask::red`]), or later for a red filed before it marked reds
 //! ([`crate::Store::mark_red`]), and the board keeps the mark among the task's own fields, beside
 //! the plugins' ([`FIELDS`]`.`[`MARK`], the text naming what is red), so a reader judges a task by
@@ -24,8 +24,14 @@ pub const MARK: &str = "red";
 /// The session kind of a red's filer, the one session a red mark is taken from.
 pub const FILER: &str = "filer";
 /// The series reds are filed in, by slug: a red verify of the main line, which a landing files, and
-/// a red nightly run's findings. Only their tasks take a red mark ([`filed`]).
-pub const SERIES: [&str; 2] = ["tests/main-red-", "tests/nightly-red-"];
+/// a red release run's findings; last, the series a release run filed them in before the rename to
+/// `just release`, whose reds still open are its own until they close. Only their tasks take a red
+/// mark ([`filed`]).
+pub const SERIES: [&str; 3] = [
+    "tests/main-red-",
+    "tests/release-red-",
+    "tests/nightly-red-",
+];
 /// How long a red task may go without an executor before the PULL digest names it: ten minutes.
 pub const UNSTAFFED_SECONDS: f64 = 600.0;
 
@@ -118,6 +124,10 @@ mod tests {
             ("tests/main-red-3e0c", true),
             ("tests/nightly-red-sim-determinism", true),
             ("tests/nightly-red-sim-2", true),
+            ("tests/release-red-verify-tests", true),
+            ("tests/release-red-run-2", true),
+            ("tests/release-red-run/fix", false),
+            ("tests/release-red", false),
             ("tests/main-red-", false),
             ("tests/main-red-old/feature", false),
             ("tests/nightly-red-sim/fix", false),

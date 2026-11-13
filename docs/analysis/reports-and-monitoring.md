@@ -444,9 +444,10 @@ is `tools/agent-cost-estimate`, after `tools/board-token-usage`.
 
 ### Board health over days
 
-The server appends, once an hour, the hour it already holds in memory (`Recorder::report`) to a
-day file beside `health.json`: dispatch and sweep passes and failures, request counts, slow and
-unanswered requests, the slowest caller, write p50 and p90. No board request. Kept 90 days.
+The server appends, once an hour, the hour it already holds in memory (the minutes `Recorder`
+keeps) to a day file in `symphony/health/` in the git common dir: dispatch and sweep passes and
+failures, request counts, slow and unanswered requests, the slowest caller, write p50 and p90. No
+board request. Kept 90 days ([TASKS](../TASKS.md#board-health)).
 
 ### How the figures are computed
 
@@ -485,6 +486,10 @@ starts included: the tick makes the roll-up's one board read and hands it, with 
 scan of the live branches' cards, to a thread of its own, which reads git and the documents, works
 out the figures and writes the files. That thread never holds the tick up, and a stop or a reload
 waits on none of it. One roll-up runs at a time: an hour that comes while one runs waits for it.
+It keeps to the gate the server's generation holds for its recorders (`crates/tasks/src/recording.rs`,
+as the board's health hours and the agents' day files do): a replacement rolls nothing up until its
+hand-off commits, and the generation it replaces writes no file once its gate closes, so a reload
+never has two servers writing one day file, nor an older read renamed over a newer one.
 
 **When.** Each roll-up writes today's file again with what the day held up to then, and
 yesterday's file once more while it is missing or not final: the first roll-up after midnight

@@ -5,12 +5,12 @@
 //! variant it names named, a trait it implements implemented with the methods it writes, a type it
 //! names named. Nothing here runs; it is compiled by the test build and by `just lint-rs` (clippy
 //! over every target), so a change that would break a consumer fails a task's gate rather than a
-//! night later.
+//! run later.
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
-//! consumer's code calls. Not held by any of them, and caught only by the nightly's conciliation
-//! (`crates/symphony/src/nightly/conciliate.rs`, which builds each project the machine serves on the
+//! consumer's code calls. Not held by any of them, and caught only by the release run's conciliation
+//! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on the
 //! candidate): the blocks a consumer builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`,
 //! `Image`, `Presentation` and `Fragment`), and a field it reads or a method it calls on a value
 //! that is not named in a guard.
@@ -178,7 +178,7 @@ fn the_names_consumers_call_keep_their_shapes() {
 
     // The plugin vocabulary a consumer's plugin builds by its fields: every field named, so one
     // added here breaks it. (The blocks themselves, `Block`, `Span`, `Media`, `Cell`, `Image`,
-    // `Presentation` and `Fragment`, are left to the nightly's conciliation, as the header says.)
+    // `Presentation` and `Fragment`, are left to the release run's conciliation, as the header says.)
     let _ = |text: String| NavItem {
         label: text.clone(),
         title: text.clone(),

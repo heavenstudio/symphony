@@ -95,6 +95,7 @@ fn roll(tree: &Tree, folder: &Path, now: f64, cards: &[BranchCard]) -> Result<Ro
         &days,
         &ReportRead::default(),
         cards,
+        &Gate::default(),
     )
 }
 
@@ -185,10 +186,49 @@ fn no_day_writes_nothing() {
         &[],
         &ReportRead::default(),
         &[],
+        &Gate::default(),
     )
     .unwrap();
     assert_eq!(rolled, Rolled::default());
     assert!(!folder.exists());
+}
+
+#[test]
+fn a_gate_a_reload_holds_or_closed_writes_nothing_and_an_open_one_writes_each_day() {
+    let tree = Tree::new();
+    repository(&tree);
+    let folder = tree.path("reports");
+    let days = due(&folder, NOW);
+    let roll = |gate: &Gate| {
+        roll_up(
+            &tree.root,
+            "sim",
+            NOW,
+            &folder,
+            &days,
+            &ReportRead::default(),
+            &[],
+            gate,
+        )
+        .unwrap()
+    };
+    let held = Gate::default();
+    held.hold();
+    let closed = Gate::default();
+    closed.close(NOW - 1.0);
+    for (gate, why) in [
+        (&held, "a replacement's before its hand-off"),
+        (&closed, "closed"),
+    ] {
+        assert_eq!(roll(gate).written, Vec::<String>::new(), "{why}");
+        assert!(!folder.exists(), "{why}");
+    }
+    held.open(NOW);
+    assert_eq!(
+        roll(&held).written.len(),
+        2,
+        "open once its hand-off commits"
+    );
 }
 
 #[test]
