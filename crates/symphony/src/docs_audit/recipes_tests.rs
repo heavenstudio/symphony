@@ -547,6 +547,10 @@ fn the_symphonys_own_audit_refuses_a_recipe_its_lists_do_not_allow() {
     git(&tree.root, &["add", new]);
     let errors = super::audit(&tree.root).errors;
     assert!(errors.contains(&refused(new, 1, "gate")), "{errors:#?}");
+    // A file git tracks that is gone from the checkout names nothing.
+    std::fs::remove_file(tree.path(new)).unwrap();
+    std::fs::remove_file(tree.path("crates/tasks/AGENTS.md")).unwrap();
+    assert_eq!(super::audit(&tree.root).errors, judged[..3]);
     std::fs::remove_file(tree.path(LISTS)).unwrap();
     assert_eq!(super::audit(&tree.root).errors, Vec::<String>::new());
 }
