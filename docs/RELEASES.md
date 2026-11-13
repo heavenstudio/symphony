@@ -26,8 +26,10 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 
 ## The release run
 
-`just release` (`symphony release`, `crates/symphony/src/release.rs`) cuts the releases, and is the
-one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
+`just release` (`symphony-build release`, `crates/symphony/src/release.rs`) cuts the releases, and
+is the one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)). It is a
+command of `symphony-build`, this repository's own binary, which no project is given and the
+shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip; while a release candidate is
@@ -463,21 +465,21 @@ also starts once enough tasks have landed, whatever the hour
 - **The trigger.** A land runs `[board] on_land` once the task is closed and pushed, after it
   started the regenerator ([TASKS](TASKS.md#the-default-landing)), which the run it starts
   waits for (*The candidate*, above), and shows what it said within its first seconds. This
-  repository names there the build of `symphony` its main checkout links,
-  `.target/bin/symphony nightly --due` (the command's name before the rename, which a build of
-  either side runs; [the rename](#the-rename)), and the land appends the task's slug and its merge
+  repository names there the build of `symphony-build` its main checkout links,
+  `.target/bin/symphony-build release --due`, and the land appends the task's slug and its merge
   commit. Nothing slow sits on or behind a land: short of the count, `--due` prints the count and
   what the next run waits for and exits 0, having run git alone, no cargo and no recipe, so no
   `just tasks` or `just land` waits on a build lock of its. Once the count is reached it takes the
   lock, brings the release run's own checkout (`../symphony-wt/release`) to `origin/main`'s tip,
-  builds `symphony` there with `tools/rs-bin.sh --build symphony` in that checkout's own build
-  folder, never the main checkout's, and becomes that build, which runs exactly as `just release`
-  does: the full verification, the conciliation, the tag and its push, each red filed, then the
-  refresh. A tip that cannot be built so is said, and its run goes on from the linked build, which
-  meets the same red in its checks. The record names what started it (`cause`: `20 landings since
-  release-…, the last SLUG`). A red run files its reds, as any release run does. A linked build
-  older than the cadence knows no `--due`: the land shows its refusal, and `tools/rs-bin.sh --link
-  symphony` in the main checkout renews the link.
+  builds `symphony-build` there with `tools/rs-bin.sh --build symphony-build` in that checkout's
+  own build folder, never the main checkout's, and becomes that build, which runs exactly as
+  `just release` does: the full verification, the conciliation, the tag and its push, each red
+  filed, then the refresh. A tip that cannot be built so is said, and its run goes on from the
+  linked build, which meets the same red in its checks. The record names what started it
+  (`cause`: `20 landings since release-…, the last SLUG`). A red run files its reds, as any
+  release run does. A main checkout that links no `symphony-build` starts no count: the land
+  shows its refusal, and `tools/rs-bin.sh --link symphony-build` in the main checkout makes the
+  link, or renews it. No landing is lost meanwhile: the next count reads them all from git.
 - **The release candidate holds it.** Before it counts, `--due` settles the release candidate
   under the run's lock ([the advance](#the-release-candidate)), unless a run holds the lock, which
   settles it itself. While one is open and a red of it waits, the count starts nothing, however
@@ -666,22 +668,20 @@ Until it is installed, only the cadence runs `just verify` on main.
 
 ## The rename
 
-`just nightly`, `symphony nightly` and `--release COMMIT` are the release run's old names ([the
-names](analysis/release-candidate.md#the-names)). A build that knows only them, an older build,
-may be the one the main checkout links, and what it left on disk is this build's to take over
-(`crates/symphony/src/release.rs`, `release/record.rs`, `release/place.rs`):
+`just nightly`, the command `nightly` and `--release COMMIT` are the release run's old names ([the
+names](analysis/release-candidate.md#the-names)). What a build that knew only them left on disk is
+this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`,
+`release/place.rs`):
 
 - **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
   exit 2, until the first release `just release` cuts; then it goes.
-- **The old command.** `symphony nightly --due …` runs as `symphony release --due …` does, so a
-  landing's `on_land` that names it goes on, and so does an older build handing a due count's run
-  to a build of the tip (`SYMPHONY_NIGHTLY_DRIVER` counts as `SYMPHONY_RELEASE_DRIVER`). Anything
-  else it refuses, saying "`symphony nightly` is now `symphony release`", exit 2, and `symphony
-  release --release COMMIT` says "`--release COMMIT` is now `--commit COMMIT`", exit 2; neither
-  runs anything. This repository's `on_land` names `nightly --due`, which an older build knows,
-  while the main checkout may link one: a landing of this build links it (`tools/rs-bin.sh --link
-  symphony` and `--link tasks` in the main checkout), and `on_land` names `release --due` once the
-  link is newer.
+- **The old command.** `symphony-build nightly --due …` runs as `symphony-build release --due …`
+  does, so an `on_land` that names it goes on, and so does a due count's run handed on by an older
+  build (`SYMPHONY_NIGHTLY_DRIVER` counts as `SYMPHONY_RELEASE_DRIVER`). Anything else it refuses,
+  saying "`symphony-build nightly` is now `symphony-build release`", exit 2, and
+  `symphony-build release --release COMMIT` says "`--release COMMIT` is now `--commit COMMIT`",
+  exit 2; neither runs anything. This repository's `on_land` names `release --due`
+  ([the trigger](#the-cadence)).
 - **The records.** Until a run moves them, `--status` and the cadence read the records where an
   older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
   lock before it decides anything, so no older build's run, and no second run starting at the same
@@ -711,7 +711,7 @@ may be the one the main checkout links, and what it left on disk is this build's
 
 An older build that runs a count after a newer one moved the folder finds no record there, and a
 due run of it makes the old folder and checkout again; so a landing of this build is followed at
-once by the links above.
+once by its link in the main checkout ([the trigger](#the-cadence)).
 
 ## Never
 

@@ -92,11 +92,12 @@ fn standin_cargo() -> &'static Path {
 }
 
 /// The binaries a fixture declares, each with the source folder the launcher checks.
-const BINARIES: [(&str, &str); 4] = [
+const BINARIES: [(&str, &str); 5] = [
     ("tasks", "crates/tasks"),
     ("agent-send", "crates/tasks"),
     ("fake-hc", "crates/tasks"),
     ("symphony", "crates/symphony"),
+    ("symphony-build", "crates/symphony"),
 ];
 
 /// A repository whose main checkout (`main/`) holds the launcher and `main` as every binary's source,
@@ -364,7 +365,7 @@ fn the_main_checkout_another_repository_and_other_binaries_run_the_callers_own_b
         f.run(&f.wt, &folder, &[], &["tasks", "list"]).ok(),
         f.said("tasks", &f.main, &folder, "list")
     );
-    for name in ["symphony", "fake-hc"] {
+    for name in ["symphony", "symphony-build", "fake-hc"] {
         assert_eq!(
             f.in_wt(&[], &[name, "x"]).ok(),
             f.said(name, &f.wt, &f.wt, "x")

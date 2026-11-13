@@ -43,7 +43,7 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write, parent: &Path)
     let [root, metadata, files, component_files, mode] = args else {
         let _ = writeln!(
             err,
-            "usage: symphony release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK"
+            "usage: symphony-build release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK"
         );
         return 2;
     };
@@ -51,7 +51,7 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write, parent: &Path)
     if fs::canonicalize(parent).ok().as_deref() != Some(parent) {
         let _ = writeln!(
             err,
-            "symphony release-inputs: canonical release parent {} is required",
+            "symphony-build release-inputs: canonical release parent {} is required",
             parent.display()
         );
         return 1;
@@ -68,12 +68,12 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write, parent: &Path)
         Ok(root) => match writeln!(out, "{}", root.display()) {
             Ok(()) => 0,
             Err(error) => {
-                let _ = writeln!(err, "symphony release-inputs: {error}");
+                let _ = writeln!(err, "symphony-build release-inputs: {error}");
                 1
             }
         },
         Err(error) => {
-            let _ = writeln!(err, "symphony release-inputs: {error}");
+            let _ = writeln!(err, "symphony-build release-inputs: {error}");
             1
         }
     }

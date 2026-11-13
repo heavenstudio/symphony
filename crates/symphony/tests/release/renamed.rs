@@ -1,8 +1,8 @@
-//! What keeps working across the rename of `symphony nightly` to `symphony release`: the old
-//! command runs a due count, as a landing's `on_land` and a build older than the rename run it, and
-//! refuses anything else; the first run moves the records, the checkout and its build from their
-//! old names, reads the old records as release runs, and writes to and closes the reds the old
-//! series still holds open.
+//! What keeps working across the rename of `nightly` to `release`: the old command runs a due
+//! count, as a landing's `on_land` and a build older than the rename run it, and refuses anything
+//! else; the first run moves the records, the checkout and its build from their old names, reads
+//! the old records as release runs, and writes to and closes the reds the old series still holds
+//! open.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -13,7 +13,7 @@ use super::cadence::{counting, landing};
 use super::{CHECK, DAY, Fixture, NOW, git};
 
 /// What the old command says of anything but a due count.
-const REFUSED: &str = "`symphony nightly` is now `symphony release`\n";
+const REFUSED: &str = "`symphony-build nightly` is now `symphony-build release`\n";
 
 #[test]
 fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
@@ -98,7 +98,10 @@ fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(
         fs::read_to_string(&built).unwrap(),
-        format!("--build symphony in {}\n", fixture.worktree().display())
+        format!(
+            "--build symphony-build in {}\n",
+            fixture.worktree().display()
+        )
     );
     assert!(
         out.contains(&format!(

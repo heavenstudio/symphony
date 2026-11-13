@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The key of everything the client's build reads, printed as the last line: the release
-# snapshot's name, `symphony release-inputs ... --key`, of the inputs captured as
+# snapshot's name, `symphony-build release-inputs ... --key`, of the inputs captured as
 # apps/symphony-ui/bundle.sh captures them (the lines below, which a test holds to bundle.sh's).
 # The regenerator runs it before `just client-check` (symphony.toml, `[land] generators`): a tip
 # whose key and committed distribution passed that check before builds no client.
@@ -24,6 +24,6 @@ if [ "$(owned_git -C "$components" rev-parse HEAD)" != "${component_pin##*#}" ];
 fi
 owned_git -C "$components" ls-files --cached -z > "$inputs/components"
 snapshot_args=("$root" "$inputs/metadata.json" "$inputs/source" "$inputs/components")
-publisher="$("$root/tools/rs-bin.sh" --build symphony)"
+publisher="$("$root/tools/rs-bin.sh" --build symphony-build)"
 # Its key, as bundle.sh names its snapshot's lock:
 "$publisher" release-inputs "${snapshot_args[@]}" --key

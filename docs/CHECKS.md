@@ -351,7 +351,9 @@ reduce it further." Each binary this workspace delivers (`symphony-server`, `sym
 `agent-send`) has a budget, and so does the client distribution the server embeds (every file
 under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
-`[profile.release]`, and runs `symphony size-budget`, which prints each size beside its budget.
+`[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
+budget (`symphony-build`, the commands only this repository's build and release run use, is no
+binary it delivers, and has no line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
@@ -407,9 +409,9 @@ A binary's line is its size, as `just size-check` measures it in the commit that
 plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction sets the lines: it
 lowers the line of each binary it made smaller to that, and leaves a line where it stood when the
 rule would put it higher. The 4 % is the room the landings after a reduction share until the next
-one. Within its line, `symphony size-budget` prints where the rule brings down a binary's line
-that stands higher (`its line comes down to …`), so the commit of a reduction takes that number,
-not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
+one. Within its line, `symphony-build size-budget` prints where the rule brings down a binary's
+line that stands higher (`its line comes down to …`), so the commit of a reduction takes that
+number, not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
 allows, by the same rule: to the binary's size plus 4 %, never higher. The client's line is set by
 the same rule from the distribution main holds when it is set, and the check prints no such number
 for it: what the distribution holds rises and falls with the builds `publish-client` keeps.

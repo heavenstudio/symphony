@@ -1,8 +1,8 @@
-//! `symphony release` end to end: a repository of the test's own whose remote is a bare repository
-//! beside it, a scratch board (the store's test server, a database per test), a machine folder of
-//! its own and stand-in checks. No test reaches a real remote, the live board or the machine's
-//! registry, and none runs the real verification. The release run runs with a hostile user git
-//! configuration ([`HOSTILE`]), which asks every push to take more than its refspec.
+//! `symphony-build release` end to end: a repository of the test's own whose remote is a bare
+//! repository beside it, a scratch board (the store's test server, a database per test), a machine
+//! folder of its own and stand-in checks. No test reaches a real remote, the live board or the
+//! machine's registry, and none runs the real verification. The release run runs with a hostile
+//! user git configuration ([`HOSTILE`]), which asks every push to take more than its refspec.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -34,7 +34,7 @@ use symphony_board::{Store, Task, rpc};
 
 use common::Tree;
 
-const BIN: &str = env!("CARGO_BIN_EXE_symphony");
+const BIN: &str = env!("CARGO_BIN_EXE_symphony-build");
 /// 2026-11-12 10:00 UTC; the runs read time in UTC.
 const NOW: f64 = 1_794_477_600.0;
 const DAY: f64 = 86_400.0;
@@ -190,7 +190,8 @@ impl Fixture {
         commit
     }
 
-    /// `symphony release ARGS` from the main checkout at `now`: its exit code, stdout and stderr.
+    /// `symphony-build release ARGS` from the main checkout at `now`: its exit code, stdout and
+    /// stderr.
     fn release_at(&self, now: f64, args: &[&str]) -> (i32, String, String) {
         self.release_with(now, args, &[])
     }
@@ -210,8 +211,8 @@ impl Fixture {
         )
     }
 
-    /// `symphony release ARGS` from the main checkout, its clock at `now`, with `extra` in its
-    /// environment, to start.
+    /// `symphony-build release ARGS` from the main checkout, its clock at `now`, with `extra` in
+    /// its environment, to start.
     fn command(&self, now: f64, args: &[&str], extra: &[(&str, &str)]) -> Command {
         self.command_through(&[], now, args, extra)
     }
@@ -469,7 +470,7 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
     );
     let (code, out, _) = fixture.release_at(NOW, &["--help"]);
     assert_eq!(code, 0);
-    assert!(out.starts_with("usage: symphony release"), "{out}");
+    assert!(out.starts_with("usage: symphony-build release"), "{out}");
     assert!(!out.contains("--now"), "{out}");
     assert!(!fixture.records().join("runs").exists(), "nothing ran");
     assert!(!fixture.worktree().exists());
