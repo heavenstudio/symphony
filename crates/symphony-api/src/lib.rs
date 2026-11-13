@@ -39,18 +39,22 @@ mod agents;
 mod blocks;
 mod field_value;
 pub mod gates;
+pub mod health;
 mod links;
 mod machine_work;
 mod media;
 mod project;
+pub mod reports;
 mod runs;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
 pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
+pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use media::{GalleryItem, Media, View, Viewer};
+pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
 };

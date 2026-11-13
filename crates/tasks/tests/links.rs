@@ -1,0 +1,32 @@
+//! What the board's shipped binaries, `tasks` and `agent-send`, link of what they never run: on
+//! macOS no symbol is exported, as no other code loads them. The size it would add is their
+//! budgets' to hold (docs/CHECKS.md, "Size budgets").
+
+// Whether a Mach-O binary exports a symbol, read from its export trie.
+#[cfg(target_os = "macos")]
+#[path = "../../../tools/test-support/macho_exports.rs"]
+mod macho_exports;
+
+/// On macOS every binary of the board links with `-no_exported_symbols` (build.rs): no other code
+/// loads it, so the export trie a link writes by default, a name for each global symbol, would
+/// serve only a debugger reading a stripped build. This test's own executable, linked without it,
+/// exports, and so shows the reading finds a trie where there is one.
+#[test]
+#[cfg(target_os = "macos")]
+fn the_shipped_binaries_export_no_symbols() {
+    let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+    assert!(
+        macho_exports::exports_any(&this),
+        "this test's executable exports nothing: the reading no longer finds an export trie"
+    );
+    for (name, path) in [
+        ("tasks", env!("CARGO_BIN_EXE_tasks")),
+        ("agent-send", env!("CARGO_BIN_EXE_agent-send")),
+    ] {
+        assert!(
+            !macho_exports::exports_any(&std::fs::read(path).unwrap()),
+            "the {name} binary exports symbols: its link lost `-Wl,-no_exported_symbols` \
+             (crates/tasks/build.rs)"
+        );
+    }
+}

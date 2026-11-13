@@ -88,9 +88,60 @@ pub fn stamp_minutes(stamp: &str) -> Option<i64> {
     Some(days_from_civil(year, month, day) * 1440 + hour * 60 + minute)
 }
 
+/// The second since the epoch a card's stamp names, in this machine's time zone, as
+/// [`stamp_at`] wrote it: `%Y-%m-%d %H:%M`, or a day alone (`%Y-%m-%d`), read as its first minute.
+/// `None` when it does not read, or names a minute the clocks skipped.
+pub fn stamp_seconds(stamp: &str) -> Option<f64> {
+    let stamp = if stamp.len() == 10 {
+        format!("{stamp} 00:00")
+    } else {
+        stamp.to_string()
+    };
+    stamp_minutes(&stamp)?;
+    let caps = STAMP.captures(&stamp)?;
+    let field = |i: usize| caps[i].trim().parse::<libc::c_int>().ok();
+    // SAFETY: an all-zero `tm` is a valid value of a plain C struct of integers (and, on some
+    // platforms, a null zone name), which mktime reads and normalises.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = field(1)? - 1900;
+    tm.tm_mon = field(2)? - 1;
+    tm.tm_mday = field(3)?;
+    tm.tm_hour = field(4)?;
+    tm.tm_min = field(5)?;
+    // Whether summer time holds then is mktime's to work out.
+    tm.tm_isdst = -1;
+    // SAFETY: tzset reads TZ into libc's own state; mktime reads and writes only `tm`, which
+    // outlives the call.
+    let seconds = unsafe {
+        tzset();
+        libc::mktime(&mut tm)
+    };
+    #[allow(clippy::cast_precision_loss)]
+    (seconds != -1).then_some(seconds as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stamp_reads_back_to_the_minute_it_was_written_at() {
+        let noon = 1_800_000_000 - 1_800_000_000 % 86_400 + 12 * 3600;
+        for at in [noon, noon + 59, noon + 3_600 * 7 + 120, noon + 86_400 * 180] {
+            let minute = at - at % 60;
+            #[allow(clippy::cast_precision_loss)]
+            let expected = minute as f64;
+            assert_eq!(stamp_seconds(&stamp_at(at)), Some(expected), "{at}");
+        }
+        let day = stamp_at(noon);
+        assert_eq!(
+            stamp_seconds(&day[..10]),
+            stamp_seconds(&format!("{} 00:00", &day[..10]))
+        );
+        for bad in ["2026-13-01 00:00", "x", "2026-01-01 24:00", ""] {
+            assert_eq!(stamp_seconds(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn a_stamp_reads_to_minutes_and_a_bad_one_does_not() {

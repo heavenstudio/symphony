@@ -1054,7 +1054,7 @@ impl Clock {
 fn recording_hub(root: &Path, folder: &Path, clock: &Clock, gate: Arc<Gate>) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     *hub.agent_activity.get_mut().unwrap() = Some(Recorder::new(folder.to_path_buf()));
-    hub.gate_agents(gate);
+    hub.gate_recorders(gate);
     let clock = clock.clone();
     hub.clock = Box::new(move || clock.now());
     hub
@@ -1154,7 +1154,7 @@ fn recording_makes_no_board_write_though_the_board_counts_writes() {
     );
 
     *hub.agent_activity.lock().unwrap() = Some(Recorder::new(folder.clone()));
-    hub.gate_agents(Arc::default());
+    hub.gate_recorders(Arc::default());
     for _ in 0..3 {
         hub.board_read(&fixture.store).unwrap();
         pass(&fixture, &clock, 91.0);
@@ -1186,7 +1186,7 @@ fn hub_started(drain_chat: bool) -> (Tree, Arc<Hub>, PathBuf) {
         move |_| store.take().ok_or_else(|| "one store in this test".into()),
     )
     .unwrap();
-    hub.gate_agents(Arc::default());
+    hub.gate_recorders(Arc::default());
     hub.start_initial_board();
     let deadline = Instant::now() + Duration::from_secs(60);
     while hub.task_snapshot().is_err() {
@@ -1495,28 +1495,28 @@ fn hand_off(outcome: HandOff) -> Vec<Line> {
             (_, 21) => replacement = true,
             (HandOff::Committed, 31) => {
                 old_gate.close(H + 1830.0);
-                new_gate.open();
+                new_gate.open(H + 1830.0);
             }
             (HandOff::Committed, 33) => {
-                old_gate.stop(old.as_mut().unwrap(), || H + 1925.0);
+                gated_stop(&old_gate, old.as_mut().unwrap(), || H + 1925.0);
                 old = None;
             }
             (HandOff::FailedBeforeTheClose, 31) => {
-                new_gate.stop(&mut new, || t);
+                gated_stop(&new_gate, &mut new, || t);
                 replacement = false;
             }
             (HandOff::FailedAfterTheClose, 31) => old_gate.close(H + 1830.0),
             (HandOff::FailedAfterTheClose, 32) => {
-                old_gate.open();
+                old_gate.reopen(t);
                 replacement = false;
             }
             _ => {}
         }
         if let Some(old) = old.as_mut() {
-            old_gate.record(old, &at(t), || t);
+            gated_record(&old_gate, old, &at(t), || t);
         }
         if replacement {
-            new_gate.record(&mut new, &at(t), || t);
+            gated_record(&new_gate, &mut new, &at(t), || t);
         }
     }
     read_day(folder.path(), &day(H))
@@ -1636,13 +1636,13 @@ fn an_hour_across_a_stop_and_a_start_has_two_lines_a_reader_adds_taking_started_
     let mut before = Recorder::new(folder.path().to_path_buf());
     for minute in 1..=20 {
         let t = H + 60.0 * f64::from(minute);
-        gate.record(&mut before, &at(t), || t);
+        gated_record(&gate, &mut before, &at(t), || t);
     }
-    gate.stop(&mut before, || H + 1230.0);
+    gated_stop(&gate, &mut before, || H + 1230.0);
     let mut after = Recorder::new(folder.path().to_path_buf());
     for minute in 25..=60 {
         let t = H + 60.0 * f64::from(minute);
-        gate.record(&mut after, &at(t), || t);
+        gated_record(&gate, &mut after, &at(t), || t);
     }
     let lines = read_day(folder.path(), &day(H));
     let started: Vec<u64> = hours(&lines)
@@ -1721,7 +1721,7 @@ fn a_hub_records_only_as_its_generations_gate_lets_it_and_none_without_one() {
         kinds().is_empty(),
         "a replacement records nothing before its commit"
     );
-    gate.open();
+    gate.open(NOW);
     pass(&fixture, &clock, 30.0);
     hub.board_read(&fixture.store).unwrap();
     pass(&fixture, &clock, 30.0);
@@ -1745,9 +1745,12 @@ fn a_hub_records_only_as_its_generations_gate_lets_it_and_none_without_one() {
 /// The line that makes the server record at all: a hub given no gate records nothing, and only
 /// `api::start` gives a server's hubs theirs, its `Shared`'s. So the hub it starts for the server's
 /// own project, and the one it starts for a project served beside it (`Shared::beside`), hold that
-/// one gate of the server generation, the same `Arc`: were it not given, or not shared, every
-/// other test here would pass while the shared server wrote nothing. No board is opened: the
-/// first board read is never started.
+/// one gate of the server generation, the same `Arc`, for both their recorders, the agents' and
+/// the board's health hours: were it not given, or not shared, or a recorder given a gate of its
+/// own (a fresh one, which a reload's hold, close and reopen never reach, so each hand-off counted
+/// twice), every other test here and in the board's would pass while the shared server wrote
+/// nothing, or wrote the same minutes from two generations. No board is opened: the first board
+/// read is never started.
 #[test]
 fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_serve() {
     let tree = Tree::new();
@@ -1769,12 +1772,20 @@ fn the_hubs_a_server_starts_hold_its_generations_one_gate_whatever_project_they_
     });
     for (hub, project) in [(&own, "its own project"), (&theirs, "a project beside it")] {
         let gate = hub
-            .agents_gate
+            .recording_gate
             .get()
             .expect("api::start gives a hub its gate");
         assert!(
-            Arc::ptr_eq(gate, &shared.agents),
-            "the hub of {project} holds the server generation's one gate"
+            Arc::ptr_eq(gate, &shared.recording),
+            "the agents of {project} keep to the server generation's one gate"
+        );
+        let health = hub
+            .health
+            .gate()
+            .expect("api::start gives a hub's board health its gate");
+        assert!(
+            Arc::ptr_eq(&health, &shared.recording),
+            "the board's hours of {project} keep to that same gate"
         );
     }
     shared.stop();

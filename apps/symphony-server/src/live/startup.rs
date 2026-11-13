@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 use symphony::taskview;
+use symphony_board::board_health::hours;
 
 impl Hub {
     pub fn start(
@@ -43,6 +44,7 @@ impl Hub {
         drop(worker);
         // The worker has ended, so no tick records after the hour so far is written.
         self.stop_agents();
+        self.health.stop_hours(self.now());
     }
 
     /// Install watcher `W` and documents. The owned worker starts its board read when activated,
@@ -72,6 +74,23 @@ impl Hub {
             match symphony_board::board_health::file(&env) {
                 Ok(file) => hub.health = symphony_board::board_health::Recorder::writing(file),
                 Err(why) => eprintln!("→ board health: kept in memory alone ({why})"),
+            }
+            // Its hours too, a line each in the day files the Reports page reads.
+            match hours::folder(&env) {
+                Ok(folder) => hub.health.keep_hours(folder, hours::awake, |line| {
+                    crate::front::tell(format_args!("{line}"));
+                }),
+                Err(why) => {
+                    crate::front::tell(format_args!("→ board health: no hours kept ({why})"))
+                }
+            }
+            // So are the project's day files, rolled up once an hour.
+            match symphony_board::reports::folder(&env) {
+                Ok(folder) => {
+                    *hub.reports.get_mut().unwrap_or_else(|e| e.into_inner()) =
+                        Some(super::reports::Rollup::new(folder));
+                }
+                Err(why) => eprintln!("→ reports: no day files written ({why})"),
             }
             // So are the agents' day files, which a private server's ticks would say twice.
             match super::agent_activity::folder(&env) {

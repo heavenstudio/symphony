@@ -175,15 +175,11 @@ fn an_empty_message_or_unknown_slug_is_an_error() {
 
 const REPLY_TEXT: &str = "# D\n\n- [-] **one** — first.\n  [2026-09-24 10:00] owner · rejected — why\n- [x] **two** — second.\n";
 
+/// `symphony reply ARGS…` in process, with none of the marks a test does not set.
 fn reply(args: &[&str]) -> (i32, String, String) {
-    let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = symphony::cli::reply_main(&argv, &mut out, &mut err);
-    (
-        code,
-        String::from_utf8(out).unwrap(),
-        String::from_utf8(err).unwrap(),
-    )
+    let mut argv = vec!["reply"];
+    argv.extend(args);
+    crate::common::cli(&argv)
 }
 
 #[test]

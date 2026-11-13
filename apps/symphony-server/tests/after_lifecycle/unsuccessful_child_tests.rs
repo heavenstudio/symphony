@@ -35,7 +35,26 @@ fn unsuccessful_children_report_their_pid_command_status_and_output() {
         assert!(message.starts_with(&format!("child {pid} (\"/bin/sh\" [\"-c\", ")));
         assert!(message.contains(script), "{message}");
         assert!(message.contains(status), "{message}");
-        assert!(message.ends_with(&format!(": {output}")), "{message}");
+        let kept = scratch.path.join(format!("{index}.killed"));
+        if status.starts_with("signal") {
+            // The shell signalled itself, which its Process did not: the failure ends with what
+            // was known of its pid then, kept beside its logs.
+            let capture = fs::read_to_string(&kept).unwrap();
+            assert!(
+                capture.starts_with(&format!(
+                    "child {pid} (\"/bin/sh\" [\"-c\", \"{script}\"]) ended by SIGTERM (signal 15), \
+                     which its Process did not send;"
+                )),
+                "{capture}"
+            );
+            assert!(
+                message.ends_with(&format!(": {output}\n{capture}")),
+                "{message}"
+            );
+        } else {
+            assert!(message.ends_with(&format!(": {output}")), "{message}");
+            assert!(!kept.exists(), "an exit captured {}", kept.display());
+        }
         if status == "signal: 15" && output.is_empty() {
             let meta = fs::metadata("/bin/sh").unwrap();
             let identity = format!(
@@ -135,4 +154,148 @@ fn a_silent_signal_reports_the_original_and_current_executable_identity() {
         }
         assert!(child.output().is_empty());
     }
+}
+
+/// A child that waits on its input until something ends it, said ready once it reads, and the
+/// file a capture of its end is kept in.
+fn waiting_child(scratch: &Scratch, name: &str) -> (Process, PathBuf) {
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "printf ready; read -r line"])
+        .stdin(Stdio::piped());
+    let log = scratch.path.join(name);
+    let process = Process::spawn(command, &log);
+    until("the child reads its input", || {
+        (process.output() == "ready").then_some(())
+    });
+    (process, log.with_extension("killed"))
+}
+
+/// What `process.success()` panics with.
+fn failure_of(process: &mut Process) -> String {
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process.success()))
+        .expect_err("a signalled child must fail success()");
+    failure.downcast_ref::<String>().unwrap().clone()
+}
+
+/// A process other than the test kills the child, as a kill by a pid the kernel gave the child
+/// after its first owner ended would: the failure says its Process did not send it, and what was
+/// known of the pid then, as the scratch folder keeps it.
+#[test]
+fn a_child_another_process_kills_names_what_was_known_of_its_pid() {
+    let scratch = Scratch::new("killed-by-a-helper");
+    let (mut process, kept) = waiting_child(&scratch, "victim");
+    let pid = process.child.id();
+    let helper =
+        symphony_board::sys::output(Command::new("/bin/kill").args(["-KILL", &pid.to_string()]))
+            .unwrap();
+    assert!(helper.status.success(), "{}", said(&helper));
+    let message = failure_of(&mut process);
+    let capture = fs::read_to_string(&kept).unwrap();
+    assert!(
+        message.ends_with(&format!(": ready\n{capture}")),
+        "{message}"
+    );
+    assert!(
+        capture.starts_with(&format!(
+            "child {pid} (\"/bin/sh\" [\"-c\", \"printf ready; read -r line\"]) ended by SIGKILL \
+             (signal 9), which its Process did not send; what was known of pid {pid} at "
+        )),
+        "{capture}"
+    );
+    assert!(
+        capture.contains(&format!(
+            " ms since Unix epoch, kept in {}:\n",
+            kept.display()
+        )),
+        "{capture}"
+    );
+    assert!(
+        capture.contains(&format!(
+            "\n· signals this test process sent to pid {pid}: none\n"
+        )),
+        "{capture}"
+    );
+    assert!(
+        capture.contains(&format!(
+            "\n· lines naming pid {pid} in this test process's scratch logs"
+        )),
+        "{capture}"
+    );
+    if cfg!(target_os = "macos") {
+        let memory = "\n· memory, swap and load (sysctl, vm_stat):\n";
+        assert!(capture.contains(memory), "{capture}");
+        for said in [
+            "  vm.swapusage: total = ",
+            "  kern.memorystatus_level: ",
+            "  Pages free: ",
+        ] {
+            assert!(capture.contains(said), "{said}: {capture}");
+        }
+        let alive = format!(
+            "\n· this test's processes alive (descendants of pid {}, ",
+            std::process::id()
+        );
+        assert!(capture.contains(&alive), "{capture}");
+        // This process's own row is among them, and the child's pid has none: it was reaped.
+        assert!(
+            capture
+                .lines()
+                .any(|line| line.starts_with(&format!("  {} ", std::process::id()))),
+            "{capture}"
+        );
+        assert!(
+            capture.contains(&format!("\n  pid {pid}: no row (ended and reaped)\n")),
+            "{capture}"
+        );
+        assert!(
+            capture.contains(&format!("\n· the system log for pid {pid} from ")),
+            "{capture}"
+        );
+    } else {
+        assert!(
+            capture.ends_with("nothing captured, it is read on macOS only\n"),
+            "{capture}"
+        );
+    }
+}
+
+/// A signal this test process sent the pid by its number alone, as one case's kill of a pid
+/// another case's child was given would be, is the capture's first line of evidence.
+#[test]
+fn a_child_this_test_process_signalled_by_its_pid_alone_names_that_signal() {
+    let scratch = Scratch::new("killed-by-pid");
+    let (mut process, kept) = waiting_child(&scratch, "victim");
+    let pid = process.child.id();
+    killed::send(i64::from(pid), libc::SIGTERM, "another case's kill by pid");
+    let message = failure_of(&mut process);
+    let capture = fs::read_to_string(&kept).unwrap();
+    assert!(
+        message.ends_with(&format!(": ready\n{capture}")),
+        "{message}"
+    );
+    assert!(
+        capture.contains(&format!(
+            "\n· signals this test process sent to pid {pid}:\n  at "
+        )),
+        "{capture}"
+    );
+    assert!(
+        capture.contains(&format!(
+            ": SIGTERM (signal 15) to pid {pid}: another case's kill by pid\n"
+        )),
+        "{capture}"
+    );
+}
+
+/// A signal the child's own Process sent captures nothing: the case meant it.
+#[test]
+fn a_child_its_process_signals_captures_nothing() {
+    let scratch = Scratch::new("killed-by-its-process");
+    let (mut process, kept) = waiting_child(&scratch, "victim");
+    process.signal(libc::SIGKILL);
+    assert_eq!(process.wait().signal(), Some(libc::SIGKILL));
+    let message = failure_of(&mut process);
+    assert!(message.ends_with(": ready"), "{message}");
+    assert!(!kept.exists(), "{}", kept.display());
 }

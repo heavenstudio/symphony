@@ -15,7 +15,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
+use symphony_board::recording::{Gate, State};
 use symphony_board::{Board, Health, Session};
 
 /// The day files' folder in the git common dir, in the one folder of Symphony's there, as the runs'
@@ -43,20 +44,7 @@ const DAY: f64 = 86_400.0;
 /// its working directory, `symphony/agents.<database>/` for a board database other than the live
 /// one.
 pub(crate) fn folder(env: &symphony_board::cli::Env) -> Result<PathBuf, String> {
-    let var = |name: &str| env.vars.get(name).filter(|value| !value.is_empty());
-    if let Some(named) = var(FOLDER_VAR) {
-        return Ok(PathBuf::from(named));
-    }
-    if var("TASKS_SERVER").is_some() {
-        return Err(format!(
-            "a board TASKS_SERVER names keeps no agents' day files unless {FOLDER_VAR} names a folder"
-        ));
-    }
-    let common = symphony_board::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-    Ok(common.join(match var("TASKS_DATABASE") {
-        Some(database) if database != symphony_board::DATABASE => format!("{FOLDER}.{database}"),
-        _ => FOLDER.to_string(),
-    }))
+    symphony_board::reports::day_files(env, FOLDER, FOLDER_VAR, "agents' day files")
 }
 
 /// One line of a day file: an object whose `type` names which. The tests read it back by its
@@ -1004,7 +992,7 @@ impl Recorder {
 
 /// `lines` appended to the files of their days in `folder`, made as needed: each day's lines in one
 /// write, opened to append, after a newline when a writer before was cut short in its line, so each
-/// line stays its own. No lock is taken: one server records at a time ([`Gate`]).
+/// line stays its own. No lock is taken: one server records at a time ([`Gate`], its generation's).
 pub(crate) fn append(folder: &Path, lines: &[Line]) -> io::Result<()> {
     let mut by_day: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for line in lines {
@@ -1103,77 +1091,47 @@ pub(crate) fn read_day(folder: &Path, day: &str) -> Vec<Line> {
     text.lines().filter_map(Line::read).collect()
 }
 
-/// When a server generation's hubs record their agents: one gate for every project it serves
-/// (`front::Shared`). A reload's hand-off has two generations alive at once, so the replacement's
-/// gate waits until the hand-off commits, and the generation it replaces closes its own just
-/// before it commits, its hours ending there: no two record the same moment. A hand-off that fails
-/// after that close opens the gate again.
-#[derive(Debug, Default)]
-pub(crate) struct Gate(Mutex<Recording>);
-
-#[derive(Debug, Clone, Copy, Default)]
-enum Recording {
-    #[default]
-    Open,
-    /// A replacement's, until its hand-off commits.
-    Waiting,
-    /// Closed at this time, by the server's clock, as the hand-off commits.
-    Closed(f64),
+/// The snapshot `board` of a tick recorded by `recorder` as its server generation's `gate`
+/// ([`symphony_board::recording`]) lets it, at `now`, read while the gate is held so that a close
+/// falls between two ticks: open, recorded; held, not; closed, the hour so far written once,
+/// ending at the close.
+pub(crate) fn gated_record(
+    gate: &Gate,
+    recorder: &mut Recorder,
+    board: &Board,
+    now: impl FnOnce() -> f64,
+) {
+    gate.with(|state| match state {
+        State::Open { .. } => recorder.record(board, now(), load_average()),
+        State::Held => {}
+        State::Closed(at) => recorder.stop(at),
+    });
 }
 
-impl Gate {
-    /// A replacement's: nothing is recorded until [`Gate::open`].
-    pub(crate) fn hold(&self) {
-        *self.state() = Recording::Waiting;
-    }
-
-    pub(crate) fn open(&self) {
-        *self.state() = Recording::Open;
-    }
-
-    /// Nothing recorded after `at`, by the server's clock, which ends each hour being summed.
-    pub(crate) fn close(&self, at: f64) {
-        *self.state() = Recording::Closed(at);
-    }
-
-    fn state(&self) -> MutexGuard<'_, Recording> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// The snapshot `board` of a tick recorded by `recorder` as the gate lets it, at `now`, read
-    /// while the gate is held so that a close falls between two ticks: open, recorded; waiting,
-    /// not; closed, the hour so far written once, ending at the close.
-    pub(crate) fn record(&self, recorder: &mut Recorder, board: &Board, now: impl FnOnce() -> f64) {
-        let state = self.state();
-        match *state {
-            Recording::Open => recorder.record(board, now(), load_average()),
-            Recording::Waiting => {}
-            Recording::Closed(at) => recorder.stop(at),
-        }
-    }
-
-    /// `recorder`'s server stopping at `now`: the hour so far written, ending at the close if the
-    /// gate closed.
-    pub(crate) fn stop(&self, recorder: &mut Recorder, now: impl FnOnce() -> f64) {
-        let state = self.state();
-        match *state {
-            Recording::Open => recorder.stop(now()),
-            Recording::Waiting => {}
-            Recording::Closed(at) => recorder.stop(at),
-        }
-    }
+/// `recorder`'s server stopping at `now`: the hour so far written, ending at the close if `gate`
+/// closed.
+pub(crate) fn gated_stop(gate: &Gate, recorder: &mut Recorder, now: impl FnOnce() -> f64) {
+    gate.with(|state| match state {
+        State::Open { .. } => recorder.stop(now()),
+        State::Held => {}
+        State::Closed(at) => recorder.stop(at),
+    });
 }
 
 impl super::Hub {
-    /// The gate of this hub's server generation: until it is given, nothing is recorded.
-    pub(crate) fn gate_agents(&self, gate: Arc<Gate>) {
-        let _ = self.agents_gate.set(gate);
+    /// The gate of this hub's server generation, which both of its recorders keep to: the
+    /// agents' here and the board's health hours ([`symphony_board::board_health::Recorder::gated`]),
+    /// and so does the hourly roll-up's write of the day files (`live/reports.rs`). Until it is
+    /// given, none of them records.
+    pub(crate) fn gate_recorders(&self, gate: Arc<Gate>) {
+        self.health.gated(Arc::clone(&gate));
+        let _ = self.recording_gate.set(gate);
     }
 
     /// The snapshot `board` this tick took, recorded by the one server's recorder, at the server's
     /// time, as its gate lets it; a private server keeps none and does nothing.
     pub(super) fn record_agents(&self, board: &Board) {
-        let Some(gate) = self.agents_gate.get() else {
+        let Some(gate) = self.recording_gate.get() else {
             return;
         };
         let mut recorder = self
@@ -1182,14 +1140,14 @@ impl super::Hub {
             .unwrap_or_else(|e| e.into_inner());
         if let Some(recorder) = recorder.as_mut() {
             super::measured("agent activity", || {
-                gate.record(recorder, board, || self.now());
+                gated_record(gate, recorder, board, || self.now());
             });
         }
     }
 
     /// The hour so far written as the server stops.
     pub(super) fn stop_agents(&self) {
-        let Some(gate) = self.agents_gate.get() else {
+        let Some(gate) = self.recording_gate.get() else {
             return;
         };
         let mut recorder = self
@@ -1197,7 +1155,7 @@ impl super::Hub {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(recorder) = recorder.as_mut() {
-            gate.stop(recorder, || self.now());
+            gated_stop(gate, recorder, || self.now());
         }
     }
 }
