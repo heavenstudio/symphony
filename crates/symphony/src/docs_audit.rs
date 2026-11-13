@@ -2,8 +2,11 @@
 //! picture card still shows the candidates it asks the owner to choose, and every open card's
 //! pictures load ([`missing_pictures`]) and are files git tracks, so a clone shows them
 //! (`card_pictures`). A link into the ignored artifacts folder, or to an owner's upload, that a
-//! clone or this machine lacks is warned of (`artifacts`). Reference and structure checks are
-//! compilation failures in docs-index, not duplicated here.
+//! clone or this machine lacks is warned of (`artifacts`). In the Symphony's own checkout, every
+//! `just NAME` its documents, what it ships and its guides name is one the rule of its lists allows
+//! (`recipes_named`, by the reader the hooks test shares); a consuming project's texts name its own
+//! recipes and are not judged for them. Reference and structure checks are compilation failures in
+//! docs-index, not duplicated here.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -21,9 +24,12 @@ use crate::render::{Render, doc_paths, split_blocks};
 use crate::text::{read_text, splitlines};
 
 mod pictures;
+mod recipes;
 
 #[cfg(test)]
 mod paths_tests;
+#[cfg(test)]
+mod recipes_tests;
 
 static COMPONENT_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="component-error"[^>]*>⚠ ([^<]*)</span>"#).unwrap());
@@ -718,6 +724,10 @@ pub fn audit(root: &Path) -> Result {
         tracked: tracked.as_ref(),
         forked: forked.as_ref(),
     };
+    // The Symphony's own checkout, whose texts name only the recipes its lists allow: the documents
+    // of them the walk reads, by their files.
+    let symphony = project.id == recipes::PROJECT && root.join(recipes::LISTS).is_file();
+    let mut naming = Vec::new();
     for folder in &folders {
         match renderer.folder(folder) {
             Ok(page) => {
@@ -767,8 +777,52 @@ pub fn audit(root: &Path) -> Result {
         document_pictures(&judging, rel, &text, &definitions, &mut result);
         picture_cards(&text, rel, &mut result);
         undrawn_cards(&text, rel, &mut result);
+        let file = project.file(rel);
+        if symphony && recipes::audited(&file) {
+            naming.push((file, 1, text));
+        }
+    }
+    if symphony {
+        result
+            .errors
+            .extend(recipes_named(root, tracked.as_ref(), naming));
     }
     result
+}
+
+/// The errors of the recipes the Symphony's own checkout at `root` names: in its documents (`texts`,
+/// each a file, its first line and its text, as the walk read them) and, of the files git tracks
+/// (`tracked`), what it ships and its guides ([`recipes::beside_documents`]), judged by the rule of
+/// its lists, with each entry of the lists for those files kept current ([`recipes::Rule::errors`]).
+fn recipes_named(
+    root: &Path,
+    tracked: Option<&HashSet<String>>,
+    mut texts: Vec<(String, usize, String)>,
+) -> Vec<String> {
+    let read = |file: &str| {
+        std::fs::read_to_string(root.join(file))
+            .map_err(|error| vec![format!("{file}: does not read: {error}")])
+    };
+    let (lists, installed) = match (read(recipes::LISTS), read(recipes::INSTALLED)) {
+        (Ok(lists), Ok(installed)) => (lists, installed),
+        (Err(error), _) | (_, Err(error)) => return error,
+    };
+    let justfile = read("justfile").unwrap_or_default();
+    let rule = match recipes::Rule::read(&lists, &installed, &justfile) {
+        Ok(rule) => rule,
+        Err(error) => return vec![error],
+    };
+    let mut beside: Vec<String> = (tracked.into_iter().flatten())
+        .filter(|file| recipes::beside_documents(file) && !texts.iter().any(|(at, ..)| at == *file))
+        .cloned()
+        .collect();
+    beside.sort();
+    for file in beside {
+        if let Ok(text) = read(&file) {
+            texts.push((file, 1, text));
+        }
+    }
+    rule.errors(&texts, recipes::audited)
 }
 
 pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -787,7 +841,9 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Ok(p) if p.help => {
             let _ = writeln!(
                 out,
-                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered.\n\n\
+                "{USAGE}\n\nCheck that every document renders and every waiting card can be answered; in the \
+                 Symphony's own checkout, that every recipe its texts name is one tools/named-recipes.txt \
+                 allows.\n\n\
                  options:\n  \
                  -h, --help   show this help message and exit\n  \
                  --root ROOT  the project's folder (default: here)\n  \
