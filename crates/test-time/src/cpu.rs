@@ -31,7 +31,9 @@ pub fn spent<T>(work: impl FnOnce() -> T) -> (T, Duration) {
 }
 
 /// The CPU the children this process has reaped took, with every child they reaped
-/// (`RUSAGE_CHILDREN`): a child's share is in it once it has been waited for.
+/// (`RUSAGE_CHILDREN`): a child's share is in it once it has been waited for. It is the whole
+/// process's: in a test binary, every other test's reaped children are in it too, so a test bills
+/// its own child by [`reap`] (or a live one by [`of`]), never by a difference of this.
 pub fn children() -> Duration {
     // SAFETY: plain data, for which all zeroes is a value.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };

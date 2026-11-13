@@ -221,9 +221,9 @@ impl Native {
                 }
             }
         });
-        native.base = recv.recv_timeout(SHOWN).unwrap_or_else(|e| {
+        native.base = super::announced("the native server", &recv).unwrap_or_else(|why| {
             panic!(
-                "native server readiness: {e}; {}",
+                "{why}; {}",
                 std::fs::read_to_string(native.root.join("artifacts/server.log")).unwrap()
             )
         });
@@ -242,7 +242,9 @@ impl Native {
     pub(super) fn raw_status(&self, target: &str) -> u16 {
         let address = self.base.strip_prefix("http://").unwrap();
         let mut stream = TcpStream::connect(address).unwrap();
-        stream.set_read_timeout(Some(SHOWN)).unwrap();
+        // The answer's one wait: a quiet machine has it within SHOWN, and only a stall reaches
+        // its backstop (RULES.md `tests/no-test-fails-on-load`).
+        stream.set_read_timeout(Some(super::STALL)).unwrap();
         stream
             .write_all(
                 format!("GET {target} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
@@ -250,7 +252,14 @@ impl Native {
             )
             .unwrap();
         let mut status = String::new();
-        BufReader::new(stream).read_line(&mut status).unwrap();
+        if let Err(error) = BufReader::new(stream).read_line(&mut status) {
+            panic!(
+                "{target}: stalled: no status line by the read's wall-clock backstop of {:?} \
+                 ({error}); {}",
+                super::STALL,
+                test_time::Load::now()
+            );
+        }
         status.split_whitespace().nth(1).unwrap().parse().unwrap()
     }
 }

@@ -256,16 +256,26 @@ one helper, `crates/test-time` (a development dependency only):
   positive barrier instead.
 - **Real time** stays only where the product's promise is elapsed time: a deadline, a backoff, a
   page's two seconds on a phone. Its clock is injected where it can be: an environment variable,
-  a setting the test passes, or a page clock the test drives. A test that cannot inject it leaves
-  `just verify`: `#[ignore = "a quiet machine's: WHY"]`, run by a recipe of its own on a quiet
-  machine and listed below with the reason.
+  a setting the test passes, or a page clock the test drives. A test that cannot inject it stays
+  and runs in `just verify` until the owner says otherwise.
+
+**Who takes a test out of the nightly: the owner, and no one else.** An executor who finds a test
+that none of the three ways can hold proposes it on its task's thread: the promise the test guards
+and why no CPU bound, count, wait or injected clock stands in for it. The orchestrator puts it to
+the owner, and the test leaves `just verify` only on the owner's word. A real-time promise is never
+dropped, only moved: to a recipe a quiet machine runs, which still runs the test. No such recipe
+exists yet, so nothing is `#[ignore]`d for a quiet machine; a test the owner lets go waits in the
+nightly until that recipe lands, and is then listed below with its promise and the owner's word.
 
 No budget, allowance or tolerance is widened to make a loaded run pass. Evidence for a test
 rewritten under this rule is the test run alone five times on the loaded machine, the load average
 stated with each result, and once more under a load of the agent's own (a few busy loops in its own
 process group, started and stopped by their PIDs).
 
-**Out of the nightly for a quiet machine:** none.
+**Out of the nightly for a quiet machine:** none. Proposed and waiting for the owner's word:
+`phone::the_board_is_interactive_within_two_seconds_on_a_mid_phone` (the board interactive within
+2 s on a mid phone, which a loaded machine's wall cannot stand in for); it runs in the nightly until
+then.
 
 ## Size budgets
 

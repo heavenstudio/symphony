@@ -73,6 +73,23 @@ const SHOWN: Duration = Duration::from_secs(30);
 /// [`SHOWN`]: six times it, which only a stall reaches (RULES.md `tests/no-test-fails-on-load`).
 /// The driver's own waits keep the same rule (`crates/chrome-devtools`).
 const STALL: Duration = test_time::backstop(SHOWN);
+
+/// What a server said on `said` once it is up (its address), looked for until it says it: a
+/// server whose output ends first (it exited) never will, and one that says nothing by the
+/// backstop ([`STALL`]) stalled, which the error says with the load average. `what` names it.
+fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<String, String> {
+    use std::sync::mpsc::TryRecvError;
+    test_time::until(format!("{what} saying it is up"), STALL, || {
+        match said.try_recv() {
+            Ok(address) => Some(Ok(address)),
+            Err(TryRecvError::Disconnected) => Some(Err(format!(
+                "{what}'s output ended before it said it was up"
+            ))),
+            Err(TryRecvError::Empty) => None,
+        }
+    })
+    .unwrap_or_else(|stall| Err(stall.to_string()))
+}
 /// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
 /// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.

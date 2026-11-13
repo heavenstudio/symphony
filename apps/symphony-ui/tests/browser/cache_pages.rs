@@ -148,19 +148,28 @@ const STORE: &str = include_str!("../../assets/cache.js");
 /// it should (`assets/cache.js`); with the database made, the page's own open makes nothing.
 pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
     chrome.open(&site.url("/api/pending"));
-    let opened = chrome.eval(&format!(
-        r#"(async () => {{
-            {STORE}
-            const C = window.symphonyCache, format = {format}, until = performance.now() + 30000;
-            while (await C.keep(format, "warm", "task:warm", "task", "page", "", {{}}, undefined, false) !== true) {{
-                if (performance.now() > until) return false;
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }}
-            return C.forget(format, "warm", "task:warm");
-        }})()"#,
-        format = symphony_api::CACHE_FORMAT
-    ));
-    assert_eq!(opened, json!(true), "the store never opened its database");
+    chrome.eval(&format!("(async () => {{ {STORE}\n return null; }})()"));
+    let format = symphony_api::CACHE_FORMAT;
+    let keep = format!(
+        r#"window.symphonyCache.keep({format}, "warm", "task:warm", "task", "page", "", {{}}, undefined, false)"#
+    );
+    // A quiet machine keeps it within seconds; only a stall reaches the browser target's backstop
+    // (RULES.md `tests/no-test-fails-on-load`).
+    let opened = test_time::until_true(
+        "this origin's store keeping a scratch item",
+        crate::STALL,
+        || chrome.eval(&keep) == json!(true),
+    );
+    if let Err(stall) = opened {
+        panic!("the store never opened its database: {stall}");
+    }
+    assert_eq!(
+        chrome.eval(&format!(
+            r#"window.symphonyCache.forget({format}, "warm", "task:warm")"#
+        )),
+        json!(true),
+        "the store forgets the scratch item it kept"
+    );
 }
 
 /// A first visit to `page`: drawn from the server, live, and its reads kept.

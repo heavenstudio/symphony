@@ -146,9 +146,9 @@ impl OneServer {
             base: String::new(),
             scratch,
         };
-        server.base = recv.recv_timeout(SHOWN).unwrap_or_else(|e| {
+        server.base = super::announced("the one server", &recv).unwrap_or_else(|why| {
             panic!(
-                "the one server's readiness: {e}; {}",
+                "{why}; {}",
                 std::fs::read_to_string(server.scratch.join("server.log")).unwrap()
             )
         });

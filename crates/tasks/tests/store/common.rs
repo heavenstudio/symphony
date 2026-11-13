@@ -223,12 +223,11 @@ pub fn launch_on(
         said
     };
     // Up once it answers and the server itself listens there (the shell says its pid): a process
-    // that took its port answers too. A quiet machine has it up within `READY`; each start waits
-    // for it until the shared backstop, which only a stall reaches, and a port taken is tried again
-    // within the same (RULES.md `tests/no-test-fails-on-load`).
+    // that took its port answers too. A quiet machine has it up within `READY`. Every start, a port
+    // taken tried again on another included, waits within the one backstop, which only a stall
+    // reaches: each attempt has what is left of it (RULES.md `tests/no-test-fails-on-load`).
     const READY: Duration = Duration::from_secs(20);
-    let backstop = test_time::backstop(READY);
-    let until = Instant::now() + backstop;
+    let until = Instant::now() + test_time::backstop(READY);
     let started = symphony_board::port::start_on_free_port(
         symphony_board::port::ATTEMPTS,
         until,
@@ -269,7 +268,7 @@ pub fn launch_on(
             let server = shell.server;
             let up = test_time::until(
                 format!("the SurrealDB server answering on {addr}"),
-                backstop,
+                until.saturating_duration_since(Instant::now()),
                 || match shell.shell.try_wait().unwrap() {
                     Some(status) => Some(Err(status)),
                     None => (rpc::healthy(&addr)

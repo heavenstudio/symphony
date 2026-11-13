@@ -118,9 +118,13 @@ for cpu wall clock time usage - not total time spent or be removed from nightly"
 is a bound on the CPU the work took, or on a count of the work. A wait is a wait on its condition:
 its only time is a wall-clock backstop that only a stall reaches, and its failure says it was a
 stall and gives the load average. Elapsed time stays only where the product's promise is elapsed
-time, with its clock injected where it can be. Otherwise the test leaves `just verify` for a recipe
-a quiet machine runs, and docs/CHECKS.md lists it with the reason. No budget or tolerance is
-widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
+time, with its clock injected where it can be. A test that can be none of these is proposed on
+its task's thread, with the promise it guards and why no CPU bound, count, wait or injected clock
+can stand in for it; the orchestrator puts it to the owner, and it leaves `just verify` only on the
+owner's word. Until then it stays and runs. A product's real-time promise is never dropped: a test
+the owner lets go moves to a recipe a quiet machine runs, which still runs it, and none leaves
+before that recipe exists; docs/CHECKS.md lists each with its promise and the owner's word. No
+budget or tolerance is widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
 use it: [CHECKS](docs/CHECKS.md#time-in-tests).
 
 ### `a-test-that-passes-either-way-is-not-a-test`
