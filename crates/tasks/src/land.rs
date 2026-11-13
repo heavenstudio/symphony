@@ -1105,11 +1105,14 @@ fn hold(
             Err(TryLockError::Error(e)) => return Err(at(&path, &e)),
         }
     }
+    // Named in place, as the lock is the file's, in one write: a land waiting meanwhile reads it
+    // empty ("another land") or whole.
     let held = sys::FileLock(file);
+    let name = format!("the land of {slug} (pid {})", std::process::id());
     let mut file = &held.0;
     let _ = file.set_len(0);
     let _ = file.seek(SeekFrom::Start(0));
-    let _ = write!(file, "the land of {slug} (pid {})", std::process::id());
+    let _ = file.write_all(name.as_bytes());
     Ok(held)
 }
 

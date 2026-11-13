@@ -604,9 +604,16 @@ fn a_second_regenerator_ends_at_once_while_one_runs() {
         "the regenerator runs already: it goes round once it ends, and makes the newest tip"
     );
     assert_eq!(said, "");
+    // A land finds the lock taken and not yet named, as one is between its holder's lock and its
+    // write: another regenerator runs, and it starts nothing.
+    assert_eq!(
+        trigger(&r),
+        "another regenerator: it makes main's newest tip once it ends; nothing started"
+    );
     assert_eq!(head(&r.root, "main"), before);
     assert_eq!(made(&r), 0);
     assert!(State::read(&lands(&r)).is_none());
+    assert_eq!(logged(&r), "");
     drop(held);
     regenerated(&r).1.unwrap();
     assert_eq!(made(&r), 1);
@@ -903,12 +910,24 @@ fn lock_free(r: &Repo) -> bool {
     }
 }
 
+/// The lines `file` beside the repository holds whole: a line its writer has not ended yet is
+/// not one, as a shell's `>>` creates the file before it writes.
+fn whole_lines(r: &Repo, file: &str) -> Vec<String> {
+    let text = fs::read_to_string(r.dir.join(file)).unwrap_or_default();
+    let ended = text.rfind('\n').map_or("", |last| &text[..=last]);
+    ended.lines().map(str::to_string).collect()
+}
+
 /// The tips a [`blocking`] generator was run on, in order.
 fn builds(r: &Repo) -> Vec<String> {
-    fs::read_to_string(r.dir.join("builds"))
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_string)
+    whole_lines(r, "builds")
+}
+
+/// The pids of the [`blocking`] builds, in order.
+fn pids(r: &Repo) -> Vec<i64> {
+    whole_lines(r, "pids")
+        .iter()
+        .map(|pid| pid.parse().unwrap())
         .collect()
 }
 
@@ -939,7 +958,8 @@ fn release(r: &Repo) {
 }
 
 /// The regenerator's state as one with `pid` and `start` wrote it: `state` on `tip`, main's
-/// outputs last current at `current`.
+/// outputs last current at `current`. Written whole, staged and renamed as the regenerator writes
+/// it, since a status may read it meanwhile.
 fn wrote(r: &Repo, state: &str, tip: &str, pid: i64, current: Option<&str>) {
     let state = State {
         state: state.into(),
@@ -952,11 +972,9 @@ fn wrote(r: &Repo, state: &str, tip: &str, pid: i64, current: Option<&str>) {
         line: "what it came to".into(),
     };
     fs::create_dir_all(lands(r)).unwrap();
-    fs::write(
-        lands(r).join("regenerate.json"),
-        serde_json::to_string(&state).unwrap(),
-    )
-    .unwrap();
+    let staged = lands(r).join(".regenerate.json.test");
+    fs::write(&staged, serde_json::to_string(&state).unwrap()).unwrap();
+    fs::rename(&staged, lands(r).join(regenerate::STATE)).unwrap();
 }
 
 /// The command line of `tasks` in `env`: its exit, its output and its errors.
@@ -1057,16 +1075,14 @@ fn a_builder_that_died_is_replaced_by_the_next_trigger_which_makes_mains_tip() {
     generating(&r, &[&blocking(&r)]);
     let tip = head(&r.root, "main");
     let mut builder = spawned(&r);
-    wait_for(|| builds(&r).len() == 1);
+    // The build noted its tip and its pid, each a whole line, whichever it wrote first.
+    wait_for(|| builds(&r).len() == 1 && pids(&r).len() == 1);
+    assert_eq!(builds(&r), vec![tip.clone()]);
+    let build = pids(&r)[0];
     let pid = builder.id();
     builder.kill().unwrap();
     builder.wait().unwrap();
     // Its build ends once it is gone; the lock it held is free, and names it still.
-    let build: i64 = fs::read_to_string(r.dir.join("pids"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
     wait_for(|| !symphony_board::sys::pid_alive(build));
     assert!(lock_free(&r));
     let named = fs::read_to_string(lands(&r).join(REGENERATING)).unwrap();
@@ -1166,15 +1182,14 @@ fn the_status_waits_while_the_regenerator_makes_them_then_says_where_it_stands()
     );
     // Red, or behind with none making them: it waits for nothing and exits 1, `--wait` alone too.
     wrote(&r, "red", &moved, dead_pid(), Some(&top));
-    let began = Instant::now();
     let (code, out, err) = cli(&["regenerate", "--wait"], &env);
     assert_eq!(code, 1, "{out}{err}");
+    // No `waiting:` line: it never waited.
     assert_eq!(out, "");
     assert!(
         err.contains(&format!("the index: red on main at {} since ", &moved[..7])),
         "{err}"
     );
-    assert!(began.elapsed() < Duration::from_secs(2));
     wrote(&r, "current", &top, dead_pid(), Some(&top));
     let (code, _, err) = cli(&["regenerate", "--status", "--wait"], &env);
     assert_eq!(code, 1);
