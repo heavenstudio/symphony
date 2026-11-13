@@ -33,6 +33,18 @@ const LAN: &str = "192.168.1.5:2";
 const SCREEN: &str = "❯ running the focused tests\n";
 const WEB: &str = "https://claude.ai/code/session_01abc";
 
+/// The wall-clock backstop of a wait here on its event: only a stall reaches it (RULES.md
+/// `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(60));
+
+/// What a wait that ran out says: `what` stalled, and the machine's load then.
+fn stalled(what: &str) -> String {
+    format!(
+        "{what}: stalled: the wait's wall-clock backstop of {BACKSTOP:?} ran out; {}",
+        test_time::Load::now()
+    )
+}
+
 /// A response's status, headers and JSON (its text as a string when it is none).
 async fn read(response: axum::response::Response) -> (StatusCode, HeaderMap, Value) {
     let (status, headers) = (response.status(), response.headers().clone());
@@ -72,14 +84,11 @@ impl Kept {
     }
     /// Wait until hc has been asked `call`.
     fn asked(&self, call: &str) {
-        let until = Instant::now() + Duration::from_secs(60);
-        while !self.calls().iter().any(|c| c == call) {
-            assert!(
-                Instant::now() < until,
-                "never asked {call}: {:?}",
-                self.calls()
-            );
-            std::thread::sleep(Duration::from_millis(20));
+        let asked = test_time::until_true(format!("hc to be asked {call}"), BACKSTOP, || {
+            self.calls().iter().any(|c| c == call)
+        });
+        if let Err(stall) = asked {
+            panic!("{stall}; asked {:?}", self.calls());
         }
     }
 }
@@ -285,9 +294,9 @@ impl Served {
     ) -> (StatusCode, HeaderMap, Value) {
         let answer = self.start(peer, method, path, headers, body);
         self.runtime.block_on(async {
-            let response = tokio::time::timeout(Duration::from_secs(60), answer)
+            let response = tokio::time::timeout(BACKSTOP, answer)
                 .await
-                .unwrap_or_else(|_| panic!("{path} did not answer"))
+                .unwrap_or_else(|_| panic!("{}", stalled(&format!("{path} to answer"))))
                 .unwrap()
                 .unwrap();
             read(response).await
@@ -941,9 +950,10 @@ fn ticked_ways_in() {
     }
 }
 
-/// How much later than [`DEADLINE`](symphony_board::launch::go::DEADLINE) a hung focus or screen
-/// read may answer: its spawn and the server's threads on a loaded machine. Far short of the 120 s
-/// an hc call without a deadline is given, so an answer within it is the deadline's.
+/// The allowance past [`DEADLINE`](symphony_board::launch::go::DEADLINE) of the wait for a hung
+/// focus or screen read's answer, whose backstop only a stall reaches. Which limit ended the call
+/// is the answer's own words: "no answer within the 10 s it is given" only where the deadline's
+/// time was the shorter (`hc::Binary::answered`), never for an hc call given its 120 s alone.
 const SLACK: Duration = Duration::from_secs(20);
 
 /// The server's own hc ([`Hub::new`]'s `panes`) asks a hung hc and Herdr app under the deadline:
@@ -1003,7 +1013,8 @@ fn hung_ways_in_answer_within_the_deadline() {
     );
     let reading = s.start(PHONE, "GET", "/api/agent-screen?handle=amber", &[], None);
     let given = symphony_board::launch::go::DEADLINE.as_secs();
-    let by = started + symphony_board::launch::go::DEADLINE + SLACK;
+    let backstop = test_time::backstop(symphony_board::launch::go::DEADLINE + SLACK);
+    let by = started + backstop;
     for (answer, why) in [
         (
             focusing,
@@ -1022,7 +1033,13 @@ fn hung_ways_in_answer_within_the_deadline() {
             let left = by.saturating_duration_since(Instant::now());
             let response = tokio::time::timeout(left, answer)
                 .await
-                .unwrap_or_else(|_| panic!("no answer within {given} s and {SLACK:?}: {why}"))
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "an answer within the {given} s it is given: stalled: the wait's \
+                         wall-clock backstop of {backstop:?} ran out; {}; {why}",
+                        test_time::Load::now()
+                    )
+                })
                 .unwrap()
                 .unwrap();
             read(response).await
@@ -1046,10 +1063,11 @@ fn hung_ways_in_answer_within_the_deadline() {
     let pids = std::fs::read_to_string(stand_ins.join("pids")).unwrap_or_default();
     for pid in pids.lines() {
         let pid: i64 = pid.parse().unwrap();
-        let until = Instant::now() + Duration::from_secs(30);
-        while symphony_board::sys::pid_alive(pid) {
-            assert!(Instant::now() < until, "{pid} was never killed and reaped");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        test_time::until_true(
+            format!("{pid} to be killed and reaped"),
+            test_time::backstop(Duration::from_secs(30)),
+            || !symphony_board::sys::pid_alive(pid),
+        )
+        .unwrap();
     }
 }
