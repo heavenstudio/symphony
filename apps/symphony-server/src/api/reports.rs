@@ -399,6 +399,9 @@ impl Sums {
             flow.held = hour.top.held;
         }
         add(&mut flow.entered, &hour.top.entered);
+        if let Some(done) = hour.top.done {
+            *flow.done.get_or_insert(0) += done;
+        }
         add(&mut flow.task_hours, &hour.top.task_hours);
         flow.unclaimed_hours += hour.top.unclaimed_hours;
         flow.bounces += hour.top.bounces;

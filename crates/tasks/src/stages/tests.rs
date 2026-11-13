@@ -108,6 +108,33 @@ fn a_task_claimed_reviewed_and_approved_stops_at_its_verdict() {
     assert_eq!(found.lead_seconds(T0), Some(10_800.0));
 }
 
+/// The one rule of a task done, which `tasks stats` and the roll-up share: its last close, while
+/// it holds done.
+#[test]
+fn a_task_is_done_at_its_last_close_while_it_holds_done() {
+    let done = stages(facts("done", 3.0), &straight_through(), at(10.0));
+    assert_eq!(done.done_at(), Some(at(3.0)));
+    // Sent back to review by its landing, approved again: done once, at the second approve.
+    let mut again = straight_through();
+    again.push(sys(8, 4.0, "teal moved it done → review"));
+    again.push(verdict_by(9, 5.0, "approve: the merge", "plum"));
+    again.push(verdict(10, 6.0, "landed on main"));
+    let found = stages(facts("done", 5.0), &again, at(10.0));
+    assert_eq!(found.done_at(), Some(at(5.0)));
+    let entries = found.segments.iter().filter(|s| s.status == "done").count();
+    assert_eq!(entries, 2, "it entered done twice");
+    // Sent back and still in review: done no more.
+    let reopened = stages(facts("review", 4.0), &again[..8], at(10.0));
+    assert_eq!((reopened.closed, reopened.done_at()), (None, None));
+    // Cancelled after its approve, by a hand edit no line records: closed, but not done.
+    let cancelled = stages(facts("cancelled", 4.0), &straight_through(), at(10.0));
+    assert_eq!(cancelled.closed, Some(at(4.0)));
+    assert_eq!(cancelled.done_at(), None);
+    // Open: no close.
+    let open = stages(facts("review", 2.0), &straight_through()[..5], at(10.0));
+    assert_eq!(open.done_at(), None);
+}
+
 #[test]
 fn lines_out_of_order_or_twice_read_the_same() {
     let mut lines = straight_through();

@@ -138,7 +138,8 @@ pub struct ReportBucket {
     /// The waits that ended in it, each spread over the waits of that kind.
     #[serde(default)]
     pub waits: Option<BucketWaits>,
-    /// Creation to close of the top-level tasks closed in its days: a day's as the roll-up keeps it;
+    /// Creation to close of the top-level tasks done in its days, as [`BucketFlow::done`] counts
+    /// them: a day's as the roll-up keeps it;
     /// a week's out of its days', its median the mean of theirs weighted by their closes and its
     /// p90 the largest of theirs, so approximate. None by the hour, and with no close.
     #[serde(default)]
@@ -163,9 +164,14 @@ pub struct BucketFlow {
     /// How many held each open status at the end of its last roll-up hour.
     #[serde(default)]
     pub held: ByStatus<u32>,
-    /// How many times a task took each status in it: `done` is the tasks done.
+    /// How many times a task took each status in it: a task approved again after its landing sent
+    /// it back takes done twice.
     #[serde(default)]
     pub entered: ByStatus<u32>,
+    /// The tasks done in it, each once at its last close ([`crate::reports::Flow::done`]), summed
+    /// over its roll-up hours that record them; none when none does.
+    #[serde(default)]
+    pub done: Option<u32>,
     /// The task-hours spent in each open status in it.
     #[serde(default)]
     pub task_hours: ByStatus<f64>,

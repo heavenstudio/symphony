@@ -443,7 +443,10 @@ Where the pipeline's time goes, over the top-level tasks made in the window:
 tasks by status; for the done ones, lead time and the time in each status
 (median, p75, p90); how often review sent work back; the ten open tasks
 longest in their status; blocked and unstaffed ready work. Done per day
-counts every top-level task closed in the window, whenever it was made.
+counts each top-level task done now once, on the day of its last close in
+this machine's time zone, whenever it was made: one approved again after its
+landing sent it back counts once, one cancelled or reopened since counts
+none. The Reports page's Tasks done counts the same tasks, by UTC day.
 
 options:
   -h, --help  show this help message and exit

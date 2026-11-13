@@ -514,7 +514,10 @@ while it lasts (`· reports: …`).
 hours of any span sum to that span's figure (a day, a week, a local day):
 
 - **Flow**, top-level tasks and subtasks apart: how many held each open status at the hour's end,
-  how many times a task took each status in the hour, the task-hours in each status and the part
+  how many times a task took each status in the hour, the tasks done in the hour (`done`: each
+  task done at the read, once, in the hour of its last close, the rule `just tasks stats` counts
+  its tasks done per day by, so a task approved, sent back to review by its landing and approved
+  again is one task done where it took done twice), the task-hours in each status and the part
   spent before a first claim, and the moves from review back to in progress.
 - **Landings**: the `landed` lines the land writes. **Reds** filed and closed.
 - **Waits**, each counted in the hour it ended:
@@ -539,7 +542,8 @@ Agents, orchestrators and reviewers at work per hour, and the sessions that star
 these files: they are the agents' day files' ([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)), whose hour
 lines name an hour by its first second as `start` too, so a page joins an hour of the two on it.
 
-**Per day**: the lead time of each close (median, p90), the ten open tasks longest in their status,
+**Per day**: the lead time of the tasks done (median, p90), each from its creation to its last
+close, the ten open tasks longest in their status,
 the `changes` and `approve` verdicts by review round, each red with its filing and close, the
 cards still waiting with since when, each card that left the queue in the day with its minute and
 the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it

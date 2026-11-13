@@ -260,10 +260,12 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
             Spec {
                 id: "done",
                 title: "Tasks done",
-                note: "Top-level tasks that reached done, per {per}.",
+                note: "Top-level tasks done, per {per}, each once at its last close: one approved \
+                       again after its landing sent it back counts once. Hours and days are UTC; \
+                       just tasks stats counts the same tasks by this machine's days.",
                 unit: Unit::Count,
                 source: Source::Rollup,
-                series: &[bar("Done", "flow.entered.done")],
+                series: &[bar("Done", "flow.done")],
             },
             Spec {
                 id: "open",
@@ -294,7 +296,7 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
             Spec {
                 id: "lead",
                 title: "Lead time",
-                note: "Creation to close of the top-level tasks closed in each {per}.",
+                note: "Creation to last close of the top-level tasks done in each {per}.",
                 unit: Unit::Seconds,
                 source: Source::Rollup,
                 series: &[line("Median", "lead.median"), line("p90", "lead.p90")],
@@ -635,11 +637,17 @@ pub fn figures(page: &Page) -> [Figure; 4] {
     let total = |of: &[&Bucket], path: &str| -> f64 {
         of.iter().filter_map(|b| b.number(path)).sum::<f64>() + 0.0
     };
-    let flows = recorded("flow");
-    let done = if flows.is_empty() {
+    let rolled = recorded("flow");
+    // The periods whose roll-up counted the tasks done: a day file may not record them.
+    let flows: Vec<&Bucket> = (rolled.iter().copied())
+        .filter(|b| b.number("flow.done").is_some())
+        .collect();
+    let done = if rolled.is_empty() {
         missing("Done", "no roll-up in the window")
+    } else if flows.is_empty() {
+        missing("Done", "no roll-up in the window counted them")
     } else {
-        let done = total(&flows, "flow.entered.done");
+        let done = total(&flows, "flow.done");
         Figure {
             label: "Done",
             value: short(done, 0),

@@ -316,10 +316,19 @@ fn overlap(from: f64, to: f64, start: f64, end: f64) -> f64 {
 }
 
 /// How the top-level tasks of `replayed` (`top`), or its subtasks, moved from `from` to `to`, their
-/// open stretches counted up to `now`.
+/// open stretches counted up to `now`. The tasks done are those whose last close falls in it, done
+/// at the read ([`Stages::done_at`](crate::stages::Stages::done_at)), as `tasks stats` counts them.
 fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow {
     let mut flow = Flow::default();
+    let mut done = 0;
     for task in replayed.iter().filter(|r| r.task.parent.is_none() == top) {
+        if task
+            .stages
+            .done_at()
+            .is_some_and(|at| from <= at && at < to)
+        {
+            done += 1;
+        }
         let segments = &task.stages.segments;
         if let Some(held) = task.holding(to)
             && !CLOSED.contains(&held.status.as_str())
@@ -350,6 +359,7 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
                 && pair[1].from < to
         }));
     }
+    flow.done = Some(done);
     flow
 }
 
@@ -362,17 +372,19 @@ fn spread(values: Vec<f64>) -> Option<Spread> {
 }
 
 /// What the top-level tasks of `replayed` (`top`), or its subtasks, did over the day from `start`
-/// to `until` that does not add up across hours. The longest in their status are kept in order as
-/// they are found, ten at most, rather than all sorted: a sort costs the server's binary a sort of
-/// its own for each kind of list (docs/CHECKS.md, size budgets).
+/// to `until` that does not add up across hours: the lead time of the tasks its hours count done,
+/// each once at its last close. The longest in their status are kept in order as they are found,
+/// ten at most, rather than all sorted: a sort costs the server's binary a sort of its own for each
+/// kind of list (docs/CHECKS.md, size budgets).
 fn day_flow(replayed: &[Replayed], top: bool, start: f64, until: f64) -> DayFlow {
     let mut leads = Vec::new();
     let mut longest: Vec<Sitting> = Vec::new();
     for task in replayed.iter().filter(|r| r.task.parent.is_none() == top) {
-        for segment in &task.stages.segments {
-            if segment.status == "done" && start <= segment.from && segment.from < until {
-                leads.push((segment.from - task.task.created).max(0.0));
-            }
+        if let Some(at) = task.stages.done_at()
+            && start <= at
+            && at < until
+        {
+            leads.push((at - task.task.created).max(0.0));
         }
         if let Some(held) = task.holding(until)
             && !CLOSED.contains(&held.status.as_str())

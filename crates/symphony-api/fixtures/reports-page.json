@@ -10,7 +10,8 @@
       "rolled": 24,
       "flow": {
         "held": { "blocked": 1, "in_progress": 3, "ready": 2, "review": 1 },
-        "entered": { "done": 5, "in_progress": 6, "review": 7 },
+        "entered": { "done": 6, "in_progress": 6, "review": 7 },
+        "done": 5,
         "task_hours": { "in_progress": 30.5, "ready": 12.25, "review": 6.0 },
         "unclaimed_hours": 4.5,
         "bounces": 2,

@@ -40,6 +40,7 @@ fn hour(start: f64, done: u32, review: u32) -> symphony_api::ReportHour {
         ..Default::default()
     };
     hour.top.entered.done = done;
+    hour.top.done = Some(done);
     hour.top.held.review = review;
     hour.top.task_hours.in_progress = 1.5;
     hour
@@ -383,10 +384,11 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
     assert_eq!(
         (
             flow.entered.done,
+            flow.done,
             flow.held.review,
             flow.task_hours.in_progress
         ),
-        (3, 1, 3.0),
+        (3, Some(3), 1, 3.0),
         "the tasks held are the last hour's, the rest added up"
     );
     assert_eq!((flow.bounces, flow.landed, flow.reds_filed), (1, 3, 1));
@@ -437,7 +439,10 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
     // Wednesday, under way: its one roll-up hour, the red listed again not counted again, and the
     // health of the hour and a half its lines cover.
     assert_eq!(wednesday.rolled, 1);
-    assert_eq!(wednesday.flow.map(|f| f.entered.done), Some(4));
+    assert_eq!(
+        wednesday.flow.map(|f| (f.entered.done, f.done)),
+        Some((4, Some(4)))
+    );
     assert_eq!(wednesday.decisions, None, "no hour of it read the cards");
     assert_eq!(wednesday.git, None, "no hour of it read git");
     assert_eq!(wednesday.waits, None);
@@ -527,8 +532,8 @@ fn a_week_sums_its_days_and_weighs_their_lead_times_by_their_closes() {
     };
     assert_eq!((week.start, week.rolled), (MONDAY, 3));
     assert_eq!(
-        week.flow.map(|f| (f.entered.done, f.held.review)),
-        Some((7, 2))
+        week.flow.map(|f| (f.entered.done, f.done, f.held.review)),
+        Some((7, Some(7), 2))
     );
     assert_eq!(
         week.lead,
@@ -540,6 +545,45 @@ fn a_week_sums_its_days_and_weighs_their_lead_times_by_their_closes() {
     );
     assert_eq!(week.red_fix.map(|s| s.n), Some(1));
     assert!(week.agents.is_some() && week.health.is_some());
+}
+
+/// The tasks done ([`BucketFlow::done`]) are the sum of the roll-up hours that count them: an
+/// hour of a file that does not record them adds none, and a period none of whose hours does has
+/// none, missing, where its entries into done are still summed.
+#[test]
+fn the_tasks_done_sum_the_hours_that_count_them_and_a_period_none_counts_has_none() {
+    let tree = Tree::new();
+    let uncounted = |start: f64, done: u32| {
+        let mut hour = hour(start, done, 0);
+        hour.top.done = None;
+        hour
+    };
+    report(
+        &tree,
+        MONDAY,
+        vec![
+            uncounted(MONDAY + 9.0 * HOUR, 5),
+            hour(MONDAY + 10.0 * HOUR, 2, 0),
+        ],
+        |_| {},
+    );
+    report(
+        &tree,
+        MONDAY + DAY,
+        vec![uncounted(MONDAY + DAY + 9.0 * HOUR, 4)],
+        |_| {},
+    );
+    let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    let flows: Vec<Option<(u32, Option<u32>)>> = (page.buckets.iter())
+        .map(|bucket| bucket.flow.map(|flow| (flow.entered.done, flow.done)))
+        .collect();
+    assert_eq!(
+        flows,
+        [Some((7, Some(2))), Some((4, None)), None],
+        "Monday counts its 10:00 alone, Tuesday none of its hours, Wednesday has no file"
+    );
+    let text = serde_json::to_string(&page.buckets[1].flow).unwrap();
+    assert!(text.contains(r#""done":null"#), "{text}");
 }
 
 #[test]

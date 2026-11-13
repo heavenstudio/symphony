@@ -176,6 +176,15 @@ impl Stages {
     pub fn lead_seconds(&self, created: f64) -> Option<f64> {
         self.closed.map(|closed| (closed - created).max(0.0))
     }
+
+    /// When the task counts as done: its last close, while it holds done; none for a task open,
+    /// cancelled (after done too) or reopened since. A task approved, sent back to review by its
+    /// landing and approved again is done once, at the second approve. The one rule of a task done:
+    /// `tasks stats` counts its tasks done per day by it, and the roll-up its hours' `done`
+    /// ([`crate::reports`]), so the two agree on one board read at one time.
+    pub fn done_at(&self) -> Option<f64> {
+        self.closed.filter(|_| self.current == "done")
+    }
 }
 
 /// What a line did.
