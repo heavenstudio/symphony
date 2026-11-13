@@ -4,11 +4,12 @@
 //! board of the test's own (or the one named) while it runs, then how it ended and how long it took.
 //! The recorder finishes after its command does, so what it keeps is waited for.
 //!
-//! Every run here is on a scratch board, and takes [`SCALE`]: each wait of the recorder's a
-//! machine's speed meets (its word that it watches its command, the board's answer, git's) is that
-//! many times its own, so a loaded machine never decides what a run records. A wait of the tests'
-//! own that gives up says what the work folder holds ([`holds`]): never recorded, or recorded and
-//! never finished.
+//! Every run here is on a scratch board, and takes [`SCALE`] but one that bounds its own time by a
+//! wait it rules out: each wait of the recorder's a machine's speed meets (its word that it watches
+//! its command, the board's answer, git's) is that many times its own, so a loaded machine never
+//! decides what a run records. What the scale would hide, a recorder grown slow, the quickest of a
+//! test's several runs shows ([`QUICKEST_START`]). A wait of the tests' own that gives up says what
+//! the work folder holds ([`holds`]): never recorded, or recorded and never finished.
 
 use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
@@ -1573,6 +1574,32 @@ fn pipeline_run(
     done.status
 }
 
+/// The most the quickest of a test's runs may take from being asked for to its command starting
+/// (`started - queued`, which its record holds as `started_at - queued_at`). On macOS that is the
+/// span a command waits, for READY (the product's 1 s, which a test cannot read), to hear its
+/// recorder watches it before it goes on unrecorded; this is half of it. The tests' [`SCALE`] lets
+/// a recorder grown slow still record, so this is what turns one red. Spans measured: 2 ms to 87 ms
+/// at loads of 73 to 120 on 16 cores.
+const QUICKEST_START: Duration = Duration::from_millis(500);
+
+/// That the quickest of the runs `lines` fold to started within [`QUICKEST_START`] of being asked
+/// for: one run stalled, or several, never fails it; a recorder slow on every run does. A failure
+/// says each run's span.
+#[track_caller]
+fn one_started_promptly(lines: &[RunLine]) {
+    let spans: Vec<f64> = lines
+        .iter()
+        .filter_map(|line| Some(line.started? - line.queued))
+        .collect();
+    let quickest = spans.iter().copied().reduce(f64::min);
+    assert!(
+        quickest.is_some_and(|quickest| quickest < QUICKEST_START.as_secs_f64()),
+        "none of {} runs started within {QUICKEST_START:?} of being asked for (READY is 1 s): each \
+         one's span, in seconds: {spans:?}",
+        lines.len()
+    );
+}
+
 /// `case`'s environment for `tasks run` in this process, at top level in `repo`, recording in
 /// `folders` and writing its lines to `runs`, its waits at [`SCALE`].
 fn in_process(case: &Case, folders: &Folders, (repo, runs): (&Path, &Path)) -> Env {
@@ -1731,6 +1758,8 @@ fn a_run_says_how_it_ended_and_a_rerun_of_its_command_on_its_tree_names_the_run_
             .filter(|each| each.run == line.run && each.is_start());
         assert_eq!(starts.count(), 1, "{}", line.run);
     }
+    // Seven runs one after another, with git, over the test's seconds: its recorder is prompt.
+    one_started_promptly(&lines);
 }
 
 #[test]
@@ -1757,6 +1786,7 @@ fn runs_started_back_to_back_each_name_the_one_their_caller_ran_before() {
             "{lines:#?}"
         );
     }
+    one_started_promptly(&lines);
 }
 
 #[test]
@@ -1812,9 +1842,14 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     fs::create_dir_all(&runs).unwrap();
     let holder = fs::File::create(runs.join("lock")).unwrap();
     holder.lock().unwrap();
+    // Its own waits, not the tests' scale: it asserts nothing git or the board decides, and their
+    // own bounds (0.6 s and 1 s, each cut off there) keep the run under the one an append that
+    // waited costs.
+    let mut env = in_process(&case, &folders, (&repo, &runs));
+    env.vars.remove(SCALE_VAR);
     let began = Instant::now();
     let ran = crate::run(
-        &in_process(&case, &folders, (&repo, &runs)),
+        &env,
         &[
             "run",
             "--phase",
@@ -1830,7 +1865,9 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     );
     let took = began.elapsed();
     assert_eq!(ran.code, 7, "{}{}", ran.out, ran.err);
-    assert!(took < Duration::from_secs(1), "{took:?}");
+    // An append that waited for the lock as a recorder apart from its caller does would have cost
+    // LOCK_WAIT alone.
+    assert!(took < symphony_board::runs::LOCK_WAIT, "{took:?}");
     // Both lines were appended still, each whole, without the lock.
     let [ended] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
         .try_into()

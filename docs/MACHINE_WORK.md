@@ -119,10 +119,11 @@ records nothing.
 wait the machine's speed meets N times as long: the 1 s COMMAND waits to hear its
 recorder watches it, the 1 s the board is asked its task (below) and the 0.6 s git is
 asked a run's tree ([RUNS](RUNS.md)). So a loaded machine never decides what a test's
-run records. It is taken only where the board the run reaches is a scratch one, as the
-board tells its live one: a test's `TASKS_SERVER` with a `TASKS_DATABASE` of its own, or
-`--database NAME`. A run on a project's live board, or one that reaches no board, keeps
-the bounds as they are, whatever it names.
+run records. It is taken only where the board the run reaches is on a database other
+than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
+board never takes for a live one either. A run on the `tasks` database, by whatever server
+or folder it reaches it and whether or not that server is up, or one that reaches no
+board, keeps the bounds as they are, whatever it names.
 
 **What.** Each operation is `operations/<id>.json` in the work folder, rewritten
 whole (a file of its own renamed over it): first once the board said which task it is

@@ -60,8 +60,9 @@
 //! read, with whether a reading knew it missed some (`supervised::cpu::Tree`).
 //!
 //! The three bounds the machine's speed meets ([`READY`], [`WAIT`], [`GIT_WAIT`]) are a test's to
-//! scale, on a scratch board alone ([`SCALE_VAR`], [`Waits`]), so a loaded machine never decides
-//! what a test's run records; a run on a live board keeps them whatever it names.
+//! scale, on a scratch board's database alone ([`SCALE_VAR`], [`Waits`]), so a loaded machine never
+//! decides what a test's run records; a run on the live board's database keeps them whatever it
+//! names.
 
 use super::Env;
 use super::machine_work::recorded::{self, Phase, Record, Run, Step};
@@ -288,10 +289,12 @@ fn trigger(env: &Env, handle: Option<&str>) -> String {
 /// How long a run waits on what the machine's speed decides: its recorder's word that it watches
 /// its command ([`READY`]), the board's answer ([`WAIT`]) and git's ([`GIT_WAIT`]), each its own
 /// bound times a scale. The scale is 1 but where a test names one ([`SCALE_VAR`]) and the board the
-/// run reaches is a scratch one, as the board itself tells a live board ([`super::Reached::live`]:
-/// a test's `TASKS_SERVER` and `TASKS_DATABASE`, or a `--database`), so a loaded machine never
-/// decides what a test's run records. A run on a live board, or one that reaches no board, keeps
-/// its own bounds whatever it names, and one that names none asks nothing more.
+/// run reaches is on a database other than the live one's ([`crate::DATABASE`]: a test's
+/// `TASKS_DATABASE`, or a `--database`), which the board never takes for a live board either
+/// ([`super::Reached::live`]), so a loaded machine never decides what a test's run records. A run
+/// on the live one's database, by whatever server or folder it reaches it and whether or not that
+/// server is up, or one that reaches no board, keeps its own bounds whatever it names, and one that
+/// names none asks nothing more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Waits(u32);
 
@@ -309,7 +312,11 @@ impl Waits {
             return Waits::OWN;
         };
         match super::reach(env, &env.cwd, false) {
-            Ok(reached) if reached.live.is_none() => Waits(scale),
+            Ok(reached)
+                if reached.live.is_none() && reached.client.database() != crate::DATABASE =>
+            {
+                Waits(scale)
+            }
             _ => Waits::OWN,
         }
     }
@@ -2378,10 +2385,11 @@ mod tests {
         }
     }
 
-    /// A scale is taken only where the board the run reaches is a scratch one, as the board tells a
-    /// live board: a run that reaches its project's live board, by the server a `TASKS_SERVER`
-    /// names or by its folder, keeps its own waits, and so does one that reaches no board; the same
-    /// server's scratch database takes it.
+    /// A scale is taken only on a scratch board's database: a run that reaches its project's live
+    /// board, by the server a `TASKS_SERVER` names or by its folder, keeps its own waits, and so
+    /// does one on the live database of a server named from where the board cannot tell whose it
+    /// is (the server down, the run in another repository or in none), or one that reaches no
+    /// board; the same server's scratch database takes it.
     #[test]
     fn a_scale_is_never_taken_on_a_live_board_or_where_no_board_is_reached() {
         let scratch = Scratch::new("waits");
@@ -2406,6 +2414,15 @@ mod tests {
         assert_eq!(at(&live, &[named]), Waits::OWN);
         assert_eq!(at(&live, &[named, ("TASKS_DATABASE", "tasks")]), Waits::OWN);
         assert_eq!(at(&live, &[named, scratch_database]), Waits(20));
+        // The live database of a server no one answers on, named from a repository that records
+        // no server, or from no repository: the board takes it for no live board, and still the
+        // scale is not taken.
+        for cwd in [&unserved, &scratch.0] {
+            assert_eq!(at(cwd, &[named]), Waits::OWN, "{}", cwd.display());
+            let live_database = ("TASKS_DATABASE", crate::DATABASE);
+            assert_eq!(at(cwd, &[named, live_database]), Waits::OWN);
+            assert_eq!(at(cwd, &[named, scratch_database]), Waits(20));
+        }
         // By its folder: the project's board, and a scratch database on its server.
         assert_eq!(at(&live, &[]), Waits::OWN);
         assert_eq!(at(&live, &[scratch_database]), Waits(20));
