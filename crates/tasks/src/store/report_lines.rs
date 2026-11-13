@@ -77,13 +77,7 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
     for (task, thread) in tasks.iter().zip(threads) {
         let mut lines = Vec::new();
         for line in thread.as_array()? {
-            lines.push(Line {
-                id: line.get("sid")?.as_i64()?,
-                kind: text(line, "kind")?,
-                text: text(line, "text").unwrap_or_default(),
-                ts: number(line, "ts")?,
-                sender: text(line, "sender").unwrap_or_default(),
-            });
+            lines.push(line_of(line)?);
         }
         read.tasks.push(ReportTask {
             slug: text(task, "slug")?,
@@ -97,6 +91,20 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
         });
     }
     Some(read)
+}
+
+/// A thread's line as a read's `row` gives it, taken apart by hand as [`taken_apart`] takes its
+/// rows: its key (`sid`), kind and time must be there, its text and sender may be missing. None
+/// when one it must have is not.
+pub(super) fn line_of(row: &Value) -> Option<Line> {
+    let text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
+    Some(Line {
+        id: row.get("sid")?.as_i64()?,
+        kind: text("kind")?,
+        text: text("text").unwrap_or_default(),
+        ts: row.get("ts")?.as_f64()?,
+        sender: text("sender").unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]

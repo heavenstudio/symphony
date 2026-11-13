@@ -69,6 +69,16 @@ pub fn task(t: &Task) -> Py {
     ])
 }
 
+/// A task as `tasks list --json` lists it: with `in_status_since`, when it took the status it holds
+/// ([`crate::stages::in_status_since`]), null where that was not read.
+pub fn listed(t: &Task, in_status_since: Option<f64>) -> Py {
+    let mut shaped = task(t);
+    if let Py::Obj(fields) = &mut shaped {
+        fields.push(("in_status_since".into(), Py::opt_float(in_status_since)));
+    }
+    shaped
+}
+
 /// A landed task, with the status the landing closed it from.
 pub fn landed(l: &Landed) -> Py {
     let mut shaped = task(&l.task);
