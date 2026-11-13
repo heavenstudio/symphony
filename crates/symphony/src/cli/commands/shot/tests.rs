@@ -249,14 +249,22 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
         "but on a link, an object or another control inside it (in a component's open shadow root \
          too, and on what is slotted into one there)",
-        // What the page cannot see, it never takes as the label's, and what it misses it says.
-        "or on a custom element without an open shadow root, whose inside the page cannot see (a \
-         closed root on a built-in element, such as a span, goes unseen)",
-        "stays covered, fails the step (naming what covers it)",
-        "stays clipped (naming the box that clips it away, by its overflow, clip or clip-path), \
-         stays hidden (its visibility)",
+        // What the page cannot see, it never takes as the label's; the browser's own hit confirms
+        // the rest, and what it misses it says.
+        "or on a custom element without an open shadow root, whose inside the page cannot see, as \
+         the label's activation clicks its control",
+        "The browser's own hit confirms a press through a label, so a control in a closed root on \
+         a built-in element, such as a span, makes it fail as covered (one around what is slotted \
+         into such a root goes unseen)",
+        "stays covered (by its own ancestor too, painted over it), fails the step (naming what \
+         covers it)",
+        // A clip named only where the browser or the shape backs it, and no cause made up.
+        "stays clipped, the browser finding it nowhere under its middle (naming the box whose \
+         overflow or clip cuts it away there, or whose clip-path, an inset, circle, ellipse or \
+         polygon, leaves its middle out), stays hidden (its visibility)",
         "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, its \
-         own clip or clip-path, or nothing of it painted there, as in an SVG ring)",
+         own clip or clip-path leaving its middle out, or a cause it does not name, as an SVG \
+         ring's unpainted middle)",
         "the failure names it, with a selector that finds it alone to target instead (or says none \
          does), unless the element's own clip hides it, the ancestor is the page's body, or a \
          press there clicks another control through a label",
@@ -510,7 +518,7 @@ fn a_probe_tests_what_is_on_top_at_the_middle_of_the_box_it_read() {
             ],
         );
         assert!(
-            probe.contains("view: [innerWidth, innerHeight], hit}"),
+            probe.contains("view: [innerWidth, innerHeight], scroll: [scrollX, scrollY], hit}"),
             "{probe}"
         );
     }
@@ -625,13 +633,14 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
         &probe,
         &[
             "const hit = !p.at ? null",
-            ": takes(p) ? true",
+            // Taken: inside it, or through its label, for the browser's own hit to confirm.
+            ": takes(p) ? element.contains(p.at) || {label: true}",
             ": style.visibility !== 'visible' ? {hidden: style.visibility}",
             ": clipper ? {clipped: named(clipper.by)}",
-            // A cover in a shadow root is named in its host's.
-            ": !held ? inside(p.deep)",
+            // A cover in a shadow root is named in its host's; an ancestor painted over it covers it.
+            ": !held || listed ? inside(p.deep)",
             ": shaped && shaped !== element ? {clipped: inside(shaped)}",
-            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unpainted', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};",
+            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};",
         ],
     );
     // What is named in a shadow root is named in its outermost host's.
@@ -641,11 +650,19 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
         ),
         "{probe}"
     );
-    // A clip-path cuts the element away where the press passes it by for its ancestor: its own,
-    // unless it takes no pointer anyway, or one between it and that ancestor.
+    // The browser lists what a press at the point could reach: the element among it, nothing clips
+    // it away there.
     assert!(
         probe.contains(
-            "for (let e = element; held && e && e !== p.deep && !shaped; e = flat(e)) if (getComputedStyle(e).clipPath !== 'none' && (e !== element || style.pointerEvents !== 'none')) shaped = e;"
+            "const listed = document.elementsFromPoint(x, y).some(e => element.contains(e));"
+        ),
+        "{probe}"
+    );
+    // A clip-path is named only where its shape leaves the point out, and never for an element
+    // that takes no pointer, which says why already.
+    assert!(
+        probe.contains(
+            "for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep && !shaped; e = flat(e)) if (excludes(e, x, y)) shaped = e;"
         ),
         "{probe}"
     );
@@ -659,11 +676,89 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
         probe.contains("for (let e = element; e && !held; e = flat(e)) held = e === p.deep;"),
         "{probe}"
     );
-    // A box around it clips it there; its own clip makes a holder's reason, not a clipping box.
+    // A box around it clips it there, when the browser lists it nowhere there; its own clip makes a
+    // holder's reason, not a clipping box.
     assert!(
-        probe.contains("const clipper = clips.find(c => c.by && away(c, x, y));"),
+        probe.contains("const clipper = listed ? null : clips.find(c => c.by && away(c, x, y));"),
         "{probe}"
     );
+}
+
+#[test]
+fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_an_untransformed_box() {
+    let probe = probe("#a", Look::Now);
+    for part in [
+        // An HTML element's box, neither inline nor transformed, nor inside a scaled or rotated box
+        // (its layout size its drawn size), and an inset, circle, ellipse or polygon on its border
+        // box; anything else is never claimed.
+        "const t = e instanceof HTMLElement ? getComputedStyle(e) : null;",
+        "t.display !== 'inline' && t.transform === 'none' && (t.scale || 'none') === 'none' && (t.rotate || 'none') === 'none' ? /^(inset|circle|ellipse|polygon)\\((.*)\\)( border-box)?$/.exec(t.clipPath) : null;",
+        "if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;",
+        // Lengths in pixels or percentages only: a calc() or a keyword claims nothing.
+        "const size = (v, basis) => /^-?\\d*\\.?\\d+px$/.test(v) ? parseFloat(v) : /^-?\\d*\\.?\\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN;",
+        // An inset's rectangle, its rounded corners left out (they only cut more), empty when its
+        // sides cross.
+        "return r <= l || b0 <= t0 || px < l || px >= r || py < t0 || py >= b0;",
+        // A circle's radius as a percentage of the box's diagonal over the square root of two.
+        "return Math.hypot(px - cx, py - cy) > radius(words[0], Math.hypot(w, h) / Math.SQRT2, [cx, w - cx, cy, h - cy]);",
+        "((px - cx) / radius(words[0], w, [cx, w - cx])) ** 2 + ((py - cy) / radius(words[1], h, [cy, h - cy])) ** 2 > 1;",
+        // A polygon by its fill rule.
+        "return rule === 'evenodd' ? crossings % 2 === 0 : winding === 0;",
+    ] {
+        assert!(probe.contains(part), "no {part:?} in {probe}");
+    }
+}
+
+#[test]
+fn a_press_through_a_label_is_confirmed_by_the_node_the_browser_finds_there() {
+    // From the node itself, inside a closed shadow root too, up the flat tree: the element, or its
+    // own label, before anything else interactive, else the node there by its name.
+    in_order(
+        CONFIRM,
+        &[
+            "const element = document.querySelector(css);",
+            "for (let e = this; e; e = flat(e)) {",
+            "if (e === element) return true;",
+            "if (e.nodeType === 1 && e.matches(interactive)) return e.localName === 'label' && e.control === element ? true : inside(found);",
+        ],
+    );
+    // A text node there is named by the element it lies in.
+    assert!(
+        CONFIRM.contains("const found = this.nodeType === 1 ? this : flat(this);"),
+        "{CONFIRM}"
+    );
+    // The names and the walk are the probe's own.
+    for part in ["const flat = ", "const inside = "] {
+        assert!(NAMES.contains(part), "{part}");
+        assert!(!CONFIRM.contains(part), "{part}");
+        assert!(!AIM.contains(part), "{part}");
+        assert!(probe("#a", Look::Now).contains(part), "{part}");
+    }
+    // Its answer: taken, or covered by what the browser found there.
+    assert_eq!(Hit::confirmed(&json!(true)), Hit::Target);
+    assert_eq!(
+        Hit::confirmed(&json!("button in span#host's shadow root")),
+        Hit::Missed(Miss::Covered("button in span#host's shadow root".into()))
+    );
+    for unsaid in [json!(null), json!(false), json!(3)] {
+        assert_eq!(
+            Hit::confirmed(&unsaid),
+            Hit::Missed(Miss::Covered("what the browser found there".into()))
+        );
+    }
+    // The protocol takes a point by the whole CSS pixel it lies in, in the document's coordinates:
+    // the viewport's middle moved by the page's scroll, read in the same frame.
+    assert_eq!(
+        [pixel(12.5), pixel(8.0), pixel(0.99), pixel(-0.5)],
+        [12, 8, 0, -1]
+    );
+    let scrolled = Place {
+        scroll: (30.0, 1200.0),
+        ..place(10.0, 20.0, 100.0, 40.0)
+    };
+    assert_eq!(scrolled.middle(), (60.0, 40.0));
+    assert_eq!(scrolled.in_document(), (90.0, 1240.0));
+    assert_eq!(place(10.0, 20.0, 100.0, 40.0).in_document(), (60.0, 40.0));
 }
 
 #[test]
@@ -695,6 +790,7 @@ fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
         width,
         height,
         view: (1440.0, 900.0),
+        scroll: (0.0, 0.0),
         hit: Hit::Target,
     }
 }
@@ -724,11 +820,12 @@ fn holder(name: &str, why: Why) -> Holder {
 
 #[test]
 fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
-    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844], "hit": true});
+    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [390, 844], "scroll": [0, 640.5], "hit": true});
     assert_eq!(
         Place::read("#a", &found),
         Ok(Some(Place {
             view: (390.0, 844.0),
+            scroll: (0.0, 640.5),
             ..place(10.5, 20.0, 100.0, 22.0)
         }))
     );
@@ -737,6 +834,10 @@ fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
         read["hit"] = said;
         Place::read("#a", &read).unwrap().unwrap().hit
     };
+    // Taken through its label, for the browser's own hit to confirm; anything else under `label`
+    // is not.
+    assert_eq!(hit(json!({"label": true})), Hit::Label);
+    assert_eq!(hit(json!({"label": "yes"})), Hit::Missed(Miss::Nothing));
     // Why it misses the press: another element by its name, its visibility, the box that clips it.
     assert_eq!(
         hit(json!("header#top.sticky")),
@@ -755,8 +856,8 @@ fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
     for (why, read) in [
         ("none", Why::PointerEventsNone),
         ("clip", Why::OwnClip),
-        ("unpainted", Why::Unpainted),
-        ("anything else", Why::Unpainted),
+        ("unnamed", Why::Unnamed),
+        ("anything else", Why::Unnamed),
     ] {
         assert_eq!(
             hit(
@@ -913,7 +1014,7 @@ fn a_target_whose_ancestor_takes_the_pointer_at_its_middle_is_scrolled_again_nev
     let icon = place(100.0, 449.0, 24.0, 24.0);
     for (name, why) in [
         ("button#go", Why::PointerEventsNone),
-        ("svg#rings", Why::Unpainted),
+        ("svg#rings", Why::Unnamed),
         ("label#toggle", Why::OwnClip),
     ] {
         let mut aim = Aim::default();
@@ -1068,7 +1169,7 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
         (
             Latest::Missed(Miss::Holder(Holder {
                 instead: Instead::Alone("section > svg:nth-of-type(2)".into()),
-                ..holder("section > svg", Why::Unpainted)
+                ..holder("section > svg", Why::Unnamed)
             })),
             "#x takes no pointer at its middle: section > svg, which holds it, was on top there \
              after every scroll within 5s; target section > svg:nth-of-type(2) instead",

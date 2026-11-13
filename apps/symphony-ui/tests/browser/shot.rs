@@ -904,7 +904,8 @@ const POINTED: &str = r#"<script>
 /// label: one under a span slotted into a component's shadow button, one under a closed shadow
 /// root's button, and one under a closed shadow root of decoration only; and an icon with
 /// `pointer-events: none` slotted into a component's shadow label, whose control is a checkbox in
-/// that shadow root.
+/// that shadow root. Then, each hidden in its label: one under a button in a closed shadow root on
+/// a plain span, and one under a closed shadow root of decoration only on a plain span.
 fn labels() -> Vec<u8> {
     format!(
         r##"<!doctype html>
@@ -931,6 +932,8 @@ fn labels() -> Vec<u8> {
 <p><label class="toggle"><input type="checkbox" id="closed" class="hidden"><x-closed id="closed-host"></x-closed> a closed root's button, over it</label></p>
 <p><label class="toggle"><input type="checkbox" id="adorned" class="hidden"><x-closed-deco id="deco-host"></x-closed-deco> a closed root's decoration, over it</label></p>
 <p><x-check id="check-host"><svg id="checkmark" width="24" height="24" style="pointer-events: none"><rect width="24" height="24" fill="#a0a"/></svg></x-check> a mark in a component's label</p>
+<p><label class="toggle"><input type="checkbox" id="spanned" class="hidden"><span id="span-host"></span> a closed root's button on a span, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="plain" class="hidden"><span id="plain-host"></span> a closed root's decoration on a span, over it</label></p>
 <script>
   const component = (name, mode, html) => customElements.define(name, class extends HTMLElement {{
     constructor() {{ super(); this.attachShadow({{mode}}).innerHTML = html; }}
@@ -941,6 +944,8 @@ fn labels() -> Vec<u8> {
   component('x-closed', 'closed', `<button type="button" id="closed-button" style="${{track}}"></button>`);
   component('x-closed-deco', 'closed', `<span style="${{track}}; background: #bbb"></span>`);
   component('x-check', 'open', '<label id="shadow-label"><input type="checkbox" id="shadow-check"><slot></slot></label>');
+  document.getElementById('span-host').attachShadow({{mode: 'closed'}}).innerHTML = `<button type="button" style="${{track}}"></button>`;
+  document.getElementById('plain-host').attachShadow({{mode: 'closed'}}).innerHTML = `<span style="${{track}}; background: #bbb"></span>`;
 </script>
 {POINTED}"##
     )
@@ -959,8 +964,10 @@ fn a_click_on_a_checkbox_its_own_label_covers_lands_on_the_label_and_checks_it()
             "#under",
             "--click",
             "#named",
+            "--click",
+            "#plain",
             "--eval",
-            "[landed, ['hidden', 'under', 'named', 'unnamed', 'linked'].map(id => document.getElementById(id).checked)]",
+            "[landed, ['hidden', 'under', 'named', 'unnamed', 'linked', 'plain'].map(id => document.getElementById(id).checked)]",
         ],
     ) else {
         return;
@@ -970,7 +977,8 @@ fn a_click_on_a_checkbox_its_own_label_covers_lands_on_the_label_and_checks_it()
     let [after] = lines.as_slice() else {
         panic!("one evaluation: {}", said(&output));
     };
-    // Each press landed on the label, or on its track, and the label clicked its control.
+    // Each press landed on the label, or on its track, and the label clicked its control. The
+    // last, on a closed root's decoration, the browser's own hit confirmed: no control there.
     assert_eq!(
         after[0],
         json!([
@@ -982,11 +990,18 @@ fn a_click_on_a_checkbox_its_own_label_covers_lands_on_the_label_and_checks_it()
             ["click", "under"],
             ["pointerdown", "named-label"],
             ["click", "named-label"],
-            ["click", "named"]
+            ["click", "named"],
+            ["pointerdown", "plain-host"],
+            ["click", "plain-host"],
+            ["click", "plain"]
         ]),
         "{after}"
     );
-    assert_eq!(after[1], json!([true, true, true, false, false]), "{after}");
+    assert_eq!(
+        after[1],
+        json!([true, true, true, false, false, true]),
+        "{after}"
+    );
     assert_eq!(Picture::read(&out).width, 1440);
 }
 
@@ -1034,13 +1049,19 @@ fn a_click_on_a_checkbox_under_a_shadow_roots_button_or_an_object_in_its_label_s
 fn a_click_on_a_checkbox_under_what_is_slotted_into_a_shadow_button_or_a_closed_root_stays_covered()
 {
     // A press on the span reaches the shadow button the span is slotted into, as the press travels
-    // the flat tree, so the label never activates. Inside a closed shadow root the page cannot see
-    // whether a control takes the press, so it is never taken as the label's: a button there, or
-    // only decoration.
+    // the flat tree, so the label never activates. Inside a custom element's closed shadow root the
+    // page cannot see whether a control takes the press, so it is never taken as the label's: a
+    // button there, or only decoration. On a plain span the browser's own hit finds the button in
+    // its closed root, named in its host's.
     for (name, css, cover) in [
         ("label-slotted", "#slotted", "span#slotted-span.track"),
         ("label-closed", "#closed", "x-closed#closed-host"),
         ("label-closed-deco", "#adorned", "x-closed-deco#deco-host"),
+        (
+            "label-closed-span",
+            "#spanned",
+            "button in span#span-host's shadow root",
+        ),
     ] {
         let message = format!(
             "--click {css} stayed covered: {cover} was on top at its middle after every scroll \
@@ -1093,7 +1114,11 @@ fn a_target_whose_label_clicks_another_control_says_so_and_offers_no_label_to_ta
 /// opacity. Then a toolbar of two buttons with neither id nor class, each holding an icon with
 /// `pointer-events: none`; a button its visibility hides; and a link in a panel folded to no
 /// height. Then a button its box's `clip-path` cuts away at its middle; a checkbox its own
-/// `clip-path` hides; and an icon with `pointer-events: none` straight in the body.
+/// `clip-path` hides; and an icon with `pointer-events: none` straight in the body. Then an icon in
+/// a span of its button, the span with `pointer-events: none` and a rounded `clip-path` that keeps
+/// its middle; an SVG ring in a group a `clip-path` clips, its middle unpainted; an avatar its own
+/// round `clip-path` keeps at its middle, painted under its card's background; and a button
+/// outside the circle its box's `clip-path` keeps, inside that box.
 fn ancestors() -> Vec<u8> {
     format!(
         r##"<!doctype html>
@@ -1120,6 +1145,10 @@ fn ancestors() -> Vec<u8> {
 <section id="cut-row"><div id="cut"><button id="cut-button">its box's clip-path cuts it away</button></div></section>
 <section id="sr-row"><input type="checkbox" id="sr"> its own clip-path hides it</section>
 <svg class="glyph" id="loose" width="20" height="20"><rect width="20" height="20" fill="#888"/></svg>
+<div><button id="deco-button"><span id="deco" style="display: inline-block; clip-path: inset(0 round 6px); pointer-events: none; padding: 4px; background: #def"><svg id="decorated" width="24" height="24"><rect width="24" height="24" fill="#08f"/></svg></span> go</button></div>
+<div><svg id="framed" width="100" height="100"><defs><clipPath id="frame"><rect width="100" height="100"/></clipPath></defs><g clip-path="url(#frame)"><circle id="framed-ring" cx="50" cy="50" r="40" fill="none" stroke="#00f" stroke-width="8"/></g></svg></div>
+<div id="card" style="background: #fff; padding: 8px"><span id="avatar" style="display: inline-block; position: relative; z-index: -1; width: 40px; height: 40px; background: #f80; clip-path: circle(50%)"></span> under its card</div>
+<section id="round-row"><div id="round" style="clip-path: circle(20px at 20px 20px); width: 300px; height: 60px; background: #fee"><button id="round-button" style="margin: 20px 0 0 120px">outside its box's circle</button></div></section>
 {POINTED}"##
     )
     .into_bytes()
@@ -1253,6 +1282,44 @@ fn a_target_a_clip_path_cuts_away_fails_as_clipped_offering_nothing() {
             "#sr",
             "--click #sr stayed clipped by its own clip: section#sr-row, which holds it, was on top \
              at its middle after every scroll within 5s",
+        ),
+        // Inside its box, outside the circle the box's clip-path keeps.
+        (
+            "cut-round",
+            "#round-button",
+            "--click #round-button stayed clipped: div#round clips it away at its middle after \
+             every scroll within 5s",
+        ),
+    ] {
+        if !refused(name, &ancestors(), "--click", css, message) {
+            return;
+        }
+    }
+}
+
+#[test]
+fn a_target_no_clip_path_cuts_at_its_middle_is_never_called_clipped() {
+    // Each misses its click for another cause than the clip-path around it or its own: the span's
+    // inherited pointer-events, the ring's unpainted middle, a card painted over the avatar.
+    for (name, css, message) in [
+        (
+            "uncut-icon",
+            "#decorated",
+            "--click #decorated takes no pointer at its middle (pointer-events: none): \
+             button#deco-button, which holds it, was on top there after every scroll within 5s; \
+             target button#deco-button instead",
+        ),
+        (
+            "uncut-ring",
+            "#framed-ring",
+            "--click #framed-ring takes no pointer at its middle: svg#framed, which holds it, was \
+             on top there after every scroll within 5s; target svg#framed instead",
+        ),
+        (
+            "uncut-avatar",
+            "#avatar",
+            "--click #avatar stayed covered: div#card was on top at its middle after every scroll \
+             within 5s",
         ),
     ] {
         if !refused(name, &ancestors(), "--click", css, message) {
