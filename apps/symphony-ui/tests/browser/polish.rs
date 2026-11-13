@@ -1182,11 +1182,29 @@ fn a_task_card_opens_its_task_from_its_title() {
         page.eval(&format!("(() => {{const e=document.querySelector({});return [e.textContent, getComputedStyle(e).cursor, getComputedStyle(e).fontWeight];}})()", json!(title))),
         json!(["Example task", "pointer", "600"])
     );
+    // A card's slot skips drawing its contents (`content-visibility: auto`) until a rendering
+    // pass of the browser's finds it on the screen. A press before that pass lands on the slot,
+    // not the title: the page has not drawn the card yet, so no reader could have clicked it. The
+    // title is clicked once hit testing reaches it.
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({}).checkVisibility({{contentVisibilityAuto: true}})",
+                json!(title)
+            ),
+            SHOWN
+        ),
+        "the title was never drawn for hit testing"
+    );
+    page.eval(
+        "window.__pressed = []; for (const kind of ['mousedown', 'click']) document.addEventListener(kind, e => window.__pressed.push(kind + ' ' + e.target.nodeName + '.' + e.target.className), true); null",
+    );
     click_middle(&mut page, title);
     assert!(
         page.wait_for("location.pathname === '/task/tools/example'", SHOWN),
-        "the title did not open its task: {}",
-        page.eval("location.href")
+        "the title did not open its task: {}; the press went to {}",
+        page.eval("location.href"),
+        page.eval("window.__pressed")
     );
 }
 
