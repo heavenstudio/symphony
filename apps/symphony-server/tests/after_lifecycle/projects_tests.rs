@@ -301,7 +301,7 @@ fn a_branchs_build_holding_the_plugin_never_replaces_the_plain_host() {
     assert!(
         said.contains(&format!(
             "✖ Symphony: the running Symphony does not serve {}, and a start in a linked worktree \
-             ({}) runs a branch's build",
+             ({}) never starts the machine's Symphony",
             shelf.display(),
             branch.display()
         )),
@@ -316,7 +316,7 @@ fn a_branchs_build_holding_the_plugin_never_replaces_the_plain_host() {
     assert!(
         said.contains(&format!(
             "✖ Symphony: the running Symphony lacks the plugin fixture-shelf, which pantry names: \
-             this build was started in the linked worktree {}, and a branch's build never \
+             this start runs in the linked worktree {}, and a start in a linked worktree never \
              replaces the running Symphony: run `just symphony` in {}\n",
             branch.display(),
             shelf.display()

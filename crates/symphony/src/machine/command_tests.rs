@@ -1,6 +1,7 @@
 //! `project add`: registered once, again, and as the running server's host rule says.
 
 use super::*;
+use crate::test_layouts::{Others, others, repository};
 use crate::test_tree::Tree;
 
 fn project(tree: &Tree, id: &str, plugins: &str) -> PathBuf {
@@ -121,23 +122,23 @@ fn a_running_host_lacking_its_plugins_is_said_and_a_newer_schema_refused_unregis
 }
 
 #[test]
-fn a_build_run_in_a_linked_worktree_registers_nothing_and_names_the_main_checkout() {
+fn a_linked_worktree_registers_no_project_of_its_own_repository_and_names_the_main_checkout() {
     let tree = Tree::new();
-    let (main, linked) = crate::machine::host::tests::repository(&tree);
+    let (main, linked) = repository(&tree.root);
     let machine = tree.path("machine");
     let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
     let refusal = format!(
-        "this build runs in the linked worktree {}, and a branch's build registers no project \
-         with the machine's Symphony: run `project add` in {}, the main checkout",
+        "this runs in the linked worktree {}, and a linked worktree registers no project of its \
+         own repository with the machine's Symphony: run `project add` in {}, the main checkout",
         linked.display(),
         main.display()
     );
-    // Whichever project it names and whatever runs, a branch's build registers none.
+    // Whichever folder of its repository it names and whatever runs, it registers none.
     for from in [linked.clone(), linked.join("docs")] {
-        for dir in [&linked, &main] {
+        for dir in [linked.clone(), main.clone(), main.join("docs")] {
             for running in [None, Some(&host)] {
                 assert_eq!(
-                    add(dir, &from, &machine, running),
+                    add(&dir, &from, &machine, running),
                     Err(refusal.clone()),
                     "{} from {}",
                     dir.display(),
@@ -148,9 +149,9 @@ fn a_build_run_in_a_linked_worktree_registers_nothing_and_names_the_main_checkou
     }
     assert!(
         !machine.join(crate::machine::PROJECTS).exists(),
-        "a branch's build wrote the registry"
+        "a linked worktree wrote the registry for its own repository"
     );
-    // The main checkout's build registers the project its worktree names, at its main checkout.
+    // The main checkout registers the project its worktree names, at its main checkout.
     let added = add(&linked, &main, &machine, Some(&host)).unwrap();
     assert!(
         added.starts_with(&format!(
@@ -160,6 +161,57 @@ fn a_build_run_in_a_linked_worktree_registers_nothing_and_names_the_main_checkou
         "{added}"
     );
     assert_eq!(Registry::read(&machine).unwrap().projects[0].root, main);
+}
+
+#[test]
+fn a_linked_worktree_registers_another_repositorys_project_and_a_submodule_its_own() {
+    let tree = Tree::new();
+    let (_, linked) = repository(&tree.root);
+    let Others {
+        submodule,
+        separate,
+        bare,
+        bare_worktree,
+    } = others(&tree.root);
+    let plain = project(&tree, "plain", "");
+    let machine = tree.path("machine");
+    // From a linked worktree, a project of another repository, or of none, registers as it would
+    // from anywhere: what a scratch repository's `project add` run in a branch's checkout does.
+    for (dir, said) in [
+        (&submodule, "lib registered at /lib/"),
+        (&separate, "sep registered at /sep/"),
+        (&plain, "plain works registered at /plain/"),
+    ] {
+        let added = add(dir, &linked.join("docs"), &machine, None).unwrap();
+        assert!(
+            added.starts_with(&format!("· {said} (")),
+            "{} from the worktree: {added}",
+            dir.display()
+        );
+    }
+    // A submodule and a `--separate-git-dir` checkout are main checkouts, whose `.git` is a file:
+    // each registers its own project, from itself, at itself.
+    for (dir, id) in [(&submodule, "lib"), (&separate, "sep")] {
+        let added = add(dir, dir, &machine, None).unwrap();
+        assert!(
+            added.starts_with(&format!("· {id} already registered at /{id}/ (")),
+            "{added}"
+        );
+        let registry = Registry::read(&machine).unwrap();
+        assert_eq!(&registry.get(id).unwrap().root, dir);
+    }
+    // A bare repository's worktree registers none of its own, and names no checkout to run in.
+    assert_eq!(
+        add(&bare_worktree, &bare_worktree, &machine, None),
+        Err(format!(
+            "this runs in the linked worktree {}, and a linked worktree registers no project of \
+             its own repository with the machine's Symphony: its repository's git dir {} names \
+             no main checkout: run `project add` in that repository's main checkout, if it has one",
+            bare_worktree.display(),
+            bare.display()
+        ))
+    );
+    assert_eq!(Registry::read(&machine).unwrap().projects.len(), 3);
 }
 
 #[test]

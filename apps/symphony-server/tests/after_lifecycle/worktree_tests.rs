@@ -1,4 +1,4 @@
-//! A start in a linked worktree runs a branch's build: it never starts the one server, registers
+//! A start in a linked worktree, whichever build it runs, never starts the one server, registers
 //! its project or replaces the running server. It prints the running server's page for its
 //! worktree when that server serves the project, reading the server and the registry alone, and is
 //! refused otherwise, naming `--port 0`, a server of its own, which serves it beside the one server.
@@ -24,11 +24,10 @@ fn refused(repo: &Repo, args: &[&str]) -> String {
 /// The line a refused start ends with, after what it found: what to run instead.
 fn instead(repo: &Repo) -> String {
     format!(
-        ", and a start in a linked worktree ({}) runs a branch's build, which never starts, \
-         registers a project with or replaces the machine's Symphony: `just symphony --port 0` \
-         here serves this worktree on a server of its own; `just symphony` in {} has the \
-         machine's serve it; `--shared` lets this branch's build start the machine's, never \
-         replacing one that runs\n",
+        ", and a start in a linked worktree ({}) never starts the machine's Symphony, registers \
+         a project with it or replaces it: `just symphony --port 0` here serves this worktree on \
+         a server of its own; `just symphony` in {} has the machine's serve it; `--shared` lets \
+         a start here start the machine's, never replacing one that runs\n",
         repo.tree.display(),
         repo.main.display()
     )
@@ -41,7 +40,10 @@ fn a_start_in_a_worktree_with_no_server_starts_and_registers_nothing() {
     for args in [&[][..], &["--if-up"]] {
         let said = refused(&repo, args);
         assert!(
-            said.contains(&format!("✖ Symphony: no Symphony runs{}", instead(&repo))),
+            said.contains(&format!(
+                "✖ Symphony: no Symphony answers{}",
+                instead(&repo)
+            )),
             "{args:?}: {said}"
         );
     }
@@ -109,6 +111,55 @@ fn a_start_in_a_worktree_reads_the_running_server_and_the_registry_and_changes_n
     // The one server is the one main's start made, all along.
     assert_eq!(repo.record().unwrap().pid, running.pid);
     assert_eq!(front(running.port).unwrap().pid, running.pid);
+    let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
+    assert_eq!(log.matches("→ Symphony at ").count(), 1, "{log}");
+}
+
+/// A record missing, malformed, stale or naming another process hides no running server from a
+/// start in a worktree, which finds it as a start in the main checkout would, from the process
+/// table, and mends no record: it changes nothing.
+#[test]
+fn a_start_in_a_worktree_finds_the_server_its_record_misses_and_mends_nothing() {
+    let repo = Repo::new("worktree-unrecorded");
+    repo.start(&repo.main, false);
+    let running = repo.check_server();
+    let page = format!(
+        "→ Symphony at http://127.0.0.1:{}/{}/@feature~lifecycle/  (pid {};",
+        running.port, running.projects[0], running.pid
+    );
+    let address = repo.home.join("server.json");
+    let kept = fs::read(&address).unwrap();
+    let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
+    let stale_pid = dead.id();
+    dead.wait().unwrap();
+    let record = |pid: i64| {
+        serde_json::json!({"pid": pid, "port": running.port, "root": running.root}).to_string()
+    };
+    for contents in [
+        None,
+        Some("{malformed".to_string()),
+        Some(record(i64::from(stale_pid))),
+        Some(record(i64::from(std::process::id()))),
+    ] {
+        match &contents {
+            Some(contents) => fs::write(&address, contents).unwrap(),
+            None => fs::remove_file(&address).unwrap(),
+        }
+        let mut start = repo.run(repo.command(&repo.tree));
+        start.success();
+        assert!(
+            start.output().contains(&page),
+            "{contents:?}: {}",
+            start.output()
+        );
+        assert_eq!(
+            fs::read_to_string(&address).ok(),
+            contents,
+            "the record was mended"
+        );
+    }
+    fs::write(&address, kept).unwrap();
+    assert_eq!(repo.check_server().pid, running.pid);
     let log = fs::read_to_string(repo.home.join("server.log")).unwrap();
     assert_eq!(log.matches("→ Symphony at ").count(), 1, "{log}");
 }

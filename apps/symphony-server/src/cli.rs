@@ -52,16 +52,16 @@ every registered project at `/<id>/` and each of its worktrees at `/<id>/@<tree 
 registers its checkout's project, finds the running server and prints the project's URL, or
 starts the server, detached, and prints that. A running server that lacks the project's plugins
 is replaced by this build, its sockets handed over, every project kept registered. A start in a
-linked worktree runs a branch's build: it only prints the running server's URL for that worktree,
+linked worktree, whichever build it runs, only prints the running server's URL for that worktree,
 when that server serves its project, and otherwise starts, registers and replaces nothing.
 
   --open       open the URL in the browser (interactive human terminals only)
   --if-up      a start of the one server only finds the running one: prints (and opens) its URL,
                or exits 3 having started nothing, as it does when this build must replace it; a
                stop or a port of its own is done at once
-  --shared     in a linked worktree, the owner's word that this branch's build may be the one
-               server: it registers the project and starts the one server when none runs, and
-               never replaces a running one
+  --shared     in a linked worktree, the owner's word that this start may start the one server:
+               it registers the project and starts the one server when none runs, and never
+               replaces a running one
   --host H     the address it listens on, repeatable (default: every interface, each request
                judged by its client address: this machine or a confirmed tailnet peer)
   --port N     a server of its own on port N, not the one server: it runs in the foreground and
@@ -71,7 +71,8 @@ when that server serves its project, and otherwise starts, registers and replace
   --root DIR   the project it serves; a root outside this repository is a server of its own too
   --stop       stop the one server
   project add  register DIR's project (default: here) with the one server, and say whether the
-               running server can serve it; a linked worktree's build registers none
+               running server can serve it; run in a linked worktree, it registers none of that
+               worktree's own repository
 
 The one server ignores --host and an in-repository --root; use --port to customize a server.
 ";
@@ -99,7 +100,7 @@ pub struct Options {
     pub port: Option<u16>,
     pub hosts: Vec<String>,
     pub if_up: bool,
-    /// `--shared`: a start in a linked worktree may start the one server with this branch's build.
+    /// `--shared`: a start in a linked worktree may start the one server with this build.
     pub shared: bool,
 }
 

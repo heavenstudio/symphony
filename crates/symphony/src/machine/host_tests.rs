@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::test_layouts::{Others, others, repository};
 use crate::test_tree::Tree;
 
 fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
@@ -13,59 +14,6 @@ fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
         by: "/work/host".into(),
         worktree: None,
     }
-}
-
-/// `git ARGS` in `at`, which must succeed, with no configuration of the machine's to sign or hook.
-fn git(at: &Path, args: &[&str]) {
-    let done = std::process::Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args([
-            "-c",
-            "init.defaultBranch=main",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(["-c", "core.hooksPath=/dev/null"])
-        .args(args)
-        .current_dir(at)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_COMMON_DIR")
-        .output()
-        .unwrap();
-    assert!(
-        done.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&done.stderr)
-    );
-}
-
-/// A repository in `tree` with one commit, the project `lantern`: its main checkout `main/` and a
-/// linked worktree `wt/` on a branch, each with a `docs/` folder: the two checkouts, canonical.
-pub(crate) fn repository(tree: &Tree) -> (PathBuf, PathBuf) {
-    tree.write("main/docs/README.md", "# Docs\n");
-    tree.write(
-        "main/symphony.toml",
-        "[project]\nid = \"lantern\"\nname = \"Lantern\"\n",
-    );
-    let main = tree.path("main");
-    git(&main, &["init", "-q"]);
-    git(&main, &["add", "."]);
-    git(&main, &["commit", "-qm", "docs"]);
-    let linked = tree.path("wt");
-    git(
-        &main,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "-b",
-            "feature/x",
-            linked.to_str().unwrap(),
-        ],
-    );
-    (main.canonicalize().unwrap(), linked.canonicalize().unwrap())
 }
 
 fn entry(id: &str, plugins: &[&str], pin: u32, schema: i64) -> Entry {
@@ -238,8 +186,8 @@ fn a_branchs_build_never_replaces_the_running_host_and_names_the_main_checkout()
     };
     assert_eq!(
         why,
-        "the running Symphony lacks the plugin shelf, which shelf-project names: this build was \
-         started in the linked worktree /work/trees/shelf-feature, and a branch's build never \
+        "the running Symphony lacks the plugin shelf, which shelf-project names: this start runs \
+         in the linked worktree /work/trees/shelf-feature, and a start in a linked worktree never \
          replaces the running Symphony: run `just symphony` in /work/shelf-project"
     );
     // A newer pin or board schema the main checkout's build would replace the host for is refused,
@@ -268,9 +216,9 @@ fn a_branchs_build_never_replaces_the_running_host_and_names_the_main_checkout()
         assert_eq!(
             why,
             format!(
-                "the running Symphony {lacks}: this build was started in the linked worktree \
-                 /work/trees/shelf-feature, and a branch's build never replaces the running \
-                 Symphony: run `just symphony` in /work/shelf-project"
+                "the running Symphony {lacks}: this start runs in the linked worktree \
+                 /work/trees/shelf-feature, and a start in a linked worktree never replaces the \
+                 running Symphony: run `just symphony` in /work/shelf-project"
             )
         );
     }
@@ -284,10 +232,27 @@ fn a_branchs_build_never_replaces_the_running_host_and_names_the_main_checkout()
 #[test]
 fn a_build_started_in_a_linked_worktree_is_a_branchs_and_in_a_main_checkout_is_not() {
     let tree = Tree::new();
-    let (main, linked) = repository(&tree);
+    let (main, linked) = repository(&tree.root);
+    let Others {
+        submodule,
+        separate,
+        bare,
+        bare_worktree,
+    } = others(&tree.root);
     let this = Build::this(&main);
     assert_eq!(this.worktree, None);
-    for dir in [main.clone(), main.join("docs"), tree.root.clone()] {
+    // A submodule's and a `--separate-git-dir` checkout's `.git` is a file naming their repository's
+    // own git dir: each is its repository's main checkout.
+    for dir in [
+        main.clone(),
+        main.join("docs"),
+        tree.root.clone(),
+        submodule.clone(),
+        submodule.join("docs"),
+        separate.clone(),
+        separate.join("docs"),
+        bare,
+    ] {
         assert_eq!(
             this.clone().started_in(&dir).worktree,
             None,
@@ -295,10 +260,16 @@ fn a_build_started_in_a_linked_worktree_is_a_branchs_and_in_a_main_checkout_is_n
             dir.display()
         );
     }
-    for dir in [linked.clone(), linked.join("docs")] {
+    // A bare repository's worktree is a linked one: its git dir has a `commondir`.
+    for (dir, top) in [
+        (linked.clone(), &linked),
+        (linked.join("docs"), &linked),
+        (bare_worktree.clone(), &bare_worktree),
+        (bare_worktree.join("docs"), &bare_worktree),
+    ] {
         assert_eq!(
-            this.clone().started_in(&dir).worktree,
-            Some(linked.clone()),
+            this.clone().started_in(&dir).worktree.as_ref(),
+            Some(top),
             "{}",
             dir.display()
         );

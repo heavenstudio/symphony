@@ -1,10 +1,11 @@
 //! A start of the one server, and `project add`: the checkout's project registered in the machine
 //! folder, the host rule ([`crate::host`]) applied to the running server, then the project's URL,
-//! a start of this build, or the hand-off to it. A start in a linked worktree runs a branch's build:
-//! it never starts the one server, registers a project with it or replaces it. It prints the running
-//! server's page for that worktree when the server serves its project, and is refused otherwise,
-//! naming `--port 0`, a server of its own; `--shared` is the owner's word that this branch's build
-//! may start the one server, and the host rule never lets it replace a running one.
+//! a start of this build, or the hand-off to it. A start in a linked worktree, whichever build it
+//! runs, never starts the one server, registers a project with it or replaces it. It prints the
+//! running server's page for that worktree when the server serves its project, and is refused
+//! otherwise, naming `--port 0`, a server of its own; `--shared` is the owner's word that a start
+//! there may start the one server, and the host rule never lets it replace a running one. A
+//! worktree of a repository git names no main checkout of (a bare one's) is refused either way.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -47,7 +48,7 @@ pub(crate) enum Started {
 /// Register `checkout`'s project and have the one server serve it: the running one when it does,
 /// this build in its place when the host rule says so (`if_up` asks only, and starts nothing),
 /// else this build started. In a linked worktree it only finds the running server ([`found`]),
-/// unless `shared` lets this branch's build start it.
+/// unless `shared` lets the start there start it.
 pub(crate) fn one(
     checkout: &Checkout,
     home: &Home,
@@ -64,7 +65,16 @@ pub(crate) fn one(
             return Err(why);
         }
     }
-    if checkout.top != checkout.main && !shared {
+    if checkout.linked() && checkout.mainless() {
+        return Err(format!(
+            "{} is a linked worktree of {}, a repository git names no main checkout of for the \
+             machine's Symphony to serve: `just symphony --port 0` here serves this worktree on a \
+             server of its own",
+            checkout.top.display(),
+            checkout.common.display()
+        ));
+    }
+    if checkout.linked() && !shared {
         return found(checkout, home);
     }
     let machine = home.dir().to_path_buf();
@@ -141,16 +151,16 @@ fn predates(running: Running, front: &symphony_api::Front) -> Started {
     Started::Serving(running, String::new())
 }
 
-/// A start in the linked worktree `checkout.top`, a branch's build, without `--shared`: the running
-/// server when it serves the project registered at the main checkout, the registry and the server
-/// only read; else why nothing was started, naming what to run.
+/// A start in the linked worktree `checkout.top` without `--shared`: the running server, found but
+/// only read ([`Home::found`]), when it serves the project registered at the main checkout, the
+/// registry only read too; else why nothing was started, naming what to run.
 fn found(checkout: &Checkout, home: &Home) -> Result<Started, String> {
-    let running = home.up();
+    let running = home.found();
     let front = running
         .as_ref()
         .and_then(|running| crate::probe::front(running.port, Duration::from_secs(5)));
     let (Some(running), Some(front)) = (running, front) else {
-        return Err(refused(checkout, "no Symphony runs"));
+        return Err(refused(checkout, "no Symphony answers"));
     };
     if front.pin == 0 {
         return Ok(predates(running, &front));
@@ -177,11 +187,10 @@ fn found(checkout: &Checkout, home: &Home) -> Result<Started, String> {
 /// what to run instead.
 fn refused(checkout: &Checkout, what: &str) -> String {
     format!(
-        "{what}, and a start in a linked worktree ({}) runs a branch's build, which never starts, \
-         registers a project with or replaces the machine's Symphony: `just symphony --port 0` \
-         here serves this worktree on a server of its own; `just symphony` in {} has the \
-         machine's serve it; `--shared` lets this branch's build start the machine's, never \
-         replacing one that runs",
+        "{what}, and a start in a linked worktree ({}) never starts the machine's Symphony, \
+         registers a project with it or replaces it: `just symphony --port 0` here serves this \
+         worktree on a server of its own; `just symphony` in {} has the machine's serve it; \
+         `--shared` lets a start here start the machine's, never replacing one that runs",
         checkout.top.display(),
         checkout.main.display()
     )
