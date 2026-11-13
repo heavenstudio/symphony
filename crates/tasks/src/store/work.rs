@@ -748,7 +748,7 @@ IF $task.title != $title {{
         how: Moving,
         reason: Option<String>,
     ) -> Result<(Task, String), Error> {
-        let starts = OPEN.contains(&status) && self.slots.is_some();
+        let starts = OPEN.contains(&status);
         // The board the commands a refusal names reach: this one.
         let board = self.board_command();
         let from = RefCell::new(String::new());
