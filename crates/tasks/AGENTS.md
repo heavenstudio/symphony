@@ -646,6 +646,13 @@ row for the terminal's process says nothing of it. A terminal the board would
 close whose `hc get`, table or window cannot be read stays, and cleanup and
 finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
 screen prints `kept pane T [of H] (on screen in the Herdr app)`.
+A product deadline a test would otherwise trip on a loaded machine is a setting in seconds, read
+only when set (`Env::seconds`), never raised for anyone else: the recorder's `TASKS_RUN_READY`,
+`TASKS_RUN_BOARD_WAIT`, `TASKS_RUN_GIT_WAIT`, `TASKS_RUN_RERUN_WAIT` and `TASKS_RUN_LOCK_WAIT`,
+`tools/record.sh`'s probe `TASKS_RECORDER_PROBE_WAIT`, the landing's listening window
+`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, and a Codex delivery's
+`TASKS_CODEX_WAIT`. A test of the deadline itself sets it short; every other test gives it a
+backstop, so its result never turns on how loaded the machine is.
 The idle sweep (`launch/reap.rs`) removes each terminal of the board whose program ended at the
 first sweep that finds it, out of the owner's sight, its open records closed first with their
 restore line (`its program ended`); one whose records are closed already goes without a line.
