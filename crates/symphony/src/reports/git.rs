@@ -22,7 +22,6 @@
 //! take 0.24 s.
 
 use crate::project::Project;
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use symphony_api::reports::{GitCounts, GitRead, ReportDay};
 
@@ -228,10 +227,11 @@ pub fn parse(text: &str) -> Vec<Commit> {
 
 /// What each commit on `read`'s line of first parents brought to the branch, oldest first: a
 /// commit there itself, a merge the commits of what it merged that no commit before it on the line
-/// brought (walked back from its other parents through [`Read::all`]).
+/// brought (walked back from its other parents through [`Read::all`]). The commits are looked up by
+/// a scan, a millisecond for the thousand or so of two days, where a map would cost the server's
+/// binary its own (docs/CHECKS.md, size budgets).
 pub fn reached(read: &Read) -> Vec<Reached> {
-    let all: HashMap<&str, &Commit> = read.all.iter().map(|c| (c.hash.as_str(), c)).collect();
-    let mut seen: HashSet<&str> = read.line.iter().map(|c| c.hash.as_str()).collect();
+    let mut seen: Vec<&str> = read.line.iter().map(|c| c.hash.as_str()).collect();
     let counted = |commit: &Commit| commit.parents.len() < 2 && commit.changed;
     let revert = |commit: &Commit| commit.subject.starts_with("Revert \"");
     read.line
@@ -252,12 +252,13 @@ pub fn reached(read: &Read) -> Vec<Reached> {
             }
             let mut walk: Vec<&str> = on.parents.iter().skip(1).map(String::as_str).collect();
             while let Some(hash) = walk.pop() {
-                let Some(commit) = all.get(hash) else {
-                    continue; // the branch held it before the window
-                };
-                if !seen.insert(hash) {
+                if seen.contains(&hash) {
                     continue;
                 }
+                let Some(commit) = read.all.iter().find(|c| c.hash == hash) else {
+                    continue; // the branch held it before the window
+                };
+                seen.push(hash);
                 if counted(commit) {
                     reached.commits += 1;
                     reached.reverts += u32::from(revert(commit));
@@ -271,19 +272,18 @@ pub fn reached(read: &Read) -> Vec<Reached> {
 
 /// Fill `day`'s hours from `read` ([`read`]), `from` naming what it was read from.
 pub fn fill(day: &mut ReportDay, read: &Read, from: GitRead) {
-    let reached = reached(read);
-    let until = day.until;
     for hour in &mut day.hours {
-        let to = (hour.start + crate::reports::HOUR).min(until);
-        let mut counts = GitCounts::default();
-        for on in reached.iter().filter(|r| hour.start <= r.at && r.at < to) {
+        hour.git = Some(GitCounts::default());
+    }
+    for on in reached(read) {
+        let hour = symphony_board::reports::hour_at(&mut day.hours, day.until, on.at);
+        if let Some(counts) = hour.and_then(|hour| hour.git.as_mut()) {
             counts.commits += on.commits;
             counts.merges += u32::from(on.merge);
             counts.reverts += on.reverts;
             counts.added += on.added;
             counts.removed += on.removed;
         }
-        hour.git = Some(counts);
     }
     day.git = Some(from);
 }

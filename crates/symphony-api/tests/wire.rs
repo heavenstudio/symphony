@@ -439,10 +439,46 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     assert_eq!(day.subtasks.lead, None);
 }
 
+/// A figure per status is written as a map of the statuses whose figure is not zero, by name, as a
+/// map of names would be: none written for an hour where nothing moved, a name that is no status
+/// left out when read, and no figure for it.
+#[test]
+fn a_figure_per_status_writes_the_statuses_that_have_one_by_name() {
+    use symphony_api::reports::ByStatus;
+    let mut held = ByStatus::<u32>::default();
+    assert_eq!(serde_json::to_string(&held).unwrap(), "{}");
+    for status in ["review", "in_progress", "backlog", "review"] {
+        *held.get_mut(status).unwrap() += 1;
+    }
+    assert_eq!(held.get_mut("open"), None, "no status of the board's");
+    assert_eq!(
+        serde_json::to_string(&held).unwrap(),
+        r#"{"backlog":1,"in_progress":1,"review":2}"#
+    );
+    let read: ByStatus<u32> =
+        serde_json::from_str(r#"{"review":2,"open":5,"backlog":1,"in_progress":1}"#).unwrap();
+    assert_eq!(read, held);
+    let hours = ByStatus {
+        ready: 0.5,
+        cancelled: 0.0,
+        ..ByStatus::default()
+    };
+    assert_eq!(serde_json::to_string(&hours).unwrap(), r#"{"ready":0.5}"#);
+    let names: Vec<&str> = hours.each().iter().map(|(name, _)| *name).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "written in the order of their names");
+    let mut each = hours;
+    for name in names {
+        assert!(each.get_mut(name).is_some(), "{name}");
+    }
+}
+
 /// A day file written before a figure was added reads with that figure empty: none for the
 /// decisions and git, no hours, no auto-approval or withdrawal in an hour's decisions.
 #[test]
 fn a_day_file_without_its_later_figures_reads_with_them_empty() {
+    use symphony_api::reports::ByStatus;
     use symphony_api::{ReportDay, ReportHour};
     let day: ReportDay = serde_json::from_str(
         r#"{"schema":1,"project":"p","day":"2027-01-15","start":1799971200.0,
@@ -453,7 +489,7 @@ fn a_day_file_without_its_later_figures_reads_with_them_empty() {
     assert_eq!((day.decisions, day.git), (None, None));
     let hour: ReportHour = serde_json::from_str(r#"{"start":1799982000.0}"#).unwrap();
     assert_eq!((hour.landed, hour.decisions, hour.git), (0, None, None));
-    assert!(hour.top.held.is_empty() && hour.waits.approved_to_landed.is_empty());
+    assert!(hour.top.held == ByStatus::default() && hour.waits.approved_to_landed.is_empty());
     let hour: ReportHour =
         serde_json::from_str(r#"{"start":1799982000.0,"decisions":{"open":2,"answered":1}}"#)
             .unwrap();

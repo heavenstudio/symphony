@@ -2,6 +2,7 @@
 //! counted here from the lines, hour by hour.
 
 use super::*;
+use std::collections::BTreeMap;
 
 /// A UTC midnight: the day every case reads.
 const D: f64 = 1_799_971_200.0;
@@ -76,8 +77,17 @@ fn task(slug: &str, created: f64, status: &str, updated: f64, thread: Thread) ->
     }
 }
 
-fn counts(pairs: &[(&str, u32)]) -> BTreeMap<String, u32> {
-    pairs.iter().map(|(s, n)| ((*s).into(), *n)).collect()
+/// A figure for each status `pairs` names, zero for the rest.
+fn by_status<T: Copy + Default>(pairs: &[(&str, T)]) -> ByStatus<T> {
+    let mut figures = ByStatus::default();
+    for (status, figure) in pairs {
+        *figures.get_mut(status).unwrap() = *figure;
+    }
+    figures
+}
+
+fn counts(pairs: &[(&str, u32)]) -> ByStatus<u32> {
+    by_status(pairs)
 }
 
 fn waits(all: &[Wait]) -> Vec<(&str, f64)> {
@@ -189,7 +199,7 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
     assert_eq!(hour(0).top.held, counts(&[("ready", 2)]));
     assert_eq!(
         hour(0).top.task_hours,
-        BTreeMap::from([("ready".into(), 2.0)])
+        by_status(&[("ready", 2.0)])
     );
     assert_eq!(hour(0).top.unclaimed_hours, 2.0);
     assert_eq!(
@@ -233,7 +243,7 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
     assert_eq!(hour(13).subtasks.held, counts(&[("in_progress", 1)]));
     assert_eq!(
         hour(13).top.task_hours,
-        BTreeMap::from([("ready".into(), 1.0), ("review".into(), 0.5)]),
+        by_status(&[("ready", 1.0), ("review", 0.5)]),
         "the hour under way counts up to the read"
     );
     let bounces: u32 = day.hours.iter().map(|h| h.top.bounces).sum();
@@ -311,7 +321,11 @@ fn a_day_read_after_it_ended_is_closed_with_all_its_hours_and_nothing_after_it()
     assert_eq!(day.until, D, "the figures stop at the day's end");
     assert_eq!(day.hours.len(), 24);
     assert_eq!(day.hours[23].top.held, counts(&[("ready", 2)]));
-    let entered: u32 = day.hours.iter().flat_map(|h| h.top.entered.values()).sum();
+    let entered: u32 = day
+        .hours
+        .iter()
+        .flat_map(|h| h.top.entered.each().map(|(_, n)| *n))
+        .sum();
     assert_eq!(
         entered, 1,
         "the nightly red made in the day; nothing of the next day"
@@ -326,7 +340,7 @@ fn a_read_at_midnight_has_its_first_hour_and_counts_nothing_yet() {
     let day = day("sim", D, D, D, &board());
     assert_eq!(day.hours.len(), 1);
     assert_eq!(day.hours[0].top.held, counts(&[("ready", 2)]));
-    assert!(day.hours[0].top.entered.is_empty());
+    assert_eq!(day.hours[0].top.entered, ByStatus::default());
     assert_eq!(day.hours[0].top.unclaimed_hours, 0.0);
 }
 
@@ -519,6 +533,41 @@ fn the_longest_in_their_status_are_the_ten_oldest_by_since_then_slug_whatever_th
     );
 }
 
+/// The day file's text written by hand is serde's, byte for byte: the wire fixture, which fills
+/// every field (an hour's decisions and git, a spread, a red closed and one open, a card waiting
+/// since no line), the fixture board's day under way and its day before, a day with nothing in it,
+/// and strings and numbers serde escapes or writes as `null`.
+#[test]
+fn a_day_file_s_text_is_the_one_serde_writes() {
+    let fixture: ReportDay =
+        serde_json::from_str(include_str!("../../../symphony-api/fixtures/report-day.json"))
+            .unwrap();
+    let decisions = fixture.decisions.as_ref().unwrap();
+    assert!(
+        !decisions.open.is_empty() && !decisions.withdrawn.is_empty() && fixture.git.is_some(),
+        "the fixture fills the lists the day file can hold"
+    );
+    let mut odd = day("p \"q\" \\ \n\t\u{1}é☃", D, at(2.0), at(2.0), &board());
+    odd.read = f64::NAN;
+    odd.hours[0].top.task_hours.review = f64::INFINITY;
+    odd.hours[1].waits.changes_to_review.push(Wait {
+        slug: "sim/\u{7f}\u{2028}".into(),
+        seconds: -0.0,
+    });
+    let days = [
+        fixture,
+        day("sim", D, at(13.5), at(13.5), &board()),
+        day("sim", D - DAY, D, D, &board()),
+        ReportDay::default(),
+        odd,
+    ];
+    for day in &days {
+        let ours = String::from_utf8(json::day(day)).unwrap();
+        let serde = serde_json::to_string(day).unwrap();
+        assert_eq!(ours, serde, "{}", day.project);
+    }
+}
+
 #[test]
 fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
     let folder = std::env::temp_dir().join(format!("symphony-reports-{}", std::process::id()));
@@ -579,5 +628,10 @@ fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
         closed(&folder, "1999-01-02"),
         "only `closed` is read, whatever else the file holds"
     );
+    for (n, text) in [r#"{"closed":"yes"}"#, r#"{"hours":[]}"#, "[true]"].iter().enumerate() {
+        let day = format!("1999-02-0{}", n + 1);
+        std::fs::write(folder.join(format!("{day}.json")), text).unwrap();
+        assert!(!closed(&folder, &day), "{text}: no `closed` that is true");
+    }
     std::fs::remove_dir_all(&folder).unwrap();
 }

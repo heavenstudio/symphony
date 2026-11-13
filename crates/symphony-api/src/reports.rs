@@ -14,7 +14,6 @@
 //! reader built before it reads a newer file and one built after it an older file.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// [`ReportDay::schema`] as written now.
 pub const REPORT_SCHEMA: u32 = 1;
@@ -99,26 +98,95 @@ pub struct ReportHour {
 
 /// How tasks moved in one hour. A status no task held, took or spent time in is left out of its
 /// map.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Flow {
     /// How many tasks held each open status at the hour's end, or at [`ReportDay::until`] for the
     /// hour under way: backlog, concept, design, ready, `in_progress`, review, blocked.
     #[serde(default)]
-    pub held: BTreeMap<String, u32>,
+    pub held: ByStatus<u32>,
     /// How many times a task took each status in the hour, done and cancelled included: a task
     /// made counts once in the status it was made in, a claim of ready work once in `in_progress`,
     /// and a task sent back from review takes `in_progress` again.
     #[serde(default)]
-    pub entered: BTreeMap<String, u32>,
+    pub entered: ByStatus<u32>,
     /// The task-hours spent in each open status in the hour.
     #[serde(default)]
-    pub task_hours: BTreeMap<String, f64>,
+    pub task_hours: ByStatus<f64>,
     /// The part of those task-hours spent before a task's first claim: unclaimed.
     #[serde(default)]
     pub unclaimed_hours: f64,
     /// Moves from review back to in progress, a `changes` verdict's included.
     #[serde(default)]
     pub bounces: u32,
+}
+
+/// A figure for each status a task can take, written as a map of the statuses whose figure is not
+/// zero, by name. A field each rather than a map of names: a map costs the server's binary its own
+/// tree code for each kind of figure (docs/CHECKS.md, size budgets), and the board has these nine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(
+    default,
+    bound(
+        serialize = "T: Serialize + Default + PartialEq",
+        deserialize = "T: Deserialize<'de> + Default"
+    )
+)]
+pub struct ByStatus<T> {
+    #[serde(skip_serializing_if = "is_zero")]
+    pub backlog: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub blocked: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub cancelled: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub concept: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub design: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub done: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub in_progress: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ready: T,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub review: T,
+}
+
+impl<T> ByStatus<T> {
+    /// The figure of `status`; none for a name that is no status.
+    pub fn get_mut(&mut self, status: &str) -> Option<&mut T> {
+        Some(match status {
+            "backlog" => &mut self.backlog,
+            "blocked" => &mut self.blocked,
+            "cancelled" => &mut self.cancelled,
+            "concept" => &mut self.concept,
+            "design" => &mut self.design,
+            "done" => &mut self.done,
+            "in_progress" => &mut self.in_progress,
+            "ready" => &mut self.ready,
+            "review" => &mut self.review,
+            _ => return None,
+        })
+    }
+
+    /// Each status's figure, by name, as the file writes them.
+    pub fn each(&self) -> [(&'static str, &T); 9] {
+        [
+            ("backlog", &self.backlog),
+            ("blocked", &self.blocked),
+            ("cancelled", &self.cancelled),
+            ("concept", &self.concept),
+            ("design", &self.design),
+            ("done", &self.done),
+            ("in_progress", &self.in_progress),
+            ("ready", &self.ready),
+            ("review", &self.review),
+        ]
+    }
+}
+
+fn is_zero<T: Default + PartialEq>(figure: &T) -> bool {
+    *figure == T::default()
 }
 
 /// The tasks over a whole day: what does not add up across hours.

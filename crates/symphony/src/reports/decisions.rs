@@ -222,20 +222,29 @@ pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
     let until = day.until;
     for hour in &mut day.hours {
         let to = (hour.start + crate::reports::HOUR).min(until);
-        let count = |out: Out| {
-            let n = answers
-                .iter()
-                .filter(|(how, a)| *how == out && hour.start <= a.at && a.at < to)
-                .count();
-            u32::try_from(n).unwrap_or(u32::MAX)
-        };
         hour.decisions = Some(DecisionCounts {
             open: u32::try_from(histories.iter().filter(|h| h.waiting(to)).count())
                 .unwrap_or(u32::MAX),
-            answered: count(Out::Answered),
-            auto_approved: count(Out::AutoApproved),
-            withdrawn: count(Out::Withdrawn),
+            ..DecisionCounts::default()
         });
+    }
+    // Each answer in the day, in order, to its hour's count and the day's list of its kind.
+    let mut lists = Decisions::default();
+    for (out, answer) in answers {
+        if answer.at < day.start || answer.at >= until {
+            continue;
+        }
+        let counts = symphony_board::reports::hour_at(&mut day.hours, until, answer.at)
+            .and_then(|hour| hour.decisions.as_mut());
+        let (count, list) = match out {
+            Out::Answered => (counts.map(|c| &mut c.answered), &mut lists.answered),
+            Out::AutoApproved => (counts.map(|c| &mut c.auto_approved), &mut lists.auto_approved),
+            Out::Withdrawn => (counts.map(|c| &mut c.withdrawn), &mut lists.withdrawn),
+        };
+        if let Some(count) = count {
+            *count += 1;
+        }
+        list.push(answer);
     }
     let mut open: Vec<OpenCard> = Vec::new();
     for history in histories.iter().filter(|history| history.waiting(until)) {
@@ -250,19 +259,8 @@ pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
             .partition_point(|kept| (kept.since.unwrap_or(f64::NEG_INFINITY), &kept.slug) <= key);
         open.insert(at, card);
     }
-    let in_day = |out: Out| -> Vec<Answer> {
-        answers
-            .iter()
-            .filter(|(how, a)| *how == out && day.start <= a.at && a.at < until)
-            .map(|(_, a)| a.clone())
-            .collect()
-    };
-    day.decisions = Some(Decisions {
-        open,
-        answered: in_day(Out::Answered),
-        auto_approved: in_day(Out::AutoApproved),
-        withdrawn: in_day(Out::Withdrawn),
-    });
+    lists.open = open;
+    day.decisions = Some(lists);
 }
 
 #[cfg(test)]

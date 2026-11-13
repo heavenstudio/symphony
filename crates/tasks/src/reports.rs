@@ -14,10 +14,9 @@
 use crate::cli::Env;
 use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages};
 use crate::{ReportRead, ReportTask, red};
-use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
-    DayFlow, Flow, Red, ReportDay, ReportHour, Round, Sitting, Spread, Wait, Waits,
+    ByStatus, DayFlow, Flow, Red, ReportDay, ReportHour, Round, Sitting, Spread, Wait, Waits,
 };
 
 pub const HOUR: f64 = 3_600.0;
@@ -43,15 +42,6 @@ pub fn day_start(at: f64) -> f64 {
 pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -> ReportDay {
     let until = until.clamp(start, start + DAY);
     let replayed: Vec<Replayed> = read.tasks.iter().map(|task| replay(task, now)).collect();
-    let mut children: HashMap<&str, Vec<&Replayed>> = HashMap::new();
-    for task in &replayed {
-        if let Some(parent) = &task.task.parent
-            && task.task.instruction
-        {
-            children.entry(parent.as_str()).or_default().push(task);
-        }
-    }
-    let events = Events::of(&replayed, &children);
     let mut hours = Vec::new();
     // Each hour of the day up to the one `until` falls in; the first always, even when `until` is
     // the day's first second.
@@ -61,23 +51,44 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
             break;
         }
         let to = (from + HOUR).min(until);
-        let within = |at: f64| from <= at && at < to;
-        let reds = || replayed.iter().filter(|r| r.series.is_some());
         hours.push(ReportHour {
             start: from,
             top: flow(&replayed, true, from, to, now),
             subtasks: flow(&replayed, false, from, to, now),
-            landed: count(events.landed.iter().filter(|at| within(**at))),
-            reds_filed: count(reds().filter(|r| within(r.task.created))),
-            reds_closed: count(
-                reds()
-                    .flat_map(|r| &r.stages.segments)
-                    .filter(|s| CLOSED.contains(&s.status.as_str()) && within(s.from)),
-            ),
-            waits: events.waits_in(&within),
-            decisions: None,
-            git: None,
+            ..ReportHour::default()
         });
+    }
+    // What happened once, each to the hour it happened in.
+    let events = Events::of(&replayed);
+    for at in events.landed {
+        if let Some(hour) = hour_at(&mut hours, until, at) {
+            hour.landed += 1;
+        }
+    }
+    for red in replayed.iter().filter(|r| r.series.is_some()) {
+        if let Some(hour) = hour_at(&mut hours, until, red.task.created) {
+            hour.reds_filed += 1;
+        }
+        for segment in &red.stages.segments {
+            if CLOSED.contains(&segment.status.as_str())
+                && let Some(hour) = hour_at(&mut hours, until, segment.from)
+            {
+                hour.reds_closed += 1;
+            }
+        }
+    }
+    let waits: [(Vec<(f64, Wait)>, fn(&mut Waits) -> &mut Vec<Wait>); 4] = [
+        (events.approved_to_landed, |w| &mut w.approved_to_landed),
+        (events.review_to_reviewer, |w| &mut w.review_to_reviewer),
+        (events.changes_to_resumed, |w| &mut w.changes_to_resumed),
+        (events.changes_to_review, |w| &mut w.changes_to_review),
+    ];
+    for (all, kind) in waits {
+        for (at, wait) in all {
+            if let Some(hour) = hour_at(&mut hours, until, at) {
+                kind(&mut hour.waits).push(wait);
+            }
+        }
     }
     // By their number, kept in order as found.
     let mut rounds: Vec<Round> = Vec::new();
@@ -121,6 +132,15 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
 
 fn count<T>(items: impl Iterator<Item = T>) -> u32 {
     u32::try_from(items.count()).unwrap_or(u32::MAX)
+}
+
+/// The hour of `hours`, a day's from its first, that `at` falls in, when it falls before `until`;
+/// none for a time before the day or from `until` on.
+pub fn hour_at(hours: &mut [ReportHour], until: f64, at: f64) -> Option<&mut ReportHour> {
+    if at >= until {
+        return None;
+    }
+    hours.iter_mut().rev().find(|hour| hour.start <= at)
 }
 
 /// A task replayed for the report.
@@ -213,7 +233,10 @@ struct Events {
 }
 
 impl Events {
-    fn of(replayed: &[Replayed], children: &HashMap<&str, Vec<&Replayed>>) -> Events {
+    /// Read from `replayed`, each task's review subtasks found among them by a scan: a few hundred
+    /// tasks an hour, where a map would cost the server's binary its own (docs/CHECKS.md, size
+    /// budgets).
+    fn of(replayed: &[Replayed]) -> Events {
         let mut events = Events::default();
         for task in replayed {
             let slug = &task.task.slug;
@@ -267,7 +290,11 @@ impl Events {
                     }
                 }
             }
-            let reviews = children.get(slug.as_str());
+            let reviews = || {
+                replayed.iter().filter(|child| {
+                    child.task.instruction && child.task.parent.as_deref() == Some(slug.as_str())
+                })
+            };
             for review in task.review_segments() {
                 let (from, to) = (review.from, review.to.unwrap_or(f64::INFINITY));
                 let held = task.holds.iter().any(|hold| {
@@ -281,7 +308,7 @@ impl Events {
                         .iter()
                         .filter(|hold| hold.role == "reviewer")
                         .map(|hold| hold.from);
-                    let claimed = reviews.into_iter().flatten().flat_map(|child| {
+                    let claimed = reviews().flat_map(|child| {
                         child
                             .holds
                             .iter()
@@ -300,26 +327,12 @@ impl Events {
         }
         events
     }
-
-    /// The waits that ended at a time `within` says.
-    fn waits_in(&self, within: &dyn Fn(f64) -> bool) -> Waits {
-        let pick = |all: &[(f64, Wait)]| -> Vec<Wait> {
-            all.iter()
-                .filter(|(at, _)| within(*at))
-                .map(|(_, wait)| wait.clone())
-                .collect()
-        };
-        Waits {
-            approved_to_landed: pick(&self.approved_to_landed),
-            review_to_reviewer: pick(&self.review_to_reviewer),
-            changes_to_resumed: pick(&self.changes_to_resumed),
-            changes_to_review: pick(&self.changes_to_review),
-        }
-    }
 }
 
-fn add(map: &mut BTreeMap<String, u32>, status: &str) {
-    *map.entry(status.into()).or_default() += 1;
+fn add(counts: &mut ByStatus<u32>, status: &str) {
+    if let Some(count) = counts.get_mut(status) {
+        *count += 1;
+    }
 }
 
 /// The time `from`..`to` spends in `start`..`end`.
@@ -344,8 +357,10 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
             }
             if !CLOSED.contains(&segment.status.as_str()) {
                 let spent = overlap(segment.from, segment.to.unwrap_or(now), from, to);
-                if spent > 0.0 {
-                    *flow.task_hours.entry(segment.status.clone()).or_default() += spent / HOUR;
+                if spent > 0.0
+                    && let Some(hours) = flow.task_hours.get_mut(&segment.status)
+                {
+                    *hours += spent / HOUR;
                 }
             }
         }
@@ -464,9 +479,8 @@ pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
         std::process::id(),
         WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    // Compact: indenting costs the server's binary a serializer of its own for each part of the
-    // file, and doubles the file (docs/CHECKS.md, size budgets); `jq .` shows one indented.
-    let mut text = serde_json::to_vec(day).map_err(|e| e.to_string())?;
+    // Compact, `jq .` shows one indented; written by hand, as serde writes it ([`json`]).
+    let mut text = json::day(day);
     text.push(b'\n');
     std::fs::write(&partial, text)
         .and_then(|()| std::fs::rename(&partial, &path))
@@ -477,17 +491,14 @@ pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
 }
 
 /// Whether the day file of `day` (`YYYY-MM-DD`) in `folder` is final ([`ReportDay::closed`]): false
-/// when there is none or it does not read. Its other figures are not read.
+/// when there is none or it does not read. It is read as any JSON is, for its one field: a reader
+/// of the day file's shape would cost the server's binary its own (docs/CHECKS.md, size budgets).
 pub fn closed(folder: &Path, day: &str) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Closed {
-        #[serde(default)]
-        closed: bool,
-    }
     std::fs::read(folder.join(symphony_api::report_file(day)))
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Closed>(&bytes).ok())
-        .is_some_and(|file| file.closed)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|file| file.get("closed")?.as_bool())
+        .unwrap_or(false)
 }
 
 /// The day file of `day` (`YYYY-MM-DD`) in `folder`; none when there is none.
@@ -501,6 +512,8 @@ pub fn read(folder: &Path, day: &str) -> Result<Option<ReportDay>, String> {
         Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
+
+mod json;
 
 #[cfg(test)]
 mod tests;

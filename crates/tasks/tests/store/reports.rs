@@ -146,7 +146,11 @@ fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits
     assert_eq!((total(|h| h.reds_filed), total(|h| h.reds_closed)), (1, 1));
     assert_eq!(
         day.hours[9].top.held,
-        [("ready".to_string(), 1), ("review".to_string(), 1)].into(),
+        symphony_api::reports::ByStatus {
+            ready: 1,
+            review: 1,
+            ..Default::default()
+        },
         "sim/old, made the day before, and sim/b"
     );
     let changes: u32 = day.rounds.iter().map(|r| r.changes).sum();

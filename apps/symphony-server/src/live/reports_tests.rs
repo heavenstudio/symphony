@@ -136,7 +136,11 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     assert_eq!(total(&first, |h| h.landed), 1);
     assert_eq!(
         first.hours[9].top.held,
-        [("ready".to_string(), 1), ("review".to_string(), 1)].into()
+        symphony_api::reports::ByStatus {
+            ready: 1,
+            review: 1,
+            ..Default::default()
+        }
     );
     let decisions = |hour: usize| {
         let counts = first.hours[hour].decisions.unwrap();
