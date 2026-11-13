@@ -1,11 +1,12 @@
 //! The roll-up's one read of a real board (`Store::report_records`): every task open now however
-//! old, every one written since the window opened and none closed before it, top-level and
-//! subtasks, each with its whole thread (a post by its sender and time alone), the red mark, and
-//! the sessions that registered since; one request, and no write. Then the board's figures of the
-//! day file from that read, on the scratch board the store itself wrote through its commands
+//! old, every one written since the window opened or with a line since then, and none closed before
+//! it with nothing said since, top-level and subtasks, each with its whole thread (a post by its
+//! sender and time alone) and the red mark; one request, and no write. Then the board's figures of
+//! the day file from that read, on the scratch board the store itself wrote through its commands
 //! ([`crate::common::report_board`]).
 
-use crate::common::{NOW, report_board as board};
+use crate::common::{Fixture, NOW, report_board as board};
+use symphony_board::NewTask;
 use symphony_board::board_health::queries_of;
 use symphony_board::reports::{DAY, HOUR, day, day_start};
 use symphony_board::sweep::trigger::now;
@@ -72,14 +73,63 @@ fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_noth
         16,
         "a verdict is cut to its first words"
     );
+}
+
+#[test]
+fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_counted() {
+    let f = Fixture::empty();
+    f.at_hour(-3.0);
+    let orch = f.session("orchestrator");
+    let exe = f.session("worker");
+    let rev = f.session("reviewer");
+    f.task_with(NewTask::new("sim/late", "Work", &orch));
+    f.task_with(NewTask::new("sim/before", "Work", &orch));
+    f.store
+        .take_role("sim/late", &orch, "orchestrator")
+        .unwrap();
+    f.store.claim("sim/late", &exe).unwrap();
+    f.store.claim("sim/before", &exe).unwrap();
+    f.store.move_to("sim/before", "cancelled", "owner").unwrap();
+    f.at_hour(-1.0);
+    f.store.move_to("sim/late", "review", &exe).unwrap();
+    f.store.take_role("sim/late", &rev, "reviewer").unwrap();
+    f.at_hour(-0.25);
+    f.store
+        .verdict("sim/late", &rev, "approve", "fine")
+        .unwrap();
+    f.at_hour(0.5);
+    f.store
+        .landed(
+            "sim/late",
+            &orch,
+            "landed sim/late on main at 3e0c661",
+            false,
+            &["done"],
+        )
+        .unwrap();
+    f.at_hour(1.5);
+    let read = f.store.report_records(midnight()).unwrap();
+    let slugs: Vec<&str> = read.tasks.iter().map(|t| t.slug.as_str()).collect();
     assert_eq!(
-        read.sessions
-            .iter()
-            .map(|s| (s.kind.as_str(), s.model.as_str()))
-            .collect::<Vec<_>>(),
-        [("worker", "opus")],
-        "only the session that registered since midnight"
+        slugs,
+        ["sim/late"],
+        "approved at 23:45 and landed at 00:30, its task not written since: read by its line; the \
+         task closed before midnight with nothing said since is not"
     );
+    let late = &read.tasks[0];
+    assert!(
+        late.updated < midnight(),
+        "the landing left the task as it was"
+    );
+    let day = day("sim", midnight(), f.now(), f.now(), &read);
+    assert_eq!(day.hours[0].landed, 1);
+    let waited: Vec<(&str, f64)> = day.hours[0]
+        .waits
+        .approved_to_landed
+        .iter()
+        .map(|w| (w.slug.as_str(), w.seconds / HOUR))
+        .collect();
+    assert_eq!(waited, [("sim/late", 0.75)]);
 }
 
 #[test]

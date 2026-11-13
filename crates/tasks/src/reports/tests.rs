@@ -2,7 +2,6 @@
 //! counted here from the lines, hour by hour.
 
 use super::*;
-use crate::ReportSession;
 
 /// A UTC midnight: the day every case reads.
 const D: f64 = 1_799_971_200.0;
@@ -77,14 +76,6 @@ fn task(slug: &str, created: f64, status: &str, updated: f64, thread: Thread) ->
     }
 }
 
-fn session(kind: &str, model: &str, hours: f64) -> ReportSession {
-    ReportSession {
-        kind: kind.into(),
-        model: model.into(),
-        connected: at(hours),
-    }
-}
-
 fn counts(pairs: &[(&str, u32)]) -> BTreeMap<String, u32> {
     pairs.iter().map(|(s, n)| ((*s).into(), *n)).collect()
 }
@@ -96,8 +87,8 @@ fn waits(all: &[Wait]) -> Vec<(&str, f64)> {
 }
 
 /// The fixture the brief asks for: tasks across statuses, one bounced twice, a red filed and
-/// closed, two `changes` verdicts, open tasks made before the window, a review subtask and the
-/// sessions of the day, read 13.5 hours after midnight.
+/// closed, two `changes` verdicts, open tasks made before the window and a review subtask, read
+/// 13.5 hours after midnight.
 fn board() -> ReportRead {
     let (orch, exe, rev) = ("orch", "exe", "rev");
     let old = task(
@@ -179,12 +170,6 @@ fn board() -> ReportRead {
     );
     ReportRead {
         tasks: vec![old, nightly, a, b, c, main_red, review],
-        sessions: vec![
-            session("worker", "opus", 1.0),
-            session("orchestrator", "opus", 0.5),
-            session("worker", "opus", 12.0),
-            session("reviewer", "opus", -1.0),
-        ],
     }
 }
 
@@ -195,6 +180,11 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
     assert_eq!((day.start, day.until, day.read), (D, at(13.5), at(13.5)));
     assert!(!day.closed);
     assert_eq!(day.hours.len(), 14, "midnight to the hour under way");
+    assert_eq!(
+        day.hours.iter().map(|h| h.start).collect::<Vec<_>>(),
+        (0..14).map(|n| at(f64::from(n))).collect::<Vec<_>>(),
+        "each hour by its first second"
+    );
     let hour = |n: usize| &day.hours[n];
     assert_eq!(hour(0).top.held, counts(&[("ready", 2)]));
     assert_eq!(
@@ -305,21 +295,6 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
             },
         ]
     );
-    assert_eq!(
-        day.sessions,
-        [
-            Started {
-                kind: "worker".into(),
-                model: "opus".into(),
-                count: 2
-            },
-            Started {
-                kind: "orchestrator".into(),
-                model: "opus".into(),
-                count: 1
-            },
-        ]
-    );
     assert_eq!((day.decisions.clone(), day.git.clone()), (None, None));
     assert!(
         day.hours
@@ -342,7 +317,7 @@ fn a_day_read_after_it_ended_is_closed_with_all_its_hours_and_nothing_after_it()
         "the nightly red made in the day; nothing of the next day"
     );
     assert_eq!(day.reds.len(), 1, "the main red was filed the next day");
-    assert!(day.rounds.is_empty() && day.sessions.len() == 1);
+    assert!(day.rounds.is_empty());
     assert_eq!(day.top.lead, None);
 }
 
@@ -368,7 +343,6 @@ fn a_landing_with_no_approve_before_it_is_a_landing_and_no_wait() {
                 .claim(1.0, "e")
                 .verdict(2.0, "o", "landed sim/x on m"),
         )],
-        sessions: Vec::new(),
     };
     let day = day("sim", D, at(3.0), at(3.0), &read);
     assert_eq!(day.hours[2].landed, 1);
@@ -394,7 +368,6 @@ fn an_executor_that_left_resumes_by_the_next_claim_and_its_release_is_not_resumi
                 .left(3.0, "e")
                 .claim(5.0, "e2"),
         )],
-        sessions: Vec::new(),
     };
     let day = day("sim", D, at(6.0), at(6.0), &read);
     assert_eq!(
@@ -427,7 +400,6 @@ fn a_review_with_no_reviewer_by_its_end_is_no_wait_and_a_reopened_task_enters_re
                 .moved(3.0, "o", "done", "review")
                 .joined(4.0, "r"),
         )],
-        sessions: Vec::new(),
     };
     let day = day("sim", D, at(5.0), at(5.0), &read);
     assert!(day.hours[1].waits.review_to_reviewer.is_empty());
@@ -472,13 +444,101 @@ fn the_folder_is_the_one_named_else_beside_the_board_and_none_for_a_named_server
 }
 
 #[test]
+fn a_task_approved_the_day_before_and_landed_after_midnight_lands_today_with_its_wait() {
+    let read = ReportRead {
+        tasks: vec![task(
+            "sim/late",
+            -5.0,
+            "done",
+            -0.25,
+            Thread::default()
+                .made(-5.0, "o")
+                .claim(-4.0, "e")
+                .moved(-1.0, "e", "in_progress", "review")
+                .joined(-0.5, "r")
+                .verdict(-0.25, "r", "approve: fine")
+                .verdict(0.5, "o", "landed sim/late on m"),
+        )],
+    };
+    let today = day("sim", D, at(1.5), at(1.5), &read);
+    assert_eq!(today.hours[0].landed, 1);
+    assert_eq!(
+        waits(&today.hours[0].waits.approved_to_landed),
+        [("sim/late", 0.75)],
+        "from the approve at 23:45 to the landing at 00:30"
+    );
+    assert!(today.rounds.is_empty(), "its verdict was the day before");
+    let yesterday = day("sim", D - DAY, D + 1.5 * H, D + 1.5 * H, &read);
+    assert_eq!(yesterday.hours.iter().map(|h| h.landed).sum::<u32>(), 0);
+    assert_eq!(yesterday.rounds.len(), 1);
+}
+
+#[test]
+fn the_longest_in_their_status_are_the_ten_oldest_by_since_then_slug_whatever_the_read_order() {
+    // Twelve ready tasks, read in an order that is neither their age nor their names'.
+    let made = [
+        5.0, -3.0, 2.0, -3.0, 7.0, 1.0, -1.0, 4.0, 0.5, 6.0, 3.0, -2.0,
+    ];
+    let tasks = made
+        .iter()
+        .enumerate()
+        .map(|(i, hours)| {
+            let slug = format!("sim/t{:02}", made.len() - 1 - i);
+            task(
+                &slug,
+                *hours,
+                "ready",
+                *hours,
+                Thread::default().made(*hours, "o"),
+            )
+        })
+        .collect();
+    let read = ReportRead { tasks };
+    let day = day("sim", D, at(9.0), at(9.0), &read);
+    let longest: Vec<(&str, f64)> = day
+        .top
+        .longest
+        .iter()
+        .map(|s| (s.slug.as_str(), (s.since - D) / H))
+        .collect();
+    assert_eq!(
+        longest,
+        [
+            ("sim/t08", -3.0),
+            ("sim/t10", -3.0),
+            ("sim/t00", -2.0),
+            ("sim/t05", -1.0),
+            ("sim/t03", 0.5),
+            ("sim/t06", 1.0),
+            ("sim/t09", 2.0),
+            ("sim/t01", 3.0),
+            ("sim/t04", 4.0),
+            ("sim/t11", 5.0),
+        ],
+        "two made at once by their slugs; the two youngest left out"
+    );
+}
+
+#[test]
 fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
-    let folder = std::env::temp_dir().join(format!("sf-reports-{}", std::process::id()));
+    let folder = std::env::temp_dir().join(format!("symphony-reports-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     let written = day("sim", D, at(13.5), at(13.5), &board());
     assert_eq!(read(&folder, &written.day), Ok(None));
+    assert!(!closed(&folder, &written.day), "no file is no final file");
     write(&folder, &written).unwrap();
     assert_eq!(read(&folder, &written.day), Ok(Some(written.clone())));
+    let text = std::fs::read_to_string(folder.join(format!("{}.json", written.day))).unwrap();
+    assert_eq!(
+        text.find('\n'),
+        Some(text.len() - 1),
+        "compact JSON on one line, ended by a newline"
+    );
+    assert!(!closed(&folder, &written.day), "a day under way");
+    let ended = day("sim", D - DAY, D, D, &board());
+    write(&folder, &ended).unwrap();
+    assert!(closed(&folder, &ended.day), "a day read after its end");
+    std::fs::remove_file(folder.join(format!("{}.json", ended.day))).unwrap();
     let names = || -> Vec<String> {
         std::fs::read_dir(&folder)
             .unwrap()
@@ -508,6 +568,16 @@ fn a_day_file_is_written_whole_read_back_and_none_where_there_is_none() {
         read(&folder, "1999-01-01")
             .unwrap_err()
             .contains("1999-01-01.json")
+    );
+    assert!(!closed(&folder, "1999-01-01"), "a file that does not read");
+    std::fs::write(
+        folder.join("1999-01-02.json"),
+        r#"{"closed":true,"later":[1]}"#,
+    )
+    .unwrap();
+    assert!(
+        closed(&folder, "1999-01-02"),
+        "only `closed` is read, whatever else the file holds"
     );
     std::fs::remove_dir_all(&folder).unwrap();
 }

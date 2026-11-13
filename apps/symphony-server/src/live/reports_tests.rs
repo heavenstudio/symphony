@@ -3,15 +3,16 @@
 //! yesterday's final file and today's, with the board's, the cards' and git's figures, a tick later
 //! in the same hour writes nothing, an hour later only today's file changes, a tick that cannot
 //! reach the board leaves both byte for byte, after midnight the day that ended is written once
-//! more, final, and never again, and no tick writes to the board. A private server keeps no day
-//! files.
+//! more, final, and never again, and no tick writes to the board. The tick hands the roll-up to a
+//! thread of its own: an hour that comes while one runs waits for it, and a stop waits on none. A
+//! private server keeps no day files. A failure is said once while it lasts.
 
 use super::Hub;
-use super::reports::Rollup;
+use super::reports::{Rollup, say};
 use crate::testing::board::{Fixture, NOW, report_board};
 use crate::testing::{Tree, repository};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use symphony_api::{ReportDay, ReportHour};
 use symphony_board::board_health::queries_of;
 use symphony_board::reports::{DAY, HOUR, day_start};
@@ -34,6 +35,14 @@ fn shared(root: &Path, folder: &Path, clock: &Clock) -> Hub {
     let clock = clock.clone();
     hub.clock = Box::new(move || *clock.0.lock().unwrap());
     hub
+}
+
+/// The hub's tick with the board `board`, then the roll-up it started, if any, waited for.
+fn tick(hub: &Hub, board: Option<&symphony_board::Store>) {
+    hub.reports_tick(board);
+    if let Some(rollup) = hub.reports.lock().unwrap().as_mut() {
+        rollup.settle();
+    }
 }
 
 /// The bytes of the day file of the day from `start`; none when there is none.
@@ -117,7 +126,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     let log = queries_of(client.addr(), "sf", client.database());
     let (requests, writes) = log.report(now());
 
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     let first = day(&folder, today);
     assert!(!first.closed && first.until == ten && first.project == "main");
     assert_eq!(first.hours.len(), 10, "10:00: the day's first ten hours");
@@ -131,11 +140,16 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     );
     let decisions = |hour: usize| {
         let counts = first.hours[hour].decisions.unwrap();
-        (counts.open, counts.answered, counts.unasked)
+        (
+            counts.open,
+            counts.answered,
+            counts.auto_approved,
+            counts.withdrawn,
+        )
     };
     assert_eq!(
         [decisions(0), decisions(1), decisions(3)],
-        [(1, 0, 0), (2, 0, 0), (1, 1, 0)],
+        [(1, 0, 0, 0), (2, 0, 0, 0), (1, 1, 0, 0)],
         "the repository's card at every hour, `pick` from 01:00 until the owner's line at 03:00"
     );
     let git = |hour: usize| {
@@ -144,15 +158,15 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     };
     assert_eq!(
         [git(2), git(3), git(4)],
-        [(1, 0, 5), (1, 0, 0), (0, 1, 5)],
-        "the commit on main at 02:00, the branch's at 03:00, its merge at 04:30"
+        [(1, 0, 5), (0, 0, 0), (1, 1, 5)],
+        "the commit on main at 02:00; the branch's, made at 03:00, with its merge at 04:30"
     );
     let ended = day(&folder, yesterday);
     assert!(ended.closed && ended.until == today && ended.hours.len() == 24);
     let (yesterday_bytes, today_bytes) = (bytes(&folder, yesterday), bytes(&folder, today));
 
     clock.set(ten + 59.0 * 60.0);
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     assert_eq!(
         bytes(&folder, today),
         today_bytes,
@@ -160,7 +174,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     );
 
     clock.set(ten + HOUR + 5.0);
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     let later = day(&folder, today);
     assert_eq!((later.until, later.hours.len()), (ten + HOUR + 5.0, 12));
     assert_eq!(
@@ -171,7 +185,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     let today_bytes = bytes(&folder, today);
 
     clock.set(ten + 2.0 * HOUR);
-    hub.reports_tick(None);
+    tick(&hub, None);
     assert_eq!(
         (bytes(&folder, yesterday), bytes(&folder, today)),
         (yesterday_bytes.clone(), today_bytes),
@@ -180,7 +194,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
 
     let tomorrow = today + DAY;
     clock.set(tomorrow + 30.0);
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     let finished = day(&folder, today);
     assert!(finished.closed && finished.until == tomorrow && finished.hours.len() == 24);
     assert!(!day(&folder, tomorrow).closed);
@@ -192,7 +206,7 @@ fn the_roll_up_writes_today_each_hour_makes_yesterday_final_once_and_survives_a_
     let finished_bytes = bytes(&folder, today);
 
     clock.set(tomorrow + HOUR);
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     assert_eq!(
         bytes(&folder, today),
         finished_bytes,
@@ -222,7 +236,7 @@ fn a_roll_up_git_cannot_read_still_writes_the_board_s_figures_and_leaves_git_s_o
     let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
     let hub = shared(&root, &folder, &clock);
 
-    hub.reports_tick(Some(&fixture.store));
+    tick(&hub, Some(&fixture.store));
     let today = day(&folder, midnight());
     assert_eq!(
         today.git, None,
@@ -268,11 +282,98 @@ fn a_private_server_keeps_no_day_files_and_the_shared_one_keeps_them_in_the_comm
         .unwrap()
         .as_ref()
         .map(|rollup| rollup.folder.clone());
+    // A roll-up that has not ended, as one stuck in git would be: the stop waits on none of it.
+    let (release, held) = mpsc::channel::<()>();
+    let stuck = std::thread::spawn(move || {
+        let _ = held.recv();
+    });
+    shared.reports.lock().unwrap().as_mut().unwrap().hold(stuck);
     shared.stop();
+    release.send(()).unwrap();
+    shared.reports.lock().unwrap().as_mut().unwrap().settle();
     let folder = folder.unwrap();
     assert_eq!(
         folder,
         common.join("reports"),
         "in the one folder of Symphony's state in the git common dir"
     );
+}
+
+#[test]
+fn an_hour_that_comes_while_a_roll_up_runs_waits_for_it_and_then_rolls_up() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("reports");
+    let fixture = report_board();
+    let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
+    let hub = shared(&root, &folder, &clock);
+    let client = fixture.store.client();
+    let log = queries_of(client.addr(), "sf", client.database());
+    let (requests, _) = log.report(now());
+    let (release, held) = mpsc::channel::<()>();
+    let running = std::thread::spawn(move || {
+        let _ = held.recv();
+    });
+    hub.reports.lock().unwrap().as_mut().unwrap().hold(running);
+
+    hub.reports_tick(Some(&fixture.store));
+    hub.reports_tick(Some(&fixture.store));
+    assert!(
+        !folder.exists(),
+        "no roll-up starts while the last one runs"
+    );
+    let (waiting, _) = log.report(now());
+    assert_eq!(waiting.count, requests.count, "nor reads the board");
+
+    release.send(()).unwrap();
+    hub.reports.lock().unwrap().as_mut().unwrap().settle();
+    tick(&hub, Some(&fixture.store));
+    assert!(
+        bytes(&folder, midnight()).is_some(),
+        "the hour's roll-up, once the last one ended"
+    );
+}
+
+#[test]
+fn a_day_file_that_cannot_be_written_is_said_and_the_next_hour_writes_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("reports");
+    std::fs::write(&folder, "a file where the folder goes").unwrap();
+    let fixture = report_board();
+    let clock = Clock(Arc::new(Mutex::new(midnight() + 10.0 * HOUR)));
+    let hub = shared(&root, &folder, &clock);
+    let said = || hub.reports.lock().unwrap().as_ref().unwrap().said();
+
+    tick(&hub, Some(&fixture.store));
+    let why = said().unwrap();
+    assert!(
+        why.starts_with("a day file could not be written (")
+            && why.ends_with("); the next hour tries again"),
+        "{why}"
+    );
+    std::fs::remove_file(&folder).unwrap();
+    tick(&hub, Some(&fixture.store));
+    assert_eq!(
+        bytes(&folder, midnight()),
+        None,
+        "not again in the same hour"
+    );
+    clock.set(midnight() + 11.0 * HOUR);
+    tick(&hub, Some(&fixture.store));
+    assert!(
+        bytes(&folder, midnight()).is_some(),
+        "the next hour writes it"
+    );
+    assert_eq!(said(), None, "right again");
+}
+
+#[test]
+fn a_failure_is_said_once_while_it_lasts_and_again_once_it_comes_back() {
+    let said = Mutex::new(None);
+    assert!(say(&said, Some("the board could not be reached".into())));
+    assert!(!say(&said, Some("the board could not be reached".into())));
+    assert!(say(&said, Some("git: no repository".into())), "another");
+    assert!(!say(&said, None), "right again: nothing to say");
+    assert!(say(&said, Some("git: no repository".into())), "back");
 }

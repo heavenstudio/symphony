@@ -2,15 +2,16 @@
 //! what reached its default branch, hour by hour. The machine's one server rolls each project it
 //! serves up once an hour, and once after midnight for the day that ended, into one [`ReportDay`]
 //! per UTC day ([`report_file`]), in `symphony/reports/` in the project's git common dir; the
-//! Reports page reads them (docs/analysis/reports-and-monitoring.md, *Pipeline and defects*).
+//! Reports page reads them (docs/analysis/reports-and-monitoring.md, *The day files*).
 //!
 //! A day file under way is written again each hour with what its day held up to then; one whose
 //! day had ended when it was read is [`ReportDay::closed`] and never written again. Each figure
 //! that adds up is kept per hour ([`ReportHour`]), so a page sums the hours of any span (a day, a
 //! week, the hours of a local day); a spread, a list of tasks or cards, and what holds at the end
 //! of the day are kept once per day. Every time is seconds since the epoch; every hour is a UTC
-//! hour. A field added later is `#[serde(default)]`, so a reader built before it reads a newer
-//! file and one built after it an older file.
+//! hour, named by its first second ([`ReportHour::start`]), the key the other day files of the
+//! `symphony/` folder name their hours by too. A field added later is `#[serde(default)]`, so a
+//! reader built before it reads a newer file and one built after it an older file.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -56,11 +57,8 @@ pub struct ReportDay {
     /// Each red task filed, closed or open in the day: the board's main and nightly reds.
     #[serde(default)]
     pub reds: Vec<Red>,
-    /// The sessions that registered in the day, by kind and model, the most first.
-    #[serde(default)]
-    pub sessions: Vec<Started>,
-    /// The decision cards of the project's registers over the day; none where its documents
-    /// could not be read.
+    /// The decision cards of the project's registers over the day, a live branch's posted cards
+    /// with main's; none where its documents could not be read.
     #[serde(default)]
     pub decisions: Option<Decisions>,
     /// What git was read for the hours' [`ReportHour::git`]; none where it could not be read.
@@ -71,9 +69,7 @@ pub struct ReportDay {
 /// One hour of a day: what adds up, so the hours of any span sum to that span's figure.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReportHour {
-    /// The UTC hour, 0 to 23.
-    pub hour: u32,
-    /// Its first second.
+    /// Its first second: the hour's key, as the other day files of the project name an hour.
     pub start: f64,
     /// The top-level tasks.
     #[serde(default)]
@@ -183,16 +179,6 @@ pub struct Red {
     pub status: String,
 }
 
-/// Sessions that registered.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Started {
-    /// `orchestrator`, `worker`, `reviewer`, …, as the session registered.
-    pub kind: String,
-    /// The model it named; empty when it named none.
-    pub model: String,
-    pub count: u32,
-}
-
 /// The waits that ended in an hour, each in the hour it ended.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Waits {
@@ -220,18 +206,28 @@ pub struct Wait {
     pub seconds: f64,
 }
 
-/// The decision cards in one hour.
+/// The decision cards in one hour. A card leaves the owner's queue by one line, counted once in
+/// the hour of that line, in `answered`, `auto_approved` or `withdrawn` by whose line it is and
+/// what it says. Not counted: a decision recorded as answered by a plain agent line on a card the
+/// owner approved, which leaves the queue as it was; a card an agent posted already out of the
+/// queue, unless auto-approved; and a live branch's card while its task is done and the branch not
+/// landed, which the owner's queue leaves out too.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionCounts {
     /// Cards waiting on the owner at the hour's end, or at [`ReportDay::until`] for the hour
     /// under way: those the owner's queue holds, its *Needs your decision* and *Answered: approve
-    /// again or comment* groups.
+    /// again or comment* groups, a live branch's posted cards among them.
     pub open: u32,
     /// Cards the owner's own line took out of the queue in the hour.
     pub answered: u32,
-    /// Cards an agent's line took out of the queue, or posted already answered, in the hour: answered
-    /// without asking the owner.
-    pub unasked: u32,
+    /// Cards an agent's `auto-approved` line took out of the queue, or posted already
+    /// auto-approved, in the hour: decided without asking the owner.
+    #[serde(default)]
+    pub auto_approved: u32,
+    /// Cards another agent's line took out of the queue in the hour, deciding nothing: superseded
+    /// by a newer card (`dismissed`), the agent's own question withdrawn, or marked resolved.
+    #[serde(default)]
+    pub withdrawn: u32,
 }
 
 /// The decision cards over a day.
@@ -243,15 +239,19 @@ pub struct Decisions {
     /// Each card the owner's line took out of the queue in the day, oldest first.
     #[serde(default)]
     pub answered: Vec<Answer>,
-    /// Each card answered without asking the owner in the day, oldest first.
+    /// Each card auto-approved in the day ([`DecisionCounts::auto_approved`]), oldest first.
     #[serde(default)]
-    pub unasked: Vec<Answer>,
+    pub auto_approved: Vec<Answer>,
+    /// Each card withdrawn in the day ([`DecisionCounts::withdrawn`]), oldest first.
+    #[serde(default)]
+    pub withdrawn: Vec<Answer>,
 }
 
 /// A card waiting on the owner.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpenCard {
-    /// The document it is in, by its route.
+    /// The page it is on, by its route: `docs/DECISIONS.md`, or `@BRANCH/docs/DECISIONS.md` for a
+    /// card a live branch posted.
     pub doc: String,
     pub slug: String,
     /// Since when it has waited: the minute of its line that last put it in the owner's queue,
@@ -263,32 +263,33 @@ pub struct OpenCard {
 /// A card taken out of the owner's queue.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
+    /// The page it is on, as [`OpenCard::doc`] names it.
     pub doc: String,
     pub slug: String,
     /// When: the minute of the line that did it.
     pub at: f64,
-    /// What did it. The owner's verdict word (`approved`, `rejected`, `question`, `dismissed`),
-    /// or `commented` for a line with none; for a card answered without asking,
-    /// `auto-approved` (an agent's auto-approve line, the triage's judgement or a basis naming the
-    /// earlier verdict that decides the card) or `agent` (an agent's plain, `resolved` or
-    /// `dismissed` line).
+    /// The verdict word of that line (the owner's `approved`, `rejected`, `question`,
+    /// `dismissed`; an agent's `auto-approved`, `dismissed`, `resolved`), or `commented` for the
+    /// owner's line with none and `answered` for an agent's.
     pub how: String,
 }
 
-/// What reached the default branch in one hour, by commit time.
+/// What reached the default branch in one hour: each commit in the hour the commit on the
+/// branch's line of first parents that brought it there was made, itself or the merge that landed
+/// it, so commits, merges and lines share one time base.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitCounts {
-    /// Commits of any branch the default branch holds that were made in the hour, merges left
-    /// out.
+    /// Commits that reached the branch, merges left out, and so is a commit that changed no path
+    /// outside [`GitRead::excluded`] (a generator's own commit of its outputs).
     pub commits: u32,
-    /// Merge commits on the default branch's line of first parents: its landings by git.
+    /// Merge commits on the branch's line of first parents: its landings by git.
     pub merges: u32,
     /// Lines added by the commits on that line, each a merge by what it brought against its first
     /// parent, the paths [`GitRead::excluded`] names left out.
     pub added: u64,
     /// Lines removed the same way.
     pub removed: u64,
-    /// Commits the default branch holds whose subject begins `Revert "`.
+    /// Of `commits`, those whose subject begins `Revert "`.
     pub reverts: u32,
 }
 

@@ -1,18 +1,22 @@
 //! The decision cards of a day file: how many waited on the owner at each hour's end, which ones
-//! the owner answered, and which an agent's line answered without asking, read back from the
-//! dated lines under each card in the project's documents ([`crate::board::documents`]).
+//! the owner answered, which an agent auto-approved and which an agent withdrew, read back from the
+//! dated lines under each card of the project's documents, a live branch's posted cards laid on
+//! main's as the owner's queue lays them ([`crate::dashboard::merge_decisions`]).
 //!
 //! A card's history is replayed one dated line at a time: after each, the card is regrouped as the
 //! register groups it ([`Decision::thread`]), over the lines up to it and the mark they leave (the
 //! last verdict a line gives, the owner's or an agent's `resolved`, `auto-approved` or `dismissed`;
 //! the card's own mark after its last line). It waits on the owner while it sits in *Needs your
 //! decision* or *Answered: approve again or comment*, as the owner's queue counts it
-//! ([`crate::triage::queue`]). The line that takes it out of those groups answered it: the owner's,
-//! or an agent's, which answered it without asking; an agent's line that posts a card already out
-//! of them answered it so too. What the history cannot tell: a line's minute is when it was written,
-//! in the machine's time zone; a card with no dated line has no history, and counts as it stands now
-//! at every hour; an `auto-approved` line has no fixed word for a basis that names an earlier
-//! verdict of the owner's that decides the card, so it counts as the triage's own judgement does.
+//! ([`crate::triage::queue`]). The line that takes it out of those groups is counted once, by whose
+//! it is and what it says: the owner's answered it, an agent's `auto-approved` decided it without
+//! asking, and any other agent's (a supersession's `dismissed`, a question withdrawn) withdrew it.
+//! What the history cannot tell: a line's minute is when it was written, in the machine's time
+//! zone; a card with no dated line has no history, and counts as it stands now at every hour; an
+//! `auto-approved` line has no fixed word for a basis that names an earlier verdict of the owner's
+//! that decides the card, so it counts as the triage's own judgement does; and a decision recorded
+//! as answered by a plain agent line on the card the owner approved leaves that card where it was,
+//! out of the queue, so it is counted nowhere.
 
 use crate::board::Doc;
 use crate::clock::stamp_seconds;
@@ -144,33 +148,35 @@ impl History {
         before.get(last.map_or(0, |i| i + 1)).map(|step| step.at)
     }
 
-    /// Each line that took it out of the owner's queue, or posted it out of it, by an agent
-    /// (`false`) or the owner (`true`).
-    fn answers(&self) -> Vec<(bool, Answer)> {
+    /// Each line that took it out of the owner's queue, and how. Its first dated line (its posting,
+    /// or the first since lines were dated) has no queue before it: the owner's line that leaves it
+    /// out of the queue answered it, and an agent's posting of a card already auto-approved
+    /// auto-approved it; any other agent's posting out of the queue never asked the owner.
+    fn answers(&self) -> Vec<(Out, Answer)> {
         let mut found = Vec::new();
         for (k, step) in self.steps.iter().enumerate() {
             let before = k.checked_sub(1).map(|k| self.steps[k].waiting);
-            let answered = match before {
-                Some(waiting) => waiting && !step.waiting,
-                None => !step.waiting,
-            };
-            if !answered {
+            if step.waiting || before == Some(false) {
                 continue;
             }
-            let owner = step.who == Who::Owner;
-            let how = match (owner, step.verdict.as_deref()) {
-                (true, Some(verdict)) => verdict.to_string(),
-                (true, None) => "commented".to_string(),
-                (false, Some("auto-approved")) => "auto-approved".to_string(),
-                (false, _) => "agent".to_string(),
+            let out = match (step.who, step.verdict.as_deref()) {
+                (Who::Owner, _) => Out::Answered,
+                (Who::Agent, Some(AUTO_APPROVED)) => Out::AutoApproved,
+                (Who::Agent, _) if before.is_some() => Out::Withdrawn,
+                (Who::Agent, _) => continue,
+            };
+            let how = match (step.who, step.verdict.as_deref()) {
+                (_, Some(verdict)) => verdict,
+                (Who::Owner, None) => "commented",
+                (Who::Agent, None) => "replied",
             };
             found.push((
-                owner,
+                out,
                 Answer {
                     doc: self.doc.clone(),
                     slug: self.slug.clone(),
                     at: step.at,
-                    how,
+                    how: how.to_string(),
                 },
             ));
         }
@@ -178,66 +184,84 @@ impl History {
     }
 }
 
-/// Fill `day`'s decisions, and each hour's, from the cards of `docs`.
+/// The word of an agent's line that auto-approves a card.
+const AUTO_APPROVED: &str = "auto-approved";
+
+/// How a card left the owner's queue ([`symphony_api::reports::DecisionCounts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Out {
+    /// By the owner's own line.
+    Answered,
+    /// By an agent's `auto-approved` line: decided without asking.
+    AutoApproved,
+    /// By any other agent's line, deciding nothing.
+    Withdrawn,
+}
+
+/// Fill `day`'s decisions, and each hour's, from the cards of `docs`. Each list is kept in order as
+/// it is made, by time and then slug, rather than sorted: a sort costs the server's binary a sort of
+/// its own for each kind of list (docs/CHECKS.md, size budgets).
 pub fn fill(day: &mut ReportDay, docs: &[Doc], plugins: &Plugins) {
-    let histories: Vec<History> = docs
-        .iter()
-        .flat_map(|doc| {
-            doc.decisions.iter().map(|card| History {
+    let mut histories: Vec<History> = Vec::new();
+    for doc in docs {
+        for card in &doc.decisions {
+            histories.push(History {
                 doc: doc.path.clone(),
                 slug: card.slug.clone(),
                 steps: steps(card, plugins),
                 waiting_now: waits_on_owner(card.group(plugins)),
-            })
-        })
-        .collect();
-    let answers: Vec<(bool, Answer)> = histories.iter().flat_map(History::answers).collect();
+            });
+        }
+    }
+    let mut answers: Vec<(Out, Answer)> = Vec::new();
+    for answer in histories.iter().flat_map(History::answers) {
+        let key = (answer.1.at, &answer.1.slug);
+        let at = answers.partition_point(|(_, kept)| (kept.at, &kept.slug) <= key);
+        answers.insert(at, answer);
+    }
     let until = day.until;
     for hour in &mut day.hours {
         let to = (hour.start + crate::reports::HOUR).min(until);
-        let within = |at: f64| hour.start <= at && at < to;
-        let count = |owner: bool| {
+        let count = |out: Out| {
             let n = answers
                 .iter()
-                .filter(|(by, a)| *by == owner && within(a.at))
+                .filter(|(how, a)| *how == out && hour.start <= a.at && a.at < to)
                 .count();
             u32::try_from(n).unwrap_or(u32::MAX)
         };
         hour.decisions = Some(DecisionCounts {
             open: u32::try_from(histories.iter().filter(|h| h.waiting(to)).count())
                 .unwrap_or(u32::MAX),
-            answered: count(true),
-            unasked: count(false),
+            answered: count(Out::Answered),
+            auto_approved: count(Out::AutoApproved),
+            withdrawn: count(Out::Withdrawn),
         });
     }
-    let mut open: Vec<OpenCard> = histories
-        .iter()
-        .filter(|history| history.waiting(until))
-        .map(|history| OpenCard {
+    let mut open: Vec<OpenCard> = Vec::new();
+    for history in histories.iter().filter(|history| history.waiting(until)) {
+        let card = OpenCard {
             doc: history.doc.clone(),
             slug: history.slug.clone(),
             since: history.since(until),
-        })
-        .collect();
-    open.sort_by(|a, b| {
-        let since = |card: &OpenCard| card.since.unwrap_or(f64::NEG_INFINITY);
-        since(a)
-            .total_cmp(&since(b))
-            .then_with(|| a.slug.cmp(&b.slug))
-    });
-    let in_day = |owner: bool| {
-        let mut picked: Vec<Answer> = answers
+        };
+        // A card waiting since no line it has comes first.
+        let key = (card.since.unwrap_or(f64::NEG_INFINITY), &card.slug);
+        let at = open
+            .partition_point(|kept| (kept.since.unwrap_or(f64::NEG_INFINITY), &kept.slug) <= key);
+        open.insert(at, card);
+    }
+    let in_day = |out: Out| -> Vec<Answer> {
+        answers
             .iter()
-            .filter(|(by, a)| *by == owner && day.start <= a.at && a.at < until)
+            .filter(|(how, a)| *how == out && day.start <= a.at && a.at < until)
             .map(|(_, a)| a.clone())
-            .collect();
-        picked.sort_by(|a, b| a.at.total_cmp(&b.at).then_with(|| a.slug.cmp(&b.slug)));
-        picked
+            .collect()
     };
     day.decisions = Some(Decisions {
         open,
-        answered: in_day(true),
-        unasked: in_day(false),
+        answered: in_day(Out::Answered),
+        auto_approved: in_day(Out::AutoApproved),
+        withdrawn: in_day(Out::Withdrawn),
     });
 }
 

@@ -403,9 +403,9 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     assert_eq!(spec.readme_route(), "README.md");
 }
 
-/// A project's day file (`sf-tasks/reports/YYYY-MM-DD.json`), as the hourly roll-up writes it and
-/// the Reports page reads it: every figure of the hours and the day reads and writes back, and the
-/// hours sum to a span's figure.
+/// A project's day file (`symphony/reports/YYYY-MM-DD.json` in its git common dir), as the hourly
+/// roll-up writes it and the Reports page reads it: every figure of the hours and the day reads and
+/// writes back, each hour is named by its first second, and the hours sum to a span's figure.
 #[test]
 fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_span() {
     use symphony_api::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
@@ -417,20 +417,30 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
         (REPORT_SCHEMA, "2027-01-15.json".into())
     );
     assert_eq!(symphony_api::run_day(day.start), day.day);
+    assert_eq!(
+        day.hours.iter().map(|h| h.start).collect::<Vec<_>>(),
+        [day.start, day.start + 3_600.0],
+        "each hour by its first second, the key the other day files join on"
+    );
     let sum = |pick: fn(&ReportHour) -> u64| -> u64 { day.hours.iter().map(pick).sum() };
     assert_eq!(sum(|h| h.git.unwrap().added), 212);
-    assert_eq!(sum(|h| u64::from(h.decisions.unwrap().unasked)), 1);
+    assert_eq!(sum(|h| u64::from(h.decisions.unwrap().auto_approved)), 1);
+    assert_eq!(sum(|h| u64::from(h.decisions.unwrap().withdrawn)), 1);
     assert_eq!(sum(|h| u64::from(h.landed)), 1);
     let decisions = day.decisions.unwrap();
     assert_eq!(
         decisions.open[0].since, None,
         "a card with no dated line has no wait to tell"
     );
+    assert_eq!(
+        (decisions.auto_approved.len(), decisions.withdrawn.len()),
+        (1, 1)
+    );
     assert_eq!(day.subtasks.lead, None);
 }
 
 /// A day file written before a figure was added reads with that figure empty: none for the
-/// decisions and git, no hours.
+/// decisions and git, no hours, no auto-approval or withdrawal in an hour's decisions.
 #[test]
 fn a_day_file_without_its_later_figures_reads_with_them_empty() {
     use symphony_api::{ReportDay, ReportHour};
@@ -441,7 +451,20 @@ fn a_day_file_without_its_later_figures_reads_with_them_empty() {
     .unwrap();
     assert!(day.closed && day.hours.is_empty() && day.rounds.is_empty());
     assert_eq!((day.decisions, day.git), (None, None));
-    let hour: ReportHour = serde_json::from_str(r#"{"hour":3,"start":1799982000.0}"#).unwrap();
+    let hour: ReportHour = serde_json::from_str(r#"{"start":1799982000.0}"#).unwrap();
     assert_eq!((hour.landed, hour.decisions, hour.git), (0, None, None));
     assert!(hour.top.held.is_empty() && hour.waits.approved_to_landed.is_empty());
+    let hour: ReportHour =
+        serde_json::from_str(r#"{"start":1799982000.0,"decisions":{"open":2,"answered":1}}"#)
+            .unwrap();
+    let counts = hour.decisions.unwrap();
+    assert_eq!(
+        (
+            counts.open,
+            counts.answered,
+            counts.auto_approved,
+            counts.withdrawn
+        ),
+        (2, 1, 0, 0)
+    );
 }

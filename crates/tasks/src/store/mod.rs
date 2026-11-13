@@ -68,7 +68,7 @@ pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use opening::Opening;
 use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
-pub use report_lines::{ReportRead, ReportSession, ReportTask};
+pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;

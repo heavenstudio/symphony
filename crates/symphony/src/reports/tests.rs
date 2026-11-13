@@ -1,8 +1,9 @@
-//! The roll-up's days and its one read: yesterday's file while it is not final, then today's; the
-//! board read once from the first of them; a failing read writes nothing; the documents and git
-//! failing leave only their own figures out, and say so.
+//! The roll-up's days and what it fills them with: yesterday's file while it is not final, then
+//! today's; the board's read, the documents with a live branch's posted cards, and git; no days
+//! write nothing; the documents and git failing leave only their own figures out, and say so.
 
 use super::*;
+use crate::branches::Tree as Worktree;
 use crate::test_tree::Tree;
 use symphony_api::ReportDay;
 
@@ -82,18 +83,27 @@ fn yesterday_is_due_until_its_file_is_final_and_today_always() {
     );
 }
 
+/// Roll the repository at `tree` up into `folder` at `now`, for the days due then, from an empty
+/// board read and the live branches' `cards`.
+fn roll(tree: &Tree, folder: &Path, now: f64, cards: &[BranchCard]) -> Result<Rolled, String> {
+    let days = due(folder, now);
+    roll_up(
+        &tree.root,
+        "sim",
+        now,
+        folder,
+        &days,
+        &ReportRead::default(),
+        cards,
+    )
+}
+
 #[test]
 fn one_read_from_yesterday_fills_both_files_with_the_board_documents_and_git() {
     let tree = Tree::new();
     repository(&tree);
     let folder = tree.path("reports");
-    let mut asked = Vec::new();
-    let rolled = roll_up(&tree.root, "sim", NOW, &folder, |since| {
-        asked.push(since);
-        Ok(ReportRead::default())
-    })
-    .unwrap();
-    assert_eq!(asked, [today() - DAY], "one read, from yesterday's start");
+    let rolled = roll(&tree, &folder, NOW, &[]).unwrap();
     let names = [today() - DAY, today()].map(symphony_api::run_day);
     assert_eq!(
         rolled,
@@ -121,27 +131,64 @@ fn one_read_from_yesterday_fills_both_files_with_the_board_documents_and_git() {
 }
 
 #[test]
-fn a_failing_board_read_writes_nothing_and_leaves_each_file_as_it_was() {
+fn a_live_branch_s_posted_card_waits_on_the_owner_beside_main_s_by_its_page() {
     let tree = Tree::new();
     repository(&tree);
     let folder = tree.path("reports");
-    roll_up(&tree.root, "sim", NOW, &folder, |_| {
-        Ok(ReportRead::default())
-    })
-    .unwrap();
-    let file = folder.join(symphony_api::report_file(&symphony_api::run_day(today())));
-    let before = std::fs::read(&file).unwrap();
-    let error = roll_up(&tree.root, "sim", NOW + HOUR, &folder, |_| {
-        Err("the board is down".into())
-    })
-    .unwrap_err();
-    assert_eq!(error, "the board is down");
-    assert_eq!(std::fs::read(&file).unwrap(), before);
-    assert_eq!(
-        std::fs::read_dir(&folder).unwrap().count(),
-        2,
-        "nothing left beside the two files"
+    #[allow(clippy::cast_possible_truncation)]
+    let stamp = |hours: f64| crate::clock::stamp_at((today() + hours * HOUR) as libc::time_t);
+    let text = format!(
+        "- [x] **two** — And this?\n  [{}] agent — Posted on the branch.\n  [{}] owner · \
+         approved\n",
+        stamp(6.0),
+        stamp(7.75)
     );
+    let lines: Vec<&str> = text.lines().collect();
+    let card = BranchCard {
+        tree: Worktree {
+            branch: "tools/x".into(),
+            path: tree.path("x"),
+        },
+        doc: "docs/DECISIONS.md".into(),
+        card: crate::register::parse_decisions(&lines).remove(0),
+        on_main: false,
+    };
+    roll(&tree, &folder, NOW, &[card]).unwrap();
+    let day = written(&folder, today());
+    let open = |hour: usize| day.hours[hour].decisions.unwrap().open;
+    assert_eq!(
+        [open(5), open(6), open(7)],
+        [0, 1, 1],
+        "the branch's card from 06:00, main's from 07:00, the branch's answered at 07:45"
+    );
+    assert_eq!(day.hours[7].decisions.unwrap().answered, 1);
+    let decisions = day.decisions.unwrap();
+    let answered: Vec<(&str, &str)> = decisions
+        .answered
+        .iter()
+        .map(|a| (a.doc.as_str(), a.slug.as_str()))
+        .collect();
+    assert_eq!(answered, [("@tools~x/docs/DECISIONS.md", "two")]);
+    assert_eq!(decisions.open[0].slug, "one");
+}
+
+#[test]
+fn no_day_writes_nothing() {
+    let tree = Tree::new();
+    repository(&tree);
+    let folder = tree.path("reports");
+    let rolled = roll_up(
+        &tree.root,
+        "sim",
+        NOW,
+        &folder,
+        &[],
+        &ReportRead::default(),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(rolled, Rolled::default());
+    assert!(!folder.exists());
 }
 
 #[test]
@@ -149,10 +196,7 @@ fn without_git_the_files_are_written_with_no_git_figures_and_say_why() {
     let tree = Tree::new();
     tree.write("docs/README.md", "# Readme\n");
     let folder = tree.path("reports");
-    let rolled = roll_up(&tree.root, "sim", NOW, &folder, |_| {
-        Ok(ReportRead::default())
-    })
-    .unwrap();
+    let rolled = roll(&tree, &folder, NOW, &[]).unwrap();
     assert_eq!(rolled.written.len(), 2);
     assert_eq!(rolled.problems.len(), 1, "{:?}", rolled.problems);
     assert!(
@@ -170,9 +214,6 @@ fn a_folder_that_cannot_be_written_is_the_error() {
     let tree = Tree::new();
     repository(&tree);
     let folder = tree.write("reports", "a file where the folder goes");
-    let error = roll_up(&tree.root, "sim", NOW, &folder, |_| {
-        Ok(ReportRead::default())
-    })
-    .unwrap_err();
+    let error = roll(&tree, &folder, NOW, &[]).unwrap_err();
     assert!(error.contains("reports"), "{error}");
 }

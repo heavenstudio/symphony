@@ -1,26 +1,30 @@
 //! What reached a project's default branch in each hour of a day file, from two cheap reads of the
-//! branch since the roll-up's window opened ([`read`]):
+//! branch ([`read`]):
 //!
-//! - its line of first parents, from its tip, with the lines each commit there changed, a merge by
-//!   what it brought against its first parent: a merge there is a landing, and those lines are the
-//!   lines that reached the branch;
-//! - every commit it holds, by its parents, commit time and subject alone, no diff.
+//! - its line of first parents since the roll-up's window opened, from its tip, with the lines each
+//!   commit there changed, a merge by what it brought against its first parent: a merge there is a
+//!   landing, and those lines are the lines that reached the branch;
+//! - every commit that reached it since the commit that line starts from, by its parents, subject
+//!   and the paths it changed, no diff.
+//!
+//! Each commit counts in the hour it reached the branch ([`reached`]): the hour of the commit on
+//! the line of first parents that brought it there, itself or the merge that landed it, so a
+//! branch's commits made the day before their landing count with it, and commits, merges and lines
+//! share one time base. A merge off the line of first parents (a branch taking the default branch
+//! in) counts as neither a commit nor a landing. What [`excluded`] names is left out of the lines,
+//! by git itself: each generator's outputs, which the land's regenerator commits (the client
+//! distribution here), and lock files by name; a commit that changed nothing else (the
+//! regenerator's own) is no commit. A binary file's change has no lines.
 //!
 //! One read of every commit with its lines would diff each commit of each branch merged, only to
 //! count those lines again with the merge: 15.7 s of git's CPU over two days of this repository
-//! (770 commits, 2026-11-12, at load 120), 2.3 s with the paths below left to git, where the two
-//! reads take 0.24 s. A commit of a branch it merged counts as a commit in the hour it was made; a
-//! merge off the first parents' line (a branch taking the default branch in) counts as neither a
-//! commit nor a landing. What [`excluded`] names is left out of the lines, by git itself: each
-//! generator's outputs, which the land's regenerator commits (the client distribution here), and
-//! lock files by name. A binary file's change has no lines. A commit made in a day whose file was
-//! final before the commit reached the branch is in no day file: the files are read forward, never
-//! rewritten.
+//! (770 commits, 2026-11-12, at load 120), 2.3 s with the paths left to git, where the two reads
+//! take 0.24 s.
 
 use crate::project::Project;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use symphony_api::reports::{GitCounts, GitRead, ReportDay};
-use symphony_board::land::owns;
 
 /// The lock files whose lines are not counted, by file name, wherever they are.
 pub const LOCKS: [&str; 13] = [
@@ -42,18 +46,11 @@ pub const LOCKS: [&str; 13] = [
 /// The record of each commit: `hash\x1fparents\x1fcommit time\x1fsubject`, after a `\x1e`.
 const FORMAT: &str = "--format=%x1e%H%x1f%P%x1f%ct%x1f%s";
 
-/// The read of the line of first parents: every commit on it, those whose lines the pathspecs leave
-/// out too (`--full-history --sparse`, which a pathspec would otherwise drop), each with its lines.
-const LINE: &[&str] = &[
-    "--first-parent",
-    "--full-history",
-    "--sparse",
-    "--no-renames",
-    "--diff-merges=first-parent",
-    "--numstat",
-];
+/// Every commit a read walks is shown, those that change only what the pathspecs leave out too
+/// (`--full-history --sparse`, which a pathspec would otherwise drop), each with its own parents.
+const EVERY: [&str; 3] = ["--full-history", "--sparse", "--no-renames"];
 
-/// One commit of a read, its lines those outside [`excluded`].
+/// One commit of a read: its lines and whether it changed a path outside [`excluded`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Commit {
     pub hash: String,
@@ -63,6 +60,8 @@ pub struct Commit {
     pub subject: String,
     pub added: u64,
     pub removed: u64,
+    /// Whether it changed a path outside [`excluded`]; a merge's own change is never read.
+    pub changed: bool,
 }
 
 /// The two reads ([`read`]).
@@ -70,8 +69,23 @@ pub struct Commit {
 pub struct Read {
     /// The branch's line of first parents, its tip first, each with its lines.
     pub line: Vec<Commit>,
-    /// Every commit the branch holds, with no lines.
-    pub commits: Vec<Commit>,
+    /// Every commit the branch holds that its line's first commit's parent does not, with no lines.
+    pub all: Vec<Commit>,
+}
+
+/// What one commit on the line of first parents brought to the branch, at its commit time.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Reached {
+    pub at: f64,
+    /// It is a merge: a landing.
+    pub merge: bool,
+    /// The commits it brought, itself among them when it is no merge, a commit that changed
+    /// nothing outside [`excluded`] and every merge left out.
+    pub commits: u32,
+    /// Of `commits`, the reverts.
+    pub reverts: u32,
+    pub added: u64,
+    pub removed: u64,
 }
 
 /// The paths whose lines are not counted in `project`: each generator's outputs, as the project file
@@ -91,16 +105,7 @@ pub fn excluded(project: &Project) -> Vec<String> {
     outputs
 }
 
-/// Whether `path`'s lines are left out by `excluded` ([`excluded`]): inside a generator's outputs,
-/// or a lock file by its name.
-fn left_out(excluded: &[String], path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    excluded
-        .iter()
-        .any(|out| (LOCKS.contains(&out.as_str()) && out == name) || owns(out, path))
-}
-
-/// The pathspecs that keep git from diffing what `excluded` names: the whole tree but each output,
+/// The pathspecs that keep git from reading what `excluded` names: the whole tree but each output,
 /// as written, and each lock file at any depth.
 fn pathspecs(excluded: &[String]) -> Vec<String> {
     let mut specs = vec![".".to_string()];
@@ -114,15 +119,8 @@ fn pathspecs(excluded: &[String]) -> Vec<String> {
     specs
 }
 
-/// `git log` of `branch` in the repository at `root` since `since`, `args` before the branch and
-/// `paths` after it.
-fn log(
-    root: &Path,
-    branch: &str,
-    since: f64,
-    args: &[&str],
-    paths: &[String],
-) -> Result<String, String> {
+/// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them.
+fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<String, String> {
     let mut git = crate::children::command("git");
     // The repository is the one at `root`, whatever the server was started from.
     for name in [
@@ -146,33 +144,53 @@ fn log(
                 "--no-color",
                 FORMAT,
             ])
-            .arg(format!("--since=@{}", since.floor()))
+            .args(EVERY)
             .args(args)
             .arg("--end-of-options")
-            .arg(format!("refs/heads/{branch}"))
+            .args(revs)
             .arg("--")
             .args(paths),
     )
     .map_err(|e| format!("git log could not start: {e}"))?;
     if !done.status.success() {
         let said = String::from_utf8_lossy(&done.stderr);
+        let branch = revs[0].trim_start_matches("refs/heads/");
         return Err(format!("git log of {branch} failed: {}", said.trim()));
     }
     Ok(String::from_utf8_lossy(&done.stdout).into_owned())
 }
 
-/// The two reads of `branch` since `since`, the lines of what `excluded` names left out.
+/// The two reads of `branch` since `since`, what `excluded` names left out: its line of first
+/// parents since then with each commit's lines, then every commit it holds that the parent of that
+/// line's first commit does not, with the paths each changed. No commit on the line since then
+/// reads nothing more.
 pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Result<Read, String> {
-    let line = log(root, branch, since, LINE, &pathspecs(excluded))?;
-    let commits = log(root, branch, since, &[], &[])?;
-    Ok(Read {
-        line: parse(&line, excluded),
-        commits: parse(&commits, excluded),
-    })
+    let tip = format!("refs/heads/{branch}");
+    let paths = pathspecs(excluded);
+    let since = format!("--since=@{}", since.floor());
+    let line = parse(&log(
+        root,
+        &[
+            &since,
+            "--first-parent",
+            "--diff-merges=first-parent",
+            "--numstat",
+        ],
+        std::slice::from_ref(&tip),
+        &paths,
+    )?);
+    let Some(oldest) = line.last() else {
+        return Ok(Read::default());
+    };
+    let mut revs = vec![tip];
+    revs.extend(oldest.parents.first().map(|base| format!("^{base}")));
+    let all = parse(&log(root, &["--name-only"], &revs, &paths)?);
+    Ok(Read { line, all })
 }
 
-/// The commits of a read's `text`, in its order, their lines outside `excluded`.
-pub fn parse(text: &str, excluded: &[String]) -> Vec<Commit> {
+/// The commits of a read's `text`, in its order: after each record's head, a `--numstat` line
+/// (`added\tremoved\tpath`, `-` for a binary file's) or a `--name-only` path is a change.
+pub fn parse(text: &str) -> Vec<Commit> {
     text.split('\x1e')
         .filter_map(|record| {
             let mut lines = record.lines();
@@ -192,18 +210,13 @@ pub fn parse(text: &str, excluded: &[String]) -> Vec<Commit> {
                 subject,
                 ..Commit::default()
             };
-            for line in lines {
+            for line in lines.filter(|line| !line.trim().is_empty()) {
+                commit.changed = true;
                 let mut fields = line.splitn(3, '\t');
-                let (Some(added), Some(removed), Some(path)) =
-                    (fields.next(), fields.next(), fields.next())
-                else {
-                    continue;
-                };
-                let (Ok(added), Ok(removed)) = (added.parse::<u64>(), removed.parse::<u64>())
-                else {
-                    continue; // a binary file: `-` lines
-                };
-                if !left_out(excluded, path) {
+                if let (Some(Ok(added)), Some(Ok(removed))) = (
+                    fields.next().map(str::parse::<u64>),
+                    fields.next().map(str::parse::<u64>),
+                ) {
                     commit.added += added;
                     commit.removed += removed;
                 }
@@ -213,26 +226,64 @@ pub fn parse(text: &str, excluded: &[String]) -> Vec<Commit> {
         .collect()
 }
 
+/// What each commit on `read`'s line of first parents brought to the branch, oldest first: a
+/// commit there itself, a merge the commits of what it merged that no commit before it on the line
+/// brought (walked back from its other parents through [`Read::all`]).
+pub fn reached(read: &Read) -> Vec<Reached> {
+    let all: HashMap<&str, &Commit> = read.all.iter().map(|c| (c.hash.as_str(), c)).collect();
+    let mut seen: HashSet<&str> = read.line.iter().map(|c| c.hash.as_str()).collect();
+    let counted = |commit: &Commit| commit.parents.len() < 2 && commit.changed;
+    let revert = |commit: &Commit| commit.subject.starts_with("Revert \"");
+    read.line
+        .iter()
+        .rev()
+        .map(|on| {
+            let merge = on.parents.len() > 1;
+            let mut reached = Reached {
+                at: on.at,
+                merge,
+                added: on.added,
+                removed: on.removed,
+                ..Reached::default()
+            };
+            if counted(on) {
+                reached.commits += 1;
+                reached.reverts += u32::from(revert(on));
+            }
+            let mut walk: Vec<&str> = on.parents.iter().skip(1).map(String::as_str).collect();
+            while let Some(hash) = walk.pop() {
+                let Some(commit) = all.get(hash) else {
+                    continue; // the branch held it before the window
+                };
+                if !seen.insert(hash) {
+                    continue;
+                }
+                if counted(commit) {
+                    reached.commits += 1;
+                    reached.reverts += u32::from(revert(commit));
+                }
+                walk.extend(commit.parents.iter().map(String::as_str));
+            }
+            reached
+        })
+        .collect()
+}
+
 /// Fill `day`'s hours from `read` ([`read`]), `from` naming what it was read from.
 pub fn fill(day: &mut ReportDay, read: &Read, from: GitRead) {
+    let reached = reached(read);
     let until = day.until;
     for hour in &mut day.hours {
         let to = (hour.start + crate::reports::HOUR).min(until);
-        let within = |commit: &&Commit| hour.start <= commit.at && commit.at < to;
-        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-        let line: Vec<&Commit> = read.line.iter().filter(within).collect();
-        let made: Vec<&Commit> = read.commits.iter().filter(within).collect();
-        hour.git = Some(GitCounts {
-            commits: count(made.iter().filter(|c| c.parents.len() < 2).count()),
-            merges: count(line.iter().filter(|c| c.parents.len() > 1).count()),
-            added: line.iter().map(|c| c.added).sum(),
-            removed: line.iter().map(|c| c.removed).sum(),
-            reverts: count(
-                made.iter()
-                    .filter(|c| c.subject.starts_with("Revert \""))
-                    .count(),
-            ),
-        });
+        let mut counts = GitCounts::default();
+        for on in reached.iter().filter(|r| hour.start <= r.at && r.at < to) {
+            counts.commits += on.commits;
+            counts.merges += u32::from(on.merge);
+            counts.reverts += on.reverts;
+            counts.added += on.added;
+            counts.removed += on.removed;
+        }
+        hour.git = Some(counts);
     }
     day.git = Some(from);
 }

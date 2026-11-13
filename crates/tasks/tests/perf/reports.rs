@@ -57,14 +57,13 @@ fn the_roll_up_reads_the_board_once_an_hour_within_a_bound() {
     let figures = began.elapsed();
     let bytes: usize = files
         .iter()
-        .map(|file| serde_json::to_string_pretty(file).unwrap().len())
+        .map(|file| serde_json::to_vec(file).unwrap().len() + 1)
         .sum();
     eprintln!(
-        "perf: the roll-up's read: {} tasks, {} lines, {} sessions in {wall:.1?}, {cpu:.1?} of the \
-         board server's CPU; both day files' figures in {figures:.1?}, {bytes} bytes written",
+        "perf: the roll-up's read: {} tasks, {} lines in {wall:.1?}, {cpu:.1?} of the board \
+         server's CPU; both day files' figures in {figures:.1?}, {bytes} bytes written",
         hourly.tasks.len(),
-        lines(&hourly),
-        hourly.sessions.len()
+        lines(&hourly)
     );
     let (whole, whole_wall, whole_cpu) = read(&board, &store, 0.0);
     eprintln!(
@@ -83,10 +82,11 @@ fn the_roll_up_reads_the_board_once_an_hour_within_a_bound() {
     );
 }
 
-/// The roll-up's read, once an hour: each open task's thread and each one written since yesterday,
-/// 230 tasks and 9.7k lines of this board, measured at 0.18 s of the server's CPU (0.46 s wall) at
-/// load 120 on 2026-11-12, where the whole board's 2.2k tasks and 50k lines took 1.4 s. Five times
-/// the hourly read is still a second an hour, beside the board's tick every second.
+/// The roll-up's read, once an hour: each open task's thread and each one written or with a line
+/// since yesterday, 230 tasks and 9.7k lines of this board, measured at 0.17 s of the server's CPU
+/// (0.49 s wall) at load 60 on 2026-11-13, where the whole board's 2.2k tasks and 50k lines took
+/// 1.7 s. Five times the hourly read is still a second an hour, beside the board's tick every
+/// second.
 const HOURLY: Duration = Duration::from_secs(1);
-/// Both day files' figures from it, in this process, measured at 40 ms in a debug build.
+/// Both day files' figures from it, in this process, measured at 83 ms in a debug build.
 const FIGURES: Duration = Duration::from_secs(1);

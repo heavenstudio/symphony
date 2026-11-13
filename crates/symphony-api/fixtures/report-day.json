@@ -8,7 +8,6 @@
   "closed": false,
   "hours": [
     {
-      "hour": 0,
       "start": 1799971200.0,
       "top": {
         "held": {
@@ -63,7 +62,8 @@
       "decisions": {
         "open": 3,
         "answered": 1,
-        "unasked": 0
+        "auto_approved": 0,
+        "withdrawn": 1
       },
       "git": {
         "commits": 4,
@@ -74,7 +74,6 @@
       }
     },
     {
-      "hour": 1,
       "start": 1799974800.0,
       "top": {
         "held": {
@@ -121,7 +120,8 @@
       "decisions": {
         "open": 2,
         "answered": 0,
-        "unasked": 1
+        "auto_approved": 1,
+        "withdrawn": 0
       },
       "git": {
         "commits": 2,
@@ -166,13 +166,6 @@
       "status": "done"
     }
   ],
-  "sessions": [
-    {
-      "kind": "worker",
-      "model": "opus",
-      "count": 2
-    }
-  ],
   "decisions": {
     "open": [
       {
@@ -181,7 +174,7 @@
         "since": null
       },
       {
-        "doc": "docs/DECISIONS.md",
+        "doc": "@tools~reports-page/docs/DECISIONS.md",
         "slug": "board-columns",
         "since": 1799913600.0
       }
@@ -194,12 +187,20 @@
         "how": "approved"
       }
     ],
-    "unasked": [
+    "auto_approved": [
       {
         "doc": "docs/DECISIONS.md",
         "slug": "stage-names",
         "at": 1799976000.0,
         "how": "auto-approved"
+      }
+    ],
+    "withdrawn": [
+      {
+        "doc": "docs/DECISIONS.md",
+        "slug": "where-files-live",
+        "at": 1799973600.0,
+        "how": "dismissed"
       }
     ]
   },

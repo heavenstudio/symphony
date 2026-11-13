@@ -1,13 +1,15 @@
 //! The board's part of a project's day files ([`symphony_api::reports`]): how tasks moved hour by
-//! hour, the waits that ended, the review rounds, the reds and the sessions that registered, from
-//! the one read the hourly roll-up makes of the board ([`crate::Store::report_records`]). Nothing
-//! here reads the board or the clock: [`day`] is given the read and the times. Where the day files
-//! are kept ([`folder`]), and their write ([`write`]) and read ([`read`]), are here too.
+//! hour, the waits that ended, the review rounds and the reds, from the one read the hourly
+//! roll-up makes of the board ([`crate::Store::report_records`]). Nothing here reads the board or
+//! the clock: [`day`] is given the read and the times. Where the day files are kept ([`folder`]),
+//! their write ([`write`]), whether one is final ([`closed`]) and their read ([`read`], a test's
+//! and a page's), are here too.
 //!
 //! Each task is replayed as `tasks show` replays it ([`crate::stages::stages`]): its stretches in
-//! one status are what the flow counts. A status held at an instant is the one in force just before
-//! it, so an hour's `held` holds the tasks its `entered` and the hours before it brought in. A line's
-//! time is its own, never before its task was made.
+//! one status are what the flow counts. Its lines are taken in the order the read gives them, the
+//! order written ([`ReportTask::lines`]). A status held at an instant is the one in force just
+//! before it, so an hour's `held` holds the tasks its `entered` and the hours before it brought in.
+//! A line's time is its own, never before its task was made.
 
 use crate::cli::Env;
 use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages};
@@ -15,7 +17,7 @@ use crate::{ReportRead, ReportTask, red};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
-    DayFlow, Flow, Red, ReportDay, ReportHour, Round, Sitting, Spread, Started, Wait, Waits,
+    DayFlow, Flow, Red, ReportDay, ReportHour, Round, Sitting, Spread, Wait, Waits,
 };
 
 pub const HOUR: f64 = 3_600.0;
@@ -50,44 +52,48 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
         }
     }
     let events = Events::of(&replayed, &children);
-    let hours = hour_starts(start, until)
-        .map(|(hour, from)| {
-            let to = (from + HOUR).min(until);
-            let within = |at: f64| from <= at && at < to;
-            let moved = |top: bool| {
-                flow(
-                    replayed.iter().filter(|r| r.task.parent.is_none() == top),
-                    from,
-                    to,
-                    now,
-                )
-            };
-            let reds = || replayed.iter().filter(|r| r.series.is_some());
-            ReportHour {
-                hour,
-                start: from,
-                top: moved(true),
-                subtasks: moved(false),
-                landed: count(events.landed.iter().filter(|at| within(**at))),
-                reds_filed: count(reds().filter(|r| within(r.task.created))),
-                reds_closed: count(
-                    reds()
-                        .flat_map(|r| &r.stages.segments)
-                        .filter(|s| CLOSED.contains(&s.status.as_str()) && within(s.from)),
-                ),
-                waits: events.waits_in(&within),
-                decisions: None,
-                git: None,
-            }
-        })
-        .collect();
-    let mut rounds: BTreeMap<u32, Round> = BTreeMap::new();
+    let mut hours = Vec::new();
+    // Each hour of the day up to the one `until` falls in; the first always, even when `until` is
+    // the day's first second.
+    for hour in 0..24u32 {
+        let from = start + f64::from(hour) * HOUR;
+        if hour > 0 && from >= until {
+            break;
+        }
+        let to = (from + HOUR).min(until);
+        let within = |at: f64| from <= at && at < to;
+        let reds = || replayed.iter().filter(|r| r.series.is_some());
+        hours.push(ReportHour {
+            start: from,
+            top: flow(&replayed, true, from, to, now),
+            subtasks: flow(&replayed, false, from, to, now),
+            landed: count(events.landed.iter().filter(|at| within(**at))),
+            reds_filed: count(reds().filter(|r| within(r.task.created))),
+            reds_closed: count(
+                reds()
+                    .flat_map(|r| &r.stages.segments)
+                    .filter(|s| CLOSED.contains(&s.status.as_str()) && within(s.from)),
+            ),
+            waits: events.waits_in(&within),
+            decisions: None,
+            git: None,
+        });
+    }
+    // By their number, kept in order as found.
+    let mut rounds: Vec<Round> = Vec::new();
     for (at, changes, round) in &events.verdicts {
         if start <= *at && *at < until {
-            let entry = rounds.entry(*round).or_insert(Round {
-                number: *round,
-                ..Round::default()
-            });
+            let index = rounds.partition_point(|r| r.number < *round);
+            if rounds.get(index).is_none_or(|r| r.number != *round) {
+                rounds.insert(
+                    index,
+                    Round {
+                        number: *round,
+                        ..Round::default()
+                    },
+                );
+            }
+            let entry = &mut rounds[index];
             if *changes {
                 entry.changes += 1;
             } else {
@@ -104,30 +110,13 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
         until,
         closed: until >= start + DAY,
         hours,
-        top: day_flow(
-            replayed.iter().filter(|r| r.task.parent.is_none()),
-            start,
-            until,
-        ),
-        subtasks: day_flow(
-            replayed.iter().filter(|r| r.task.parent.is_some()),
-            start,
-            until,
-        ),
-        rounds: rounds.into_values().collect(),
+        top: day_flow(&replayed, true, start, until),
+        subtasks: day_flow(&replayed, false, start, until),
+        rounds,
         reds: reds(&replayed, start, until),
-        sessions: sessions(read, start, until),
         decisions: None,
         git: None,
     }
-}
-
-/// Each hour of the day from `start` up to the one `until` falls in, by its number and first second;
-/// the first hour always, even when `until` is the day's first second.
-fn hour_starts(start: f64, until: f64) -> impl Iterator<Item = (u32, f64)> {
-    (0..24u32)
-        .map(move |hour| (hour, start + f64::from(hour) * HOUR))
-        .take_while(move |(hour, from)| *hour == 0 || *from < until)
 }
 
 fn count<T>(items: impl Iterator<Item = T>) -> u32 {
@@ -140,8 +129,6 @@ struct Replayed<'a> {
     stages: Stages,
     /// Who held its executor and reviewer roles.
     holds: Vec<Hold>,
-    /// Its lines in the order written.
-    lines: Vec<&'a Line>,
     /// The series of reds it is filed in, `main`, `nightly`, or `red` for one marked outside them;
     /// none for a task that is no red.
     series: Option<&'static str>,
@@ -184,9 +171,6 @@ fn replay(task: &ReportTask, now: f64) -> Replayed<'_> {
         created: task.created,
         updated: task.updated,
     };
-    let mut lines: Vec<&Line> = task.lines.iter().collect();
-    lines.sort_by_key(|line| line.id);
-    lines.dedup_by_key(|line| line.id);
     let series = if let Some(series) = red::SERIES.iter().find(|s| red::filed_in(s, &task.slug)) {
         Some(if *series == red::SERIES[0] {
             "main"
@@ -200,7 +184,6 @@ fn replay(task: &ReportTask, now: f64) -> Replayed<'_> {
         task,
         stages: stages::stages(facts, &task.lines, now),
         holds: stages::holds(&task.lines, task.created),
-        lines,
         series,
     }
 }
@@ -239,7 +222,8 @@ impl Events {
                 seconds: (to - from).max(0.0),
             };
             let mut approved: Option<f64> = None;
-            for (index, line) in task.lines.iter().enumerate() {
+            let lines = &task.task.lines;
+            for (index, line) in lines.iter().enumerate() {
                 if line.kind != "verdict" {
                     continue;
                 }
@@ -271,7 +255,7 @@ impl Events {
                             .changes_to_review
                             .push((review.from, wait(at, review.from)));
                     }
-                    let resumed = task.lines[index + 1..].iter().find(|later| {
+                    let resumed = lines[index + 1..].iter().find(|later| {
                         is_claim(later)
                             || (!later.sender.is_empty()
                                 && !(later.kind == "system" && later.text.contains(RELEASED))
@@ -343,10 +327,11 @@ fn overlap(from: f64, to: f64, start: f64, end: f64) -> f64 {
     (to.min(end) - from.max(start)).max(0.0)
 }
 
-/// How `tasks` moved from `from` to `to`, their open stretches counted up to `now`.
-fn flow<'a>(tasks: impl Iterator<Item = &'a Replayed<'a>>, from: f64, to: f64, now: f64) -> Flow {
+/// How the top-level tasks of `replayed` (`top`), or its subtasks, moved from `from` to `to`, their
+/// open stretches counted up to `now`.
+fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow {
     let mut flow = Flow::default();
-    for task in tasks {
+    for task in replayed.iter().filter(|r| r.task.parent.is_none() == top) {
         let segments = &task.stages.segments;
         if let Some(held) = task.holding(to)
             && !CLOSED.contains(&held.status.as_str())
@@ -386,11 +371,14 @@ fn spread(values: Vec<f64>) -> Option<Spread> {
     })
 }
 
-/// What `tasks` did over the day from `start` to `until` that does not add up across hours.
-fn day_flow<'a>(tasks: impl Iterator<Item = &'a Replayed<'a>>, start: f64, until: f64) -> DayFlow {
+/// What the top-level tasks of `replayed` (`top`), or its subtasks, did over the day from `start`
+/// to `until` that does not add up across hours. The longest in their status are kept in order as
+/// they are found, ten at most, rather than all sorted: a sort costs the server's binary a sort of
+/// its own for each kind of list (docs/CHECKS.md, size budgets).
+fn day_flow(replayed: &[Replayed], top: bool, start: f64, until: f64) -> DayFlow {
     let mut leads = Vec::new();
-    let mut longest = Vec::new();
-    for task in tasks {
+    let mut longest: Vec<Sitting> = Vec::new();
+    for task in replayed.iter().filter(|r| r.task.parent.is_none() == top) {
         for segment in &task.stages.segments {
             if segment.status == "done" && start <= segment.from && segment.from < until {
                 leads.push((segment.from - task.task.created).max(0.0));
@@ -399,19 +387,21 @@ fn day_flow<'a>(tasks: impl Iterator<Item = &'a Replayed<'a>>, start: f64, until
         if let Some(held) = task.holding(until)
             && !CLOSED.contains(&held.status.as_str())
         {
-            longest.push(Sitting {
-                slug: task.task.slug.clone(),
-                status: held.status.clone(),
-                since: held.from,
-            });
+            let key = (held.from, &task.task.slug);
+            let at = longest.partition_point(|kept| (kept.since, &kept.slug) <= key);
+            if at < LONGEST {
+                longest.insert(
+                    at,
+                    Sitting {
+                        slug: task.task.slug.clone(),
+                        status: held.status.clone(),
+                        since: held.from,
+                    },
+                );
+                longest.truncate(LONGEST);
+            }
         }
     }
-    longest.sort_by(|a, b| {
-        a.since
-            .total_cmp(&b.since)
-            .then_with(|| a.slug.cmp(&b.slug))
-    });
-    longest.truncate(LONGEST);
     DayFlow {
         lead: spread(leads),
         longest,
@@ -440,27 +430,6 @@ fn reds(replayed: &[Replayed], start: f64, until: f64) -> Vec<Red> {
         .collect()
 }
 
-/// The sessions that registered from `start` to `until`, by kind and model, the most first.
-fn sessions(read: &ReportRead, start: f64, until: f64) -> Vec<Started> {
-    let mut counted: BTreeMap<(&str, &str), u32> = BTreeMap::new();
-    for session in &read.sessions {
-        if start <= session.connected && session.connected < until {
-            *counted.entry((&session.kind, &session.model)).or_default() += 1;
-        }
-    }
-    let mut started: Vec<Started> = counted
-        .into_iter()
-        .map(|((kind, model), count)| Started {
-            kind: kind.into(),
-            model: model.into(),
-            count,
-        })
-        .collect();
-    // Stable: equal counts stay in kind and model order.
-    started.sort_by_key(|s| std::cmp::Reverse(s.count));
-    started
-}
-
 /// Where the board `env` reaches keeps its day files: the folder [`FOLDER_VAR`] names, else
 /// [`FOLDER`] in the git common dir of its working directory, `symphony/reports.<database>/` for a
 /// database other than the live one. A board `TASKS_SERVER` names keeps none unless
@@ -482,8 +451,9 @@ pub fn folder(env: &Env) -> Result<PathBuf, String> {
     Ok(common.join(name))
 }
 
-/// The day file of `day.day` written in `folder`: a whole file in its place, written aside and
-/// renamed, so a reader finds the last one or the one before it, never a part.
+/// The day file of `day.day` written in `folder`, compact JSON on one line: a whole file in its
+/// place, written aside and renamed, so a reader finds the last one or the one before it, never a
+/// part.
 pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
     static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -494,13 +464,30 @@ pub fn write(folder: &Path, day: &ReportDay) -> Result<(), String> {
         std::process::id(),
         WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    let text = serde_json::to_string_pretty(day).map_err(|e| e.to_string())?;
-    std::fs::write(&partial, text + "\n")
+    // Compact: indenting costs the server's binary a serializer of its own for each part of the
+    // file, and doubles the file (docs/CHECKS.md, size budgets); `jq .` shows one indented.
+    let mut text = serde_json::to_vec(day).map_err(|e| e.to_string())?;
+    text.push(b'\n');
+    std::fs::write(&partial, text)
         .and_then(|()| std::fs::rename(&partial, &path))
         .map_err(|e| {
             let _ = std::fs::remove_file(&partial);
             format!("{}: {e}", path.display())
         })
+}
+
+/// Whether the day file of `day` (`YYYY-MM-DD`) in `folder` is final ([`ReportDay::closed`]): false
+/// when there is none or it does not read. Its other figures are not read.
+pub fn closed(folder: &Path, day: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Closed {
+        #[serde(default)]
+        closed: bool,
+    }
+    std::fs::read(folder.join(symphony_api::report_file(day)))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Closed>(&bytes).ok())
+        .is_some_and(|file| file.closed)
 }
 
 /// The day file of `day` (`YYYY-MM-DD`) in `folder`; none when there is none.

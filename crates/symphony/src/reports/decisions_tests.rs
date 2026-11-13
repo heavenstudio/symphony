@@ -1,6 +1,7 @@
-//! A card's history read back hour by hour: who took it out of the owner's queue and when, how long
-//! the cards still in it have waited, and what a card with no dated line, a line continuing the one
-//! above, a stamp naming no minute and a line dated before the one above count as.
+//! A card's history read back hour by hour: who took it out of the owner's queue, how and when (the
+//! owner's answer, an auto-approval, a supersession or another agent's line withdrawing it), how
+//! long the cards still in it have waited, and what a card with no dated line, a line continuing
+//! the one above, a stamp naming no minute and a line dated before the one above count as.
 
 use super::*;
 use crate::board::Doc;
@@ -54,7 +55,6 @@ fn filled(until: f64, docs: &[Doc]) -> ReportDay {
         hours: (0..24u32)
             .take_while(|hour| *hour == 0 || f64::from(*hour) < until)
             .map(|hour| ReportHour {
-                hour,
                 start: start + f64::from(hour) * HOUR,
                 ..ReportHour::default()
             })
@@ -65,13 +65,18 @@ fn filled(until: f64, docs: &[Doc]) -> ReportDay {
     day
 }
 
-/// Each hour's open, answered and unasked counts.
-fn counts(day: &ReportDay) -> Vec<(u32, u32, u32)> {
+/// Each hour's open, answered, auto-approved and withdrawn counts.
+fn counts(day: &ReportDay) -> Vec<(u32, u32, u32, u32)> {
     day.hours
         .iter()
         .map(|hour| {
             let counts = hour.decisions.unwrap();
-            (counts.open, counts.answered, counts.unasked)
+            (
+                counts.open,
+                counts.answered,
+                counts.auto_approved,
+                counts.withdrawn,
+            )
         })
         .collect()
 }
@@ -92,7 +97,13 @@ fn a_card_the_owner_approves_waits_until_the_owner_s_line_and_is_answered_then()
     let day = filled(5.0, &docs);
     assert_eq!(
         counts(&day),
-        [(0, 0, 0), (1, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 0)],
+        [
+            (0, 0, 0, 0),
+            (1, 0, 0, 0),
+            (1, 0, 0, 0),
+            (0, 1, 0, 0),
+            (0, 0, 0, 0)
+        ],
         "posted at 01:15, open at the end of hours 1 and 2, answered in hour 3"
     );
     let decisions = day.decisions.unwrap();
@@ -101,11 +112,68 @@ fn a_card_the_owner_approves_waits_until_the_owner_s_line_and_is_answered_then()
         answers(&decisions.answered),
         [("pick-one", 3.5, "approved")]
     );
-    assert!(decisions.unasked.is_empty());
+    assert!(decisions.auto_approved.is_empty() && decisions.withdrawn.is_empty());
 }
 
 #[test]
-fn a_card_the_triage_auto_approves_and_one_posted_resolved_are_answered_without_asking() {
+fn the_lists_run_by_time_then_slug_across_documents_whatever_their_order() {
+    let open = |slug: &str, hours: f64| card(slug, ' ', &[(hours, "agent — Posted.")]);
+    let answered = |slug: &str, hours: f64| {
+        card(
+            slug,
+            'x',
+            &[(0.5, "agent — Posted."), (hours, "owner · approved")],
+        )
+    };
+    let mut other = doc(&[
+        open("late", 3.0),
+        answered("b-then", 2.5),
+        card("undated", ' ', &[]),
+    ]);
+    other.path = "docs/OTHER.md".into();
+    let docs = [
+        doc(&[
+            open("early", 1.0),
+            answered("c-last", 4.0),
+            open("a-tie", 3.0),
+        ]),
+        other,
+        doc(&[answered("a-first", 2.5)]),
+    ];
+    let day = filled(5.0, &docs);
+    let decisions = day.decisions.unwrap();
+    let open: Vec<(&str, Option<f64>)> = decisions
+        .open
+        .iter()
+        .map(|card| {
+            (
+                card.slug.as_str(),
+                card.since.map(|s| (s - midnight()) / HOUR),
+            )
+        })
+        .collect();
+    assert_eq!(
+        open,
+        [
+            ("undated", None),
+            ("early", Some(1.0)),
+            ("a-tie", Some(3.0)),
+            ("late", Some(3.0)),
+        ],
+        "a card waiting since no line first, then by since and slug"
+    );
+    assert_eq!(
+        answers(&decisions.answered),
+        [
+            ("a-first", 2.5, "approved"),
+            ("b-then", 2.5, "approved"),
+            ("c-last", 4.0, "approved"),
+        ]
+    );
+}
+
+#[test]
+fn an_auto_approval_counts_apart_and_a_card_posted_resolved_was_never_asked() {
     let docs = [doc(&[
         card(
             "auto",
@@ -119,19 +187,69 @@ fn a_card_the_triage_auto_approves_and_one_posted_resolved_are_answered_without_
             ],
         ),
         card(
+            "posted-decided",
+            'a',
+            &[(
+                1.5,
+                "agent · auto-approved — the owner's verdict on `pick` decides it",
+            )],
+        ),
+        card(
             "settled",
             'r',
             &[(1.0, "agent · resolved — the owner's verdict on it stands")],
         ),
     ])];
     let day = filled(3.0, &docs);
-    assert_eq!(counts(&day), [(1, 0, 0), (1, 0, 1), (0, 0, 1)]);
+    assert_eq!(
+        counts(&day),
+        [(1, 0, 0, 0), (1, 0, 1, 0), (0, 0, 1, 0)],
+        "`auto` from 00:30 until its auto-approval at 02:00, `posted-decided` auto-approved as it \
+         was posted, and `settled`, posted resolved, in no count"
+    );
     let decisions = day.decisions.unwrap();
     assert_eq!(
-        answers(&decisions.unasked),
-        [("settled", 1.0, "agent"), ("auto", 2.0, "auto-approved")]
+        answers(&decisions.auto_approved),
+        [
+            ("posted-decided", 1.5, "auto-approved"),
+            ("auto", 2.0, "auto-approved")
+        ]
     );
-    assert!(decisions.answered.is_empty() && decisions.open.is_empty());
+    assert!(decisions.answered.is_empty() && decisions.withdrawn.is_empty());
+    assert!(decisions.open.is_empty());
+}
+
+#[test]
+fn a_superseded_card_is_withdrawn_and_its_replacement_answered_by_the_owner() {
+    let docs = [doc(&[
+        card(
+            "old-ask",
+            '~',
+            &[
+                (0.0, "agent — Posted."),
+                (1.5, "agent · dismissed — superseded by **new-ask**"),
+            ],
+        ),
+        card(
+            "new-ask",
+            'x',
+            &[(1.5, "agent — Posted."), (2.5, "owner · approved — B")],
+        ),
+    ])];
+    let day = filled(3.0, &docs);
+    assert_eq!(
+        counts(&day),
+        [(1, 0, 0, 0), (1, 0, 0, 1), (0, 1, 0, 0)],
+        "the supersession at 01:30 decided nothing: withdrawn, no auto-approval; the owner \
+         answered the new card at 02:30"
+    );
+    let decisions = day.decisions.unwrap();
+    assert_eq!(
+        answers(&decisions.withdrawn),
+        [("old-ask", 1.5, "dismissed")]
+    );
+    assert_eq!(answers(&decisions.answered), [("new-ask", 2.5, "approved")]);
+    assert!(decisions.auto_approved.is_empty());
 }
 
 #[test]
@@ -149,13 +267,35 @@ fn an_agent_s_question_waits_on_the_owner_until_an_agent_withdraws_it() {
     let day = filled(3.0, &docs);
     assert_eq!(
         counts(&day),
-        [(0, 1, 0), (1, 0, 0), (0, 0, 1)],
+        [(0, 1, 0, 0), (1, 0, 0, 0), (0, 0, 0, 1)],
         "the owner answered it in hour 0, the agent's question put it back in hour 1, and an \
-         agent's line took it out again in hour 2"
+         agent's line withdrew it in hour 2"
     );
     let decisions = day.decisions.unwrap();
     assert_eq!(answers(&decisions.answered), [("asked", 0.5, "approved")]);
-    assert_eq!(answers(&decisions.unasked), [("asked", 2.5, "agent")]);
+    assert_eq!(answers(&decisions.withdrawn), [("asked", 2.5, "replied")]);
+}
+
+#[test]
+fn an_answer_recorded_on_the_card_the_owner_approved_is_counted_nowhere() {
+    let docs = [doc(&[card(
+        "approved-before",
+        'x',
+        &[
+            (-3.0, "agent — Posted."),
+            (-2.0, "owner · approved"),
+            (
+                1.0,
+                "agent — Recorded as answered: the owner's words here decide `later-ask`.",
+            ),
+        ],
+    )])];
+    let day = filled(2.0, &docs);
+    assert_eq!(
+        counts(&day),
+        [(0, 0, 0, 0), (0, 0, 0, 0)],
+        "the card stays resolved before and after the line"
+    );
 }
 
 #[test]
@@ -170,7 +310,10 @@ fn an_owner_s_question_answered_by_an_agent_waits_again_to_be_confirmed_since_th
         ],
     )])];
     let day = filled(4.0, &docs);
-    assert_eq!(counts(&day), [(1, 0, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0)]);
+    assert_eq!(
+        counts(&day),
+        [(1, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)]
+    );
     let decisions = day.decisions.unwrap();
     assert_eq!(answers(&decisions.answered), [("why", 1.0, "question")]);
     assert_eq!(decisions.open.len(), 1);
@@ -193,7 +336,7 @@ fn an_owner_s_comment_takes_a_card_out_until_an_agent_answers_it() {
         ],
     )])];
     let day = filled(3.0, &docs);
-    assert_eq!(counts(&day), [(1, 0, 0), (0, 1, 0), (1, 0, 0)]);
+    assert_eq!(counts(&day), [(1, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 0)]);
     let decisions = day.decisions.unwrap();
     assert_eq!(answers(&decisions.answered), [("words", 1.0, "commented")]);
     assert_eq!(decisions.open[0].since, Some(midnight() + 2.5 * HOUR));
@@ -207,7 +350,7 @@ fn a_card_with_no_dated_line_counts_as_it_stands_at_every_hour_with_no_wait_to_t
     let day = filled(2.0, &docs);
     assert_eq!(
         counts(&day),
-        [(1, 0, 0), (2, 0, 0)],
+        [(1, 0, 0, 0), (2, 0, 0, 0)],
         "the undated card at every hour; the later one from the hour it was posted"
     );
     let open = day.decisions.unwrap().open;
@@ -241,7 +384,7 @@ fn a_deeper_line_continues_the_one_above_and_a_stamp_naming_no_minute_is_no_line
     let day = filled(3.0, &docs);
     assert_eq!(
         counts(&day),
-        [(1, 0, 0), (1, 0, 0), (0, 1, 0)],
+        [(1, 0, 0, 0), (1, 0, 0, 0), (0, 1, 0, 0)],
         "the continuation is no answer; the owner's own line in hour 2 is"
     );
 }
@@ -254,7 +397,7 @@ fn a_line_dated_before_the_one_above_is_read_at_the_one_above_s_minute() {
         &[(2.0, "agent — Posted."), (1.0, "owner · approved")],
     )])];
     let day = filled(3.0, &docs);
-    assert_eq!(counts(&day), [(0, 0, 0), (0, 0, 0), (0, 1, 0)]);
+    assert_eq!(counts(&day), [(0, 0, 0, 0), (0, 0, 0, 0), (0, 1, 0, 0)]);
     assert_eq!(
         answers(&day.decisions.unwrap().answered),
         [("skew", 2.0, "approved")]
@@ -272,7 +415,7 @@ fn what_was_answered_before_the_day_counts_for_its_state_but_not_in_its_lists() 
         card("waiting", ' ', &[(-5.0, "agent — Posted.")]),
     ])];
     let day = filled(1.0, &docs);
-    assert_eq!(counts(&day), [(1, 0, 0)]);
+    assert_eq!(counts(&day), [(1, 0, 0, 0)]);
     let decisions = day.decisions.unwrap();
     assert!(decisions.answered.is_empty());
     assert_eq!(decisions.open[0].since, Some(midnight() - 5.0 * HOUR));
@@ -286,7 +429,11 @@ fn the_hour_under_way_counts_up_to_the_read_and_the_lists_stop_there() {
         &[(0.0, "agent — Posted."), (0.75, "owner · approved")],
     )])];
     let day = filled(0.5, &docs);
-    assert_eq!(counts(&day), [(1, 0, 0)], "read at 00:30: not answered yet");
+    assert_eq!(
+        counts(&day),
+        [(1, 0, 0, 0)],
+        "read at 00:30: not answered yet"
+    );
     let decisions = day.decisions.unwrap();
     assert!(decisions.answered.is_empty());
     assert_eq!(decisions.open[0].slug, "soon");
