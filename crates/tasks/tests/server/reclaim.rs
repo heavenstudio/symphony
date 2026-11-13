@@ -192,9 +192,10 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     // The old store it removed is kept, a snapshot taken before any server of the reclaim started
     // on it, that serves what the board held.
     let kept = reclaimed.kept.path();
+    // A clone where the volume clones (APFS, btrfs, XFS), a plain copy where it cannot.
     assert_eq!(
         matches!(reclaimed.kept, Kept::Cloned(_)),
-        cfg!(target_os = "macos"),
+        symphony_board::server::snapshot::clones(&home.snapshots_folder()),
         "{:?}",
         reclaimed.kept
     );
@@ -626,7 +627,7 @@ fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
     let snapshots = s.home().snapshots().unwrap();
     let old = snapshots.last().expect("the old store is kept");
     assert!(!old.log, "{snapshots:?}");
-    let how = if cfg!(target_os = "macos") {
+    let how = if symphony_board::server::snapshot::clones(&s.home().snapshots_folder()) {
         "a copy-on-write clone"
     } else {
         "a plain copy, as this volume cannot clone"
