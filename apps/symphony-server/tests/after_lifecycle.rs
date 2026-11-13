@@ -25,10 +25,28 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
+
+/// The pinned SurrealDB a case's own board runs on: `SYMPHONY_SURREAL`, else what
+/// `tools/surreal.sh` fetches.
+fn surreal() -> PathBuf {
+    symphony_env::SURREAL.os().map_or_else(
+        || {
+            let found = symphony_board::sys::output(
+                Command::new("bash")
+                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
+                    .env_remove("BASH_ENV"),
+            )
+            .unwrap();
+            assert!(found.status.success(), "SurrealDB lookup: {found:?}");
+            PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
+        },
+        PathBuf::from,
+    )
+}
 
 #[test]
 fn bash_env_does_not_add_output_to_build_fixtures() {

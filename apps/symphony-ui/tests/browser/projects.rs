@@ -1,7 +1,7 @@
-//! Two projects on the one real server, each as the owner first opens it: its home within the
-//! first visit's budget, its theme in the page's computed look and the rest of the look the
-//! other's, project links under its own `/<id>/`, and the header switch back to the root picker;
-//! what one keeps in the browser, a draft or a
+//! Two projects on the one real server, each as the owner first opens it: its home and its tasks
+//! board each within the first visit's budget, its theme in the page's computed look and the rest
+//! of the look the other's, project links under its own `/<id>/`, and the header switch back to
+//! the root picker; what one keeps in the browser, a draft or a
 //! saved theme, never shows in the other, whose origin it shares. `alpha` is a plain project whose
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
 //! provides; `gamma`, in the one case that registers it, serves its documents at its root.
@@ -383,15 +383,23 @@ fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     wait_for_picker(&mut browser);
 }
 
+/// Each project of the one server, the primary token its theme sets and a layout it sets, as the
+/// page's dataset names it.
+const THEMES: [(&str, &str, (&str, &str)); 2] = [
+    ("alpha", "#7a2e8f", ("layoutHome", "focus")),
+    ("pantry", "#2a6f4e", ("layoutHeader", "compact")),
+];
+
+/// What a page's theme sets: its primary token and its layouts.
+const THEME: &str = "({primary: getComputedStyle(document.documentElement)\
+    .getPropertyValue('--primary').trim(), layouts: Object.assign({}, document.documentElement.dataset)})";
+
 #[test]
 fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look() {
     let board = ScratchBoard::start();
     let server = OneServer::start(board.address());
     let mut looks = Vec::new();
-    for (id, primary, layout) in [
-        ("alpha", "#7a2e8f", ("layoutHome", "focus")),
-        ("pantry", "#2a6f4e", ("layoutHeader", "compact")),
-    ] {
+    for (id, primary, layout) in THEMES {
         let Some(mut browser) = chrome() else { return };
         browser.open(&server.url(&format!("/{id}/")));
         assert!(
@@ -431,10 +439,51 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
         |look: &Value| ["background", "color", "font", "size"].map(|part| look[part].clone());
     assert_eq!(shared(&looks[0]), shared(&looks[1]));
 
+    // Each project's tasks board, the other entry page, is a first visit of its own too, in a
+    // browser of its own and in its own theme. The board is made first, holding a card for the
+    // page to draw, so the page draws its title too.
+    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    board.call_in_database(
+        DATABASE,
+        "create",
+        json!({"slug":"budget/card","title":"A card on the board","by":actor["handle"]}),
+    );
+    for (id, primary, layout) in THEMES {
+        let Some(mut browser) = chrome() else { return };
+        let page = format!("/{id}/tasks");
+        browser.open(&server.url(&page));
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "document.querySelector({}) !== null",
+                    json!(format!(".taskcard a[href='/{id}/task/budget/card']"))
+                ),
+                SHOWN
+            ),
+            "{page} did not draw its card: {:?}",
+            browser.eval("document.body.innerText")
+        );
+        let requests = completed_requests(&mut browser);
+        let bytes = needed_bytes(&requests);
+        eprintln!(
+            "{page} first visit: {bytes} bytes; keep-alive pings beside it: {} bytes",
+            ping_bytes(&requests)
+        );
+        assert!(
+            bytes <= FIRST_VISIT_BYTES,
+            "{page} first visit loads {bytes} bytes, over {FIRST_VISIT_BYTES}: {requests:#?}"
+        );
+        let theme = browser.eval(THEME);
+        assert_eq!(theme["primary"], json!(primary), "{page}: {theme}");
+        assert_eq!(
+            theme["layouts"][layout.0],
+            json!(layout.1),
+            "{page}: {theme}"
+        );
+    }
+
     // The server's own pages, the picker and what an unknown project answers, stand in the
-    // column a project's pages stand in, their titles at the same size. The board is made first,
-    // so the tasks page draws its title.
-    board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    // column a project's pages stand in, their titles at the same size.
     let Some(mut browser) = chrome() else { return };
     browser.call(
         "Emulation.setDeviceMetricsOverride",
