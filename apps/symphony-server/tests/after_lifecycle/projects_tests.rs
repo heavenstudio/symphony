@@ -4,7 +4,7 @@
 //! own board, its server in the project's own common dir as every project's is, holding a task of
 //! its own: whichever build serves them reads each project's tasks from its own board.
 
-use super::fixture::{APP, PATIENCE, Process};
+use super::fixture::{APP, BACKSTOP, Process};
 use super::*;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -99,8 +99,14 @@ fn path(repo: &Repo) -> OsString {
 
 /// A start of the one server from `dir` by `program`, in the fixture's environment.
 fn start_with(repo: &Repo, program: &str, dir: &Path) -> Process {
+    start_with_args(repo, program, dir, &[])
+}
+
+/// [`start_with`], with `args`.
+fn start_with_args(repo: &Repo, program: &str, dir: &Path, args: &[&str]) -> Process {
     let mut command = Command::new(program);
     command
+        .args(args)
         .current_dir(dir)
         .env_clear()
         .envs(repo.environment())
@@ -116,7 +122,7 @@ fn board_tasks(port: u16, id: &str) -> Vec<String> {
     let mut last = None;
     let read = test_time::until(
         format!("{route} to list its board's tasks"),
-        test_time::backstop(PATIENCE),
+        BACKSTOP,
         || {
             let answer = get(port, &route);
             let read = match &answer {
@@ -137,7 +143,7 @@ fn board_tasks(port: u16, id: &str) -> Vec<String> {
 /// The status, headers and body of a browser's navigation to `path`.
 fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    stream.set_read_timeout(Some(PATIENCE)).unwrap();
+    stream.set_read_timeout(Some(BACKSTOP)).unwrap();
     let cookie = cookie.map_or_else(String::new, |cookie| format!("Cookie: {cookie}\r\n"));
     write!(
         stream,
@@ -156,7 +162,7 @@ fn navigate(port: u16, path: &str, cookie: Option<&str>) -> (u16, String, String
 /// bookmark of today's paths sent to the starter's project.
 fn both_served(repo: &Repo, starter: &str) {
     let port = repo.port();
-    let front = front(port).expect("native status");
+    let front = status(port);
     assert!(
         front.plugins.iter().any(|name| name == "fixture-shelf"),
         "{:?}",
@@ -174,25 +180,22 @@ fn both_served(repo: &Repo, starter: &str) {
     for (id, task) in [("alpha", ALPHA_TASK), ("pantry", PANTRY_TASK)] {
         assert_eq!(board_tasks(port, id), [task], "{id}'s board");
     }
-    let (status, alpha) = get(port, "/alpha/").unwrap();
-    assert_eq!(status, 200, "{alpha}");
+    let (code, alpha) = answer(port, "/alpha/");
+    assert_eq!(code, 200, "{alpha}");
     assert!(alpha.contains("<title>Alpha</title>"), "{alpha}");
     assert!(alpha.contains(":root{--primary:#7a2e8f;}"), "{alpha}");
     assert!(alpha.contains("data-layout-home=\"focus\""), "{alpha}");
-    let (status, shelf) = get(port, "/pantry/").unwrap();
-    assert_eq!(status, 200, "{shelf}");
+    let (code, shelf) = answer(port, "/pantry/");
+    assert_eq!(code, 200, "{shelf}");
     assert!(shelf.contains("<title>The Shelf</title>"), "{shelf}");
     assert!(shelf.contains(":root{--primary:#2a6f4e;}"), "{shelf}");
     assert!(shelf.contains("data-layout-header=\"compact\""), "{shelf}");
     for (id, token) in [("alpha", "#7a2e8f"), ("pantry", "#2a6f4e")] {
-        let (status, css) = get(port, &format!("/{id}/theme.css")).unwrap();
-        assert_eq!(
-            (status, css),
-            (200, format!(":root{{--primary:{token};}}\n"))
-        );
+        let (code, css) = answer(port, &format!("/{id}/theme.css"));
+        assert_eq!((code, css), (200, format!(":root{{--primary:{token};}}\n")));
     }
     // The shelf's own page answers under its project alone.
-    assert_eq!(get(port, "/pantry/x/shelf/none.item").unwrap().0, 404);
+    assert_eq!(answer(port, "/pantry/x/shelf/none.item").0, 404);
     let (status, head, _) = navigate(port, "/docs/A.md", None);
     assert_eq!(status, 307, "{head}");
     assert!(
@@ -247,14 +250,14 @@ fn a_plain_host_waits_for_the_plugins_project_whose_build_then_takes_over_by_han
         "{output}"
     );
     assert!(output.contains(&shelf.display().to_string()), "{output}");
-    assert_eq!(get(repo.port(), "/pantry/").unwrap().0, 503);
+    assert_eq!(answer(repo.port(), "/pantry/").0, 503);
     // The shelf's build serves every registered project, so it replaces the plain host.
     let mut takes = start_with(&repo, SHELF, &shelf);
     takes.success();
     let output = takes.output();
     assert!(output.contains("replaces it"), "{output}");
     assert!(output.contains("/pantry/"), "{output}");
-    let host = front(repo.port()).expect("native status");
+    let host = status(repo.port());
     assert_ne!(host.pid, plain.pid);
     assert_eq!(host.root, shelf.to_str().unwrap());
     repo.adopt();
@@ -265,6 +268,69 @@ fn a_plain_host_waits_for_the_plugins_project_whose_build_then_takes_over_by_han
 }
 
 #[test]
+fn a_branchs_build_holding_the_plugin_never_replaces_the_plain_host() {
+    let repo = Repo::new("projects branch build");
+    let shelf = projects(&repo);
+    // A branch of the shelf project: a linked worktree of its repository.
+    repository(&shelf, &["config", "core.hooksPath", "/dev/null"]);
+    repository(&shelf, &["add", "."]);
+    repository(&shelf, &["commit", "-qm", "The shelf"]);
+    let branch = repo.base.join("shelf branch");
+    repository(
+        &shelf,
+        &[
+            "worktree",
+            "add",
+            "-qb",
+            "feature/shelf",
+            branch.to_str().unwrap(),
+        ],
+    );
+    start_with(&repo, APP, &repo.main).success();
+    repo.remember();
+    let plain = repo.check_server();
+    let registry = || fs::read_to_string(repo.home.join("projects.json")).unwrap();
+    let before = registry();
+    // Started there, the build holding the shelf only reads the host, which does not serve it.
+    let mut reads = start_with(&repo, SHELF, &branch);
+    assert_eq!(reads.wait().code(), Some(2), "{}", reads.output());
+    let said = reads.output();
+    assert!(
+        said.contains(&format!(
+            "✖ Symphony: the running Symphony does not serve {}, and a start in a linked worktree \
+             ({}) never starts the machine's Symphony",
+            shelf.display(),
+            branch.display()
+        )),
+        "{said}"
+    );
+    assert_eq!(registry(), before, "the shelf project was registered");
+    // With the owner's `--shared` it registers the shelf project, which waits for the start in the
+    // shelf's main checkout: the host is not replaced.
+    let mut waits = start_with_args(&repo, SHELF, &branch, &["--shared"]);
+    assert_eq!(waits.wait().code(), Some(2), "{}", waits.output());
+    let said = waits.output();
+    assert!(
+        said.contains(&format!(
+            "✖ Symphony: the running Symphony lacks the plugin fixture-shelf, which pantry names: \
+             this start runs in the linked worktree {}, and a start in a linked worktree never \
+             replaces the running Symphony: run `just symphony` in {}\n",
+            branch.display(),
+            shelf.display()
+        )),
+        "{said}"
+    );
+    assert!(registry().contains("\"pantry\""), "{}", registry());
+    assert!(
+        !repo.home.join("handover.json").exists(),
+        "a hand-off was asked"
+    );
+    let host = status(repo.port());
+    assert_eq!(host.pid, plain.pid);
+    assert!(host.plugins.is_empty(), "{:?}", host.plugins);
+}
+
+#[test]
 fn a_host_holding_the_plugin_serves_a_plain_project_started_after_it() {
     let repo = Repo::new("projects shelf first");
     let shelf = projects(&repo);
@@ -272,12 +338,12 @@ fn a_host_holding_the_plugin_serves_a_plain_project_started_after_it() {
     let mut first = start_with(&repo, SHELF, &shelf);
     first.success();
     repo.adopt();
-    let host = front(repo.port()).expect("native status");
+    let host = status(repo.port());
     assert_eq!(board_tasks(host.port, "pantry"), [PANTRY_TASK]);
     // The plain build serves no plugin the host lacks: it registers and is served as it is.
     let mut second = start_with(&repo, APP, &repo.main);
     second.success();
     assert!(second.output().contains("/alpha/"), "{}", second.output());
-    assert_eq!(front(repo.port()).unwrap().pid, host.pid);
+    assert_eq!(status(repo.port()).pid, host.pid);
     both_served(&repo, "pantry");
 }

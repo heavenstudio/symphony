@@ -44,7 +44,11 @@ mod forkless;
 pub mod killed;
 
 pub const APP: &str = env!("CARGO_BIN_EXE_symphony-server");
+/// What a wait of this target takes on a quiet machine with room to spare: its allowance.
 pub const PATIENCE: Duration = Duration::from_secs(30);
+/// The wall-clock backstop of every wait of this target, which only a stall reaches
+/// (`test_time::backstop`, RULES.md `tests/no-test-fails-on-load`).
+pub const BACKSTOP: Duration = test_time::backstop(PATIENCE);
 
 const SCRATCH_PREFIX: &str = "after-lifecycle-";
 
@@ -262,22 +266,45 @@ fn diagnostic_output(stdout: &Path, stderr: &Path, server_log: Option<&Path>) ->
     text
 }
 
-/// This polls an observable event, never a presumed startup duration.
+/// This polls an observable event, never a presumed startup duration: only a stall reaches its
+/// [`BACKSTOP`].
 pub fn until<T>(why: &str, event: impl FnMut() -> Option<T>) -> T {
-    poll(PATIENCE, || why.into(), event, Instant::elapsed)
+    poll(BACKSTOP, || why.into(), event, Instant::elapsed)
 }
 
 fn poll<T>(
-    patience: Duration,
+    backstop: Duration,
     why: impl FnOnce() -> String,
     event: impl FnMut() -> Option<T>,
     elapsed: impl FnMut(&Instant) -> Duration,
 ) -> T {
-    poll_for(patience, event, elapsed).unwrap_or_else(|| panic!("timed out: {}", why()))
+    poll_for(backstop, event, elapsed).unwrap_or_else(|| panic!("{}", stalled(&why(), backstop)))
+}
+
+/// A wait's failure: `why` was still not so when the wait's wall-clock `backstop` ran out, which
+/// only a stall reaches, and the machine's load then, on a line of its own after it.
+fn stalled(why: &str, backstop: Duration) -> String {
+    format!(
+        "stalled: {why}\n(the wait's wall-clock backstop of {backstop:?} ran out; {})",
+        test_time::Load::now()
+    )
+}
+
+/// `message` with the line [`stalled`] ends it with taken off, after checking that line names
+/// [`BACKSTOP`] and the load: what a stalled wait said of itself.
+#[cfg(test)]
+fn stalled_why(message: &str) -> &str {
+    let (why, load) = message.rsplit_once('\n').unwrap_or_else(|| panic!("{message}"));
+    let backstop = format!("(the wait's wall-clock backstop of {BACKSTOP:?} ran out; ");
+    assert!(
+        load.starts_with(&backstop) && load.contains("load average"),
+        "{message}"
+    );
+    why
 }
 
 fn poll_for<T>(
-    patience: Duration,
+    backstop: Duration,
     mut event: impl FnMut() -> Option<T>,
     mut elapsed: impl FnMut(&Instant) -> Duration,
 ) -> Option<T> {
@@ -286,7 +313,7 @@ fn poll_for<T>(
         if let Some(value) = event() {
             return Some(value);
         }
-        if elapsed(&began) >= patience {
+        if elapsed(&began) >= backstop {
             return None;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -300,7 +327,7 @@ fn wait_cleanup(
     elapsed: impl FnMut(&Instant) -> Duration,
 ) {
     let outcome = poll_for(
-        PATIENCE,
+        BACKSTOP,
         || match finished() {
             Ok(true) => Some(Ok(())),
             Ok(false) => None,
@@ -311,7 +338,7 @@ fn wait_cleanup(
     let message = match outcome {
         Some(Ok(())) => return,
         Some(Err(error)) => format!("{}: {error}", why()),
-        None => format!("timed out: {}", why()),
+        None => stalled(&why(), BACKSTOP),
     };
     cleanup_failed(&message);
 }
@@ -325,14 +352,13 @@ fn cleanup_failed(message: &str) {
     }
 }
 
+/// One request for `path` on `port`, the status and body it was answered with, or none where
+/// nothing listens there or the answer is no HTTP. A connection that is taken is answered: only a
+/// stall reaches [`BACKSTOP`] while it waits. A wait for an answer is [`answer`]'s.
 pub fn get(port: u16, path: &str) -> Option<(u16, String)> {
-    let mut stream =
-        TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(200))
-            .ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(2)))
-        .ok()?;
+    let mut stream = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), BACKSTOP).ok()?;
+    stream.set_read_timeout(Some(BACKSTOP)).ok()?;
+    stream.set_write_timeout(Some(BACKSTOP)).ok()?;
     write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
@@ -344,11 +370,24 @@ pub fn get(port: u16, path: &str) -> Option<(u16, String)> {
     Some((head.split_whitespace().nth(1)?.parse().ok()?, body.into()))
 }
 
+/// The answer to `path` on `port`, once the server there gives one ([`get`]): a wait on it.
+pub fn answer(port: u16, path: &str) -> (u16, String) {
+    until(&format!("an answer to GET {path} on port {port}"), || {
+        get(port, path)
+    })
+}
+
+/// One read of the native status on `port` ([`get`]), or none.
 pub fn front(port: u16) -> Option<symphony_api::Front> {
     let (status, body) = get(port, "/api/front")?;
     (status == 200)
         .then(|| serde_json::from_str(&body).ok())
         .flatten()
+}
+
+/// The native status on `port`, once the server there gives it ([`front`]): a wait on it.
+pub fn status(port: u16) -> symphony_api::Front {
+    until(&format!("the native status on port {port}"), || front(port))
 }
 
 /// Retains and reaps its exact child even if a test assertion unwinds.
@@ -563,7 +602,7 @@ impl Process {
         let server_log = self.server_log.as_deref();
         let launch = &self.launch;
         let status = poll(
-            PATIENCE,
+            BACKSTOP,
             || {
                 format!(
                     "child {id} to exit; {launch}: {}",
@@ -643,7 +682,7 @@ impl Process {
         let id = self.child.id();
         let child = &mut self.child;
         let actual = poll(
-            PATIENCE,
+            BACKSTOP,
             || {
                 format!(
                     "native server readiness for child {id}: {}",
@@ -1068,7 +1107,7 @@ impl Repo {
 
     /// `path` of the project the one server on `port` was started by, under its `/<id>/`.
     pub fn page(&self, port: u16, path: &str) -> String {
-        let front = front(port).expect("native status");
+        let front = status(port);
         format!(
             "/{}{path}",
             front.projects.first().expect("a project is served")
@@ -1077,7 +1116,7 @@ impl Repo {
 
     pub fn check_server(&self) -> symphony_api::Front {
         let record = self.record().expect("shared address record");
-        let actual = front(record.port).expect("native status");
+        let actual = status(record.port);
         assert!(actual.ready);
         assert_eq!(actual.pid, record.pid);
         assert_eq!(actual.root, self.main.to_str().unwrap());

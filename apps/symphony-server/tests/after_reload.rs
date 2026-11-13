@@ -27,7 +27,19 @@ mod lines;
 use gate::{Entry, Gate};
 use lines::Lines;
 
-const LIMIT: Duration = Duration::from_secs(45);
+/// What a wait of this target takes on a quiet machine with room to spare: its allowance.
+const ALLOWANCE: Duration = Duration::from_secs(45);
+/// The wall-clock backstop of every wait of this target, which only a stall reaches
+/// (`test_time::backstop`, RULES.md `tests/no-test-fails-on-load`).
+const LIMIT: Duration = test_time::backstop(ALLOWANCE);
+
+/// A wait for `what` that ran past [`LIMIT`]: a stall, and the machine's load then.
+fn stalled(what: impl std::fmt::Display) -> String {
+    format!(
+        "{what}: stalled: the wait's wall-clock backstop of {LIMIT:?} ran out; {}",
+        test_time::Load::now()
+    )
+}
 const DOC: &str = "# Reload fixture\n\n<!-- register:start -->\n- [ ] **one** — A proposal.\n<!-- register:end -->\n";
 
 fn write(path: &Path, text: &str) {
@@ -57,15 +69,12 @@ fn repository(root: &Path, args: &[&str]) -> String {
 struct OwnedChild(Child);
 impl OwnedChild {
     fn wait(&mut self) {
-        let began = Instant::now();
-        loop {
-            if let Some(status) = self.0.try_wait().unwrap() {
-                assert!(status.success(), "child {}: {status}", self.0.id());
-                return;
-            }
-            assert!(began.elapsed() < LIMIT, "child {} did not end", self.0.id());
-            std::thread::park_timeout(Duration::from_millis(10));
-        }
+        let id = self.0.id();
+        let status = test_time::until(format!("child {id} to end"), LIMIT, || {
+            self.0.try_wait().unwrap()
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
+        assert!(status.success(), "child {id}: {status}");
     }
 }
 impl Drop for OwnedChild {
@@ -108,6 +117,7 @@ fn driver(logs: &Path) -> &'static Path {
                         "__DIRTY_MAIN__",
                         &format!("{:?}", symphony::landing::DIRTY_MAIN),
                     )
+                    .replace("__LIMIT_SECS__", &LIMIT.as_secs().to_string())
                     .as_bytes(),
             )
             .unwrap();
@@ -135,7 +145,8 @@ use std::os::unix::process::CommandExt;
 const DIRTY_MAIN: &str = __DIRTY_MAIN__;
 fn event(kind: &str) -> String {
     let mut s = UnixStream::connect(env::var_os("SYMPHONY_AFTER_RELOAD_GATE").unwrap()).unwrap();
-    s.set_read_timeout(Some(std::time::Duration::from_secs(45))).unwrap();
+    // The case answers within the target's backstop, which only a stall reaches.
+    s.set_read_timeout(Some(std::time::Duration::from_secs(__LIMIT_SECS__))).unwrap();
     writeln!(s, "{kind} {}", std::process::id()).unwrap();
     let mut answer = String::new();
     assert!(BufReader::new(s).read_line(&mut answer).unwrap() > 0);
@@ -384,10 +395,9 @@ impl Fixture {
         let surreal = leashed_surreal::binary();
         // Surreal prints its configured address for :0, so it is told a reserved port, and started
         // again on another when that port was taken before it bound it (port), every start
-        // within the one 30 s budget. A readiness announcement from this exact child, and its own
-        // listener on that port, are required before any fixture writes can be sent.
-        let began = Instant::now();
-        let deadline = began + Duration::from_secs(30);
+        // within the one backstop, [`LIMIT`]. A readiness announcement from this exact child, and
+        // its own listener on that port, are required before any fixture writes can be sent.
+        let deadline = Instant::now() + LIMIT;
         let started = port::start_on_free_port(port::ATTEMPTS, deadline, |reserved| {
             assert_ne!(reserved.port(), 8765);
             let board_address = reserved.to_string();
@@ -401,8 +411,9 @@ impl Fixture {
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
                 }
-                Err(e) => panic!(
-                    "waiting for the private database's pid: {e}; {:?}",
+                Err(_) => panic!(
+                    "{}; {:?}",
+                    stalled("the private database's pid"),
                     database_lines.history
                 ),
             };
@@ -411,8 +422,9 @@ impl Fixture {
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Ok::<_, Infallible>(Start::Ended(database_lines.said()));
                 }
-                Err(e) => panic!(
-                    "waiting for the private database's announcement: {e}; {:?}",
+                Err(_) => panic!(
+                    "{}; {:?}",
+                    stalled("the private database's announcement"),
                     database_lines.history
                 ),
             };
@@ -429,14 +441,11 @@ impl Fixture {
                 {
                     return Ok(Start::Up((database, database_lines, board_address)));
                 }
-                assert!(
-                    began.elapsed() < LIMIT,
-                    "private database never answered its health check"
-                );
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 assert!(
                     !remaining.is_zero(),
-                    "private database exhausted its 30 s announcement and health budget"
+                    "{}",
+                    stalled("the private database's answer to its health check")
                 );
                 std::thread::sleep(Duration::from_millis(50).min(remaining));
             }
@@ -700,19 +709,17 @@ fn assert_front(address: SocketAddr, pid: i64) {
     assert_eq!(front["ready"], true);
 }
 fn await_front(address: SocketAddr, pid: i64) {
-    let began = Instant::now();
-    loop {
+    let mut last = Value::Null;
+    let served = test_time::until_true(format!("replacement {pid} to serve"), LIMIT, || {
         let front = get(address, "/api/front");
         assert_eq!(front["port"], address.port());
         assert_eq!(front["ready"], true);
-        if front["pid"] == pid {
-            return;
-        }
-        assert!(
-            began.elapsed() < LIMIT,
-            "replacement {pid} never served: {front}"
-        );
-        std::thread::yield_now();
+        let served = front["pid"] == pid;
+        last = front;
+        served
+    });
+    if let Err(stall) = served {
+        panic!("{stall}; the last answer: {last}");
     }
 }
 
@@ -840,11 +847,8 @@ fn a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed() {
         let pid = lines
             .find_map(|line| leashed_surreal::pid_of(&line.unwrap()))
             .expect("the database's pid");
-        let began = Instant::now();
-        while !rpc::healthy(&address) {
-            assert!(began.elapsed() < LIMIT, "the database never answered");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        test_time::until_true("the database's answer", LIMIT, || rpc::healthy(&address))
+            .unwrap_or_else(|stall| panic!("{stall}"));
         fs::write(
             format!("{}.partial", said.to_string_lossy()),
             pid.to_string(),
@@ -867,33 +871,26 @@ fn a_fixtures_leashed_database_ends_when_the_test_that_started_it_is_killed() {
         )
         .unwrap(),
     );
-    let began = Instant::now();
-    let database: i64 = loop {
-        if let Ok(pid) = fs::read_to_string(&said) {
-            break pid.trim().parse().unwrap();
-        }
+    let database: i64 = test_time::until("the starter's database's answer", LIMIT, || {
+        let written = fs::read_to_string(&said).ok();
         assert!(
-            starter.0.try_wait().unwrap().is_none(),
+            written.is_some() || starter.0.try_wait().unwrap().is_none(),
             "the starter ended before its database answered"
         );
-        assert!(
-            began.elapsed() < LIMIT,
-            "the starter's database never answered"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    };
+        Some(written?.trim().parse().unwrap())
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
     assert!(sys::pid_alive(database));
     // The abrupt end: SIGKILL, so nothing of the starter's runs after it.
     starter.0.kill().unwrap();
     starter.0.wait().unwrap();
-    let ended = Instant::now();
-    while sys::pid_alive(database) {
-        assert!(
-            ended.elapsed() < Duration::from_secs(10),
-            "database {database} outlived the test that started it"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    // Only the leash ends the database now: it would otherwise serve on until the backstop.
+    test_time::until_true(
+        format!("database {database} to end with the test that started it"),
+        LIMIT,
+        || !sys::pid_alive(database),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
     fs::remove_dir_all(&dir).unwrap();
 }
 

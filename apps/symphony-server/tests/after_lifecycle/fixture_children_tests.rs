@@ -42,7 +42,7 @@ fn a_setup_run_waits_for_its_child_on_a_clock_past_every_deadline() {
         .args(["-c", "read -r line; printf ended"])
         .stdin(Stdio::piped());
     let mut setup = Process::spawn(command, &scratch.path.join("setup"));
-    setup.wait_elapsed = Box::new(|_| PATIENCE);
+    setup.wait_elapsed = Box::new(|_| BACKSTOP);
     setup.setup_success();
     assert_eq!(setup.output(), "ended");
 }
@@ -69,15 +69,15 @@ fn a_readiness_timeout_names_its_child_and_reports_late_open_stage() {
                 == "startup stdout\n· review timing start: hub branch trees\n")
                 .then_some(())
         });
-        PATIENCE
+        BACKSTOP
     });
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process.ready()));
     drop(process);
     let failure = failure.expect_err("a child without a readiness event must time out");
     assert_eq!(
-        failure.downcast_ref::<String>().unwrap(),
-        &format!(
-            "timed out: native server readiness for child {pid}: startup stdout\n· review timing start: hub branch trees\n"
+        stalled_why(failure.downcast_ref::<String>().unwrap()),
+        format!(
+            "stalled: native server readiness for child {pid}: startup stdout\n· review timing start: hub branch trees\n"
         )
     );
 }
@@ -94,7 +94,7 @@ fn a_descendant_that_keeps_its_endpoint_fails_with_its_launch_identity() {
         (process.output() == "ready").then_some(())
     });
     let pid = process.child.id();
-    process.descendants.as_mut().unwrap().wait_elapsed = Box::new(|_| PATIENCE);
+    process.descendants.as_mut().unwrap().wait_elapsed = Box::new(|_| BACKSTOP);
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         process.descendants.as_mut().unwrap().wait();
     }));
@@ -105,9 +105,9 @@ fn a_descendant_that_keeps_its_endpoint_fails_with_its_launch_identity() {
     drop(process);
     let failure = failure.expect_err("a live holder must fail the bounded EOF wait");
     assert_eq!(
-        failure.downcast_ref::<String>().unwrap(),
-        &format!(
-            "timed out: descendants of child {pid} (\"/bin/sh\" [\"-c\", \"printf ready; read -r release\"]) to exit before scratch removal"
+        stalled_why(failure.downcast_ref::<String>().unwrap()),
+        format!(
+            "stalled: descendants of child {pid} (\"/bin/sh\" [\"-c\", \"printf ready; read -r release\"]) to exit before scratch removal"
         )
     );
 }
@@ -193,7 +193,7 @@ fn timed_out_wait_reports_output_written_after_polling_begins() {
             (output(&stdout, &stderr) == "late stdout\nlate stderr\n").then_some(())
         });
         write(&detached, "late detached server progress\n");
-        PATIENCE
+        BACKSTOP
     });
     // The expected timeout leaves Process owning its child, which is cleaned up below.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process.wait()));
@@ -202,9 +202,9 @@ fn timed_out_wait_reports_output_written_after_polling_begins() {
     let timeout = result.unwrap_err();
     let message = timeout.downcast_ref::<String>().unwrap();
     assert_eq!(
-        message,
-        &format!(
-            "timed out: child {id} to exit; {launch}: late stdout\nlate stderr\n\ndetached server log {}:\nlate detached server progress\n",
+        stalled_why(message),
+        format!(
+            "stalled: child {id} to exit; {launch}: late stdout\nlate stderr\n\ndetached server log {}:\nlate detached server progress\n",
             server_log.display()
         )
     );

@@ -1806,7 +1806,8 @@ mod tests {
                 _ => &mut command,
             };
             let (own_group, own_session) = (case != "plain", case == "session");
-            let mut child = command.arg("60").spawn().unwrap();
+            // It lives until killed: no run of the test outlasts its day.
+            let mut child = command.arg("86400").spawn().unwrap();
             let pid = libc::pid_t::try_from(child.id()).unwrap();
             // SAFETY: getpgid and getsid read the group and session of this test's own child.
             let (its_group, its_session) = unsafe { (libc::getpgid(pid), libc::getsid(pid)) };
@@ -2212,7 +2213,7 @@ mod tests {
             !found(unconnected.as_raw_fd()),
             "the socket reached a child before its connect"
         );
-        let mut socket = connect(&to, Duration::from_secs(5)).unwrap();
+        let mut socket = connect(&to, test_time::backstop(Duration::from_secs(5))).unwrap();
         assert!(
             !found(socket.as_raw_fd()),
             "the connected socket reached a forked child"
@@ -2244,7 +2245,11 @@ mod tests {
         socket.read_exact(&mut byte).unwrap();
         assert_eq!(byte, *b"b");
         let six = TcpListener::bind("[::1]:0").unwrap();
-        let socket = connect(&six.local_addr().unwrap(), Duration::from_secs(5)).unwrap();
+        let socket = connect(
+            &six.local_addr().unwrap(),
+            test_time::backstop(Duration::from_secs(5)),
+        )
+        .unwrap();
         assert!(!found(socket.as_raw_fd()));
         assert_eq!(socket.peer_addr().unwrap(), six.local_addr().unwrap());
     }
@@ -2415,14 +2420,14 @@ mod tests {
         );
     }
 
-    /// Children outliving every answer, spawned through std beside it as another thread's long
-    /// child would be, each under [`spawning`] as every std spawn beside the helpers, and keeping
+    /// Children outliving every answer, each living until it is killed (a day), spawned through std
+    /// beside it as another thread's long child would be, each under [`spawning`] as every std spawn beside the helpers, and keeping
     /// whatever else it could copy as it started.
     fn racing(spawned: &AtomicBool) -> Children {
         let mut children = Children(Vec::new());
         for _ in 0..32 {
             let child = std::process::Command::new("sleep")
-                .arg("60")
+                .arg("86400")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -2446,18 +2451,22 @@ mod tests {
                 set_nonblocking(&reader, true).unwrap();
                 drop(writer);
                 // No child holds the writer: no spawn or fork copies a pipe's ends, and a racer
-                // spawned under the lock never sees its first ones.
+                // spawned under the lock never sees its first ones. Its EOF comes at once; only a
+                // holder, which lives a day, keeps it past the backstop.
                 let made = Instant::now();
                 loop {
                     match reader.read(&mut [0]) {
                         Ok(0) => break,
                         Err(e)
                             if e.kind() == io::ErrorKind::WouldBlock
-                                && made.elapsed() < Duration::from_secs(5) =>
+                                && made.elapsed() < test_time::backstop(Duration::from_secs(5)) =>
                         {
                             std::thread::sleep(Duration::from_millis(1));
                         }
-                        other => panic!("answer {answers} is held open: {other:?}"),
+                        other => panic!(
+                            "answer {answers} is held open: {other:?}; {}",
+                            test_time::Load::now()
+                        ),
                     }
                 }
                 answers += 1;
@@ -2551,7 +2560,7 @@ mod tests {
                 answers += 1;
             }
             let mut children = other.join().unwrap();
-            // A wait some racer held would have ended only with that racer, 60 s on.
+            // A wait some racer held would have ended only with that racer, a day on.
             for racer in &mut children.0 {
                 assert!(racer.try_wait().unwrap().is_none(), "a racer ended first");
             }
