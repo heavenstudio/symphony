@@ -7,6 +7,7 @@
 //! own as soon as it is made, over one connection: how the client keeps one process for a board.
 
 use super::shape;
+use crate::launch::Bounds;
 use crate::pyjson::{self, Py};
 use crate::{Beat, Error, NewAsk, NewLaunch, NewSession, NewTask, Store};
 use serde::de::DeserializeOwned;
@@ -333,6 +334,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "record_launch" => {
             let new: NewLaunch = a.rest()?;
             super::check_actor(&new.handle)?;
+            // Through `just tasks`, which an agent runs unasked: no record a restore would start
+            // outside the project in, nor one naming a conversation the board did not record.
+            if let Some(bounds) = board.context.as_ref().and_then(Bounds::unasked) {
+                bounds.record(&new).map_err(Fail::Refused)?;
+            }
             shape::launch(&board.get()?.record_launch(&new)?)
         }
         "task_sessions" => {

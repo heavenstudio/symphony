@@ -41,10 +41,12 @@ options:
   --detached            a worktree on no branch, for read-only work (a
                         reviewer's and an instruction's are)
   --worktree WORKTREE   use this worktree instead of making one under
-                        <repo>-wt/
+                        <repo>-wt/; through just tasks, one in the project
+                        or under <repo>-wt/
   --tab TAB             the Herdr app tab (stream) for its terminal; default
                         code for an executor, review for a reviewer
-  --prompt PROMPT       text sent after /work SLUG HANDLE
+  --prompt PROMPT       text sent after /work SLUG HANDLE; refused through
+                        just tasks: say it on the task's thread
 "#;
 
 /// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the

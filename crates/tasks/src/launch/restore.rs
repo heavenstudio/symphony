@@ -72,6 +72,16 @@ fn restore_one(
             session.handle
         )));
     }
+    // Through a recipe an agent runs unasked, a record names a folder it makes again and starts an
+    // agent in: only one in the project ([`super::Bounds`]), whenever the record was written.
+    if let Some(bounds) = &machine.bounds {
+        bounds
+            .admit(
+                &format!("{}'s recorded worktree", session.handle),
+                Path::new(&session.worktree),
+            )
+            .map_err(Error::Refused)?;
+    }
     if let Some(terminal) = running_as(hc, &session.handle)? {
         return Err(Error::Refused(format!(
             "{} still runs in terminal {terminal}: close it before restoring",

@@ -19,6 +19,8 @@
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
+//! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
+//! the project, and a launch's first message is `/work SLUG HANDLE` alone ([`Bounds`]).
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`symphony.board`); its
 //! agent is idle (or it is a shell with nothing in it, or its program ended), its foreground is the
@@ -36,6 +38,7 @@
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
+mod bounds;
 mod checkout;
 mod cleanup;
 mod close;
@@ -56,6 +59,7 @@ pub mod staff;
 mod startup;
 mod uuid;
 
+pub use bounds::Bounds;
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
 pub use defaults::{Defaults, Resolved};
@@ -124,6 +128,9 @@ pub struct Machine {
     /// `TASKS_DATABASE` and `TASKS_SERVER`, when it has them. hc starts programs in the login
     /// session's environment, not the caller's.
     pub board_env: Vec<(String, String)>,
+    /// For a command run under the unasked recipes' marker, where the agents it starts may run
+    /// ([`Bounds`]); none for the binary run by itself, which starts them anywhere.
+    pub bounds: Option<Bounds>,
 }
 
 impl Machine {
@@ -132,6 +139,7 @@ impl Machine {
         let root = root_of(env);
         let wt_base = worktree_base(&root, env);
         Machine {
+            bounds: Bounds::of(env, &root, &wt_base),
             root,
             wt_base,
             new_id: Box::new(new_uuid),
@@ -236,6 +244,14 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             crate::pyjson::repr(role)
         )));
     }
+    // Through a recipe an agent runs unasked: no word of the launcher's in the first message, and
+    // no folder outside the project ([`Bounds`]).
+    if let Some(bounds) = &m.bounds {
+        bounds.prompt(slug, &ask.prompt).map_err(Error::Refused)?;
+        if let Some(given) = &ask.worktree {
+            bounds.admit("--worktree", given).map_err(Error::Refused)?;
+        }
+    }
     store.touch(&ask.actor)?;
     let task = store.get(slug)?;
     if FINISHED.contains(&task.status.as_str()) {
@@ -256,6 +272,11 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                     }
                     path = m.wt_base.join(format!("{dashed}-review-{n}"));
                 }
+            }
+            if let Some(bounds) = &m.bounds {
+                bounds
+                    .admit("its worktree", &path)
+                    .map_err(Error::Refused)?;
             }
             if path.exists() {
                 return Err(LaunchError(format!(

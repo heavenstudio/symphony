@@ -11,6 +11,7 @@ mod startup;
 
 use crate::common::refused;
 use crate::{World, git};
+use std::fs;
 use std::path::Path;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::{Ask, GONE, Started, restore};
@@ -310,6 +311,96 @@ fn a_missing_worktree_is_made_again_on_its_branch_or_detached_without_one() {
             &["rev-parse", "--abbrev-ref", "HEAD"]
         ),
         "HEAD"
+    );
+}
+
+// -- through `just tasks`, which an agent runs unasked -----------------------------------------
+
+fn unasked(w: &World) -> Result<Vec<Started>, Error> {
+    restore(w.store(), &w.hc(), &w.unasked(), "sim/jump", None, None)
+}
+
+#[test]
+fn unasked_a_record_of_a_worktree_outside_the_project_is_neither_made_again_nor_started_in() {
+    let w = World::new();
+    // An older record, or one the binary run by itself made: a Claude executor outside the project.
+    let elsewhere = w.dir().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    let s = w
+        .try_launch(&Ask {
+            kind: Some("claude".into()),
+            worktree: Some(elsewhere.clone()),
+            ..w.ask("sim/jump")
+        })
+        .unwrap()
+        .row;
+    close_terminal(&w, &s);
+    let closed = w.store().task_sessions("sim/jump").unwrap();
+    assert_eq!(
+        refused(unasked(&w)),
+        w.outside(&format!(
+            "{}'s recorded worktree {} is",
+            s.handle,
+            elsewhere.display()
+        ))
+    );
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), closed);
+    // One that is gone is not made again there, and a record whose terminal is gone stays as it
+    // was: nothing is written before the refusal.
+    let gone = w.dir().join("gone");
+    w.store()
+        .record_launch(&NewLaunch {
+            claude_session: s.claude_session.clone(),
+            worktree: gone.display().to_string(),
+            branch: "sim/jump".into(),
+            pane: s.pane.clone(),
+            model: s.model.clone(),
+            ..NewLaunch::new("sim/jump", &s.handle, &s.role)
+        })
+        .unwrap();
+    let reopened = w.store().task_sessions("sim/jump").unwrap();
+    assert_eq!(reopened[0].closed, None);
+    assert_eq!(
+        refused(unasked(&w)),
+        w.outside(&format!(
+            "{}'s recorded worktree {} is",
+            s.handle,
+            gone.display()
+        ))
+    );
+    assert!(!gone.exists());
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), reopened);
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+    // The binary run by itself makes it and starts the agent there.
+    let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
+    assert!(gone.is_dir());
+    assert_eq!(
+        w.terminal(&again.row.pane)["cwd"].as_str(),
+        Some(gone.display().to_string().as_str())
+    );
+}
+
+#[test]
+fn unasked_a_record_in_the_project_is_restored_and_made_again_under_the_worktree_base() {
+    let w = World::new();
+    let s = launched(&w).row;
+    close_terminal(&w, &s);
+    git(&w.repo, &["worktree", "remove", "--force", &s.worktree]);
+    let [again] = <[_; 1]>::try_from(unasked(&w).unwrap()).unwrap();
+    assert_eq!(
+        git(
+            Path::new(&s.worktree),
+            &["rev-parse", "--abbrev-ref", "HEAD"]
+        ),
+        "sim/jump"
+    );
+    assert_eq!(
+        w.terminal(&again.row.pane)["cwd"].as_str(),
+        Some(s.worktree.as_str())
+    );
+    assert_eq!(
+        last_program(&w)[..3],
+        ["claude", "--resume", s.claude_session.as_str()]
     );
 }
 

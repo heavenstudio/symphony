@@ -318,10 +318,20 @@ repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
 linked worktree its repository lists, the main checkout's artifacts folder, never
 into a git folder, with the path's links and `..` resolved, and replaces only an
 earlier snapshot; it refuses any other place, or a file of the project's own,
-with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
-reply recipes keep their writes to the same places (AGENTS.md, "Agent
-integration"). The binary run by itself, which no rule allows, writes wherever it
-is told. The mark is the one command's: no child the board starts keeps it
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
+agent the board starts under the mark stays in the project the same way
+(`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
+launch makes and the one a restore makes again and starts in, an older record's
+too, lead only into those places or under the project's worktree base (`<repo>-wt/`,
+or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
+line naming the folder and starts nothing. A launch takes no `--prompt` there: an
+agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
+alone, and the rest goes on the task's thread, which `/work` reads. `tasks api`'s
+`record_launch` records neither a worktree outside those places nor a conversation
+id, so a restore resumes only a conversation the board recorded itself, launching
+or finding the agent. The reply recipes keep their writes to the same places
+(AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
+writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
 (`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
 where the project says.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
@@ -740,7 +750,8 @@ its foreground: a job it runs in front, or one it became by `exec`, is work. Whe
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
-worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
+worktree, in a new terminal; through `just tasks`, only a worktree in the project
+([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
