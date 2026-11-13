@@ -8,7 +8,9 @@
 //! address and its encoding, in the places active segments hold, so the same segments give the same
 //! bytes. Active segments are dropped once written, so no instruction can tell their indices apart;
 //! a passive or declared segment keeps its index. Two active segments that fill one place with
-//! different contents would make their order matter, and that is refused.
+//! different contents would make their order matter, and that is refused, as is a chunk whose name,
+//! linking or relocation sections name its segments by index, which a new order would leave naming
+//! others (the splitter removes the last two; a chunk still holding one is not its output).
 
 use super::Failure;
 use super::wasm::{self, DATA, ELEMENT, Mode, Module, Segment};
@@ -65,6 +67,18 @@ pub(super) fn order(chunk: &[u8]) -> Result<Ordered, Failure> {
              others"
                 .into(),
         ));
+    }
+    if let Some(section) = module
+        .sections
+        .iter()
+        .filter_map(wasm::Section::custom)
+        .map(|(name, _)| name)
+        .find(|name| *name == "linking" || name.starts_with("reloc."))
+    {
+        return Err(Failure::Unsafe(format!(
+            "its {section} section names its segments by index, which a new order of them would \
+             leave naming others"
+        )));
     }
     Ok(Ordered {
         bytes: module.write(),
