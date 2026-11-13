@@ -21,7 +21,7 @@ impl Store {
                 repr(role)
             )));
         }
-        let starts = role == "orchestrator" && self.slots.is_some();
+        let starts = role == "orchestrator";
         // The board the commands a refusal names reach: this one.
         let board = self.board_command();
         // Who orchestrated the task, read from its thread as the verdict reads it.
@@ -63,7 +63,7 @@ impl Store {
                         continue; // a double both still hold: settled by handover or release
                     }
                     // A hand-over is capped as this take is: it is no way round the cap.
-                    let capped = if self.slots.is_some() {
+                    let capped = if self.slots().is_some() {
                         format!(", which {handle}'s cap decides as it does a take")
                     } else {
                         String::new()
@@ -116,7 +116,7 @@ impl Store {
     pub fn hand_over(&self, slug: &str, from: &str, to: &str) -> Result<Task, Error> {
         let capped = from != super::OWNER;
         let board = self.board_command();
-        self.ruling(slug, from, capped && self.slots.is_some(), |view| {
+        self.ruling(slug, from, capped, |view| {
             view.actor(from)?;
             let task = view.task(slug)?;
             if task.status == "done" || task.status == "cancelled" {

@@ -23,6 +23,7 @@ const PULL_SECONDS: f64 = 600.0;
 
 mod asks;
 mod finish;
+mod limits;
 mod list;
 mod panes;
 mod stats;
@@ -282,9 +283,15 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "next" => {
             if let Some(t) = store.next_for(&c.actor()?)? {
+                // Past `[limits] machine_agents` the task is still named: its asker runs already.
+                let hc = crate::launch::hc::Binary::of(c.env);
+                if let Some(warning) = crate::launch::running::warning_next(store, c.env, &hc) {
+                    let _ = writeln!(c.err, "⚠ {warning}");
+                }
                 c.say(&format!("{}  p{}  {}", t.slug, t.priority, t.title));
             }
         }
+        "limits" => limits::run(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;

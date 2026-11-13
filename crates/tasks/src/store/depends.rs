@@ -205,7 +205,7 @@ impl Store {
             };
             // Back to work or review it was blocked from starts it again, as a move would: refused
             // past the cap.
-            let slots = match (back, self.slots) {
+            let slots = match (back, self.slots()) {
                 (Some((to, _)), Some(cap)) if OPEN.contains(&to) => {
                     let view = self.view(&Which::Starting(slug))?;
                     let mut executing: Vec<String> =
