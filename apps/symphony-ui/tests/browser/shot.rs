@@ -1094,8 +1094,16 @@ fn a_click_on_a_checkbox_under_a_span_slotted_into_a_closed_roots_button_stays_c
     // as the label's; the browser names the slot, and the walk up from it finds the button the
     // press reaches, which never activates the label. On a plain span, or on a component.
     for (name, css, cover) in [
-        ("label-slot-span", "#slot-spanned", "span#slot-span-track.track"),
-        ("label-slot-closed", "#slot-closed", "span#closed-slotted.track"),
+        (
+            "label-slot-span",
+            "#slot-spanned",
+            "span#slot-span-track.track",
+        ),
+        (
+            "label-slot-closed",
+            "#slot-closed",
+            "span#closed-slotted.track",
+        ),
     ] {
         let message = format!(
             "--click {css} stayed covered: {cover} was on top at its middle after every scroll \
@@ -1108,7 +1116,8 @@ fn a_click_on_a_checkbox_under_a_span_slotted_into_a_closed_roots_button_stays_c
 }
 
 #[test]
-fn a_click_on_a_checkbox_under_a_custom_element_no_control_takes_lands_on_the_label_and_checks_it() {
+fn a_click_on_a_checkbox_under_a_custom_element_no_control_takes_lands_on_the_label_and_checks_it()
+{
     // A custom element never defined, one with no shadow root, and one whose closed root holds only
     // decoration: the page cannot see inside the last, the browser's own hit confirms nothing there
     // takes the press, and the label clicks its control.
@@ -1543,7 +1552,13 @@ fn a_clip_path_with_rounded_corners_calc_a_four_value_place_or_another_box_is_re
             "--click {css} stayed clipped: {by} clips it away at its middle after every scroll \
              within 5s"
         );
-        if !refused(&format!("shaped-{name}"), &shaped(), "--click", css, &message) {
+        if !refused(
+            &format!("shaped-{name}"),
+            &shaped(),
+            "--click",
+            css,
+            &message,
+        ) {
             return;
         }
     }
@@ -1584,7 +1599,13 @@ fn a_click_aims_tests_and_presses_one_whole_pixel_of_the_page() {
     // finds the button in the span's closed root, and presses nothing.
     let message = "--click #split stayed covered: button in span#split-host's shadow root was on \
                    top at its middle after every scroll within 5s";
-    if !refused("fractional-split", &fractional(), "--click", "#split", message) {
+    if !refused(
+        "fractional-split",
+        &fractional(),
+        "--click",
+        "#split",
+        message,
+    ) {
         return;
     }
     // With nothing past that edge, the press at the whole pixel lands on the label, which checks
