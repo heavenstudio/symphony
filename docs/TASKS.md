@@ -1776,7 +1776,7 @@ none (`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs
   orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
   task is already another's under a parent it holds; a subagent's claim of it leaves that role
   where it is. `--no-role --for HANDLE` files it for HANDLE, a live orchestrator, which takes the
-  role instead; `--no-role` naming nobody, or a session that is no live orchestrator, is refused.
+  role instead; `--no-role` without `--for`, or with one naming no live orchestrator, is refused.
   Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, staffing's review
   job, `tasks api`'s `create`) goes to the orchestrator of a task that session holds another role
   on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
