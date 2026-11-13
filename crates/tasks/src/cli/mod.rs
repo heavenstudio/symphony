@@ -443,6 +443,19 @@ pub fn writable_board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Client, None)
 }
 
+/// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
+/// ([`crate::Store::open`]): kept, with this signature, for consumers' code, which a release's
+/// refresh never changes (it moves their pin alone). New code uses [`writable_board`] and opens its
+/// store by [`Reached::opening`]. A store opened on a bare client names no live board, so a live
+/// board that went back below its record is refused here instead, in the rollback's words, before
+/// the client is returned, its schema read once when there is a record, as [`open_unchecked`] does
+/// ([`crate::live::seen::checked`]).
+pub fn board_client(env: &Env) -> Result<Client, String> {
+    let reached = writable_board(env)?;
+    not_gone_back(&reached)?;
+    Ok(reached.client)
+}
+
 /// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
 /// (`search_bench`'s), which a process Cargo runs may make.
 pub fn raw_client(env: &Env) -> Result<Client, String> {
@@ -657,12 +670,19 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
 /// A live board that went back below its record is refused in the rollback's words, its schema read
 /// once when there is a record ([`crate::live::seen::checked`]).
 fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
+    not_gone_back(&reached)?;
+    Ok(unchecked(reached, clock))
+}
+
+/// Refused in the rollback's words when `reached` is a live board that went back below its record,
+/// its schema read once when there is a record ([`crate::live::seen::checked`]); no record, no read.
+fn not_gone_back(reached: &Reached) -> Result<(), String> {
     if let Some(live) = &reached.live
         && let Some(back) = crate::live::seen::checked(live, || migrate::version(&reached.client))?
     {
         return Err(back.refusal());
     }
-    Ok(unchecked(reached, clock))
+    Ok(())
 }
 
 /// As [`open_unchecked`], for the heartbeat's one request: the board's schema is read only when the
