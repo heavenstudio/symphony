@@ -8,7 +8,9 @@
 //! run in the write that fires them is planned from the schema itself ([`crate::sql::events`]),
 //! `$before` and `$after` a message of the board's. The check fails on what [`crate::findings`]
 //! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
-//! subquery in a predicate.
+//! subquery in a predicate. Before its commands it files a task nobody orchestrates, so the give
+//! pass a dispatch and a look make is among what it plans on every run, whatever the tests before
+//! it on the same board left ([`unowned`]).
 
 use crate::board::board;
 use crate::findings::{Finding, findings, reads_rows, whole_read};
@@ -38,6 +40,8 @@ pub fn bound(name: &str) -> Option<Value> {
         "s" | "state" | "c" | "lease" | "recipient" | "channel" | "before" | "pull" => json!({}),
         "candidates" | "acked" | "wanted" | "pool" | "keys" | "waiting_keys" | "said" => json!([]),
         "line" => json!({"slug": generated::thread(), "sid": 1}),
+        // A give pass's fence names each task it decided on with its version as read.
+        "g" => json!({"slug": generated::thread(), "version": 1}),
         "address" => json!("uds:/tmp/perf.sock"),
         // The pending-post read is planned outside the closure that supplies each task's slug.
         "slug" | "dependent" => json!(generated::thread()),
@@ -158,9 +162,38 @@ fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> 
     planned
 }
 
+/// A statement of the give pass's fence ([`symphony_board::Store::give_unowned`]): what the requests
+/// hold once the check's commands made a give.
+const GIVE_FENCE: &str = "type::record('task', $g.slug)";
+
+/// A new top-level task nobody orchestrates on `board`, filed by the owner as a plain create, which
+/// gives none: the next reader of the whole board that gives (`tasks dispatch`, a look of `tasks
+/// wait`) gives it, whatever the board's other tasks are, and however earlier tests left them.
+fn unowned(board: &crate::board::Board) -> String {
+    let store = symphony_board::Store::with(
+        board.client(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        &symphony_board::sys::hostname(),
+    )
+    .unwrap();
+    let slug = format!("perf/unowned-{}", std::process::id());
+    let new = symphony_board::NewTask::new(&slug, "Nobody orchestrates it", "owner");
+    let task = store.create(&new).unwrap();
+    assert!(
+        task.roles.iter().all(|role| role.role != "orchestrator"),
+        "{:?}",
+        task.roles
+    );
+    slug
+}
+
 #[test]
 fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     let mut board = board();
+    // The give pass runs on a condition the check sets, never on what earlier tests or the clock
+    // left: a task nobody orchestrates, made before the relay records.
+    let nobodys = unowned(&board);
     let relay = Proxy::to(&board.addr);
     let thread = generated::thread();
     let writer = generated::writer();
@@ -233,7 +266,28 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     }
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
+    let given = board
+        .client()
+        .query(
+            "RETURN {
+                held: (SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'orchestrator'),
+                waiting: (SELECT VALUE fields._board.waiting FROM ONLY type::record('task', $slug)),
+            };",
+            json!({"slug": nobodys}),
+        )
+        .unwrap()
+        .remove(0);
+    assert!(
+        given["held"] == json!([orchestrator]) || given["waiting"].is_number(),
+        "a give pass gave {nobodys} to {orchestrator}, or marked it waiting: {given}"
+    );
     let planned = plan_all(&board.client(), &requests);
+    assert!(
+        planned
+            .keys()
+            .any(|statement| statement.contains(GIVE_FENCE)),
+        "the requests hold the give pass's fence"
+    );
     let failed = failures(&planned);
     let unread = unread(&board.client(), &requests, statements);
     eprintln!(
