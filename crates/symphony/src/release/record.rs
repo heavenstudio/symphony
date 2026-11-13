@@ -272,6 +272,11 @@ pub(crate) fn kept(common: &Path) -> PathBuf {
 }
 
 /// The run's lock, open: the folder the run records in, where it is, and whether it was taken.
+///
+/// Taken, it lets go of the lock itself as it drops: a `flock` belongs to the open file, and a child
+/// another thread forks while it is held keeps a copy of that file until its exec (a spawn that
+/// fails, until the kernel tears its child down), so a close alone would leave the lock held by that
+/// child for as long, and a run, a `--due` or a `--drop` started right after would find it held.
 pub(crate) struct Lock {
     pub(crate) folder: PathBuf,
     pub(crate) path: PathBuf,
@@ -280,6 +285,14 @@ pub(crate) struct Lock {
     pub(crate) taken: Result<(), TryLockError>,
     /// What the move of the folder a build older than the rename left said, when this moved it.
     pub(crate) moved: Option<String>,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if self.taken.is_ok() {
+            let _ = self.file.unlock();
+        }
+    }
 }
 
 /// Open the lock of the runs of `common` and try to take it, without waiting: in [`folder`], made
@@ -1505,6 +1518,9 @@ mod tests {
         assert!(tried.moved.is_none());
         assert!(!folder(&common).exists(), "nothing moved");
         drop(tried);
+        // Let go as the run's own lock lets go, by itself: a close alone leaves it held by any child
+        // another test's thread forked meanwhile, until that child's exec.
+        held.unlock().unwrap();
         drop(held);
         let mut fresh = lock(&common).unwrap();
         assert!(fresh.taken.is_ok());
@@ -1536,48 +1552,99 @@ mod tests {
         );
     }
 
+    /// A child another thread spawns, caught between its fork and its exec: it holds a copy of
+    /// every descriptor this process had open when it forked, as each child std forks does until
+    /// its exec, and with it the lock of each that is a locked file. It execs, and is waited for,
+    /// once this drops.
+    struct MidSpawn {
+        go: std::io::PipeWriter,
+        spawner: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl MidSpawn {
+        /// Another thread's spawn of `true`, returned once its child has forked, before it execs.
+        fn caught() -> MidSpawn {
+            use std::io::Read as _;
+            use std::os::fd::AsRawFd as _;
+            use std::os::unix::process::CommandExt as _;
+            let (mut forked, forked_by) = std::io::pipe().unwrap();
+            let (go_on, go) = std::io::pipe().unwrap();
+            let fds = (forked_by.as_raw_fd(), go_on.as_raw_fd(), go.as_raw_fd());
+            let spawner = std::thread::spawn(move || {
+                let (forked_fd, go_on_fd, go_fd) = fds;
+                let mut command = std::process::Command::new("true");
+                // SAFETY: close, write and read are async-signal-safe and touch only the child's
+                // copies of three pipe ends, which stay open in this process until the spawn
+                // returns. Its copy of the writer closed, the child goes on at a byte or at the
+                // reader's end, once this process lets go of the writer however it ends.
+                unsafe {
+                    command.pre_exec(move || {
+                        let mut byte = [0u8];
+                        libc::close(go_fd);
+                        retried(|| libc::write(forked_fd, byte.as_ptr().cast(), 1));
+                        retried(|| libc::read(go_on_fd, byte.as_mut_ptr().cast(), 1));
+                        Ok(())
+                    });
+                }
+                let child = command.spawn();
+                drop((forked_by, go_on));
+                child.unwrap().wait().unwrap();
+            });
+            let mut byte = [0];
+            forked
+                .read_exact(&mut byte)
+                .expect("the child forked and said so");
+            MidSpawn {
+                go,
+                spawner: Some(spawner),
+            }
+        }
+    }
+
+    /// `call`, made again while it fails interrupted by a signal; it allocates nothing, so a forked
+    /// child may make it before its exec.
+    fn retried(mut call: impl FnMut() -> isize) {
+        while call() < 0
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {}
+    }
+
+    impl Drop for MidSpawn {
+        fn drop(&mut self) {
+            use std::io::Write as _;
+            let _ = self.go.write_all(b"x");
+            if let Some(spawner) = self.spawner.take() {
+                let _ = spawner.join();
+            }
+        }
+    }
+
+    /// A child another thread forks while the run's lock is held keeps a copy of the lock's file
+    /// until its exec, and a lock let go by closing its file alone stays held by that copy. The
+    /// run's lock lets go of itself, so a run that tries it next takes it at once, whatever child
+    /// forked while it was held.
     #[test]
-    fn of_two_first_runs_at_once_only_the_one_that_takes_the_lock_moves_or_runs() {
+    fn the_runs_lock_let_go_is_free_at_once_though_a_child_forked_meanwhile_has_not_execd() {
         let tree = Tree::new();
         let common = tree.path("git");
-        let (old, new) = (legacy(&common), folder(&common));
-        tree.write("git/symphony/nightly/runs/a.json", "{}");
-        tree.write("git/symphony/nightly/run.lock", "");
-        // The second run opened the old lock, then the first took it and moved the folder.
-        let second = File::options()
-            .read(true)
-            .write(true)
-            .open(old.join("run.lock"))
-            .unwrap();
-        let first = lock(&common).unwrap();
-        assert!(first.taken.is_ok() && first.moved.is_some());
-        let tried = second.try_lock();
-        let late = settled(second, tried, &old, &new).unwrap();
-        assert!(matches!(late.taken, Err(TryLockError::WouldBlock)));
-        assert_eq!((late.folder.as_path(), late.moved), (new.as_path(), None));
-        // The first done, the second takes the very lock it opened, now in the new folder: it
-        // moves nothing and makes no old folder again.
-        drop(first);
-        let file = late.file;
-        let tried = file.try_lock();
-        let after = settled(file, tried, &old, &new).unwrap();
-        assert!(after.taken.is_ok());
-        assert_eq!(
-            (after.folder.as_path(), after.path.as_path()),
-            (new.as_path(), new.join("run.lock").as_path())
+        let closed = tree.path("closed");
+        fs::create_dir_all(&closed).unwrap();
+        let held = lock(&common).unwrap();
+        assert!(held.taken.is_ok());
+        let bare = File::create(closed.join(LOCK)).unwrap();
+        bare.try_lock().unwrap();
+        let child = MidSpawn::caught();
+        drop((held, bare));
+        assert!(
+            busy(&closed.join(LOCK)),
+            "a lock let go by its close alone is still held by the child's copy of its file"
         );
-        assert!(after.moved.is_none());
-        assert!(!old.exists());
-        assert!(busy(&new.join("run.lock")), "the one lock of the runs");
-
-        // A run that found the old folder, which another moved before it opened the lock there,
-        // opens none there and makes nothing: [`lock`] takes the new one.
-        assert!(legacy_lock(&old, &new).unwrap().is_none());
-        assert!(!old.exists());
-        drop(after);
-        let third = lock(&common).unwrap();
-        assert!(third.taken.is_ok() && third.moved.is_none());
-        assert_eq!(third.folder, new);
+        let next = lock(&common).unwrap();
+        assert!(
+            next.taken.is_ok(),
+            "the run's lock, let go, is still held by a child forked while it was held"
+        );
+        drop(child);
     }
 
     #[test]

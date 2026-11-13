@@ -502,7 +502,6 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
     let _ = record::hold(&folder, &building);
     let built = driver(repo, options, out);
     record::release(&folder, &building.id);
-    let _ = lock.file.unlock();
     drop(lock);
     let driver = match built {
         Ok(Some(driver)) => driver,
