@@ -247,19 +247,40 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
         "a link wrapped over two lines is aimed at its first line, and one taller than its \
          scrolling box at a line the box shows",
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
-        "but on a link, an object or another control inside it (in a component's shadow root too)",
+        "but on a link, an object or another control inside it (in a component's open shadow root \
+         too, and on what is slotted into one there)",
+        // What the page cannot see, it never takes as the label's, and what it misses it says.
+        "or on a custom element without an open shadow root, whose inside the page cannot see (a \
+         closed root on a built-in element, such as a span, goes unseen)",
         "stays covered, fails the step (naming what covers it)",
-        "stays clipped (naming the box that clips it away), stays hidden (its visibility)",
+        "stays clipped (naming the box that clips it away, by its overflow, clip or clip-path), \
+         stays hidden (its visibility)",
         "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, its \
-         own clip, or nothing of it painted there, as in an SVG ring)",
+         own clip or clip-path, or nothing of it painted there, as in an SVG ring)",
         "the failure names it, with a selector that finds it alone to target instead (or says none \
-         does), unless the element's own clip hides it or a press there clicks another control \
-         through a label",
+         does), unless the element's own clip hides it, the ancestor is the page's body, or a \
+         press there clicks another control through a label",
     ] {
         assert!(words.contains(said), "{said:?} not in the help: {words}");
     }
-    // Nor does it say what the aim no longer does.
+    // Nor does it say what the aim no longer does, or promise every shadow root.
     assert!(!words.contains("a wrapped inline's first line)"), "{words}");
+    assert!(
+        !words.contains("(in a component's shadow root too)"),
+        "{words}"
+    );
+}
+
+#[test]
+fn every_line_of_the_help_fits_a_hundred_columns() {
+    // The usage before it is one line, as a synopsis is; the help's own lines are wrapped.
+    for line in HELP.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "{} columns: {line:?}",
+            line.chars().count()
+        );
+    }
 }
 
 #[test]
@@ -557,22 +578,25 @@ fn a_probe_reads_what_clips_the_element_through_its_containing_blocks() {
 #[test]
 fn a_probe_reaches_through_shadow_roots_and_takes_the_targets_own_label_as_its_activation_does() {
     let probe = probe("#a", Look::Now);
-    // Through every open shadow root to the element really there, then up through shadow hosts to
-    // the first interactive element, which, when a label, clicks its control.
+    // Through every open shadow root to the element really there, then up the flat tree, as the
+    // press travels, to the first interactive element, which, when a label, clicks its control; a
+    // custom element whose inside the page cannot see ends the walk with no label.
     in_order(
         &probe,
         &[
             "const inner = deep.shadowRoot.elementFromPoint(x, y);",
-            "while (first && !first.matches(INTERACTIVE)) first = up(first);",
+            "while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);",
             "via: first && first.localName === 'label' ? first.control : null",
         ],
     );
-    assert!(
-        probe.contains(
-            "const up = e => e.parentElement || (e.parentNode instanceof ShadowRoot ? e.parentNode.host : null);"
-        ),
-        "{probe}"
-    );
+    for part in [
+        "const up = e => e.parentElement || (e.parentNode instanceof ShadowRoot ? e.parentNode.host : null);",
+        // A slotted node's slot comes before its parent, as in the flat tree.
+        "const flat = e => e.assignedSlot || up(e);",
+        "const unseen = e => e instanceof HTMLElement && e.localName.includes('-') && !e.shadowRoot;",
+    ] {
+        assert!(probe.contains(part), "no {part:?} in {probe}");
+    }
     assert!(
         probe.contains(
             "const takes = p => !!p.at && (element.contains(p.at) || p.via === element);"
@@ -605,9 +629,30 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
             ": style.visibility !== 'visible' ? {hidden: style.visibility}",
             ": clipper ? {clipped: named(clipper.by)}",
             // A cover in a shadow root is named in its host's.
-            r#": !held ? (p.deep === p.at ? named(p.at) : named(p.deep) + ' in ' + named(p.at) + "'s shadow root")"#,
-            ": {holder: named(p.at), why: clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unpainted', target: alone(p.at), labels: p.via && (alone(p.via) ?? named(p.via))};",
+            ": !held ? inside(p.deep)",
+            ": shaped && shaped !== element ? {clipped: inside(shaped)}",
+            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unpainted', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};",
         ],
+    );
+    // What is named in a shadow root is named in its outermost host's.
+    assert!(
+        probe.contains(
+            r#"const inside = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host === e ? named(e) : named(e) + ' in ' + named(host) + "'s shadow root"; };"#
+        ),
+        "{probe}"
+    );
+    // A clip-path cuts the element away where the press passes it by for its ancestor: its own,
+    // unless it takes no pointer anyway, or one between it and that ancestor.
+    assert!(
+        probe.contains(
+            "for (let e = element; held && e && e !== p.deep && !shaped; e = flat(e)) if (getComputedStyle(e).clipPath !== 'none' && (e !== element || style.pointerEvents !== 'none')) shaped = e;"
+        ),
+        "{probe}"
+    );
+    // The page's body and root are no target.
+    assert!(
+        probe.contains("const page = p.at === document.body || p.at === document.documentElement;"),
+        "{probe}"
     );
     // What is there holds the element when it is the element's ancestor in the flat tree.
     assert!(
@@ -672,7 +717,7 @@ fn holder(name: &str, why: Why) -> Holder {
     Holder {
         name: name.into(),
         why,
-        target: Some(name.into()),
+        instead: Instead::Alone(name.into()),
         labels: None,
     }
 }
@@ -715,25 +760,41 @@ fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
     ] {
         assert_eq!(
             hit(
-                json!({"holder": "nav.tools > button", "why": why, "target": "nav.tools > button:nth-of-type(2)", "labels": null})
+                json!({"holder": "nav.tools > button", "why": why, "target": "nav.tools > button:nth-of-type(2)", "page": false, "labels": null})
             ),
             Hit::Missed(Miss::Holder(Holder {
                 name: "nav.tools > button".into(),
                 why: read,
-                target: Some("nav.tools > button:nth-of-type(2)".into()),
+                instead: Instead::Alone("nav.tools > button:nth-of-type(2)".into()),
                 labels: None,
             }))
         );
     }
     assert_eq!(
-        hit(json!({"holder": "label#l", "why": "none", "target": null, "labels": "input#other"})),
+        hit(
+            json!({"holder": "label#l", "why": "none", "target": null, "page": false, "labels": "input#other"})
+        ),
         Hit::Missed(Miss::Holder(Holder {
             name: "label#l".into(),
             why: Why::PointerEventsNone,
-            target: None,
+            instead: Instead::Unfound,
             labels: Some("input#other".into()),
         }))
     );
+    // The page's body is no target, whatever selector finds it.
+    for target in [json!(null), json!("body")] {
+        assert_eq!(
+            hit(
+                json!({"holder": "html > body", "why": "none", "target": target, "page": true, "labels": null})
+            ),
+            Hit::Missed(Miss::Holder(Holder {
+                name: "html > body".into(),
+                why: Why::PointerEventsNone,
+                instead: Instead::Page,
+                labels: None,
+            }))
+        );
+    }
     // Anything else is nothing at its middle, an ancestor without its name too.
     for nothing in [json!(null), json!(false), json!({"why": "none"}), json!(3)] {
         assert_eq!(hit(nothing), Hit::Missed(Miss::Nothing));
@@ -1006,23 +1067,34 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
         ),
         (
             Latest::Missed(Miss::Holder(Holder {
-                target: Some("section > svg:nth-of-type(2)".into()),
+                instead: Instead::Alone("section > svg:nth-of-type(2)".into()),
                 ..holder("section > svg", Why::Unpainted)
             })),
             "#x takes no pointer at its middle: section > svg, which holds it, was on top there \
              after every scroll within 5s; target section > svg:nth-of-type(2) instead",
         ),
-        // No selector finds it alone (it is in a shadow root, say): said plainly.
+        // No selector finds it alone: said plainly.
         (
             Latest::Missed(Miss::Holder(Holder {
-                target: None,
+                instead: Instead::Unfound,
                 ..holder("x-card > div", Why::PointerEventsNone)
             })),
             "#x takes no pointer at its middle (pointer-events: none): x-card > div, which holds \
              it, was on top there after every scroll within 5s; no selector finds x-card > div \
              alone, to target instead",
         ),
-        // A press on a label for another control clicks that control: never offered instead.
+        // The page's body holds it: no target, said as such.
+        (
+            Latest::Missed(Miss::Holder(Holder {
+                instead: Instead::Page,
+                ..holder("html > body", Why::PointerEventsNone)
+            })),
+            "#x takes no pointer at its middle (pointer-events: none): html > body, which holds \
+             it, was on top there after every scroll within 5s; html > body is the page itself, \
+             nothing to target instead",
+        ),
+        // A press on a label for another control clicks that control: never offered instead, the
+        // control named in its component's shadow root when it lies in one.
         (
             Latest::Missed(Miss::Holder(Holder {
                 labels: Some("input#other".into()),
@@ -1031,6 +1103,25 @@ fn an_aim_not_taken_says_what_its_latest_read_found() {
             "#x takes no pointer at its middle (pointer-events: none): label#l, which holds it, \
              was on top there after every scroll within 5s; a press there clicks input#other (by \
              its label), not it",
+        ),
+        (
+            Latest::Missed(Miss::Holder(Holder {
+                labels: Some("input#check in x-check#host's shadow root".into()),
+                instead: Instead::Unfound,
+                ..holder("x-check#host", Why::PointerEventsNone)
+            })),
+            "#x takes no pointer at its middle (pointer-events: none): x-check#host, which holds \
+             it, was on top there after every scroll within 5s; a press there clicks input#check \
+             in x-check#host's shadow root (by its label), not it",
+        ),
+        // Its own clip hides it, the page's body holding it: nothing offered either.
+        (
+            Latest::Missed(Miss::Holder(Holder {
+                instead: Instead::Page,
+                ..holder("html > body", Why::OwnClip)
+            })),
+            "#x stayed clipped by its own clip: html > body, which holds it, was on top at its \
+             middle after every scroll within 5s",
         ),
         // Its own clip hides it: what holds it is no substitute, whether a selector finds it or not.
         (

@@ -63,21 +63,24 @@ after the scroll, as a capture waits, and two reads in a row, each in an animati
 that box in one place with its middle in view and taking the press: on top there is the element,
 something inside it, or the label of the control it is (a checkbox hidden in its label or under
 the label's styled track), pressed anywhere in the label but on a link, an object or another
-control inside it (in a component's shadow root too), as the label's activation clicks its
+control inside it (in a component's open shadow root too, and on what is slotted into one there),
+or on a custom element without an open shadow root, whose inside the page cannot see (a closed
+root on a built-in element, such as a span, goes unseen), as the label's activation clicks its
 control. Content the scroll brings near mounts and moves it first, and can push it out of its
 scrolling container's view or under a sticky header: should it leave the view, be clipped or be
 covered, it is scrolled to the middle again (its containers and the page, clear of a header
 shorter than half the view) and the page settled again. An element that never holds still, or
 stays covered, fails the step (naming what covers it), and nothing is pressed. So does one that
-stays clipped (naming the box that clips it away), stays hidden (its visibility), or takes no
-pointer at its middle, its own ancestor on top there (pointer-events: none, its own clip, or
-nothing of it painted there, as in an SVG ring): a press would reach the ancestor, which may not
-be what was meant, so the failure names it, with a selector that finds it alone to target
-instead (or says none does), unless the element's own clip hides it or a press there clicks
-another control through a label. Typing focuses its element by script and types with no pointer,
-so what covers the element takes none of it. A click, typing, a key or a hover then waits for the page to settle
-again, as a capture does, bringing the page back in front if the step left it hidden (an Escape
-the page does not take).
+stays clipped (naming the box that clips it away, by its overflow, clip or clip-path), stays
+hidden (its visibility), or takes no pointer at its middle, its own ancestor on top there
+(pointer-events: none, its own clip or clip-path, or nothing of it painted there, as in an SVG
+ring): a press would reach the ancestor, which may not be what was meant, so the failure names
+it, with a selector that finds it alone to target instead (or says none does), unless the
+element's own clip hides it, the ancestor is the page's body, or a press there clicks another
+control through a label. Typing focuses its element by script and types with no pointer, so what
+covers the element takes none of it. A click, typing, a key or a hover then waits for the page to
+settle again, as a capture does, bringing the page back in front if the step left it hidden (an
+Escape the page does not take).
 Chrome is SF_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -678,8 +681,12 @@ enum Look {
 /// What is under a point is `reach`ed as Chrome's pointer finds it: the document's element there
 /// (`at`, a shadow host for what its shadow root draws, as a selector can name), then through every
 /// open shadow root to the element really there (`deep`), and the first interactive element
-/// ([`INTERACTIVE`]) from that one up, through shadow hosts, as a label's activation looks for one:
-/// when it is a label, `via` is the control it clicks.
+/// ([`INTERACTIVE`]) from that one up the flat tree, as the press travels (a slotted node's slot
+/// first, a shadow root's host), as a label's activation looks for one: when it is a label, `via`
+/// is the control it clicks. A custom element on the way without an open shadow root ends the walk
+/// with no label: the page cannot see into a closed shadow root, where a control may take the
+/// press, so a press there is never taken as the label's (a closed root attached to a built-in
+/// element, such as a span, goes unseen).
 ///
 /// What clips the element is `clips`: its own `clip`, then each box around it that can clip it
 /// (the boxes its containing blocks are in, so an absolute or a fixed one escapes the boxes it
@@ -698,13 +705,15 @@ enum Look {
 /// or by holding it) and nothing interactive lies between, as the label's activation then clicks
 /// it (a checkbox hidden in its label or under the label's styled track). Else it is why not, the
 /// first that holds: `{hidden}` for an element whose visibility is not `visible`; `{clipped}` for
-/// the box around it that clips it away there; a cover's name for what is there and does not hold
-/// the element (the element in a shadow root there named in its host's: `button#inner in
-/// x-pressable#host's shadow root`); and `{holder, why, target, labels}` for its own ancestor there, which a press
-/// there reaches instead, `why` being `clip` for the element's own clip, `none` for its
-/// `pointer-events: none`, else `unpainted` (nothing of it painted there, as in an SVG ring),
-/// `target` a selector that finds the ancestor alone, and `labels` the control a press there
-/// clicks through a label. `null` is nothing there (a point outside the page).
+/// the box around it that clips it away there, or for the element between it and its ancestor on
+/// top there whose `clip-path` does (`shaped`); a cover's name for what is there and does not hold
+/// the element (the element in a shadow root there named in its host's, `inside`: `button#inner in
+/// x-pressable#host's shadow root`); and `{holder, why, target, page, labels}` for its own
+/// ancestor there, which a press there reaches instead, `why` being `clip` for the element's own
+/// `clip` or `clip-path`, `none` for its `pointer-events: none`, else `unpainted` (nothing of it
+/// painted there, as in an SVG ring), `target` a selector that finds the ancestor alone, `page`
+/// whether the ancestor is the page's body or root, no target, and `labels` the control a press
+/// there clicks through a label. `null` is nothing there (a point outside the page).
 ///
 /// An element is named as a selector names it, its tag, id and first three classes after its
 /// parent's when it has neither id nor class (`main > div`), which need not find it alone; `alone`
@@ -728,6 +737,8 @@ const alone = e => {
 };
 const up = e => e.parentElement || (e.parentNode instanceof ShadowRoot ? e.parentNode.host : null);
 const flat = e => e.assignedSlot || up(e);
+const inside = e => { let host = e; while (host.getRootNode() instanceof ShadowRoot) host = host.getRootNode().host; return host === e ? named(e) : named(e) + ' in ' + named(host) + "'s shadow root"; };
+const unseen = e => e instanceof HTMLElement && e.localName.includes('-') && !e.shadowRoot;
 const reach = (x, y) => {
   const at = document.elementFromPoint(x, y);
   let deep = at;
@@ -737,7 +748,7 @@ const reach = (x, y) => {
     deep = inner;
   }
   let first = deep;
-  while (first && !first.matches(INTERACTIVE)) first = up(first);
+  while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);
   return {at, deep, via: first && first.localName === 'label' ? first.control : null};
 };
 const takes = p => !!p.at && (element.contains(p.at) || p.via === element);
@@ -780,18 +791,23 @@ const p = reach(x, y);
 const clipper = clips.find(c => c.by && away(c, x, y));
 let held = false;
 for (let e = element; e && !held; e = flat(e)) held = e === p.deep;
+let shaped = null;
+for (let e = element; held && e && e !== p.deep && !shaped; e = flat(e)) if (getComputedStyle(e).clipPath !== 'none' && (e !== element || style.pointerEvents !== 'none')) shaped = e;
+const page = p.at === document.body || p.at === document.documentElement;
 const hit = !p.at ? null
   : takes(p) ? true
   : style.visibility !== 'visible' ? {hidden: style.visibility}
   : clipper ? {clipped: named(clipper.by)}
-  : !held ? (p.deep === p.at ? named(p.at) : named(p.deep) + ' in ' + named(p.at) + "'s shadow root")
-  : {holder: named(p.at), why: clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unpainted', target: alone(p.at), labels: p.via && (alone(p.via) ?? named(p.via))};
+  : !held ? inside(p.deep)
+  : shaped && shaped !== element ? {clipped: inside(shaped)}
+  : {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unpainted', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};
 "#;
 
 /// What, pressed inside a label, takes the press itself rather than activating the label (HTML's
 /// interactive content, and an object, whose own document takes a press as an iframe's does): a
-/// press on a link or another control inside a label, a component's shadow root among the places
-/// it lies, never reaches the label's control.
+/// press on a link or another control inside a label, a component's open shadow root among the
+/// places it lies and a node slotted into one among the places pressed, never reaches the label's
+/// control.
 const INTERACTIVE: &str = "a[href], audio[controls], button, details, embed, iframe, img[usemap], input, label, object, select, textarea, video[controls]";
 
 /// A script reading the box a click or a hover aims at in the first element `css` matches, the
@@ -833,8 +849,9 @@ enum Hit {
 enum Miss {
     /// Its visibility is not `visible` (it is `hidden` or `collapse`), so no press reaches it.
     Hidden(String),
-    /// A box around it, by its name, clips it away there (its overflow, its paint containment or
-    /// its `clip`): it is scrolled out of its scrolling box's view, or folded away.
+    /// A box around it, by its name, clips it away there (its overflow, its paint containment, its
+    /// `clip` or its `clip-path`): it is scrolled out of its scrolling box's view, or folded or cut
+    /// away.
     Clipped(String),
     /// Another element, by its name, which does not hold it.
     Covered(String),
@@ -850,11 +867,23 @@ struct Holder {
     /// Its name ([`AIM`]).
     name: String,
     why: Why,
-    /// A selector that finds it alone, when there is one.
-    target: Option<String>,
+    /// What to target in the element's place.
+    instead: Instead,
     /// The control a press there clicks through a label (the holder's or one around it), by a
-    /// selector that finds it alone, else its name: no substitute for the element.
+    /// selector that finds it alone, else its name (in its host's, from a shadow root): no
+    /// substitute for the element.
     labels: Option<String>,
+}
+
+/// What a failure offers to target in place of an element whose own ancestor takes the press.
+#[derive(Clone, Debug, PartialEq)]
+enum Instead {
+    /// The ancestor, by a selector that finds it alone.
+    Alone(String),
+    /// Nothing: no selector finds the ancestor alone.
+    Unfound,
+    /// Nothing: the ancestor is the page's body or root, no target.
+    Page,
 }
 
 /// Why the element takes no press at its middle, its own ancestor on top there.
@@ -862,7 +891,7 @@ struct Holder {
 enum Why {
     /// It has `pointer-events: none`.
     PointerEventsNone,
-    /// Its own `clip` hides it there (a screen-reader-only control).
+    /// Its own `clip` or `clip-path` hides it there (a screen-reader-only control).
     OwnClip,
     /// Nothing of it is painted there (an SVG ring's empty middle).
     Unpainted,
@@ -884,7 +913,11 @@ impl Hit {
                             Some("clip") => Why::OwnClip,
                             _ => Why::Unpainted,
                         },
-                        target: text("target"),
+                        instead: match text("target") {
+                            _ if hit["page"] == true => Instead::Page,
+                            Some(target) => Instead::Alone(target),
+                            None => Instead::Unfound,
+                        },
                         labels: text("labels"),
                     })
                 } else if let Some(visibility) = text("hidden") {
@@ -1066,11 +1099,12 @@ fn missed(miss: &Miss) -> (String, String) {
             String::new(),
         ),
         // Never "covered": what is there holds the element, and is named to target instead only
-        // when a selector finds it alone and a press on it is not a label's for another control.
+        // when a selector finds it alone, it is not the page's body or root, and a press on it is
+        // not a label's for another control.
         Miss::Holder(Holder {
             name,
             why,
-            target,
+            instead,
             labels,
         }) => {
             // A press on what holds an element its own clip hides is no substitute for it.
@@ -1089,14 +1123,17 @@ fn missed(miss: &Miss) -> (String, String) {
                      middle after every scroll"
                 ),
             };
-            let after = match (labels, target, substitute) {
+            let after = match (labels, instead, substitute) {
                 (Some(control), _, _) => {
                     format!("; a press there clicks {control} (by its label), not it")
                 }
                 (None, _, false) => String::new(),
-                (None, Some(target), true) => format!("; target {target} instead"),
-                (None, None, true) => {
+                (None, Instead::Alone(target), true) => format!("; target {target} instead"),
+                (None, Instead::Unfound, true) => {
                     format!("; no selector finds {name} alone, to target instead")
+                }
+                (None, Instead::Page, true) => {
+                    format!("; {name} is the page itself, nothing to target instead")
                 }
             };
             (why, after)
