@@ -186,6 +186,27 @@ fn an_owned_process_is_signalled_only_while_its_pid_names_the_process_taken() {
 }
 
 #[test]
+fn a_process_taken_once_it_had_ended_is_gone_and_one_of_unknown_start_is_known_by_its_pid() {
+    for pid in [0, -1] {
+        let gone = Owned::of(pid);
+        assert_eq!(gone.start, Identity::Gone, "{pid}");
+        assert!(!gone.alive());
+    }
+    // Only the pid is known: alive while some process has it.
+    let this = Owned {
+        pid: i64::from(std::process::id()),
+        start: Identity::Unknown,
+    };
+    assert!(this.alive());
+    let started = Owned::of(i64::from(std::process::id()));
+    assert!(
+        matches!(started.start, Identity::Started(_)),
+        "{started:?}"
+    );
+    assert!(started.alive());
+}
+
+#[test]
 fn the_scratch_logs_are_searched_for_a_pid_in_this_processs_folders_alone() {
     let scratch = Scratch::new("scratch-log-search");
     let root = scratch.path.join("root");
