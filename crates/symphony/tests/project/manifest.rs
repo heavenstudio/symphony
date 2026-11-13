@@ -424,6 +424,13 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
     assert!(plain.land.check);
     assert!(!parsed("[land]\ncheck = false\n").unwrap().land.check);
     assert!(refused("[land]\ncheck = \"no\"\n").contains("check"));
+    // What holds the project's tests and checks, which the land reads for a red's fix: a key the
+    // project file knows, each entry a path inside the project.
+    assert!(parsed("[land]\ncheck_paths = [\"tests/\", \"/symphony.toml [verdicts]\"]\n").is_ok());
+    assert!(
+        refused("[land]\ncheck_paths = [\"../x\"]\n")
+            .contains("[land] check_paths names \"../x\", which is no path inside the project")
+    );
     // A generator's key, which the regenerator runs before it, named in `[land] keys`: a key
     // inside the generator's own table would make an older Symphony refuse the whole file.
     let generator =

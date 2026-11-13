@@ -1,13 +1,23 @@
-//! A night's checks on Symphony's own board: one task per red check, `tests/nightly-red-KEY` (KEY
-//! the check's name), filed at p0 and marked red ([`symphony_board::red`]: red work takes no
-//! orchestrator slot, and PULL names it first while nobody is on it). A check red again while its
-//! task is open gets a line on that task; a green one closes it, when the candidate holds the
-//! commit it was red on (an out-of-cycle release of an older commit leaves it open). A run that
-//! stopped short of deciding (it could not fetch, check out, finish in time or push) is the red
-//! [`RUN`], which the next run that gets through closes. A closed task's key is filed again under
-//! the next generation (`-2`, `-3`). The run acts as a session of kind filer, the one kind the
-//! board takes a red mark from, which it registers for the night and leaves; a night with nothing
-//! to file, update or close writes nothing.
+//! A night's checks on Symphony's own board: one task per red step of a check that lists its steps
+//! ([`super::steps`]: `verify`'s lint, client check, size budgets, docs audit and tests), and per
+//! red check that lists none or is red beyond its steps, `tests/nightly-red-KEY` (KEY the check's
+//! name, a step's under its check's: `verify-size-check`), filed at p0, marked red
+//! ([`symphony_board::red`]: red work takes no orchestrator slot, `next` offers it before other
+//! work of its priority, and PULL names it first while nobody is on it 10 minutes after it was
+//! filed) and as a fast fix, under the bound the land holds a red's fix to
+//! ([`symphony_board::fast_fix::RED`]: its orchestrator's approve lands a fix that changes none of
+//! the project's tests and checks, a fresh reviewer's any other). A stop the owner clears is filed
+//! with no fast-fix mark, since nothing lands for it. Its text says what failed, the commands that
+//! rerun each failure alone ([`super::rerun`]: each failed test, else its own command, a step's
+//! included), its log and the machine's load when it ended, a step's as the step's list says it. A
+//! red step filed while its check's own red is open names that one, which hears of it. A check
+//! red again while its task is open gets a line on that task; a green one closes it, when the
+//! candidate holds the commit it was red on (an out-of-cycle release of an older commit leaves it
+//! open). A run that stopped short of deciding (it could not fetch, check out, finish in time or
+//! push) is the red [`RUN`], which the next run that gets through closes. A closed task's key is
+//! filed again under the next generation (`-2`, `-3`). The run acts as a session of kind filer, the
+//! one kind the board takes a red mark from, which it registers for the night and leaves; a night
+//! with nothing to file, update or close writes nothing.
 
 use serde_json::{Value, json};
 
@@ -41,8 +51,15 @@ pub(crate) trait Reds {
     fn leave(&self, handle: &str) -> Result<(), String>;
     /// The status of the task `slug`, none when the board has no such task.
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
-    /// A red task `slug`, filed by `by` at p0 and marked red.
-    fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String>;
+    /// A red task `slug`, filed by `by` at p0, marked red, and as a fast fix when `fast_fix`.
+    fn create(
+        &self,
+        slug: &str,
+        title: &str,
+        body: &str,
+        by: &str,
+        fast_fix: bool,
+    ) -> Result<(), String>;
     fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String>;
     /// Close `slug` with `why` on its thread.
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String>;
@@ -76,8 +93,15 @@ impl Reds for CliBoard {
         }
     }
 
-    fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
-        let task = json!({
+    fn create(
+        &self,
+        slug: &str,
+        title: &str,
+        body: &str,
+        by: &str,
+        fast_fix: bool,
+    ) -> Result<(), String> {
+        let mut task = json!({
             "slug": slug,
             "title": title,
             "body": body,
@@ -86,6 +110,9 @@ impl Reds for CliBoard {
             "red": MARK,
             "links": [LINK],
         });
+        if fast_fix {
+            task["fast_fix"] = json!(symphony_board::fast_fix::RED);
+        }
         self.call("create", &task).map(|_| ()).map_err(|e| e.0)
     }
 
@@ -218,20 +245,181 @@ fn since(night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
-/// A red task's body: what is red, how it ended, its log, the commits since the last green run,
-/// who fixes it and what closes it.
-fn body(ran: &Ran, night: &Night<'_>) -> String {
+/// Why a red is staffed first and how it is fixed: what a red check's task, and a stop's an
+/// executor clears, say.
+const FIRST: &str = "It blocks every release, so it is staffed before anything else and fixed as \
+a bug fix is (RULES.md `workflow/fast-bugfixes`): one agent, the smallest checks that cover the \
+repair, and the code fixed, never a test or check loosened. It is red work, which takes no \
+orchestrator slot.";
+/// How a red's fix is approved: the bound its fast-fix mark records
+/// ([`symphony_board::fast_fix::RED`]) and the land holds it to, said in full.
+const APPROVED: &str = "It is filed as a fast fix, under a bound the land holds it to: its \
+orchestrator, which did not execute it, approves a fix that changes none of the project's tests \
+and checks (`[land] check_paths`), on the posted evidence of the failing tests, unchanged, rerun \
+alone and green at the fix's tip. The land refuses that approve on a fix that changes a test, a \
+check, a budget or a run step: a fresh reviewer, which its orchestrator staffs, approves one, and \
+the fix says on the thread why the code was not the thing to fix.";
+/// What a stop the owner clears says of its mark: nothing lands for it.
+const UNMARKED: &str = "It is not filed as a fast fix: what clears it is a process ended, not a \
+fix that lands.";
+/// How many of the commands that rerun a failure alone a red task lists at most.
+const RERUNS_LISTED: usize = 12;
+
+/// How a red task says the load when its check ended.
+fn load(ran: &Ran) -> String {
+    match &ran.load {
+        Some(load) => format!("Load average when it ended: {}.", load.said()),
+        None => "Load average when it ended: not recorded.".into(),
+    }
+}
+
+/// Whether the check `ran` conciliated a project, run in that project's scratch copy rather than
+/// in the candidate's checkout.
+fn conciliates(ran: &Ran) -> bool {
+    key(&ran.name).starts_with(&format!("{CONCILIATE}-"))
+}
+
+/// Whether `command` runs a whole test run: `cargo test` (through `tools/cargo.sh` too) or
+/// `just test-rs`, whose rerun alone is a target of it, never all of it again.
+fn runs_tests(command: &str) -> bool {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words.windows(2).any(|pair| {
+        let [tool, what] = pair else { return false };
+        ((tool.ends_with("cargo") || tool.ends_with("cargo.sh")) && *what == "test")
+            || (*tool == "just" && *what == "test-rs")
+    })
+}
+
+/// What a red task says reruns each target of a test run alone when its log names none failed.
+const EACH_TARGET: &str = "each target alone, as `just test-rs -p PACKAGE --test TARGET` (`--lib` \
+for a package's own tests), the one its last lines name, never the whole run again";
+
+/// How a red task says to rerun each failure of its check alone ([`super::rerun`]): each failed
+/// test its own log names, as a step's red reads its own (the tests' step's naming each target);
+/// else its own command, a step's as its list records it (`just size-check`), but a test run's,
+/// which is rerun a target at a time ([`EACH_TARGET`]). `just verify` is never named, as no task
+/// runs it: one that listed no steps (a verify older than its steps' list, as an out-of-cycle
+/// release of an older commit runs) is rerun by the step its log's recipes name, its tests' a
+/// target at a time; one that listed
+/// its steps and is red beyond them, whose log is its own lines and its steps' tails, by the
+/// commands its steps recorded.
+fn alone(ran: &Ran, night: &Night<'_>) -> String {
+    let verify = ran.command == super::VERIFY.1;
+    let listed = !ran.steps.is_empty();
+    let log = if listed {
+        super::rerun::Log::default()
+    } else {
+        super::rerun::read(&ran.log)
+    };
+    let each = super::rerun::arguments(&log.targets);
+    let place = if conciliates(ran) {
+        "in its scratch copy".to_string()
+    } else {
+        format!("in a checkout of {}", short(night.commit))
+    };
+    if each.is_empty() {
+        let named = (verify && !listed)
+            .then(|| super::rerun::step(&log.recipes))
+            .flatten();
+        // A test run's recipe named is the whole run, rerun a target at a time below.
+        if let Some(step) = named.as_ref().filter(|step| !runs_tests(step)) {
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}, the step its \
+                 log names failed: `{step}`."
+            );
+        }
+        if listed {
+            let steps: Vec<String> = (ran.steps.iter())
+                .map(|step| {
+                    let said = if step.green() {
+                        "green".to_string()
+                    } else {
+                        format!("{}, a task of its own", step.ended())
+                    };
+                    format!("`{}` ({said})", step.command)
+                })
+                .collect();
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: each step it \
+                 listed by the command it recorded, {}; a step it did not reach, by the command its \
+                 last lines name, a test run's {EACH_TARGET}.",
+                steps.join(", ")
+            );
+        }
+        if verify && named.is_none() {
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: its log names no \
+                 failed test or step, so its last lines say which of verify's steps failed, and \
+                 that one alone reruns it, by its own recipe (`just RECIPE`), or its tests, \
+                 {EACH_TARGET}."
+            );
+        }
+        if named.is_some() || runs_tests(&ran.command) {
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: its log names no \
+                 failed test target, so {EACH_TARGET}."
+            );
+        }
+        if conciliates(ran) {
+            return format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
+                 test, so nothing narrower than the check itself, the command above, {place}."
+            );
+        }
+        return format!(
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed test, \
+             so nothing narrower than its own command, `{}`, {place}.",
+            ran.command
+        );
+    }
+    let (head, prefix) = if conciliates(ran) {
+        (
+            "the command above, in its scratch copy, with each of these in place of its `-p` \
+             packages"
+                .to_string(),
+            "",
+        )
+    } else {
+        (
+            format!("in a checkout of {}", short(night.commit)),
+            "just test-rs ",
+        )
+    };
+    let mut text = format!(
+        "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {head}, as its log names each \
+         failure ({}):\n",
+        each.len()
+    );
+    for args in each.iter().take(RERUNS_LISTED) {
+        text.push_str(&format!("- `{prefix}{args}`\n"));
+    }
+    if each.len() > RERUNS_LISTED {
+        text.push_str(&format!(
+            "- … and {} more in the log\n",
+            each.len() - RERUNS_LISTED
+        ));
+    }
+    text.trim_end().to_string()
+}
+
+/// A red task's body: what is red, how it ended, its log, the load it ended under, the commands
+/// that rerun its failures alone, the commits since the last green run, who fixes it, how its fix
+/// is approved, the open red `beside` it ([`beside`]) and what closes it.
+fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
         "The Symphony nightly is red in `{name}` on main at {commit} (run {id}, {when}).\n\n\
          Command: `{command}`, in the nightly's clean checkout of that commit: {ended}.\n\
-         Log: {log}\n\n\
+         Log: {log}\n\
+         {load}\n\n\
          {tail}\n\n\
+         {alone}\n\n\
          {since}\n\n\
-         Who fixes: any free executor takes this from the board; it is red work, which takes no \
-         orchestrator slot. Reproduce with the command above on {commit}. The next run of `just \
-         nightly` closes this task once `{name}` is green; a fix released out of cycle \
-         (`just nightly --release COMMIT`) closes it too.\n\n\
+         Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
+         {beside}\
+         The next run of `just nightly` closes this task once `{name}` is green; a fix released \
+         out of cycle (`just nightly --release COMMIT`) closes it too.\n\n\
          key: {key}\ncheck: {name}",
+        beside = beside.unwrap_or_default(),
         name = ran.name,
         commit = short(night.commit),
         id = night.id,
@@ -239,7 +427,9 @@ fn body(ran: &Ran, night: &Night<'_>) -> String {
         command = ran.command,
         ended = ran.ended(),
         log = ran.log.display(),
+        load = load(ran),
         tail = quoted_tail(ran),
+        alone = alone(ran, night),
         since = since(night),
         key = key(&ran.name),
     )
@@ -248,12 +438,14 @@ fn body(ran: &Ran, night: &Night<'_>) -> String {
 /// The line a red task that is still open gets on a later red night.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n\n{}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}\n\n{}",
         short(night.commit),
         night.id,
         night.when,
         ran.ended(),
         ran.log.display(),
+        load(ran),
+        alone(ran, night),
         quoted_tail(ran)
     )
 }
@@ -286,9 +478,9 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
          own.\n\n\
          Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
          that project's, a task on its own board; a main checkout to put right is its owner's; \
-         one of the Symphony's is fixed here. Then an orchestrator reruns the refresh, `just \
-         nightly --refresh` in the Symphony's main checkout, which finishes what this step did \
-         not; a green refresh of it closes this task.\n\n\
+         one of the Symphony's is fixed here. {APPROVED} Then an orchestrator reruns the refresh, \
+         `just nightly --refresh` in the Symphony's main checkout, which finishes what this step \
+         did not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
         id = night.id,
@@ -332,8 +524,7 @@ it may be anyone's: a shell, a terminal tab, an editor or a Finder window there 
 executor ends only a process it started (RULES `delete-by-name`). End it, or move it out of that \
 folder, and the next run goes.";
 /// Who fixes any other stop.
-const EXECUTORS: &str = "Who fixes: any free executor takes this from the board; it is red work, \
-which takes no orchestrator slot.";
+const EXECUTORS: &str = "Who fixes: any free executor takes this from the board.";
 
 /// The red [`RUN`]'s body: why the run stopped, who fixes it and what closes it.
 fn stopped_body(why: &str, night: &Night<'_>) -> String {
@@ -347,32 +538,41 @@ fn stopped_body(why: &str, night: &Night<'_>) -> String {
         on = on(night),
         id = night.id,
         when = night.when,
-        who = if night.for_owner { OWNERS } else { EXECUTORS },
+        who = if night.for_owner {
+            format!("{OWNERS} {UNMARKED}")
+        } else {
+            format!("{EXECUTORS} {FIRST} {APPROVED}")
+        },
     )
+}
+
+/// What a key that is red files: the task's title and body, the line a later red night adds, and
+/// whether it is filed as a fast fix ([`symphony_board::fast_fix::RED`]): every red but a stop the
+/// owner clears, for which nothing lands.
+struct Red {
+    title: String,
+    body: String,
+    again: String,
+    fast_fix: bool,
 }
 
 /// What a night does to one key's task.
 enum Act {
-    /// File the red `slug`, titled, with its body; a later red line in case another run filed it.
-    File {
-        slug: String,
-        title: String,
-        body: String,
-        again: String,
-    },
+    /// File the red `slug`; its later line goes on it instead in case another run filed it.
+    File { slug: String, red: Red },
     /// Add a line to the open red `slug`.
     Say { slug: String, text: String },
     /// Close the open red `slug`, saying why.
     Close { slug: String, why: String },
 }
 
-/// The act on the key `key`'s task: red with its title, body and later line, else green with
-/// the name of what passed; none when there is nothing to write.
+/// The act on the key `key`'s task: red with what it files, else green with the name of what
+/// passed; none when there is nothing to write.
 fn act(
     board: &dyn Reds,
     night: &Night<'_>,
     key: &str,
-    red: Option<(String, String, String)>,
+    red: Option<Red>,
     passed: &str,
 ) -> Result<Option<Act>, String> {
     let (slug, open) = generation(board, key)?;
@@ -388,59 +588,103 @@ fn act(
                 night.when,
             ),
         }),
-        (Some((_, _, again)), true) => Some(Act::Say { slug, text: again }),
-        (Some((title, body, again)), false) => Some(Act::File {
+        (Some(red), true) => Some(Act::Say {
             slug,
-            title,
-            body,
-            again,
+            text: red.again,
         }),
+        (Some(red), false) => Some(Act::File { slug, red }),
     })
 }
 
-/// A red check's title, body and later line, as a refresh step's or a check's; none when green.
-fn red_of(ran: &Ran, night: &Night<'_>) -> Option<(String, String, String)> {
-    let refresh = is_refresh(&ran.name);
+/// What a red check files, as a refresh step's or a check's (a step a check listed among them), its
+/// body naming the open red `beside` it when there is one; none when green. Every one is filed as a
+/// fast fix.
+fn red_of(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> Option<Red> {
     (!ran.green()).then(|| {
-        if refresh {
-            (
-                format!("Nightly red: {}", ran.command),
-                refresh_body(ran, night),
-                refresh_again(ran, night),
-            )
+        if is_refresh(&ran.name) {
+            Red {
+                title: format!("Nightly red: {}", ran.command),
+                body: refresh_body(ran, night),
+                again: refresh_again(ran, night),
+                fast_fix: true,
+            }
         } else {
-            (
-                format!("Nightly red: {} on {}", ran.name, short(night.commit)),
-                body(ran, night),
-                again(ran, night),
-            )
+            Red {
+                title: format!("Nightly red: {} on {}", ran.name, short(night.commit)),
+                body: body(ran, night, beside),
+                again: again(ran, night),
+                fast_fix: true,
+            }
         }
     })
 }
 
-/// The line the open red of a check gets on a night it is red in its steps alone, each of them
-/// filed on its own ([`super::steps`]).
-fn in_steps(ran: &Ran, night: &Night<'_>) -> String {
-    let reds: Vec<String> = (super::steps::reds(ran).iter())
-        .map(|red| format!("`{}` ({})", red.name, red.ended()))
-        .collect();
+/// What the body of a red step filed while its check's own red `slug` is open says of that one:
+/// one filed before the check listed its steps, as a whole-verify red was, can be this same red.
+fn beside(slug: &str, check: &str) -> String {
     format!(
-        "Red on {} (run {}, {}) in its steps {}, each filed as a task of its own in \
-         {SERIES}{}-*. This task closes once `{}` is green.",
+        "The open red of `{check}` itself, {slug}, was filed before this one: one filed before \
+         `{check}` listed its steps, or for a red beyond them, can be this same failure, so whoever \
+         takes this reads its thread first, and the two are fixed as one where they are. That task \
+         hears of this one, and closes once `{check}` is green.\n\n"
+    )
+}
+
+/// The line the open red of a check gets on a night it is red in its steps alone, each a task of
+/// its own ([`super::steps`]): `held`, each red step with its task.
+fn in_steps(ran: &Ran, night: &Night<'_>, held: &[String]) -> String {
+    format!(
+        "Red on {} (run {}, {}) in its steps alone, each a task of its own: {}. Whoever holds this \
+         task reads those first, as one can be this same failure. This task closes once `{}` is \
+         green.",
         short(night.commit),
         night.id,
         night.when,
-        reds.join(", "),
-        key(&ran.name),
+        held.join(", "),
         ran.name,
     )
 }
 
-/// The act on the key `key`'s task when the night only has `text` to say to it: a line on it
-/// while it is open, else none.
-fn noted(board: &dyn Reds, key: &str, text: String) -> Result<Option<Act>, String> {
-    let (slug, open) = generation(board, key)?;
-    Ok(open.then_some(Act::Say { slug, text }))
+/// What the night does to the tasks of the check `ran` and of each step it listed, in that order
+/// but the check's last, with what the board refused. A check red in its steps alone files nothing
+/// of its own: its open red, if it has one, hears each red step's task, and a red step filed now
+/// names it on its own ([`beside`]), so two tasks for one red are linked both ways.
+fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option<Act>, String>> {
+    let passed = |ran: &Ran| format!("`{}` passed", ran.name);
+    let mut found = Vec::new();
+    let told = ran.green() || super::steps::beyond(ran);
+    let open = if told {
+        None
+    } else {
+        match generation(board, &key(&ran.name)) {
+            Ok((slug, true)) => Some(slug),
+            Ok(_) => None,
+            Err(error) => {
+                found.push(Err(error));
+                None
+            }
+        }
+    };
+    let mut held = Vec::new();
+    for step in &ran.steps {
+        let near = open.as_deref().map(|slug| beside(slug, &ran.name));
+        let red = red_of(step, night, near.as_deref());
+        let act = act(board, night, &key(&step.name), red, &passed(step));
+        if let Ok(Some(Act::File { slug, .. } | Act::Say { slug, .. })) = &act {
+            held.push(format!("`{}` ({}) in {slug}", step.name, step.ended()));
+        }
+        found.push(act);
+    }
+    if told {
+        let red = red_of(ran, night, None);
+        found.push(act(board, night, &key(&ran.name), red, &passed(ran)));
+    } else if let Some(slug) = open {
+        found.push(Ok(Some(Act::Say {
+            slug,
+            text: in_steps(ran, night, &held),
+        })));
+    }
+    found
 }
 
 /// File or update the red task of each red check of `checks` and of the run when it stopped, and
@@ -457,26 +701,17 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
         Ok(found) => acts.extend(found),
         Err(error) => errors.push(error),
     };
-    let passed = |ran: &Ran| format!("`{}` passed", ran.name);
     for ran in checks {
-        for step in &ran.steps {
-            let red = red_of(step, night);
-            take(act(board, night, &key(&step.name), red, &passed(step)));
-        }
-        if ran.green() || super::steps::beyond(ran) {
-            let red = red_of(ran, night);
-            take(act(board, night, &key(&ran.name), red, &passed(ran)));
-        } else {
-            take(noted(board, &key(&ran.name), in_steps(ran, night)));
+        for found in of_check(board, night, ran) {
+            take(found);
         }
     }
     if night.whole {
-        let stopped = night.stopped.map(|why| {
-            (
-                format!("Nightly red: the run stopped {}", on(night)),
-                stopped_body(why, night),
-                format!("Stopped again (run {}, {}): {why}", night.id, night.when),
-            )
+        let stopped = night.stopped.map(|why| Red {
+            title: format!("Nightly red: the run stopped {}", on(night)),
+            body: stopped_body(why, night),
+            again: format!("Stopped again (run {}, {}): {why}", night.id, night.when),
+            fast_fix: !night.for_owner,
         });
         take(act(board, night, RUN, stopped, "the run got through"));
     }
@@ -506,24 +741,21 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             Act::Say { slug, text } => board
                 .say(slug, &handle, text)
                 .map(|()| done.updated.push(slug.clone())),
-            Act::File {
-                slug,
-                title,
-                body,
-                again,
-            } => match board.create(slug, title, body, &handle) {
-                Ok(()) => {
-                    done.filed.push(slug.clone());
-                    Ok(())
+            Act::File { slug, red } => {
+                match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
+                    Ok(()) => {
+                        done.filed.push(slug.clone());
+                        Ok(())
+                    }
+                    // Another run filed it first: update it, never file a second.
+                    Err(error) => match board.status(slug) {
+                        Ok(Some(status)) if !closed(&status) => board
+                            .say(slug, &handle, &red.again)
+                            .map(|()| done.updated.push(slug.clone())),
+                        _ => Err(error),
+                    },
                 }
-                // Another run filed it first: update it, never file a second.
-                Err(error) => match board.status(slug) {
-                    Ok(Some(status)) if !closed(&status) => board
-                        .say(slug, &handle, again)
-                        .map(|()| done.updated.push(slug.clone())),
-                    _ => Err(error),
-                },
-            },
+            }
         };
         if let Err(error) = wrote {
             let (Act::Close { slug, .. } | Act::Say { slug, .. } | Act::File { slug, .. }) = &act;
@@ -554,6 +786,8 @@ mod tests {
         refuse: Vec<&'static str>,
         /// A task another run files between this one's look and its create.
         raced: Option<&'static str>,
+        /// The tasks filed as a fast fix.
+        fast_fixes: RefCell<Vec<String>>,
     }
 
     impl Fake {
@@ -609,7 +843,14 @@ mod tests {
                 .map(|(status, _)| status.clone()))
         }
 
-        fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
+        fn create(
+            &self,
+            slug: &str,
+            title: &str,
+            body: &str,
+            by: &str,
+            fast_fix: bool,
+        ) -> Result<(), String> {
             assert_eq!(by, "filer-1");
             if self.raced == Some(slug) {
                 self.tasks
@@ -622,6 +863,9 @@ mod tests {
                 slug.into(),
                 ("ready".into(), vec![format!("{title}\n{body}")]),
             );
+            if fast_fix {
+                self.fast_fixes.borrow_mut().push(slug.into());
+            }
             Ok(())
         }
 
@@ -652,6 +896,7 @@ mod tests {
             error: None,
             timed_out: false,
             interrupted: false,
+            load: None,
         }
     }
 
@@ -693,11 +938,17 @@ mod tests {
         );
         assert!(
             filed.contains(&format!(
-                "\n\n{OWNERS} The next run that gets through closes this task.\n\nkey: run\n"
+                "\n\n{OWNERS} It is not filed as a fast fix: what clears it is a process ended, \
+                 not a fix that lands. The next run that gets through closes this task.\n\nkey: \
+                 run\n"
             )),
             "{filed}"
         );
         assert!(!filed.contains("any free executor"), "{filed}");
+        assert!(
+            board.fast_fixes.borrow().is_empty(),
+            "nothing an executor lands, so no fast-fix mark"
+        );
 
         let board = Fake::default();
         stopped.stopped = Some("git fetch origin failed");
@@ -706,11 +957,13 @@ mod tests {
         let filed = board.thread("tests/nightly-red-run").join("\n");
         assert!(
             filed.contains(&format!(
-                "\n\n{EXECUTORS} The next run that gets through closes this task.\n\nkey: run\n"
+                "\n\n{EXECUTORS} {FIRST} {APPROVED} The next run that gets through closes this \
+                 task.\n\nkey: run\n"
             )),
             "{filed}"
         );
         assert!(!filed.contains("the owner"), "{filed}");
+        assert_eq!(*board.fast_fixes.borrow(), ["tests/nightly-red-run"]);
     }
 
     #[test]
@@ -793,13 +1046,22 @@ mod tests {
         );
     }
 
+    /// The load each step of [`verify`] ended under, as its list says it.
+    fn step_load() -> super::super::checks::Load {
+        super::super::checks::Load {
+            averages: [1.5, 2.0, 2.5],
+            processors: 8,
+        }
+    }
+
     /// `verify`, red when a step is, listing its steps each with its exit status, its command
-    /// `just STEP` and a log of its own.
+    /// `just STEP`, a log of its own and the load it ended under.
     fn verify(steps: &[(&str, i32)]) -> Ran {
         let steps: Vec<Ran> = (steps.iter())
             .map(|(name, code)| Ran {
                 command: format!("just {name}"),
                 log: PathBuf::from(format!("/logs/verify/{name}.log")),
+                load: Some(step_load()),
                 ..ran(&format!("verify/{name}"), *code)
             })
             .collect();
@@ -833,12 +1095,26 @@ mod tests {
             "Nightly red: verify/size-check on cafe01234567\n",
             "The Symphony nightly is red in `verify/size-check` on main at cafe01234567",
             "Command: `just size-check`, in the nightly's clean checkout of that commit: exit 1.",
-            "Log: /logs/verify/size-check.log",
+            "Log: /logs/verify/size-check.log\nLoad average when it ended: 1.50, 2.00, 2.50 (over \
+             1, 5 and 15 minutes) on 8 processors.\n",
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
+             test, so nothing narrower than its own command, `just size-check`, in a checkout of \
+             cafe01234567.",
             "once `verify/size-check` is green",
             "key: verify-size-check\ncheck: verify/size-check",
         ] {
             assert!(filed.contains(said), "{said:?} in:\n{filed}");
         }
+        assert!(!filed.contains("just verify"), "{filed}");
+        assert!(!filed.contains("The open red of"), "none was open: {filed}");
+        // Each step's red takes the express path a check's does.
+        assert_eq!(
+            *board.fast_fixes.borrow(),
+            [
+                "tests/nightly-red-verify-size-check",
+                "tests/nightly-red-verify-tests"
+            ]
+        );
 
         // Its size fixed, its tests still red: the one closed, the other told again.
         let done = report(
@@ -871,30 +1147,46 @@ mod tests {
     }
 
     #[test]
-    fn an_open_red_of_the_check_hears_which_steps_are_red_and_closes_once_it_is_green() {
-        let board = Fake::with(&[("tests/nightly-red-verify", "ready")]);
+    fn an_open_red_of_the_check_and_each_red_step_name_each_other_and_it_closes_once_it_is_green() {
+        // A whole-verify red filed before verify listed its steps, and a step's red already open.
+        let board = Fake::with(&[
+            ("tests/nightly-red-verify", "in_progress"),
+            ("tests/nightly-red-verify-tests", "ready"),
+        ]);
         let done = report(
             &board,
             &night(&[]),
-            &[verify(&[("lint", 2), ("tests", 101)])],
+            &[verify(&[("lint", 2), ("size-check", 0), ("tests", 101)])],
         );
+        assert_eq!(done.filed, ["tests/nightly-red-verify-lint"]);
         assert_eq!(
-            done.filed,
-            [
-                "tests/nightly-red-verify-lint",
-                "tests/nightly-red-verify-tests"
-            ]
+            done.updated,
+            ["tests/nightly-red-verify-tests", "tests/nightly-red-verify"]
         );
-        assert_eq!(done.updated, ["tests/nightly-red-verify"]);
         assert_eq!(
             board.thread("tests/nightly-red-verify"),
             [
-                "Red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00) in its steps \
-                 `verify/lint` (exit 2), `verify/tests` (exit 101), each filed as a task of its \
-                 own in tests/nightly-red-verify-*. This task closes once `verify` is green."
+                "Red on cafe01234567 (run 2026-11-12T0300-1, 2026-11-12 03:00) in its steps alone, \
+                 each a task of its own: `verify/lint` (exit 2) in tests/nightly-red-verify-lint, \
+                 `verify/tests` (exit 101) in tests/nightly-red-verify-tests. Whoever holds this \
+                 task reads those first, as one can be this same failure. This task closes once \
+                 `verify` is green."
             ]
         );
-        assert_eq!(board.status_of("tests/nightly-red-verify"), "ready");
+        assert_eq!(board.status_of("tests/nightly-red-verify"), "in_progress");
+        // The step filed now names the check's open red; the one already open heard of it above.
+        let lint = board.thread("tests/nightly-red-verify-lint").join("\n");
+        assert!(
+            lint.contains(
+                "\n\nThe open red of `verify` itself, tests/nightly-red-verify, was filed before \
+                 this one: one filed before `verify` listed its steps, or for a red beyond them, \
+                 can be this same failure, so whoever takes this reads its thread first, and the \
+                 two are fixed as one where they are. That task hears of this one, and closes once \
+                 `verify` is green.\n\nThe next run of `just nightly` closes this task once \
+                 `verify/lint` is green;"
+            ),
+            "{lint}"
+        );
 
         let done = report(&board, &night(&[]), &[verify(&[("lint", 0), ("tests", 0)])]);
         assert_eq!(
@@ -921,6 +1213,23 @@ mod tests {
         );
         let filed = board.thread("tests/nightly-red-verify").join("\n");
         assert!(filed.contains("timed out: stopped after 1 s"), "{filed}");
+        // Its log is its own lines and its steps' tails: its steps are named by the commands they
+        // recorded, never verify.
+        assert!(
+            filed.contains(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+                 cafe01234567: each step it listed by the command it recorded, `just lint` (exit \
+                 4, a task of its own); a step it did not reach, by the command its last lines \
+                 name, a test run's each target alone, as `just test-rs -p PACKAGE --test TARGET` \
+                 (`--lib` for a package's own tests), the one its last lines name, never the whole \
+                 run again."
+            ),
+            "{filed}"
+        );
+        assert_eq!(
+            *board.fast_fixes.borrow(),
+            ["tests/nightly-red-verify-lint", "tests/nightly-red-verify"]
+        );
 
         // Red with every step it listed green: the check, and no step.
         let board = Fake::default();
@@ -1166,6 +1475,14 @@ mod tests {
             blind.sessions.borrow().is_empty(),
             "nothing to write: no session"
         );
+        // A check red in its steps alone looks for an open red of its own too.
+        let done = report(&blind, &night(&[]), &[verify(&[("lint", 1)])]);
+        assert!(done.filed.is_empty() && done.updated.is_empty());
+        assert_eq!(
+            done.error.as_deref(),
+            Some("status refused; status refused; status refused"),
+            "the check's, its step's and the run's"
+        );
 
         let unleaving = Fake {
             refuse: vec!["leave"],
@@ -1221,6 +1538,258 @@ mod tests {
             "No green run is recorded yet, so no range of commits narrows it."
         );
         assert!(since(&night(&[])).contains("this same commit (beef01234567)"));
+    }
+
+    /// A verify log in which cargo named failed targets: `count` tests of the lib failing, and an
+    /// integration target that crashed naming none.
+    fn cargo_log(tree: &crate::test_tree::Tree, count: usize) -> PathBuf {
+        let mut text = String::from("running 9 tests\n");
+        for n in 0..count {
+            text.push_str(&format!("test store::case_{n} ... FAILED\n"));
+        }
+        text.push_str(
+            "error: test failed, to rerun pass `-p symphony-board --lib`\n\
+             running 1 test\n\
+             error: test failed, to rerun pass `-p symphony --test nightly`\n",
+        );
+        tree.write("verify.log", &text)
+    }
+
+    #[test]
+    fn a_red_task_says_the_load_its_check_ended_under_and_how_to_rerun_each_failure_alone() {
+        let tree = crate::test_tree::Tree::new();
+        let red = Ran {
+            log: cargo_log(&tree, 2),
+            load: Some(super::super::checks::Load {
+                averages: [31.92, 70.68, 171.07],
+                processors: 10,
+            }),
+            ..ran("verify", 101)
+        };
+        let board = Fake::default();
+        report(&board, &night(&[]), std::slice::from_ref(&red));
+        let filed = board.thread("tests/nightly-red-verify").join("\n");
+        for said in [
+            format!(
+                "Log: {}\nLoad average when it ended: 31.92, 70.68, 171.07 (over 1, 5 and 15 \
+                 minutes) on 10 processors.\n",
+                red.log.display()
+            ),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+             cafe01234567, as its log names each failure (3):\n\
+             - `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n\
+             - `just test-rs -p symphony-board --lib -- store::case_1 --exact`\n\
+             - `just test-rs -p symphony --test nightly`\n\n"
+                .into(),
+            format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
+        ] {
+            assert!(filed.contains(&said), "{said:?} in:\n{filed}");
+        }
+        assert_eq!(*board.fast_fixes.borrow(), ["tests/nightly-red-verify"]);
+
+        // Red again: the line says the load and the reruns of this night.
+        let later = Ran {
+            log: cargo_log(&tree, 1),
+            load: None,
+            ..red
+        };
+        report(&board, &night(&[]), &[later]);
+        let again = &board.thread("tests/nightly-red-verify")[1];
+        assert!(
+            again.contains("\nLoad average when it ended: not recorded.\n\nRerun alone"),
+            "{again}"
+        );
+        assert!(
+            again.contains("(2):\n- `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n- `just test-rs -p symphony --test nightly`"),
+            "{again}"
+        );
+    }
+
+    #[test]
+    fn a_red_step_of_verify_is_rerun_by_its_own_command_and_never_by_verify() {
+        let tree = crate::test_tree::Tree::new();
+        // A step's red reads its own log: the tests' names each failure, any other its command.
+        let tests = Ran {
+            command: "tools/cargo.sh test --workspace --locked --no-fail-fast".into(),
+            log: cargo_log(&tree, 1),
+            ..ran("verify/tests", 101)
+        };
+        assert!(
+            alone(&tests, &night(&[])).ends_with(
+                "(2):\n- `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n- `just \
+                 test-rs -p symphony --test nightly`"
+            ),
+            "{}",
+            alone(&tests, &night(&[]))
+        );
+        let lint = Ran {
+            command: "just lint-rs".into(),
+            log: tree.write("lint-step.log", "error: recipe `_lint-rs` failed\n"),
+            ..ran("verify/lint", 1)
+        };
+        assert_eq!(
+            alone(&lint, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed test, \
+             so nothing narrower than its own command, `just lint-rs`, in a checkout of \
+             cafe01234567."
+        );
+        // A verify that listed no steps, as an older one: today's size budget, red, where the
+        // recipe nearest verify names the step.
+        let size = Ran {
+            log: tree.write(
+                "size.log",
+                "size-budget: symphony is 18.8 MiB, 0.5 MiB past its budget\n\
+                 error: recipe `_size-check` failed on line 101 with exit code 1\n\
+                 error: recipe `size-check` failed on line 96 with exit code 1\n\
+                 error: recipe `verify` failed on line 105 with exit code 1\n",
+            ),
+            ..ran("verify", 1)
+        };
+        assert_eq!(
+            alone(&size, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+             cafe01234567, the step its log names failed: `just size-check`."
+        );
+        // The docs audit's recipe says nothing when it fails: the log names no step, and verify's
+        // steps are listed, never verify itself.
+        let docs = Ran {
+            log: tree.write(
+                "docs.log",
+                "✖ docs/TASKS.md: a broken link\n\
+                 error: recipe `_verify` failed on line 109 with exit code 1\n\
+                 error: recipe `verify` failed on line 105 with exit code 1\n",
+            ),
+            ..ran("verify", 1)
+        };
+        let said = alone(&docs, &night(&[]));
+        assert_eq!(
+            said,
+            format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+                 cafe01234567: its log names no failed test or step, so its last lines say which \
+                 of verify's steps failed, and that one alone reruns it, by its own recipe (`just \
+                 RECIPE`), or its tests, {EACH_TARGET}."
+            )
+        );
+        assert!(!said.contains("just verify"), "{said}");
+        // A test run whose log names no failed target (it did not build): a target at a time,
+        // never the whole suite again.
+        let unbuilt = Ran {
+            command: "SF_SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh \
+                      test --workspace --locked --no-fail-fast"
+                .into(),
+            log: tree.write("unbuilt.log", "error[E0425]: cannot find value `x`\n"),
+            ..ran("verify/tests", 101)
+        };
+        assert_eq!(
+            alone(&unbuilt, &night(&[])),
+            format!(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), in a checkout of \
+                 cafe01234567: its log names no failed test target, so {EACH_TARGET}."
+            )
+        );
+        // Nor when an older verify's log names its tests' recipe failed.
+        let suite = Ran {
+            log: tree.write(
+                "suite.log",
+                "error[E0425]: cannot find value `x`\n\
+                 error: recipe `test-rs` failed on line 40 with exit code 101\n\
+                 error: recipe `verify` failed on line 105 with exit code 101\n",
+            ),
+            ..ran("verify", 101)
+        };
+        assert_eq!(
+            alone(&suite, &night(&[])),
+            alone(&unbuilt, &night(&[])),
+            "a target at a time"
+        );
+        assert!(runs_tests("just test-rs -p symphony") && runs_tests("cargo test --lib"));
+        assert!(!runs_tests("just size-check") && !runs_tests("cargo build --tests"));
+        // A verify that listed its steps never reads its own log, whose tails can quote a step's
+        // recipe or test: its steps are each a task of their own.
+        let quoting = Ran {
+            log: tree.write(
+                "quoting.log",
+                "verify: size-check: red, exit 1 (3 s); its last lines:\n    error: recipe \
+                 `size-check` failed on line 96 with exit code 1\n    error: test failed, to rerun \
+                 pass `-p symphony --lib`\n",
+            ),
+            timed_out: true,
+            ..verify(&[("size-check", 1)])
+        };
+        assert!(
+            alone(&quoting, &night(&[])).contains(
+                ": each step it listed by the command it recorded, `just size-check` (exit 1, a \
+                 task of its own);"
+            ),
+            "{}",
+            alone(&quoting, &night(&[]))
+        );
+        // Another check is rerun by its own command.
+        let other = Ran {
+            command: "sh -c 'exit 1'".into(),
+            log: tree.write("other.log", "error: could not compile `symphony` (lib)\n"),
+            ..ran("other", 101)
+        };
+        assert_eq!(
+            alone(&other, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
+             test, so nothing narrower than its own command, `sh -c 'exit 1'`, in a checkout of \
+             cafe01234567."
+        );
+    }
+
+    #[test]
+    fn a_log_naming_many_failed_tests_is_cut() {
+        let tree = crate::test_tree::Tree::new();
+        let many = Ran {
+            log: cargo_log(&tree, RERUNS_LISTED + 3),
+            ..ran("verify", 101)
+        };
+        let said = alone(&many, &night(&[]));
+        assert_eq!(said.lines().count(), 1 + RERUNS_LISTED + 1, "{said}");
+        assert!(
+            said.ends_with(&format!(
+                "- `just test-rs -p symphony-board --lib -- store::case_{} --exact`\n\
+                 - … and 4 more in the log",
+                RERUNS_LISTED - 1
+            )),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_conciliations_failures_are_rerun_in_its_scratch_copy_with_its_own_command() {
+        let tree = crate::test_tree::Tree::new();
+        let conciliation = Ran {
+            command: "cargo --config 'patch…' test --no-fail-fast -p game (in /copies/sf at 1a2b)"
+                .into(),
+            log: cargo_log(&tree, 1),
+            ..ran("conciliate-star-foundry", 101)
+        };
+        let said = alone(&conciliation, &night(&[]));
+        assert!(
+            said.starts_with(
+                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), the command above, in its \
+                 scratch copy, with each of these in place of its `-p` packages, as its log names \
+                 each failure (2):\n- `-p symphony-board --lib -- store::case_0 --exact`\n"
+            ),
+            "{said}"
+        );
+        assert!(!said.contains("just test-rs"), "{said}");
+        let quiet = Ran {
+            log: tree.write("quiet.log", "error: no matching package\n"),
+            ..conciliation
+        };
+        assert!(
+            alone(&quiet, &night(&[])).ends_with("the command above, in its scratch copy."),
+            "{}",
+            alone(&quiet, &night(&[]))
+        );
+        assert!(
+            !conciliates(&ran(CONCILIATE, 1)),
+            "the registry's read is no project's"
+        );
     }
 
     #[test]
