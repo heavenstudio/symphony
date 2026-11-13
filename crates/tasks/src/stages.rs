@@ -503,6 +503,13 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     }
 }
 
+/// When the task `facts` describe took the status it holds, by its thread's `lines`: the replay's
+/// [`Stages::current_since`], which no clock moves. For a closed task it is its close; where the
+/// thread does not record the change to the status it holds, its `updated`.
+pub fn in_status_since(facts: Facts, lines: &[Line]) -> f64 {
+    stages(facts, lines, facts.updated).current_since
+}
+
 /// One session's hold on the executor or reviewer role of a task.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hold {

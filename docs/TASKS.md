@@ -2430,6 +2430,16 @@ an unblock's): they follow one another from the task's creation, the one it
 holds has no `to`, and their times add up to the statuses'. No table is added
 for them; they are the same read.
 
+`just tasks list --json` carries, on each task it lists, `in_status_since`:
+when the task took the status it holds, the replay's `current.since` (its close
+for a done or cancelled task; the task's `updated` where its thread does not
+record the change). `just tasks search --json` carries it too, its rows being
+list's, and `tasks api`'s `in_status_since` (api version 14) answers it for the
+tasks its `slugs` name, by slug, refusing a slug no task has. Each reads the
+tasks it names and their status and verdict lines in one request however many
+there are (`Store::in_status_since`; `tests/cli/stats.rs` counts them over 300
+tasks); `list` and `search` read nothing more without `--json`.
+
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
 made in the window, subtasks left out. Every figure is of those tasks but the

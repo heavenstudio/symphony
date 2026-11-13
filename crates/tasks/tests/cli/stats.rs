@@ -1,9 +1,11 @@
-//! `show`'s stages and `stats`, on a board whose clock each command sets: every expected time is
-//! written out here by hand.
+//! `show`'s stages, `stats` and when each task took the status it holds (`list --json`, `search
+//! --json`, `tasks api`'s `in_status_since`), on a board whose clock each command sets: every
+//! expected time is written out here by hand.
 
 use crate::Case;
 use crate::common::{NOW, Seed, task};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::Instant;
 use symphony_board::reports::{DAY, day as report_day, day_start};
 use symphony_board::rows::{MessageRow, TaskRow};
@@ -567,4 +569,128 @@ fn stats_reads_the_board_once_however_many_tasks_it_holds() {
     // One read of the schema's version to open the board, one of the window.
     assert_eq!((few_requests.len(), reads(&few_requests)), (2, 1));
     assert_eq!((many_requests.len(), reads(&many_requests)), (2, 1));
+}
+
+/// Each task `listed` (a `list --json` or `search --json` answer) names, with its `in_status_since`.
+fn since_by_slug(listed: &str) -> BTreeMap<String, Value> {
+    let listed: Value = serde_json::from_str(listed).unwrap();
+    (listed["tasks"].as_array().unwrap().iter())
+        .map(|t| {
+            (
+                t["slug"].as_str().unwrap().to_string(),
+                t["in_status_since"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// [`pipeline_by`], and `sim/f` made 17 hours in, claimed at 18, in review at 19 and sent back at
+/// 20, still in progress.
+fn pipeline_sent_back() -> Case {
+    let (c, [orch, exe, rev]) = pipeline_by();
+    let t = |hours: f64| at(&c, START, hours);
+    t(17.0).ok(&orch, &["create", "sim/f", "Again"]);
+    t(18.0).ok(&exe, &["claim", "sim/f"]);
+    t(19.0).ok(&exe, &["move", "sim/f", "review"]);
+    t(19.0).ok(&rev, &["role", "sim/f", "reviewer"]);
+    t(20.0).ok(&rev, &["verdict", "sim/f", "changes", "one more case"]);
+    c
+}
+
+#[test]
+fn list_says_when_each_task_took_the_status_it_holds() {
+    let c = pipeline_sent_back();
+    let later = at(&c, START, 30.0);
+    let open = BTreeMap::from([
+        // Blocked by its executor 6 hours in.
+        ("sim/c".to_string(), json!(START + 6.0 * H)),
+        // Never claimed, a subtask among them: ready, or in the backlog, since they were made.
+        ("sim/d".to_string(), json!(START)),
+        ("sim/d/s".to_string(), json!(START)),
+        ("sim/e".to_string(), json!(START)),
+        // In progress again from the changes verdict, not from its first claim.
+        ("sim/f".to_string(), json!(START + 20.0 * H)),
+    ]);
+    assert_eq!(since_by_slug(&later.ok("", &["list", "--json"])), open);
+    let mut all = open.clone();
+    all.extend([
+        // Done at its approve, whenever it was made.
+        ("sim/a".to_string(), json!(START + 4.0 * H)),
+        ("sim/b".to_string(), json!(START + 16.0 * H)),
+        ("sim/old".to_string(), json!(START + 22.0 * H)),
+    ]);
+    assert_eq!(
+        since_by_slug(&later.ok("", &["list", "--json", "--all"])),
+        all
+    );
+    let blocked = since_by_slug(&later.ok("", &["list", "--json", "--status", "blocked"]));
+    assert_eq!(
+        blocked,
+        BTreeMap::from([("sim/c".to_string(), json!(START + 6.0 * H))])
+    );
+    // Search's rows are list's: they carry it too.
+    assert_eq!(
+        since_by_slug(&later.ok("", &["search", "Again", "--json"])),
+        BTreeMap::from([("sim/f".to_string(), json!(START + 20.0 * H))])
+    );
+    // The clock only counts: an hour later nothing moved, so nothing changed.
+    assert_eq!(
+        since_by_slug(&at(&c, START, 31.0).ok("", &["list", "--json", "--all"])),
+        all
+    );
+}
+
+#[test]
+fn the_api_says_when_each_task_named_took_its_status_and_refuses_one_no_task_has() {
+    let c = pipeline_sent_back();
+    let later = at(&c, START, 30.0);
+    let call = |slugs: Value| -> Value {
+        let input = json!({"method": "in_status_since", "args": {"slugs": slugs}}).to_string();
+        let ran = later.run_as("", &["api"], &input);
+        assert_eq!(ran.code, 0, "{}", ran.err);
+        serde_json::from_str(&ran.out).unwrap()
+    };
+    assert_eq!(
+        call(json!(["sim/f", "sim/a", "sim/c", "sim/f"])),
+        json!({"ok": {
+            "sim/a": START + 4.0 * H,
+            "sim/c": START + 6.0 * H,
+            "sim/f": START + 20.0 * H,
+        }})
+    );
+    assert_eq!(call(json!([])), json!({"ok": {}}));
+    assert_eq!(
+        call(json!(["sim/a", "sim/nope"])),
+        json!({"refused": "no task 'sim/nope'"})
+    );
+}
+
+/// `list --json --all` on a board of `tasks` tasks, through a relay that keeps each request: what
+/// it printed and the requests it sent.
+fn listed_measured(tasks: usize) -> (String, Vec<proxy::Request>) {
+    let c = seeded(tasks);
+    let relay = proxy::Proxy::to(&c.env.vars["TASKS_SERVER"]);
+    let mut env = c.env.clone();
+    env.vars.insert("TASKS_SERVER".into(), relay.addr.clone());
+    let through = Case { env };
+    let said = through.ok("", &["list", "--json", "--all"]);
+    (said, relay.take())
+}
+
+#[test]
+fn list_reads_when_tasks_took_their_status_in_one_request_however_many_it_lists() {
+    let (few, few_requests) = listed_measured(3);
+    let (many, many_requests) = listed_measured(300);
+    // Each seeded task was approved three and a half hours after it was made.
+    let since = |listed: &str| -> Vec<Value> { since_by_slug(listed).into_values().collect() };
+    assert_eq!(since(&few), vec![json!(NOW + 3.5 * H); 3]);
+    assert_eq!(since(&many), vec![json!(NOW + 3.5 * H); 300]);
+    let reads = |requests: &[proxy::Request]| {
+        (requests.iter())
+            .filter(|r| r.sql.contains("WHERE kind IN ['system', 'verdict']"))
+            .count()
+    };
+    assert_eq!(reads(&few_requests), 1);
+    assert_eq!(reads(&many_requests), 1);
+    assert_eq!(few_requests.len(), many_requests.len());
 }

@@ -1,0 +1,37 @@
+  0.00s  INFO Bundling project...
+  2.65s  INFO Compiled [  1/167]: unicode_ident
+ 17.69s  INFO Compiled [ 46/167]: thiserror_impl
+ 18.44s  INFO Compiled [ 49/167]: thiserror
+ 20.17s  INFO Compiled [ 51/167]: tracing_attributes
+/work/symphony-wt/release/build/verified-client/.modules/board/public
+  0.00s  INFO Bundling project...
+[33mwarning[0m: Waiting for cargo-metadata...
+ 22.31s  INFO Compiled [166/167]: symphony_ui
+ 49.87s  INFO  [1m[33mwarning[0m[1m: use of deprecated constant `std::f32::INFINITY`: replaced by the `INFINITY` associated constant on `f32`[0m
+   [1m[94m--> [0m/private/tmp/symphony-client-4c0c43b3/components/primitives/src/select/text_search.rs:155:30
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(deprecated)]` on by default
+
+  0.00s  INFO Bundling project...
+ 13.96s  INFO Compiled [166/167]: symphony_ui
+ 25.04s  INFO Compiled [167/167]: symphony-ui
+ 25.08s  INFO Bundling app...
+ 25.19s  INFO Running wasm-bindgen...
+ 26.62s  INFO Copying asset (1/11): /work/symphony-wt/release/.target/symphony-client-7c6b0817478b7fd0/dx/symphony-ui/release/web/public/wasm/symphony-ui_bg.wasm
+ 26.62s  INFO Copying asset (2/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/src/components/select/trigger.css
+ 26.62s  INFO Copying asset (3/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/src/components/input/style.css
+ 26.62s  INFO Copying asset (4/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/assets/frame.css
+ 26.62s  INFO Copying asset (5/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/assets/task-timeline.css
+ 26.62s  INFO Copying asset (6/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/src/components/button/style.css
+ 26.62s  INFO Copying asset (7/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/src/components/textarea/style.css
+ 26.62s  INFO Copying asset (8/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/assets/dx-components-theme.css
+ 26.62s  INFO Copying asset (9/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/assets/media.css
+ 26.62s  INFO Copying asset (10/11): /private/tmp/symphony-client-4c0c43b3/source/apps/symphony-ui/assets/board.css
+ 26.90s  INFO Copying asset (11/11): /work/symphony-wt/release/.target/symphony-client-7c6b0817478b7fd0/dx/symphony-ui/release/web/public/wasm/symphony-ui.js
+ 26.92s  INFO Copying bundles to output directory: /work/symphony-wt/release/build/verified-client/.modules/timeline
+Bundled 1 bundles:
+/work/symphony-wt/release/build/verified-client/.modules/timeline/public
+symphony-ui: five page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: /work/symphony-wt/release/build/verified-client/public
+client-check: rebuild and commit the client asset: index.html
+error: recipe `_client-check` failed on line 98 with exit code 1
+error: recipe `client-check` failed on line 93 with exit code 1
