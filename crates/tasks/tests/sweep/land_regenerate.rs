@@ -620,6 +620,9 @@ fn a_second_regenerator_ends_at_once_while_one_runs() {
     assert_eq!(made(&r), 0);
     assert!(State::read(&lands(&r)).is_none());
     assert_eq!(logged(&r), "");
+    // Let go as the regenerator lets go of its own, by itself: a close alone leaves it held by any
+    // child another test's thread forked meanwhile, until that child's exec.
+    held.unlock().unwrap();
     drop(held);
     regenerated(&r).1.unwrap();
     assert_eq!(made(&r), 1);

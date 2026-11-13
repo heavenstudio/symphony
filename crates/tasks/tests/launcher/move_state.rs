@@ -1006,9 +1006,13 @@ fn a_land_at_work_refuses_and_the_record_of_a_group_gone_moves_along() {
     let s = State::new("move-land");
     s.fill();
     // The lock two lands take in turn, held as a land holds it, naming the land: lsof names the
-    // process that holds it open, here this test's own.
+    // process that holds it open, here this test's own. Close-on-fork, so no child another test's
+    // thread forks holds a copy of it until its exec: lsof would name that child too, and the lock
+    // would outlive this test's drop of it by that copy.
     s.write("sf-tasks/land.lock", "the land of tools/x (pid 41)");
-    let lock = fs::File::open(s.common.join("sf-tasks/land.lock")).unwrap();
+    let lock = process_cwd::close_on_fork(fs::OpenOptions::new().read(true))
+        .open(s.common.join("sf-tasks/land.lock"))
+        .unwrap();
     lock.try_lock().unwrap();
     let me = std::process::id();
     let before = s.tree();
