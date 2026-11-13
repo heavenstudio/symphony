@@ -368,7 +368,12 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         .iter()
         .filter_map(|worker| worker.thread().name().map(String::from))
         .collect();
-    for name in [TAILNET_WORKER, SWEEP_WORKER, RELOAD_WORKER] {
+    for name in [
+        TAILNET_WORKER,
+        SWEEP_WORKER,
+        RELOAD_WORKER,
+        crate::projects::REGISTRY_WORKER,
+    ] {
         assert!(
             owned.contains(name),
             "the {name} worker is not kept for the join: {owned:?}"
@@ -381,6 +386,97 @@ async fn a_started_server_keeps_every_worker_it_owns_until_it_returns() {
         "the server returned without clearing its port record"
     );
     assert_eq!(said.try_iter().collect::<Vec<_>>(), waits);
+}
+
+/// The one server sweeps every project its machine folder registers, its starter's by a worker of
+/// its own and each other's by its state's, each project's `tasks reap` run in its checkout and
+/// recorded in its own board's health; its stop joins every one of them. The checkouts are folders
+/// of a temporary tree, each `tasks` a stand-in, the machine folder a temporary one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() {
+    let tree = Tree::new();
+    for id in ["alpha", "beta"] {
+        tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
+        tree.write(
+            &format!("{id}/symphony.toml"),
+            &format!("[project]\nname = \"{id}\"\nid = \"{id}\"\n"),
+        );
+        let tasks = tree.path(&format!("{id}/.target/bin/tasks"));
+        std::fs::create_dir_all(tasks.parent().unwrap()).unwrap();
+        crate::fixture_script::write(&tasks, "#!/bin/sh\nprintf '%s\\n' \"$1\" >> calls\n", false);
+    }
+    let home = tree.path("home");
+    let mut registry = symphony::machine::Registry::default();
+    for id in ["alpha", "beta"] {
+        registry
+            .add(symphony::machine::Entry::of(&tree.path(id)).unwrap())
+            .unwrap();
+    }
+    registry.write(&home).unwrap();
+    let started = start(
+        Serve {
+            home: Some(home),
+            root: tree.path("alpha").canonicalize().unwrap(),
+            port: 0,
+            hosts: vec!["127.0.0.1".into()],
+            install: None,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    let served = started.projects.as_ref().unwrap().served();
+    let [alpha, beta] = ["alpha", "beta"].map(|id| {
+        served
+            .iter()
+            .find(|served| served.entry.id == id)
+            .unwrap()
+            .shared
+            .clone()
+    });
+    assert!(Arc::ptr_eq(&alpha, &started.shared));
+    assert_eq!(
+        beta.maintaining(),
+        2,
+        "its sweep and its embedding catch-up"
+    );
+    let calls =
+        |id: &str| std::fs::read_to_string(tree.path(&format!("{id}/calls"))).unwrap_or_default();
+    let looked = [alpha.clone(), beta.clone()];
+    let (alpha_calls, beta_calls) = (tree.path("alpha/calls"), tree.path("beta/calls"));
+    tokio::task::spawn_blocking(move || {
+        test_time::until_true(
+            "each project swept and caught up, each in its own record",
+            test_time::backstop(Duration::from_secs(20)),
+            || {
+                looked.iter().all(|shared| {
+                    shared
+                        .api
+                        .get()
+                        .is_some_and(|hub| hub.health.report(hub.now()).sweep.ok > 0)
+                }) && [&alpha_calls, &beta_calls].iter().all(|calls| {
+                    let calls = std::fs::read_to_string(calls).unwrap_or_default();
+                    calls.lines().any(|call| call == "reap")
+                        && calls.lines().any(|call| call == "embed")
+                })
+            },
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    for id in ["alpha", "beta"] {
+        assert!(
+            calls(id)
+                .lines()
+                .all(|call| call == "reap" || call == "embed"),
+            "{id}: {}",
+            calls(id)
+        );
+    }
+    assert_eq!(started.serve_until_stopped(std::future::ready(())).await, 0);
+    assert!(beta.stopping());
+    assert_eq!(beta.maintaining(), 0, "the stop joined beta's maintenance");
 }
 
 /// A generation with no worker of its own, saying its stop's waits through `stages`.

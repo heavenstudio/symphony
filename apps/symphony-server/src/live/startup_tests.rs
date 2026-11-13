@@ -28,6 +28,8 @@ enum Board {
     Panics,
     /// It returns [`SLOW`], as a board that took a read and answered it late, twice, does.
     Slow,
+    /// It returns what a project with no board says: no store, and no SurrealDB here to serve one.
+    Absent,
 }
 
 /// A board read's failure on a server that took the request and gave no answer within the wait.
@@ -83,6 +85,12 @@ impl Held {
                     }
                     if matches!(board, Board::Slow) {
                         return Err(SLOW.into());
+                    }
+                    if matches!(board, Board::Absent) {
+                        return Err(symphony_board::server::ServerError::NoSurreal(
+                            "/nowhere/surreal".into(),
+                        )
+                        .to_string());
                     }
                     store
                         .take()
@@ -264,4 +272,29 @@ async fn stopping_releases_initial_board_waiters_and_joins_the_owned_read() {
         .unwrap()
         .unwrap();
     assert_eq!(held.worker_finished(), None);
+}
+
+/// Whether the project has a board is not known until the hub's first board read is done: then a
+/// board read, or one that cannot be reached now (unwell, but there), is one, and a project with no
+/// store and no SurrealDB to serve one has none. The server's maintenance of the project waits on it.
+#[tokio::test]
+async fn a_hub_knows_whether_its_project_has_a_board_once_its_first_read_is_done() {
+    for (board, has) in [
+        (Board::Opens, true),
+        (Board::Fails, true),
+        (Board::Slow, true),
+        (Board::Absent, false),
+    ] {
+        let mut held = Held::entered(board).await;
+        assert_eq!(held.hub.has_board(), None, "{board:?}: its read is held");
+        held.release();
+        // The read ends on the hub's own thread, which needs nothing of this test's runtime.
+        let known = test_time::until(
+            format!("{board:?}: the first board read done"),
+            test_time::backstop(Duration::from_secs(30)),
+            || held.hub.has_board(),
+        )
+        .unwrap();
+        assert_eq!(known, has, "{board:?}");
+    }
 }

@@ -34,7 +34,9 @@ entrypoint.
 One server serves every project the machine folder's registry holds
 (`crates/symphony/src/machine/registry.rs`: `projects.json` beside the server's record,
 in `SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
-board snapshot and branch scan. A project's state stays in its checkout: paths under
+board snapshot and branch scan, and, while it has a board, its own idle sweep and embedding
+catch-up (`front::maintenance`); the server reads the registry again each second, so a project
+registered or removed starts or stops them. A project's state stays in its checkout: paths under
 its artifacts folder go through `Project::artifact`, never an `artifacts/` literal.
 The projects share the server's origin, so the client keys what it keeps in the
 browser by the project's id (`project::stored` in `apps/symphony-ui`).

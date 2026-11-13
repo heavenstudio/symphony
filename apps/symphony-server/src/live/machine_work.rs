@@ -305,7 +305,8 @@ impl Sampler {
 }
 
 impl Hub {
-    pub(super) fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
+    /// One tick's read of the board on `store`.
+    pub(crate) fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
         if let Some(callbacks) = self
             .callbacks
             .lock()
