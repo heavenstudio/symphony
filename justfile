@@ -67,16 +67,22 @@ symphony-cli *ARGS:
 tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"
 
-# Symphony's releases (docs/RELEASES.md): main's tip, fetched, verified in full (`just verify`) in a
-# clean checkout outside this folder and conciliated with the projects this machine serves; each
-# red check filed on the board, a green tip tagged release-YYYY-MM-DD and that tag pushed.
-# `--release COMMIT` releases a commit of main out of cycle, `--status` runs nothing, and
-# `--schedule` prints the entry that runs it each night. Scheduling is the owner's. The board's
+# Symphony's releases (docs/RELEASES.md), a release run: main's tip, fetched, verified in full
+# (`just verify`) in a clean checkout outside this folder and conciliated with the projects this
+# machine serves; each red check filed on the board, a green tip tagged release-YYYY-MM-DD and that
+# tag pushed. `--commit COMMIT` releases a commit of main out of cycle, `--status` runs nothing, and
+# `--schedule` prints the entry that runs it each day. Scheduling is the owner's. The board's
 # binary is built and linked first: the run files its reds and records its checks through it.
 [no-exit-message]
-nightly *ARGS:
+release *ARGS:
     @tools/rs-bin.sh --link tasks >/dev/null
-    @tools/rs-bin.sh symphony nightly "$@"
+    @tools/rs-bin.sh symphony release "$@"
+
+# The release run's name before `just release`: it runs nothing and says so, exit 2, until the
+# first release `just release` cuts.
+[no-exit-message]
+nightly *ARGS:
+    @echo '`just nightly` is now `just release`' >&2; exit 2
 
 [no-exit-message]
 agent-send *ARGS:
@@ -93,7 +99,7 @@ _client-check OUT:
 
 # The shipped binaries, built as `cargo install` builds them (the release profile), and the client
 # the server embeds, each against its line in tools/size-budget.toml (docs/CHECKS.md, "Size
-# budgets"). The nightly's verify runs it: one release build, which no task's gate pays for.
+# budgets"). The release run's verify runs it: one release build, which no task's gate pays for.
 size-check:
     @{{record}} --pipeline size --step size-check build "just size-check" just --justfile {{quote(justfile())}} _size-check
 

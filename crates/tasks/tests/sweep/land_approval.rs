@@ -208,10 +208,10 @@ fn in_review(
     head(&wt, "HEAD")
 }
 
-/// A red filed as a fast fix, as the nightly files one: its orchestrator's approve lands a fix that
-/// changes the product alone, and is refused on one that changes a test or the size budget, which a
-/// fresh reviewer's approve lands, its red mark lifted or not. A fast fix that is no red lands on
-/// its orchestrator's approve whatever it changes.
+/// A red filed as a fast fix, as the release run files one: its orchestrator's approve lands a fix
+/// that changes the product alone, and is refused on one that changes a test or the size budget,
+/// which a fresh reviewer's approve lands, its red mark lifted or not. A fast fix that is no red
+/// lands on its orchestrator's approve whatever it changes.
 #[test]
 fn a_reds_orchestrator_lands_a_product_fix_and_a_fresh_reviewer_one_changing_a_check() {
     let r = Repo::new();

@@ -1,5 +1,5 @@
 # tools/cargo_deny.sh pins the release. lint-rs fetches the locked crates, then checks them offline;
-# the nightly's `just deny` also fetches the RustSec database and checks advisories.
+# a consuming project's nightly `just deny` also fetches the RustSec database and checks advisories.
 [graph]
 targets = [
     "aarch64-apple-darwin",

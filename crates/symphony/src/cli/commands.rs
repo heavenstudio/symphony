@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-mod release;
+mod release_inputs;
 mod shot;
 mod size_budget;
 
@@ -55,7 +55,7 @@ const OWN: [(&str, &str); 16] = [
         "check the shipped binaries' sizes against their budget",
     ),
     (
-        "nightly",
+        "release",
         "verify main's tip in full and tag it a release when green",
     ),
     ("serve", "answer JSON requests on stdin, one a line"),
@@ -116,7 +116,7 @@ pub(super) fn plain_help(name: &str, args: &[String]) -> Option<String> {
 /// a name no plugin adds is refused, naming the nearest. Its exit code.
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if name == "release-inputs" {
-        return release::main(args, out, err);
+        return release_inputs::main(args, out, err);
     }
     if name == "size-budget" {
         return size_budget::main(args, out, err);
@@ -127,8 +127,13 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     if name == "shot" {
         return shot::main(args, out, err);
     }
-    if name == "nightly" {
-        return crate::nightly::main(args, out, err);
+    if name == "release" {
+        return crate::release::main(args, out, err);
+    }
+    // Its name before the rename, unlisted: what a landing's on_land and a build older than the
+    // rename still run (`nightly --due`), and a refusal naming the new one.
+    if name == crate::release::LEGACY {
+        return crate::release::legacy(args, out, err);
     }
     // Measured as the project the command runs in says, the nearest above the current folder.
     let root = std::env::current_dir()
