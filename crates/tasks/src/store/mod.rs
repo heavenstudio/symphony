@@ -70,6 +70,7 @@ pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
+pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
     BEFORE_WORK, COVERED, CoveredLine, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
@@ -192,9 +193,10 @@ pub struct Board {
 
 pub struct Store {
     client: Client,
-    /// The client the unanswered-post lookup reads through: this one's board, waited on at most
-    /// [`unanswered::LOOKUP_WAIT`], a read that ran that out not sent again ([`Client::bounded`]).
-    lookup: Client,
+    /// The client the unanswered-post lookup reads through when one is set
+    /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
+    /// sent again ([`Client::bounded`]). None reads through `client`, as every other read.
+    lookup: Option<Client>,
     clock: Clock,
     pid_alive: Probe,
     host: String,
@@ -246,6 +248,15 @@ impl Store {
     /// name that server ([`board_command`]).
     pub fn on_named_server(mut self) -> Store {
         self.named_server = true;
+        self
+    }
+
+    /// This store, each read of its unanswered-post lookup waiting at most `wait` (its client's own
+    /// wait when that is shorter) and sent once: a board command's, [`UNANSWERED_WAIT`] unless
+    /// [`UNANSWERED_WAIT_VAR`] says, so no command waits minutes on what it can do without. A
+    /// store none is set on waits on the lookup as on any read.
+    pub fn looking_up_within(mut self, wait: Duration) -> Store {
+        self.lookup = Some(self.client.bounded(wait));
         self
     }
 

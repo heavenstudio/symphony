@@ -19,11 +19,15 @@ mod recipients;
 
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
 
-/// The longest one read of the lookup waits for the board, sent once
-/// ([`crate::rpc::Client::bounded`]). Each caller does without the answer: PULL leaves its
-/// unanswered posts out and says why, recovery tries again at its next sweep, and the reap keeps a
-/// pane it cannot judge.
-pub(crate) const LOOKUP_WAIT: Duration = Duration::from_secs(10);
+/// The longest one read of the lookup waits for the board in a board command, sent once
+/// ([`Store::looking_up_within`]), unless [`LOOKUP_WAIT_VAR`] says. Each caller does without the
+/// answer: PULL leaves its unanswered posts out and says why, recovery tries again at its next
+/// sweep, and the reap keeps a pane it cannot judge.
+pub const LOOKUP_WAIT: Duration = Duration::from_secs(10);
+
+/// The setting of [`LOOKUP_WAIT`] in seconds, read only when set (`Env::seconds`): a test gives the
+/// lookup a backstop past its client's own wait, or makes it run out at once.
+pub const LOOKUP_WAIT_VAR: &str = "TASKS_UNANSWERED_WAIT";
 
 /// The statuses an executor's post can be overdue in; a reviewer's only in review.
 const OPEN: [&str; 3] = ["in_progress", "blocked", "review"];

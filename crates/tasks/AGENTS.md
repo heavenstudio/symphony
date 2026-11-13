@@ -389,9 +389,12 @@ handle and the sessions under it owe, on the threads that address one of them, h
 record one made (`message_recipient`, `message_sender`) or name one in a role. Threads, launches
 and the threads below a task are record ranges (`message:[slug, ..]`, `task_session:[slug, ..]`),
 and only the posts still asked after the in-memory filters read the threads below their task after
-the post (the own thread's answer is the thread check). Each of its reads (four at most) waits
-at most `unanswered::LOOKUP_WAIT` (10 s), sent once (`rpc::Client::bounded`): a PULL then skips its
-unanswered posts and says why, and the reap keeps the terminal it could not judge. The plans
+the post (the own thread's answer is the thread check). In a board command each of its reads (four
+at most) waits at most `UNANSWERED_WAIT` (10 s, `TASKS_UNANSWERED_WAIT` when set), sent once
+(`Store::looking_up_within`, `rpc::Client::bounded`); a store none is set on waits on it as on
+any read. A PULL then skips its unanswered posts and says why, and the reap, at its judgment or
+either last look, keeps the terminal it could not judge and goes on to the next (the cli target's
+`pull::command` and the launch target's `reap_unread` set the wait short). The plans
 inside its closures are pinned by `store/unanswered_reads.rs`, its cost on the generated board by
 the perf target's `unanswered`. Recovery's final check reads only that recipient's eligible
 records after the post through `message_sender`, then checks actual task parents. Direct
@@ -674,8 +677,9 @@ A product deadline a test would otherwise trip on a loaded machine is a setting,
 set and never raised for anyone else: the recorder's waits scale by `TASKS_RUN_WAIT_SCALE` on a
 scratch board alone (docs/MACHINE_WORK.md), and these are seconds (`Env::seconds`):
 `tools/record.sh`'s probe `TASKS_RECORDER_PROBE_WAIT`, the landing's listening window
-`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, and a Codex delivery's
-`TASKS_CODEX_WAIT`. A test of the deadline itself sets it short; every other test gives it a
+`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, a Codex delivery's
+`TASKS_CODEX_WAIT`, and each read of the unanswered-post lookup `TASKS_UNANSWERED_WAIT` (a store a
+test opens itself sets none). A test of the deadline itself sets it short; every other test gives it a
 backstop, so its result never turns on how loaded the machine is. Where a test must act only after
 the product did something on a thread of its own, the product leaves a mark it reads only when
 set: the recorder makes the file `TASKS_RUN_END_MARK` names once it has stamped its command's end

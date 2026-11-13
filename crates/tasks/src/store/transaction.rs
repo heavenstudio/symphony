@@ -38,15 +38,16 @@ impl Store {
         read_on(&self.client, body, vars)
     }
 
-    /// [`Store::read`] through the unanswered-post lookup's client, which waits a bounded time
-    /// and sends a read that ran it out no second time.
+    /// [`Store::read`] through the unanswered-post lookup's client when one is set, which waits a
+    /// bounded time and sends a read that ran it out no second time
+    /// ([`Store::looking_up_within`]).
     #[track_caller]
     pub(super) fn bounded_read<T: DeserializeOwned>(
         &self,
         body: &str,
         vars: Value,
     ) -> Result<T, Failure> {
-        read_on(&self.lookup, body, vars)
+        read_on(self.lookup.as_ref().unwrap_or(&self.client), body, vars)
     }
 
     /// A task write returns recipient presence in its snapshot and dispatches after decoding it.

@@ -140,7 +140,8 @@ fn still_idle(
     {
         return changed();
     }
-    if let Err(why) = board_still(store, judged)? {
+    // A board that cannot say, its unanswered lookup out of time among them, keeps the terminal.
+    if let Err(why) = board_still(store, judged).unwrap_or_else(|problem| Err(unread(&problem))) {
         return Ok(Err(why));
     }
     if !(how.processes)(judged.pid)
@@ -202,8 +203,12 @@ fn still_finished(
     if let Some(why) = procs::reap_busy_reason(&commands) {
         return Err(format!("work started under it: {why}"));
     }
-    board_still(store, judged)
-        .unwrap_or_else(|problem| Err(format!("never closed on no information: {problem}")))
+    board_still(store, judged).unwrap_or_else(|problem| Err(unread(&problem)))
+}
+
+/// Why a terminal stays whose board could not be read: `problem`, said as no information.
+fn unread(problem: &Error) -> String {
+    screen::no_information(&crate::launch::LaunchError(problem.to_string()))
 }
 
 /// One line on a task thread for the close, saying `why`: the restore line, or "" when the handle

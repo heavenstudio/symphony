@@ -1,12 +1,8 @@
 //! The unanswered-post lookup a PULL digest runs, on the generated board: it reads the threads of
 //! the open tasks it asks about and the launches on them, by record range, never every thread of
-//! the board nor each pending post's recipient suffix, within a bound of the server's CPU.
-//!
-//! Before it was bounded so, on this board, the lookup read all 2.2k threads (0.71 s of the
-//! server's CPU) and then, for each of the 6.6k posts pending on any of them in any status, its
-//! recipient's every record after it (5.66 s): 6.4 s of a digest's 6.8 s, and 86% of a claim's
-//! server CPU, whose write builds the PULL of an orchestrator it makes due. On the consuming
-//! project's larger board that scan ran out a command's 300 s wait.
+//! the board nor each pending post's recipient suffix, within a bound of the server's CPU. The
+//! reader sets no deadline on the lookup ([`Store::looking_up_within`]), so its client's own wait
+//! is the backstop and the posts it finds never turn on how loaded the machine is.
 
 use crate::board::{DATABASE, board};
 use crate::generated::NOW;
@@ -18,11 +14,11 @@ use symphony_board::{NAMESPACE, Store, sys};
 /// The statuses the lookup reads the threads of: an executor's post is overdue only in these.
 const OPEN: [&str; 3] = ["in_progress", "blocked", "review"];
 
-/// The most server CPU the lookup's reads may take, replayed one after another. Measured on
-/// 2026-11-13 at load 14 to 15 on 16 cores: its two reads (the 165 open threads, and one for the
-/// posts still asked after it) took 0.14 s, and the thread read of a digest 0.16 s of its 0.31 s; the same
-/// digest's lookup took 7.8 s at main's tip. The bound is about ten times what it takes and a
-/// fifth of what reading the board took.
+/// The most server CPU the lookup's reads may take, replayed one after another: it holds them to
+/// the open tasks' threads, since every thread of this board and each pending post's answers after
+/// it take several seconds of the server's CPU. Measured on 2026-11-13, its two reads (the open
+/// threads, and one for the posts still asked after it) took 0.14 s at load 14 to 15 on 16 cores
+/// and 0.18 s at load 40 to 127. The bound is about ten times that.
 const LOOKUP: Duration = Duration::from_millis(1_500);
 
 /// Whether `request` is one of the lookup's reads: its threads and launches, the answers below

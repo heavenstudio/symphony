@@ -242,6 +242,10 @@ impl Board {
             .env("TASKS_DATABASE", DATABASE)
             .env("TASKS_NOW", NOW.to_string())
             .env("TASKS_DISPATCH", "inline")
+            .env(
+                symphony_board::UNANSWERED_WAIT_VAR,
+                crate::store::LOOKUP_BACKSTOP,
+            )
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
