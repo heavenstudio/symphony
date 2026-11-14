@@ -4,14 +4,34 @@
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
+/// A read of `path`, its fetch aborted when the read is dropped before it ends: the asks read again
+/// as the page's feed opens, dropping the read before, and a read dropped once its answer came
+/// would leave its body unread, which the browser counts in flight for as long as the page is open.
 pub(crate) async fn fetch(path: &str) -> Result<JsValue, String> {
     let window = web_sys::window().ok_or("no browser")?;
     let url = crate::project::current().here(path);
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(&url))
+    let controller = web_sys::AbortController::new().map_err(describe)?;
+    let init = web_sys::RequestInit::new();
+    init.set_signal(Some(&controller.signal()));
+    let mut abandoned = Abandoned(Some(controller));
+    let response: web_sys::Response = JsFuture::from(window.fetch_with_str_and_init(&url, &init))
         .await
         .map_err(describe)?
         .unchecked_into();
-    response_json(response, path).await
+    let read = response_json(response, path).await;
+    abandoned.0 = None;
+    read
+}
+
+/// The fetch a read still owes an end, aborted when the read is dropped first.
+struct Abandoned(Option<web_sys::AbortController>);
+
+impl Drop for Abandoned {
+    fn drop(&mut self) {
+        if let Some(controller) = self.0.take() {
+            controller.abort();
+        }
+    }
 }
 
 pub(crate) async fn post(path: &str, fields: &[(&str, &str)]) -> Result<JsValue, String> {

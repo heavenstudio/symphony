@@ -303,9 +303,10 @@ build linked at `.target/bin/tasks`, else, from a linked worktree, the main
 checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
 to make when it finds none. The Symphony's own board clients find it the same
 way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
-`tools/rs-bin.sh` builds the binary before every run, so the first command after
-a change to its sources takes a minute or two, later ones only Cargo's check
-that nothing changed. On the live board it is the main checkout's build, from
+`tools/rs-bin.sh` builds the binary before a run once its sources or settings
+changed, so the first command after such a change takes a minute or two, and
+later ones run the build without asking Cargo ([the launcher](../AGENTS.md#rust)).
+On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and

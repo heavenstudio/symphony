@@ -283,7 +283,8 @@ pub fn top() -> String {
         }
     }
     text.push_str(
-        "\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR       act as \
+        "\noptions:\n  -h, --help       show this help message and exit\n  --version        say \
+         the version and exit\n  --as ACTOR       act as \
          this session handle, before or after the command\n                   (default: \
          $TASKS_SESSION)\n  --database NAME  the scratch board NAME, not the project's; it comes \
          first,\n                   before every other word, and sweeps no repository\n\

@@ -701,7 +701,7 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 }
                 refresh = true;
             }
-            "task" | "task-summary" => {
+            "task" => {
                 let mut change: ItemChange<Task> =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
                 d.from_device.retain(|slug| slug != &change.key);
@@ -727,6 +727,12 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 refresh |=
                     searching || change.fields.status.is_some() || change.fields.parent.is_some();
             }
+            // A holder's health: its roles on every card say it.
+            "session" => crate::tasks::holder_health(
+                &mut d.tasks,
+                &field(&value, "key").as_string().unwrap_or_default(),
+                field(&field(&value, "value"), "health").as_string(),
+            ),
             "message" => refresh |= searching,
             "task-signoff" if searching => refresh = true,
             "task-signoff" => {

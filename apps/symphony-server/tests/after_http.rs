@@ -576,11 +576,12 @@ fn later_expiry(f: &Fixture) {
 fn contracts(f: &Fixture) {
     let shell = f.get("/").status(200);
     assert!(shell.text().contains("Native shell."));
+    // The fixture has no docs/DECISIONS.md: its page names no register, so its home links none.
     let project = format!(
         "<html><body><script type=\"application/json\" id=\"symphony-project\">{}</script>",
         json!({
             "name": f.root.file_name().unwrap().to_str().unwrap(),
-            "register": "docs/DECISIONS.md",
+            "register": "",
             "nav": [{"label": "▤ shelf", "title": "Shelf items", "href": "/shelf", "document": "docs/SHELF.md"}],
             "entrypoints": ["docs"],
         })
