@@ -1024,7 +1024,6 @@ fn serve(
         let navigation = headers
             .get("sec-fetch-dest")
             .is_some_and(|destination| destination == "document");
-        let head_only = line.starts_with("HEAD ");
         let named = headers.get("if-none-match").cloned();
         // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
         // the shell's warmed modules are prefetches too, but no reads of the API.
@@ -1240,43 +1239,26 @@ fn serve(
                     body.etag,
                     body.headers
                 );
-                if head_only {
-                    // A `HEAD` is answered with the head alone, its length the body's.
-                    out.write_all(head.as_bytes())
+                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
+                    body.bytes.len() / 2
                 } else {
-                    sent_whole(&mut out, &head, body, &path, shared, released)
+                    body.bytes.len()
+                };
+                let sent = out
+                    .write_all(head.as_bytes())
+                    .and_then(|_| out.write_all(&body.bytes[..half]))
+                    .and_then(|_| out.flush());
+                if half < body.bytes.len() && sent.is_ok() {
+                    let mut pending = shared.lock().unwrap();
+                    while pending.stalled_bodies.contains(&path) {
+                        pending = released.wait(pending).unwrap();
+                    }
                 }
+                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {
             return;
         }
     }
-}
-
-/// `head` and `body` sent, the body's second half held while `path` is stalled.
-fn sent_whole(
-    out: &mut TcpStream,
-    head: &str,
-    body: &Body,
-    path: &str,
-    shared: &Mutex<Shared>,
-    released: &Condvar,
-) -> std::io::Result<()> {
-    let half = if shared.lock().unwrap().stalled_bodies.contains(path) {
-        body.bytes.len() / 2
-    } else {
-        body.bytes.len()
-    };
-    let sent = out
-        .write_all(head.as_bytes())
-        .and_then(|_| out.write_all(&body.bytes[..half]))
-        .and_then(|_| out.flush());
-    if half < body.bytes.len() && sent.is_ok() {
-        let mut pending = shared.lock().unwrap();
-        while pending.stalled_bodies.contains(path) {
-            pending = released.wait(pending).unwrap();
-        }
-    }
-    sent.and_then(|_| out.write_all(&body.bytes[half..]))
 }

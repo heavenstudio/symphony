@@ -117,19 +117,4 @@ fn an_html_document_runs_its_scripts_in_a_frame_that_never_reaches_the_app() {
             site.requests()
         );
     }
-    // A route with no document behind it says so, with the way back, and draws no frame.
-    page.open(&site.url("/docs/analysis/gone.html"));
-    assert!(
-        page.wait_for(
-            "document.querySelector('[data-ready=missing]') !== null",
-            SHOWN
-        ),
-        "no missing document was said: {}",
-        page.eval("document.body ? document.body.innerText.slice(0, 1000) : '(no body)'")
-    );
-    let missing = page.eval(
-        "({ frames: document.querySelectorAll('iframe').length, \
-           said: document.querySelector('[data-ready=missing]').innerText.includes('Document not found') })",
-    );
-    assert_eq!(missing, json!({"frames": 0, "said": true}));
 }

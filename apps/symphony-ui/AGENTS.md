@@ -540,10 +540,12 @@ never the whole target, which the release run runs.
   it runs in an opaque origin with no reach into the app's storage, cookies, feed, API or page.
   The server answers the page's own load of the route with the shell and the frame's with the
   file, under a policy that keeps its loads to its entrypoint and opens no connection
-  (`html_document`, `apps/symphony-server/src/media_files.rs`). The frame is as wide as the page
-  and as tall as the window below the header, scrolling inside itself; the page has the header
-  and nothing of the Markdown view (outline, cards, notes, editing, versions, cache or feed), and
-  a `HEAD` of the route says when there is no such document.
+  (`html_document`, `apps/symphony-server/src/media_files.rs`), and a route with no such document
+  with its Not found, which the frame shows. The frame is as wide as the page and as tall as the
+  window below the header, scrolling inside itself; the page has the header and nothing of the
+  Markdown view (outline, cards, notes, editing, versions, cache or feed), and no reads of its own:
+  what an HTML document does is the server's and the browser tests', so a port of the documents'
+  page carries it over as one frame.
   The feed opts into
   one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
   a document receives no document payloads. Changing the requested keys reopens
