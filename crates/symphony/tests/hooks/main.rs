@@ -12,6 +12,7 @@ mod installer;
 mod lifetime;
 mod named_recipes;
 mod own_names;
+mod owner_words;
 mod recipe_variables;
 mod recipes;
 #[path = "../common/mod.rs"]

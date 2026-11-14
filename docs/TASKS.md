@@ -1145,7 +1145,7 @@ processes cannot be listed reads `health: unknown`. `last_tool_call` is the time
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
-an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
+an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
 tasks an orchestrator (or any session holding open work's slot) holds against the
 cap, and `null` otherwise. `session_url` is the web address the session gave
 ([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
@@ -1821,7 +1821,7 @@ and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
 role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
-HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
+HANDLE's counted tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
@@ -2144,7 +2144,7 @@ reviewer = "opus"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
-  orchestrator's open tasks), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
   machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
   launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
   also read from `[board]` where `[limits]` names none, where a build that does not know
@@ -2191,8 +2191,9 @@ reviewer = "opus"
 
 ## Slots
 
-An orchestrator holds at most a set number of open tasks, its slots, so work is
-pushed to done before new work starts (`crates/tasks/src/slots.rs`).
+An orchestrator holds at most a set number of tasks being built, its slots, so
+work is pushed to review and done before new work starts
+(`crates/tasks/src/slots.rs`).
 The number is the project's: `orchestrator_slots` in the `[limits]` table of
 `symphony.toml` ([Limits and models](#limits-and-models)), else in its `[board]` table,
 where builds before `[limits]` read it, from the repository's main checkout, as
@@ -2200,10 +2201,11 @@ where builds before `[limits]` read it, from the repository's main checkout, as
 capped. A value that does not parse, or one below 1, is said on stderr with its line
 (`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
 
-- **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
-  the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
-  `done` or `cancelled`, or leaves the open statuses another way.
+- **A slot** is held by a task `in_progress`, or `blocked` under a hold that
+  keeps the slot (below). A task in `review` is open and holds none (below);
+  other `blocked` work, `backlog`, `concept`, `design` and `ready` hold none
+  either. A slot frees when its task moves to `review`, is `done` or
+  `cancelled`, or leaves the statuses that hold one another way.
 - **Work in review takes no slot.** The cap counts the tasks being built, not
   the review of them: a task's slot frees when it moves to `review`, and a move
   into `review` is never refused. The work under a task in review goes with it,
@@ -2212,8 +2214,8 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   either, and starts at any count. The task's return to `in_progress`, on a
   changes verdict or a move, goes between open statuses and starts nothing: it
   is never refused, and counts again from then, as it was being worked already.
-- **Each open task, one slot.** A subtask holds a slot of its own, so
-  gathering open work under one task frees none. Two kinds of task share the
+- **Each task being built, one slot.** A subtask holds a slot of its own, so
+  gathering work in progress under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
   `SLUG/review`) counts with the task it reviews when the board holds that
   task, and an instruction subtask (`instruction: true`) with the nearest
