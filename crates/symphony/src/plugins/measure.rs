@@ -332,7 +332,7 @@ impl Meter {
         self.trip::<Declare>(
             plugin.name(),
             declared,
-            || Declare { protocol: PROTOCOL },
+            || Declare::new(PROTOCOL),
             |_| declared(),
         );
     }
@@ -602,11 +602,13 @@ impl Component for On<dyn Component> {
         self.meter.call(
             &self.name,
             || self.inner.render(page, argument, option),
-            || Render {
-                component: self.name.clone(),
-                page: PageData::of(page),
-                argument: argument.into(),
-                option: option.map(str::to_string),
+            || {
+                Render::new(
+                    self.name.clone(),
+                    PageData::of(page),
+                    argument.into(),
+                    option.map(str::to_string),
+                )
             },
             |asked| {
                 far_page(&asked.page, page, |page| {
@@ -621,11 +623,13 @@ impl Component for On<dyn Component> {
         self.meter.call(
             &self.name,
             || self.inner.resolve(page, argument, option),
-            || Resolve {
-                component: self.name.clone(),
-                page: PageData::of(page),
-                argument: argument.into(),
-                option: option.map(str::to_string),
+            || {
+                Resolve::new(
+                    self.name.clone(),
+                    PageData::of(page),
+                    argument.into(),
+                    option.map(str::to_string),
+                )
             },
             |asked| {
                 far_page(&asked.page, page, |page| {
@@ -640,10 +644,7 @@ impl Component for On<dyn Component> {
         self.meter.call(
             &self.name,
             || self.inner.cache_version(page),
-            || CacheVersion {
-                component: self.name.clone(),
-                page: PageData::of(page),
-            },
+            || CacheVersion::new(self.name.clone(), PageData::of(page)),
             |asked| far_page(&asked.page, page, |page| self.inner.cache_version(page)),
         )
     }
@@ -655,10 +656,7 @@ macro_rules! card_call {
         $self.meter.call(
             &$self.name,
             || $self.inner.$call($card),
-            || $ask {
-                kind: $self.name.clone(),
-                card: CardData::of($card),
-            },
+            || $ask::new($self.name.clone(), CardData::of($card)),
             |asked| asked.card.read(|card| $self.inner.$call(card)),
         )
     };
@@ -675,11 +673,7 @@ impl CardKind for On<dyn CardKind> {
         self.meter.call(
             &self.name,
             || self.inner.pictures(root, card),
-            || Pictures {
-                kind: self.name.clone(),
-                root: root.to_path_buf(),
-                card: CardData::of(card),
-            },
+            || Pictures::new(self.name.clone(), root.to_path_buf(), CardData::of(card)),
             |asked| {
                 asked
                     .card
@@ -724,11 +718,7 @@ impl Renderer for On<dyn Renderer> {
         self.meter.call(
             &self.name,
             || self.inner.draw(page, file),
-            || Draw {
-                renderer: self.name.clone(),
-                page: PageData::of(page),
-                file: FileData::of(file),
-            },
+            || Draw::new(self.name.clone(), PageData::of(page), FileData::of(file)),
             |asked| {
                 far_page(&asked.page, page, |page| {
                     self.inner.draw(page, &asked.file.file())
@@ -746,11 +736,7 @@ impl Route for On<dyn Route> {
         self.meter.call(
             &self.name,
             || self.inner.serve(root, rest),
-            || Serve {
-                route: self.name.clone(),
-                root: root.to_path_buf(),
-                rest: rest.into(),
-            },
+            || Serve::new(self.name.clone(), root.to_path_buf(), rest.into()),
             |asked| self.inner.serve(&asked.root, &asked.rest),
         )
     }
@@ -764,10 +750,7 @@ impl HomeRegion for On<dyn HomeRegion> {
         self.meter.call(
             &self.name,
             || self.inner.region(root),
-            || ShowRegion {
-                region: self.name.clone(),
-                root: root.to_path_buf(),
-            },
+            || ShowRegion::new(self.name.clone(), root.to_path_buf()),
             |asked| self.inner.region(&asked.root),
         )
     }
@@ -781,11 +764,7 @@ impl BoardAction for On<dyn BoardAction> {
         self.meter.call(
             &self.name,
             || self.inner.offer(root, task),
-            || Offer {
-                action: self.name.clone(),
-                root: root.to_path_buf(),
-                task: TaskData::of(task),
-            },
+            || Offer::new(self.name.clone(), root.to_path_buf(), TaskData::of(task)),
             |asked| self.inner.offer(&asked.root, &asked.task.task()),
         )
     }
@@ -798,11 +777,13 @@ impl BoardAction for On<dyn BoardAction> {
         self.meter.call(
             &self.name,
             || self.inner.submit(root, task, submission),
-            || Submit {
-                action: self.name.clone(),
-                root: root.to_path_buf(),
-                task: TaskData::of(task),
-                submission: submission.clone(),
+            || {
+                Submit::new(
+                    self.name.clone(),
+                    root.to_path_buf(),
+                    TaskData::of(task),
+                    submission.clone(),
+                )
             },
             |asked| {
                 self.inner
@@ -826,10 +807,7 @@ impl BoardField for On<dyn BoardField> {
         self.meter.call(
             &self.name,
             || self.inner.validate(value),
-            || Validate {
-                field: self.name.clone(),
-                value: value.clone(),
-            },
+            || Validate::new(self.name.clone(), value.clone()),
             |asked| self.inner.validate(&asked.value),
         )
     }
@@ -848,11 +826,13 @@ impl Gates for On<dyn Gates> {
         self.meter.call(
             &self.name,
             || self.inner.answer(root, task, tip),
-            || AnswerGates {
-                answerer: self.name.clone(),
-                root: root.to_path_buf(),
-                task: TaskData::of(task),
-                tip: tip.map(str::to_string),
+            || {
+                AnswerGates::new(
+                    self.name.clone(),
+                    root.to_path_buf(),
+                    TaskData::of(task),
+                    tip.map(str::to_string),
+                )
             },
             |asked| {
                 self.inner
@@ -864,11 +844,7 @@ impl Gates for On<dyn Gates> {
         self.meter.call(
             &self.name,
             || self.inner.kept_while(root, task),
-            || KeptWhile {
-                answerer: self.name.clone(),
-                root: root.to_path_buf(),
-                task: TaskData::of(task),
-            },
+            || KeptWhile::new(self.name.clone(), root.to_path_buf(), TaskData::of(task)),
             |asked| self.inner.kept_while(&asked.root, &asked.task.task()),
         )
     }
@@ -882,10 +858,7 @@ impl Watch for On<dyn Watch> {
         self.meter.call(
             &self.name,
             || self.inner.changed(root),
-            || Changed {
-                watch: self.index,
-                root: root.to_path_buf(),
-            },
+            || Changed::new(self.index, root.to_path_buf()),
             |asked| self.inner.changed(&asked.root),
         )
     }
@@ -893,10 +866,7 @@ impl Watch for On<dyn Watch> {
         self.meter.call(
             &self.name,
             || self.inner.forget(root),
-            || Forget {
-                watch: self.index,
-                root: root.to_path_buf(),
-            },
+            || Forget::new(self.index, root.to_path_buf()),
             |asked| self.inner.forget(&asked.root),
         );
     }
@@ -910,10 +880,7 @@ impl DocCheck for On<dyn DocCheck> {
         self.meter.call(
             &self.name,
             || self.inner.components(docs),
-            || DocComponents {
-                check: self.name.clone(),
-                root: docs.root().to_path_buf(),
-            },
+            || DocComponents::new(self.name.clone(), docs.root().to_path_buf()),
             |asked| far_docs(&asked.root, docs, |docs| self.inner.components(docs)),
         )
     }
@@ -933,10 +900,7 @@ impl DocCheck for On<dyn DocCheck> {
             .trip(
                 &self.name,
                 || problems(docs),
-                || CheckDocs {
-                    check: self.name.clone(),
-                    root: docs.root().to_path_buf(),
-                },
+                || CheckDocs::new(self.name.clone(), docs.root().to_path_buf()),
                 |asked| far_docs(&asked.root, docs, problems),
             )
             .into_iter()
@@ -963,11 +927,7 @@ impl ProseRule for On<dyn ProseRule> {
         self.meter.call(
             &self.name,
             || self.inner.check(rel, text),
-            || CheckProse {
-                rule: self.name.clone(),
-                rel: rel.into(),
-                text: text.into(),
-            },
+            || CheckProse::new(self.name.clone(), rel.into(), text.into()),
             |asked| self.inner.check(&asked.rel, &asked.text),
         )
     }
@@ -994,10 +954,7 @@ impl Command for On<dyn Command> {
         self.meter.call(
             &self.name,
             || run(args),
-            || RunCommand {
-                command: self.name.clone(),
-                args: args.to_vec(),
-            },
+            || RunCommand::new(self.name.clone(), args.to_vec()),
             |asked| run(&asked.args),
         )
     }
@@ -1011,11 +968,7 @@ impl Transport for On<dyn Transport> {
         self.meter.call(
             &self.name,
             || self.inner.register(handle, reported),
-            || RegisterAgent {
-                transport: self.name.clone(),
-                handle: handle.into(),
-                reported: reported.into(),
-            },
+            || RegisterAgent::new(self.name.clone(), handle.into(), reported.into()),
             |asked| self.inner.register(&asked.handle, &asked.reported),
         )
     }
@@ -1023,11 +976,7 @@ impl Transport for On<dyn Transport> {
         self.meter.call(
             &self.name,
             || self.inner.deliver(address, message),
-            || Deliver {
-                transport: self.name.clone(),
-                address: address.into(),
-                message: message.into(),
-            },
+            || Deliver::new(self.name.clone(), address.into(), message.into()),
             |asked| self.inner.deliver(&asked.address, &asked.message),
         )
     }
@@ -1035,10 +984,7 @@ impl Transport for On<dyn Transport> {
         self.meter.call(
             &self.name,
             || self.inner.alive(address),
-            || Alive {
-                transport: self.name.clone(),
-                address: address.into(),
-            },
+            || Alive::new(self.name.clone(), address.into()),
             |asked| self.inner.alive(&asked.address),
         )
     }

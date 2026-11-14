@@ -522,8 +522,12 @@ fn tasks_done_are_the_tasks_counted_once_and_a_period_that_did_not_count_them_is
     let [figure, ..] = figures(&read(&wire));
     assert_eq!(
         (figure.value.as_str(), figure.detail.as_str()),
-        ("3", "3 a day on average · 1 of 3 days counted"),
-        "over Monday alone, the one period that counted them, and it says so"
+        (
+            "3",
+            "3 a day on average · 1 of 3 days counted, 1 rolled up before the count began"
+        ),
+        "over Monday alone, the one period that counted them, and it says so: Wednesday rolled up \
+         without them, Tuesday not rolled up at all"
     );
     wire.buckets[2].flow.as_mut().unwrap().done = Some(4);
     let whole = ReportsPage {
@@ -797,6 +801,125 @@ fn with_no_roll_up_yet_the_page_says_when_the_first_comes() {
         "{html}"
     );
     assert!(html.contains("2026-11-10.json: not a regular file"));
+}
+
+/// [`wire`] in a window of five days from the Saturday before, Saturday and Sunday recorded by no
+/// source, the project's first roll-up file at `first`.
+fn wide(first: Option<f64>) -> ReportsPage {
+    let mut wide = wire();
+    wide.days = 5;
+    wide.from = MONDAY - 2.0 * DAY;
+    wide.first = first;
+    for day in [1.0, 2.0] {
+        wide.buckets.insert(
+            0,
+            ReportBucket {
+                start: MONDAY - day * DAY,
+                end: MONDAY - (day - 1.0) * DAY,
+                ..ReportBucket::default()
+            },
+        );
+    }
+    wide
+}
+
+/// Each period's weekday, as the axis names it.
+fn weekdays(page: &Page) -> Vec<String> {
+    axis(page)
+        .periods
+        .iter()
+        .map(|p| p.chars().take(3).collect())
+        .collect()
+}
+
+/// The axis starts at the project's first roll-up: a window wider than its files is drawn from the
+/// first period of its first file, its figures over those periods alone, a gap after it kept.
+/// Agents recorded before the first roll-up are a record and stay. With no roll-up yet the page
+/// stays whole, as it does where nothing before the first file is in the window.
+#[test]
+fn the_axis_starts_at_the_project_s_first_roll_up() {
+    let mut wide = wide(Some(MONDAY));
+    assert_eq!(weekdays(&read(&wide)), ["Sat", "Sun", "Mon", "Tue", "Wed"]);
+    let trimmed = from_first_record(read(&wide));
+    assert_eq!(
+        weekdays(&trimmed),
+        ["Mon", "Tue", "Wed"],
+        "from Monday, Tuesday's gap kept"
+    );
+    assert_eq!(
+        trimmed.buckets,
+        page().buckets,
+        "the periods as if its window began on Monday"
+    );
+    let html = view(Some(read(&wide)));
+    assert!(
+        html.contains("3.5 a day on average · 2 of 3 days counted"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("7 Nov") && !html.contains("8 Nov"),
+        "no period before Monday on any axis: {html}"
+    );
+    // Only a period wholly before the first file goes: one it begins inside stays, a gap.
+    let mut midday = wide.clone();
+    midday.first = Some(MONDAY - 12.0 * HOUR);
+    assert_eq!(
+        weekdays(&from_first_record(read(&midday))),
+        ["Sun", "Mon", "Tue", "Wed"]
+    );
+    // Sunday's agents, before the first roll-up, are a record of it.
+    wide.buckets[1].agents = wire().buckets[0].agents.clone();
+    assert_eq!(
+        weekdays(&from_first_record(read(&wide))),
+        ["Sun", "Mon", "Tue", "Wed"]
+    );
+    let mut none = wide.clone();
+    for bucket in &mut none.buckets {
+        *bucket = ReportBucket {
+            start: bucket.start,
+            end: bucket.end,
+            ..ReportBucket::default()
+        };
+    }
+    for first in [None, Some(MONDAY + 30.0 * DAY)] {
+        none.first = first;
+        assert_eq!(
+            from_first_record(read(&none)).buckets.len(),
+            5,
+            "nothing recorded and the first file at {first:?}: every period stays"
+        );
+    }
+}
+
+/// A period from after the roll-up began that no file holds (a day the server did not run, a file
+/// left unread) is a gap, kept on the axis and hatched, wherever it falls in the window: the
+/// notice of the files not read is true of the axis drawn, and the figures count it.
+#[test]
+fn a_gap_after_the_roll_up_began_stays_on_the_axis_however_early_in_the_window() {
+    let mut wide = wide(Some(MONDAY - 30.0 * DAY));
+    wide.unread = ["2026-11-07", "2026-11-08"]
+        .iter()
+        .map(|day| format!("/repo/.git/symphony/reports/{day}.json: not read"))
+        .collect();
+    let kept = from_first_record(read(&wide));
+    assert_eq!(weekdays(&kept), ["Sat", "Sun", "Mon", "Tue", "Wed"]);
+    assert!(
+        find(&charts(&kept), "done").gap(0),
+        "Saturday hatched, never dropped"
+    );
+    let html = view(Some(read(&wide)));
+    assert!(
+        html.contains("2 files not read: their hours show as gaps"),
+        "{html}"
+    );
+    assert!(
+        html.contains("3.5 a day on average · 2 of 5 days counted"),
+        "{html}"
+    );
+    assert!(
+        html.contains("7 Nov") && html.contains("8 Nov"),
+        "Saturday and Sunday on the axis: {html}"
+    );
 }
 
 #[test]

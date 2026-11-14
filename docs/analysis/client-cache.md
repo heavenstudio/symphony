@@ -300,10 +300,9 @@ gone.
 
 ## Read ahead
 
-The owner's rulings on the build's thread: "eager loading of content of both tasks and docs of
-related / adjacent info based on links present on a page", and "Large documents should not be eager
-loaded… a given amount of its content could be pre-loaded (equivalent to a screen render or a bit
-more of it)." As built (`perf/client-cache/ahead`):
+The rulings on the build's thread: a page loads eagerly the tasks and documents of related and
+adjacent information its links name, and a large document is never loaded whole that way, only a
+given amount of its content, a screen's worth or a little more. As built (`perf/client-cache/ahead`):
 
 - **When.** Once a page has its data and the browser is idle (the shell's `settled`, which its
   warm-up of the persistent modules waits for too) and its feed is open, the shell reads ahead
