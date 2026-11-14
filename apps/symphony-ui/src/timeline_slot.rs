@@ -13,7 +13,8 @@ pub const SLOT: &str = "timeline-slot";
 /// The box's height on a phone (the list) and wide (the lanes) for a task this browser has drawn
 /// no timeline of, in pixels: the most a timeline shows before its "Show all", the owner's 240 at
 /// any width (docs/DECISIONS.md), so the brief and the thread start near the page's top. What
-/// does not fit fades out: on a phone the earliest steps, wide the lanes under the first few.
+/// does not fit is left out: on a phone the earliest steps, fading, and wide the lanes under the
+/// last that fits whole, the box then kept as tall as those for the next visit.
 pub const NARROW: u32 = 240;
 pub const WIDE: u32 = 240;
 /// The least a box is reserved, whatever was kept.

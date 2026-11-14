@@ -46,6 +46,8 @@
 .ask-thread { content-visibility:auto; contain-intrinsic-size:auto 220px; }
 .ask-thread[data-deferred=true] { min-height:220px; }
 .asks form { display:grid; gap:8px; margin-top:12px; }
+/* A question and its answers read in a brief's measure (80ch), the box to ask in as wide. */
+.asks form, .asks .ask-thread { max-width:80ch; }
 .asks textarea { box-sizing:border-box; width:100%; min-height:5rem; font:inherit; background:var(--card); color:var(--foreground); border:1px solid var(--border); border-radius:6px; padding:8px; }
 .asks button { justify-self:start; font:inherit; padding:8px 12px; min-height:44px; background:var(--card); color:var(--primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
 .asks button:disabled { opacity:.6; cursor:wait; }

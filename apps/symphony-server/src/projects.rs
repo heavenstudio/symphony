@@ -663,9 +663,11 @@ fn list_row(
     let detail = match (&project.refused, counts) {
         (Some(why), _) => format!("<span class=\"refused\">{}</span>", escape(why)),
         (None, Some(counts)) => {
+            // The status's count, which the board splits into In progress, Build and Test by the
+            // machine's work: said as such, so it never reads as the board's In progress column.
             let tasks = match &counts.tasks {
                 Some(tasks) => format!(
-                    " · {} in progress · {} in review",
+                    " · {} in progress (Build and Test included) · {} in review",
                     tasks.in_progress, tasks.in_review
                 ),
                 None if boardless => " · no task board".to_string(),

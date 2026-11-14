@@ -2567,8 +2567,10 @@ The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
 this browser last drew the task's timeline, at most 240 px on a phone and wide (the
 owner's choice, so the brief and the thread start near the page's top), with
 placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out (the latest steps in
-view on a phone, the first lanes wide), and "Show all" lets it grow.
+adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
+steps in view), and wide the lanes ending under the last that fits whole, the box kept
+that tall for the next visit. "Show all" lets it grow, naming what it shows: the steps
+on a phone, the lanes wide.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per
