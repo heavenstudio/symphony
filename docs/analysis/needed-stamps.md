@@ -68,8 +68,8 @@ assessed needs, is `review`, which is today's rule.
   path `[land] check_paths` names, since a loosened test is how a red turns green unfixed; a
   shipped skill or a rule every agent follows; a change that does more than one thing, or one the
   assessor cannot place.
-- **Skips:** documents alone (a design, a reference page, a record); a fix of a few lines whose
-  failing test, unchanged, passes at the tip, that test being its reader; a hotfix restoring
+- **Skips:** documents alone (a design, a reference page, a record); a fix of a few lines that
+  leaves the failing test its task names unchanged; a hotfix restoring
   something wholly broken, read afterwards as its postmortem.
 
 ### `pictures`
@@ -143,7 +143,8 @@ the branch's tip:
 3. **Standing on the tip.** Each stamp, by its reader, at the tip. A missing one refuses, naming
    each missing and who gives it: `tests` or `pictures` to `@executor`; `review`, or an assessment
    of another tip, to `@orchestrator`; a missing `owner` moves the task to blocked, waiting on the
-   owner, as review waiting on nobody does today.
+   owner. That move is new to the default land, which moves nothing to blocked today; a consumer's
+   own landing makes it for review waiting on nobody.
 
 Nothing else decides a land. The merge, the move, the push, the close and what starts after it are
 as they are.
@@ -161,8 +162,8 @@ information the land does not read.
 | Task | Needs | Why |
 |---|---|---|
 | Documents only: a design under `docs/` and its card | none | Nothing runs it. The docs audit and the status lint at the tip are its evidence on the thread, and the regenerator runs the audit on main after the land, a red there a task within minutes. |
-| A hotfix: the board refuses every command, a one-line fix | none | Restoring what every agent needs comes first; a reviewer reads it afterwards, as its postmortem. With a failing test that shows the break, `tests`. |
-| A release red: a test fails, the fix is in code and the test unchanged | `tests` | The failing test, unchanged and green at the tip, is the fix's reader. |
+| A hotfix: the server's pages fail to load, a one-line fix | none | Restoring what everyone uses comes first; a reviewer reads it afterwards, as its postmortem. With a failing test that shows the break, `tests`. |
+| A release red: a test fails, the fix is in code and the test unchanged | `tests` | The fix leaves its test alone. The stamp asks that the task's test runs at the tip are green, not that the red's own test is among them ([left out](#left-out)). |
 | The same red, its fix changing the test | `tests`, `review` | The test is a check path: a loosened test needs a reader that did not ask for it. |
 | A board command's refusal reworded | `tests`, `review` | A board command every agent runs. |
 | A row added to the home queue | `tests`, `review`, `pictures` | A page's look and the client's tests. |
@@ -170,7 +171,8 @@ information the land does not read.
 
 A hotfix goes: filed, fixed, moved to review, assessed (one small-model run, about a minute),
 landed. The assessment made at filing cannot waive anything on its own: a waiver waits for the
-diff.
+diff. A broken board, which each of those steps needs, is fixed and landed by hand, outside `just
+land`.
 
 ## What stops an executor waiving its own review
 
@@ -187,7 +189,8 @@ its assessor. A reviewer has the same gap today ([left out](#left-out)).
 ## Existing tasks and `--fast-fix`
 
 - No open task has an assessment, so each needs `review`, as today. Nothing is migrated.
-- A fast fix becomes an assessment that needs `tests`. `just tasks create` stops taking
+- A fast fix becomes an assessment that needs `tests`, which gives up its orchestrator's read of
+  the red's own failing test ([left out](#left-out)). `just tasks create` stops taking
   `--fast-fix`, the release run and the regenerator file their reds without it, and the assessor
   reads each at review. A task already filed with the mark keeps today's path (its orchestrator's
   approve, a red's bounded by `[land] check_paths`) until it closes, and that code goes once none is
@@ -240,6 +243,10 @@ landing changes until the whole is there:
   thread.
 - **A floor under the assessment:** the land enforces the needs alone. Today's bound on a red's fix
   (`[land] check_paths`) becomes the `review` guideline, its paths named to the assessor as a fact.
+- **A red's own failing test:** retiring `--fast-fix` gives up the orchestrator's read of a red's
+  evidence, so nobody reads that the red's failing test, unchanged, ran green at the tip: `tests`
+  asks only that the task's test runs there are green, and a red's fix that ran another test green
+  meets it. Requiring a run of the test the red names is the smallest fix, if one is wanted.
 - **Refusing an assessor or a reviewer the executor started:** one check of a session's recorded
   parent would close both, a task of its own if wanted.
 - **A clean tree behind a recorded run:** a run records its checkout's commit, not whether the tree
