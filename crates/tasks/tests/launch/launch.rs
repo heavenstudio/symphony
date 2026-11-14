@@ -683,6 +683,29 @@ fn the_first_message_is_work_slug_handle_alone_or_followed_by_a_given_prompt() {
 }
 
 #[test]
+fn a_reviewers_first_message_is_the_review_skill_never_work() {
+    for (kind, review) in [
+        (Some("codex".into()), "$review-task"),
+        (Some("claude".into()), "/review-task"),
+    ] {
+        let w = World::new();
+        let s = w
+            .try_launch(&Ask {
+                role: "reviewer".into(),
+                kind,
+                prompt: "Judge the tip.".into(),
+                ..w.ask("sim/jump")
+            })
+            .unwrap()
+            .row;
+        assert_eq!(
+            w.sent(&s.pane),
+            [format!("{review} sim/jump {} Judge the tip.", s.handle)]
+        );
+    }
+}
+
+#[test]
 fn everything_is_recorded_on_the_task_and_the_session() {
     let w = World::new();
     let s = w.launch("sim/jump").row;

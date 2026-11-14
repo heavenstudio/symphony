@@ -47,9 +47,14 @@ fn last_program(w: &World) -> Vec<String> {
 }
 
 fn told(handle: &str) -> String {
+    told_to(handle, "work")
+}
+
+/// What a restored session is told, to go on with the skill it works by.
+fn told_to(handle: &str, skill: &str) -> String {
     format!(
         "You were restored after your pane was closed. First run `just tasks callback --as {handle}`, \
-         then `just tasks inbox --as {handle}` and continue /work sim/jump."
+         then `just tasks inbox --as {handle}` and continue /{skill} sim/jump."
     )
 }
 
@@ -402,6 +407,24 @@ fn unasked_a_record_in_the_project_is_restored_and_made_again_under_the_worktree
         last_program(&w)[..3],
         ["claude", "--resume", s.claude_session.as_str()]
     );
+}
+
+#[test]
+fn a_restored_reviewer_goes_on_with_the_review_skill_and_an_executor_with_work() {
+    let w = World::new();
+    let reviewer = w.review("sim/jump").row;
+    close_terminal(&w, &reviewer);
+    let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
+    assert_eq!(
+        w.sent(&again.row.pane),
+        [told_to(&reviewer.handle, "review-task")]
+    );
+
+    let w = World::new();
+    let executor = launched(&w).row;
+    close_terminal(&w, &executor);
+    let [again] = <[_; 1]>::try_from(restored(&w, "sim/jump", None).unwrap()).unwrap();
+    assert_eq!(w.sent(&again.row.pane), [told(&executor.handle)]);
 }
 
 #[test]

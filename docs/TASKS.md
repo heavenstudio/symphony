@@ -520,43 +520,6 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
-### The folder move
-
-An older build keeps a repository's state in folders of the git common dir under the old names,
-and a build of this code refuses to start a board, a server or a recorder there until
-`tools/move-state.sh` has moved them into `symphony/` (its header lists each move). It is run once
-per repository, from any of its checkouts, `--dry-run` first, with the board held and the shared
-server stopped. Every move is a rename, and nothing moves while anything of the repository runs:
-a process whose command line names the old folders, one with a file of the board's, the server's
-or the old client tools open or working there, by whatever path (lsof finds the ones named
-relatively), a server either record names, a land, a fetch of SurrealDB, or a program of the
-board or the server in a checkout. Each refusal names the pid and says what to end.
-
-A SurrealDB server whose data folder and working folder both lie outside the repository is passed
-instead, and named on stdout with both: a test's private board an older build left running on the
-pinned program from the old folder, which it keeps running once that moves. Its data is the last
-word of its command line (`memory`, or a path after `surrealkv://` or another engine's scheme),
-made absolute against its working folder. A folder lies in the repository when the common dir
-holds it or git, asked there, finds this repository, or, where git finds none, when a checkout
-holds it; a repository nested in a checkout's ignored files is another, and a working folder since
-removed lies in none. One that also has a file of the board's or the server's open is refused. The
-move signals no process, passed or refused.
-
-The board's records of processes move with its folder, byte for byte, and the new build reads
-them as its own: the hold the move was made under, a private replay's record and each ask to end
-a server. The hold still holds the board after the move, so the script's closing line then says
-to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
-otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
-
-The board's, SurrealDB's, the server's and the model's old folders, once moved, each leave a
-one-line file of their name saying where they went, so a build from before the move fails there
-instead of starting an empty board or fetching SurrealDB beside the moved state. Such
-a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
-setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
-20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,
-a sweep or `tasks-reclaim`. Both mean the state moved: merge main and rebuild. `just tasks
-database release` run by such a build does nothing to it, as the file is no hold.
-
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a
@@ -1076,6 +1039,27 @@ Orchestrators can share the board, each holding its own slug prefixes. A decisio
 one side makes that the other must act on becomes a short board task for that side,
 and a side that approves documents commits them regularly, because worktree agents
 see only what is committed.
+
+## The tasks API
+
+`tasks api` is the board's methods as JSON, for a program rather than a person: one call
+`{"method": NAME, "args": {…}}`, or a list of them, on stdin, each answered `{"ok": RESULT}`,
+`{"refused": WHY}` (the board's refusal, which wrote nothing) or `{"error": WHY}`; `tasks api
+--lines` answers a call per line over one connection (`crates/tasks/src/cli/api.rs`). It is how a
+project's own program reaches its board without linking the board's library.
+
+It is a contract, versioned `MAJOR.MINOR`. `{"method": "version"}` answers
+`{"api": {"major": M, "minor": N}, "schema": S}`, S the board schema the build writes, without
+reaching the board: a program that must know what a build serves, such as a project's launcher
+choosing between builds, asks it, never reading Symphony's source. Within a major a method, an
+argument or a field of an answer is added, never removed, renamed or changed in meaning, and an
+argument added has a default, its absence read as before; each addition raises the minor, and the
+api version this guide gives a method (`hold`, api version 4) is its minor of major 1. A new major
+is a task of its own. The calls a registered project's programs make today are held by
+`crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
+reads with their JSON types, so a change that would break one fails its own task's gate. What the
+api promises is its calls, not the board's rules behind them, such as who may move or judge a
+task.
 
 ## The agents API
 
@@ -2052,9 +2036,10 @@ its own work.
 
 Every instruction an orchestrator gives an agent is a **subtask**: a task made
 with `--parent`, whose description is the instruction, word for word. The agent's
-whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), never a brief
-in a file. A parent's subtasks nest to any depth; a task is never its own
-ancestor (`just tasks parent SLUG PARENT` moves one, and refuses a cycle).
+whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), a reviewer's
+`/review-task SLUG HANDLE` (`.agents/skills/review-task/SKILL.md`), never a brief in a file.
+A parent's subtasks nest to any depth; a task is never its own ancestor (`just tasks parent
+SLUG PARENT` moves one, and refuses a cycle).
 
 ```
 just tasks create perf/x/review "Review perf/x" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'

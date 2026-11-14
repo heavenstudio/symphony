@@ -274,7 +274,7 @@ fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled()
     let line = staff(&idle_reviewer(FRESH)).unwrap();
     assert!(
         line.starts_with(&format!(
-            "pinged {FRESH} as reviewer, pane t1, prompt $work sim/jump/staff-review-2 {FRESH}"
+            "pinged {FRESH} as reviewer, pane t1, prompt $review-task sim/jump/staff-review-2 {FRESH}"
         )),
         "{line}"
     );

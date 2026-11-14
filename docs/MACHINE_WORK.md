@@ -211,8 +211,8 @@ writes nothing.
 
 A session counts only while the board reads it live (its heartbeat recent, or in a
 tool call that may still run; not stale, lost or left), at the clock the board's
-commands read. A `/work` agent never runs `just tasks leave`, so a finished one's
-binding stays; it stops counting once it goes quiet, wherever it last ran. A
+commands read. A `/work` or `/review-task` agent never runs `just tasks leave`, so a
+finished one's binding stays; it stops counting once it goes quiet, wherever it last ran. A
 session holds a task when it executes it in concept, design, ready or in progress,
 or reviews it in review. Of several, it holds the one all the others are under (a
 feature's executor holds its `/work` instruction too). None, or several with no

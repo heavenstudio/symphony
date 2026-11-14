@@ -5,6 +5,16 @@
 //!
 //! `tasks api --lines` serves a call per line of stdin until it ends, each answer on a line of its
 //! own as soon as it is made, over one connection: how the client keeps one process for a board.
+//!
+//! It is a contract, versioned `MAJOR.MINOR`: `{"method": "version"}` answers
+//! `{"api": {"major": M, "minor": N}, "schema": S}`, S the board schema this build writes, without
+//! reaching the board. A program that must know what a build serves (a project's launcher choosing
+//! a build, a release checking one) asks it, never this file. Within a major, a method, an argument
+//! or a field of an answer is added, never removed, renamed or changed in meaning, and an argument
+//! added has a default, its absence read as before; each addition raises the minor. A new major is
+//! a deliberate act, a task of its own. `tests/cli/api/contract.rs` holds the calls a project's own
+//! programs make: each request, and the fields of its answer the caller reads, with their JSON
+//! types.
 
 use super::shape;
 use crate::launch::Bounds;
@@ -23,8 +33,11 @@ mod context;
 )]
 pub use context::{run, serve};
 
-/// What a caller of these methods may rely on beyond the schema and the server's RPC: one more each
-/// time a method takes or does something an earlier build refused or did otherwise (1: `landed`'s
+/// The api's major: what a caller relies on, which a later build of the same major still answers.
+pub const MAJOR: i64 = 1;
+
+/// The api's minor within [`MAJOR`]: one more each time a method takes or does something an
+/// earlier build refused or did otherwise (1: `landed`'s
 /// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
 /// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
 /// take literal session recipients; 6: `move`'s `from`, the statuses alone it moves from, as a
@@ -44,13 +57,9 @@ pub use context::{run, serve};
 /// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another
 /// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write; 14:
 /// `in_status_since`, when each task named took the status it holds, by slug, as `tasks list
-/// --json` carries it). A project's launcher that serves an earlier main build does so only while
-/// this matches main's, so no caller reaches a build without what it relies on.
-#[expect(
-    dead_code,
-    reason = "a project's launcher reads it from the committed source; no Rust code compares builds"
-)]
-pub const VERSION: i64 = 14;
+/// --json` carries it). Each added a method or what one takes, and none removed or changed what an
+/// earlier build took or answered, so the fourteen are minors of major 1.
+pub const MINOR: i64 = 14;
 
 /// Why a call has no result.
 enum Fail {
@@ -264,6 +273,17 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         (@ $name:ident or $default:expr) => { a.or(stringify!($name), $default)? };
     }
     Ok(match method.as_str() {
+        // This build's, so the board is not reached.
+        "version" => {
+            args!();
+            Py::obj(vec![
+                (
+                    "api",
+                    Py::obj(vec![("major", Py::Int(MAJOR)), ("minor", Py::Int(MINOR))]),
+                ),
+                ("schema", Py::Int(crate::schema::VERSION)),
+            ])
+        }
         "assessment_state" | "record_waits" => return assessment::call(a, board),
         // Sessions
         "register" => {

@@ -22,13 +22,6 @@ mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.
 #[path = "launcher/seed.rs"]
 mod seed;
-// `tools/move-state.sh`, which moves a repository's state folders into `symphony/` in its common dir.
-#[path = "launcher/move_state.rs"]
-mod move_state;
-// The stand-ins a case runs in place of a system program, each a link to the machine's one copy of
-// the shared fixture script, so no new executable file runs.
-#[path = "../../../tools/test-support/script_std.rs"]
-mod fixture_script;
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -314,30 +307,6 @@ fn a_server_on_the_live_servers_port_is_the_live_board() {
     f.record("{}");
     let vars = [("TASKS_SERVER", "127.0.0.1:4322")];
     assert_eq!(f.in_wt(&vars, &["tasks", "list"]).ok(), main);
-}
-
-#[test]
-fn an_older_builds_board_is_the_live_one_by_its_record_in_its_old_folder_until_the_move() {
-    let f = Fixture::new("unmoved");
-    // An older build's board, run from its old folder by its own server, which records itself there.
-    let (_, old) = symphony_board::unmoved::OLD[0];
-    let folder = f.main.join(".git").join(old);
-    fs::create_dir_all(&folder).unwrap();
-    fs::write(
-        folder.join("server.json"),
-        r#"{"addr":"127.0.0.1:4321","pid":1,"version":"3.3.0"}"#,
-    )
-    .unwrap();
-    let main = f.said("tasks", &f.main, &f.wt, "list");
-    let own = f.said("tasks", &f.wt, &f.wt, "list");
-    for (server, expected) in [("127.0.0.1:4321", &main), ("127.0.0.1:4322", &own)] {
-        assert_eq!(
-            &f.in_wt(&[("TASKS_SERVER", server)], &["tasks", "list"])
-                .ok(),
-            expected,
-            "{server}"
-        );
-    }
 }
 
 #[test]
