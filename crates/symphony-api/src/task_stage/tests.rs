@@ -275,3 +275,102 @@ fn the_wire_leaves_out_an_empty_under_and_an_older_record_reads_as_under_nothing
     );
     assert!(placed.is_for("feature") && placed.is_for("parent") && !placed.is_for("other"));
 }
+
+/// A machine's heartbeat moves its sequence, its age and what it does beside builds and tests every
+/// second, and places no task anywhere else: works alike in every way a task's stage reads are
+/// alike, however the rest of them moved.
+#[test]
+fn a_heartbeat_places_alike_and_so_does_what_places_no_task() {
+    let current = work(&[
+        operation("build", "running", "b"),
+        operation("test", "queued", "t"),
+    ]);
+    let mut beat = current.clone();
+    beat.freshness = WorkFreshness::Incomplete;
+    let machine = &mut beat.machines[0];
+    machine.sequence += 1;
+    machine.age_ms = Some(900);
+    machine.label = "Alpha, again".into();
+    machine.complete = false;
+    machine.freshness = WorkFreshness::Incomplete;
+    machine.counts = Some(crate::WorkCounts::default());
+    for operation in &mut machine.operations {
+        operation.phase_since = Some(12.0);
+        operation.reason = "still at it".into();
+        operation.handle = Some("other-worker".into());
+        operation.resource = "another resource".into();
+    }
+    // What can place no task: a command, a reservation, another machine's report on this one, an
+    // operation with no id, a machine whose evidence is stale, and work assigned to no machine.
+    machine
+        .operations
+        .push(operation("command", "running", "c"));
+    machine
+        .operations
+        .push(operation("reservation", "queued", "r"));
+    machine.operations.push(WorkOperation {
+        machine_id: Some("foreign".into()),
+        ..operation("build", "running", "f")
+    });
+    machine.operations.push(WorkOperation {
+        operation_id: None,
+        ..operation("test", "running", "")
+    });
+    let mut stale = beat.machines[0].clone();
+    stale.machine_id = "beta".into();
+    stale.freshness = WorkFreshness::Stale;
+    for operation in &mut stale.operations {
+        operation.machine_id = Some("beta".into());
+    }
+    beat.machines.push(stale);
+    beat.unassigned = vec![operation("build", "running", "loose")];
+    assert!(current.places_alike(&beat) && beat.places_alike(&current));
+    assert!(MachineWork::default().places_alike(&work(&[operation("setup", "running", "s")])));
+}
+
+/// Anything a task's stage reads that differs is another placement: the board reads its counts and
+/// columns again.
+#[test]
+fn a_work_that_could_move_a_task_does_not_place_alike() {
+    fn first(work: &mut MachineWork) -> &mut WorkOperation {
+        &mut work.machines[0].operations[0]
+    }
+    let current = work(&[operation("build", "queued", "b")]);
+    let differs = |change: &dyn Fn(&mut MachineWork)| {
+        let mut next = current.clone();
+        change(&mut next);
+        assert!(
+            !current.places_alike(&next) && !next.places_alike(&current),
+            "{next:?}"
+        );
+    };
+    differs(&|work| first(work).state = WorkState::Running);
+    differs(&|work| first(work).kind = WorkKind::Test);
+    differs(&|work| first(work).task = Some("other".into()));
+    differs(&|work| first(work).task = None);
+    differs(&|work| first(work).under = vec!["parent".into()]);
+    differs(&|work| work.machines[0].operations.clear());
+    differs(&|work| {
+        work.machines[0]
+            .operations
+            .push(operation("test", "running", "t"));
+    });
+    // A second report of the same operation that disagrees with it unplaces it.
+    differs(&|work| {
+        let disagreeing = WorkOperation {
+            state: WorkState::Running,
+            ..work.machines[0].operations[0].clone()
+        };
+        work.machines[0].operations.push(disagreeing);
+    });
+    for freshness in [
+        WorkFreshness::Unknown,
+        WorkFreshness::Stale,
+        WorkFreshness::Disconnected,
+        WorkFreshness::Conflict,
+    ] {
+        differs(&|work| work.machines[0].freshness = freshness.clone());
+    }
+    differs(&|work| work.machines.clear());
+    assert!(!MachineWork::default().places_alike(&current));
+}
