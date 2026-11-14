@@ -1,7 +1,8 @@
-//! The board's words: a register's moment, the greeting, an age, the lead line and what a task
-//! page says of the board.
+//! The board's words: a register's moment, when a kept copy was saved and what a task page says
+//! of the board. Home's greeting, ages and lead are the web client's
+//! (apps/symphony-web/src/home.tsx).
 
-use symphony_ui::words::{BoardStatus, Moment, age, device_notice, greeting, lead, saved_at};
+use symphony_ui::words::{BoardStatus, Moment, device_notice, saved_at};
 
 fn at(text: &str) -> Moment {
     Moment::parse(text).unwrap_or_else(|| panic!("{text} does not parse"))
@@ -36,44 +37,6 @@ fn a_moment_reads_a_registers_date_with_or_without_its_time() {
     ] {
         assert_eq!(Moment::parse(bad), None, "{bad:?}");
     }
-}
-
-#[test]
-fn the_greeting_follows_the_hour() {
-    assert_eq!(greeting(at("2026-10-08 00:00")), "Good morning");
-    assert_eq!(greeting(at("2026-10-08 11:59")), "Good morning");
-    assert_eq!(greeting(at("2026-10-08 12:00")), "Good afternoon");
-    assert_eq!(greeting(at("2026-10-08 17:59")), "Good afternoon");
-    assert_eq!(greeting(at("2026-10-08 18:00")), "Good evening");
-}
-
-#[test]
-fn an_age_is_new_then_hours_then_days() {
-    let now = at("2026-10-08 12:00");
-    assert_eq!(age(Some("2026-10-08 11:30"), now), "new");
-    assert_eq!(age(Some("2026-10-08 09:00"), now), "3 h");
-    assert_eq!(age(Some("2026-10-07 12:00"), now), "1 d");
-    assert_eq!(age(Some("2026-10-01"), now), "7 d");
-    assert_eq!(
-        age(Some("2026-10-09 08:00"), now),
-        "new",
-        "a clock behind the register is not negative"
-    );
-    assert_eq!(age(Some("soon"), now), "");
-    assert_eq!(age(None, now), "");
-}
-
-#[test]
-fn the_lead_counts_cards_and_documents_in_the_singular_and_plural() {
-    assert_eq!(
-        lead(37, 9),
-        "37 cards wait on you across 9 documents. Start with the one below."
-    );
-    assert_eq!(
-        lead(1, 1),
-        "1 card waits on you across 1 document. Start with the one below."
-    );
-    assert_eq!(lead(0, 0), "Your queue is empty.");
 }
 
 #[test]

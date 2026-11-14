@@ -193,3 +193,34 @@ fn a_panel_of_finished_work_alone_is_only_its_count() {
     assert!(!html.contains("doc-tasks-open"), "{html}");
     assert!(html.contains("<summary>1 finished</summary>"), "{html}");
 }
+
+#[test]
+fn comparisons_label_each_kind_and_link_the_task() {
+    use symphony_api::{Difference, DocumentComparison, SectionComparison};
+    use symphony_ui::doc_components::{ComparisonNote, SectionDifference};
+    let comparison = DocumentComparison {
+        task: "design/policy".into(),
+    };
+    let html = dioxus_ssr::render_element(rsx! { ComparisonNote { comparison } });
+    assert!(html.contains("href=\"/task/design/policy\""));
+    for (kind, label) in [
+        (Difference::Added, "Added"),
+        (Difference::Changed, "Changed"),
+        (Difference::Removed, "Removed"),
+    ] {
+        let comparison = Some(SectionComparison {
+            kind,
+            before: Vec::new(),
+        });
+        let html = dioxus_ssr::render_element(
+            rsx! { SectionDifference { comparison, p { "Current prose" } } },
+        );
+        assert!(html.contains(&format!(">{label}</p>")));
+        assert!(html.contains("Current prose"));
+    }
+    let html = dioxus_ssr::render_element(
+        rsx! { SectionDifference { comparison: None, p { "Unchanged prose" } } },
+    );
+    assert!(html.contains("Unchanged prose"));
+    assert!(!html.contains("data-difference"));
+}

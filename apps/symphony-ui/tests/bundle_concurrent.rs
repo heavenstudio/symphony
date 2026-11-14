@@ -20,14 +20,14 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The three page kinds built alone; and the program's kinds (src/split.rs), one build of it.
-const KINDS: [&str; 3] = ["board", "docs", "review"];
+/// The two page kinds built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 2] = ["board", "docs"];
 const PROGRAM: [&str; 5] = ["tasks", "reports", "panel", "overlay", "timeline"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
 const CHUNKS: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
 /// The web client's kinds, one Vite build of them all.
-const WEB: [&str; 1] = ["queue"];
+const WEB: [&str; 2] = ["queue", "review"];
 
 /// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
@@ -76,9 +76,11 @@ set -euo pipefail
 out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
-printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.js"
-printf '/*%s-queue*/body{}' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.css"
-printf '{"src/kinds/queue.tsx":{"file":"assets/queue-%s.js","name":"queue","src":"src/kinds/queue.tsx","isEntry":true,"css":["assets/queue-%s.css"]}}\n' "$BUNDLE_ID" "$BUNDLE_ID" > "$out/.vite/manifest.json"
+for kind in queue review; do
+    printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
+    printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$out/assets/$kind-$BUNDLE_ID.css"
+done
+printf '{"src/kinds/queue.tsx":{"file":"assets/queue-%s.js","name":"queue","src":"src/kinds/queue.tsx","isEntry":true,"css":["assets/queue-%s.css"]},"src/kinds/review.tsx":{"file":"assets/review-%s.js","name":"review","src":"src/kinds/review.tsx","isEntry":true,"css":["assets/review-%s.css"]}}\n' "$BUNDLE_ID" "$BUNDLE_ID" "$BUNDLE_ID" "$BUNDLE_ID" > "$out/.vite/manifest.json"
 "#;
 
 struct Fixture(PathBuf);

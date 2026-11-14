@@ -63,7 +63,7 @@ custom_only() {
 }
 # The program last: its styles are placed by what the other kinds load. The web client's kinds
 # (apps/symphony-web) are placed after the shared stylesheet, below.
-for module_kind in board docs review program; do
+for module_kind in board docs program; do
     module="$out/.modules/$module_kind"
     # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
     # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
@@ -122,7 +122,8 @@ for module_kind in board docs review program; do
     rm -f "$stage/assets/$original"
     styles="$(find "$module/public/assets" -name '*.css' -exec basename {} \; | sort | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s .)"
     # The summary board has no media nodes. The persistent panel loads these styles when
-    # opened; documents and the review page keep them with their visible pictures.
+    # opened; documents keep them with their visible pictures, and home has its own copy
+    # (apps/symphony-web, its entry's CSS).
     if [ "$module_kind" = board ]; then
         styles="$(jq 'map(select(contains("/media-") | not))' <<< "$styles")"
     fi
@@ -225,4 +226,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: home, the board and the documents as modules of their own, the web client's kinds (the queue) as its own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the board and the documents as modules of their own, the web client's kinds (home and the queue) as its own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

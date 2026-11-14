@@ -39,8 +39,8 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, document and review-home modules and the program, build the React client's
-  kinds (`web`: one Vite build of `apps/symphony-web`, [its guide](../symphony-web/AGENTS.md)),
+  board and document modules and the program, build the React client's
+  kinds (`web`: one Vite build of `apps/symphony-web`, home and the queue, [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
@@ -54,8 +54,8 @@ never the whole target, which the release run runs.
   the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
-  in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
-  of their own, under their 300,000-byte caps, which a program shared with them would pass. The
+  in the one instance (a `VirtualDom` per root, `module.rs`); the board keeps a module of its
+  own, under its 300,000-byte cap, which a program shared with it would pass. The
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the program's styles another kind loads too and its own by name, and refuses a style no
   kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
@@ -148,7 +148,7 @@ never the whole target, which the release run runs.
   opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
   never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
   against their own opens.
-- **A return visit.** Home and the task board (and the React client's queue, the same way) draw what they kept of
+- **A return visit.** The task board (and the React client's home and queue, the same way) draws what it kept of
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
   read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
@@ -364,7 +364,7 @@ never the whole target, which the release run runs.
   a task nothing gates shows none, and a failed read says so in its place. In the
   program alone (the task pages, Reports, the chat, the menus and the timeline, which
   share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
-  `page-tasks`, which `page-program` turns on), so the board's, home's and the documents'
+  `page-tasks`, which `page-program` turns on), so the board's and the documents'
   transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
@@ -513,9 +513,11 @@ never the whole target, which the release run runs.
   again with every `IntersectionObserver` callback 800 ms late. No scrollbar takes room there
   (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `tests/browser/skeleton.rs`
   covers the rest.
-- **Queue.** `/queue` is the React client's, the first page kind it took over
-  ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Home's preview of the
-  queue stays here, in `view.rs` and `live.rs`, until home moves.
+- **Queue and home.** `/queue` and home (`/`, the kind `review`) are the React client's, the
+  first page kinds it took over ([its guide](../symphony-web/AGENTS.md)): this client builds
+  none of them. Home's media layer (frames scaled, a viewer's script loaded, its view buttons,
+  the picture viewer's opener) is the web client's own (`media-layer.ts`); the picture viewer it
+  opens is still the overlay module's here.
 - **Reports.** `reports.rs` renders `/api/reports` at `/reports`, the program's `reports`
   kind: a chunk of its own over the runtime, frame and components the program's main module
   holds for the task pages too, so a move between them fetches the other's chunk alone. Its
@@ -690,9 +692,8 @@ never the whole target, which the release run runs.
   address or a long-press opens what a click does; the shell follows a link under
   the base in place and adds nothing to it, leaves any other to the browser, and
   the project switch's `/` alone leaves the project.
-- **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
-  typed document images carry real dimensions and thumbnail URLs from the
-  API. The shared visibility latch defers native media shells, gallery rows, document blocks
+- **Media.** Typed document images carry real dimensions and thumbnail URLs from the
+  API (home's pictures, which reserve a square, are the web client's). The shared visibility latch defers native media shells, gallery rows, document blocks
   and ask threads. Mount `media_live::MediaRuntime` once beside `main`: its
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),

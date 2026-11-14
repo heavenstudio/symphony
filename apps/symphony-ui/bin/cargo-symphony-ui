@@ -32,17 +32,17 @@ dist)
 clippy)
     bash "$here/wasm-fresh.sh"
     cd "$here/../.."
-    # Every shipped configuration must compile on its own: the three page kinds built alone and the
+    # Every shipped configuration must compile on its own: the two page kinds built alone and the
     # program (src/split.rs). The union of page features hides unused imports and missing cfg
     # branches, and compiles none of the program's split points.
-    for kind in board docs review program; do
+    for kind in board docs program; do
         "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --lib --bins --locked \
             --no-default-features --features "web,page-$kind" -- -D warnings
     done
     "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --bin symphony-ui-dev --locked \
         --no-default-features --features web,devtools -- -D warnings
     "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --bin floor_dioxus --bin floor_websys \
-        --bin entry_websys --locked --no-default-features --features web,size-probe -- -D warnings
+        --locked --no-default-features --features web,size-probe -- -D warnings
     ;;
 size)
     shift

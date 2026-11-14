@@ -18,7 +18,7 @@ Ranked by what the owner gains, against a browser tab on the same Mac:
 
 | | What | Today in the browser | First release |
 |---|---|---|---|
-| 1 | **Notifications with no Symphony tab open**, for every server and project, when a card comes to wait on you (see [What notifies](#what-notifies)) | A notice fires only from a project's home page, while its tab is hidden and once notifications are allowed (`apps/symphony-ui/src/live.rs`, the `page-review` branch; `state.rs`, `apply`) | yes: cards, agents' questions on tasks, reviewers' verdicts |
+| 1 | **Notifications with no Symphony tab open**, for every server and project, when a card comes to wait on you (see [What notifies](#what-notifies)) | A notice fires only from a project's home page, while its tab is hidden and once notifications are allowed (`apps/symphony-web/src/home-board.ts`, `apply` and `notify`) | yes: cards, agents' questions on tasks, reviewers' verdicts |
 | 2 | **A count of what waits on you** in the dock and the menu bar, summed over every server and project | Each project's home shows its own count; the project list at a server's `/` shows each project's | yes |
 | 3 | **Stays connected with its window closed**: the menu-bar item keeps following each project's feed | Nothing follows once the tab is closed | yes: 1 and 2 rest on it |
 | 4 | **No address or port to remember**: this Mac's server is found by itself, others are saved by name | A bookmark per server | yes |
@@ -62,8 +62,8 @@ notifications can be aimed at specific people:
 
 The client was chosen for this: one Dioxus app, "the browser now and the desktop window later, from
 the same code" (`apps/symphony-ui/AGENTS.md`), with every platform hook behind
-`platform::Platform` (`apps/symphony-ui/src/platform.rs`: `notify`, `open_external`, `load`,
-`save`). Today each server compiles its client into itself and serves it
+`platform::Platform` (`apps/symphony-ui/src/platform.rs`: `open_external`, `load`, `save`; home,
+drawn by the web client since, notifies from `apps/symphony-web/src/home-board.ts`). Today each server compiles its client into itself and serves it
 (`apps/symphony-server/src/client.rs`, `select`), and a page reloads itself when the server names
 another client build (`Board::build`; `live.rs`, `reload_if_redeployed`). Client and server are
 always the same release.
@@ -90,7 +90,8 @@ A native Mac app whose windows show the pages each server already serves, one we
   changes for the first release.
 - **The page never meets a missing API.** A web view may lack the web Notification API (to try in
   the first slice). The shell defines one that always reports notifications as denied, so the page's
-  own notice (`platform::Browser::notify`) stays quiet and never notifies twice.
+  own notice (`notify` in `apps/symphony-web/src/home-board.ts`) stays quiet and never notifies
+  twice.
 - **The app's own screens** (the server list, adding a server, "this server does not answer") are a
   few small pages, in Dioxus: a Dioxus desktop
   app around the server's web view. The first slice tries whether Dioxus desktop 0.7.10 can host a

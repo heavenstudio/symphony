@@ -1,17 +1,17 @@
-//! Size probe: `/` and `/tasks` rendered to HTML on the host from saved API replies, gzipped: what
-//! a server-drawn first frame of each page would send.
+//! Size probe: `/tasks` rendered to HTML on the host from saved API replies, gzipped: what a
+//! server-drawn first frame of the page would send. (`/` is the web client's, apps/symphony-web.)
 //!
-//!     cargo run -p symphony-ui --example ssr_size -- BOARD.json COUNTS.json COLUMN.json...
+//!     cargo run -p symphony-ui --example ssr_size -- COUNTS.json COLUMN.json...
 //!
-//! BOARD is `/api/board`, COUNTS the board's `/api/task-board?counts=1` and each COLUMN the first
-//! page of one column, as probes/live.sh saves them. It prints the raw and gzip bytes of each body,
-//! and writes the HTML to stderr.
+//! COUNTS is the board's `/api/task-board?counts=1` and each COLUMN the first page of one column,
+//! as probes/live.sh saves them. It prints the raw and gzip bytes of the body, and writes the HTML
+//! to stderr.
 use std::io::Write;
 
 use dioxus::prelude::*;
 use flate2::{Compression, write::GzEncoder};
-use symphony_api::{Board, Task, TaskListing};
-use symphony_ui::{tasks::TaskBoard, view::BoardView, words::Moment};
+use symphony_api::{Task, TaskListing};
+use symphony_ui::tasks::TaskBoard;
 
 fn gzip(bytes: &[u8]) -> usize {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -47,20 +47,12 @@ fn TasksProbe(probe: Probe) -> Element {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 2 {
-        eprintln!("usage: ssr_size BOARD.json COUNTS.json COLUMN.json...");
+    if args.is_empty() {
+        eprintln!("usage: ssr_size COUNTS.json COLUMN.json...");
         std::process::exit(2);
     }
-    let board: Board = read(&args[0]);
-    let now = Moment::parse("2026-10-28 11:00").unwrap();
-    let home = dioxus_ssr::render_element(rsx! { BoardView { board, now } });
-    println!(
-        "/      {:>7} raw {:>6} gzip",
-        home.len(),
-        gzip(home.as_bytes())
-    );
-    let listing: TaskListing = read(&args[1]);
-    let tasks = args[2..]
+    let listing: TaskListing = read(&args[0]);
+    let tasks = args[1..]
         .iter()
         .flat_map(|path| read::<TaskListing>(path).tasks)
         .collect();
@@ -72,5 +64,5 @@ fn main() {
         html.len(),
         gzip(html.as_bytes())
     );
-    eprintln!("{home}\n\n{html}");
+    eprintln!("{html}");
 }
