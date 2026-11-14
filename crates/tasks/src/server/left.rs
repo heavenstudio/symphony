@@ -35,7 +35,7 @@
 //! replay's server as the board's.
 
 use super::starters::{REPLAYED_BEFORE, REPLAYING};
-use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage};
+use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage, untold};
 use crate::sys::pid_alive;
 use std::fs;
 use std::time::{Duration, Instant};
@@ -276,7 +276,7 @@ impl Home {
     /// and has not answered within the wait ([`Home::answer_wait`]) is still replaying its log:
     /// never signalled, nor adopted as the board's, and the caller refused, naming the replay. One
     /// that ends while it is waited for is settled again. Refused, and nothing removed, while what
-    /// runs cannot be told.
+    /// runs cannot be told, or whether its answer is its own ([`untold`]).
     pub(super) fn left_replay_through(&self) -> Result<Option<LeftReplay>, ServerError> {
         let Some(replay) = self.replay_record() else {
             return Ok(None);
@@ -289,6 +289,8 @@ impl Home {
             };
             match self.answers(&left.server) {
                 Waited::Answers => return Ok(Some(left)),
+                // Stopped next, it is never taken as answering on a check that could not say.
+                Waited::Unsure(why) => return Err(untold(&left.server, &why)),
                 Waited::Silent => return Err(self.replay_unanswered(&left)),
                 Waited::Ended => {}
             }

@@ -481,9 +481,11 @@ impl Home {
     /// one older than the pinned version is replaced; a newer one is used as it is, so that two trees
     /// pinning two versions never end each other's server. An answer on a server's address, recorded or
     /// found, counts only from that process's own listener there ([`port::listens`]): a process that
-    /// took its port answers too. Where that cannot be told (no `lsof` runs), the answer counts, and
-    /// the start or the wait that took it says so in one line ([`unsure`]): nothing is ended on a
-    /// check that said nothing. A recorded server that ends while it is waited for is started again.
+    /// took its port answers too. Where that cannot be told (no `lsof` runs), the answer counts for a
+    /// server kept, started or found, and the start or the wait that took it says so in one line
+    /// ([`unsure`]); one that would be ended on it (an older one, a replay's) is not, the caller
+    /// refused naming why ([`untold`]): nothing is ended on a check that could not say. A recorded
+    /// server that ends while it is waited for is started again.
     /// One that runs and does not answer within the patience, recorded or not, is left running,
     /// never ended nor joined by a second: it is still replaying its log, or stuck, and the refusal
     /// says so. Refused while the board is held ([`Home::hold`]). A caller starting apart
@@ -526,22 +528,38 @@ impl Home {
         {
             match self.answers(&running) {
                 Waited::Answers if older(&running.version) => self.end(running.pid)?,
+                Waited::Unsure(why) if older(&running.version) => {
+                    return Err(untold(&running, &why));
+                }
                 Waited::Answers => return Ok(running),
+                Waited::Unsure(why) => return Ok(self.kept_unsure(running, &why)),
                 Waited::Ended => {}
                 Waited::Silent => return Err(self.silent(&running)),
             }
         }
         if let Some(running) = self.unrecorded() {
-            match self.answers(&running) {
-                Waited::Answers => {
-                    self.record(&running)?;
-                    return Ok(running);
-                }
-                Waited::Ended => {}
+            let running = match self.answers(&running) {
+                Waited::Answers => running,
+                Waited::Unsure(why) => self.kept_unsure(running, &why),
+                Waited::Ended => return self.start(&starters),
                 Waited::Silent => return Err(self.silent(&running)),
-            }
+            };
+            self.record(&running)?;
+            return Ok(running);
         }
         self.start(&starters)
+    }
+
+    /// `running`, which answers where whether from its own listener cannot be told (`why`), kept
+    /// as the board's server, and that said in one line ([`unsure`]).
+    fn kept_unsure(&self, running: Running, why: &str) -> Running {
+        (self.tell)(&unsure(
+            "the board's server",
+            running.pid,
+            &running.addr,
+            &why,
+        ));
+        running
     }
 
     /// Why a server on this board's data that runs and has not answered within the wait
@@ -738,23 +756,17 @@ impl Home {
 
     /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers
     /// on its address from a listener of its own ([`owns`]), it ends, or it runs and does neither.
-    /// One whose listener cannot be told answers, and a line says so ([`unsure`]).
+    /// One that answers where whether from its own listener cannot be told is [`Waited::Unsure`].
     fn answers(&self, running: &Running) -> Waited {
         let began = Instant::now();
         let wait = self.answer_wait();
         loop {
-            if rpc::healthy(&running.addr)
-                && owns(running).unwrap_or_else(|why| {
-                    (self.tell)(&unsure(
-                        "the board's server",
-                        running.pid,
-                        &running.addr,
-                        &why,
-                    ));
-                    true
-                })
-            {
-                return Waited::Answers;
+            if rpc::healthy(&running.addr) {
+                match owns(running) {
+                    Ok(true) => return Waited::Answers,
+                    Ok(false) => {}
+                    Err(why) => return Waited::Unsure(why),
+                }
             }
             if !pid_alive(running.pid) {
                 return Waited::Ended;
@@ -1077,10 +1089,14 @@ impl Home {
 }
 
 /// What a server that runs came to, waited on within the patience ([`Home::answers`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Waited {
     /// It answers on its address from a listener of its own.
     Answers,
+    /// It answers on its address, and whether from a listener of its own cannot be told: why
+    /// ([`owns`]). A caller that keeps it says so ([`unsure`]); one that would end it refuses
+    /// ([`untold`]).
+    Unsure(String),
     /// Its process ended.
     Ended,
     /// It runs and does not answer from a listener of its own.
@@ -1090,7 +1106,7 @@ enum Waited {
 /// Whether the process `running` names holds the listener on its address itself
 /// ([`port::listens`]): a health answer there is that server's only then. Where that cannot be
 /// told (a record whose pid or address cannot be one, an `lsof` that cannot run or say), why: an
-/// unknown, which its callers take as yes, never as no ([`unsure`]).
+/// unknown, never a no.
 fn owns(running: &Running) -> Result<bool, String> {
     let pid = u32::try_from(running.pid).map_err(|problem| problem.to_string())?;
     let addr: SocketAddr = running
@@ -1109,6 +1125,17 @@ fn unsure(what: &str, pid: i64, addr: &str, why: &dyn fmt::Display) -> String {
         "· {what} (pid {pid}, {addr}) answers, and whether it holds that port's listener itself \
          cannot be told, so it is kept as up: {why}"
     )
+}
+
+/// Why `running`, which answers on its address, is not ended when whether that answer is its own
+/// cannot be told (`why`): a process that took its port answers too, while it may still be on its
+/// way up, before its handlers are set, where a signal ends it at once. It is left running.
+fn untold(running: &Running, why: &str) -> ServerError {
+    ServerError::NotUp(format!(
+        "could not tell whether the board's server (pid {}, {}) listens there: {why}; it is left \
+         running, never ended on a check that could not say",
+        running.pid, running.addr
+    ))
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one
