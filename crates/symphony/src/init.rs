@@ -250,10 +250,19 @@ impl Shipped {
                 skill!("apply-review", "rewrite-brief.md"),
                 skill!("chat-doc"),
                 skill!("create-task"),
+                skill!("review-task"),
                 skill!("task-orchestrator"),
                 skill!("tasks"),
                 skill!("triage"),
-                skill!("work"),
+                // The executor's skill: a short page naming the one page of each stage.
+                skill!(
+                    "work",
+                    "start.md",
+                    "build.md",
+                    "connected.md",
+                    "finish.md",
+                    "rare-endings.md"
+                ),
             ],
             codex_rules: include_str!("../shipped/codex.rules").to_string(),
             recipes: Some(include_str!("../shipped/symphony.just").to_string()),
