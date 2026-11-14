@@ -157,8 +157,8 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
-    /// Paths answered 404, as the server answers a read of what it does not have, each with the
-    /// server's error.
+    /// Paths or targets answered 404, as the server answers a read of what it does not have, each
+    /// with the server's error.
     missing_routes: BTreeMap<String, String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
@@ -472,7 +472,8 @@ impl Site {
     }
 
     /// Answer a route 404 with the server's JSON error, `{"error": ERROR}`, as the server answers
-    /// a folder or record it does not have; none answers it again.
+    /// a folder, document or record it does not have; none answers it again. `path` is a route
+    /// (every query of it) or one target, its query included.
     pub fn miss_route(&self, path: &str, error: Option<&str>) {
         let mut shared = self.shared.lock().unwrap();
         match error {
@@ -1064,7 +1065,14 @@ fn serve(
                 return;
             }
         }
-        let missing = shared.lock().unwrap().missing_routes.get(&path).cloned();
+        let missing = {
+            let shared = shared.lock().unwrap();
+            shared
+                .missing_routes
+                .get(&path)
+                .or_else(|| shared.missing_routes.get(&target))
+                .cloned()
+        };
         if let Some(error) = missing {
             answered(404);
             let error = serde_json::json!({ "error": error }).to_string();

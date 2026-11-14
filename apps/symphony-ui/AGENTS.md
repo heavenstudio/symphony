@@ -663,6 +663,9 @@ never the whole target, which the release run runs.
   says so (`frame::use_asks_heard`): its `asks` region names a moved thread (by id
   and document path) or a new chat recipient, or a stream opens again. The page
   module forwards that region to every module as a `review:asks` event; a read
-  that fails tries again every 3 s until one answers, and none polls.
+  that fails tries again every 3 s until one answers, and none polls. A read the
+  next one replaces aborts its fetch (`media_live/requests.rs`): a fetch whose
+  body the page never reads stays in flight in Chrome's eyes for as long as the
+  page is open, and `symphony shot` waits on it.
   The media style is `assets/media.css`; the browser adapter uses web-sys and
   keeps every observer and listener owned by the mounted runtime.

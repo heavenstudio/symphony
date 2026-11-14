@@ -317,7 +317,10 @@ more of it)." As built (`perf/client-cache/ahead`):
   its reads in flight does not see, at `priority: "low"`, past the HTTP cache, marked
   `Purpose: prefetch` and naming the tag kept for it (`assets/cache.js`, `ahead`), so an item read
   ahead before costs a `304`. A task: its `/api/task-page` and its thread's newest page, the two
-  reads its visit keeps. A document: its first part, `/api/document?view=first`.
+  reads its visit keeps. A document: its first part, `/api/document?view=first`. Every answer's
+  body is read to its end, a refusal's too (a link to a document the project lacks answers
+  `404`): Chrome ends a read only once the page has read its body, and a read left unread stays in
+  flight for as long as the page is open, so `symphony shot` would wait on it.
 - **A document's first part.** The outline's head with all its headings, so a visit draws the
   contents whole at once and nothing moves when the outline answers, and, whole, the leading
   sections that fit with it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its
