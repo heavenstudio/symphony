@@ -285,8 +285,10 @@ stamped line, only where there is none, and adds `/.target/` and the artifacts f
 line. Each recipe runs
 the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
 linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
-Symphony's board clients share). Stamped copies are kept current; an unstamped
-project copy wins. Project-specific skills and taste data stay in the project.
+Symphony's board clients share). Stamped copies are kept current; one that differs from
+its stamp, an edit since, is written over all the same, its line saying so and where the
+project's own goes (a recipe in its justfile); an unstamped project copy wins.
+Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
 permission rule but the allow rules. A rule carries no stamp, so init removes only one a
 landed init wrote and it no longer does: an allow rule (`RETIRED`: the env-prefixed
@@ -344,13 +346,15 @@ themselves, which no rule allows, write where they are told: the owner's way to 
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
-Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
-left (`Next:`): the project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by
-its address in this repository, its document folders, the justfile's import, the links
-to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
-beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
-rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
-pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
+Init refuses a `--root` that is not a folder or is in no git checkout (a bare repository or a
+`.git` folder is none), making nothing. It ends by printing what is left (`Next:`): the
+project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by its address in
+this repository, its document folders, the justfile's import, the links to the project's
+builds the recipes and hooks find nowhere (with the `ln -s` for those beside the running
+`symphony`, and the `cargo build` in a Symphony checkout for the rest), `just` when it is not
+on PATH, the board's SurrealDB (the line that fetches the pinned tarball and checks its
+SHA-256), the board's making while it is not made (`just tasks list`: the Symphony only reads
+a board) and the machine's registration; then that Claude
 Code counts the allow rules only once the folder is trusted. It warns on stderr while
 the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs, the guides and the binaries' strings is an installed recipe or

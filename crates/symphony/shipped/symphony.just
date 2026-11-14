@@ -8,7 +8,8 @@
 # makes the setting itself, init writes this file without it, as `just` refuses it twice. A copy
 # without the stamp line is the project's own, and init never writes it. Each command says its own
 # errors, and a failing one ends with them, with no recipe-failed line after them
-# (`[no-exit-message]`).
+# (`[no-exit-message]`). The comment line right above each recipe is the one line `just --list`
+# shows for it, so it says what the recipe does; anything longer goes in the lines before it.
 
 set allow-duplicate-recipes
 
@@ -60,9 +61,9 @@ symphony-cli *ARGS:
 symphony-status *ARGS:
     @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
 
-# An agent's line under a card, or with the slug `L<line>` the answer that resolves that line's
-# comment: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`, `--as` naming the
-# session that answers the owner's ask.
+# A reply with the slug `L<line>` is the answer that resolves that line's comment, and `--as` names
+# the session that answers the owner's ask.
+# An agent's line under a card: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`.
 [positional-arguments]
 [no-exit-message]
 symphony-reply *ARGS:
@@ -74,12 +75,13 @@ symphony-reply *ARGS:
 symphony-ask *ARGS:
     @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
 
-# `just land SLUG --as HANDLE` (`just tasks land --help`); a `land` of the project's own replaces it.
-# Land a task's approved branch on the default branch, check it, push it and close the task. It
-# sets SYMPHONY_LAND, without which `tasks land` refuses: `just tasks land` by itself never lands.
-# `symphony init` allows it unasked: this land lands only what its approval check passes, a fresh
-# reviewer's approve standing on the tip; a `land` of the project's own gets the same allow rule,
-# and the project's landing policy decides what that one lands.
+# The default landing merges the branch named as the task on the default branch, checks it, pushes
+# it and closes the task (`just tasks land --help`). It sets SYMPHONY_LAND, without which
+# `tasks land` refuses: `just tasks land` by itself never lands. `symphony init` allows it unasked:
+# this land lands only what its approval check passes, a fresh reviewer's approve standing on the
+# tip; a `land` of the project's own replaces it, gets the same allow rule, and its landing policy
+# decides what it lands.
+# Land a task's approved branch: `just land SLUG --as HANDLE`.
 [positional-arguments]
 [no-exit-message]
 land *ARGS:

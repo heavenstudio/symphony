@@ -171,6 +171,66 @@ fn document_card_verdict_form_fits_a_phone_card() {
     );
 }
 
+/// Where the open versions reach: the page's width beside the window's (less its scrollbar), whether the list stays
+/// inside the document's head, and the versions whose words run past their button.
+const VERSIONS_FIT: &str = "(() => {
+    const versions = document.querySelector('details.versions'), head = document.querySelector('.doc-head');
+    return {page: document.documentElement.scrollWidth, window: document.documentElement.clientWidth,
+        inside: versions.getBoundingClientRect().right <= head.getBoundingClientRect().right + 0.5,
+        cut: [...versions.querySelectorAll('li button')].filter(b => b.scrollWidth > b.clientWidth + 1).map(b => b.textContent)};
+})()";
+
+/// Opening "Versions and diffs" never makes the page scroll sideways (app/visual-polish-3), wide
+/// or on a phone: the list keeps to the document's head, a version's long subject wraps inside its
+/// button, and a diff's long line scrolls inside its own box.
+#[test]
+fn the_open_versions_and_a_diff_keep_the_page_the_windows_width() {
+    let site = probe_site();
+    let subject = "app/visual-polish-3: the open versions take a row of their own under the page's links, \
+                   each version's date and subject wrapping inside its button";
+    site.set_json(
+        "/api/versions",
+        &json!({"versions":[{"sha":"a1","date":"2026-11-14 01:12","subject":subject},
+            {"sha":"b2","date":"2026-11-13 22:40","subject":"Short"}]}),
+    );
+    site.set_json(
+        "/api/diff",
+        &json!({"sha":"a1","subject":subject,"diff":format!("+{}", "an-unbroken-line-".repeat(30))}),
+    );
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(1425, 900), (390, 844)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url(&format!("/{DOC}")));
+        assert!(page.wait_for(
+            "document.querySelector('details.versions > summary') !== null",
+            SHOWN
+        ));
+        page.eval("document.querySelector('details.versions > summary').click()");
+        assert!(
+            page.wait_for(
+                "document.querySelectorAll('details.versions li button').length === 2",
+                SHOWN
+            ),
+            "{width}px: {}",
+            page.eval("document.querySelector('details.versions')?.innerText")
+        );
+        let listed = page.eval(VERSIONS_FIT);
+        page.eval("document.querySelector('details.versions li button').click()");
+        assert!(page.wait_for(
+            "document.querySelector('details.versions pre.diff') !== null",
+            SHOWN
+        ));
+        let diffed = page.eval(VERSIONS_FIT);
+        for (open, fit) in [("listed", listed), ("with a diff", diffed)] {
+            assert_eq!(
+                (&fit["page"], &fit["inside"], &fit["cut"]),
+                (&fit["window"], &json!(true), &json!([])),
+                "{width}px, {open}: the page keeps the window's width and each version its button's: {fit}"
+            );
+        }
+    }
+}
+
 #[test]
 fn document_card_history_keeps_an_agents_paragraphs() {
     let site = probe_site();

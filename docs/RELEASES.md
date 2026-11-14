@@ -62,13 +62,15 @@ task `tools/publish-to-crates-io`): the library's package is
 The product's commands install from crates.io with:
 
 ```sh
-cargo install --locked --config profile.release.strip=true symphony-app symphony-board symphony-server
+cargo install --locked --config profile.release.strip=true --config profile.release.codegen-units=1 symphony-app symphony-board symphony-server
 ```
 
 The workspace's `[profile.release]` is read from its root manifest alone and is not in a published
-one, so the install line strips the symbol table itself, as the shipped binaries' size budgets
-assume ([CHECKS](CHECKS.md#size-budgets)); no member carries a profile of its own, which Cargo
-would ignore with a warning on every build here. The server embeds its client at build time from
+one, so the install line sets both of its settings itself: it strips the symbol table and builds
+each crate as one codegen unit, as the shipped binaries' size budgets assume
+([CHECKS](CHECKS.md#size-budgets)). Without the second an install builds 16 units a crate and its
+binaries are 0.5 to 2.7 MB larger than the lines measure. No member carries a profile of its own,
+which Cargo would ignore with a warning on every build here. The server embeds its client at build time from
 its package's `client/public`, so an installed server serves it with no build of the client; its
 package carries every build that folder keeps, as it stands (7.6 to 8.0 MiB compressed in
 November 2026, of the 10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut

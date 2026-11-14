@@ -3,7 +3,9 @@
 //! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
 //! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
 //! part. The kinds share the one runtime, so a move between them loads a chunk, never another copy
-//! of the framework.
+//! of the framework. The media layer (`media_live::MediaRuntime`) is a chunk of its own too, though
+//! no kind: a kind's page loads it once it shows media ([`MediaPart`]), so a page without any loads
+//! none of it.
 //!
 //! Each split point is what `wasm_split::lazy_loader!` writes, spelled out: its expansion is edition
 //! 2021 (`extern` blocks and `#[no_mangle]` without `unsafe`), which this crate refuses. The names
@@ -41,6 +43,31 @@ thread_local! {
     static LOADED: Cell<u8> = const { Cell::new(0) };
 }
 
+/// The media layer's chunk, which no kind is: its name in the program script's map of chunks (the
+/// shell's manifest never names it), and its bit, past the kinds'.
+const MEDIA: (&str, u8) = ("media", 1 << Chunk::ALL.len());
+
+/// Whether the chunk of `bit` is in, so the slot its split point calls through holds its entry.
+fn is_in(bit: u8) -> bool {
+    LOADED.with(|loaded| loaded.get() & bit != 0)
+}
+
+/// Fetches and instantiates the chunk `name` once, through the program script's `reviewChunk`; an
+/// error for a failed fetch, an answer that is not ok or a failed instantiation, after which a
+/// later call tries again.
+async fn fetch(name: &str, bit: u8) -> Result<(), JsValue> {
+    if is_in(bit) {
+        return Ok(());
+    }
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+    let load: js_sys::Function =
+        js_sys::Reflect::get(&window, &"reviewChunk".into())?.dyn_into()?;
+    let loading: js_sys::Promise = load.call1(&JsValue::UNDEFINED, &name.into())?.dyn_into()?;
+    JsFuture::from(loading).await?;
+    LOADED.with(|loaded| loaded.set(loaded.get() | bit));
+    Ok(())
+}
+
 impl Chunk {
     pub(crate) const ALL: [Chunk; 5] = [
         Chunk::Tasks,
@@ -76,39 +103,38 @@ impl Chunk {
         1 << self as u8
     }
 
-    /// Whether its chunk is in, so the slot its split point calls through holds its entry.
-    pub(crate) fn loaded(self) -> bool {
-        LOADED.with(|loaded| loaded.get() & self.bit() != 0)
-    }
-
-    /// Fetches and instantiates its chunk once, through the program script's `reviewChunk`; an
-    /// error for a failed fetch, an answer that is not ok or a failed instantiation, after which a
-    /// later call tries again.
+    /// Fetches and instantiates its chunk once ([`fetch`]).
     pub(crate) async fn load(self) -> Result<(), JsValue> {
-        if self.loaded() {
-            return Ok(());
-        }
-        let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
-        let load: js_sys::Function =
-            js_sys::Reflect::get(&window, &"reviewChunk".into())?.dyn_into()?;
-        let loading: js_sys::Promise = load
-            .call1(&JsValue::UNDEFINED, &self.kind().into())?
-            .dyn_into()?;
-        JsFuture::from(loading).await?;
-        LOADED.with(|loaded| loaded.set(loaded.get() | self.bit()));
-        Ok(())
+        fetch(self.kind(), self.bit()).await
     }
 }
 
 /// Whether `chunk` is in. A kind's `run` loads its chunk before its root draws, so it is from the
 /// first render; a part drawn in another root (a page the shell is about to replace) loads it
-/// here, and draws once it is in.
+/// here, and draws once it is in. A kind's load that fails is the shell's to say.
 fn use_chunk(chunk: Chunk) -> bool {
-    let mut ready = use_signal(|| chunk.loaded());
+    use_loaded(chunk.kind(), chunk.bit(), None)
+}
+
+/// Whether the chunk `name` (of `bit`) is in, fetched by the first render that finds it out. A part
+/// that is no kind, the media layer, passes its activation, `shown`: a load that fails sets it
+/// back, and the shell hears of each load ([`media_said`]). One future serves every part, kind or
+/// not: a spawned future's code stays with its vtable in the main module, so a second would grow
+/// that.
+fn use_loaded(name: &'static str, bit: u8, shown: Option<Signal<bool>>) -> bool {
+    let mut ready = use_signal(|| is_in(bit));
     use_hook(move || {
-        if !chunk.loaded() {
+        if !is_in(bit) {
             spawn(async move {
-                if chunk.load().await.is_ok() {
+                let loaded = fetch(name, bit).await;
+                let ok = loaded.is_ok();
+                if let Some(mut shown) = shown {
+                    if !ok {
+                        shown.set(false);
+                    }
+                    media_said(loaded);
+                }
+                if ok {
                     ready.set(true);
                 }
             });
@@ -117,8 +143,25 @@ fn use_chunk(chunk: Chunk) -> bool {
     ready()
 }
 
-// The split points. Each import is called only once its chunk is in (`use_chunk`): until then its
-// slot holds the splitter's placeholder, which traps.
+/// What the shell hears of a load of the media layer's chunk (assets/shell.js): one that failed
+/// (`reviewMediaFailed`, which loads the page again when its build is gone and otherwise says so
+/// with a retry), or one that worked (`reviewMediaLoaded`, which takes down the notice an earlier
+/// failure put up). Called as `fetch` calls `reviewChunk`, it needs no import of its own.
+fn media_said(loaded: Result<(), JsValue>) {
+    let (name, error) = match loaded {
+        Ok(()) => ("reviewMediaLoaded", JsValue::UNDEFINED),
+        Err(error) => ("reviewMediaFailed", error),
+    };
+    if let Some(window) = web_sys::window()
+        && let Ok(said) = js_sys::Reflect::get(&window, &name.into())
+        && let Ok(said) = said.dyn_into::<js_sys::Function>()
+    {
+        let _ = said.call1(&JsValue::UNDEFINED, &error);
+    }
+}
+
+// The split points. Each import is called only once its chunk is in (`use_chunk`, `MediaPart`):
+// until then its slot holds the splitter's placeholder, which traps.
 #[link(wasm_import_module = "./__wasm_split.js")]
 unsafe extern "C" {
     #[allow(improper_ctypes)]
@@ -134,6 +177,8 @@ unsafe extern "C" {
     fn __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() -> Element;
     #[allow(improper_ctypes)]
     fn __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() -> Element;
+    #[allow(improper_ctypes)]
+    fn __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() -> Element;
 }
 
 #[unsafe(no_mangle)]
@@ -171,6 +216,13 @@ pub extern "C" fn __wasm_split_00___overlay___00_export_5b5e7a5c0000000000000000
 pub extern "C" fn __wasm_split_00___timeline___00_export_5b5e7a5c000000000000000000000005_timeline()
 -> Element {
     rsx! { crate::task_timeline::TimelineApp {} }
+}
+
+#[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn __wasm_split_00___media___00_export_5b5e7a5c000000000000000000000006_media()
+-> Element {
+    rsx! { crate::media_live::MediaRuntime {} }
 }
 
 /// A task page or `/agents`, from the task pages' chunk.
@@ -223,4 +275,21 @@ pub(crate) fn TimelinePart() -> Element {
     }
     // SAFETY: as in `TasksPart`.
     unsafe { __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() }
+}
+
+/// The media layer (`media_live::MediaRuntime`), from its chunk, drawn once a page shows media
+/// (`needed`, `media_live::use_activation`): once the chunk is in, nothing before, so the page's
+/// media wait for it as they wait for the activation. A chunk that does not load leaves the page as
+/// it is and sets `needed` back, so the next media the page shows asks for it again; the shell
+/// loads the page again when its build is gone, as for a kind, and otherwise says so with a retry
+/// that shows the media again (`reviewMediaFailed`, assets/shell.js), its notice taken down once
+/// the chunk is in.
+#[component]
+pub(crate) fn MediaPart(needed: Signal<bool>) -> Element {
+    let (name, bit) = MEDIA;
+    if !use_loaded(name, bit, Some(needed)) {
+        return rsx! {};
+    }
+    // SAFETY: as in `TasksPart`.
+    unsafe { __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() }
 }

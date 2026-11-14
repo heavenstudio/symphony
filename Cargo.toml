@@ -27,16 +27,15 @@ incremental = false
 # no unstripped copy is kept to read them against. A build to debug or profile sets
 # CARGO_PROFILE_RELEASE_STRIP=debuginfo, which keeps the names. Unwinding stays: the server
 # outlives a plugin's panic (symphony::gates) and a worker's.
+#
+# `codegen-units = 1` compiles each crate as one unit. In the default 16 a crate compiles a generic
+# or helper into each unit that reaches it, with its unwind tables, inlines across none of them, and
+# copies a large constant table (comrak's, regex-syntax's Unicode tables) into each unit that reads
+# it: one unit saves about 2.7 MB of symphony-server, 1.8 MB of symphony, 2.4 MB of tasks and
+# 0.5 MB of agent-send. It costs each crate's release compile (a cold release build about 30 %
+# longer); debug and test builds are unchanged, and the client's wasm-release sets the same.
 [profile.release]
 strip = true
-
-# One codegen unit for the two dependencies whose large constant tables each unit that reads one
-# would otherwise hold a copy of: comrak's and regex-syntax's (its Unicode tables), about 200 KB
-# of each of symphony-server and symphony. It costs only their own compile, once per build folder.
-[profile.release.package.comrak]
-codegen-units = 1
-
-[profile.release.package.regex-syntax]
 codegen-units = 1
 
 # Optimise the regular-expression dependencies in development and test builds too.
