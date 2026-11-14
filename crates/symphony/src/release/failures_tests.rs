@@ -599,8 +599,8 @@ error: test failed, to rerun pass `-p p --lib`
     );
 }
 
-/// Three targets that failed, shaped as a conciliation's log is: each failed test's block, then
-/// libtest's list of them, its result and cargo's line, and cargo's list at the end.
+/// Three targets that failed, shaped as a `cargo test --no-fail-fast` log is: each failed test's
+/// block, then libtest's list of them, its result and cargo's line, and cargo's list at the end.
 const THREE_TARGETS: &str = "     Running tests/golden_card.rs (target/debug/deps/golden_card-1a2b)
 
 running 2 tests

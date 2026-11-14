@@ -4,6 +4,11 @@ use super::*;
 use crate::test_layouts::{Others, others, repository};
 use crate::test_tree::Tree;
 
+/// [`super::running`], the server given a look only a stall outlasts.
+fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Front> {
+    running_within(machine, older, test_time::backstop(LOOK))
+}
+
 fn project(tree: &Tree, id: &str, plugins: &str) -> PathBuf {
     tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
     tree.write(

@@ -253,7 +253,7 @@ struct Level {
 impl Store {
     /// Counted parent-feature keys by owner, from one read-only whole-board observation.
     /// Uses the admission ledger's hold-stamp and presence rules, including Unknown owners;
-    /// red work is excluded. No cap need be configured. Owners without a counted slot are absent.
+    /// red work and work in review are excluded. No cap need be configured. Owners without a counted slot are absent.
     /// This reads one snapshot (tasks, roles, branches, holds and session health), with no
     /// per-parent follow-up reads. A failed observation returns an error, never empty holdings.
     pub fn slot_holdings(&self) -> Result<BTreeMap<String, BTreeSet<String>>, Error> {

@@ -1,6 +1,5 @@
-//! A task page over a slow board: a read whose answer comes later than the wait goes once more and
-//! the page gets its answer; a board late twice is said to be slow, never unreachable; a write that
-//! got no answer runs once, a defined function's call however it is spelled.
+//! A task page over a slow board: a board late twice is said to be slow, never unreachable; a write
+//! that got no answer runs once, a defined function's call however it is spelled.
 
 use serde_json::json;
 use symphony_board::rpc::{Client, slow};
@@ -38,23 +37,6 @@ fn family() -> Fixture {
                 Some("fixture/parent"),
             )),
     )
-}
-
-#[test]
-fn a_page_whose_read_is_answered_late_once_gets_the_answer_on_the_one_resend() {
-    let fixture = family();
-    let record = fixture.store.get("fixture/parent").unwrap();
-    let stall = Relay::to(fixture.store.client().addr(), 0);
-    // The page's read, rehearsed on nobody's short wait: the server's answer to it is what the
-    // read's one resend is answered from, at once.
-    page(&store(&stall, &fixture), &record, &Tree::new().root).unwrap();
-    stall.hold(1);
-    let page = page(&store(&stall, &fixture), &record, &Tree::new().root).unwrap();
-    assert_eq!(page.children_count, 1);
-    let sent = stall.requests();
-    assert_eq!(sent.len(), 2, "the late read went once more: {sent:?}");
-    assert_eq!(sent[0].1, sent[1].1, "the same read went once more");
-    assert_eq!((sent[0].0, sent[1].0), (0, 1), "on a new connection");
 }
 
 /// Late twice is slow, 504; a board that refuses the connection, beside it, cannot be reached, 503.

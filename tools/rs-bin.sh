@@ -45,9 +45,7 @@ port_number() {
 # the working directory's repository reaches (TASKS_SERVER unset) when that repository is this one,
 # or a TASKS_SERVER on the port recorded in `$common/symphony/tasks/server.json`, compared as the number
 # the binary reads. A record naming no address, or a port spelled any other way, counts as that
-# port; with no record there is no live server to name. While an older build's board is still in
-# its old folder, its server runs from there until tools/move-state.sh moves it, and its record is
-# read there (`board_record`, crates/tasks/src/unmoved.rs).
+# port; with no record there is no live server to name.
 live_board() {
     local database="${TASKS_DATABASE:-tasks}" record="" file addr here named recorded
     while [ "${1:-}" = --database ]; do
@@ -58,7 +56,6 @@ live_board() {
     [ "$database" = tasks ] || return 1
     if [ -n "${TASKS_SERVER:-}" ]; then
         file="$common/symphony/tasks/server.json"
-        if [ -d "$common/sf-tasks" ]; then file="$common/sf-tasks/server.json"; fi
         [ -f "$file" ] || return 1
         IFS= read -r record < "$file" || true
         case "$record" in

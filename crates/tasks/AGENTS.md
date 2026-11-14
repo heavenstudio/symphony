@@ -46,16 +46,7 @@ none, or none naming an id, the machine registry (`projects.json` in
 entry for the repository's main checkout, else that checkout's folder name
 does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
-and the staffing lock stay there too. While an older build's state is still in
-the old folders there, which `tools/move-state.sh` moves into `symphony/`
-(`src/unmoved.rs`), a command reaching the board, a start or stop of its server
-(`Home::in_common`'s), a sweep's request and a model's fetch refuse with the line
-naming the move, and the heartbeat's keys, recorded work and runs are kept
-nowhere, and the board's health record (`board_health::file`) only in the memory of
-the one server, which serves such a project when another build registered it, so no
-empty board or folder is made beside the old one
-(`tests/cli/unmoved.rs`); `just symphony` refuses the same before it registers
-the project. A fixture repository under a checkout's
+and the staffing lock stay there too. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
@@ -99,9 +90,7 @@ with an empty registry, or in a copy of the repository that kept the original's
 original's default branch. Only where the machine cannot say who listens there
 (nothing does, or no `lsof` or `ps` answers) is it known by the record of the
 working directory's repository, then of a registered project, that names its
-port. Until `tools/move-state.sh` moves a repository's state, an older build's
-board in the board's old folder is its live one, by the data it serves and the
-record there (`unmoved::board_record`). Only a build
+port. Only a build
 the repository's default branch says is its own moves one behind it, judged by
 what that branch commits (`live::committed`, which `git` reads from the common
 dir), never by what a checkout holds, the branch the main checkout has out or the
@@ -184,9 +173,9 @@ which hands a consumer's own code a bare client to open its store on (`Store::op
 live board), reads it as `cli::open_unchecked` does before it returns the client; it is kept, with
 its signature, for consumers' code, and new code opens by `writable_board` and `Reached::opening`.
 The board's public names consumers call are held by `tests/consumer_api.rs` (the other packages'
-by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to the release run's
-conciliation): a release's refresh moves a consumer's pin and no code, so one changes only with a
-consumer release plan. `Home::reclaim`
+by their own, which [RELEASES](../../docs/RELEASES.md) lists with what is left to a project to
+meet when it moves its pin): a release's refresh moves a consumer's pin and no code, so one changes
+only with a consumer release plan. `Home::reclaim`
 reads the record beside its store (`seen::went_back_in`, the folder's own `schema-seen.log`)
 through the running server before `halt`, and through the reclaim's own server on the store
 before any export. `tasks snapshot` and raw reads read no record. Otherwise an
@@ -581,7 +570,15 @@ run of that binary; nothing else changes `.target/bin/`. The native `tasks api`
 JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` takes
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
-`threads` and `snapshot`, which read several things in one round trip.
+`threads` and `snapshot`, which read several things in one round trip, and
+`version`, the api's `MAJOR` and `MINOR` and the schema this build writes, answered
+without the board. It is a contract ([TASKS](../../docs/TASKS.md#the-tasks-api)):
+within a major a method, an argument or a field of an answer is added, never
+removed, renamed or changed in meaning, an argument added has a default, and each
+addition raises `MINOR`; a new major is a task of its own. `tests/cli/api/contract.rs`
+holds the calls a registered project's programs make, each request and the fields
+of its answer the caller reads with their JSON types: a call such a program starts
+making is added there.
 `notify` authorizes a tool's actor and posts an addressed `board` message to a
 literal session handle on its task (neither `owner` nor a role). It reaches that
 session's inbox even when the actor is the recipient; ordinary `say` posts retain

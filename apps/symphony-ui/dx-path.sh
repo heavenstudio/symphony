@@ -7,8 +7,8 @@
 # dx makes itself the rustc wrapper of the workspace's own crates (RUSTC_WORKSPACE_WRAPPER), by its
 # canonical path, and Cargo mixes that path into each such crate's -C metadata: their symbol names
 # follow it, and so every byte of the client's wasm and every asset name after them. Run from
-# another folder, as once tools/move-state.sh had moved the common dir's tools, the same sources
-# made another client than the one committed. So a build runs STAND/NAME, STAND being
+# another folder (another common dir's tools), the same sources make another client than the one
+# committed. So a build runs STAND/NAME, STAND being
 # /private/tmp/symphony-client-tools, a private folder of this user's beside the release snapshots:
 # a hard link of TOOLS/NAME, or a copy of it where no link can be made (another volume), renamed
 # into place whole whenever what stands there is not TOOLS/NAME's file or bytes, so a build that

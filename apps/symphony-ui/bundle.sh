@@ -11,8 +11,7 @@
 #
 # The tools are dx, and wasm-bindgen at the version Cargo.lock pins, both built by cargo into
 # symphony/tools/ in the git common dir by tools.sh the first time they are missing (minutes, once per
-# machine), or an older build's copies, run where they stand until tools/move-state.sh moves them.
-# dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into DX_HOME, also
+# machine). dx fetches its other two tools (wasm-opt, esbuild) at the versions it pins into DX_HOME, also
 # there. dx itself runs from /private/tmp/symphony-client-tools (dx-path.sh), the same path wherever
 # it was installed.
 set -euo pipefail

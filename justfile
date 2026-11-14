@@ -68,13 +68,13 @@ tasks *ARGS:
     @{{ _symphony_board }}{{ _symphony_unasked }}tools/rs-bin.sh tasks "$@"
 
 # Symphony's releases (docs/RELEASES.md), a release run: main's tip, fetched, verified in full
-# (`just verify`) in a clean checkout outside this folder and conciliated with the projects this
-# machine serves; each red check filed on the board, a green tip tagged release-YYYY-MM-DD and that
-# tag pushed. `--commit COMMIT` releases a commit of main out of cycle, `--status` runs nothing, and
-# `--schedule` prints the entry that runs it each day. Scheduling is the owner's. The board's
-# binary is built and linked first: the run files its reds and records its checks through it. So
-# is `symphony-build`, whose link `[board] on_land` runs (symphony.toml): any `just release`, even
-# `--status`, makes that link or renews it.
+# (`just verify`) in a clean checkout outside this folder, building and testing nothing of the
+# projects this machine serves; each red check filed on the board, a green tip tagged
+# release-YYYY-MM-DD and that tag pushed. `--commit COMMIT` releases a commit of main out of cycle,
+# `--status` runs nothing, and `--schedule` prints the entry that runs it each day. Scheduling is
+# the owner's. The board's binary is built and linked first: the run files its reds and records
+# its checks through it. So is `symphony-build`, whose link `[board] on_land` runs (symphony.toml):
+# any `just release`, even `--status`, makes that link or renews it.
 [no-exit-message]
 release *ARGS:
     @tools/rs-bin.sh --link tasks >/dev/null

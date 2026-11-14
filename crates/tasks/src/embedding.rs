@@ -100,9 +100,6 @@ impl Bge {
         if !(1..=64).contains(&threads) {
             return Err("inference threads must be between 1 and 64".into());
         }
-        if let Some(why) = crate::unmoved::refusal(common, MODELS) {
-            return Err(why);
-        }
         let dir = common.join(MODELS).join(REVISION);
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let lock = download_lock(&dir)?;

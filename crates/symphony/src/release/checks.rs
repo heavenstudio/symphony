@@ -59,11 +59,8 @@ pub(crate) struct Step {
     pub(crate) command: String,
     /// What runs.
     pub(crate) argv: Vec<String>,
-    /// The folder it runs in; the recorder still runs in the candidate's checkout.
-    pub(crate) cwd: Option<PathBuf>,
-    /// Variables set for it, and variables removed.
+    /// Variables set for it.
     pub(crate) set: Vec<(String, String)>,
-    pub(crate) unset: Vec<String>,
 }
 
 impl Step {
@@ -73,9 +70,7 @@ impl Step {
             name: name.to_string(),
             command: command.to_string(),
             argv: vec!["sh".into(), "-c".into(), command.to_string()],
-            cwd: None,
             set: Vec::new(),
-            unset: Vec::new(),
         }
     }
 
@@ -237,37 +232,11 @@ fn recorded(checkout: &Path, label: &str, argv: &[String]) -> Vec<String> {
     line
 }
 
-/// What `argv` becomes to run in `cwd` while its recorder runs in the checkout: the working folder
-/// a record keeps, and the board's work folder it is written to, are the checkout's.
-fn moved(cwd: Option<&Path>, argv: &[String]) -> Vec<String> {
-    match cwd {
-        None => argv.to_vec(),
-        Some(cwd) => {
-            let mut line = vec![
-                "sh".to_string(),
-                "-c".into(),
-                "cd \"$1\" && shift && exec \"$@\"".into(),
-                "release".into(),
-                cwd.to_string_lossy().into_owned(),
-            ];
-            line.extend(argv.iter().cloned());
-            line
-        }
-    }
-}
-
 /// Run `step` in the candidate's checkout at `checkout`, within `within`, its output in `log`.
 pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) -> Ran {
-    let line = recorded(
-        checkout,
-        &format!("release {}", step.name),
-        &moved(step.cwd.as_deref(), &step.argv),
-    );
+    let line = recorded(checkout, &format!("release {}", step.name), &step.argv);
     let opened = File::create(log).and_then(|mut file| {
         writeln!(file, "$ {}", step.command)?;
-        if let Some(cwd) = &step.cwd {
-            writeln!(file, "(in {})", cwd.display())?;
-        }
         let err = file.try_clone()?;
         Ok((file, err))
     });
@@ -297,9 +266,6 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         .env_remove(super::steps::VAR);
     for (name, value) in &step.set {
         child.env(name, value);
-    }
-    for name in &step.unset {
-        child.env_remove(name);
     }
     let started = Instant::now();
     let mut child = match child.spawn() {
@@ -394,10 +360,10 @@ pub(crate) fn tail(path: &Path, lines: usize, bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::waits::{far, gone, pid_written, written_pid};
     use super::*;
     use crate::test_tree::Tree;
     use std::cell::RefCell;
-    use std::time::Duration;
 
     fn script(tree: &Tree) {
         tree.write(
@@ -406,21 +372,21 @@ mod tests {
         );
     }
 
-    /// `step` run with a minute to spare.
+    /// `step` run within a bound only a stall reaches.
     fn checked(step: &Step, checkout: &Path, log: &Path) -> Ran {
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
-        run(step, checkout, log, within)
+        run(step, checkout, log, Within::bound(far()))
     }
 
-    /// Whether the process whose pid `pid` holds still lives after a few seconds' wait for it to
-    /// end and be reaped by whoever inherited it.
-    fn alive(pid: &Path) -> bool {
-        let pid: i64 = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
-        let until = Instant::now() + std::time::Duration::from_secs(10);
-        while symphony_board::sys::pid_alive(pid) && Instant::now() < until {
-            std::thread::sleep(group::POLL);
-        }
-        symphony_board::sys::pid_alive(pid)
+    /// A step that starts a helper which outlives any wait of a test, says `started` and writes the
+    /// helper's pid in `helper`, then waits for it.
+    fn helper_step(helper: &Path) -> Step {
+        Step::shell(
+            "verify",
+            &format!(
+                "sleep 1000 & h=$!; echo started; echo $h > '{}'; wait",
+                helper.display()
+            ),
+        )
     }
 
     #[test]
@@ -450,30 +416,36 @@ mod tests {
     fn a_check_past_the_runs_time_is_stopped_with_its_group_and_is_red() {
         let tree = Tree::new();
         let helper = tree.path("helper.pid");
-        let step = Step::shell(
-            "verify",
-            &format!(
-                "sleep 30 & echo $! > '{}'; echo started; wait",
-                helper.display()
-            ),
+        // The run's time is up once the check has started its helper: what says the check runs is
+        // told before the run looks at its time, and waits there for the helper's pid.
+        let running = |check: Option<&Checking>| {
+            if check.is_some() {
+                written_pid(&helper);
+            }
+        };
+        let within = Within {
+            bound: Bound::until(Instant::now()),
+            running: Some(&running),
+        };
+        let ran = run(
+            &helper_step(&helper),
+            &tree.root,
+            &tree.path("verify.log"),
+            within,
         );
-        let started = Instant::now();
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_millis(500)));
-        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
-        assert!(ran.timed_out && !ran.green(), "{ran:?}");
-        assert!(
-            ran.ended()
-                .starts_with("timed out: stopped after 1 s, when the run's time was up")
-                || ran
-                    .ended()
-                    .starts_with("timed out: stopped after 0 s, when the run's time was up"),
-            "{ran:?}"
+        assert!(ran.timed_out && !ran.interrupted && !ran.green(), "{ran:?}");
+        let said = Ran {
+            seconds: 1.0,
+            ..ran.clone()
+        };
+        assert_eq!(
+            said.ended(),
+            "timed out: stopped after 1 s, when the run's time was up"
         );
         let log = fs::read_to_string(tree.path("verify.log")).unwrap();
         assert!(log.contains("started\n"), "{log}");
         assert!(log.contains("s: the run's time was up)\n"), "{log}");
-        assert!(!alive(&helper), "what the check started went with it");
+        gone(written_pid(&helper), "what the check started");
     }
 
     #[test]
@@ -482,39 +454,39 @@ mod tests {
         let helper = tree.path("helper.pid");
         let step = Step::shell(
             "verify",
-            &format!("sleep 30 & echo $! > '{}'", helper.display()),
+            &format!("sleep 1000 & echo $! > '{}'", helper.display()),
         );
-        let started = Instant::now();
         let ran = checked(&step, &tree.root, &tree.path("verify.log"));
         assert!(ran.green(), "{ran:?}");
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
-        assert!(!alive(&helper));
+        gone(written_pid(&helper), "what the check left running");
     }
 
     #[test]
     fn a_check_of_a_run_told_to_stop_is_stopped_with_its_group() {
         let tree = Tree::new();
         let helper = tree.path("helper.pid");
-        let step = Step::shell(
-            "verify",
-            &format!("sleep 30 & echo $! > '{}'; wait", helper.display()),
+        // The run is told to stop once the check has started its helper.
+        let heard = || pid_written(&helper);
+        let within = Within::bound(Bound::hearing(far().until, &heard));
+        let ran = run(
+            &helper_step(&helper),
+            &tree.root,
+            &tree.path("verify.log"),
+            within,
         );
-        let started = Instant::now();
-        let heard = move || started.elapsed() >= Duration::from_millis(300);
-        let within = Within::bound(Bound::hearing(
-            Instant::now() + Duration::from_secs(60),
-            &heard,
-        ));
-        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
         assert!(ran.interrupted && !ran.timed_out && !ran.green(), "{ran:?}");
-        assert!(
-            ran.ended().starts_with("interrupted: stopped after "),
-            "{ran:?}"
+        let said = Ran {
+            seconds: 2.0,
+            ..ran.clone()
+        };
+        assert_eq!(
+            said.ended(),
+            "interrupted: stopped after 2 s, when the run was told to stop"
         );
         let log = fs::read_to_string(tree.path("verify.log")).unwrap();
+        assert!(log.contains("started\n"), "{log}");
         assert!(log.contains("s: the run was told to stop)\n"), "{log}");
-        assert!(!alive(&helper), "what the check started went with it");
+        gone(written_pid(&helper), "what the check started");
     }
 
     #[test]
@@ -532,7 +504,7 @@ mod tests {
         let said = RefCell::new(Vec::new());
         let running = |check: Option<&Checking>| said.borrow_mut().push(check.cloned());
         let within = Within {
-            bound: Bound::until(Instant::now() + Duration::from_secs(60)),
+            bound: far(),
             running: Some(&running),
         };
         let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
@@ -578,7 +550,9 @@ mod tests {
 
     /// A release run a land started inherits how that land was asked for: the unasked recipes'
     /// mark and the `land` recipe's. Its checks run without either (`sys::MARKS`), or every test
-    /// of a command that writes outside the checkout is refused there, and a check could land.
+    /// of a command that writes outside the checkout is refused there, and a check could land. Nor
+    /// does a check see a steps folder it inherited ([`super::super::steps::VAR`]): only the one
+    /// its run names for it.
     #[test]
     fn a_check_runs_without_the_marks_of_how_the_run_was_asked_for() {
         // The marks are this test's own process's, set when it is started: set here, they would
@@ -591,14 +565,14 @@ mod tests {
                 &Step::shell(
                     "verify",
                     "echo \"marks ${SYMPHONY_UNASKED-unset} ${SYMPHONY_LAND-unset} \
-                     ${SYMPHONY_RELEASE_KEPT-unset}\"",
+                     ${SYMPHONY_RELEASE_KEPT-unset} ${SYMPHONY_CHECK_STEPS-unset}\"",
                 ),
                 &tree.root,
                 &log,
             );
             assert!(ran.green(), "{ran:?}");
             let text = fs::read_to_string(&log).unwrap();
-            assert!(text.contains("\nmarks unset unset kept\n"), "{text}");
+            assert!(text.contains("\nmarks unset unset kept unset\n"), "{text}");
             return;
         }
         // This test's name as the harness lists it: its module's path below the crate.
@@ -609,7 +583,8 @@ mod tests {
                 .args(["--exact", name.as_str()])
                 .env(CASE, "1")
                 .envs(symphony_board::sys::MARKS.map(|name| (name, "1")))
-                .env("SYMPHONY_RELEASE_KEPT", "kept"),
+                .env("SYMPHONY_RELEASE_KEPT", "kept")
+                .env(super::super::steps::VAR, "/elsewhere"),
         )
         .unwrap();
         let said = String::from_utf8_lossy(&done.stdout);
@@ -652,44 +627,6 @@ mod tests {
             fs::read_to_string(tree.path("verify.log"))
                 .unwrap()
                 .contains("checked\n")
-        );
-    }
-
-    #[test]
-    fn a_check_in_another_folder_is_recorded_from_the_checkout_and_runs_there() {
-        let tree = Tree::new();
-        let root = tree.root.canonicalize().unwrap();
-        script(&tree);
-        let elsewhere = root.join("elsewhere");
-        fs::create_dir_all(&elsewhere).unwrap();
-        let recorded = tree.path("recorded");
-        let step = Step {
-            name: "conciliate-x".into(),
-            command: "cargo test".into(),
-            argv: vec!["sh".into(), "-c".into(), "pwd; echo \"$GONE-$KEPT\"".into()],
-            cwd: Some(elsewhere.clone()),
-            set: vec![
-                ("RECORDED".into(), recorded.to_string_lossy().into()),
-                ("KEPT".into(), "kept".into()),
-                ("GONE".into(), "set, then removed".into()),
-            ],
-            unset: vec!["GONE".into()],
-        };
-        let ran = checked(&step, &root, &tree.path("x.log"));
-        assert!(ran.green(), "{ran:?}");
-        assert_eq!(
-            fs::read_to_string(&recorded).unwrap(),
-            format!("test|release conciliate-x|{}\n", root.display()),
-            "the recorder runs in the checkout"
-        );
-        let log = fs::read_to_string(tree.path("x.log")).unwrap();
-        assert!(
-            log.contains(&format!("(in {})\n", elsewhere.display())),
-            "{log}"
-        );
-        assert!(
-            log.contains(&format!("{}\n-kept\n", elsewhere.display())),
-            "{log}"
         );
     }
 
