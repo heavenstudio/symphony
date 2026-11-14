@@ -1176,7 +1176,10 @@ impl Hub {
                 .unwrap_or_else(|e| e.into_inner());
             if message_changed
                 || previous.as_ref() != Some(&pending)
-                || held.last.as_ref().is_none_or(|old| old.tasks != next.tasks)
+                || held
+                    .last
+                    .as_ref()
+                    .is_none_or(|old| !tasks_alike(&old.tasks, &next.tasks))
             {
                 let signoff = measured("signoff", || {
                     taskview::signoff(store, &next.tasks, &pending)
@@ -1222,7 +1225,8 @@ impl Hub {
         }
         if let Some(old) = &held.last {
             task_changes(&mut changed, &old.tasks, &next.tasks);
-            if old.tasks != next.tasks {
+            // A holder's health is no task's change: it moves no column's count.
+            if !tasks_alike(&old.tasks, &next.tasks) {
                 let mut counts = BTreeMap::<&str, usize>::new();
                 for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
@@ -1256,37 +1260,19 @@ impl Hub {
                 self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
-            // active worker a stream of pointless events. Sessions change when displayed state does.
-            let visible = |sessions: &[symphony_api::Session]| {
-                sessions
-                    .iter()
-                    .map(|s| {
-                        let mut s = s.clone();
-                        s.last_seen = 0.0;
-                        s.last_tool = None;
-                        s
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let session_at = changed.len();
-            diff_items(
+            // active worker a stream of pointless events. Sessions change when displayed state does,
+            // and a session's health is its roles' too: the client sets them from this change.
+            diff_shown(
                 &mut changed,
                 "session",
-                &visible(&old.sessions),
-                &visible(&next.sessions),
+                &old.sessions,
+                &next.sessions,
                 |s| s.handle.clone(),
+                |s| {
+                    s.last_seen = 0.0;
+                    s.last_tool = None;
+                },
             );
-            for event in &mut changed[session_at..] {
-                if event["region"] == "session"
-                    && event["data"].get("value").is_some()
-                    && let Some(session) = next
-                        .sessions
-                        .iter()
-                        .find(|s| event["data"]["key"] == s.handle)
-                {
-                    event["data"]["value"] = json!(session);
-                }
-            }
         }
         held.last = Some(next.clone());
         held.raw = Some(snapshot);
@@ -1294,9 +1280,15 @@ impl Hub {
         drop(held);
         let mut old_agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = &*old_agents {
-            diff_items(&mut changed, "agent", &old.agents, &agents.agents, |a| {
-                a.handle.clone()
-            });
+            // No page shows when an agent last called a tool: a tool call alone sends nothing.
+            diff_shown(
+                &mut changed,
+                "agent",
+                &old.agents,
+                &agents.agents,
+                |a| a.handle.clone(),
+                |a| a.last_tool_call = None,
+            );
             if old.probes != agents.probes {
                 changed.push(json!({"region":"agent-probes","data":agents.probes}));
             }
@@ -1759,11 +1751,120 @@ fn diff_items<T: serde::Serialize + PartialEq>(
     }
 }
 
+/// List changes of `region` by what a page shows of each item: two items alike once `hide` has
+/// cleared what no page draws send nothing, and an item that changed is sent as it is now, whole.
+fn diff_shown<T: serde::Serialize + PartialEq + Clone>(
+    changes: &mut Vec<Value>,
+    region: &str,
+    old: &[T],
+    new: &[T],
+    key: impl Fn(&T) -> String,
+    hide: impl Fn(&mut T),
+) {
+    let shown = |items: &[T]| {
+        items
+            .iter()
+            .map(|item| {
+                let mut item = item.clone();
+                hide(&mut item);
+                item
+            })
+            .collect::<Vec<_>>()
+    };
+    let at = changes.len();
+    diff_items(changes, region, &shown(old), &shown(new), &key);
+    let now: BTreeMap<String, &T> = new.iter().map(|item| (key(item), item)).collect();
+    for event in &mut changes[at..] {
+        if event["region"] == region
+            && event["data"].get("value").is_some()
+            && let Some(item) = event["data"]["key"].as_str().and_then(|key| now.get(key))
+        {
+            event["data"]["value"] = json!(item);
+        }
+    }
+}
+
+/// A task as the feed compares it: without its holders' health, which each holder's `session`
+/// change says once, rather than every task it ever held saying it again.
+#[derive(serde::Serialize)]
+#[serde(transparent)]
+struct Shown<'a>(&'a symphony_api::Task);
+
+impl PartialEq for Shown<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        shown_alike(self.0, other.0)
+    }
+}
+
+/// Whether `a` and `b` are the same task, or differ only in their holders' health. Every field is
+/// named, so a new one is compared or the build fails.
+#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
+fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
+    let symphony_api::Task {
+        slug,
+        title,
+        body,
+        status,
+        priority,
+        parent,
+        created_by,
+        created,
+        updated,
+        links,
+        depends,
+        roles,
+        instruction,
+        fields,
+    } = a;
+    *slug == b.slug
+        && *title == b.title
+        && *body == b.body
+        && *status == b.status
+        && *priority == b.priority
+        && *parent == b.parent
+        && *created_by == b.created_by
+        && *created == b.created
+        && *updated == b.updated
+        && *links == b.links
+        && *depends == b.depends
+        && *instruction == b.instruction
+        && *fields == b.fields
+        && roles_alike(roles, &b.roles)
+}
+
+/// Whether `a` and `b` are the same roles, their holders' health aside.
+#[expect(clippy::float_cmp, reason = "the role's own derived equality")]
+fn roles_alike(a: &[symphony_api::Role], b: &[symphony_api::Role]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            let symphony_api::Role {
+                handle,
+                role,
+                since,
+                expires,
+                health: _,
+            } = a;
+            *handle == b.handle && *role == b.role && *since == b.since && *expires == b.expires
+        })
+}
+
+/// Whether the board's tasks are the same in `old` and `new`, their holders' health aside.
+fn tasks_alike(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
+    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| shown_alike(a, b))
+}
+
 fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[symphony_api::Task]) {
-    // Insertions/removals use the same keyed list protocol. Existing records send fields only,
-    // otherwise a status change would retransmit a task's potentially very long brief.
+    // Insertions/removals use the same keyed list protocol. An existing task is sent once, as the
+    // fields that changed, never its whole record again: a status change would retransmit a long
+    // brief, and a client that does not hold the task reads it with the view that shows it.
+    let (shown_old, shown_new): (Vec<_>, Vec<_>) = (
+        old.iter().map(Shown).collect(),
+        new.iter().map(Shown).collect(),
+    );
     let mut basic = Vec::new();
-    diff_items(&mut basic, "task", old, new, |t| t.slug.clone());
+    diff_items(&mut basic, "task", &shown_old, &shown_new, |t| {
+        t.0.slug.clone()
+    });
     for event in basic {
         if let Some(key) = event["data"]["key"].as_str()
             && event["region"] == "task"
@@ -1785,15 +1886,19 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             field!(updated);
             field!(links);
             field!(depends);
-            field!(roles);
             field!(instruction);
+            // Roles that changed say their holders' health as it is now.
+            if !roles_alike(&before.roles, &after.roles) {
+                fields.roles = Some(after.roles.clone());
+            }
             if before.parent != after.parent {
                 fields.parent = Some(after.parent.clone().unwrap_or_default());
             }
-            changes.push(json!({"region":"task-fields", "data":symphony_api::TaskChange { key:key.into(), fields }}));
-            let mut summary = after.clone();
-            summary.body.clear();
-            changes.push(json!({"region":"task-summary", "data":symphony_api::ItemChange { key:key.into(), value:Some(summary), removed:false }}));
+            // A change of what no field carries (a plugin's board fields, which no page draws)
+            // sends nothing.
+            if fields != symphony_api::TaskFields::default() {
+                changes.push(json!({"region":"task-fields", "data":symphony_api::TaskChange { key:key.into(), fields }}));
+            }
         } else {
             changes.push(event);
         }
@@ -1844,6 +1949,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod feed_deltas_tests;
 
 #[cfg(test)]
 mod session_go_tests;
