@@ -7,19 +7,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Needs your decision
 
-### Releases
-
-- [ ] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
-  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
-
-    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
-
-    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
-
-    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
-
-    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
-
 ### Client framework
 
 - [ ] **client-framework** — Should the web client stay in Dioxus or move to JSX? Three of its pages (the board, a task's page, a document with a card's verdict) were written again in JSX, built on React and on Preact from one source, drawn with the client's own style sheets and served by the same server, then measured beside the Dioxus pages of main at `a8490d80` on the same fixture. The JSX pages leave out parts the Dioxus pages carry (the device cache, the ghosts' kept shapes, the task page's gates and timeline, search), so their figures are a floor. With those parts added at an estimate, a Preact first visit is about a tenth to a quarter of the Dioxus bytes and a cold visit is usable sooner, most of all on a slow CPU; Dioxus is quicker on a return visit to a small board or a task's page at full speed and draws a card's move sooner, and keeps the compiler's checks of the wire. A: keep Dioxus. B: move the client to JSX on Preact, a page kind at a time. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/client-framework-comparison#The choice]]
@@ -62,6 +49,22 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Releases
+
+- [x] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
+  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
+
+    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
+
+    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
+
+    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
+
+    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
+  [2026-11-14 06:29] owner · approved — A
 
 ## Rejected and replaced
 

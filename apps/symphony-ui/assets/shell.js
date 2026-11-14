@@ -252,10 +252,14 @@ window.reviewOverlay = request => {
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
-// what lands at the top. Each frame, until four pass with nothing moved and no reserved box within
-// 600 px of the screen waiting to draw (its `.viewport-sentinel`'s reach), thirty at most, the
-// box and then the page scroll by however far it moved. The reader's own scroll, click or key
-// (typing in a field aside) ends the hold.
+// what lands at the top. Each frame the box and then the page scroll by however far it moved, until
+// four pass with nothing moved and no reserved box waiting to draw within its sentinel's reach:
+// 600 px above and below what its own scroller shows of the window (`.viewport-sentinel`, as
+// `viewport::waits_near` decides), for a box past it never draws. However many frames that takes, as
+// on a slow phone, and 1800 at most (half a minute at sixty a second; a hidden tab draws none), a
+// backstop only a box that never draws reaches. A move the box and the page cannot take back (one
+// at its end) counts as nothing moved once it stays. The reader's own scroll, click or key (typing
+// in a field aside) ends the hold.
 window.reviewHoldPlace = rows => {
     const scrollerOf = node => {
         while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
@@ -271,23 +275,34 @@ window.reviewHoldPlace = rows => {
     const scroller = scrollerOf(anchor), page = scrollY > 0;
     if (scroller ? scroller.scrollTop <= 0 : !page) return;
     const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
-    let stopped = false, frame = 0, quiet = 0;
+    let stopped = false, frame = 0, quiet = 0, stuck = 0;
     const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
+    // Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
+    // above and below it.
+    const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
     const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
         const r = box.getBoundingClientRect();
-        return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
+        return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
     });
     const hold = () => {
         if (!stopped && anchor.isConnected) {
-            let moved = anchor.getBoundingClientRect().top - top;
-            quiet = Math.abs(moved) >= 0.5 || near() ? 0 : quiet + 1;
-            if (Math.abs(moved) >= 0.5 && scroller) {
+            const moved = anchor.getBoundingClientRect().top - top;
+            let left = moved;
+            if (Math.abs(left) >= 0.5 && scroller) {
                 const before = scroller.scrollTop;
-                scroller.scrollTop = before + Math.round(moved);
-                moved -= scroller.scrollTop - before;
+                scroller.scrollTop = before + Math.round(left);
+                left -= scroller.scrollTop - before;
             }
-            if (Math.abs(moved) >= 0.5 && page) scrollBy(0, moved);
-            if (++frame < 30 && quiet < 4) return requestAnimationFrame(hold);
+            if (Math.abs(left) >= 0.5 && page) {
+                const before = scrollY;
+                scrollBy(0, left);
+                left -= scrollY - before;
+            }
+            quiet = Math.abs(moved - stuck) >= 0.5 || near() ? 0 : quiet + 1;
+            stuck = left;
+            if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
         }
         gestures.forEach(kind => removeEventListener(kind, gesture, true));
     };
