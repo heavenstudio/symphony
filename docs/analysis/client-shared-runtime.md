@@ -290,9 +290,17 @@ step after the split has to sort them.
 3. **Trim the shared part** to what every page of the program needs: the media layer, the keyboard
    types and float formatting behind the pages that use them. Built, only the media layer could
    go: a chunk of its own, which a page loads once it shows media, takes the main module from
-   216,771 bytes on the wire to 207,303 and a task page's and `/agents`' first visits down by
-   7,868 bytes, of the 12,362 step 2 added. The other two stay with dioxus-web and the splitter
-   as they are pinned. The keyboard's key names (with `document::eval` and the serde_json it
+   216,490 bytes on the wire to 207,514 and a task page's and `/agents`' first visits down by
+   7,389 bytes, of the 12,362 step 2 added (against main's build at 2eec23a). A chunk that is no
+   kind has no page move or shell module to fail through, so the layer says its own failure
+   through the shell: the page loads again when its build is gone, and otherwise stays under a
+   notice whose retry, or the next media shown, asks for the chunk again. Against a build of this
+   step without it, that costs the main module about 920 bytes of wasm (some 490 on the wire)
+   and every page's shell about 60. The other side: the chunks that share code with the layer
+   each hold a copy of it, 4,646 bytes on the wire across five chunks, and a task page that shows
+   media on its first screen fetches the chunk too, 5,514 bytes more than before and one more
+   round trip. The other two stay with dioxus-web and the splitter as they are pinned. The
+   keyboard's key names (with `document::eval` and the serde_json it
    reads with, the same way) are functions of tables dioxus-web makes at launch, the event
    converter's and the document's; the splitter keeps every function of a table the main module
    reaches, and the compiler keeps these as the chat's and the menus' controls call them. Float
