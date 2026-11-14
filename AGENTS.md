@@ -151,17 +151,10 @@ standing rules in [RULES.md](RULES.md).
 **Its own names.** Symphony names only its own variables (`SYMPHONY_`), state folders
 (`symphony/` in the git common dir), formats and settings, never a consuming project's
 tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
-outside the fences it lists, each with its reason (the move command `tools/move-state.sh`
-and its tests, `crates/tasks/src/unmoved.rs`, the launcher's read of an older build's board
-record, and the client's tools script, which runs an older build's copies where they stand),
-and on the first consuming project's name, in any spelling or identifier built from it, in a
-tracked file's text or path: say "the consuming project". The state folders are named once, in
-`crates/tasks/src/folders.rs`. Until the move, a build of this code starts no board, server
-or recorder on a repository whose old folders still hold its state, and makes no verdict
-journal there, refusing with the line naming `tools/move-state.sh` (`unmoved.rs`). It
-installs no client tools beside an older build's either, and no build removes those: another
-worktree's build may be running them. Only the move takes them away, on a quiet machine,
-refusing while a process has a file open under them.
+outside the fences it lists, each with its reason (a past incident's record in
+`docs/history/`), and on the first consuming project's name, in any spelling or identifier
+built from it, in a tracked file's text or path: say "the consuming project". The state
+folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
