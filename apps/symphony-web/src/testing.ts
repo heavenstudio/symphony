@@ -16,11 +16,30 @@ export interface ViewCase {
   readme: string;
 }
 
+/**
+ * The documents' reads, each as the server writes it: with every field, then (`bare…`, `noAsks`)
+ * with only those it always sends.
+ */
+export type DocumentSample =
+  | "outline"
+  | "bareOutline"
+  | "sections"
+  | "change"
+  | "bareChange"
+  | "folder"
+  | "bareFolder"
+  | "versions"
+  | "diff"
+  | "asks"
+  | "noAsks";
+
 export const CASES = cases as unknown as {
   here: [string, string, string][];
   strip: [string, string, string][];
   views: ViewCase[];
   queueCategory: [string, string][];
+  /** A task's slug, and whether it is one the Symphony filed for the owner's verdicts. */
+  answersVerdicts: [string, boolean][];
   isHtml: [string, boolean][];
   /** A word, the grain it names, and that grain's default and longest windows in days. */
   grains: [string, string | null, number | null, number | null][];
@@ -38,7 +57,7 @@ export const CASES = cases as unknown as {
     reports: unknown;
     emptyReports: unknown;
     blocks: Block[];
-  };
+  } & Record<DocumentSample, unknown>;
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];
 };

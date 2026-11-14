@@ -5,6 +5,7 @@
 
 import { here, project } from "./project";
 import { answered as refusedRead, UNREACHABLE } from "./trouble";
+import { VERSION_HEADER } from "./wire";
 
 /** How long a request waits for the server's response, and then again for its body. */
 export const ANSWER_MS = 15_000;
@@ -64,8 +65,11 @@ function marker(post: boolean, url: string): (phase: string) => void {
   };
 }
 
-/** One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). */
-async function exchange(url: string, payload?: unknown, etag?: string): Promise<Answer> {
+/**
+ * One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). Its
+ * answer, and the headers it came with.
+ */
+async function exchange(url: string, payload?: unknown, etag?: string): Promise<[Answer, Headers]> {
   const reading = payload === undefined;
   const mark = marker(!reading, url);
   const init: RequestInit = {};
@@ -101,7 +105,7 @@ async function exchange(url: string, payload?: unknown, etag?: string): Promise<
     throw new Failure("uncertain", NO_ANSWER);
   }
   mark("fetched");
-  return answer(response.value, reading, mark);
+  return [await answer(response.value, reading, mark), response.value.headers];
 }
 
 /** A response's answer: `same` for a `304`; else its JSON body with its tag, or its refusal. */
@@ -152,7 +156,7 @@ async function answer(
 
 /** A read: its body as the browser parsed it. */
 export async function getJson(url: string): Promise<unknown> {
-  const answered = await exchange(url);
+  const [answered] = await exchange(url);
   if (answered.same) throw new Failure("uncertain", "The server answered 304 to a plain read");
   return answered.value;
 }
@@ -161,13 +165,45 @@ export async function getJson(url: string): Promise<unknown> {
  * A read of something this device kept: it names the kept copy's tag (`If-None-Match`, when there
  * is one) and goes past the browser's cache.
  */
-export function getIf(url: string, etag: string): Promise<Answer> {
-  return exchange(url, undefined, etag);
+export async function getIf(url: string, etag: string): Promise<Answer> {
+  return (await exchange(url, undefined, etag))[0];
+}
+
+/** What a document read answered, and the feed's cursor it was read at. */
+export interface DocumentAnswer {
+  answer: Answer;
+  /** The cursor the server named (`VERSION_HEADER`), on its `200` and its `304` alike. */
+  cursor: number | null;
+}
+
+/**
+ * The feed's cursor a header names: a whole number, as Rust's `u64` parses it (an optional `+`,
+ * then digits), within the safe integers; null for any other or none.
+ */
+export function cursorOf(header: string | null): number | null {
+  if (header === null || !/^\+?[0-9]+$/.test(header)) return null;
+  const cursor = Number(header);
+  return Number.isSafeInteger(cursor) ? cursor : null;
+}
+
+/**
+ * A document read naming the copy this device kept (`getIf`), with the feed's cursor it was read
+ * at, so a page that draws its kept copy on a `304`, which has no body, opens the feed from it;
+ * null when the server has no such document (a `404`).
+ */
+export async function getDocument(url: string, etag: string): Promise<DocumentAnswer | null> {
+  try {
+    const [answer, headers] = await exchange(url, undefined, etag);
+    return { answer, cursor: cursorOf(headers.get(VERSION_HEADER)) };
+  } catch (failure) {
+    if (failure instanceof Failure && failure.kind === "missing") return null;
+    throw failure;
+  }
 }
 
 /** A post of `fields` as JSON: the reply's body. */
 export async function post(url: string, fields: Record<string, unknown>): Promise<unknown> {
-  const answered = await exchange(url, fields);
+  const [answered] = await exchange(url, fields);
   if (answered.same) throw new Failure("uncertain", "The server answered 304 to a plain read");
   return answered.value;
 }

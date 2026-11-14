@@ -50,6 +50,13 @@ describe("blocks read where they arrive", () => {
       { type: "thread", entries: [{ who: "agent", blocks: [] }] },
     ],
     ["a comment", { type: "comment", text: "a note" }],
+    ["the lowest level", { type: "heading", level: 0, anchor: "", spans: [] }],
+    ["the highest level a byte holds", { type: "heading", level: 255, anchor: "", spans: [] }],
+    ["a list from none", { type: "list", ordered: true, start: 0, items: [] }],
+    [
+      "a list from the largest safe integer",
+      { type: "list", ordered: true, start: Number.MAX_SAFE_INTEGER, items: [] },
+    ],
     ["fields a newer server adds", { type: "rule", width: 3, colour: "red" }],
   ])("take %s as serde does", (_, block) => {
     expect(readBlocks([block])).toEqual([block]);
@@ -93,6 +100,22 @@ describe("blocks read where they arrive", () => {
     ],
     ["a thread author it does not know", { type: "thread", entries: [{ who: "bot", blocks: [] }] }],
     ["a level that is not a number", { type: "heading", level: "2", anchor: "", spans: [] }],
+    // A level is a u8 and a list's start a u64: serde refuses a fraction, a sign or a size past
+    // them, and the Dioxus client's reader a number past 2^53 - 1 it cannot tell apart.
+    ["a level of a fraction", { type: "heading", level: 1.5, anchor: "", spans: [] }],
+    ["a level past a byte", { type: "heading", level: 256, anchor: "", spans: [] }],
+    ["a level below none", { type: "heading", level: -1, anchor: "", spans: [] }],
+    [
+      "a level that is no number at all",
+      { type: "heading", level: Number.NaN, anchor: "", spans: [] },
+    ],
+    ["a start of a fraction", { type: "list", ordered: true, start: 1.5, items: [] }],
+    ["a start below none", { type: "list", ordered: true, start: -1, items: [] }],
+    ["a start past a safe integer", { type: "list", ordered: true, start: 2 ** 53, items: [] }],
+    [
+      "a start of infinity",
+      { type: "list", ordered: true, start: Number.POSITIVE_INFINITY, items: [] },
+    ],
     ["spans that are no list", paragraph(text("x") as unknown as unknown[])],
     ["a missing field", { type: "code", language: "rust" }],
     [

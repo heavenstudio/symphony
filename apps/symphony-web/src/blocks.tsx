@@ -6,7 +6,7 @@
 
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { Button } from "./button";
-import { DocumentPicture, declarations, MediaView } from "./media";
+import { DocumentPicture, MediaView, writtenStyle } from "./media";
 import { href } from "./project";
 import { NearViewport, useVisibility } from "./viewport";
 import type {
@@ -891,14 +891,15 @@ const ATTRIBUTES = new Map<string, string>(
 );
 
 /**
- * The attributes of `values` the client applies, as React's props, the style as its object: one
- * bag any element takes, whatever its own props' types.
+ * The attributes of `values` the client applies, as React's props, the style as a ref that writes
+ * it as given (`writtenStyle`): one bag any element takes, whatever its own props' types.
  */
 function mapped(values: Record<string, string>): object {
   const props: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(values)) {
     const prop = ATTRIBUTES.get(name);
-    if (prop !== undefined) props[prop] = prop === "style" ? declarations(value) : value;
+    if (prop === "style") props.ref = writtenStyle(value);
+    else if (prop !== undefined) props[prop] = value;
   }
   return props;
 }
