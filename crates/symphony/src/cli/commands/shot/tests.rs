@@ -327,6 +327,10 @@ fn the_help_says_what_the_page_waits_for_what_a_dialog_gets_and_what_the_report_
         "A dialog the page or a frame opens is dismissed as it opens, and the page goes on: an \
          alert closed, a confirm or a prompt answered as by its Cancel, a beforeunload let leave; \
          --report names each",
+        // A page the page opens is let run behind it, and its dialogs are Chrome's to close.
+        "A page the page opens (a link, a script) runs behind it as Chrome leaves it: the page is \
+         brought back in front as soon as Chrome tells of the new one, so Chrome closes that \
+         one's dialogs, which --report does not name",
         "naming what it waited for, a frame by its address and a worker by its script's",
         // Every frame's console errors are in the report, each naming its frame.
         "the console errors and failed requests seen, a frame's (one Chrome runs in a process of \

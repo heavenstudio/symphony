@@ -947,6 +947,12 @@ pub struct Chrome {
     /// What each frame followed turns on beyond its network and page events
     /// ([`Chrome::enable_in_frames`]).
     frame_domains: Vec<String>,
+    /// The targets of the pages this driver opened itself: the observer's and the page under
+    /// test's, which [`Chrome::keep_in_front`] tells from the pages the page opens.
+    own_pages: Vec<String>,
+    /// Whether the page under test is brought back in front as soon as another page appears or
+    /// commits ([`Chrome::keep_in_front`]).
+    fronting: bool,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -981,6 +987,8 @@ impl Chrome {
             following: false,
             dismissing: false,
             frame_domains: Vec::new(),
+            own_pages: Vec::new(),
+            fronting: false,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -1006,6 +1014,7 @@ impl Chrome {
             json!({"targetId": target_id, "flatten": true}),
         )?;
         chrome.session = Some(session_id(&attached)?);
+        chrome.own_pages = vec![blank, target_id];
         chrome.call("Page.enable", json!({}))?;
         chrome.call("Network.enable", json!({}))?;
         Ok(chrome)
@@ -1085,10 +1094,37 @@ impl Chrome {
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
-        // Shared workers, which the browser runs, are only told of: discovery attaches to and
-        // holds nothing. A Chrome that refuses it tells of none.
-        let shared = json!({"discover": true, "filter": [{"type": SHARED_WORKER}]});
-        match self.browser_call("Target.setDiscoverTargets", shared) {
+        self.discover()
+    }
+
+    /// From now on, keep the page under test in front of every page it opens. Each page Chrome
+    /// tells of that this driver did not open itself (`Target.targetCreated`: a page the page
+    /// opened, by a link or a script; `Target.targetInfoChanged`: its document committed, or its
+    /// title) has the page brought back in front at once, unwaited, as its event is read, in any
+    /// call or wait: the browser does it without asking the page. A page behind another draws no
+    /// frames, and Chrome closes the dialog of a page that is not in front. A page of the page's
+    /// own site opened with its opener runs in the page's renderer, and a dialog it shows in front
+    /// holds that renderer, and every call and wait on the page with it, until it is answered: it
+    /// is closed as the page comes back in front, or as it opens once that page is behind. Such a
+    /// page is only told of (`Target.setDiscoverTargets`), never attached or held: it runs as
+    /// Chrome leaves it, and its dialogs are not among [`Chrome::events`].
+    pub fn keep_in_front(&mut self) -> Result<()> {
+        self.fronting = true;
+        self.discover()
+    }
+
+    /// Have the browser tell of the targets that are only told of, never attached to or held:
+    /// shared workers once frames are followed ([`Chrome::follow_frames`]), which the browser
+    /// runs, and pages once the page is kept in front ([`Chrome::keep_in_front`]). A Chrome that
+    /// refuses tells of none, and nothing else is lost.
+    fn discover(&mut self) -> Result<()> {
+        let filter: Vec<Value> = [(self.following, SHARED_WORKER), (self.fronting, PAGE)]
+            .into_iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, kind)| json!({ "type": kind }))
+            .collect();
+        let discover = json!({"discover": true, "filter": filter});
+        match self.browser_call("Target.setDiscoverTargets", discover) {
             Err(error) if error.past_deadline() => Err(error),
             _ => Ok(()),
         }
@@ -1263,10 +1299,15 @@ impl Chrome {
 
     /// Keep `event`; one that says a frame or a worker followed ([`Chrome::follow_frames`]) has
     /// started is answered first ([`Chrome::follow`]), and so is a dialog opening, once dialogs
-    /// are dismissed ([`Chrome::dismiss_dialogs`]).
+    /// are dismissed ([`Chrome::dismiss_dialogs`]), and one of a page the page opened, once the
+    /// page is kept in front ([`Chrome::keep_in_front`]).
     fn keep(&mut self, event: Value) -> Result<()> {
         if self.following && event["method"] == "Target.attachedToTarget" {
             self.follow(&event["params"])?;
+        }
+        if self.fronting && self.opened_by_the_page(&event) {
+            // Unwaited: the browser answers it, whatever holds the page's renderer.
+            self.send("Page.bringToFront", json!({}), self.session.clone())?;
         }
         if self.dismissing && event["method"] == "Page.javascriptDialogOpening" {
             // Answered on the session it opened on, the page's or a followed frame's, unwaited:
@@ -1317,6 +1358,19 @@ impl Chrome {
             self.send("Runtime.runIfWaitingForDebugger", json!({}), Some(session))?;
         }
         Ok(())
+    }
+
+    /// Whether `event` tells of a page this driver did not open itself, as it appears or commits
+    /// its document: a page the page opened.
+    fn opened_by_the_page(&self, event: &Value) -> bool {
+        let target = &event["params"]["targetInfo"];
+        matches!(
+            event["method"].as_str(),
+            Some("Target.targetCreated" | "Target.targetInfoChanged")
+        ) && target["type"] == PAGE
+            && target["targetId"]
+                .as_str()
+                .is_some_and(|id| !self.own_pages.iter().any(|own| own == id))
     }
 
     fn forget_events(&mut self) {
@@ -1410,6 +1464,10 @@ const WORKER: &str = "worker";
 /// The kind of target that is a shared worker, which the browser runs: only discovered
 /// ([`Chrome::follow_frames`]), never followed.
 const SHARED_WORKER: &str = "shared_worker";
+
+/// The kind of target that is a page (a tab): one the page opens is only discovered
+/// ([`Chrome::keep_in_front`]), never followed.
+const PAGE: &str = "page";
 
 /// The auto-attach that follows a page's, a followed frame's or a followed worker's frames in
 /// processes of their own and workers ([`Chrome::follow_frames`]): each held as it starts, on a

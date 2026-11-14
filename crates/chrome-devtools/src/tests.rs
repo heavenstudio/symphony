@@ -629,6 +629,8 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         following: false,
         dismissing: false,
         frame_domains: Vec::new(),
+        own_pages: Vec::new(),
+        fronting: false,
     };
     let failure = chrome
         .read(false)
@@ -1384,6 +1386,9 @@ fn with_peer<T: Send + 'static>(
         following: false,
         dismissing: false,
         frame_domains: Vec::new(),
+        // The targets of the observer's page and the page under test, as a launch has them.
+        own_pages: vec!["observer-target".into(), "page-target".into()],
+        fronting: false,
     };
     (chrome, served)
 }
@@ -2106,6 +2111,95 @@ fn a_dialog_is_answered_on_the_session_it_opened_on_once_dialogs_are_dismissed_a
             answer("frame", false),
             answer("page", false),
             answer("page", true),
+        ]
+    );
+}
+
+#[test]
+fn a_page_the_page_opens_brings_it_back_in_front_unwaited_as_it_is_told_of_once_kept_in_front() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        // Every command but the observer's turns and the page's probes: its session, its method and
+        // its parameters.
+        let mut seen = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            seen.push((
+                command["sessionId"].as_str().unwrap_or("").to_string(),
+                command["method"].as_str().unwrap_or("").to_string(),
+                command["params"].clone(),
+            ));
+            if command["method"] == "Fixture.open" {
+                // Told of before the reply, as Chrome tells of what a call started: a page the
+                // page opened, appearing and committing its document; the page itself and the
+                // observer's page changing; a shared worker appearing; the opened page closing.
+                for (method, target, kind) in [
+                    ("Target.targetCreated", "opened", "page"),
+                    ("Target.targetInfoChanged", "opened", "page"),
+                    ("Target.targetInfoChanged", "page-target", "page"),
+                    ("Target.targetInfoChanged", "observer-target", "page"),
+                    ("Target.targetCreated", "shared", "shared_worker"),
+                ] {
+                    peer.send(json!({"method": method, "params": {
+                        "targetInfo": {"targetId": target, "type": kind, "url": "http://a/"}}}));
+                }
+                peer.send(json!({"method": "Target.targetDestroyed",
+                    "params": {"targetId": "opened"}}));
+            }
+            // Bringing the page in front is never waited for: it gets no reply here.
+            if command["method"] != "Page.bringToFront" {
+                peer.reply(&command, json!({}));
+            }
+        }
+        seen
+    });
+    // Not kept in front, a page opened is only kept among the events.
+    chrome.call("Fixture.open", json!({})).unwrap();
+    chrome.keep_in_front().unwrap();
+    chrome.follow_frames().unwrap();
+    chrome.call("Fixture.open", json!({})).unwrap();
+    // A wait goes on, the page never answering its bringing in front.
+    chrome.call("Fixture.after", json!({})).unwrap();
+    let told = chrome
+        .events()
+        .iter()
+        .filter(|event| event["method"].as_str().unwrap().starts_with("Target.target"))
+        .count();
+    assert_eq!(told, 12);
+    drop(chrome);
+    let command = |session: &str, method: &str, params: Value| {
+        (session.to_string(), method.to_string(), params)
+    };
+    let discover = |kinds: &[&str]| {
+        let filter: Vec<Value> = kinds.iter().map(|kind| json!({ "type": kind })).collect();
+        json!({"discover": true, "filter": filter})
+    };
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            command("page", "Fixture.open", json!({})),
+            // Of the browser's own session: pages told of, then shared workers too, as frames
+            // are followed.
+            command("", "Target.setDiscoverTargets", discover(&["page"])),
+            command(
+                "page",
+                "Target.setAutoAttach",
+                json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}),
+            ),
+            command(
+                "",
+                "Target.setDiscoverTargets",
+                discover(&["shared_worker", "page"]),
+            ),
+            command("page", "Fixture.open", json!({})),
+            // The opened page appearing, then committing: the page brought in front each time,
+            // on its own session; nothing for the page itself, the observer's, a worker or a page
+            // closing.
+            command("page", "Page.bringToFront", json!({})),
+            command("page", "Page.bringToFront", json!({})),
+            command("page", "Fixture.after", json!({})),
         ]
     );
 }
