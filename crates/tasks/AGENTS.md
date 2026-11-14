@@ -581,7 +581,15 @@ run of that binary; nothing else changes `.target/bin/`. The native `tasks api`
 JSON interface (`src/cli/api.rs`) takes a call on stdin; `tasks api --lines` takes
 one JSON call per line on stdin and answers each on its own line (a line that
 is a list of calls gets a list of answers), the methods being the store's, plus
-`threads` and `snapshot`, which read several things in one round trip.
+`threads` and `snapshot`, which read several things in one round trip, and
+`version`, the api's `MAJOR` and `MINOR` and the schema this build writes, answered
+without the board. It is a contract ([TASKS](../../docs/TASKS.md#the-tasks-api)):
+within a major a method, an argument or a field of an answer is added, never
+removed, renamed or changed in meaning, an argument added has a default, and each
+addition raises `MINOR`; a new major is a task of its own. `tests/cli/api/contract.rs`
+holds the calls a registered project's programs make, each request and the fields
+of its answer the caller reads with their JSON types: a call such a program starts
+making is added there.
 `notify` authorizes a tool's actor and posts an addressed `board` message to a
 literal session handle on its task (neither `owner` nor a role). It reaches that
 session's inbox even when the actor is the recipient; ordinary `say` posts retain

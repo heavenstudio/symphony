@@ -1049,6 +1049,27 @@ one side makes that the other must act on becomes a short board task for that si
 and a side that approves documents commits them regularly, because worktree agents
 see only what is committed.
 
+## The tasks API
+
+`tasks api` is the board's methods as JSON, for a program rather than a person: one call
+`{"method": NAME, "args": {…}}`, or a list of them, on stdin, each answered `{"ok": RESULT}`,
+`{"refused": WHY}` (the board's refusal, which wrote nothing) or `{"error": WHY}`; `tasks api
+--lines` answers a call per line over one connection (`crates/tasks/src/cli/api.rs`). It is how a
+project's own program reaches its board without linking the board's library.
+
+It is a contract, versioned `MAJOR.MINOR`. `{"method": "version"}` answers
+`{"api": {"major": M, "minor": N}, "schema": S}`, S the board schema the build writes, without
+reaching the board: a program that must know what a build serves, such as a project's launcher
+choosing between builds, asks it, never reading Symphony's source. Within a major a method, an
+argument or a field of an answer is added, never removed, renamed or changed in meaning, and an
+argument added has a default, its absence read as before; each addition raises the minor, and the
+api version this guide gives a method (`hold`, api version 4) is its minor of major 1. A new major
+is a task of its own. The calls a registered project's programs make today are held by
+`crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
+reads with their JSON types, so a change that would break one fails its own task's gate. What the
+api promises is its calls, not the board's rules behind them, such as who may move or judge a
+task.
+
 ## The agents API
 
 The app is the source of truth for who is doing what: `GET /api/agents` of the Symphony and `just tasks agents
