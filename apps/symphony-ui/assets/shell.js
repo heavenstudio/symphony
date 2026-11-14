@@ -285,8 +285,8 @@ window.reviewHoldPlace = rows => {
     const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
     let stopped = false, frame = 0, quiet = 0, stuck = 0;
     const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
-    // The window cut to `clip`, a scroller's box, and the reach of a sentinel around it: whether `r`
-    // meets it.
+    // Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
+    // above and below it.
     const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
         && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
         && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
