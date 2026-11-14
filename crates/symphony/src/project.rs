@@ -16,8 +16,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
-use std::time::SystemTime;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 mod board;
 mod file;
@@ -31,6 +31,28 @@ pub use theme::Theme;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
+
+/// How long after a load a plugin's process refused ([`Project::of`]) it is read again: the pause
+/// after which that process is started again, so each read again may start it.
+pub const AGAIN: Duration = crate::plugins::process::PAUSE;
+
+/// A project as [`Project::of`] read it: each file its load looked at, as it was, the project, why
+/// it is the plain project when it is, and when its load is read again, for a plugin's process.
+struct Seen {
+    stamps: Vec<(PathBuf, Stamp)>,
+    project: Arc<Project>,
+    problem: Option<String>,
+    again: Option<Instant>,
+}
+
+/// Each project [`Project::of`] read, by its root.
+static SEEN: LazyLock<Mutex<BTreeMap<PathBuf, Seen>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// `mutex` held, whatever a thread that panicked holding it left.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
 /// session without a channel reads.
@@ -378,17 +400,39 @@ impl Project {
     /// folder under that. A table or key this build does not know is left out and reported once
     /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
     /// settings; a project that does not load leaves the plain project in its place, reported the
-    /// same way. `symphony-status --lint` refuses both ([`crate::lint::project_problems`]).
+    /// same way, and says why while it does ([`Project::problem`]). A load refused while a plugin of
+    /// the project answering from its process has not declared (its program missing, or slow to
+    /// declare at a start) is no setting of the project's: it is read again [`AGAIN`] after, by one
+    /// reader while the others keep the plain project, until it loads. `symphony-status --lint`
+    /// refuses each ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
-        type Seen = BTreeMap<PathBuf, (Vec<(PathBuf, Stamp)>, Arc<Project>)>;
-        static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
-        if let Some((stamps, project)) = SEEN
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(root)
-            && stamps.iter().all(|(path, held)| *held == Stamp::of(path))
+        Self::seen(root).0
+    }
+
+    /// Why the project at `root` is the plain project in [`Project::of`]'s place, while its file
+    /// does not load: none once it does.
+    pub fn problem(root: &Path) -> Option<String> {
+        Self::seen(root).1
+    }
+
+    /// [`Project::of`], and why it is the plain project when it is.
+    fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
+        let mut said = None;
+        if let Some(held) = lock(&SEEN).get_mut(root)
+            && held
+                .stamps
+                .iter()
+                .all(|(path, held)| *held == Stamp::of(path))
         {
-            return project.clone();
+            match held.again {
+                // This reader reads it again; the others keep what was read meanwhile, so a
+                // process slow to declare holds one reader, never each.
+                Some(at) if Instant::now() >= at => {
+                    held.again = Some(Instant::now() + AGAIN);
+                    said = held.problem.clone();
+                }
+                _ => return (held.project.clone(), held.problem.clone()),
+            }
         }
         let stamped = |path: PathBuf| {
             let stamp = Stamp::of(&path);
@@ -405,22 +449,35 @@ impl Project {
                 .map(|()| (project, unknown))
                 .map_err(|e| format!("{FILE}: {e}"))
         });
-        let project = Arc::new(match loaded {
+        let (project, problem, again) = match loaded {
             Ok((project, unknown)) => {
                 if let Some(refusal) = File::refusal(&unknown) {
                     eprintln!("{}: {refusal}; left out, the rest read", root.display());
                 }
-                project
+                (project, None, None)
             }
             Err(problem) => {
-                eprintln!("{}: {problem}; using the defaults", root.display());
-                Self::plain(root)
+                // A load read again for a plugin's process says its problem again only when it
+                // changed.
+                if said.as_ref() != Some(&problem) {
+                    eprintln!("{}: {problem}; using the defaults", root.display());
+                }
+                let again =
+                    crate::plugins::process::undeclared(root).then(|| Instant::now() + AGAIN);
+                (Self::plain(root), Some(problem), again)
             }
-        });
-        SEEN.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(root.to_path_buf(), (stamps, project.clone()));
-        project
+        };
+        let project = Arc::new(project);
+        lock(&SEEN).insert(
+            root.to_path_buf(),
+            Seen {
+                stamps,
+                project: project.clone(),
+                problem: problem.clone(),
+                again,
+            },
+        );
+        (project, problem)
     }
 
     /// The project as the client's header and home read it: its theme package's name, its register

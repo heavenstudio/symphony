@@ -43,7 +43,7 @@ pub fn of_project(
 
 /// The plugin `name` as it answers: from its process when `processes` names one for it
 /// ([`process::answering`]), else the compiled plugin of that name; or why its process cannot say
-/// what it declared.
+/// what it declared, naming its log.
 fn plugin(
     name: &str,
     processes: &BTreeMap<String, PluginProcess>,
@@ -56,9 +56,12 @@ fn plugin(
         return Ok(compiled());
     };
     let remote = process::made(name, &started);
-    remote
-        .declaration()
-        .map_err(|why| format!("[plugins.process] {name} cannot say its renderers: {why}"))?;
+    remote.declaration().map_err(|why| {
+        format!(
+            "[plugins.process] {name} cannot say its renderers: {why} (its log: {})",
+            started.log.display()
+        )
+    })?;
     Ok(Some(remote))
 }
 

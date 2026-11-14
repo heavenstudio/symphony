@@ -616,8 +616,9 @@ impl AskStore {
     }
 }
 
-/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`artifacts/`) of the main
-/// checkout every worktree of `root`'s repository shares, else under `root`.
+/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`[project] artifacts`, else
+/// `artifacts/`, read alone: [`symphony_board::project::artifacts`]) of the main checkout every
+/// worktree of `root`'s repository shares, else under `root`.
 pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
     if let Some(db) = asks_db.filter(|db| !db.is_empty()) {
         return PathBuf::from(db);
@@ -639,7 +640,10 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
             base = checkout.to_path_buf();
         }
     }
-    base.join(crate::project::Project::of(&base).artifact("asks/asks.db"))
+    // The artifacts folder read alone and quietly, as the board finds the store: no plugin's
+    // process starts for a path, and a project that does not load keeps its store where it is.
+    let artifacts = symphony_board::project::artifacts(&base).unwrap_or_else(|| "artifacts".into());
+    base.join(format!("{artifacts}/asks/asks.db"))
 }
 
 /// `ASK <id> <path>#<anchor> — <question>` on one line.

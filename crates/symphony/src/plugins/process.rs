@@ -162,6 +162,15 @@ pub fn answering(name: &str, own: &PluginProcess) -> Option<PluginProcess> {
     }
 }
 
+/// Whether a plugin of the checkout at `root` answering from a process (its main checkout's, from a
+/// linked worktree: [`answering`]) has not declared: what a load it refused waits for.
+pub fn undeclared(root: &Path) -> bool {
+    let answers = crate::builds::main_checkout(root).unwrap_or_else(|| root.to_path_buf());
+    lock(&REMOTES)
+        .iter()
+        .any(|remote| remote.process.root == answers && remote.declared.get().is_none())
+}
+
 /// The remote `plugin` is, when it is one: a plugin of a project answering from its own process.
 pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
     lock(&REMOTES)

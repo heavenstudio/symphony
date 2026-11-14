@@ -583,7 +583,11 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
     assert_eq!(run_line["call"], "run");
     assert_eq!(run_line["name"], "every");
     assert!(run_line.get("lost").is_none());
-    assert!(symphony::plugins::command("nobody", Some(&tree.root)).is_none());
+    // No plugin adds it, and none failed to say what it adds.
+    assert_eq!(
+        symphony::plugins::command("nobody", Some(&tree.root)).err(),
+        Some(Vec::new())
+    );
 }
 
 /// The environment variable naming the project the child of

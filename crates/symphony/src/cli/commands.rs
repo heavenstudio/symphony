@@ -204,7 +204,10 @@ pub(super) fn plain_help(binary: &Binary, name: &str, args: &[String]) -> Option
 }
 
 /// `name`, a command the Symphony's `symphony` does not have of its own, run by the first plugin
-/// that adds it with `args`; a name no plugin adds is refused, naming the nearest. Its exit code.
+/// that adds it with `args`; a name no plugin adds is refused, naming the nearest, exit 2. While a
+/// plugin of the project answering from its process did not declare, its commands are not known:
+/// the name is refused naming each such plugin, why and its log, exit 1, as the command may be
+/// one of its. Its exit code.
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if name == "init" {
         return crate::init::main(args, out, err);
@@ -213,11 +216,21 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
         return shot::main(args, out, err);
     }
     // Measured as the project the command runs in says, the nearest above the current folder.
-    if let Some(command) = crate::plugins::command(name, here().as_deref()) {
-        return command.run(args, out, err);
+    match crate::plugins::command(name, here().as_deref()) {
+        Ok(command) => command.run(args, out, err),
+        Err(failed) => refuse_unknown(&SYMPHONY, name, &failed, err),
     }
-    let _ = writeln!(err, "{}", unknown(&SYMPHONY, name));
-    2
+}
+
+/// The refusal of `name`, no command of `binary`'s, on `err`: first each plugin whose process
+/// failed (`failed`, [`crate::plugins::Commands::failed`]), as the command may be one of its, exit
+/// 1; then the nearest commands ([`unknown`]), exit 2 when no process failed.
+fn refuse_unknown(binary: &Binary, name: &str, failed: &[String], err: &mut dyn Write) -> i32 {
+    for line in failed {
+        let _ = writeln!(err, "{}: {line}", binary.name);
+    }
+    let _ = writeln!(err, "{}", unknown(binary, name));
+    if failed.is_empty() { 2 } else { 1 }
 }
 
 /// The project a command runs in: the nearest above the current folder.
@@ -243,10 +256,7 @@ pub(super) fn build(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("split-repair") => split_repair::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
-        Some(name) => {
-            let _ = writeln!(err, "{}", unknown(&SYMPHONY_BUILD, name));
-            2
-        }
+        Some(name) => refuse_unknown(&SYMPHONY_BUILD, name, &[], err),
         None => usage(&SYMPHONY_BUILD, err),
     }
 }
@@ -293,12 +303,13 @@ pub(super) fn help(
             let _ = write!(out, "{}", listing(binary));
             0
         }
-        Some(name) if names(binary).iter().any(|known| known == name) => {
-            (binary.run)(&[name.to_string(), "--help".into()], out, err)
-        }
         Some(name) => {
-            let _ = writeln!(err, "{}", unknown(binary, name));
-            2
+            let (every, failed) = every(binary);
+            if every.iter().any(|(known, _)| known == name) {
+                (binary.run)(&[name.to_string(), "--help".into()], out, err)
+            } else {
+                refuse_unknown(binary, name, &failed, err)
+            }
         }
     }
 }
@@ -309,21 +320,27 @@ pub(super) fn usage(binary: &Binary, err: &mut dyn Write) -> i32 {
     2
 }
 
-/// Every command `binary` runs, with what it does, in the order its usage names them.
-fn every(binary: &Binary) -> Vec<(String, String)> {
+/// Every command `binary` runs, with what it does, in the order its usage names them; and a line
+/// for each plugin of the project whose process did not declare, so whose commands are not among
+/// them ([`crate::plugins::Commands::failed`]).
+fn every(binary: &Binary) -> (Vec<(String, String)>, Vec<String>) {
     let line = |(name, said): &(&str, &str)| ((*name).to_string(), (*said).to_string());
     let Some((last, own)) = binary.own.split_last() else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     // The plugins' commands of the project the binary runs in, as [`plugin`] runs them.
     let plugins = if binary.plugins {
         crate::plugins::commands_of(here().as_deref())
     } else {
-        Vec::new()
+        crate::plugins::Commands {
+            listed: Vec::new(),
+            failed: Vec::new(),
+        }
     };
-    own.iter()
+    let listed = own
+        .iter()
         .map(line)
-        .chain(plugins.into_iter().map(|command| {
+        .chain(plugins.listed.into_iter().map(|command| {
             let said = command.summary();
             let said = if said.is_empty() {
                 "a command of the project's plugins"
@@ -333,21 +350,26 @@ fn every(binary: &Binary) -> Vec<(String, String)> {
             (command.name().to_string(), said.to_string())
         }))
         .chain([line(last)])
-        .collect()
+        .collect();
+    (listed, plugins.failed)
 }
 
 /// Every command name of `binary`, in the order its usage names them.
 fn names(binary: &Binary) -> Vec<String> {
-    every(binary).into_iter().map(|(name, _)| name).collect()
+    every(binary).0.into_iter().map(|(name, _)| name).collect()
 }
 
-/// `binary`'s usage and every command with what it does: what its `help` prints.
+/// `binary`'s usage and every command with what it does: what its `help` prints, and after the
+/// commands each plugin whose process failed, as an unknown command says it ([`plugin`]).
 fn listing(binary: &Binary) -> String {
-    let every = every(binary);
+    let (every, failed) = every(binary);
     let width = every.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     let mut text = format!("{}commands:\n", binary.head);
     for (name, said) in &every {
         text.push_str(&format!("  {name:<width$}  {said}\n"));
+    }
+    for line in &failed {
+        text.push_str(&format!("\n{}: {line}\n", binary.name));
     }
     text
 }

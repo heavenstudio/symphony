@@ -139,17 +139,28 @@ impl Plugin for Piped {
 }
 
 /// A component that spends its argument's microseconds before it answers, so a measurement shows
-/// its meters move by a known time; `hang` it never answers in a test's time.
+/// its meters move by a known time; `hang` it never answers in a test's time, the file
+/// [`HANGING`] written in the page's root first, so a test sees the call is in it.
 struct Slow;
 
 static SLOW: Slow = Slow;
+
+/// What `slow hang` writes in its page's root once the call is in the component.
+pub const HANGING: &str = "slow-hanging";
 
 impl Component for Slow {
     fn name(&self) -> &str {
         "slow"
     }
-    fn render(&self, _: &Page<'_>, argument: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+    fn render(
+        &self,
+        page: &Page<'_>,
+        argument: &str,
+        _: Option<&str>,
+    ) -> Result<Vec<Block>, String> {
         if argument == "hang" {
+            // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
+            let _ = std::fs::write(page.root.join(HANGING), "");
             std::thread::sleep(std::time::Duration::from_secs(600));
         }
         let micros: u64 = argument

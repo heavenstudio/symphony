@@ -92,10 +92,20 @@ pub fn commands() -> Vec<&'static dyn Command> {
         .collect()
 }
 
+/// The commands `symphony` runs in a project, and why those of a plugin answering from a process
+/// that did not declare are not among them.
+pub struct Commands {
+    /// Each command, as [`commands_of`] lists them.
+    pub listed: Vec<&'static dyn Command>,
+    /// For each plugin of the project whose process did not declare, so whose commands are not
+    /// known: a line naming it, why and its log.
+    pub failed: Vec<String>,
+}
+
 /// Every command `symphony` runs in the project at `root` ([`command`]): the commands of its
 /// plugins answering from a process, then those of the plugins this process holds that none of its
-/// processes answers for, each name once.
-pub fn commands_of(root: Option<&Path>) -> Vec<&'static dyn Command> {
+/// processes answers for, each name once; and the plugins whose process did not declare.
+pub fn commands_of(root: Option<&Path>) -> Commands {
     let piped = piped(root);
     let linked = compiled()
         .iter()
@@ -107,15 +117,20 @@ pub fn commands_of(root: Option<&Path>) -> Vec<&'static dyn Command> {
             found.push(command);
         }
     }
-    found
+    Commands {
+        listed: found,
+        failed: piped.failed,
+    }
 }
 
 /// What a project has of plugins answering from a process, for its commands: their commands, run
-/// as their programs ([`process`]), and the names of the plugins its file gives a process.
+/// as their programs ([`process`]), the names of the plugins its file gives a process, and a line
+/// for each of those whose process did not declare ([`Commands::failed`]).
 #[derive(Default)]
 struct Piped {
     commands: Vec<&'static dyn Command>,
     names: Vec<String>,
+    failed: Vec<String>,
 }
 
 impl Piped {
@@ -134,17 +149,25 @@ fn piped(root: Option<&Path>) -> Piped {
         return Piped::default();
     };
     let project = Project::of(root);
-    let plugins = Plugins::for_project(&project);
-    Piped {
-        commands: plugins
-            .list()
-            .iter()
-            .copied()
-            .filter(|plugin| process::remote(*plugin).is_some())
-            .flat_map(|plugin| plugin.commands())
-            .collect(),
+    let mut piped = Piped {
         names: project.plugin_processes.keys().cloned().collect(),
+        ..Piped::default()
+    };
+    for plugin in Plugins::for_project(&project).list() {
+        let Some(remote) = process::remote(*plugin) else {
+            continue;
+        };
+        match remote.declaration() {
+            Ok(_) => piped.commands.extend(plugin.commands()),
+            Err(why) => piped.failed.push(format!(
+                "the plugin {}'s process failed, so its commands are not known: {why} (its log: \
+                 {})",
+                plugin.name(),
+                remote.process().log.display()
+            )),
+        }
     }
+    piped
 }
 
 /// The command `name` `symphony` runs in the project at `root`: one of a plugin of the project
@@ -152,18 +175,22 @@ fn piped(root: Option<&Path>) -> Piped {
 /// holds that adds one, measured as the project at `root` says when there is one
 /// ([`Plugins::at`]). Whether the project names a plugin's process, and its two settings, are read
 /// alone and quietly first ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at),
-/// [`PluginCalls::read`]): with none of them, the command runs as it did before either setting
-/// existed, the project neither loaded nor checked and nothing said of its file.
-pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> {
+/// [`PluginCalls::read`]): with none of them, the command runs as it would with neither setting,
+/// the project neither loaded nor checked and nothing said of its file. None found is
+/// [`Commands::failed`]'s lines, empty when no plugin's process failed.
+pub fn command(name: &str, root: Option<&Path>) -> Result<&'static dyn Command, Vec<String>> {
     let piped = piped(root);
     if let Some(found) = piped.commands.iter().copied().find(|c| c.name() == name) {
-        return Some(found);
+        return Ok(found);
     }
-    let plugin = compiled()
+    let Some(plugin) = compiled()
         .iter()
         .copied()
         .filter(|plugin| !piped.answers(plugin.name()))
-        .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))?;
+        .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))
+    else {
+        return Err(piped.failed);
+    };
     let plugin = match root {
         Some(root) if PluginCalls::read(root).recorded() => {
             let project = Project::of(root);
@@ -177,6 +204,7 @@ pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> 
         .commands()
         .into_iter()
         .find(|command| command.name() == name)
+        .ok_or_else(Vec::new)
 }
 
 /// The record of `project`'s plugin calls, its checkout at `root`.

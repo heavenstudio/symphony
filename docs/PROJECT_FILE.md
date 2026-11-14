@@ -4,7 +4,9 @@ A project's settings are its `symphony.toml`, committed at the root of its main 
 table and key is optional: a key left out takes the default below, and an empty file, or none, is
 a plain project of every default. A table or key the Symphony does not know is refused by name and
 line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
-read, where the Symphony runs with the file as it is. The board reads its own keys (`[board]`'s
+read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
+project: the server serves the project with the defaults, and every page of it says so and why,
+until it loads. The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch` and `[agents.models]`) from the main
 checkout's copy, so a branch cannot change its own. A path is relative to the project's root and
 stays inside it, unless its key says otherwise.

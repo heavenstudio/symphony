@@ -342,6 +342,57 @@ fn a_plugins_process_that_cannot_say_its_renderers_is_named_by_the_entrypoint_th
 }
 
 #[test]
+fn a_project_whose_plugins_process_could_not_declare_is_read_again_until_it_loads() {
+    let tree = Tree::new();
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [\"./bin/plugin\"]\n\n\
+         [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [\"markdown\", \"every\"]\n",
+    );
+    tree.write("models/a.every", "");
+    // Its program is not there at the first read: the plain project, saying why and where its log
+    // is.
+    let started = Instant::now();
+    let mut read = vec![Project::of(&tree.root)];
+    assert!(read[0].plugins.is_empty());
+    let why = Project::problem(&tree.root).unwrap();
+    let log = tree.path("artifacts/plugins/every.log");
+    assert!(
+        why.starts_with("symphony.toml: [plugins.process] every cannot say its renderers: "),
+        "{why}"
+    );
+    assert!(
+        why.ends_with(&format!("(its log: {})", log.display())),
+        "{why}"
+    );
+    // Read again once a pause at most while it fails, never at each read: every project read is
+    // kept, so a new one is a new load.
+    read.extend((0..100).map(|_| Project::of(&tree.root)));
+    let loads = read
+        .iter()
+        .enumerate()
+        .filter(|(at, project)| *at == 0 || !std::sync::Arc::ptr_eq(&read[at - 1], project))
+        .count();
+    let pauses = started.elapsed().as_secs_f64() / symphony::project::AGAIN.as_secs_f64();
+    assert!(
+        loads as f64 <= 1.0 + pauses,
+        "{loads} loads in {pauses} pauses"
+    );
+    // Its program comes, with no change to the project's file: a read after the pause loads it.
+    std::fs::create_dir_all(tree.path("bin")).unwrap();
+    std::os::unix::fs::symlink(PLUGIN, tree.path("bin/plugin")).unwrap();
+    until("the project loads with its plugin's process", || {
+        Project::of(&tree.root).plugins == ["every"]
+    });
+    let project = Project::of(&tree.root);
+    let urls: Vec<&str> = project.entrypoints.iter().map(|e| e.url.as_str()).collect();
+    assert_eq!(urls, ["models"]);
+    assert_eq!(Project::problem(&tree.root), None);
+    // Its later reads are the one project loaded, with no read again.
+    assert!(std::sync::Arc::ptr_eq(&project, &Project::of(&tree.root)));
+}
+
+#[test]
 fn a_plugins_process_serves_its_route_as_it_does_linked() {
     let tree = Tree::new();
     let (linked, piped, _) = linked_and_piped(&tree, false);
@@ -501,7 +552,11 @@ fn a_plugins_process_declares_its_command_and_symphony_finds_it_in_the_project()
     let found = symphony::plugins::command("every", Some(&tree.root)).unwrap();
     assert!(std::ptr::addr_eq(found, ours[0]));
     let listed = symphony::plugins::commands_of(Some(&tree.root));
-    assert_eq!(listed.iter().filter(|c| c.name() == "every").count(), 1);
+    assert_eq!(
+        listed.listed.iter().filter(|c| c.name() == "every").count(),
+        1
+    );
+    assert!(listed.failed.is_empty());
     // A command is no call on the pipe, so none is recorded.
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
 }
@@ -554,10 +609,89 @@ fn a_plugin_the_project_gives_a_process_that_does_not_start_has_no_linked_comman
         symphony::project::FILE,
         "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n",
     );
-    // A copy this process holds is not the project's plugin, so it does not stand in for it.
-    assert!(symphony::plugins::command("every", Some(&tree.root)).is_none());
+    // A copy this process holds is not the project's plugin, so it does not stand in for it: the
+    // command is not found, naming the plugin whose process failed and its log.
+    let failed = symphony::plugins::command("every", Some(&tree.root))
+        .err()
+        .unwrap();
+    let said = "the plugin every's process failed, so its commands are not known: /no/such/plugin \
+                cannot start: ";
+    let log = format!(
+        "(its log: {})",
+        tree.path("artifacts/plugins/every.log").display()
+    );
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(
+        failed[0].starts_with(said) && failed[0].ends_with(&log),
+        "{failed:?}"
+    );
     let listed = symphony::plugins::commands_of(Some(&tree.root));
-    assert!(listed.iter().all(|c| c.name() != "every"));
+    assert!(listed.listed.iter().all(|c| c.name() != "every"));
+    assert_eq!(listed.failed.len(), 1, "{:?}", listed.failed);
+    assert!(listed.failed[0].starts_with(said), "{:?}", listed.failed);
+}
+
+#[test]
+fn symphony_names_a_plugins_process_that_failed_for_a_command_it_does_not_know() {
+    let tree = Tree::new();
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"shelf\"]\n\n[plugins.process]\nshelf = [\"./bin/shelf-plugin\"]\n",
+    );
+    let symphony = |args: &[&str]| {
+        let done = std::process::Command::new(env!("CARGO_BIN_EXE_symphony"))
+            .args(args)
+            .current_dir(&tree.root)
+            .output()
+            .unwrap();
+        let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
+        (
+            done.status.code().unwrap(),
+            text(done.stdout),
+            text(done.stderr),
+        )
+    };
+    // The project as `symphony` finds it, from the folder it runs in.
+    let root = tree.root.canonicalize().unwrap();
+    let failed = format!(
+        "symphony: the plugin shelf's process failed, so its commands are not known: {} cannot \
+         start: ",
+        root.join("bin/shelf-plugin").display()
+    );
+    let log = format!(
+        "(its log: {})\n",
+        root.join("artifacts/plugins/shelf.log").display()
+    );
+    // A command it may add is refused naming the plugin, why and its log, then as unknown: exit 1.
+    let (code, out, err) = symphony(&["render-models", "a", "b"]);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    let (first, rest) = err.split_once('\n').unwrap();
+    assert!(first.starts_with(&failed), "{err}");
+    assert!(format!("{first}\n").ends_with(&log), "{err}");
+    assert!(
+        rest.starts_with("symphony: unknown command \"render-models\""),
+        "{err}"
+    );
+    // `help` lists the commands there are and says the same after them; `help NAME` refuses as the
+    // command does.
+    let (code, listing, _) = symphony(&["help"]);
+    assert_eq!(code, 0);
+    let note = listing.rsplit_once("\n\n").unwrap().1;
+    assert!(
+        note.starts_with(&failed) && note.ends_with(&log),
+        "{listing}"
+    );
+    let (code, _, err) = symphony(&["help", "render-models"]);
+    assert_eq!(code, 1);
+    assert!(err.starts_with(&failed), "{err}");
+    // A project whose processes all declared refuses an unknown command naming no plugin: exit 2.
+    project(&tree, "");
+    let (code, _, err) = symphony(&["render-models"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.starts_with("symphony: unknown command \"render-models\""),
+        "{err}"
+    );
 }
 
 #[test]
@@ -576,8 +710,10 @@ fn a_plugins_process_killed_mid_call_fails_that_call_alone() {
             format!("{:?}", piped.render(&page, "slow", "hang", None))
         })
     };
-    // Killed while the call waits on it, however far it got.
-    std::thread::sleep(Duration::from_millis(100));
+    // Killed while the call is in the plugin: once its component marked the page's root.
+    until("the call is in the plugin", || {
+        tree.path(super::every::HANGING).exists()
+    });
     let killed = std::process::Command::new("kill")
         .args(["-9", &pid.to_string()])
         .status()

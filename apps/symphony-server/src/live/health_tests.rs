@@ -416,6 +416,56 @@ fn a_low_disk_is_said_on_every_page_beside_the_boards_health_until_it_is_freed()
     );
 }
 
+/// A project whose settings do not load is served with the defaults, and every page says so and
+/// why until they load; each change asks the loop to read the documents again.
+#[test]
+fn a_project_whose_settings_do_not_load_says_so_on_every_page_until_they_do() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    let mut notices = hub.server_notice.subscribe();
+    hub.tell_project();
+    assert!(!notices.has_changed().unwrap(), "it loads: nothing said");
+    assert!(!hub.rescan.load(SeqCst));
+
+    let file = root.join(symphony::project::FILE);
+    let entrypoint = |types: &str| {
+        format!("[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\ntypes = [{types}]\n")
+    };
+    std::fs::write(&file, entrypoint("\"none\"")).unwrap();
+    hub.tell_project();
+    let said = notices.borrow_and_update().clone();
+    let why = symphony::project::Project::load(&root).unwrap_err();
+    assert!(
+        why.contains("type \"none\": no renderer handles it"),
+        "{why}"
+    );
+    assert_eq!(said, super::health::project(&why));
+    assert!(
+        said.starts_with(
+            "This project's settings do not load, so it is served with the defaults: symphony.toml: "
+        ),
+        "{said}"
+    );
+    assert!(hub.rescan.swap(false, SeqCst), "a change asks for a read");
+    hub.tell_project();
+    assert!(
+        !notices.has_changed().unwrap(),
+        "still not loading: the pages are not told again"
+    );
+    assert!(!hub.rescan.load(SeqCst));
+
+    std::fs::write(&file, entrypoint("\"markdown\", \"media\"")).unwrap();
+    hub.tell_project();
+    assert_eq!(
+        *notices.borrow_and_update(),
+        "",
+        "it loads: its part clears"
+    );
+    assert!(hub.rescan.swap(false, SeqCst));
+}
+
 #[test]
 fn the_machines_disk_is_read_where_the_project_is_against_the_setting() {
     let tree = Tree::new();

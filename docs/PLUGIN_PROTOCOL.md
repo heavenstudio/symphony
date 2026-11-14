@@ -93,7 +93,11 @@ holds and which cost no call. A project that loads starts its plugins' processes
 declarations, as its navigation is among the routes an entrypoint's files must not meet. An
 entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
 type only a process could handle, and whose process cannot say its renderers, is refused, naming
-why. Its other seams (board fields, gates, prose rules, generators and transports) are not asked of
+why and the plugin's log. A server serves a project refused with the defaults, and every page of it
+says so and why until it loads. While that refusal is a process that has not declared (its program
+missing, or slow to declare when the server starts), the project is read again each second, the
+process's pause, by one read while the others keep the defaults: once the process declares, the
+project is served as its file says, with no change to the file. Its other seams (board fields, gates, prose rules, generators and transports) are not asked of
 a process: a plugin that declares any of them is refused under `[plugins.process]`, naming them,
 rather than losing them without a word, and stays a linked plugin's to answer. Each is answered from
 a process once a plugin first declares it from one. So is a plugin refused that declares another
@@ -158,15 +162,28 @@ answers from a process and declared the command `NAME`, runs the plugin's progra
 in, without the session, with `symphony`'s own stdin, stdout and stderr, which the program writes to
 itself once what `symphony` wrote before is flushed, and its exit code `symphony`'s, which the SDK's
 `serve` gives as the command's (its low byte, as an exit status holds it). A program killed exits
-128 and the signal's number, and one that cannot start exits 1, each saying so on stderr (`plugin
-NAME: its command C was killed by signal 9`). It is no call: it starts no process of the pipe's,
-waits on none, copies no stream and is not measured. `symphony help` lists
-the commands the project's processes declared, each once, before those of the plugins linked in the
-binary; a linked plugin that the project's file gives a process adds none, even while that process
-does not start, so a copy built into the binary never stands in for the project's own. The project
-is found and its plugins started only when its file names a `[plugins.process]`, read alone and
-quietly first; a project with none runs its linked plugins' commands as before. `commands.run` is
-the loopback's alone.
+128 and the signal's number, and one that no longer starts (its file gone since it declared) exits
+1, each saying so on stderr (`plugin NAME: its command C was killed by signal 9`). Running the
+command is no call: it waits on no process of the pipe's, copies no stream and is not measured.
+`symphony help` lists the commands the project's processes declared, each once, before those of the
+plugins linked in the binary; a linked plugin that the project's file gives a process adds none,
+even while that process does not start, so a copy built into the binary never stands in for the
+project's own. The project is found and its plugins started only when its file names a
+`[plugins.process]`, read alone and quietly first; in a project with none, `symphony NAME` runs a
+linked plugin's command with no project loaded or checked. `commands.run` is the loopback's alone.
+
+A command is known by the plugin's declaration, so `symphony NAME` and `symphony help` start each
+process of the project for it. While one cannot start or declare, its commands are not known:
+`symphony NAME` of a name nothing else adds says on stderr which plugin's process failed, why and
+where its log is, then that the command is unknown, and exits 1 (2 when no process failed):
+
+```text
+symphony: the plugin shelf's process failed, so its commands are not known: /p/bin/shelf-plugin cannot start: No such file or directory (os error 2) (its log: /p/artifacts/plugins/shelf.log)
+symphony: unknown command "render-models" (`just symphony-cli help` lists them)
+```
+
+`symphony help` lists the commands there are and then the same line for each such plugin, and
+`symphony help NAME` refuses such a name as `symphony NAME` does.
 
 ## Card kinds in one request
 
@@ -178,22 +195,13 @@ card, each kind's eight answers in the plugin's order (`KindAnswers`), the pictu
 checkout the request names. The cards go in as many requests as keep each line within the 16 MiB
 bound, a card too long for a line alone asked card by card. The read's answers stand for that read
 alone: a card it did not hold, a request that had no answer, an answer that does not hold one entry
-for each card, and a plugin of 0.2, which has no batch, are asked card by card, as before. A panic
-in any kind's call refuses the request whole, and its cards are asked card by card.
+for each card, and a plugin of 0.2, which has no batch, are asked card by card. A panic in any
+kind's call refuses the request whole, and its cards are asked card by card.
 
-What it costs, measured (below, the second test): registers of 50 and 500 cards, the test plugin's
-one card kind, each read made 30 times interleaved and none recorded, in a debug build on a machine
-under load (load averages 55 to 73 before and after each of two runs; the machine was not quiet):
-
-| Cards | Linked | From the process, card by card | From the process, in one request |
-|---|---|---|---|
-| 50 | 1.1 ms | 101 to 117 ms | 14.8 ms |
-| 500 | 10.6 ms | 940 to 971 ms | 114 to 119 ms |
-
-The 500 cards are 1,000 in the request (each with its document and with none): a request of 206
-KB and an answer of 410 KB, 35 to 39 ms in the plugin and 72 to 93 ms waited. A read from a process
-in one request costs 11 to 13 times the linked one and a seventh to an eighth of the card-by-card
-one, at either size.
+What it saves, counted: card by card, a read asks each of the eight calls of each card as a round
+trip of its own; in one request, a register of 500 cards is one request of 1,000 entries (each card
+with its document and with none), 206 KB asked and 410 KB answered, well within a line. What the
+three reads cost in time is the second test of [Measured](#measured), taken as that section says.
 
 ## The line
 
@@ -258,9 +266,10 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   `views`, a page's `render` or `artifacts`). A new field comes with a default, or with a new major.
   So that such a field is a new minor of the kit's crates too, every struct of
   `symphony_plugin::protocol` is `#[non_exhaustive]` and is made by its constructors, never by its
-  fields: a request by its `new`; a page, a card, a task, a file or a problem by its `of`; a
-  declaration, and what it lists, by its `of` from a plugin (or from its `Default`, its fields set
-  after); a version by its `new`; a line by `Envelope::asking`, `cancelling` or `answering`. A
+  fields: a request by its `new`; a page, a card, a task, a file or a problem by its `of`; a kind's
+  answers of a card (`KindAnswers`) by its `of` from the kind; a declaration, and what it lists, by
+  its `of` from a plugin (or from its `Default`, its fields set after); a version by its `new`; a
+  line by `Envelope::asking`, `cancelling` or `answering`. A
   request's `new` takes every field its call has, so a field added to a call's own changes it: no
   call has a field a later minor added yet, and the first gives `calls!` a group of fields after
   the call's own that `new` leaves out and fills with their defaults, set on the request after.
