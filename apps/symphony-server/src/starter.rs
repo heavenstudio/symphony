@@ -187,7 +187,7 @@ fn refused(checkout: &Checkout, what: &str) -> String {
 }
 
 /// Ask `running`, `server` as it was found, to hand its sockets to `request`'s build and wait for
-/// the successor to answer, holding `ours`' plugins: the successor's record.
+/// the successor ([`successor`]): the successor's record.
 fn hand_off(
     home: &Home,
     running: &Running,
@@ -199,15 +199,9 @@ fn hand_off(
     ask(server, &request.exe)?;
     let began = Instant::now();
     while began.elapsed() < HANDOVER_PATIENCE {
-        if let Some(front) = crate::probe::front(running.port, Duration::from_secs(2))
-            && front.pid != running.pid
-            && ours.plugins.iter().all(|name| front.plugins.contains(name))
-        {
-            return Ok(Running {
-                port: running.port,
-                pid: front.pid,
-                root: front.root,
-            });
+        let front = crate::probe::front(running.port, Duration::from_secs(2));
+        if let Some(successor) = successor(running, ours, front, home.recorded()) {
+            return Ok(successor);
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -217,6 +211,28 @@ fn hand_off(
         HANDOVER_PATIENCE.as_secs(),
         home.dir().join(home::LOG).display()
     ))
+}
+
+/// The server that took over from `running`, once a start can say so: `front`, what answers on its
+/// port, is another process, holding `ours`' plugins, and `recorded`, the machine folder's record,
+/// names it. The successor answers on the handed sockets before its predecessor has read its
+/// readiness and recorded it, so an answer alone would end the start while the record still names
+/// the predecessor: a `--stop` then would end the one draining and forget the one serving.
+fn successor(
+    running: &Running,
+    ours: &Build,
+    front: Option<symphony_api::Front>,
+    recorded: Option<Running>,
+) -> Option<Running> {
+    let front = front?;
+    (front.pid != running.pid
+        && ours.plugins.iter().all(|name| front.plugins.contains(name))
+        && recorded.is_some_and(|recorded| recorded.pid == front.pid))
+    .then(|| Running {
+        port: running.port,
+        pid: front.pid,
+        root: front.root,
+    })
 }
 
 /// SIGUSR1 to `server`, the running one, to hand over to `exe`, said on stderr first, while its pid
@@ -281,5 +297,76 @@ mod tests {
             std::os::unix::process::ExitStatusExt::signal(&holder.wait().unwrap()),
             Some(libc::SIGUSR1)
         );
+    }
+
+    /// What answers on the port at `pid`, holding `plugins`: a successor or its predecessor.
+    fn answering(pid: i64, plugins: &[&str]) -> symphony_api::Front {
+        symphony_api::Front {
+            pid,
+            port: 4100,
+            root: "/shelf".into(),
+            ready: true,
+            app: None,
+            tailnet: None,
+            orphans: 0,
+            plugins: plugins.iter().map(|name| (*name).to_owned()).collect(),
+            pin: 1,
+            schema: 1,
+            projects: Vec::new(),
+        }
+    }
+
+    /// The record of the server `pid` serving `root` on the port.
+    fn recorded(pid: i64, root: &str) -> Running {
+        Running {
+            port: 4100,
+            pid,
+            root: root.into(),
+        }
+    }
+
+    /// A start's hand-off is over once the record names the successor that answers: the successor
+    /// answers on the handed sockets before its predecessor has recorded it, and a start that ended
+    /// on that answer alone left the record naming the predecessor, so a `--stop` (or a test's
+    /// cleanup reading the record) ended the one draining and left the one serving running.
+    #[test]
+    fn a_hand_off_ends_once_the_record_names_the_successor_that_answers() {
+        let ours = Build {
+            plugins: vec!["fixture-shelf".into()],
+            pin: 1,
+            schema: 1,
+            by: "/shelf".into(),
+            worktree: None,
+        };
+        let old = recorded(10, "/main");
+        let new = || Some(recorded(20, "/shelf"));
+        // The successor answers holding the plugins, and the record names it: its record, as it
+        // answered.
+        assert_eq!(
+            successor(&old, &ours, Some(answering(20, &["fixture-shelf"])), new()),
+            Some(recorded(20, "/shelf"))
+        );
+        // It answers before its predecessor recorded it, or with no record to read: not yet.
+        for record in [Some(old.clone()), None] {
+            assert_eq!(
+                successor(
+                    &old,
+                    &ours,
+                    Some(answering(20, &["fixture-shelf"])),
+                    record.clone()
+                ),
+                None,
+                "{record:?}"
+            );
+        }
+        // The record names it, but the predecessor, accepting until the hand-off commits, answered
+        // this look, or nothing answered: not yet.
+        assert_eq!(
+            successor(&old, &ours, Some(answering(10, &["fixture-shelf"])), new()),
+            None
+        );
+        assert_eq!(successor(&old, &ours, None, new()), None);
+        // Recorded and answering, but without a plugin this build holds: not this build's.
+        assert_eq!(successor(&old, &ours, Some(answering(20, &[])), new()), None);
     }
 }
