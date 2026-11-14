@@ -311,13 +311,13 @@ never the whole target, which the release run runs.
   `/agents` and a task page to 548,597 and 549,190 (from 549,285 and 549,878) and the warmed chat
   and menus to 603,539 outside home's (from 604,282); every other page stays within 12 bytes of
   main's. Home moving to the web client (`app/client-moves-to-react/home`, against main's build
-  at 2949ff8) takes `/` to 108,297 bytes (from 237,723) and its cap to 125,000: its entry, its
+  at 6f89f02) takes `/` to 108,315 bytes (from 237,728) and its cap to 125,000: its entry, its
   sheet (the media sheet's copy), the chunk the three web kinds share and one it shares with the
-  queue (the board's feed and keep, 3,118 on the wire), so `/queue` takes 104,946 (from 103,265)
-  and `/reports` 106,451 (from 105,591); the Dioxus kinds, home's code gone from the shared
-  sources, take `/tasks` to 280,854 (from 281,185), `/agents` and a task page to 548,026 and
-  548,619 (from 548,587 and 549,180) and `/docs/` to 506,563 (from 507,064); the warmed chat and
-  menus take 604,993 outside home's (from 603,552), the media sheet home no longer holds under
+  queue (the board's feed and keep, 3,129 on the wire), so `/queue` takes 104,965 (from 103,296)
+  and `/reports` 106,455 (from 105,617); the Dioxus kinds, home's code gone from the shared
+  sources, take `/tasks` to 280,848 (from 281,212), `/agents` and a task page to 548,042 and
+  548,635 (from 548,627 and 549,220) and `/docs/` to 506,544 (from 507,082); the warmed chat and
+  menus take 604,993 outside home's (from 603,664), the media sheet home no longer holds under
   the program's name among them. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test

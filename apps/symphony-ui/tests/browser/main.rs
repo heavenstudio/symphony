@@ -73,7 +73,7 @@ use serde_json::json;
 use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 300_000.0;
-/// Home's first visit, the web client's since it moved (108,297 bytes on the fixture then), with
+/// Home's first visit, the web client's since it moved (108,315 bytes on the fixture then), with
 /// modest room: lowered from [`FIRST_VISIT_BYTES`] by that move, never raised.
 const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
