@@ -2664,24 +2664,28 @@ impl Landing<'_> {
     /// on the branch and has the new tip approved.
     fn owner_lines(&self) -> Result<(), Refusal> {
         let slug = self.slug;
-        let branch = format!("refs/heads/{slug}");
-        let held: Vec<String> = worktrees(&self.main)?
-            .iter()
-            .filter(|entry| entry.branch.as_deref() == Some(branch.as_str()))
-            .filter_map(|entry| {
-                let files = owner_lines_left(&entry.path);
-                (!files.is_empty())
-                    .then(|| format!("{} ({})", entry.path.display(), files.join(", ")))
-            })
-            .collect();
+        let mut held = String::new();
+        for entry in worktrees(&self.main)? {
+            if entry
+                .branch
+                .as_deref()
+                .and_then(|b| b.strip_prefix("refs/heads/"))
+                != Some(slug)
+            {
+                continue;
+            }
+            let files = owner_lines_left(&entry.path);
+            if !files.is_empty() {
+                held = format!("{held}{} ({}) ", entry.path.display(), files.join(", "));
+            }
+        }
         if held.is_empty() {
             return Ok(());
         }
         Err(Refusal::to(
             format!(
-                "{slug}'s worktree {} holds the owner's answer no commit has, which a land of its \
-                 commits would leave behind",
-                held.join(", ")
+                "{slug}'s worktree {held}holds the owner's answer no commit has, which a land of \
+                 its commits would leave behind"
             ),
             "@executor",
             format!(
