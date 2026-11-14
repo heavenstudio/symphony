@@ -34,6 +34,7 @@ pub const REPORTS_READ_BYTES: u64 = 64 << 20;
 
 /// How long each period of a window is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Grain {
     Hour,
@@ -283,6 +284,7 @@ pub struct BucketHealth {
 
 /// A commit that changed the project's settings file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ReportMark {
     /// Its commit time.
     pub at: f64,

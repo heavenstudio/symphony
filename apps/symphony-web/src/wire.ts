@@ -11,6 +11,7 @@ export const SERVER_EVENT = "server";
 export const CACHE_FORMAT = 2;
 export const BOARD_CARDS = 5;
 export const FILE_QUERY = "raw";
+export const REPORTS_PATH = "/api/reports";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -304,6 +305,20 @@ export type ActivityItem = {
 export type Pending = { items: Array<PendingItem>; docs: Array<string> };
 
 export type PendingItem = { path: string; slug: string; href: string; branch?: string | null };
+
+export type Grain = "hour" | "day" | "week";
+
+export type ReportMark = {
+  /**
+   * Its commit time.
+   */
+  at: number;
+  /**
+   * Its hash, abbreviated.
+   */
+  commit: string;
+  subject: string;
+};
 
 export type Block =
   | { type: "heading"; level: number; anchor: string; spans: Array<Span> }

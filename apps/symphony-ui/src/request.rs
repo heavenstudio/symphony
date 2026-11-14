@@ -124,8 +124,8 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
 /// newer read of its gates, holds no connection open for an answer nobody will read. A post is
 /// never aborted that way: it may already have reached the server, and it goes on as `keepalive`
 /// does. The task pages drop reads they no longer want, so the program they are part of carries
-/// this (`page-program` turns on `page-tasks`), for every kind of it: the task pages, Reports, the
-/// chat, the menus and the timeline. The board's, home's and the documents' `send` is the one it
+/// this (`page-program` turns on `page-tasks`), for every kind of it: the task pages, the chat, the
+/// menus and the timeline. The board's, home's and the documents' `send` is the one it
 /// had before.
 #[cfg(feature = "page-tasks")]
 struct Abandoned(Option<AbortController>);

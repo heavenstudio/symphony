@@ -240,7 +240,7 @@ mod program {
             return rsx! {};
         }
         match chunk {
-            Chunk::Tasks | Chunk::Reports => rsx! { crate::live::App {} },
+            Chunk::Tasks => rsx! { crate::live::App {} },
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
             Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
             Chunk::Timeline => rsx! { crate::split::TimelinePart {} },

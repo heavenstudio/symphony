@@ -33,7 +33,7 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
     exit 2
 fi
 # The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
-program_kinds=(tasks reports panel overlay timeline)
+program_kinds=(tasks panel overlay timeline)
 # Its chunks: the kinds' and the media layer's, which no kind is (the shell's manifest never names
 # it) and a kind's page loads once it shows media.
 program_chunks=("${program_kinds[@]}" media)
@@ -132,12 +132,12 @@ for module_kind in board docs program; do
         continue
     fi
     # Each program kind's styles, of the program's: those another kind loads too (the frame's, the
-    # pictures'), then its own: Reports' and the timeline's by their names, the shared controls'
-    # (`style-`, components/) for the chat and the menus. A style none of these places is refused.
+    # pictures'), then its own: the timeline's by its name, the shared controls' (`style-`,
+    # components/) for the chat and the menus. A style none of these places is refused.
     others="$(jq -c '[.[].styles[]] | unique' <<< "$manifest")"
     for kind in "${program_kinds[@]}"; do
         own="$(jq -c --arg kind "$kind" --argjson others "$others" '
-            (({reports: ["reports-"], timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) as $names
+            (({timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) as $names
             | map(select(. as $style | ($others | index($style)) != null
                 or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
         manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
@@ -226,4 +226,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the board and the documents as modules of their own, the web client's kinds (home and the queue) as its own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the board and the documents as modules of their own, the web client's kinds (home, the queue, Reports) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

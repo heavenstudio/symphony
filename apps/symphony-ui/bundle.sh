@@ -121,12 +121,12 @@ out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
 # The board and the documents are each compiled on their own: a first visit of the board must
 # not pay for the task pages' code, which a shared main module would hold
-# (docs/analysis/client-shared-runtime.md). The program, the task pages with Reports, the chat, the
-# menus and the task timeline, is one program that dx's splitter cuts into a main module and a
-# chunk for each (src/split.rs), and `symphony-build split-repair` makes that output safe and
-# repeatable, from the program dx linked, before anything is packaged; a failed repair fails the
-# build. The web client's kinds (home and the queue) are one Vite build, `web`. All assets are
-# content hashed; identical files from separate kinds share one URL and one browser-cache entry.
+# (docs/analysis/client-shared-runtime.md). The program, the task pages with the chat, the menus
+# and the task timeline, is one program that dx's splitter cuts into a main module and a chunk for
+# each (src/split.rs), and `symphony-build split-repair` makes that output safe and repeatable, from
+# the program dx linked, before anything is packaged; a failed repair fails the build. The web
+# client's kinds (home, the queue, Reports) are one Vite build, `web`. All assets are content
+# hashed; identical files from separate kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"
     # The web client's kinds, one Vite build, which no path or clock enters.
