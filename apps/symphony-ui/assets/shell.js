@@ -77,13 +77,15 @@ async function gone() {
 
 // The program's media layer is a chunk of its own, loaded once a page shows media (src/split.rs
 // `MediaPart`), which no kind is: a load that fails leaves the page as it is, and the layer calls
-// this. A gone build loads the page again, as for a kind; otherwise the alert's retry shows the
-// media again, which asks for the chunk again, and the layer takes the alert down once it is in.
+// the first of these. A gone build loads the page again, as for a kind; otherwise the alert's
+// retry shows the media again, which asks for the chunk again, and the layer calls the second
+// once it is in, which takes the alert down.
 window.reviewMediaFailed = async error => {
     if (await gone()) return;
     console.error("Media could not be loaded", error);
     alarm("media-error", "Media could not be loaded. ", "Retry loading media", () => dispatchEvent(new Event("review:media")));
 };
+window.reviewMediaLoaded = () => document.getElementById("media-error")?.remove();
 
 async function initialize(kind) {
     const spec = modules[kind];

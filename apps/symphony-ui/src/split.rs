@@ -143,30 +143,20 @@ fn use_loaded(name: &'static str, bit: u8, shown: Option<Signal<bool>>) -> bool 
     ready()
 }
 
-/// What the shell hears of a load of the media layer's chunk: one that failed
-/// (`reviewMediaFailed`, assets/shell.js, which loads the page again when its build is gone and
-/// otherwise says so with a retry), or one that worked, which takes down the notice an earlier
-/// failure put up.
+/// What the shell hears of a load of the media layer's chunk (assets/shell.js): one that failed
+/// (`reviewMediaFailed`, which loads the page again when its build is gone and otherwise says so
+/// with a retry), or one that worked (`reviewMediaLoaded`, which takes down the notice an earlier
+/// failure put up). Called as `fetch` calls `reviewChunk`, it needs no import of its own.
 fn media_said(loaded: Result<(), JsValue>) {
-    let Some(window) = web_sys::window() else {
-        return;
+    let (name, error) = match loaded {
+        Ok(()) => ("reviewMediaLoaded", JsValue::UNDEFINED),
+        Err(error) => ("reviewMediaFailed", error),
     };
-    match loaded {
-        Ok(()) => {
-            if let Some(notice) = window
-                .document()
-                .and_then(|document| document.get_element_by_id("media-error"))
-            {
-                notice.remove();
-            }
-        }
-        Err(error) => {
-            if let Ok(said) = js_sys::Reflect::get(&window, &"reviewMediaFailed".into())
-                && let Ok(said) = said.dyn_into::<js_sys::Function>()
-            {
-                let _ = said.call1(&JsValue::UNDEFINED, &error);
-            }
-        }
+    if let Some(window) = web_sys::window()
+        && let Ok(said) = js_sys::Reflect::get(&window, &name.into())
+        && let Ok(said) = said.dyn_into::<js_sys::Function>()
+    {
+        let _ = said.call1(&JsValue::UNDEFINED, &error);
     }
 }
 
