@@ -124,9 +124,10 @@ main's, or one main changed after the branch forked, is skipped.
 
 The card's page and every page its links reach are served from that worktree, under
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict on a card the branch posted,
-or on its draft, is written **into that worktree's file**, uncommitted, where the agent's `just symphony-status
---open` reads it exactly as before; the branch carries it once the agent commits it, and a land refuses while a
-worktree of the branch holds an owner line no commit has ([TASKS](TASKS.md#the-default-landing)). Until then
+or on its draft, is written **into that worktree's file**, uncommitted, where the agent's
+`just symphony-status --open` reads it exactly as before; the branch carries it once the agent commits it, and
+a land refuses while a worktree of the branch holds an owner line no commit has
+([TASKS](TASKS.md#the-default-landing)). Until then
 the owner's own lines there count at once, laid on the posted card. A line on a card main holds is main's when
 the branch's page draws main's card for it: the branch did not post the card (its copy is the one it forked
 with, or main's), the branch is in main already (landed), or the page's worktree is gone. It is saved in main's
