@@ -2356,9 +2356,14 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
 /// waited for, each part once: they come in the order each began, which a page's frames leave to
 /// the machine.
 fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
+    waiting_within(output, url, PATIENT)
+}
+
+/// [`still_waiting`], for a shot given `timeout` seconds.
+fn waiting_within(output: &Output, url: &str, timeout: &str) -> BTreeSet<String> {
     assert_eq!(output.status.code(), Some(1), "{}", said(output));
     let prefix = format!(
-        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
+        "symphony shot: {url}: the page was not drawn within {timeout}s: still waiting for "
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     let parts = stderr
@@ -2391,13 +2396,36 @@ fn telling_its_parent(name: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// A dedicated worker's script that fetches `path` and posts its parent the answer's text, having
+/// posted `started` once the fetch is asked for.
+fn fetching(path: &str) -> Vec<u8> {
+    format!(
+        "const asked = fetch('{path}'); postMessage('started'); \
+         asked.then(answer => answer.text()).then(text => postMessage(text));"
+    )
+    .into_bytes()
+}
+
+/// A shared worker's script that, for each page that connects, fetches `path` and posts the answer's
+/// text on the page's port, having posted `started` once the fetch is asked for.
+fn shared_fetching(path: &str) -> Vec<u8> {
+    format!(
+        "onconnect = event => {{ const port = event.ports[0]; const asked = fetch('{path}'); \
+         port.postMessage('started'); \
+         asked.then(answer => answer.text()).then(text => port.postMessage(text)); }};"
+    )
+    .into_bytes()
+}
+
 #[test]
-fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame() {
-    // A sandboxed frame whose document the stand-in never answers, and a frame of another site
-    // whose stylesheet it never answers: the page's own document waits for its frames, and the
-    // shot fails at its timeout naming each frame that never loaded, by its address, and what it
-    // still waits for in it. The timeout is the patient one, which only a stall reaches, so by then
-    // the page has gone as far as it ever will, however loaded the machine. No picture is left.
+fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming_each() {
+    // A sandboxed frame whose document the stand-in never answers, a frame of another site whose
+    // stylesheet it never answers, and a dedicated worker of the page whose fetch it never answers:
+    // the page's own document waits for its frames, and the shot fails at its timeout naming each
+    // frame that never loaded, by its address, and what it still waits for in it, and the worker's
+    // fetch by the worker's script, never as a frame's. The timeout is the patient one, which only
+    // a stall reaches, so by then the page has gone as far as it ever will, however loaded the
+    // machine. No picture is left.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2407,11 +2435,14 @@ fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame()
     serve_framed(&other, "/stalled.html", "/hung.css");
     other.hold_route("/hung.css", true);
     site.hold_route("/hung.html", true);
+    site.set_file("/hung-worker.js", fetching("/hung-data"), "text/javascript");
+    site.hold_route("/hung-data", true);
     let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
     site.set_file(
         "/hung-frames.html",
         format!(
-            r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>"#
+            r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>
+<script>new Worker('/hung-worker.js');</script>"#
         )
         .into_bytes(),
         "text/html",
@@ -2433,6 +2464,11 @@ fn a_frame_that_never_loads_fails_the_shot_within_its_timeout_naming_the_frame()
             format!(
                 "1 request(s) in flight in the frame {stalled}: http://localhost:{}/hung.css",
                 other.addr.port()
+            ),
+            format!(
+                "1 request(s) in flight in the worker {}: {}",
+                site.url("/hung-worker.js"),
+                site.url("/hung-data")
             ),
         ]),
         "{}",
@@ -2569,28 +2605,597 @@ fn a_frame_removed_while_its_document_still_arrives_is_not_waited_for() {
     assert!(Picture::read(&out).width > 0);
 }
 
+/// The colour at the middle of the rectangle `[x, y, width, height]` (CSS pixels) of a picture
+/// taken at one device pixel to the CSS pixel.
+fn middle_of(picture: &Picture, [x, y, width, height]: [f64; 4]) -> [u8; 4] {
+    picture.rgba[((y + height / 2.0) as usize) * picture.width + (x + width / 2.0) as usize]
+}
+
 #[test]
-fn the_report_has_a_frames_failed_requests_and_not_its_console_errors_when_chrome_runs_it_apart() {
-    // A frame of another site, which Chrome runs in a process of its own, whose picture is
-    // missing and which logs an error, on a page that logs one too: the report names the frame's
-    // missing picture and the page's error alone.
+fn a_frame_whose_parent_goes_back_into_the_pages_process_mid_load_is_not_waited_for() {
+    // A frame of another site (the other stand-in, as `localhost`) holding a frame of a third
+    // (`c.localhost`, the same stand-in), each of which Chrome runs in a process of its own. The
+    // stand-in stalls the inner frame's document after its first half, which tells its parent, and
+    // the parent then goes on to a document of the page's own site, which Chrome loads in the
+    // page's process, taking the inner frame away with it. Nothing the page holds still loads, so
+    // the shot is taken, the frame drawn with the document it went on to.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
     };
     let other = site();
     let site = site();
+    serve_framed(&site, "/arrived.html", "/arrived.css");
+    let arrived = site.url("/arrived.html");
+    let port = other.addr.port();
+    other.set_file("/held.html", telling_its_parent("held"), "text/html");
+    other.stall_body("/held.html", true);
     other.set_file(
-        "/erring.html",
-        b"<!doctype html><img src=\"/missing.png\"><script>console.error('in the frame')</script>"
+        "/holding.html",
+        format!(
+            r#"<!doctype html><meta charset="utf-8"><script>addEventListener('message', () => {{ location = '{arrived}'; }});</script>
+<p>holding</p><iframe src="http://c.localhost:{port}/held.html"></iframe>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    site.set_file(
+        "/nesting.html",
+        holding_a_frame(&format!(r#"src="http://localhost:{port}/holding.html""#)),
+        "text/html",
+    );
+    let scratch = Scratch::new("nesting-frames");
+    let out = scratch.join("nesting.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/nesting.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--eval",
+            "document.querySelector('iframe').contentDocument.URL",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), vec![json!(arrived)]);
+    assert!(
+        other.requests().iter().any(|path| path == "/held.html"),
+        "the inner frame's document was not asked for: {:?}",
+        other.requests()
+    );
+    assert_eq!(
+        middle_of(&Picture::read(&out), FRAME_BOX),
+        FRAMED_GREEN,
+        "the frame is not drawn with the document it went on to"
+    );
+}
+
+#[test]
+fn a_frame_sent_on_while_its_document_still_arrives_waits_for_the_next_document_alone() {
+    // Four frames the page sends on while the stand-in stalls each one's document after its first
+    // half, which tells the page: one of the page's own site to another of its own; one of another
+    // site (as `localhost`), which Chrome runs in a process of its own, to another of that site;
+    // one of another site to one of the page's own, which Chrome loads in the page's process; and
+    // one of the page's own to one of another site. No frame holds its first document any more,
+    // never finished, so the shot is taken once each next document has loaded, each frame drawn
+    // with it.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    let away = format!("http://localhost:{}", other.addr.port());
+    let frames = [
+        ("near", &site, &site, [0.0, 0.0, 200.0, 150.0]),
+        ("far", &other, &other, [220.0, 0.0, 200.0, 150.0]),
+        ("back", &other, &site, [0.0, 170.0, 200.0, 150.0]),
+        ("out", &site, &other, [220.0, 170.0, 200.0, 150.0]),
+    ];
+    let address = |on: &site::Site, path: &str| {
+        if std::ptr::eq(on, &other) {
+            format!("{away}{path}")
+        } else {
+            site.url(path)
+        }
+    };
+    let mut next = serde_json::Map::new();
+    let mut held = String::new();
+    for (name, first, then, [x, y, ..]) in frames {
+        let stalled = format!("/{name}.html");
+        first.set_file(&stalled, telling_its_parent(name), "text/html");
+        first.stall_body(&stalled, true);
+        serve_framed(then, &format!("/{name}-next.html"), "/next.css");
+        next.insert(
+            name.into(),
+            json!(address(then, &format!("/{name}-next.html"))),
+        );
+        held += &format!(
+            r#"<iframe id="{name}" src="{}" style="left: {x}px; top: {y}px"></iframe>"#,
+            address(first, &stalled)
+        );
+    }
+    site.set_file(
+        "/sending.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<style>
+  body {{ margin: 0; }}
+  iframe {{ position: absolute; width: 200px; height: 150px; border: 0; }}
+</style>
+<script>
+  const next = {};
+  addEventListener('message', event => {{ document.getElementById(event.data).src = next[event.data]; }});
+</script>
+{held}"#,
+            Value::Object(next)
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("sending-frames");
+    let out = scratch.join("sending.png");
+    let output = shot(
+        &chrome,
+        &[&site.url("/sending.html"), "--out", out.to_str().unwrap()],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let picture = Picture::read(&out);
+    for (name, first, then, frame) in frames {
+        for (on, path) in [
+            (first, format!("/{name}.html")),
+            (then, format!("/{name}-next.html")),
+        ] {
+            assert!(
+                on.requests().contains(&path),
+                "{name}: {path} not asked for: {:?}",
+                on.requests()
+            );
+        }
+        assert_eq!(
+            middle_of(&picture, frame),
+            FRAMED_GREEN,
+            "{name}: the frame is not drawn with the document it was sent on to"
+        );
+    }
+}
+
+#[test]
+fn a_dialog_the_page_or_a_frame_opens_is_dismissed_and_the_report_names_each() {
+    // The page opens an alert as it loads; a frame of its own site asks to confirm, and a frame of
+    // another site, which Chrome runs in a process of its own, prompts; each frame posts the page
+    // its answer, and the page marks its own part drawn once both have come. Each dialog is
+    // dismissed as it opens, the confirm and the prompt answered as by their Cancel, so the page
+    // goes on and is shot; a step's own confirm is answered the same way, and the report names all
+    // four, each by its kind, its text and the document that opened it.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    let away = format!("http://localhost:{}", other.addr.port());
+    site.set_file(
+        "/confirming.html",
+        b"<!doctype html><script>parent.postMessage(['confirm', confirm('in the frame?')], '*')</script>"
             .to_vec(),
+        "text/html",
+    );
+    other.set_file(
+        "/prompting.html",
+        b"<!doctype html><script>parent.postMessage(['prompt', prompt('Name?', 'nobody')], '*')</script>"
+            .to_vec(),
+        "text/html",
+    );
+    site.set_file(
+        "/asking.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<p id="loading" data-ready="loading">asking</p>
+<script>
+  window.answers = {{}};
+  addEventListener('message', event => {{
+    const [kind, answer] = event.data;
+    window.answers[kind] = answer;
+    if ('confirm' in window.answers && 'prompt' in window.answers) document.getElementById('loading').remove();
+  }});
+  alert('on the page');
+</script>
+<iframe src="/confirming.html"></iframe>
+<iframe src="{away}/prompting.html"></iframe>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("asking");
+    let out = scratch.join("asking.png");
+    let url = site.url("/asking.html");
+    let output = shot(
+        &chrome,
+        &[
+            &url,
+            "--out",
+            out.to_str().unwrap(),
+            "--eval",
+            "window.answers",
+            "--eval",
+            "confirm('asked by a step')",
+            "--report",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let [answers, asked, report] = printed(&output).try_into().unwrap();
+    assert_eq!(answers, json!({"confirm": false, "prompt": null}));
+    assert_eq!(asked, json!(false));
+    let dialogs: BTreeSet<String> = report["dialogs"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no dialogs: {report}"))
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    let expected: BTreeSet<String> = [
+        json!({"type": "alert", "message": "on the page", "url": url}),
+        json!({"type": "confirm", "message": "in the frame?", "url": site.url("/confirming.html")}),
+        json!({"type": "prompt", "message": "Name?", "url": format!("{away}/prompting.html")}),
+        json!({"type": "confirm", "message": "asked by a step", "url": url}),
+    ]
+    .iter()
+    .map(Value::to_string)
+    .collect();
+    assert_eq!(dialogs, expected, "{report}");
+    assert!(Picture::read(&out).width > 0);
+}
+
+#[test]
+fn a_page_with_workers_is_shot_once_they_have_answered_never_waiting_on_a_shared_workers_loads() {
+    // A dedicated worker of the page and one of a frame of another site, which Chrome runs in a
+    // process of its own, each fetching what it posts back, a worker whose script is missing, and
+    // a shared worker whose fetch the stand-in never answers: the page marks its own part drawn
+    // once the dedicated workers have answered, the missing one has failed and the shared one has
+    // started. The shot is taken with each answer, waiting on no worker's script as on a frame's
+    // document, nor on the shared worker's fetch: Chrome runs a shared worker in the browser,
+    // where the shot does not follow it.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    let away = format!("http://localhost:{}", other.addr.port());
+    site.set_file("/worker.js", fetching("/worker-data"), "text/javascript");
+    site.set_file("/worker-data", b"from the worker".to_vec(), "text/plain");
+    site.set_file(
+        "/shared.js",
+        shared_fetching("/shared-data"),
+        "text/javascript",
+    );
+    site.hold_route("/shared-data", true);
+    other.set_file(
+        "/frame-worker.js",
+        fetching("/frame-data"),
+        "text/javascript",
+    );
+    other.set_file(
+        "/frame-data",
+        b"from the frame's worker".to_vec(),
+        "text/plain",
+    );
+    other.set_file(
+        "/working.html",
+        b"<!doctype html><script>new Worker('/frame-worker.js').onmessage = event => { \
+          if (event.data !== 'started') parent.postMessage(event.data, '*'); };</script>"
+            .to_vec(),
+        "text/html",
+    );
+    site.set_file(
+        "/workers.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<p id="loading" data-ready="loading">workers at work</p>
+<script>
+  window.answers = {{}};
+  const answered = (who, what) => {{
+    window.answers[who] = what;
+    if (Object.keys(window.answers).length === 4) document.getElementById('loading').remove();
+  }};
+  new Worker('/worker.js').onmessage = event => {{
+    if (event.data !== 'started') answered('dedicated', event.data);
+  }};
+  new SharedWorker('/shared.js').port.onmessage = event => {{
+    if (!('shared' in window.answers)) answered('shared', event.data);
+  }};
+  new Worker('/no-such-worker.js').onerror = () => answered('missing', 'failed');
+  addEventListener('message', event => answered('framed', event.data));
+</script>
+<iframe src="{away}/working.html"></iframe>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("workers");
+    let out = scratch.join("workers.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/workers.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--eval",
+            "window.answers",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(
+        printed(&output),
+        vec![json!({
+            "dedicated": "from the worker",
+            "shared": "started",
+            "framed": "from the frame's worker",
+            "missing": "failed",
+        })]
+    );
+    assert!(Picture::read(&out).width > 0);
+}
+
+#[test]
+fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_says_is_drawn() {
+    // A dedicated worker whose script the stand-in holds, its answer not begun, for a second and
+    // more after it is asked for: Chrome attaches the worker only once that answer starts, so until
+    // then its script is a request of the page's in flight, and the shot waits for it. Answered,
+    // the worker fetches what it posts back and the page paints a box green with it, as the
+    // picture shows.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file("/late-worker.js", fetching("/late-data"), "text/javascript");
+    site.hold_route("/late-worker.js", true);
+    site.set_file("/late-data", b"from the late worker".to_vec(), "text/plain");
+    site.set_file(
+        "/late.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<style>body {{ margin: 0; }} #answer {{ width: 200px; height: 200px; }}</style>
+<div id="answer"></div>
+<script>
+  new Worker('/late-worker.js').onmessage = event => {{
+    if (event.data === 'started') return;
+    const answer = document.getElementById('answer');
+    answer.dataset.said = event.data;
+    answer.style.background = 'rgb(0, 160, 0)';
+  }};
+</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("late-worker");
+    let out = scratch.join("late.png");
+    let mut running = shot(
+        &chrome,
+        &[
+            &site.url("/late.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--eval",
+            "document.getElementById('answer').dataset.said ?? null",
+        ],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let ended = |running: std::process::Child, when: &str| -> ! {
+        let output = running.wait_with_output().unwrap();
+        panic!("the shot ended {when}: {}", said(&output));
+    };
+    while !site.requests().iter().any(|path| path == "/late-worker.js") {
+        if running.try_wait().unwrap().is_some() {
+            ended(running, "before its worker's script was asked for");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // A second on, the shot still waits: a loaded machine only slows it, and it ends only once the
+    // script is answered.
+    std::thread::sleep(Duration::from_secs(1));
+    if running.try_wait().unwrap().is_some() {
+        ended(running, "with its worker's script still unanswered");
+    }
+    site.hold_route("/late-worker.js", false);
+    let output = running.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), vec![json!("from the late worker")]);
+    // Painted the green a framed document paints itself.
+    assert_eq!(
+        middle_of(&Picture::read(&out), [0.0, 0.0, 200.0, 200.0]),
+        FRAMED_GREEN,
+        "the worker's answer is not drawn"
+    );
+}
+
+#[test]
+fn a_dedicated_workers_script_never_answered_fails_the_shot_within_its_timeout_naming_it() {
+    // A dedicated worker whose script the stand-in never answers: Chrome attaches no worker, so the
+    // script stays a request of the page's in flight, and the shot, given five seconds, fails at
+    // them naming it, never as a frame or a worker of its own. The page has nothing else to load,
+    // so the script is all it waits for however busy the machine. No picture is left.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.hold_route("/unanswered-worker.js", true);
+    site.set_file(
+        "/unanswered.html",
+        format!(
+            r#"<!doctype html>{NO_ICON}<p>a worker never started</p>
+<script>new Worker('/unanswered-worker.js');</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("unanswered-worker");
+    let out = scratch.join("unanswered.png");
+    let url = site.url("/unanswered.html");
+    let output = shot(
+        &chrome,
+        &[&url, "--out", out.to_str().unwrap(), "--timeout", "5"],
+    )
+    .output()
+    .unwrap();
+    assert_eq!(
+        waiting_within(&output, &url, "5"),
+        BTreeSet::from([format!(
+            "1 request(s) in flight: {}",
+            site.url("/unanswered-worker.js")
+        )]),
+        "{}",
+        said(&output)
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
+}
+
+#[test]
+fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
+    // A button that opens a page of the page's own site with `window.open`, keeping its opener; one
+    // that opens a page of another site (as `localhost`); and two that open a page of the page's
+    // own site, which Chrome runs in the opener's process, that alerts as it loads or once it has
+    // loaded, then marks the opener (`#after`). The shot leaves a page it did not open as Chrome
+    // leaves it: let start, and its dialog closed, its script going on. Each click returns, the
+    // page goes on with the window it opened and is shot, and the report has no dialog of the
+    // opened page's.
+    let other = site();
+    let site = site();
+    let away = format!("http://localhost:{}", other.addr.port());
+    for on in [&site, &other] {
+        on.set_file(
+            "/opened.html",
+            b"<!doctype html><p>opened</p>".to_vec(),
+            "text/html",
+        );
+    }
+    let marking = "opener.document.body.append(Object.assign(opener.document.createElement('p'), \
+                   {id: 'after'}))";
+    site.set_file(
+        "/alerting.html",
+        format!("<!doctype html><script>alert('as it loads'); {marking};</script>").into_bytes(),
+        "text/html",
+    );
+    site.set_file(
+        "/later.html",
+        format!(
+            "<!doctype html><script>onload = () => setTimeout(() => {{ alert('once loaded'); \
+             {marking}; }}, 100);</script>"
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    site.set_file(
+        "/opening.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<script>
+  const openPage = address => {{ window.opened = window.open(address); }};
+</script>
+<button id="same" type="button" onclick="openPage('/opened.html')">same site</button>
+<button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>
+<button id="alerting" type="button" onclick="openPage('/alerting.html')">alerting</button>
+<button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let marked = ["--wait-for", "#after"];
+    for (button, waits) in [
+        ("#same", &[][..]),
+        ("#cross", &[][..]),
+        ("#alerting", &marked[..]),
+        ("#later", &marked[..]),
+    ] {
+        let Some(chrome) = chrome::find() else {
+            eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+            return;
+        };
+        let scratch = Scratch::new("opening");
+        let out = scratch.join("opening.png");
+        let url = site.url("/opening.html");
+        let output = shot(
+            &chrome,
+            &[
+                &[
+                    url.as_str(),
+                    "--out",
+                    out.to_str().unwrap(),
+                    "--click",
+                    button,
+                ][..],
+                waits,
+                &[
+                    "--eval",
+                    "[!!window.opened, window.opened.closed]",
+                    "--report",
+                ][..],
+            ]
+            .concat(),
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{button}: {}", said(&output));
+        let [opened, report] = printed(&output).try_into().unwrap();
+        assert_eq!(opened, json!([true, false]), "{button}");
+        assert_eq!(report["dialogs"], json!([]), "{button}: {report}");
+        assert!(Picture::read(&out).width > 0);
+    }
+}
+
+#[test]
+fn the_report_names_the_frame_each_console_error_and_failed_request_came_from() {
+    // A frame of another site, which Chrome runs in a process of its own, and a frame of the page's
+    // own site, each missing a picture and logging an error, on a page that logs one too: the
+    // report has each frame's missing picture, its console error and the network's error for the
+    // picture, the last two naming the frame by its address, and the page's error naming none.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let other = site();
+    let site = site();
+    let erring = |said: &str| {
+        format!(
+            r#"<!doctype html><img src="/missing.png"><script>console.error('{said}')</script>"#
+        )
+        .into_bytes()
+    };
+    other.set_file("/erring.html", erring("in the frame"), "text/html");
+    site.set_file(
+        "/erring.html",
+        erring("in a frame of its own site"),
         "text/html",
     );
     let away = format!("http://localhost:{}", other.addr.port());
     site.set_file(
         "/reporting.html",
         format!(
-            r#"<!doctype html>{NO_ICON}<iframe src="{away}/erring.html"></iframe><script>console.error('on the page')</script>"#
+            r#"<!doctype html>{NO_ICON}<iframe src="{away}/erring.html"></iframe><iframe src="/erring.html"></iframe><script>console.error('on the page')</script>"#
         )
         .into_bytes(),
         "text/html",
@@ -2610,14 +3215,46 @@ fn the_report_has_a_frames_failed_requests_and_not_its_console_errors_when_chrom
     .unwrap();
     assert!(output.status.success(), "{}", said(&output));
     let [report] = printed(&output).try_into().unwrap();
+    let as_set = |list: &Value| -> BTreeSet<String> {
+        list.as_array()
+            .unwrap_or_else(|| panic!("no list: {report}"))
+            .iter()
+            .map(Value::to_string)
+            .collect()
+    };
+    // The network's own words for a missing picture are Chrome's: the report is held to its 404.
+    let errors: Vec<Value> = report["console_errors"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no console errors: {report}"))
+        .iter()
+        .map(|error| {
+            let mut error = error.clone();
+            if error["source"] == "network" {
+                let text = error["text"].as_str().unwrap_or("");
+                assert!(text.contains("404"), "{error}");
+                error["text"] = json!("404");
+            }
+            error
+        })
+        .collect();
+    let (here, there) = (site.url("/erring.html"), format!("{away}/erring.html"));
     assert_eq!(
-        report["console_errors"],
-        json!([{"source": "console", "text": "on the page"}]),
+        as_set(&Value::Array(errors)),
+        as_set(&json!([
+            {"source": "console", "text": "on the page"},
+            {"source": "console", "text": "in the frame", "frame": there},
+            {"source": "network", "text": "404", "url": format!("{away}/missing.png"), "frame": there},
+            {"source": "console", "text": "in a frame of its own site", "frame": here},
+            {"source": "network", "text": "404", "url": site.url("/missing.png"), "frame": here},
+        ])),
         "{report}"
     );
     assert_eq!(
-        report["failed_requests"],
-        json!([{"url": format!("{away}/missing.png"), "status": 404}]),
+        as_set(&report["failed_requests"]),
+        as_set(&json!([
+            {"url": format!("{away}/missing.png"), "status": 404},
+            {"url": site.url("/missing.png"), "status": 404},
+        ])),
         "{report}"
     );
 }
