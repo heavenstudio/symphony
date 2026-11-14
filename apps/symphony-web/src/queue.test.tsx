@@ -15,11 +15,11 @@ import {
   queueCategory,
   readQueue,
   recallRows,
-  TaskTag,
   visible,
   WaitingQueue,
 } from "./queue";
 import { STALE } from "./shared";
+import { TaskTag } from "./task-tag";
 import { asking, CASES, memoryStorage, reply, server } from "./testing";
 import type { Card } from "./wire";
 

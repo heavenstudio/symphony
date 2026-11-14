@@ -215,8 +215,7 @@ fn quick_open() {
     publish("review:activity");
 }
 
-/// Opens the activity panel, as the header's activity button does while it is closed: the home's
-/// count of today's replies leads there.
+/// Opens the activity panel, as the header's activity button does while it is closed.
 pub fn open_activity() {
     focus_on_open("activity");
     // Activity and Appearance share the header's right edge: one open closes the other.

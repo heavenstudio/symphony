@@ -20,8 +20,8 @@ set -euo pipefail
 
 out="${1:?usage: bundle.sh OUT}"
 case "${2:-all}" in
-    all) kinds=(board docs review program web) ;;
-    board|docs|review|program|web) kinds=("$2") ;;
+    all) kinds=(board docs program web) ;;
+    board|docs|program|web) kinds=("$2") ;;
     *) echo "symphony-ui: unknown page kind $2" >&2; exit 2 ;;
 esac
 case "${3:-z}" in
@@ -119,13 +119,13 @@ rm -rf "$target/dx/symphony-ui/release/web"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
-# Home, the board and the documents are each compiled on their own: a first visit of
-# home or the board must not pay for the task pages' code, which a shared main module would hold
+# The board and the documents are each compiled on their own: a first visit of the board must
+# not pay for the task pages' code, which a shared main module would hold
 # (docs/analysis/client-shared-runtime.md). The program, the task pages with the chat, the menus
 # and the task timeline, is one program that dx's splitter cuts into a main module and a chunk for
 # each (src/split.rs), and `symphony-build split-repair` makes that output safe and repeatable, from
 # the program dx linked, before anything is packaged; a failed repair fails the build. The web
-# client's kinds (the queue, Reports) are one Vite build, `web`. All assets are content
+# client's kinds (home, the queue, Reports) are one Vite build, `web`. All assets are content
 # hashed; identical files from separate kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"

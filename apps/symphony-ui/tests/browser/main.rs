@@ -73,6 +73,9 @@ use serde_json::json;
 use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 300_000.0;
+/// Home's first visit, the web client's since it moved (108,315 bytes on the fixture then), with
+/// modest room: lowered from [`FIRST_VISIT_BYTES`] by that move, never raised.
+const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -291,9 +294,14 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         with_panel - before
     );
     for (path, first, again) in entries {
+        let cap = if path == "/" {
+            HOME_FIRST_VISIT_BYTES
+        } else {
+            FIRST_VISIT_BYTES
+        };
         assert!(
-            first <= FIRST_VISIT_BYTES,
-            "{path} first visit loads {first} bytes, over {FIRST_VISIT_BYTES}"
+            first <= cap,
+            "{path} first visit loads {first} bytes, over {cap}"
         );
         assert!(
             again <= RETURN_VISIT_BYTES,
@@ -362,8 +370,8 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
         ping_bytes(&again)
     );
     assert!(
-        first_bytes <= FIRST_VISIT_BYTES,
-        "a first visit loads {first_bytes} bytes, over {FIRST_VISIT_BYTES}: {first:#?}"
+        first_bytes <= HOME_FIRST_VISIT_BYTES,
+        "a first visit loads {first_bytes} bytes, over {HOME_FIRST_VISIT_BYTES}: {first:#?}"
     );
     assert!(
         again_bytes <= RETURN_VISIT_BYTES,
@@ -987,6 +995,92 @@ fn an_unrevealed_mockup_replaced_by_a_picture_attaches_to_its_new_node() {
         "the replacement picture never revealed: {:?}",
         chrome.eval("document.querySelector('.hero').outerHTML")
     );
+}
+
+/// Home's pictures open in the overlay's picture viewer, its arrows moving through the next card's
+/// pictures alone (a later card's thumbnail is a link to its card) and Escape closing it; its
+/// mockup's frame is scaled to its box. Each wait is on the page, never on a clock.
+#[test]
+fn home_opens_its_pictures_in_the_viewer_and_scales_its_mockup() {
+    let site = site();
+    let mut board: serde_json::Value =
+        serde_json::from_str(&common::fixture("board.json")).unwrap();
+    board["next"][0]["pictures"] = json!([
+        {"src":"/first.svg", "caption":"First"},
+        {"src":"/mockup.html", "caption":"Mockup"},
+        {"src":"/second.svg", "caption":"Second"},
+    ]);
+    site.set_board(&board.to_string());
+    for name in ["first", "second"] {
+        site.set_file(
+            &format!("/{name}.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+            "image/svg+xml",
+        );
+    }
+    site.set_file(
+        "/mockup.html",
+        b"<!doctype html><title>Mockup</title><p>Mockup</p>".to_vec(),
+        "text/html",
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/"));
+    wait_for_board(&mut chrome);
+    // The pictures come in as they near the screen, and the test's window leaves them under it.
+    chrome.eval("document.querySelector('.hero .pics').scrollIntoView({block:'center'})");
+    assert!(
+        chrome.wait_for(
+            "document.querySelectorAll('.hero img[data-zoom-ready][role=button][tabindex=\"0\"]').length === 2 \
+             && document.querySelector('.hero .mockup-frame iframe')?.getAttribute('style')?.startsWith('transform:scale(') === true",
+            SHOWN
+        ),
+        "{}",
+        chrome.eval("document.querySelector('.hero').outerHTML")
+    );
+    assert_eq!(
+        chrome.eval("document.querySelector('.hero img[alt=Second]').getAttribute('aria-label')"),
+        json!("Open picture Second")
+    );
+    chrome.eval("document.querySelector('.hero img[alt=Second]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/second.svg'",
+            SHOWN
+        ),
+        "the viewer never opened: {}",
+        chrome.eval("document.querySelector('#overlay-root')?.outerHTML ?? 'no overlay root'")
+    );
+    // The next card's two pictures, its mockup no picture of the set: the second of two.
+    assert_eq!(
+        chrome.eval("document.querySelector('#media-lightbox .lightbox-caption').textContent"),
+        json!("Second · 2 / 2")
+    );
+    chrome.eval(
+        "document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))",
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox img')?.getAttribute('src') === '/first.svg'",
+        SHOWN
+    ));
+    chrome.eval(
+        "document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}))",
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox img')?.getAttribute('src') === '/second.svg'",
+        SHOWN
+    ));
+    components::key(&mut chrome, "Escape", "Escape", 27);
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox[data-state=open]') === null",
+        SHOWN
+    ));
+    // The keyboard opens it too, on the picture it is on.
+    chrome.eval("document.querySelector('.hero img[alt=First]').focus()");
+    components::key(&mut chrome, "Enter", "Enter", 13);
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/first.svg'",
+        SHOWN
+    ));
 }
 
 #[test]

@@ -39,8 +39,8 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, document and review-home modules and the program, build the React client's
-  kinds (`web`: one Vite build of `apps/symphony-web`, [its guide](../symphony-web/AGENTS.md)),
+  board and document modules and the program, build the React client's
+  kinds (`web`: one Vite build of `apps/symphony-web`, home and the queue, [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
@@ -54,8 +54,8 @@ never the whole target, which the release run runs.
   the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
-  in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
-  of their own, under their 300,000-byte caps, which a program shared with them would pass. The
+  in the one instance (a `VirtualDom` per root, `module.rs`); the board keeps a module of its
+  own, under its 300,000-byte cap, which a program shared with it would pass. The
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the program's styles another kind loads too and its own by name, and refuses a style no
   kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
@@ -148,7 +148,7 @@ never the whole target, which the release run runs.
   opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
   never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
   against their own opens.
-- **A return visit.** Home and the task board (and the React client's queue, the same way) draw what they kept of
+- **A return visit.** The task board (and the React client's home and queue, the same way) draws what it kept of
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
   read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
@@ -224,7 +224,8 @@ never the whole target, which the release run runs.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   both the owner's, the first-visit cap raised by the owner to 300 KB, and
-  never loosened by an agent). A visit counts each response the page loaded at what Chrome's
+  never loosened by an agent). Home's first visit, the web client's since it moved, is held
+  to 125,000 bytes (`HOME_FIRST_VISIT_BYTES`), lowered by that move, never raised. A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
@@ -309,7 +310,15 @@ never the whole target, which the release run runs.
   a move between the two fetches the other's entry alone; the program, Reports' chunk gone, takes
   `/agents` and a task page to 548,597 and 549,190 (from 549,285 and 549,878) and the warmed chat
   and menus to 603,539 outside home's (from 604,282); every other page stays within 12 bytes of
-  main's. Each
+  main's. Home moving to the web client (`app/client-moves-to-react/home`, against main's build
+  at 6f89f02) takes `/` to 108,315 bytes (from 237,728) and its cap to 125,000: its entry, its
+  sheet (the media sheet's copy), the chunk the three web kinds share and one it shares with the
+  queue (the board's feed and keep, 3,129 on the wire), so `/queue` takes 104,965 (from 103,296)
+  and `/reports` 106,455 (from 105,617); the Dioxus kinds, home's code gone from the shared
+  sources, take `/tasks` to 280,848 (from 281,212), `/agents` and a task page to 548,042 and
+  548,635 (from 548,627 and 549,220) and `/docs/` to 506,544 (from 507,082); the warmed chat and
+  menus take 604,993 outside home's (from 603,664), the media sheet home no longer holds under
+  the program's name among them. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -371,7 +380,7 @@ never the whole target, which the release run runs.
   a task nothing gates shows none, and a failed read says so in its place. In the
   program alone (the task pages, the chat, the menus and the timeline, which
   share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
-  `page-tasks`, which `page-program` turns on), so the board's, home's and the documents'
+  `page-tasks`, which `page-program` turns on), so the board's and the documents'
   transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
@@ -521,11 +530,15 @@ never the whole target, which the release run runs.
   (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `tests/browser/skeleton.rs`
   covers the rest.
 - **Queue.** `/queue` is the React client's, the first page kind it took over
-  ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Home's preview of the
-  queue stays here, in `view.rs` and `live.rs`, until home moves.
+  ([its guide](../symphony-web/AGENTS.md)): this client builds none of it.
 - **Reports.** `/reports` is the React client's, the second page kind it took over
   ([its guide](../symphony-web/AGENTS.md#reports)): this client builds none of it, and the
   program has no chunk of it.
+- **Home.** Home (`/`, the kind `review`) is the React client's, the third page kind it took
+  over ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Its media layer
+  (frames scaled, a viewer's script loaded, its view buttons, the picture viewer's opener) is
+  the web client's own (`media-layer.ts`); the picture viewer it opens is still the overlay
+  module's here.
 - **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
   source positions and anchors, with short card summaries. `viewport::NearViewport`
   uses the shared visibility latch to mount each block once near the screen; a collapsed
@@ -642,7 +655,7 @@ never the whole target, which the release run runs.
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.
 - **Tests.** Views render on the host with dioxus-ssr
-  (`dioxus_ssr::render_element(rsx! { BoardView { board, now } })`), pure state
+  (`dioxus_ssr::render_element(rsx! { BlocksView { blocks } })`), pure state
   in plain Rust, and `tests/browser/` drives headless Chrome over its DevTools
   protocol against the release build, served as the server serves it.
 - **Development.** `just symphony-ui-dev [PORT]` starts an owned loopback API and
@@ -670,6 +683,13 @@ never the whole target, which the release run runs.
   hot-patch parser cannot read wasm-bindgen 0.2.129's exception tags. Updating
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
+  The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
+  `/reports`) are no part of it, and at their routes it draws its frame over "Page unavailable".
+  Such a page is tried on the built distribution, with no hot reload: once a whole
+  `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
+  web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
+  them with `SYMPHONY_UI_DIST` naming `build/symphony-ui/public`, until the board's
+  `app/client-moves-to-react/dev-server` gives the web client Vite's dev server.
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
   of the machine's one server share its origin, so every key the browser
@@ -681,9 +701,8 @@ never the whole target, which the release run runs.
   address or a long-press opens what a click does; the shell follows a link under
   the base in place and adds nothing to it, leaves any other to the browser, and
   the project switch's `/` alone leaves the project.
-- **Media.** `PictureView(src, caption, thumb)` reserves a square for the board;
-  typed document images carry real dimensions and thumbnail URLs from the
-  API. The shared visibility latch defers native media shells, gallery rows, document blocks
+- **Media.** Typed document images carry real dimensions and thumbnail URLs from the
+  API (home's pictures, which reserve a square, are the web client's). The shared visibility latch defers native media shells, gallery rows, document blocks
   and ask threads. Mount `media_live::MediaRuntime` once beside `main`: its
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),

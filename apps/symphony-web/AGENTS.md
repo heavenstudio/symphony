@@ -3,9 +3,9 @@
 The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves and Reports (`/reports`) the second; every
-other page is still the Dioxus client's. Like that client it reads the server's JSON API and never
-runs server code or inserts server-rendered HTML.
+review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second and home
+(`/`, the kind `review`) the third; every other page is still the Dioxus client's. Like that
+client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
 look or behaviour) is built on its page once that page's kind has moved here, in this package,
@@ -89,7 +89,9 @@ what the server sends, and its guards read what it draws.
 Unit tests sit beside their module (`queue.test.tsx` beside `queue.tsx`) and run in Node, with no
 DOM and no DOM library: markup is drawn with `react-dom/server` and compared as text, and a test
 that needs a global (`localStorage`, `fetch`, `location`) stubs it with `vi.stubGlobal`, the
-browser's storage held in memory by `testing.ts`. Time is Vitest's fake timers, never the clock.
+browser's storage held in memory by `testing.ts`; what reads the page's elements (the media
+layer) is given a small tree of elements of its test's own (`media-layer.test.ts`). Time is
+Vitest's fake timers, never the clock.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
 browser target's (`apps/symphony-ui/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
 which opens a moved page as it opened the Dioxus one and is its parity check. A kind's entry
@@ -133,12 +135,17 @@ to keep in), and it opens every IndexedDB transaction: this client opens none of
 A move between a kind of this client and a Dioxus kind stops one and runs the other as between
 two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
 and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay
-stay the Dioxus program's kinds, which the shell mounts beside any page.
+stay the Dioxus program's kinds, which the shell mounts beside any page. A page that shows media
+mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
+the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
+overlay's picture viewer, which it reaches through the shell's `reviewOverlay` as the Dioxus
+pages do, all of it ending with the kind's mount.
 
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
-(`src/queue.css`). A component drawn by a Dioxus component library keeps its markup and class
+(`src/queue.css`; home's is the Dioxus client's media sheet, `apps/symphony-ui/assets/media.css`,
+which the shared sheet leaves out). A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
@@ -167,7 +174,8 @@ the plot, the readout and the table, and the axis scales to the series shown (`s
 hiding a large one makes the rest larger; a period stays hatched only when no series, hidden or
 not, recorded it. A tap or the arrow keys pick a period, the same on every chart, and its readout
 says every value as text; each chart's table holds every period. Figures are written as the
-Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`). The
+Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`,
+`words.ts`, which home's percentages use too). The
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.

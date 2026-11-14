@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DocumentPicture,
+  decode,
   elementHtml,
   encoded,
   FileViewer,
@@ -52,6 +53,20 @@ describe("what crates/symphony-blocks writes for a viewer", () => {
   it.each(CASES.encoded)("encodes %j's attributes as %j", (view, value) => {
     expect(encoded(view)).toBe(value);
   });
+
+  it.each(CASES.decode)("reads %j back as View::decode does", (value, pairs) => {
+    expect(decode(value)).toEqual(pairs);
+  });
+
+  it.each(CASES.encoded)(
+    "reads what it encodes for %j back as the pairs it kept",
+    (view, value) => {
+      const kept = view.set.filter(
+        ([name, value]) => /^[a-z][a-z0-9-]*$/.test(name) && !/[\n\r]/.test(value),
+      );
+      expect(decode(value)).toEqual(kept);
+    },
+  );
 });
 
 describe("media a frame or a viewer runs", () => {

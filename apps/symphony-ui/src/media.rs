@@ -1,4 +1,4 @@
-//! Native media views shared by the board, typed documents, asks and galleries.
+//! Native media views shared by typed documents, asks and galleries.
 
 use dioxus::prelude::*;
 use symphony_api::{GalleryItem, Image, Media, Viewer};
@@ -102,25 +102,6 @@ pub fn MediaView(media: Media) -> Element {
     }
 }
 
-/// Board and gallery images reserve a square, matching their existing contain layout. Document
-/// pictures have their real dimensions and thumbnail URL supplied in the API's fragment HTML.
-#[component]
-pub fn PictureView(src: String, caption: String, #[props(default)] thumb: bool) -> Element {
-    let (shown, reveal) = crate::viewport::use_visibility(false);
-    use_runtime(shown);
-    if is_mockup(&src) {
-        return rsx! { MockupFrame { src, caption, thumb } };
-    }
-    rsx! {
-        span { class: if thumb { "picture-shell thumb" } else { "picture-shell" },
-            ..reveal,
-            if shown() {
-                img { class: "media-picture", src: crate::project::href(&src), alt: caption, width: "540", height: "540", loading: "lazy", decoding: "async" }
-            }
-        }
-    }
-}
-
 /// The src a document picture holds until its latch opens: an empty picture of no size, drawn
 /// with no request. Its width and height of 0 give it no aspect ratio, so the img's own width and
 /// height attributes size its box.
@@ -210,7 +191,7 @@ mod tests {
     #[test]
     fn native_media_markup_keeps_scripts_only_frames_and_selection_only_models() {
         let mockup = dioxus_ssr::render_element(rsx! {
-            PictureView { src: "/ui/hud.HTML?v=2", caption: "Flight HUD" }
+            MockupFrame { src: "/ui/hud.HTML?v=2", caption: "Flight HUD" }
         });
         for attribute in [
             "sandbox=\"allow-scripts\"",
@@ -226,10 +207,6 @@ mod tests {
         });
         assert!(thumb.contains("mockup-thumb"));
         assert!(!thumb.contains("mockup-open"));
-        let picture = dioxus_ssr::render_element(rsx! {
-            PictureView { src: "/picture.png", caption: "Picture", thumb: true }
-        });
-        assert!(picture.contains("<img") && picture.contains("loading=\"lazy\""));
         let viewer = Viewer {
             element: "orbit-view".into(),
             script: "/static/orbit.js".into(),
