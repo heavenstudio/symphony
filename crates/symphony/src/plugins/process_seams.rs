@@ -1,19 +1,23 @@
 //! The seams a plugin's process answers besides its components and card kinds: its renderers,
-//! routes, home regions and doc checks, each the object its declaration names, forwarding each
-//! call. What the declaration says of an object (a renderer's extensions and content type, a
-//! check's inputs) is answered from it, with no call. A call that gets no answer is shown where its
-//! answer would go, as the seam has room for it: a renderer's drawing as its error in the file's
-//! place, a route's answer as not found and a home region as none (each failure in the plugin's
-//! log), a doc check's as a problem naming it, and its components as none.
+//! routes, home regions, board actions, watches and doc checks, each the object its declaration
+//! names, forwarding each call. What the declaration says of an object (a renderer's extensions and
+//! content type, a watch's paths, a check's inputs) is answered from it, with no call. A call that
+//! gets no answer is shown where its answer would go, as the seam has room for it: a renderer's
+//! drawing as its error in the file's place, a route's answer as not found and a home region as
+//! none (each failure in the plugin's log), a board action's offer or submission as its refusal, a
+//! watch's warming as the server's log line saying so, a doc check's as a problem naming it, and
+//! its components as none.
 
 use std::path::Path;
 
 use symphony_plugin::protocol::{
-    Ask, CheckDocs, DocComponents, Draw, FileData, PageData, ProblemData, Serve, ShowRegion,
+    Ask, Changed, CheckDocs, DocComponents, Draw, FileData, Forget, Offer, PageData, ProblemData,
+    Serve, ShowRegion, Submit, TaskData,
 };
-use symphony_plugin::vocabulary::Region;
+use symphony_plugin::vocabulary::{Region, TaskOffer};
 use symphony_plugin::{
-    DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem, Renderer, Reply, Route,
+    BoardAction, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem, Renderer, Reply, Route,
+    Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -134,5 +138,97 @@ impl DocCheck for RemoteCheck {
                     .failed(&format!("its doc check {} did not run: {why}", self.name)),
             )],
         }
+    }
+}
+
+/// A board action the remote declared.
+pub(super) struct RemoteAction {
+    pub(super) remote: &'static Remote,
+    pub(super) name: String,
+}
+
+impl RemoteAction {
+    /// `asked` of the remote: its answer, or why it has none as the action's error (a submission
+    /// refused moves nothing).
+    fn ask<A: Ask<Answer = Result<T, String>>, T>(&self, asked: A) -> Result<T, String> {
+        match self.remote.ask(&self.name, asked) {
+            Ok(answered) => answered,
+            // Required of every action, so in every minor.
+            Err(Failure::Newer(agreed)) => Err(self.remote.failed(&format!(
+                "it speaks protocol {agreed}, which has no {}",
+                A::TAG
+            ))),
+            Err(Failure::Down(why)) => Err(self.remote.failed(&why)),
+        }
+    }
+}
+
+impl BoardAction for RemoteAction {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String> {
+        self.ask(Offer {
+            action: self.name.clone(),
+            root: root.to_path_buf(),
+            task: TaskData::of(task),
+        })
+    }
+    fn submit(
+        &self,
+        root: &Path,
+        task: &TaskRef<'_>,
+        submission: &Submission,
+    ) -> Result<Submitted, String> {
+        self.ask(Submit {
+            action: self.name.clone(),
+            root: root.to_path_buf(),
+            task: TaskData::of(task),
+            submission: submission.clone(),
+        })
+    }
+}
+
+/// A watch the remote declared: named on the wire by its place among the plugin's watches, and in
+/// the record and the log by its paths.
+pub(super) struct RemoteWatch {
+    pub(super) remote: &'static Remote,
+    pub(super) index: usize,
+    pub(super) paths: Vec<String>,
+}
+
+impl RemoteWatch {
+    fn named(&self) -> String {
+        self.paths.join(", ")
+    }
+}
+
+impl Watch for RemoteWatch {
+    fn paths(&self) -> Vec<String> {
+        self.paths.clone()
+    }
+    fn changed(&self, root: &Path) -> Option<String> {
+        let asked = Changed {
+            watch: self.index,
+            root: root.to_path_buf(),
+        };
+        match self.remote.ask(&self.named(), asked) {
+            Ok(said) => said,
+            Err(Failure::Newer(_)) => None,
+            // The server's log says it did not warm.
+            Err(Failure::Down(why)) => Some(
+                self.remote
+                    .failed(&format!("its watch of {} did not run: {why}", self.named())),
+            ),
+        }
+    }
+    fn forget(&self, root: &Path) {
+        let asked = Forget {
+            watch: self.index,
+            root: root.to_path_buf(),
+        };
+        // Nothing to show: a failure is in the plugin's log, and a process that ends forgets all
+        // it kept.
+        let _ = self.remote.ask(&self.named(), asked);
     }
 }

@@ -81,17 +81,16 @@ fn main() -> std::process::ExitCode {
 ```
 
 What answers from a process here is a plugin's components, card kinds, renderers, routes, home
-regions and doc checks, each call a request on the pipe, and its navigation and theme, which its
-declaration holds and which cost no call. A project that loads starts its plugins' processes for
-their declarations, as its navigation is among the routes an entrypoint's files must not meet. An
-entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
-type only a process could handle, and whose process cannot say its renderers, is refused, naming
-why. Its other seams (board actions and fields,
-gates, watches, prose rules, generators, commands and transports) are not asked of a process: a
-plugin that declares any of them is refused under `[plugins.process]`, naming them, rather than
-losing them without a word, and stays a linked plugin's to answer. Each is answered from a process
-once a plugin first declares it from one. So is a plugin refused that declares another name than
-the one `[plugins.process]` gives it.
+regions, board actions, watches and doc checks, each call a request on the pipe, and its navigation
+and theme, which its declaration holds and which cost no call. A project that loads starts its
+plugins' processes for their declarations, as its navigation is among the routes an entrypoint's
+files must not meet. An entrypoint's `types` may name a renderer of a plugin's process; a project
+whose entrypoint names a type only a process could handle, and whose process cannot say its
+renderers, is refused, naming why. Its other seams (board fields, gates, prose rules, generators,
+commands and transports) are not asked of a process: a plugin that declares any of them is refused
+under `[plugins.process]`, naming them, rather than losing them without a word, and stays a linked
+plugin's to answer. Each is answered from a process once a plugin first declares it from one. So is
+a plugin refused that declares another name than the one `[plugins.process]` gives it.
 
 ## Its process
 
@@ -137,7 +136,9 @@ that does not read) is shown where its answer would go: a component's in its pla
 `⚠ plugin NAME: its process 4242 was killed by signal 9; it starts again in a moment`, a
 renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
 the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
-in the plugin's log. A doc check that did not run is a problem of the project file naming the plugin
+in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
+action's error is shown, and a submission refused moves nothing. A watch that did not warm says so in the server's log,
+and one told to forget says nothing: a process that ends keeps nothing. A doc check that did not run is a problem of the project file naming the plugin
 and the check, so `symphony status --lint` fails rather than passes, and names no component. A call
 that had no answer fails alone: the calls after it start the process again once its pause is over.
 

@@ -93,8 +93,8 @@ impl Plugin for Every {
 }
 
 /// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
-/// components, card kind, renderer, route, navigation, home region, doc check and theme), and a
-/// component that takes as long as it is told.
+/// components, card kind, renderer, route, navigation, home region, board action, watch, doc check
+/// and theme), and a component that takes as long as it is told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -120,6 +120,12 @@ impl Plugin for Piped {
     }
     fn home_regions(&self) -> Vec<&dyn HomeRegion> {
         EVERY.home_regions()
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        EVERY.board_actions()
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        EVERY.watches()
     }
     fn doc_checks(&self) -> Vec<&dyn DocCheck> {
         EVERY.doc_checks()

@@ -17,7 +17,7 @@ use symphony::project::{PluginCalls, PluginProcess, Project};
 use symphony::render::Render;
 use symphony_plugin::protocol::{Envelope, PageData, Request};
 use symphony_plugin::vocabulary::{Block, Span};
-use symphony_plugin::{CardKind, Docs, File, Page, Renderer};
+use symphony_plugin::{CardKind, Docs, File, Page, Renderer, Submission, TaskRef};
 
 use super::Tree;
 use super::calls::{lines, median, with_card};
@@ -399,6 +399,66 @@ fn a_plugins_process_checks_the_documents_as_it_does_linked() {
         symphony::lint::check_findings(&tree.root),
         (expected, vec!["every".to_string()])
     );
+}
+
+#[test]
+fn a_plugins_process_offers_and_takes_its_board_action_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, _) = linked_and_piped(&tree, false);
+    let names = |plugins: &Plugins| -> Vec<String> {
+        let actions = plugins.board_actions();
+        actions.iter().map(|a| a.name().to_string()).collect()
+    };
+    assert_eq!(names(&piped), names(&linked));
+    for status in ["review", "in_progress"] {
+        let task = TaskRef {
+            slug: "sim/jump",
+            status,
+            branch: "sim/jump-2",
+        };
+        let offered = |plugins: &Plugins| plugins.board_actions()[0].offer(&tree.root, &task);
+        assert_eq!(offered(&piped), offered(&linked), "{status}");
+        for payload in ["sim/jump@sim/jump-2", "stale"] {
+            let submission = Submission {
+                payload: payload.into(),
+                note: "send it ✅".into(),
+            };
+            let taken = |plugins: &Plugins| {
+                plugins.board_actions()[0].submit(&tree.root, &task, &submission)
+            };
+            assert_eq!(taken(&piped), taken(&linked), "{status} {payload}");
+        }
+    }
+}
+
+#[test]
+fn a_plugins_process_warms_and_forgets_its_watch_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, project) = linked_and_piped(&tree, true);
+    let paths = |plugins: &Plugins| -> Vec<Vec<String>> {
+        plugins.watches().iter().map(|w| w.paths()).collect()
+    };
+    assert_eq!(paths(&piped), paths(&linked));
+    let watch = piped.watches()[0];
+    assert_eq!(
+        watch.changed(&tree.root),
+        linked.watches()[0].changed(&tree.root)
+    );
+    watch.forget(&tree.root);
+    // Both calls went to the process, named by the watch's paths, and each was answered.
+    let record = lines(&symphony::plugins::record(&project, &tree.root));
+    let calls: Vec<String> = record
+        .iter()
+        .map(|line| format!("{}.{} {}", line["seam"], line["call"], line["name"]).replace('"', ""))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            "watches.changed data/every, pictures",
+            "watches.forget data/every, pictures"
+        ]
+    );
+    assert!(record.iter().all(|line| line.get("failed").is_none()));
 }
 
 #[test]

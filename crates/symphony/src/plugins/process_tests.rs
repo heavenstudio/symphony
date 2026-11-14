@@ -754,10 +754,8 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
     assert_eq!(
         unanswered(&every),
         [
-            "board actions",
             "board fields",
             "gates",
-            "watches",
             "prose rules",
             "generators",
             "commands",
@@ -784,6 +782,11 @@ fn wide_declared() -> Declaration {
             document: "docs/SHELF.md".into(),
         }],
         home_regions: vec!["progress".into()],
+        board_actions: vec!["land".into()],
+        watches: vec![
+            vec!["data".into()],
+            vec!["models".into(), "pictures".into()],
+        ],
         doc_checks: vec![DeclaredCheck {
             name: "links".into(),
             inputs: vec!["data/links.json".into()],
@@ -820,6 +823,9 @@ fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
     assert_eq!(renderer.content_type(), "model/stl");
     assert_eq!(remote.routes()[0].path(), "shelf");
     assert_eq!(remote.home_regions()[0].id(), "progress");
+    assert_eq!(remote.board_actions()[0].name(), "land");
+    let watched: Vec<Vec<String>> = remote.watches().iter().map(|w| w.paths()).collect();
+    assert_eq!(watched, wide_declared().watches);
     assert_eq!(remote.doc_checks()[0].inputs(), ["data/links.json"]);
     assert_eq!(remote.nav(), wide_declared().nav);
     assert_eq!(remote.theme(), wide_declared().theme);
@@ -842,6 +848,31 @@ fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
     // A route's answer is not found, a region none, a check's components none.
     assert_eq!(remote.routes()[0].serve(&tree.root, "a.json"), None);
     assert_eq!(remote.home_regions()[0].region(&tree.root), None);
+    // A board action refuses, so the board offers nothing and moves nothing.
+    let task = symphony_plugin::TaskRef {
+        slug: "a",
+        status: "review",
+        branch: "a",
+    };
+    let action = remote.board_actions()[0];
+    assert_eq!(
+        action.offer(&tree.root, &task),
+        Err(format!("plugin tiny: {down}"))
+    );
+    let submission = symphony_plugin::Submission::default();
+    assert_eq!(
+        action.submit(&tree.root, &task, &submission),
+        Err(format!("plugin tiny: {down}"))
+    );
+    // A watch's warming says so in the server's log, and its forgetting says nothing.
+    let watch = remote.watches()[1];
+    assert_eq!(
+        watch.changed(&tree.root),
+        Some(format!(
+            "plugin tiny: its watch of models, pictures did not run: {down}"
+        ))
+    );
+    watch.forget(&tree.root);
     let docs = Docs::read(&tree.root);
     assert!(remote.doc_checks()[0].components(&docs).is_empty());
     // A check that did not run is a problem, never a pass.

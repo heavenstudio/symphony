@@ -25,10 +25,10 @@
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
-//! renderers, routes, home regions and doc checks ([`seams`]), each forwarding its calls, and its
-//! navigation and theme, which are declaration alone. A plugin declaring any other seam is refused,
-//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own default
-//! answers it. A call that gets no answer (the process down, no answer in time, a refusal, an answer
+//! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
+//! forwarding its calls, and its navigation and theme, which are declaration alone. A plugin
+//! declaring any other seam is refused, naming it ([`unanswered`]). A call newer than the agreed
+//! minor is not sent: the seam's own default answers it. A call that gets no answer (the process down, no answer in time, a refusal, an answer
 //! that does not read) is shown where its answer would go: a component's in its place on the page
 //! ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing of the
 //! card, and each other seam's as [`seams`] says. A page's components share their `once` values in the plugin as they do linked: every call
@@ -56,12 +56,13 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    Card, CardKind, Component, DocCheck, HomeRegion, Page, Plugin, Renderer, Route, Theme,
+    BoardAction, Card, CardKind, Component, DocCheck, HomeRegion, Page, Plugin, Renderer, Route,
+    Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
-use seams::{RemoteCheck, RemoteRegion, RemoteRenderer, RemoteRoute};
+use seams::{RemoteAction, RemoteCheck, RemoteRegion, RemoteRenderer, RemoteRoute, RemoteWatch};
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -323,10 +324,8 @@ fn shown(bytes: &[u8]) -> String {
 fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
-        ("board actions", d.board_actions.is_empty()),
         ("board fields", d.board_fields.is_empty()),
         ("gates", d.gates.is_empty()),
-        ("watches", d.watches.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
         ("commands", d.commands.is_empty()),
@@ -1096,85 +1095,70 @@ impl Remote {
     }
 }
 
+impl Remote {
+    /// The objects `pick` takes of what it declared, as its seams answer: none when it never
+    /// declared.
+    fn each<'a, T: ?Sized>(&'a self, pick: impl FnOnce(&'a Declared) -> Vec<&'a T>) -> Vec<&'a T> {
+        self.declared().map_or_else(|_| Vec::new(), pick)
+    }
+}
+
 impl Plugin for Remote {
     fn name(&self) -> &str {
         &self.name
     }
     fn components(&self) -> Vec<&dyn Component> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .components
-                    .iter()
-                    .map(|component| -> &dyn Component { component })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.components
+                .iter()
+                .map(|c| -> &dyn Component { c })
+                .collect()
+        })
     }
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .card_kinds
-                    .iter()
-                    .map(|kind| -> &dyn CardKind { kind })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.card_kinds
+                .iter()
+                .map(|k| -> &dyn CardKind { k })
+                .collect()
+        })
     }
     fn renderers(&self) -> Vec<&dyn Renderer> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .renderers
-                    .iter()
-                    .map(|renderer| -> &dyn Renderer { renderer })
-                    .collect()
-            },
-        )
+        self.each(|d| d.renderers.iter().map(|r| -> &dyn Renderer { r }).collect())
     }
     fn routes(&self) -> Vec<&dyn Route> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .routes
-                    .iter()
-                    .map(|route| -> &dyn Route { route })
-                    .collect()
-            },
-        )
+        self.each(|d| d.routes.iter().map(|r| -> &dyn Route { r }).collect())
     }
     fn nav(&self) -> Vec<NavItem> {
         self.declaration()
             .map_or_else(|_| Vec::new(), |declared| declared.nav.clone())
     }
     fn home_regions(&self) -> Vec<&dyn HomeRegion> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .home_regions
-                    .iter()
-                    .map(|region| -> &dyn HomeRegion { region })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.home_regions
+                .iter()
+                .map(|r| -> &dyn HomeRegion { r })
+                .collect()
+        })
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        self.each(|d| {
+            d.board_actions
+                .iter()
+                .map(|a| -> &dyn BoardAction { a })
+                .collect()
+        })
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        self.each(|d| d.watches.iter().map(|w| -> &dyn Watch { w }).collect())
     }
     fn doc_checks(&self) -> Vec<&dyn DocCheck> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .doc_checks
-                    .iter()
-                    .map(|check| -> &dyn DocCheck { check })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.doc_checks
+                .iter()
+                .map(|c| -> &dyn DocCheck { c })
+                .collect()
+        })
     }
     fn theme(&self) -> Option<Theme> {
         self.declaration().ok()?.theme.clone()
@@ -1189,6 +1173,8 @@ struct Declared {
     renderers: Vec<RemoteRenderer>,
     routes: Vec<RemoteRoute>,
     home_regions: Vec<RemoteRegion>,
+    board_actions: Vec<RemoteAction>,
+    watches: Vec<RemoteWatch>,
     doc_checks: Vec<RemoteCheck>,
 }
 
@@ -1242,6 +1228,24 @@ impl Declared {
                 .map(|id| RemoteRegion {
                     remote,
                     id: id.clone(),
+                })
+                .collect(),
+            board_actions: declaration
+                .board_actions
+                .iter()
+                .map(|name| RemoteAction {
+                    remote,
+                    name: name.clone(),
+                })
+                .collect(),
+            watches: declaration
+                .watches
+                .iter()
+                .enumerate()
+                .map(|(index, paths)| RemoteWatch {
+                    remote,
+                    index,
+                    paths: paths.clone(),
                 })
                 .collect(),
             doc_checks: declaration

@@ -68,6 +68,8 @@ fn the_plugin_declares_what_its_process_answers_to_a_host_of_this_protocol() {
     assert_eq!(declared.routes, ["every"]);
     assert_eq!(declared.nav[0].href, "/x/every");
     assert_eq!(declared.home_regions, ["every"]);
+    assert_eq!(declared.board_actions, ["every"]);
+    assert_eq!(declared.watches, [["data/every", "pictures"]]);
     assert_eq!(declared.doc_checks[0].name, "every");
     assert_eq!(declared.theme.unwrap().package, "every");
 }
