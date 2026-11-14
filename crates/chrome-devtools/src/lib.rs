@@ -358,15 +358,23 @@ pub struct Request {
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
     /// The page itself gave it up (an abort, or the page going away), rather than the network.
-    /// A request still open when its frame was removed from the page counts as given up too, and
-    /// so does one a followed frame's document ([`Chrome::follow_frames`]) made, still open when
-    /// the frame left that document's process; never a frame's own document, which a frame moving
-    /// between processes goes on loading.
+    /// A request still open when its frame was removed from the page counts as given up too (a
+    /// frame goes with the document that held it, when a frame around it goes to another
+    /// document), and so does a frame's document still arriving when the frame went on to another
+    /// document, one a followed frame's document ([`Chrome::follow_frames`]) made, still open when
+    /// the frame left that document's process, one a followed worker made, still open when it
+    /// ended, and a shared worker's script, whose answer goes to the worker; never a frame's own
+    /// document as it moves between processes, which it goes on loading.
     pub canceled: bool,
     /// The frame it was made for, when that is not the page's own: the address of the document it
     /// was made for, a frame's own document request naming its own address (`about:srcdoc` for a
-    /// `srcdoc` frame's). `None` for the page's own frame, or before the page's first navigation.
+    /// `srcdoc` frame's). `None` for the page's own frame, or before the page's first navigation,
+    /// and for a worker's request.
     pub frame: Option<String>,
+    /// The worker that made it, by its script's address, when a worker followed
+    /// ([`Chrome::follow_frames`]) made it: its own script's request, which its page or frame
+    /// starts, among them.
+    pub worker: Option<String>,
     /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
     /// later use's, warmed at idle, not the page's own.
     pub prefetch: bool,
@@ -931,9 +939,14 @@ pub struct Chrome {
     backstop: Duration,
     /// The page's own frame, as its last navigation named it.
     frame: Option<String>,
-    /// Whether the frames Chrome runs in processes of their own are followed
+    /// Whether the frames Chrome runs in processes of their own, and the workers, are followed
     /// ([`Chrome::follow_frames`]).
     following: bool,
+    /// Whether every JavaScript dialog is answered as it opens ([`Chrome::dismiss_dialogs`]).
+    dismissing: bool,
+    /// What each frame followed turns on beyond its network and page events
+    /// ([`Chrome::enable_in_frames`]).
+    frame_domains: Vec<String>,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -966,6 +979,8 @@ impl Chrome {
             backstop: BACKSTOP_FLOOR,
             frame: None,
             following: false,
+            dismissing: false,
+            frame_domains: Vec::new(),
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -1055,17 +1070,45 @@ impl Chrome {
     }
 
     /// From now on, follow each frame of the page that Chrome runs in a process of its own (a
-    /// cross-site frame, a sandboxed one, and such frames within it): attached as it starts, and
-    /// held there until its network events are on, so the answer to its own document and every
-    /// request it makes are kept with the page's and end in [`Chrome::requests`] as the page's own
-    /// do. Unfollowed, such a frame's document request is seen to start, on the page, and never to
-    /// end: its answer goes to the frame's own process. Anything else the page starts that way (a
-    /// worker) is let run as it is. What starts while nothing is asked of the browser waits for
-    /// the next call or [`Chrome::pump`], which reads of it and lets it run.
+    /// cross-site frame, a sandboxed one, and such frames within it), and each dedicated worker (of
+    /// the page, of a frame, and the workers it starts): attached as it starts, and held there until
+    /// its network events are on, so the answer to its own document or script and every request it
+    /// makes are kept with the page's and end in [`Chrome::requests`] as the page's own do.
+    /// Unfollowed, such a frame's document request, or a worker's script, is seen to start, on the
+    /// page, and never to end: its answer goes to the frame's or the worker's own session. Anything
+    /// else the page starts that way is let run as it is. What starts while nothing is asked of the
+    /// browser waits for the next call or [`Chrome::pump`], which reads of it and lets it run.
+    /// Only the page's own auto-attach is set, never the browser's: a page it opens (a popup) or a
+    /// shared worker, which the browser runs, is left as Chrome leaves it. A shared worker is only
+    /// discovered (`Target.targetCreated`), so that its script, whose answer goes to the worker,
+    /// is given up ([`Chrome::requests`]) and what it loads is not followed.
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
-        Ok(())
+        // Shared workers, which the browser runs, are only told of: discovery attaches to and
+        // holds nothing. A Chrome that refuses it tells of none.
+        let shared = json!({"discover": true, "filter": [{"type": SHARED_WORKER}]});
+        match self.browser_call("Target.setDiscoverTargets", shared) {
+            Err(error) if error.past_deadline() => Err(error),
+            _ => Ok(()),
+        }
+    }
+
+    /// From now on, each frame followed ([`Chrome::follow_frames`]) that starts turns on `domains`
+    /// too (each an `enable` method, `Runtime.enable` for its console), as the page's own session
+    /// may, before it runs: their events come on the frame's own session.
+    pub fn enable_in_frames(&mut self, domains: &[&str]) {
+        self.frame_domains = domains.iter().map(|domain| (*domain).to_string()).collect();
+    }
+
+    /// From now on, answer every JavaScript dialog the page or a frame followed
+    /// ([`Chrome::follow_frames`]) opens, as it opens: an `alert`, `confirm` or `prompt` dismissed
+    /// (its OK, Cancel and nothing, as the script reads them), a `beforeunload` accepted (the page
+    /// left, as what started its navigation asked). Unanswered, a dialog holds its document's
+    /// renderer, and every wait on it, until it is answered. Each stays among [`Chrome::events`]
+    /// as `Page.javascriptDialogOpening`, which names its kind, its text and its document.
+    pub fn dismiss_dialogs(&mut self) {
+        self.dismissing = true;
     }
 
     /// Go to `url` and wait for its document to be parsed.
@@ -1218,11 +1261,26 @@ impl Chrome {
         self.arrivals.iter().copied().zip(&self.events)
     }
 
-    /// Keep `event`; one that says a frame followed ([`Chrome::follow_frames`]) has started is
-    /// answered first ([`Chrome::follow`]).
+    /// Keep `event`; one that says a frame or a worker followed ([`Chrome::follow_frames`]) has
+    /// started is answered first ([`Chrome::follow`]), and so is a dialog opening, once dialogs
+    /// are dismissed ([`Chrome::dismiss_dialogs`]).
     fn keep(&mut self, event: Value) -> Result<()> {
         if self.following && event["method"] == "Target.attachedToTarget" {
             self.follow(&event["params"])?;
+        }
+        if self.dismissing && event["method"] == "Page.javascriptDialogOpening" {
+            // Answered on the session it opened on, the page's or a followed frame's, unwaited:
+            // a dialog already gone refuses it.
+            let session = event["sessionId"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| self.session.clone());
+            let leave = event["params"]["type"] == "beforeunload";
+            self.send(
+                "Page.handleJavaScriptDialog",
+                json!({"accept": leave}),
+                session,
+            )?;
         }
         self.events.push(event);
         self.arrivals.push(Instant::now());
@@ -1231,18 +1289,28 @@ impl Chrome {
 
     /// A target the page started, attached and held (`attached`, as `Target.attachedToTarget`
     /// says it): a frame's network and page events turned on (the frames its document holds
-    /// attached and removed) and the frames within it followed, then it is let run, in that order,
-    /// as its session takes commands in turn. Their replies are not waited for: a frame gone
-    /// meanwhile refuses them, and nothing is left to follow. Anything but a frame (a worker) is
-    /// only let run.
+    /// attached and removed), with what [`Chrome::enable_in_frames`] adds, and the frames within it
+    /// followed, a worker's network events turned on and the workers it starts followed, then it
+    /// is let run, in that order, as its session takes commands in turn. Their replies are not
+    /// waited for: a target gone meanwhile refuses them, and nothing is left to follow. Anything
+    /// else is only let run.
     fn follow(&mut self, attached: &Value) -> Result<()> {
         let Some(session) = attached["sessionId"].as_str().map(str::to_owned) else {
             return Ok(());
         };
-        if attached["targetInfo"]["type"] == "iframe" {
-            for method in ["Network.enable", "Page.enable"] {
-                self.send(method, json!({}), Some(session.clone()))?;
-            }
+        let domains: Vec<String> = match attached["targetInfo"]["type"].as_str() {
+            Some("iframe") => ["Network.enable", "Page.enable"]
+                .map(String::from)
+                .into_iter()
+                .chain(self.frame_domains.iter().cloned())
+                .collect(),
+            Some(WORKER) => vec!["Network.enable".to_string()],
+            _ => Vec::new(),
+        };
+        for method in &domains {
+            self.send(method, json!({}), Some(session.clone()))?;
+        }
+        if !domains.is_empty() {
             self.send("Target.setAutoAttach", auto_attach(), Some(session.clone()))?;
         }
         if attached["waitingForDebugger"] == true {
@@ -1315,31 +1383,46 @@ impl Chrome {
 }
 
 /// Why a request still open when the frame it was made for was removed from the page (or a frame
-/// around it was) never ends.
+/// around it was, or went on to another document, taking the frames its document held along)
+/// never ends.
 const FRAME_REMOVED: &str = "its frame was removed";
+
+/// Why a frame's document request still open when the frame went on to another document (its
+/// answer still arriving, or a navigation the frame dropped) never ends.
+const DOCUMENT_LEFT: &str = "its frame went on to another document";
 
 /// Why a request a followed frame's document made, still open when the frame's session ended,
 /// never ends: the document went with the process the frame left (its removal, or its navigation
 /// to another site's process or back into the page's own).
 const DOCUMENT_GONE: &str = "its document went with the process its frame left";
 
-/// The auto-attach that follows a page's, or a followed frame's, frames in processes of their own
-/// ([`Chrome::follow_frames`]): each held as it starts, on a session of its own beside the page's.
+/// Why a request a followed worker made, still open when the worker's session ended, never ends.
+const WORKER_ENDED: &str = "its worker ended";
+
+/// Why a shared worker's script never ends where it is seen to start: its answer goes to the
+/// worker, which the browser runs and nothing follows.
+const SHARED_WORKER_SCRIPT: &str = "its shared worker is not followed";
+
+/// The kind of target that is a worker a page starts, which [`Chrome::follow_frames`] follows: a
+/// dedicated worker, of the page, a frame or a worker.
+const WORKER: &str = "worker";
+
+/// The kind of target that is a shared worker, which the browser runs: only discovered
+/// ([`Chrome::follow_frames`]), never followed.
+const SHARED_WORKER: &str = "shared_worker";
+
+/// The auto-attach that follows a page's, a followed frame's or a followed worker's frames in
+/// processes of their own and workers ([`Chrome::follow_frames`]): each held as it starts, on a
+/// session of its own beside the page's.
 fn auto_attach() -> Value {
     json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true})
 }
 
-/// Whether `frame` was removed from the page, it or a frame around it (by `parents`, each frame's
-/// parent), among the frames `removed`: a frame removed takes the frames within it along, whether
-/// or not each was told of.
-fn removed_with<'a>(
-    mut frame: &'a str,
-    parents: &'a HashMap<String, String>,
-    removed: &[String],
-) -> bool {
+/// Whether `frame` is `ancestor` or lies within it, by `parents`, each frame's parent.
+fn within<'a>(mut frame: &'a str, ancestor: &str, parents: &'a HashMap<String, String>) -> bool {
     // Each step goes up one frame; more steps than frames would be a loop.
     for _ in 0..=parents.len() {
-        if removed.iter().any(|gone| gone == frame) {
+        if frame == ancestor {
             return true;
         }
         match parents.get(frame) {
@@ -1348,6 +1431,33 @@ fn removed_with<'a>(
         }
     }
     false
+}
+
+/// Whether `frame` was removed from the page, it or a frame around it (by `parents`, each frame's
+/// parent), among the frames `removed`: a frame removed takes the frames within it along, whether
+/// or not each was told of.
+fn removed_with(frame: &str, parents: &HashMap<String, String>, removed: &[String]) -> bool {
+    removed.iter().any(|gone| within(frame, gone, parents))
+}
+
+/// One navigation of a frame, as `Page.frameNavigated` tells of it: the frame, the loader of the
+/// document it went to (a navigation's request is named by its loader) and how many requests had
+/// been seen by then.
+struct Navigated {
+    frame: String,
+    loader: String,
+    seen: usize,
+}
+
+impl Navigated {
+    /// Whether the document request `id` of its frame, first seen `at` (`seen` names when each
+    /// request was first seen), was left behind by it: not the document it went to, and seen
+    /// before that one's request was, or, for a document no request was seen for (a `srcdoc`
+    /// one), before the navigation was told of. A navigation started after the one told of goes
+    /// on.
+    fn left(&self, id: &str, at: usize, seen: &HashMap<&str, usize>) -> bool {
+        id != self.loader && at < seen.get(self.loader.as_str()).copied().unwrap_or(self.seen)
+    }
 }
 
 /// The requests `events` tell of, in the order each was first seen, by Chrome's request id, the
@@ -1360,25 +1470,71 @@ fn removed_with<'a>(
 ///
 /// A request still open counts as given up, as the page's own requests do when it goes away, once
 /// the frame it was made for, or a frame around it, is removed from the page (`Page.frameDetached`
-/// says `remove`, not a `swap` between processes: [`FRAME_REMOVED`]). So does one a followed
-/// frame's document made, still open on the frame's session when that session ends
-/// ([`DOCUMENT_GONE`]), but never a frame's own document: a frame whose session ends as it
-/// navigates into another process is still loading that document there, and its request ends
-/// where it is answered.
+/// says `remove`, not a `swap` between processes: [`FRAME_REMOVED`]), and a frame going on to
+/// another document (`Page.frameNavigated`) removes every frame its document held, whether or not
+/// each removal is told of (one in a process of its own, whose parent leaves its process, is not).
+/// A frame's document request still open when the frame went on to another document is given up
+/// too ([`Navigated::left`], [`DOCUMENT_LEFT`]): its answer still arriving, or a navigation the
+/// frame dropped. So is one a followed frame's document made, still open on the frame's session
+/// when that session ends ([`DOCUMENT_GONE`]), but never a frame's own document: a frame whose
+/// session ends as it navigates into another process is still loading that document there, and
+/// its request ends where it is answered. And so is one a followed worker made, still open when
+/// its session ends ([`WORKER_ENDED`]).
+///
+/// A worker followed is known by its session and by its target, whose id names the request for its
+/// script: what is told of on its session, and its script, are its requests ([`Request::worker`]),
+/// not a frame's. A shared worker discovered (`Target.targetCreated`) names its script's request
+/// by its target too: that request is given up while open ([`SHARED_WORKER_SCRIPT`]), as its
+/// answer goes to the worker, and what the worker loads is told of nowhere followed. A worker's
+/// script no target names yet is waited for: a dedicated worker attaches only once its script's
+/// answer starts.
 fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut requests: HashMap<String, Request> = HashMap::new();
     // The sessions each request was told of on, and the frame each was made for.
     let mut told: HashMap<String, Vec<String>> = HashMap::new();
     let mut made_for: HashMap<String, String> = HashMap::new();
-    // Each frame's parent, and the frames removed from the page.
+    // Each frame's parent, the frames removed from the page, and each frame's navigations.
     let mut parents: HashMap<String, String> = HashMap::new();
     let mut removed: Vec<String> = Vec::new();
+    let mut navigations: Vec<Navigated> = Vec::new();
+    // The workers followed, each one's script's address, by its session and by its target, and the
+    // shared workers discovered, by their target.
+    let mut workers: HashMap<String, String> = HashMap::new();
+    let mut scripts: HashMap<String, String> = HashMap::new();
+    let mut shared: Vec<String> = Vec::new();
     let mut order = Vec::new();
     for event in events {
         let params = &event["params"];
         match event["method"].as_str().unwrap_or("") {
+            "Target.targetCreated" => {
+                let target = &params["targetInfo"];
+                if let (true, Some(id)) =
+                    (target["type"] == SHARED_WORKER, target["targetId"].as_str())
+                {
+                    shared.push(id.to_string());
+                }
+                continue;
+            }
+            "Target.attachedToTarget" => {
+                let target = &params["targetInfo"];
+                if let (Some(session), Some(id), true) = (
+                    params["sessionId"].as_str(),
+                    target["targetId"].as_str(),
+                    target["type"] == WORKER,
+                ) {
+                    let script = target["url"].as_str().unwrap_or("").to_string();
+                    workers.insert(session.to_string(), script.clone());
+                    scripts.insert(id.to_string(), script);
+                }
+                continue;
+            }
             "Target.detachedFromTarget" => {
                 let gone = params["sessionId"].as_str();
+                let why = if gone.is_some_and(|gone| workers.contains_key(gone)) {
+                    WORKER_ENDED
+                } else {
+                    DOCUMENT_GONE
+                };
                 for (id, request) in &mut requests {
                     let mut on = told.get(id).into_iter().flatten().map(String::as_str);
                     if !request.finished
@@ -1386,7 +1542,7 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
                         && request.kind != "Document"
                         && on.any(|on| Some(on) == gone)
                     {
-                        request.failed = Some(DOCUMENT_GONE.to_string());
+                        request.failed = Some(why.to_string());
                         request.canceled = true;
                     }
                 }
@@ -1403,6 +1559,28 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             "Page.frameDetached" if params["reason"] == "remove" => {
                 if let Some(gone) = params["frameId"].as_str() {
                     removed.push(gone.to_string());
+                }
+                continue;
+            }
+            "Page.frameNavigated" => {
+                let navigated = &params["frame"];
+                if let (Some(id), Some(loader)) =
+                    (navigated["id"].as_str(), navigated["loaderId"].as_str())
+                {
+                    // The frames the document it left held went with that document.
+                    let gone: Vec<String> = parents
+                        .keys()
+                        .filter(|child| {
+                            *child != id && within(child, id, &parents) && !removed.contains(child)
+                        })
+                        .cloned()
+                        .collect();
+                    removed.extend(gone);
+                    navigations.push(Navigated {
+                        frame: id.to_string(),
+                        loader: loader.to_string(),
+                        seen: order.len(),
+                    });
                 }
                 continue;
             }
@@ -1492,16 +1670,45 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             _ => {}
         }
     }
+    let seen: HashMap<&str, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(at, id)| (id.as_str(), at))
+        .collect();
     for (id, request) in &mut requests {
-        if !request.finished
-            && request.failed.is_none()
-            && made_for
-                .get(id)
-                .is_some_and(|frame| removed_with(frame, &parents, &removed))
-        {
-            request.failed = Some(FRAME_REMOVED.to_string());
-            request.canceled = true;
+        if let Some(script) = scripts.get(id).or_else(|| {
+            told.get(id)
+                .into_iter()
+                .flatten()
+                .find_map(|session| workers.get(session))
+        }) {
+            request.worker = Some(script.clone());
+            request.frame = None;
         }
+        if request.finished || request.failed.is_some() {
+            continue;
+        }
+        if shared.contains(id) {
+            request.failed = Some(SHARED_WORKER_SCRIPT.to_string());
+            request.canceled = true;
+            continue;
+        }
+        let (Some(frame), Some(at)) = (made_for.get(id), seen.get(id.as_str())) else {
+            continue;
+        };
+        let why = if removed_with(frame, &parents, &removed) {
+            FRAME_REMOVED
+        } else if request.kind == "Document"
+            && navigations
+                .iter()
+                .any(|navigated| navigated.frame == *frame && navigated.left(id, *at, &seen))
+        {
+            DOCUMENT_LEFT
+        } else {
+            continue;
+        };
+        request.failed = Some(why.to_string());
+        request.canceled = true;
     }
     order
         .into_iter()
