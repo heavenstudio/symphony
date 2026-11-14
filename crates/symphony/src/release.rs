@@ -116,7 +116,8 @@ options:
                         in the run's own checkout. A landing's on_land command runs it, naming
                         the task and its merge
   --refresh             refresh the machine to the newest release here again, checking nothing:
-                        an orchestrator's retry of a red or interrupted refresh
+                        an orchestrator's retry of a red or interrupted refresh, or of one a
+                        project's own gate, hooks or main checkout stopped, once that is met
   --rerun               rerun the release candidate now, once every red of it is answered: each
                         check or step that was red, did not run or whose inputs changed; refused
                         while none is held or a red waits
@@ -1514,7 +1515,8 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
 }
 
 /// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
-/// red [`board::RUN`] when it stopped short; that red is the owner's to clear when it is
+/// red [`board::RUN`] when it stopped short, never a refresh step that is its project's to finish
+/// ([`record::Refresh::told`]); that red is the owner's to clear when it is
 /// `for_owner` (a process in the run's folders). Its reds are a release candidate's when it holds
 /// one, at the tip `holding` ([`candidate`]).
 fn tell(
@@ -1555,7 +1557,8 @@ fn tell(
     };
     let board = crate::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
-    steps.extend((record.refreshed.iter()).flat_map(|refresh| refresh.steps.iter().cloned()));
+    // A refresh step its project stopped is its project's to finish: filed nowhere, closing none.
+    steps.extend((record.refreshed.iter()).flat_map(|refresh| refresh.told().cloned()));
     board::report(&board, &night, &steps)
 }
 

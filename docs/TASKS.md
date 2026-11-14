@@ -1649,9 +1649,15 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   land.
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
-  merge commit, "Merge branch 'SLUG'"; then `[verdicts] check` on it, unless `[land]
-  check = false`, its output in `symphony/tasks/land/SLUG.log` (the slug's `/` written `%2F`,
-  its `%` `%25`, so no two slugs share a file). This repository turns it off: its check,
+  merge commit, "Merge branch 'SLUG'", committed through the project's git hooks, those git
+  runs on a merge committed after `git merge --no-commit`: `pre-commit`, `prepare-commit-msg`
+  and `commit-msg` (`pre-merge-commit` is `git merge`'s own; its sample runs `pre-commit`), from
+  the repository's hooks folder or `core.hooksPath`, which, relative, names the hooks the merge
+  holds. A hook that refuses refuses the land as a red check does, naming the hooks git found
+  (`the project's git hook pre-commit refused the merge of SLUG into main at SHA`). Then
+  `[verdicts] check` on it, unless `[land] check = false`. What the hooks and the check print
+  goes to `symphony/tasks/land/SLUG.log` (the slug's `/` written `%2F`, its `%` `%25`, so no
+  two slugs share a file). This repository turns the check off: its check,
   the docs audit, is evidence at a document change's tip, run on main's tip by the
   regenerator a land starts ([below](#the-regenerator)), and part of the release run's full
   verification ([CHECKS](CHECKS.md#checks-with-no-reviewer)).
@@ -1670,7 +1676,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   fast-forwards to what passed, so the default branch's new tree is the tree checked.
   Before it moves, the land records the landing (the task, the tip, the merge, the
   commit checked and the generated paths it took) in `symphony/tasks/land/SLUG.merged` and on
-  the thread (`land SLUG: merged TIP as MERGE, checked at SHA; moving main there`). The
+  the thread (`land SLUG: merged TIP as MERGE, checked at SHA; moving main there`, with no
+  `checked at` where the land runs no check). The
   fast-forward runs in a process group of its own, which no terminal's signal reaches
   and the land forwards none to, within the land's timeout, so it is never stopped part
   way but by that; `symphony/tasks/land/moving` names the move while it runs. Where the
@@ -1681,8 +1688,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   are each as before or as after the move is put back as main has it (`restored PATH as
   main at SHA has it`), one main lacks is removed (`removed PATH, which main at SHA
   lacks`), and one changed otherwise is left as found (`left PATH as it found it`).
-  When the default branch moved meanwhile, the merge and the check run again on its new
-  tip; a red then is said on the thread to `@orchestrator`.
+  When the default branch moved meanwhile, the merge, its hooks and the check run again on
+  its new tip; a red then is said on the thread to `@orchestrator`.
 - **Pushed.** Unless `[land] push = false` or the repository has no `origin`, the
   default branch alone is pushed, no other branch and no tag, never forced: what
   `origin` gained since is fetched first, merged and checked the same way, and the
@@ -1720,8 +1727,8 @@ The merge of the task's tip is one step of the land, the one a hosted pull reque
 merge would take the place of: the approval before it and the record, the move, the
 push and the close after it stay as they are.
 
-**Bounded.** The check runs in a process group of its own, which the land ends whole
-past `[land] timeout_seconds` (an hour unless the project says;
+**Bounded.** The merge's commit, with its hooks, and the check each run in a process group
+of its own, which the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
 `0` is refused, as is any `[land]` key the land does not know); a fetch or a push has
 five minutes at most, never asking for a password. A land's worktree carries the pid
 of the land that made it and when that process started (`symphony land: SLUG (pid N,
@@ -1741,8 +1748,8 @@ to list them (`ps -A -o pid,pgid,lstart,command`) and to remove the file once th
 of the land's are ended, never to end the group.
 
 **Interrupted.** Ctrl-C, a hang-up or `kill` (SIGINT, SIGHUP, SIGTERM) does not reach
-the check or the fast-forward, which run in groups of their own: the land takes the
-signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but the
+the commit's hooks, the check or the fast-forward, which run in groups of their own: the
+land takes the signal, ends the running group (SIGTERM, then SIGKILL five seconds on) but the
 fast-forward, which it waits for, removes its worktree, says one line and ends by that
 signal; a land waiting for another's lock ends at once, nothing landed. Before the default branch moved, nothing landed. After it moved (while it
 pushed, say), the approve still stands and the task is open, and running the land
@@ -1765,9 +1772,9 @@ the tip named) and sweep.
 Each refusal is one line, on the land's stderr and on the task's thread, and leaves
 the default branch where it was: no approval standing, one that is not a fresh
 reviewer's, a commit it does not cover, a main checkout with edits or another branch
-checked out, a conflict outside the generators' outputs (never resolved), a
-fast-forward that did not move the default branch (what it half-wrote restored), and a
-red check.
+checked out, a conflict outside the generators' outputs (never resolved), a git hook
+that refused the merge, a fast-forward that did not move the default branch (what it
+half-wrote restored), and a red check.
 
 **A task has one orchestrator.** Taking the role on a task another session
 holds while it is live, stale or of unknown liveness is refused, naming the
@@ -1916,7 +1923,9 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   said in its log, never committed, and the newest tip is built next. The commit lands
   under the land's lock: the fast-forward of the main checkout and the push, as a land
   makes them, its interrupt safety included. It needs no reviewer's approve: it changes
-  the generators' outputs alone, made by them of what main holds.
+  the generators' outputs alone, made by them of what main holds. Nor does it run the
+  project's git hooks (`git commit --no-verify`, or `git commit-tree` on a newer tip, which
+  runs none), the land's merge being where they judge what a branch brings.
 - **A red, one task.** A round whose generator fails, runs past `[land]
   timeout_seconds` or writes outside its outputs lands nothing and files
   `tests/main-red-regenerate` at p0, marked red, or adds a line to the one open while
