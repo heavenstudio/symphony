@@ -34,6 +34,7 @@ pub(super) struct File {
     pub(super) board: FileBoard,
     pub(super) releases: FileReleases,
     pub(super) limits: FileLimits,
+    pub(super) stamps: FileStamps,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
@@ -61,7 +62,7 @@ impl File {
                 _ => named(&[], key, key.clone()),
             })
             .collect();
-        let tables: [(&str, &[&str], &Unknown); 11] = [
+        let tables: [(&str, &[&str], &Unknown); 12] = [
             ("[project]", &["project"], &self.project.unknown),
             ("[plugins]", &["plugins"], &self.plugins.unknown),
             ("[theme]", &["theme"], &self.theme.unknown),
@@ -81,6 +82,7 @@ impl File {
             ("[board]", &["board"], &self.board.unknown),
             ("[releases]", &["releases"], &self.releases.unknown),
             ("[limits]", &["limits"], &self.limits.unknown),
+            ("[stamps]", &["stamps"], &self.stamps.unknown),
         ];
         for (table, path, unknown) in tables {
             names.extend(
@@ -185,6 +187,7 @@ pub(super) struct FileModels {
     pub(super) orchestrator: Option<String>,
     pub(super) executor: Option<String>,
     pub(super) reviewer: Option<String>,
+    pub(super) assessor: Option<String>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -200,6 +203,23 @@ pub(super) struct FileLimits {
     pub(super) orchestrator_slots: Option<toml::Value>,
     pub(super) low_volume: Option<toml::Value>,
     pub(super) machine_agents: Option<toml::Value>,
+    #[serde(flatten)]
+    pub(super) unknown: Unknown,
+}
+
+/// The `[stamps]` table: the stamps the project's land can require, each a table of its own
+/// (`[stamps.review]`), which the board reads itself from the main checkout's committed file
+/// (`symphony_board::stamps`). Each is known here by its name, the stamps the Symphony has a
+/// reader for, so another is refused by name and line; what each holds is any the file writes, so
+/// one the board cannot read leaves the rest of the project read ([`super::Project::of`]), and
+/// [`super::Project::parse`] refuses it as the board says it.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct FileStamps {
+    pub(super) tests: Option<toml::Value>,
+    pub(super) review: Option<toml::Value>,
+    pub(super) pictures: Option<toml::Value>,
+    pub(super) owner: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }

@@ -47,6 +47,8 @@ struct Pos {
     /// `nargs="?"`.
     optional: bool,
     choices: &'static [&'static str],
+    /// `nargs="+"`: it takes every positional left, one at least, all kept in order.
+    many: bool,
 }
 
 struct Command {
@@ -92,6 +94,7 @@ const fn pos(dest: &'static str) -> Pos {
         dest,
         optional: false,
         choices: &[],
+        many: false,
     }
 }
 
@@ -100,6 +103,17 @@ const fn maybe(dest: &'static str) -> Pos {
         dest,
         optional: true,
         choices: &[],
+        many: false,
+    }
+}
+
+/// A last positional taking every one left, one at least (`nargs="+"`).
+const fn many(dest: &'static str) -> Pos {
+    Pos {
+        dest,
+        optional: false,
+        choices: &[],
+        many: true,
     }
 }
 
@@ -236,11 +250,25 @@ const COMMANDS: &[Command] = &[
                 dest: "priority",
                 optional: false,
                 choices: PRIORITIES,
+                many: false,
             },
         ],
         opts: &[AS],
     },
     plain("field", &[pos("slug"), pos("name"), pos("value")]),
+    plain("stamps", &[maybe("slug")]),
+    Command {
+        name: "needs",
+        pos: &[pos("slug"), many("stamps")],
+        opts: &[
+            AS,
+            opt("--tip", "tip", STR),
+            Opt {
+                required: true,
+                ..opt("--why", "why", STR)
+            },
+        ],
+    },
     plain("claim", SLUG),
     plain("reserve", SLUG),
     Command {
@@ -288,6 +316,7 @@ const COMMANDS: &[Command] = &[
                 dest: "role",
                 optional: false,
                 choices: &["orchestrator", "reviewer"],
+                many: false,
             },
         ],
         opts: &[AS],
@@ -301,6 +330,7 @@ const COMMANDS: &[Command] = &[
                 dest: "status",
                 optional: false,
                 choices: STATUSES,
+                many: false,
             },
         ],
         opts: &[AS, opt("--reason", "reason", STR)],
@@ -313,6 +343,7 @@ const COMMANDS: &[Command] = &[
                 dest: "verdict",
                 optional: false,
                 choices: &["approve", "changes"],
+                many: false,
             },
             maybe("text"),
         ],
@@ -406,6 +437,7 @@ const COMMANDS: &[Command] = &[
                 dest: "action",
                 optional: true,
                 choices: &["close"],
+                many: false,
             },
             maybe("id"),
             maybe("why"),
@@ -625,6 +657,13 @@ pub fn parse_after(board: &str, args: &[String]) -> Outcome {
     let mut dash_taken = false;
     for p in cmd.pos {
         match given.next() {
+            Some((at, value)) if p.many => {
+                let mut all = vec![(at, value)];
+                all.extend(given.by_ref());
+                let last = all.last().map_or(at, |(at, _)| *at);
+                dash_taken |= dash.is_some_and(|dash| last + 1 == dash || last > dash);
+                values.insert(p.dest.into(), all.into_iter().map(|(_, v)| v).collect());
+            }
             Some((at, value)) => {
                 dash_taken |= dash.is_some_and(|dash| at + 1 == dash || at > dash);
                 let value = if p.choices.is_empty() {
@@ -1504,6 +1543,39 @@ mod tests {
         let launch = run(&["launch", "s"]);
         assert_eq!(launch.get("slug"), Some("s"));
         assert_eq!(launch.get("model"), None);
+    }
+
+    #[test]
+    fn needs_takes_every_stamp_after_its_slug_its_reason_required() {
+        let needs = run(&[
+            "needs", "a/b", "tests", "--tip", "1a2b", "review", "--why", "w",
+        ]);
+        assert_eq!(needs.get("slug"), Some("a/b"));
+        assert_eq!(needs.all("stamps"), ["tests", "review"]);
+        assert_eq!(
+            (needs.get("tip"), needs.get("why")),
+            (Some("1a2b"), Some("w"))
+        );
+        let none = run(&["needs", "--why=docs only", "a/b", "none"]);
+        assert_eq!(none.all("stamps"), ["none"]);
+        assert_eq!(none.get("tip"), None);
+        // After `--` a stamp may start with a dash, and the `--` is taken.
+        assert_eq!(
+            run(&["needs", "a/b", "--why", "w", "--", "-x", "tests"]).all("stamps"),
+            ["-x", "tests"]
+        );
+        assert!(
+            refused(&["needs", "a/b", "--why", "w"]).ends_with(
+                "just tasks needs: error: the following arguments are required: stamps\n"
+            )
+        );
+        assert!(
+            refused(&["needs", "a/b", "tests"]).ends_with(
+                "just tasks needs: error: the following arguments are required: --why\n"
+            )
+        );
+        assert_eq!(run(&["stamps"]).get("slug"), None);
+        assert_eq!(run(&["stamps", "a/b"]).get("slug"), Some("a/b"));
     }
 
     #[test]

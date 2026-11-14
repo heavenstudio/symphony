@@ -781,7 +781,8 @@ default; its pass lock is in the common `symphony/tasks/`. Its idle reviewer pic
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
 board would refuse. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
-the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`),
+the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`;
+the assessor's, unwritten, the smallest its agent offers, `defaults::smallest`: Claude's `haiku`),
 else Codex on `gpt-6.1-sol` at `xhigh`; `--kind` and `--model` win,
 and the project's models and effort go with its agent only. `src/launch/running.rs` counts the
 agents the machine runs, as staffing's cap always has: `launch` refuses at `[limits]
@@ -1030,6 +1031,16 @@ a key of `[limits]` it does not know is left out, named by `tasks limits` (the S
 reading refuses both). A write reads the cap once (`Store::ruling`), so an edit mid-write
 cannot split a decision. A store opened without a file, or held by `Store::limiting`, keeps
 what it was given.
+`stamps.rs` is the catalogue of stamps a land can require and what a task needs of them
+(docs/analysis/needed-stamps.md): `[stamps]` read from the main checkout's committed
+`symphony.toml` (`Catalogue::of`, `HEAD:symphony.toml` as `land::Settings::of` reads it), the
+Symphony's four with none written; a name with no reader, a key no stamp has and a table naming
+none refuse it (the Symphony's own reading refuses them too). A task's needs are the board's own
+field `_board.needs`, which only `Store::set_needs` (`store/work/needs.rs`, `tasks needs`) writes,
+a thread line each. The assessor is a role in name, with no row: the write is refused by
+`Held::unfresh`, the verdict's rule. `tasks stamps` and `tasks needs`
+(`src/cli/commands/stamps.rs`) read the catalogue and resolve the tip in the main checkout. Their
+tests: `tests/store/needs.rs`, `tests/cli/stamps.rs`. Nothing reads the needs to land yet.
 `slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
 A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open

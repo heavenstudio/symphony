@@ -7,9 +7,9 @@ line where the project is loaded or linted (`just symphony-status --lint`), and 
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
 until it loads. The board reads its own keys (`[board]`'s
-commands and thresholds, `[limits]`, `[agents] launch` and `[agents.models]`) from the main
-checkout's copy, so a branch cannot change its own. A path is relative to the project's root and
-stays inside it, unless its key says otherwise.
+commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
+main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
+and stays inside it, unless its key says otherwise.
 
 ```toml
 [project]
@@ -20,7 +20,8 @@ launch = { default = "claude", model = "opus" }
 ```
 
 This page lists every key the Symphony reads (`crates/symphony/src/project/file.rs`, `board.rs`
-and `theme.rs`, and a generator's in `crates/tasks/src/land.rs`): a test,
+and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
+`crates/tasks/src/stamps.rs`): a test,
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
 not have.
 
@@ -98,6 +99,7 @@ limits` prints what holds and where it came from.
 | `orchestrator` | none: whoever starts one chooses | the model an orchestrator runs on |
 | `executor` | `[agents.launch] model`, else the board's own | the model an executor runs on |
 | `reviewer` | `[agents.launch] model`, else the board's own | the model a reviewer runs on |
+| `assessor` | the smallest model the agent offers (Claude's `haiku`); for Codex, whose smallest the board does not name, `[agents.launch] model`, else the board's own | the model an assessor runs on, which names the stamps a task needs ([TASKS](TASKS.md#needed-stamps)) |
 
 ## `[verdicts]`
 
@@ -175,6 +177,35 @@ default and is said on stderr.
 | `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds |
 | `low_volume` | `4` | PULL's low-volume line below this many open slots; `0` says it to none |
 | `machine_agents` | none: no limit | the agents this machine runs, past which a launch is refused |
+
+## `[stamps]`
+
+The stamps the project's land can require, a table each ([TASKS](TASKS.md#needed-stamps)). Read by
+the board itself from the main checkout's committed copy (`HEAD:symphony.toml`), so neither a
+branch nor an edit not yet committed changes what a task is held to. With no `[stamps]` the
+catalogue is the Symphony's four; a project that writes any writes its whole list, so a stamp it
+leaves out is one its land never requires, and a `[stamps]` naming none is refused. A stamp's name
+is how the land knows it stands, so a name the Symphony has no reader for is refused by name and
+line. `just tasks stamps` prints the catalogue as it holds.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `tests` | listed while no `[stamps]` is written | `[stamps.tests]`: met by the task's recorded runs at the tip, green and one test run among them |
+| `review` | listed while no `[stamps]` is written | `[stamps.review]`: met by a fresh reviewer's approve naming the tip |
+| `pictures` | listed while no `[stamps]` is written | `[stamps.pictures]`: met by a post on the task's thread naming the tip with a picture |
+| `owner` | listed while no `[stamps]` is written | `[stamps.owner]`: met by the owner's own approve naming the tip |
+
+## `[stamps.NAME]`
+
+One stamp of the catalogue, by its name, usually written as its own table (`[stamps.review]`). A key
+left out, or a text written empty, is the Symphony's own for that stamp. How the land knows a stamp
+stands is its reader's, which no key sets. A key not listed here refuses the catalogue.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `default` | `true` for `review`, `false` for the rest | whether a task no assessment has read needs it |
+| `applies` | the Symphony's own | where an assessor needs it, as `just tasks stamps` prints it |
+| `skips` | the Symphony's own | where an assessor leaves it out |
 
 ## `[releases]`
 
