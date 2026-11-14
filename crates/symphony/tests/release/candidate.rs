@@ -2,8 +2,8 @@
 //! the local branch `release-candidate`, until its reds' own lands answer them; while it waits main's
 //! tip is not run; a red's own land advances it to the newest approved commit of the fix that holds
 //! the candidate and the fix alone, once the remote's main holds the merge; its rerun runs what was
-//! red, what its fixes changed and the conciliation, and releases it; and its bounds drop it, which
-//! makes a run of main's tip due.
+//! red and what its fixes changed, and releases it; and its bounds drop it, which makes a run of
+//! main's tip due.
 
 use std::fs;
 

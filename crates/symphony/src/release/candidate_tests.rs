@@ -59,7 +59,6 @@ fn run(id: &str, commit: &str, checks: Vec<Ran>) -> Run {
         error: None,
         previous: None,
         checks,
-        skipped: Vec::new(),
         tag: None,
         pushed: false,
         board: Told::default(),
@@ -115,13 +114,9 @@ fn a_record_reads_back_as_written_and_one_that_does_not_read_is_an_error() {
 #[test]
 fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
     let commit = "c".repeat(40);
-    let conciliate = ran("conciliate-lamp-shop", 1, Vec::new());
+    let audit = ran("audit", 1, Vec::new());
     let refresh = ran("refresh-lamp-shop", 1, Vec::new());
-    let first = run(
-        "r1",
-        &commit,
-        vec![verify(true, false), conciliate, refresh],
-    );
+    let first = run("r1", &commit, vec![verify(true, false), audit, refresh]);
     let mut candidate = Candidate::of(&first);
     assert!(candidate.open());
     assert_eq!(
@@ -137,7 +132,7 @@ fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
         reds,
         vec![
             ("verify-tests", "verify/tests", None),
-            ("conciliate-lamp-shop", "conciliate-lamp-shop", None),
+            ("audit", "audit", None),
         ],
         "a release's refresh is no red of the candidate"
     );
@@ -180,7 +175,7 @@ fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
         waiting,
         vec![
             SLUG.to_string(),
-            "conciliate-lamp-shop (no task: the board did not file it)".into()
+            "audit (no task: the board did not file it)".into()
         ]
     );
 }
@@ -832,25 +827,25 @@ fn a_red_whose_task_is_cancelled_with_no_landing_is_answered_and_one_done_waits_
     let tree = Tree::new();
     let scratch = Scratch::new(&tree);
     let tip = scratch.commit("a.txt", "candidate\n", "the candidate");
-    let conciliate = "tests/release-red-conciliate-x";
+    let size = "tests/release-red-size";
     let mut candidate = Candidate::of(&run(
         "r1",
         &tip,
         vec![
             verify(true, false),
-            ran("conciliate-x", 1, Vec::new()),
+            ran("size", 1, Vec::new()),
             ran("docs", 1, Vec::new()),
         ],
     ));
     let board = Fake {
         statuses: vec![
             (SLUG.into(), "cancelled".into()),
-            (conciliate.into(), "done".into()),
+            (size.into(), "done".into()),
             ("tests/release-red-docs".into(), "review".into()),
         ],
         open: vec![
             ("verify-tests".into(), SLUG.into()),
-            ("conciliate-x".into(), conciliate.into()),
+            ("size".into(), size.into()),
             ("docs".into(), "tests/release-red-docs".into()),
         ],
         ..Fake::default()

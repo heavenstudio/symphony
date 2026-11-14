@@ -11,6 +11,8 @@ authors.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# The plugin kit's block vocabulary, which these types carry: re-exported under the names it has here.
+symphony-blocks = { path = "../symphony-blocks", version = "0.1.0" }
 
 [dev-dependencies]
 repository-read = { path = "../repository-read" }

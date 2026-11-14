@@ -378,7 +378,7 @@ fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_release_runs_
     assert_eq!(
         fs::read_to_string(&built).unwrap(),
         format!(
-            "--build symphony in {} into its own .target\n",
+            "--build symphony-build in {} into its own .target\n",
             fixture.worktree().display()
         )
     );

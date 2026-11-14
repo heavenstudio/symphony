@@ -82,7 +82,7 @@ if [ "$(owned_git -C "$components" rev-parse HEAD)" != "${component_pin##*#}" ];
 fi
 owned_git -C "$components" ls-files --cached -z > "$inputs/components"
 snapshot_args=("$root" "$inputs/metadata.json" "$inputs/source" "$inputs/components")
-publisher="$("$root/tools/rs-bin.sh" --build symphony)"
+publisher="$("$root/tools/rs-bin.sh" --build symphony-build)"
 lock_folder="$("$publisher" release-inputs "${snapshot_args[@]}" --key)"
 snapshot="$(
     # The parent retains fd 9 for the target while this subshell takes the input lock.

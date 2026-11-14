@@ -37,7 +37,7 @@ fn built(each: usize, sizes: &[(&'static str, usize)]) -> Vec<(&'static str, usi
         .collect()
 }
 
-/// `symphony size-budget ROOT ROOT/release` on `tree`: its exit code, stdout and stderr.
+/// `symphony-build size-budget ROOT ROOT/release` on `tree`: its exit code, stdout and stderr.
 fn run(tree: &Tree) -> (i32, String, String) {
     let args = [
         tree.root.to_str().unwrap().to_string(),
@@ -194,7 +194,7 @@ fn the_embedded_client_past_its_budget_counts_every_file_under_the_distribution(
         "size-budget: the embedded client (apps/symphony-server/client/public, 3 files) is 0.0 MiB \
          (101 bytes), 0.0 MiB past its budget of 0.0 MiB (100 bytes) in tools/size-budget.toml. \
          See what it holds: `ls -lS apps/symphony-server/client/public/assets`; every generation \
-         `symphony publish-client` keeps there is embedded in the server.\n"
+         `symphony-build publish-client` keeps there is embedded in the server.\n"
     );
 }
 
@@ -299,7 +299,7 @@ fn a_server_built_from_another_client_than_the_one_beside_it_is_an_error_naming_
     assert_eq!(
         err,
         format!(
-            "symphony size-budget: symphony-server: {} is 89 bytes, less than the 90 of \
+            "symphony-build size-budget: symphony-server: {} is 89 bytes, less than the 90 of \
              apps/symphony-server/client/public it embeds, so it embeds another client; rebuild \
              it (`just size-check`)\n",
             tree.path("release/symphony-server").display()
@@ -324,7 +324,7 @@ fn a_server_built_from_another_client_than_the_one_beside_it_is_an_error_naming_
     assert_eq!(
         err,
         format!(
-            "symphony size-budget: symphony-server: {} was built before \
+            "symphony-build size-budget: symphony-server: {} was built before \
              apps/symphony-server/client/public last changed, so it embeds another client; \
              rebuild it (`just size-check`)\n",
             server.display()
@@ -385,7 +385,7 @@ fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
     assert_eq!((code, out.as_str()), (2, ""));
     assert_eq!(
         err,
-        "symphony size-budget: tools/size-budget.toml: [binaries] has no line for tasks, which \
+        "symphony-build size-budget: tools/size-budget.toml: [binaries] has no line for tasks, which \
          this workspace delivers (`BUILDS` in crates/symphony/src/init.rs): every shipped binary \
          has a budget\n"
     );
@@ -411,7 +411,7 @@ fn every_shipped_binary_has_a_line_and_every_line_is_a_shipped_binarys() {
         assert_eq!((code, out.as_str()), (2, ""));
         assert_eq!(
             err,
-            "symphony size-budget: tools/size-budget.toml: [binaries] names shelf, tasks-search, \
+            "symphony-build size-budget: tools/size-budget.toml: [binaries] names shelf, tasks-search, \
              which this workspace does not deliver (`BUILDS` in crates/symphony/src/init.rs): a \
              line is for a shipped binary\n"
         );
@@ -454,7 +454,7 @@ fn the_size_check_recipe_builds_every_shipped_binary_and_no_other() {
     assert!(
         recipe
             .iter()
-            .any(|line| line.contains("symphony size-budget . ")),
+            .any(|line| line.contains("symphony-build size-budget . ")),
         "{recipe:?}"
     );
 }
@@ -467,7 +467,7 @@ fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
     let (code, out, err) = run(&tree);
     assert_eq!((code, out.as_str()), (2, ""));
     assert!(
-        err.starts_with("symphony size-budget: symphony: ")
+        err.starts_with("symphony-build size-budget: symphony: ")
             && err.ends_with("(`just size-check` builds every binary first)\n"),
         "{err}"
     );
@@ -493,7 +493,8 @@ fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
         let (code, out, err) = run(&tree);
         assert_eq!((code, out.as_str()), (2, ""), "{text}");
         assert!(
-            err.starts_with("symphony size-budget: tools/size-budget.toml: ") && err.contains(said),
+            err.starts_with("symphony-build size-budget: tools/size-budget.toml: ")
+                && err.contains(said),
             "{text}: {err}"
         );
     }
@@ -502,7 +503,7 @@ fn a_binary_not_built_or_a_budget_it_cannot_read_is_an_error_not_a_verdict() {
     let (code, _, err) = run(&tree);
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("symphony size-budget: tools/size-budget.toml: "),
+        err.starts_with("symphony-build size-budget: tools/size-budget.toml: "),
         "{err}"
     );
 }
@@ -520,7 +521,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
     let (code, _, err) = run(&tree);
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("symphony size-budget: symphony: ") && err.ends_with(" is no file\n"),
+        err.starts_with("symphony-build size-budget: symphony: ") && err.ends_with(" is no file\n"),
         "{err}"
     );
     fs::remove_dir(tree.path("release/symphony")).unwrap();
@@ -534,7 +535,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
     let (code, _, err) = run(&tree);
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("symphony size-budget: apps/symphony-server/client/public: ")
+        err.starts_with("symphony-build size-budget: apps/symphony-server/client/public: ")
             && err.ends_with("link.js: client assets must be regular files\n"),
         "{err}"
     );
@@ -545,7 +546,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
     assert_eq!(code, 2);
     assert_eq!(
         err,
-        "symphony size-budget: apps/symphony-server/client/public: the client distribution is no \
+        "symphony-build size-budget: apps/symphony-server/client/public: the client distribution is no \
          folder\n"
     );
 }
@@ -561,7 +562,7 @@ fn the_wrong_number_of_arguments_is_the_usage() {
         assert_eq!(main(&args, &mut out, &mut err), 2);
         assert_eq!(
             (out.as_slice(), String::from_utf8(err).unwrap().as_str()),
-            (&b""[..], "usage: symphony size-budget ROOT RELEASE\n")
+            (&b""[..], "usage: symphony-build size-budget ROOT RELEASE\n")
         );
     }
 }

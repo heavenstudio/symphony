@@ -144,8 +144,8 @@ const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 /// approve standing on the tip, so a prompt before it would add only a wait on the owner; a
 /// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
 /// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
-/// stops the machine's shared server) and `symphony-cli` (which reaches `serve`, `init` and
-/// `publish-client`), ask first. `just tasks` passes every board command but the recorder
+/// stops the machine's shared server) and `symphony-cli` (which reaches `serve` and `init`), ask
+/// first. `just tasks` passes every board command but the recorder
 /// (`tasks run`), which runs any command it is handed: the recipe refuses it, in each spelling
 /// `tasks` reads, so no rule here need ask for it. The board and reply recipes keep each place
 /// they write in the checkout, out of its git folders (`symphony_board::confine`). Every rule
@@ -957,7 +957,8 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
 
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
-/// a size budget (`symphony size-budget`, docs/CHECKS.md "Size budgets").
+/// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
+/// `symphony-build`, the commands only its own build and release run use, is none of them.
 pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those

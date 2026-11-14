@@ -500,7 +500,6 @@ mod tests {
             } else {
                 Vec::new()
             },
-            skipped: Vec::new(),
             tag: None,
             pushed: false,
             board: Board::default(),

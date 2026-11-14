@@ -5,10 +5,10 @@
 //! model to delegate to. Should be very easy and simple to change the file whenever conditions or
 //! deicions happen." (The models are `[agents.models]`, [`crate::launch::Defaults`].)
 //!
-//! - `orchestrator_slots`: the open tasks an orchestrator holds before the board refuses it new
-//!   work ([`crate::slots`]); none caps nothing. `[board] orchestrator_slots` is read where
-//!   `[limits]` names none, so a file an older build reads keeps its cap; written in both with two
-//!   values, `[limits]`'s holds and the other is said.
+//! - `orchestrator_slots`: the tasks in progress an orchestrator holds (work in review and red work
+//!   not counted) before the board refuses it new work ([`crate::slots`]); none caps nothing.
+//!   `[board] orchestrator_slots` is read where `[limits]` names none, so a file an older build
+//!   reads keeps its cap; written in both with two values, `[limits]`'s holds and the other is said.
 //! - `low_volume`: an orchestrator holding fewer open slots hears PULL's `low_volume` line
 //!   ([`crate::cli::pull`]); [`LOW_VOLUME`] unwritten, and 0 says it to none.
 //! - `machine_agents`: the agents running on this machine ([`crate::launch::running`]) at which
@@ -49,7 +49,7 @@ pub const LOW_VOLUME: usize = 4;
 /// What a store holds its starts and its PULL digests to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
-    /// The open tasks an orchestrator may hold; none caps nothing.
+    /// The tasks in progress an orchestrator may hold ([`crate::slots`]); none caps nothing.
     pub orchestrator_slots: Option<usize>,
     /// The open slots below which an orchestrator hears PULL's `low_volume` line.
     pub low_volume: usize,

@@ -1,6 +1,6 @@
 //! The board's public names that consuming projects' code calls, each in the shape it calls it: a
 //! signature pinned by coercing the function to its pointer type, or a call written as a consumer
-//! writes it (a few functions are named alone, their signatures left to the conciliation below), a
+//! writes it (a few functions are named alone, their signatures left to the project, below), a
 //! struct its code builds by its fields built by them all, a variant it builds, compares or matches
 //! built, compared or matched as it does, a trait it implements implemented with the methods it
 //! writes, a struct it builds by the fields it names and fills from `Default` or a constructor
@@ -8,10 +8,8 @@
 //! by the test build and by `just lint-rs` (clippy over every target), so a change that would
 //! break a consumer in what this file holds fails a task's gate rather than a run later. The
 //! signature of a function named here alone, and a field it reads or a method it calls on a value
-//! that is not named here, the release run's conciliation
-//! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on
-//! the candidate) alone catches; the other packages' guards are named in
-//! `crates/symphony/tests/consumer_api.rs`.
+//! that is not named here, the project meets when it moves its pin, its own gate building it on
+//! the new one; the other packages' guards are named in `crates/symphony/tests/consumer_api.rs`.
 //!
 //! Each enum whose variants are held here is also matched by every variant, with no `_` arm (an
 //! enum named only as a type, as `port::NotStarted` is, or only by its constructors, as
