@@ -140,6 +140,38 @@ fn the_register_is_linked_by_its_route_and_one_outside_the_documents_by_its_path
 }
 
 #[test]
+fn the_register_is_linked_from_the_projects_folder_only_once_its_file_is_there() {
+    let register = |tree: &Tree| Project::of(&tree.root).view_at(&tree.root).register;
+    let plain = Tree::new();
+    assert_eq!(
+        register(&plain),
+        "",
+        "a new project has no register yet, so no link that leads nowhere"
+    );
+    plain.write("docs/DECISIONS", "not the register\n");
+    plain.write("docs/README.md", "# Docs\n");
+    assert_eq!(register(&plain), "", "another file is no register");
+    std::fs::create_dir_all(plain.path("docs/DECISIONS.md/inside")).unwrap();
+    assert_eq!(register(&plain), "", "a folder of its name is no register");
+    let plain = Tree::new();
+    plain.write("docs/DECISIONS.md", "# Decisions\n");
+    assert_eq!(register(&plain), "docs/DECISIONS.md");
+    let tree = manual();
+    assert_eq!(
+        register(&tree),
+        "docs/DECISIONS.md",
+        "the register in manual/ is named by its route"
+    );
+    std::fs::remove_file(tree.path("manual/DECISIONS.md")).unwrap();
+    tree.write("docs/DECISIONS.md", "# Stray\n");
+    assert_eq!(
+        register(&tree),
+        "",
+        "a file of the convention's name is not this project's register"
+    );
+}
+
+#[test]
 fn the_review_guide_is_linked_by_its_route_and_not_at_all_when_the_project_has_none() {
     let plain = Tree::new();
     plain.write("docs/DECISIONS.md", "# Decisions\n");

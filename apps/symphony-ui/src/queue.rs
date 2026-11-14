@@ -148,7 +148,7 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
                     div {
                         p { class: "eyebrow", a { href: crate::project::href(&docs::scoped(&scope, "/")), "← Home" } }
                         h1 { "Review queue" }
-                        p { class: "lead", "Every card, with a mix of document topics." }
+                        p { class: "lead", "{LEAD}" }
                     }
                 }
                 if let Some(why) = error() { p { role: "alert", "{why}" } }
@@ -166,6 +166,12 @@ pub fn QueuePage(scope: String, refreshed: Signal<u64>) -> Element {
         }
     }
 }
+
+/// What the queue's page says under its heading: what its groups hold, and the order of the first
+/// (`postpone::mixed` on the server: the document folders in turn, oldest first in each).
+#[cfg(target_arch = "wasm32")]
+const LEAD: &str = "The cards waiting on you, oldest first, the document folders taken in turn; \
+                    then those to spot-check and those waiting on an agent.";
 
 /// A row of the queue while it loads: a bar for its title and one for the line under it; a card
 /// waiting on the owner also has its rank and its Later button.

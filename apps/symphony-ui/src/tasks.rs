@@ -5,7 +5,7 @@ use crate::viewport::NearViewport as Near;
 use dioxus::prelude::*;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use symphony_api::{Role, Task, TaskFields, TaskStage, slug_order};
+use symphony_api::{Role, Task, TaskChange, TaskFields, TaskPage, TaskStage, slug_order};
 
 /// Both of the board's task orders have this one type, so the board compiles one sort for them.
 type TaskOrder = fn(&&Task, &&Task) -> Ordering;
@@ -57,6 +57,75 @@ pub fn merge(task: &mut Task, fields: &TaskFields) {
     }
 }
 
+/// What a task page made of a task's changed fields ([`page_fields`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PageFields {
+    /// The page is read again: its task's brief or status changed, or a subtask came or went, so
+    /// its count of subtasks did.
+    pub reload: bool,
+    /// A task came under the page's task: its subtasks are read again with the page.
+    pub child_came: bool,
+}
+
+/// The task page `page` takes a task's changed fields, which the feed sends alone, never the
+/// task's record again: into its task and into a subtask it lists. A subtask that left its task
+/// goes from the list, and one that came is read with the list again.
+pub fn page_fields(page: &mut TaskPage, change: &TaskChange) -> PageFields {
+    let mut done = PageFields::default();
+    if page.task.slug == change.key {
+        merge(&mut page.task, &change.fields);
+        done.reload = change.fields.body.is_some() || change.fields.status.is_some();
+    }
+    let child = page.children.iter().position(|t| t.slug == change.key);
+    if let Some(at) = child {
+        merge(&mut page.children[at], &change.fields);
+    }
+    if let Some(parent) = &change.fields.parent
+        && (*parent == page.task.slug) != child.is_some()
+    {
+        if let Some(at) = child {
+            page.children.remove(at);
+        } else {
+            done.child_came = true;
+        }
+        done.reload = true;
+    }
+    done
+}
+
+/// Each role `handle` holds on `tasks` says `health`: the feed sends a holder's health once, as its
+/// session (none, when the session is gone, is `lost`, as the board says a role of no session),
+/// never again in each task it holds.
+pub fn holder_health<'a>(
+    tasks: impl IntoIterator<Item = &'a mut Task>,
+    handle: &str,
+    health: Option<String>,
+) {
+    let health = health.unwrap_or_else(|| "lost".into());
+    for role in tasks
+        .into_iter()
+        .flat_map(|task| task.roles.iter_mut())
+        .filter(|role| role.handle == handle && role.health != health)
+    {
+        role.health.clone_from(&health);
+    }
+}
+
+/// Whether the agents page, which lists no record of a task, shows it once `fields` changed it, by
+/// the server's own rule (`agent_page::tasks`): an agent it shows (`shown`) came to hold it in a
+/// role other than orchestrator, or it finished, for the Finished line of each agent that held it.
+pub fn agents_page_takes(fields: &TaskFields, shown: impl Fn(&str) -> bool) -> bool {
+    fields
+        .status
+        .as_deref()
+        .is_some_and(|status| status == "done" || status == "cancelled")
+        || fields
+            .roles
+            .iter()
+            .flatten()
+            .any(|role| role.role != "orchestrator" && shown(&role.handle))
+}
+
 #[component]
 pub fn TaskBoard(
     tasks: Vec<Task>,
@@ -92,11 +161,7 @@ pub fn TaskBoard(
     if unreported {
         statuses.retain(|s| !stages.contains(&s.as_str()));
     } else {
-        for stage in stages {
-            if !statuses.iter().any(|s| s == stage) {
-                statuses.push(stage.to_string());
-            }
-        }
+        with_machine_stages(&mut statuses);
     }
     let mut filtered: Vec<_> = tasks
         .iter()
@@ -180,6 +245,18 @@ fn status_label(status: &str) -> String {
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
+}
+
+/// `statuses` with Build and Test where the board draws their columns: after In progress, Build
+/// before Test. One already named is moved there; with no In progress they go last.
+fn with_machine_stages(statuses: &mut Vec<String>) {
+    let stages = [TaskStage::Build, TaskStage::Test].map(TaskStage::as_str);
+    statuses.retain(|status| !stages.contains(&status.as_str()));
+    let at = statuses
+        .iter()
+        .position(|status| status == TaskStage::Lifecycle("in_progress").as_str())
+        .map_or(statuses.len(), |at| at + 1);
+    statuses.splice(at..at, stages.map(String::from));
 }
 
 /// Build and Test of a project no machine reports for: one narrow rail where their columns go.
@@ -718,6 +795,24 @@ pub fn GhostBoard(shape: Vec<(String, usize)>) -> Element {
     }
 }
 
+/// The task board whose first read failed, with nothing drawn from this device: why, in the read's
+/// own words (a board not made yet names the command that makes it), and a retry, in place of the
+/// ghost, which would wait for ever. The page reads again by itself too, and draws the board once a
+/// read answers. `trouble::Trouble`'s markup, written out as the task groups' is: the component
+/// would add to the board module's first load.
+#[component]
+pub fn UnreadBoard(why: String, retry: EventHandler<()>) -> Element {
+    rsx! {
+        section { class: "trouble card unread-board", role: "status",
+            h2 { "The task board could not be read" }
+            p { "{crate::trouble::failed(&why)}" }
+            p { class: "trouble-actions",
+                crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || retry.call(())), "Retry" }
+            }
+        }
+    }
+}
+
 /// A column of the board's ghost: its status's colour, a bar for its heading, a card for each of
 /// its `count` tasks (a page's at most, as `cards` kept them) and the room of the Load more button
 /// past a page, as its column reserves them ([`first_page_height`]); Build and Test's lines of
@@ -972,6 +1067,43 @@ mod tests {
         ] {
             assert_eq!(super::status_label(status), label, "{status}");
         }
+    }
+
+    /// The Status filter lists Build and Test where the board draws them, between In progress and
+    /// Review, whether the server named them (anywhere, even twice) or not; with no In progress
+    /// they go last.
+    #[test]
+    fn the_status_filter_lists_build_and_test_after_in_progress() {
+        let owned = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let board = owned(&[
+            "backlog",
+            "concept",
+            "design",
+            "ready",
+            "in_progress",
+            "build",
+            "test",
+            "review",
+            "done",
+            "blocked",
+            "cancelled",
+        ]);
+        let mut named = LIFECYCLE.to_vec();
+        named.extend(["build", "test"]);
+        let mut twice = owned(&["test", "build"]);
+        twice.extend(owned(&LIFECYCLE));
+        twice.push("build".into());
+        for given in [owned(&LIFECYCLE), owned(&named), twice] {
+            let mut statuses = given.clone();
+            super::with_machine_stages(&mut statuses);
+            assert_eq!(statuses, board, "{given:?}");
+        }
+        let mut none = owned(&["backlog", "done"]);
+        super::with_machine_stages(&mut none);
+        assert_eq!(none, owned(&["backlog", "done", "build", "test"]));
+        let mut empty = Vec::new();
+        super::with_machine_stages(&mut empty);
+        assert_eq!(empty, owned(&["build", "test"]));
     }
 
     /// A card opens its task from its title: the title is the card's one link to the task, and
@@ -1514,6 +1646,44 @@ mod tests {
         }
     }
 
+    /// A board whose first read was refused says why in place of its ghost, in the server's words
+    /// (a board not made yet names the command that makes it), with a retry, and draws none of the
+    /// board's classes nor the ghost's.
+    #[test]
+    fn a_board_whose_first_read_failed_says_why_in_place_of_its_ghost() {
+        let html = render(|| {
+            rsx! { super::UnreadBoard {
+                why: "the task board cannot be reached: the alpha board is not made yet, and a \
+                      reader never makes a board: nothing was read or written; `just tasks list` \
+                      in alpha makes it (the server answered 503)",
+                retry: |_| {},
+            } }
+        });
+        assert!(
+            html.starts_with(
+                "<section class=\"trouble card unread-board\" role=\"status\"><h2>The task board \
+                 could not be read</h2><p>the task board cannot be reached: the alpha board is not \
+                 made yet, and a reader never makes a board: nothing was read or written; `just \
+                 tasks list` in alpha makes it (the server answered 503).</p>"
+            ),
+            "{html}"
+        );
+        assert!(html.contains(">Retry</button>"), "{html}");
+        for drawn in ["ghost-", "kanban", "bone"] {
+            assert!(!html.contains(drawn), "{drawn}: {html}");
+        }
+        // A server out of reach sends the reader to the connection, as every page does.
+        let html = render(|| {
+            rsx! { super::UnreadBoard { why: crate::trouble::UNREACHABLE, retry: |_| {} } }
+        });
+        assert!(
+            html.contains(
+                "<p>The server could not be reached. Check the connection and try again.</p>"
+            ),
+            "{html}"
+        );
+    }
+
     #[test]
     fn a_task_counts_a_card_in_a_document_it_links_whatever_part_it_links() {
         let links = ["docs/analysis/x.md#part".to_string(), "docs/B.md".into()];
@@ -1547,5 +1717,207 @@ mod tests {
             "another task's answer says nothing of this one's"
         );
         assert_eq!(super::gates_branch("tools/x", None), "tools/x");
+    }
+
+    fn held(slug: &str, roles: &[(&str, &str, &str)]) -> symphony_api::Task {
+        serde_json::from_value(json!({
+            "slug": slug, "title": slug, "body": "", "status": "done", "priority": 2,
+            "parent": null, "created_by": "owner", "created": 1.0, "updated": 1.0,
+            "links": [], "depends": [], "instruction": false,
+            "roles": roles.iter().map(|(handle, role, health)| json!({
+                "handle": handle, "role": role, "since": 1.0, "expires": null, "health": health,
+            })).collect::<Vec<_>>(),
+        }))
+        .unwrap()
+    }
+
+    fn healths(tasks: &[symphony_api::Task]) -> Vec<Vec<(&str, &str)>> {
+        tasks
+            .iter()
+            .map(|task| {
+                task.roles
+                    .iter()
+                    .map(|role| (role.handle.as_str(), role.health.as_str()))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The feed says a holder's health once, as its session: every role of that handle, on every
+    /// task, says it, and no other role changes.
+    #[test]
+    fn a_sessions_health_reaches_every_role_its_holder_holds_and_no_other() {
+        let mut tasks = vec![
+            held(
+                "work/a",
+                &[
+                    ("amber", "executor", "live"),
+                    ("birch", "orchestrator", "live"),
+                ],
+            ),
+            held("work/b", &[("amber", "reviewer", "live")]),
+            held("work/c", &[("birch", "executor", "live")]),
+            held("work/d", &[]),
+        ];
+        super::holder_health(&mut tasks, "amber", Some("stale".into()));
+        assert_eq!(
+            healths(&tasks),
+            [
+                vec![("amber", "stale"), ("birch", "live")],
+                vec![("amber", "stale")],
+                vec![("birch", "live")],
+                vec![],
+            ]
+        );
+        let before = tasks.clone();
+        super::holder_health(&mut tasks, "cedar", Some("left".into()));
+        assert_eq!(
+            tasks, before,
+            "a session that holds nothing changes nothing"
+        );
+    }
+
+    /// A task page over `work/a` listing its subtask `work/a/1`, of two.
+    fn page() -> symphony_api::TaskPage {
+        let mut child = held("work/a/1", &[]);
+        child.parent = Some("work/a".into());
+        serde_json::from_value(json!({
+            "task": held("work/a", &[]), "blocks": [], "children": [child], "children_count": 2,
+        }))
+        .unwrap()
+    }
+
+    fn change(key: &str, fields: serde_json::Value) -> symphony_api::TaskChange {
+        serde_json::from_value(json!({"key": key, "fields": fields})).unwrap()
+    }
+
+    /// The feed sends a changed task as its changed fields alone: the page's task takes them, read
+    /// again only for a new brief or status; a subtask it lists takes them in its place.
+    #[test]
+    fn a_task_page_takes_a_changed_tasks_fields_into_its_task_and_its_subtasks() {
+        let mut page = page();
+        let done = super::page_fields(&mut page, &change("work/a", json!({"title": "Renamed"})));
+        assert_eq!(done, super::PageFields::default());
+        assert_eq!(page.task.title, "Renamed");
+
+        let done = super::page_fields(&mut page, &change("work/a", json!({"status": "review"})));
+        assert_eq!(
+            done,
+            super::PageFields {
+                reload: true,
+                child_came: false
+            }
+        );
+        assert_eq!(page.task.status, "review");
+
+        let done = super::page_fields(
+            &mut page,
+            &change(
+                "work/a/1",
+                json!({"status": "in_progress", "title": "First"}),
+            ),
+        );
+        assert_eq!(
+            done,
+            super::PageFields::default(),
+            "a subtask's status moves no count"
+        );
+        assert_eq!(
+            (
+                page.children[0].title.as_str(),
+                page.children[0].status.as_str()
+            ),
+            ("First", "in_progress")
+        );
+
+        let before = page.clone();
+        let done = super::page_fields(&mut page, &change("work/b", json!({"title": "Other"})));
+        assert_eq!(done, super::PageFields::default());
+        assert_eq!(
+            page, before,
+            "a task the page does not show changes nothing"
+        );
+    }
+
+    /// A subtask that leaves the page's task goes from its list; a task that comes under it is
+    /// read with the list again, as the page holds no record of it to add.
+    #[test]
+    fn a_subtask_that_leaves_goes_and_one_that_comes_is_read_again() {
+        let mut page = page();
+        let done = super::page_fields(&mut page, &change("work/a/1", json!({"parent": "work/b"})));
+        assert_eq!(
+            done,
+            super::PageFields {
+                reload: true,
+                child_came: false
+            }
+        );
+        assert!(page.children.is_empty());
+
+        let done = super::page_fields(&mut page, &change("work/c", json!({"parent": "work/a"})));
+        assert_eq!(
+            done,
+            super::PageFields {
+                reload: true,
+                child_came: true
+            }
+        );
+        assert!(page.children.is_empty(), "its record comes with the list");
+
+        let done = super::page_fields(&mut page, &change("work/d", json!({"parent": ""})));
+        assert_eq!(
+            done,
+            super::PageFields::default(),
+            "a task that was no subtask and leaves its parent concerns no other page"
+        );
+    }
+
+    /// A session gone from the board leaves its roles held by no session, which the board reads as
+    /// lost.
+    #[test]
+    fn a_removed_sessions_roles_read_lost() {
+        let mut tasks = vec![held("work/a", &[("amber", "executor", "stale")])];
+        super::holder_health(tasks.iter_mut(), "amber", None);
+        assert_eq!(healths(&tasks), [vec![("amber", "lost")]]);
+    }
+
+    /// The agents page takes a task it lists no record of as the server lists one: held by an agent
+    /// it shows in a role other than orchestrator, or finished; never for an orchestrator's role
+    /// alone, an agent it does not show or a change of nothing it reads.
+    #[test]
+    fn the_agents_page_takes_a_task_a_shown_agent_works_on_or_that_finished() {
+        let fields = |value| change("work/x", value).fields;
+        let shown = |handle: &str| ["amber", "birch"].contains(&handle);
+        let roles = |held: &[(&str, &str)]| {
+            json!(
+                held.iter()
+                    .map(|(handle, role)| json!({"handle": handle, "role": role, "since": 1.0, "expires": null, "health": "live"}))
+                    .collect::<Vec<_>>()
+            )
+        };
+        let takes = |value| super::agents_page_takes(&fields(value), shown);
+        assert!(takes(
+            json!({"roles": roles(&[("amber", "orchestrator"), ("birch", "executor")])})
+        ));
+        assert!(takes(json!({"roles": roles(&[("amber", "reviewer")])})));
+        assert!(
+            !takes(json!({"roles": roles(&[("amber", "orchestrator")])})),
+            "an orchestrator's open task is in its Following list, read when opened"
+        );
+        assert!(
+            !takes(json!({"roles": roles(&[("cedar", "executor")])})),
+            "an agent the page does not show"
+        );
+        assert!(!takes(json!({"roles": []})));
+        for status in ["done", "cancelled"] {
+            assert!(
+                takes(json!({"status": status})),
+                "{status} reaches its holders' Finished lines"
+            );
+        }
+        for status in ["in_progress", "review", "ready"] {
+            assert!(!takes(json!({"status": status})), "{status}");
+        }
+        assert!(!takes(json!({"title": "Renamed", "priority": 1})));
     }
 }

@@ -625,9 +625,12 @@ fn pages_read_ahead_go_before_visited_ones(chrome: &mut Chrome) {
 }
 
 /// The page's `fetch` for [`reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited`]:
-/// each read it is asked, `[url, priority, cache, headers]`, in `asked`, answered by `answers`.
+/// each read it is asked, `[url, priority, cache, headers]`, in `asked`, answered by `answers`;
+/// `unread()` names the answers whose body was left unread, which Chrome counts in flight for as
+/// long as the page is open.
 const AHEAD_FETCH: &str = r#"
-    const asked = [];
+    const asked = [], answered = [];
+    const unread = () => answered.filter(([, response]) => response.body && !response.bodyUsed).map(([url]) => url);
     const json = (value, tag) => new Response(JSON.stringify(value), { status: 200, headers: { ETag: tag } });
     const answers = {
         "/page": () => json({ title: "A" }, 'W/"p1"'),
@@ -640,7 +643,7 @@ const AHEAD_FETCH: &str = r#"
     };
     const fetch = (url, options) => {
         asked.push([url, options.priority, options.cache, options.headers]);
-        return Promise.resolve().then(() => answers[url]());
+        return Promise.resolve().then(() => answers[url]()).then(response => (answered.push([url, response]), response));
     };
 "#;
 
@@ -661,8 +664,9 @@ fn nothing_is_read_ahead_before_the_page_names_its_format(chrome: &mut Chrome) {
 /// A read ahead (`ahead`) asks each read with the page's `fetch` at the lowest priority, past the
 /// HTTP cache, marked as a prefetch and naming the tag kept for its part; a `200` is kept
 /// unvisited, and a `304`, a failure, a refusal or an answer that is no JSON keeps nothing new and
-/// stops none of the reads after it. An item a visit kept is not read, and one visited while its
-/// read was on the way keeps nothing of it.
+/// stops none of the reads after it. Every answer's body is read to its end, a refusal's too. An
+/// item a visit kept is not read, and one visited while its read was on the way keeps nothing of
+/// it.
 fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Chrome) {
     fresh(chrome, 1_000);
     let said = run(
@@ -677,6 +681,7 @@ fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Ch
                 page: await C.read(1, "alpha", "task:a", "page"),
                 thread: (await C.read(1, "alpha", "task:a", "thread"))?.value,
                 visited: items["alpha task:a"].visited,
+                unread: unread(),
             }};
             "#
         ),
@@ -691,6 +696,7 @@ fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Ch
             "page": {"value": {"title": "A"}, "etag": "W/\"p1\"", "saved": 1000},
             "thread": {"old": true},
             "visited": false,
+            "unread": [],
         })
     );
     let said = run(
@@ -706,6 +712,7 @@ fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Ch
                 asked: asked.map(([url]) => url),
                 kept: await t.kept(),
                 race: [items["alpha task:d"].visited, await C.read(1, "alpha", "task:d", "page")],
+                unread: unread(),
             }};
             "#
         ),
@@ -716,6 +723,7 @@ fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Ch
             "asked": ["/broken", "/text", "/gone", "/race"],
             "kept": ["alpha task:a", "alpha task:c", "alpha task:d"],
             "race": [true, null],
+            "unread": [],
         })
     );
 }

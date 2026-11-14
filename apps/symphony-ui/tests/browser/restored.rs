@@ -1307,6 +1307,83 @@ fn ask_reads(site: &Site) -> usize {
         .count()
 }
 
+/// The page's reads of a document's questions, as Chrome's network events tell of them.
+fn question_reads(browser: &mut super::Chrome) -> Vec<super::chrome::Request> {
+    browser
+        .requests()
+        .into_iter()
+        .filter(|request| request.url.contains("/api/asks?format=blocks&path="))
+        .collect()
+}
+
+/// A read of a document's questions that the feed's news replaces while it waits is aborted: left
+/// to answer with nobody to read it, its body went unread, which Chrome counts in flight for as
+/// long as the page is open, so `symphony shot` of a document page waited on it until its timeout.
+/// The read that replaced it answers and draws, and no read is left in flight.
+#[test]
+fn a_question_read_the_feeds_news_replaces_is_aborted_not_left_in_flight() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    document(&site, vec![paragraph("A passage for a question.")]);
+    let ask = json!({"id":7,"path":"docs/PROBE.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"","at":1.0,"blocks":[paragraph("A typed question")]}]});
+    site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"window.asksNews=[];addEventListener('review:asks',event=>asksNews.push(event.moved))"}),
+    );
+    // Every read of the questions waits until the news below has replaced one.
+    site.hold_route("/api/asks", true);
+    browser.open(&site.url("/docs/PROBE.md"));
+    assert!(browser.wait_for(
+        "document.querySelector('[data-ready=document] .asks-shell') !== null && asksNews.includes(true)",
+        SHOWN
+    ));
+    browser.eval("document.querySelector('.asks-shell').scrollIntoView({block:'center'})");
+    let before = test_time::until("a read of the questions sent", super::STALL, || {
+        let sent = question_reads(&mut browser).len();
+        (sent > 0).then_some(sent)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {:#?}", question_reads(&mut browser)));
+    site.push(
+        4183,
+        r#"{"version":4183,"changes":[{"region":"asks","data":{"threads":[{"id":7,"path":"docs/PROBE.md"}]}}]}"#,
+    );
+    let reads = test_time::until("the held reads replaced and aborted", super::STALL, || {
+        let reads = question_reads(&mut browser);
+        (reads.len() > before && reads[..before].iter().all(|read| read.failed.is_some()))
+            .then_some(reads)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {:#?}", question_reads(&mut browser)));
+    for read in &reads[..before] {
+        assert!(
+            read.canceled && !read.finished && read.status == 0,
+            "the page gave the read up before any answer: {read:#?}"
+        );
+    }
+    site.hold_route("/api/asks", false);
+    assert!(
+        browser.wait_for("document.getElementById('ask-7') !== null", SHOWN),
+        "{}",
+        browser.eval("document.body.innerText")
+    );
+    let reads = test_time::until("every read of the questions ended", super::STALL, || {
+        let reads = question_reads(&mut browser);
+        reads
+            .iter()
+            .all(|read| read.finished || read.failed.is_some())
+            .then_some(reads)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {:#?}", question_reads(&mut browser)));
+    let (last, replaced) = reads.split_last().unwrap();
+    for read in replaced {
+        assert!(read.canceled && !read.finished, "given up: {read:#?}");
+    }
+    assert!(
+        last.finished && last.status == 200,
+        "the read that replaced them answered and was read: {last:#?}"
+    );
+}
+
 #[test]
 fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answers() {
     let site = Site::start(dist(), &common::fixture("board.json"));
