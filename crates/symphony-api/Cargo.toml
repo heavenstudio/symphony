@@ -5,14 +5,21 @@ name = "symphony-api"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Symphony's wire types: the JSON its server sends and its client reads, the blocks of symphony-blocks among them."
+readme = "README.md"
+keywords = ["symphony", "serde", "api"]
+categories = ["web-programming", "encoding"]
+# What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
+include = ["src/**", "README.md", "LICENSE"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # The plugin kit's block vocabulary, which these types carry: re-exported under the names it has here.
-symphony-blocks = { path = "../symphony-blocks", version = "0.1.0" }
+symphony-blocks = { path = "../symphony-blocks", version = "1.0.0" }
 
 [dev-dependencies]
 repository-read = { path = "../repository-read" }

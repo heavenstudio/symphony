@@ -339,9 +339,10 @@ Under B, in the words RELEASES would then use:
 - **A release** is the machine's: one tag for the server, the board commands, the document
   command line and the client, installed on the machine by the update; its message names the
   protocol majors and minors it serves, the `tasks api` version and the board schema.
-- **A kit release** is a tag of its own (such as `kit-v1.4.0`), cut by the same run when the kit
-  changed, its number set by the semver check against the previous kit tag; each helper the same,
-  on its own line.
+- **A kit release** is a version of its own published on crates.io (such as `1.4.0` of the kit's
+  packages), by the same run when the kit changed, its number set by the semver check against the
+  previous published version; each helper the same, on its own line
+  ([where versions live](#open-choices)).
 - **The conciliation** is the contract checks above; no project's suite runs in the release.
 - **The refresh** installs the release on the machine; a project's pins are its own to move.
 - **A project still on a protocol major the release no longer serves** is named before the
@@ -356,7 +357,7 @@ Under B, in the words RELEASES would then use:
 | It can stay behind on | its plugin binary, while the machine speaks that protocol major; its `tasks api` and command clients, within their versions | A's, plus the kit's version, and each helper for as long as it likes | any package, within what the others' version ranges allow |
 | It cannot stay behind on | the server, the board commands, its board's schema, the client, the recipes | the same | the board's schema and the machine's server: a board writer of its own holds the schema, and the server is still one build |
 | Symphony keeps compatible | the protocol's minors and a kept major; `tasks api`; command names and outputs; settings keys | A's, plus the kit's and each helper's Rust names within a major | every package's public names within its major, the library's and the board's included |
-| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough | a registry, private or crates.io |
+| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough, though the owner chose crates.io ([below](#open-choices)) | a registry, private or crates.io |
 | The release judges | contract checks | contract checks and semver checks | semver checks of every package and their combinations; the project's suite or a matrix |
 | A break of a promised name shows | as a refused call or a default answer at run time | at the kit's or helper's semver check, at its task's gate | at each package's semver check |
 
@@ -415,7 +416,8 @@ of its own:
 Over Git this works without a registry: a consumer names the kit's three packages at one kit tag
 (one source, one copy each), and each helper at its own tag (two sources, but they share no
 types). A registry is needed only once version ranges must unify, such as two kit-dependent crates
-of a consumer each asking for a different minor.
+of a consumer each asking for a different minor. The owner chose one all the same, after B: the
+versions live on crates.io ([below](#open-choices)).
 
 - **A consumer stays behind on** its kit version, and so its plugin, while the machine's server
   speaks that kit's protocol major; on each helper as long as it likes, since nothing on the machine
@@ -426,10 +428,11 @@ of a consumer each asking for a different minor.
 - **The work here, in order:**
   1. The block vocabulary and the seams' data out of `symphony-api` into the kit, so the app's
      wire types move without touching it.
-  2. Version lines: a real `version` in each promised package's manifest (0.1.0 everywhere today),
-     a tag line for each (`kit-vX.Y.Z`, `process-cwd-vX.Y.Z`), and `cargo-semver-checks` against the
-     previous tag in the release run and at a task's gate when the package changed. The guards
-     narrow to these packages and keep what semver checks miss (a generic function named alone).
+  2. Version lines: a real `version` in each promised package's manifest (0.1.0 everywhere when
+     this was read), each version published on crates.io ([below](#open-choices)), and
+     `cargo-semver-checks` against the previous version in the release run and at a task's gate
+     when the package changed. The guards narrow to these packages and keep what semver checks
+     miss (a generic function named alone).
   3. No promised package shows another's type unless they share a line; the library's and the
      board's re-exports of the helpers stop mattering once no consumer links those two.
   4. A's steps 1 to 5.
@@ -538,18 +541,22 @@ the contract.
 
 B decides the rest:
 
-- **Where versions live:** a line of tags in this repository for the kit and one for each helper,
-  cut by the release run; Git is enough (the options' table, Distribution).
+- **Where versions live:** on crates.io, by the owner's word after B, 2026-11-13: "I would like to
+  publish crates (MIT license) to crates.io as the pacakge manager". So not on lines of tags in this
+  repository, which the options' table (Distribution) found enough for B: the kit and the helpers
+  are published there, each version once ([RELEASES](../RELEASES.md#packages-on-cratesio)).
 - **The board's rules:** the board commands stay one per machine and move at its update, so a
   changed rule reaches every project at once, the release's notes saying so. `tasks api` promises
   what its calls take and answer, not the rules behind them.
 - **An old protocol major:** the protocol is on its first, and no settings key or command is
   retired, so how long an old major is kept is asked when a second is planned.
 
-The kit's first number is no choice of its own: Cargo reads a change of 0.y as it reads a new
-major, and a Git dependency names a tag, never a range, so 0.x and 1.0 promise a project the same.
-The kit and each helper take 1.0.0 at their first tag, the number whose majors and minors B's
-promise is written in.
+The first numbers: the kit (`symphony-plugin`, `symphony-blocks` and `symphony-docs`, one version
+for the three) and each helper start at 1.0.0, the number whose majors and minors B's promise is
+written in. The kit could take it only once its blocks had left the app's wire types for
+`symphony-blocks`: with them inside it, nearly every release, changing a wire type, would have
+needed a new major, which says nothing. `symphony-api`, the app's wire types, stays at 0.1.0 and
+promises no name.
 
 ## Verified and inferred
 

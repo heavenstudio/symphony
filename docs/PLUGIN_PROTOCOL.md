@@ -19,9 +19,10 @@ types cross.
   server sends them and the client draws them; `symphony_plugin::vocabulary` re-exports it.
 - `symphony-docs`: the doc checks a plugin adds and the docs' syntax they read.
 
-The kit's crates depend on no other workspace crate but each other. The app's own wire types, which
-move with the server and the client, are `symphony-api`'s, which re-exports the vocabulary under the
-same names.
+The kit's crates depend on no other workspace crate but each other. They carry one version, 1.0.0
+now, and are made to be published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)). The
+app's own wire types, which move with the server and the client, are `symphony-api`'s, which
+re-exports the vocabulary under the same names.
 
 ## Turning it on
 
