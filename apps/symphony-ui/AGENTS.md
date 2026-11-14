@@ -226,7 +226,7 @@ never the whole target, which the release run runs.
   and all, only for the canonical-entry test's report.
   It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
-  page is open and are reported beside the total: what a visit leaves out is
+  page is open and are reported beside the total: leaving the pings out is
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture a first visit to `/tasks` takes 261,350 bytes, 38,650 under the

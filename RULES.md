@@ -267,10 +267,10 @@ words decide; a question of theirs decides nothing
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
 question. It opens with what changes for the owner, in one or two plain sentences, before any
-option, written for someone who has not read the internals: a card the owner cannot follow comes
-back undecided, its choice left to the agent. Detail
-the decision does not need goes in a linked file, and pictures go where the thing judged is visual
-([REVIEW](docs/REVIEW.md#writing-a-card)).
+option, written for someone who has not read the internals: a card the owner cannot follow loses
+their judgement, which is what it was for, and they may hand the choice back rather than make it.
+Detail the decision does not need goes in a linked file, and pictures go where the thing judged is
+visual ([REVIEW](docs/REVIEW.md#writing-a-card)).
 
 ### `docs/one-decision-per-card`
 
@@ -297,7 +297,10 @@ reason matters links its card, `[its card](DECISIONS.md#SLUG)`
 ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and `docs/history/` are the records that
 keep them: the words the guides and documents once quoted are in
 [owner-words](docs/history/owner-words.md). `crates/symphony/tests/hooks/owner_words.rs` fails on
-a rule given as the owner's words, dated or quoted, in a guide or a document.
+the owner's words in a guide or a document in the shapes the guides gave them: the owner, the
+owner's, or the owner's word or rule followed by a date, or a straight quote mark right after
+`owner's` or `the owner:`. Any other shape, a curly quote or an attribution in other words,
+passes it, and a reviewer reads for that.
 
 ### `docs/one-topic-per-doc`
 

@@ -2,7 +2,8 @@
 //! or quoted (RULES.md `docs/no-ledger-in-documents`): the words are kept in
 //! `docs/history/owner-words.md` and the decision register, the records this check passes over. The
 //! pattern is the one the published packages are read against (`tests/common/owner_words.rs`),
-//! read across a line's break, as prose wraps an attribution onto the next line.
+//! read across a line's break, as prose wraps an attribution onto the next line. It finds the
+//! shapes that pattern names; any other is a reviewer's to read for.
 
 #[path = "../common/owner_words.rs"]
 mod words;
