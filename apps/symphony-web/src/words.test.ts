@@ -1,5 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { deviceNotice, localMoment, moment, parseMoment, plural, savedAt } from "./words";
+import { deviceNotice, fixed, localMoment, moment, parseMoment, plural, savedAt } from "./words";
+
+describe("a number to a few places", () => {
+  it.each([
+    // A chart's figures.
+    [2.125, 2, "2.12"],
+    [0.125, 2, "0.12"],
+    [2.5, 0, "2"],
+    [3.5, 0, "4"],
+    [0.25, 1, "0.2"],
+    [0.75, 1, "0.8"],
+    [12.25, 1, "12.2"],
+    [1234.5, 0, "1234"],
+    [2.875, 2, "2.88"],
+    [0.375, 2, "0.38"],
+    [1.005, 2, "1.00"],
+    [33.333333333333336, 2, "33.33"],
+    [9.995, 2, "9.99"],
+    [9.96, 1, "10.0"],
+    [99.5, 0, "100"],
+    [-0, 2, "-0.00"],
+    [-0.001, 2, "-0.00"],
+    [-2.5, 0, "-2"],
+    [7, 0, "7"],
+    // Home's percentages.
+    [12.5, 0, "12"],
+    [13.5, 0, "14"],
+    [62.5, 0, "62"],
+    [0.5, 0, "0"],
+    [42.857142857142854, 0, "43"],
+    [100, 0, "100"],
+    [0, 0, "0"],
+    [6.25, 1, "6.2"],
+    [6.75, 1, "6.8"],
+    [18.75, 1, "18.8"],
+    [33.333333333333336, 1, "33.3"],
+    [11.11111111111111, 1, "11.1"],
+    [0.35, 1, "0.3"],
+    [0.05, 1, "0.1"],
+    [99.95, 1, "100.0"],
+    [100, 1, "100.0"],
+    [0, 1, "0.0"],
+  ])("writes %d to %d places as Rust's {:.N} does: %s", (value, places, text) => {
+    expect(fixed(value, places)).toBe(text);
+  });
+
+  it("writes a number too large for decimals as toFixed does", () => {
+    expect(fixed(1e21, 2)).toBe("1e+21");
+  });
+});
 
 /** A moment on the wall clock where the tests run. */
 const at = (year: number, month: number, day: number, hours: number, minutes: number) =>

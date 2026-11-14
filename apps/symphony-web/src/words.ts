@@ -44,6 +44,42 @@ export function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
 
+/** The digits after the point a decimal `digits` (no sign, no point) keeps when rounded up by one. */
+function increment(digits: string): string {
+  const out = digits.split("");
+  for (let at = out.length - 1; at >= 0; at--) {
+    if (out[at] !== "9") {
+      out[at] = String(Number(out[at]) + 1);
+      return out.join("");
+    }
+    out[at] = "0";
+  }
+  return `1${out.join("")}`;
+}
+
+/**
+ * `value` with `places` decimals, as Rust's `{:.N}` writes it (the Dioxus pages' words): the
+ * nearest, a tie to the even digit (`2.125` to two places is `2.12`, where JavaScript's `toFixed`
+ * says `2.13`), and a negative zero with its sign. The tie is read from the number's own decimal
+ * digits, which `toFixed(100)` writes exactly for every value a chart or a percentage holds.
+ */
+export function fixed(value: number, places: number): string {
+  const sign = value < 0 || Object.is(value, -0) ? "-" : "";
+  const exact = Math.abs(value).toFixed(100);
+  if (!exact.includes(".")) return `${sign}${exact}`;
+  const [whole = "0", fraction = ""] = exact.split(".");
+  const kept = whole + fraction.slice(0, places);
+  const rest = fraction.slice(places);
+  const first = rest[0] ?? "0";
+  const tie = first === "5" && !/[1-9]/.test(rest.slice(1));
+  const up = first > "5" || (first === "5" && !tie) || (tie && Number(kept.at(-1)) % 2 === 1);
+  const digits = up ? increment(kept) : kept;
+  const point = digits.length - places;
+  return places === 0
+    ? `${sign}${digits}`
+    : `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
 /** Days from 1970-01-01 to a date of the proleptic Gregorian calendar (Howard Hinnant's). */
 function daysFromCivil(year: number, month: number, day: number): number {
   const shifted = month <= 2 ? year - 1 : year;

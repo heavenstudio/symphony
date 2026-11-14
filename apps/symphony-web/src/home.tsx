@@ -1,6 +1,6 @@
 // Home (`/`): the greeting and the page links, the next card with its pictures and the four after
 // it, the counts, and the progress the project's plugins add with the design documents'. The board
-// it draws is kept current by the feed (board.ts); each region draws again only when the event
+// it draws is kept current by the feed (home-board.ts); each region draws again only when the event
 // changed its own part of the board. The Dioxus client's view.rs, drawn alike.
 
 import { memo, useEffect, useState } from "react";
@@ -18,7 +18,7 @@ import type {
   ProjectView,
   Region,
 } from "./wire";
-import { localMoment, parseMoment, plural } from "./words";
+import { fixed, localMoment, parseMoment, plural } from "./words";
 
 /** How many pictures the hero shows: a picture card's candidates, or the items a card names. */
 const HERO_PICTURES = 6;
@@ -49,19 +49,6 @@ export function lead(waiting: number, docs: number): string {
 /** `part` of `whole` in percent; 0 of nothing. */
 function percent(part: number, whole: number): number {
   return whole === 0 ? 0 : (100 * part) / whole;
-}
-
-/**
- * `value` with `digits` decimals as Rust's `{:.N}` writes it: its exact value rounded, a tie to the
- * even digit, where `toFixed` rounds a tie up. Exact for a percentage of counts, whose binary
- * fraction ends within a hundred decimals.
- */
-export function fixed(value: number, digits: number): string {
-  const exact = value.toFixed(100);
-  const point = exact.indexOf(".");
-  const kept = exact.slice(0, digits === 0 ? point : point + 1 + digits);
-  const tie = /^50*$/.test(exact.slice(point + 1 + digits));
-  return tie && Number(kept.at(-1)) % 2 === 0 ? kept : value.toFixed(digits);
 }
 
 /** The moment it is where the owner is, read again each minute. */

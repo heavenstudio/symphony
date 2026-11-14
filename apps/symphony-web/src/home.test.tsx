@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import fullBoard from "../../../crates/symphony-api/fixtures/board.json";
 import emptyBoard from "../../../crates/symphony-api/fixtures/board-empty.json";
-import { age, BoardView, fixed, greeting, HomePage, lead } from "./home";
+import { age, BoardView, greeting, HomePage, lead } from "./home";
 import { readBoard } from "./home-board";
 import { PLAIN } from "./project";
 import type { Board, Card, ProjectView, Region } from "./wire";
@@ -74,31 +74,6 @@ describe("the lead", () => {
     expect(lead(37, 9)).toBe("37 cards wait on you across 9 documents. Start with the one below.");
     expect(lead(1, 1)).toBe("1 card waits on you across 1 document. Start with the one below.");
     expect(lead(0, 0)).toBe("Your queue is empty.");
-  });
-});
-
-describe("a percentage", () => {
-  it.each([
-    [12.5, 0, "12"],
-    [13.5, 0, "14"],
-    [2.5, 0, "2"],
-    [62.5, 0, "62"],
-    [0.5, 0, "0"],
-    [42.857142857142854, 0, "43"],
-    [100, 0, "100"],
-    [0, 0, "0"],
-    [6.25, 1, "6.2"],
-    [6.75, 1, "6.8"],
-    [18.75, 1, "18.8"],
-    [33.333333333333336, 1, "33.3"],
-    [11.11111111111111, 1, "11.1"],
-    [0.35, 1, "0.3"],
-    [0.05, 1, "0.1"],
-    [99.95, 1, "100.0"],
-    [100, 1, "100.0"],
-    [0, 1, "0.0"],
-  ])("%d to %d decimals is %s, as Rust writes it", (value, digits, written) => {
-    expect(fixed(value, digits)).toBe(written);
   });
 });
 
