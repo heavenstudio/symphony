@@ -272,7 +272,7 @@ fn raw<T: Serialize>(value: &T) -> Result<Box<RawValue>, String> {
 }
 
 /// What answers `request`, written: the call's answer, or why it is refused.
-fn answered(plugin: &dyn Plugin, request: &str, pages: &Pages) -> Box<RawValue> {
+pub(crate) fn answered(plugin: &dyn Plugin, request: &str, pages: &Pages) -> Box<RawValue> {
     let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let request = serde_json::from_str::<Request>(request).map_err(|e| e.to_string())?;
         answer(plugin, request, pages)
@@ -480,7 +480,7 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
 /// The pages of the renders a process answers for, the newest [`KEPT_RENDERS`]: what their
 /// components have loaded, by render.
 #[derive(Default)]
-struct Pages {
+pub(crate) struct Pages {
     kept: Mutex<VecDeque<(u64, crate::Loaded)>>,
 }
 
@@ -489,7 +489,7 @@ impl Pages {
     /// earlier requests loaded, or a page of its own for a render of 0.
     fn with<R>(&self, data: &PageData, run: impl FnOnce(&Page<'_>) -> R) -> R {
         if data.render == 0 {
-            return run(&Page::new(&data.root, &data.doc_path));
+            return run(&Page::new(&data.root, &data.doc_path).in_artifacts(&data.artifacts));
         }
         let loaded = {
             let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
@@ -505,7 +505,7 @@ impl Pages {
                 }
             }
         };
-        run(&Page::sharing(&data.root, &data.doc_path, loaded))
+        run(&Page::sharing(&data.root, &data.doc_path, loaded).in_artifacts(&data.artifacts))
     }
 }
 

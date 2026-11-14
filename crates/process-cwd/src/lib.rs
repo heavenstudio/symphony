@@ -5,7 +5,8 @@
 //! helper the board's children share, since this leaf is the one crate both sides link. A caller
 //! that chooses lsof's environment hands the scan its own command ([`process_cwds_with`],
 //! [`occupied_with`]). An async caller awaits such a child's end, killed if the wait is dropped
-//! first, through [`exit`].
+//! first, through [`exit`]. A child starts without its starter's session and marks through
+//! [`session`], the lists the board's children and a plugin's process share.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 mod close_on_fork;
 pub mod exit;
 mod pid;
+pub mod session;
 pub mod spawn;
 
 pub use close_on_fork::close_on_fork;

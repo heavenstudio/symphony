@@ -106,7 +106,8 @@ fn a_plugins_process_answers_its_components_and_card_kinds_as_it_does_linked() {
     assert!(process::remote(piped.list()[0]).is_some());
     assert_eq!(piped.component_names(), ["task", "every", "again", "slow"]);
     let root = tree.root.as_path();
-    let page = || Page::new(root, "docs/ünï code.md");
+    // An artifacts folder of its own, so one lost on the wire reads otherwise.
+    let page = || Page::new(root, "docs/ünï code.md").in_artifacts("out/ä");
     for (argument, option) in [("lantern", Some("wide")), ("", None), ("bad", None)] {
         assert_eq!(
             piped.render(&page(), "every", argument, option),
@@ -302,6 +303,7 @@ fn a_plugins_process_ends_when_its_input_does_whatever_its_calls_are_doing() {
             root: "/r".into(),
             doc_path: "docs/A.md".into(),
             render: 0,
+            artifacts: "artifacts".into(),
         },
         argument: "hang".into(),
         option: None,
