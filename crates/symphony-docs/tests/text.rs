@@ -4,10 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use symphony_docs::markup::{escape, quote, unescape};
-use symphony_docs::text::{
-    FileStamp, NS, S, is_space, is_word, lstrip, path_str, prefix_chars, read_text, rstrip,
-    splitlines, strip, universal_newlines, write_whole,
-};
+use symphony_docs::syntax::is_space;
+use symphony_docs::text::{FileStamp, S, is_word, read_text, splitlines, strip, write_whole};
 
 /// A file of this test's own in the system's temporary folder, removed when dropped.
 struct Scratch(PathBuf);
@@ -42,8 +40,7 @@ fn splitlines_breaks_where_python_does_and_drops_a_last_empty_line() {
 #[test]
 fn strip_takes_pythons_spaces_including_the_four_separators() {
     assert_eq!(strip(" \t\x1c a b\x1f\u{a0}\u{3000}"), "a b");
-    assert_eq!(lstrip("  a "), "a ");
-    assert_eq!(rstrip("  a \n"), "  a");
+    assert_eq!(strip("  a \n"), "a");
     assert_eq!(strip("\x1e\x1d"), "");
     assert!(is_space('\x1d'));
     assert!(!is_space('\u{200b}'));
@@ -51,32 +48,8 @@ fn strip_takes_pythons_spaces_including_the_four_separators() {
 }
 
 #[test]
-fn the_space_classes_are_pythons_in_a_pattern() {
+fn the_space_class_is_pythons_in_a_pattern() {
     assert_eq!(S, r"[\s\x1C-\x1F]");
-    assert_eq!(NS, r"[^\s\x1C-\x1F]");
-}
-
-#[test]
-fn prefix_counts_characters_not_bytes() {
-    assert_eq!(prefix_chars("éèê", 2), "éè");
-    assert_eq!(prefix_chars("ab", 80), "ab");
-    assert_eq!(prefix_chars("ab", 0), "");
-}
-
-#[test]
-fn a_path_prints_as_pathlib_prints_it() {
-    assert_eq!(path_str("./tmp/x/"), "tmp/x");
-    assert_eq!(path_str("/a//b/./c"), "/a/b/c");
-    assert_eq!(path_str("//host/a"), "//host/a");
-    assert_eq!(path_str("///a"), "/a");
-    assert_eq!(path_str("."), ".");
-    assert_eq!(path_str(""), ".");
-}
-
-#[test]
-fn universal_newlines_read_crlf_and_cr_as_lf() {
-    assert_eq!(universal_newlines("a\r\nb\rc\n".into()), "a\nb\nc\n");
-    assert_eq!(universal_newlines("plain\n".into()), "plain\n");
 }
 
 #[test]
@@ -122,6 +95,7 @@ fn a_stamp_changes_with_the_file_and_holds_while_it_does_not() {
     assert!(FileStamp::read(Path::new("/nonexistent/stamp.md")).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn write_whole_replaces_the_text_and_keeps_the_permissions() {
     use std::os::unix::fs::PermissionsExt;

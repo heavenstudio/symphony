@@ -1,19 +1,23 @@
 //! Python's text rules, kept exact, so a file read or written by them is byte for byte the file
 //! Python would read or write: its whitespace and lines, a file's text read with universal newlines,
-//! a path printed as `pathlib` prints it, and a file replaced whole. What a plugin reads its own
-//! files by, and the Symphony's library with it. A string's `repr` and an OS error as Python prints
-//! one are the helper `symphony-schema`'s (`symphony_schema::text`).
+//! and a file replaced whole. What a plugin reads its own files by, and the Symphony's library with
+//! it. A string's `repr` and an OS error as Python prints one are the helper `symphony-schema`'s
+//! (`symphony_schema::text`).
 
 use std::collections::BTreeMap;
+use std::fs::Metadata;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
+use crate::syntax::is_space;
+pub use crate::syntax::is_word;
 pub use crate::syntax::lines as splitlines;
-pub use crate::syntax::{is_space, is_word};
 
-/// Identity and change times detect in-place edits, atomic replacements and timestamp restores.
+/// What a file is now, to tell that it changed: on Unix its device and inode, its size, and its
+/// modification and change times, which see an edit in place, a file replaced by another and a
+/// modification time put back; elsewhere its size and modification time, which miss a file replaced
+/// by one of the same size whose modification time was put back.
 #[derive(Clone, PartialEq, Eq)]
 pub struct FileStamp {
     device: u64,
@@ -25,43 +29,51 @@ pub struct FileStamp {
 
 impl FileStamp {
     pub fn read(path: &Path) -> io::Result<Self> {
-        let meta = std::fs::metadata(path)?;
-        Ok(Self {
+        Ok(Self::of(&std::fs::metadata(path)?))
+    }
+
+    #[cfg(unix)]
+    fn of(meta: &Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
             device: meta.dev(),
             inode: meta.ino(),
             size: meta.len(),
             modified: (meta.mtime(), meta.mtime_nsec()),
             changed: (meta.ctime(), meta.ctime_nsec()),
-        })
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn of(meta: &Metadata) -> Self {
+        // Seconds and nanoseconds since the epoch, as Unix counts them; a time the system cannot
+        // give reads as none.
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or((0, 0), |since| {
+                (
+                    i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
+                    i64::from(since.subsec_nanos()),
+                )
+            });
+        Self {
+            device: 0,
+            inode: 0,
+            size: meta.len(),
+            modified,
+            changed: (0, 0),
+        }
     }
 }
 
 /// Python's `\s` inside a pattern: Rust's `\s` plus the four separators Python also counts.
 pub const S: &str = r"[\s\x1C-\x1F]";
-/// Python's `\S`.
-pub const NS: &str = r"[^\s\x1C-\x1F]";
 
 /// Python's `str.strip()`.
 pub fn strip(s: &str) -> &str {
     s.trim_matches(is_space)
-}
-
-/// Python's `str.lstrip()`.
-pub fn lstrip(s: &str) -> &str {
-    s.trim_start_matches(is_space)
-}
-
-/// Python's `str.rstrip()`.
-pub fn rstrip(s: &str) -> &str {
-    s.trim_end_matches(is_space)
-}
-
-/// The first `n` characters of `s`, as Python's `s[:n]`.
-pub fn prefix_chars(s: &str, n: usize) -> &str {
-    s.char_indices()
-        .nth(n)
-        .and_then(|(at, _)| s.get(..at))
-        .unwrap_or(s)
 }
 
 /// `pathlib.Path.read_text(encoding="utf-8")`: universal newlines, so `\r\n` and `\r` read as `\n`.
@@ -97,31 +109,11 @@ pub fn read_text(path: &Path) -> io::Result<String> {
 }
 
 /// `text` as Python reads a file of it: `\r\n` and `\r` read as `\n`.
-pub fn universal_newlines(text: String) -> String {
+fn universal_newlines(text: String) -> String {
     if text.contains('\r') {
         return text.replace("\r\n", "\n").replace('\r', "\n");
     }
     text
-}
-
-/// Python's `str(pathlib.Path(s))`: repeated and trailing slashes and `.` parts dropped.
-pub fn path_str(s: &str) -> String {
-    let (root, rest) =
-        if let Some(rest) = s.strip_prefix("//").filter(|rest| !rest.starts_with('/')) {
-            ("//", rest)
-        } else if s.starts_with('/') {
-            ("/", s.trim_start_matches('/'))
-        } else {
-            ("", s)
-        };
-    let parts: Vec<&str> = rest
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect();
-    if root.is_empty() && parts.is_empty() {
-        return ".".to_string();
-    }
-    format!("{root}{}", parts.join("/"))
 }
 
 /// Replace the file at `path` with `text` whole: written to a file beside it, then renamed over it, so a

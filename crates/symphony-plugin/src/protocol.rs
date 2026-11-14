@@ -58,6 +58,22 @@
 //!   agreed) is refused whole, and the host shows the error in the call's place: a component's in
 //!   its place in the page.
 //!
+//! So every struct here is `#[non_exhaustive]`: a field a minor adds is no new major of this crate,
+//! as nothing outside it builds one by its fields. A request is made by its `new` (which takes every
+//! field its call has: a field a later minor adds stays out of it, as `calls!` says), a page, a
+//! card, a task, a file and a problem by their `of` from what the seam borrows, a [`Declaration`]
+//! and what it lists by its `of` from a plugin (or from `Default`, its fields set after), a
+//! [`Version`] by its `new`, and a line by [`Envelope::asking`], [`Envelope::cancelling`] or
+//! [`Envelope::answering`]. [`Request`] is `#[non_exhaustive]` as well, as a minor adds a call. The
+//! other enums here stay exhaustive, so their readers match on every variant: a variant of
+//! [`Answered`] or [`Member`] is a line an older peer cannot read, a new major of the protocol, and
+//! [`Lined`] is how a line reads, never on the wire.
+//!
+//! ```compile_fail,E0639
+//! // Outside this crate a request is made by its `new`, never by its fields.
+//! let _ = symphony_plugin::protocol::Changed { watch: 0, root: "/r".into() };
+//! ```
+//!
 //! A request names no plugin: one process speaks for one plugin, and a project whose `[plugins]
 //! crates` lists several has a process for each.
 //!
@@ -89,6 +105,7 @@ use crate::{
 
 /// The protocol's version: a new major breaks what the one before wrote, a new minor only adds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Version {
     pub major: u32,
     pub minor: u32,
@@ -112,6 +129,11 @@ impl std::fmt::Display for Version {
 }
 
 impl Version {
+    /// The version `major.minor`.
+    pub const fn new(major: u32, minor: u32) -> Version {
+        Version { major, minor }
+    }
+
     /// The version a host speaking `self` speaks with a plugin that declared `plugin`: the lower
     /// minor of their one major, so a newer plugin speaks down to the host's minor and an older one
     /// is answered at its own. Another major is refused, naming both and the side to update.
@@ -163,6 +185,7 @@ impl<T> Answered<T> {
 /// answer is read as the type of the call its id names. A struct reads its members in any order
 /// with nothing buffered, and a member it does not know is ignored.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Envelope<Q = Box<RawValue>, A = Box<RawValue>> {
     /// The call's id, the host's to choose and unique among the calls it has not had answered: the
     /// answer and a cancel name the call by it.
@@ -187,6 +210,7 @@ pub type Raw = Envelope<Box<RawValue>, Box<RawValue>>;
 
 /// The `cancel` member: an empty object.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Cancel {}
 
 /// The one known member a line holds.
@@ -361,7 +385,13 @@ macro_rules! loopback_only {
 }
 
 /// Each call: the minor it came in, its request's fields and what answers it, then the one
-/// [`Request`] they all go on the wire as.
+/// [`Request`] they all go on the wire as. [`Request`] is `#[non_exhaustive]`, so a call a later
+/// minor adds is a new variant and no new major of this crate. A request is `#[non_exhaustive]` too,
+/// made outside this crate by its `new`, which takes every field in the call's braces: a field
+/// added there changes `new`'s arguments, a new major of this crate. No call has a field a later
+/// minor added yet. The first such field gives this macro a group of its own after the call's
+/// fields, each `#[serde(default)]` and left out of `new`, which fills it with its default, so the
+/// field is a minor of this crate as of the protocol, set on the request after `new`.
 macro_rules! calls {
     ($(
         $(#[$doc:meta])*
@@ -370,8 +400,10 @@ macro_rules! calls {
         }
     )*) => {
         /// Every call a plugin answers, as it goes on the wire: one member, named by its seam and
-        /// call, holding its fields.
+        /// call, holding its fields. A later minor adds a call, so a match on it outside this crate
+        /// ends with `_`.
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        #[non_exhaustive]
         pub enum Request {
             $(
                 #[serde(rename = $tag)]
@@ -392,8 +424,16 @@ macro_rules! calls {
         $(
             $(#[$doc])*
             #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+            #[non_exhaustive]
             pub struct $name {
                 $( $(#[$field_doc])* pub $field: $type, )*
+            }
+
+            impl $name {
+                /// The request of these fields, every field its call has.
+                pub fn new($($field: $type),*) -> $name {
+                    $name { $($field),* }
+                }
             }
 
             impl From<$name> for Request {
@@ -420,6 +460,8 @@ macro_rules! calls {
     };
 }
 
+// A field added to a call's braces below changes its `new`, a new major of this crate: a field a
+// later minor adds goes in a group `new` leaves out, which `calls!`'s doc describes.
 calls! {
     /// What a plugin declares: asked once, before any other call, naming the host's protocol.
     Declare = "plugin.declare" since 1 => Declaration { protocol: Version }
@@ -566,6 +608,7 @@ calls! {
 /// A page as a request names it: the project's root, the document rendered, the render it is part
 /// of, and the project's artifacts folder.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PageData {
     pub root: PathBuf,
     pub doc_path: String,
@@ -603,6 +646,7 @@ impl PageData {
 
 /// A [`Card`], owned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CardData {
     pub slug: String,
     pub doc: String,
@@ -613,6 +657,7 @@ pub struct CardData {
 
 /// A [`ThreadLine`], owned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ThreadLineData {
     pub agent: bool,
     pub verdict: Option<String>,
@@ -661,6 +706,7 @@ impl CardData {
 
 /// A [`TaskRef`], owned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TaskData {
     pub slug: String,
     pub status: String,
@@ -687,6 +733,7 @@ impl TaskData {
 
 /// A renderer's [`File`], owned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FileData {
     pub src: String,
     pub label: String,
@@ -711,6 +758,7 @@ impl FileData {
 /// A doc check's [`Problem`], as the wire carries it: `symphony-docs` is std only, so its type
 /// takes no serde derive.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProblemData {
     pub file: String,
     pub line: usize,
@@ -739,6 +787,7 @@ impl ProblemData {
 /// object's name and what it says of itself, its navigation and its theme, each list in the
 /// plugin's order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Declaration {
     pub protocol: Version,
     pub name: String,
@@ -766,6 +815,7 @@ pub struct Declaration {
 
 /// A card kind: its name and the markers it reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredKind {
     pub name: String,
     pub markers: Vec<String>,
@@ -773,6 +823,7 @@ pub struct DeclaredKind {
 
 /// A renderer: its name, its files' extensions and the content type they are served with.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredRenderer {
     pub name: String,
     pub extensions: Vec<String>,
@@ -781,6 +832,7 @@ pub struct DeclaredRenderer {
 
 /// A board field: its name, its kind and whether a task must hold it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredField {
     pub name: String,
     pub kind: FieldKind,
@@ -789,6 +841,7 @@ pub struct DeclaredField {
 
 /// A doc check: its name and the files outside `docs/` it reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredCheck {
     pub name: String,
     pub inputs: Vec<String>,
@@ -796,6 +849,7 @@ pub struct DeclaredCheck {
 
 /// A generator, as [`Generator`](crate::Generator) says it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredGenerator {
     pub name: String,
     pub outputs: String,
@@ -805,6 +859,7 @@ pub struct DeclaredGenerator {
 
 /// A command: its name and its line in `symphony help`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeclaredCommand {
     pub name: String,
     pub summary: String,

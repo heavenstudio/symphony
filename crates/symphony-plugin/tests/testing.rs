@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 
 use symphony_plugin::protocol::{
     CacheVersion, CardData, Chosen, PROTOCOL, PageData, Pictures, Recognises, Resolve, Slot,
-    ThreadLineData, TriageCategory,
+    TriageCategory,
 };
 use symphony_plugin::testing::Host;
 use symphony_plugin::vocabulary::{Block, Picture, Span};
-use symphony_plugin::{Page, error};
+use symphony_plugin::{Card, Page, ThreadLine, error};
 
 #[path = "../../symphony/tests/project/seams/every.rs"]
 mod every;
@@ -23,24 +23,25 @@ fn root(name: &str) -> PathBuf {
 
 /// The card with `text` and a thread of an agent's line and the owner's approval.
 fn card(text: &str) -> CardData {
-    CardData {
-        slug: "pick-widget".into(),
-        doc: "docs/DECISIONS.md".into(),
-        topic: "Widgets".into(),
-        text: text.into(),
-        thread: vec![
-            ThreadLineData {
-                agent: true,
-                verdict: None,
-                text: "B. the round one".into(),
-            },
-            ThreadLineData {
-                agent: false,
-                verdict: Some("approved".into()),
-                text: "B".into(),
-            },
-        ],
-    }
+    let thread = [
+        ThreadLine {
+            agent: true,
+            verdict: None,
+            text: "B. the round one",
+        },
+        ThreadLine {
+            agent: false,
+            verdict: Some("approved"),
+            text: "B",
+        },
+    ];
+    CardData::of(&Card {
+        slug: "pick-widget",
+        doc: "docs/DECISIONS.md",
+        topic: "Widgets",
+        text,
+        thread: &thread,
+    })
 }
 
 /// The text of the heading a render of `every` answers first.
@@ -69,30 +70,28 @@ fn the_plugin_declares_what_its_process_answers_to_a_host_of_this_protocol() {
 fn a_component_renders_through_the_harness_with_its_pages_artifacts_folder() {
     let host = Host::new(&every::PIPED);
     let root = root("render");
-    let page = PageData::of(&Page::new(&root, "docs/ünï code.md").in_artifacts("out/ä"));
+    let page = Page::new(&root, "docs/ünï code.md").in_artifacts("out/ä");
     let blocks = host.render(&page, "every", "lantern", Some("wide"));
     assert_eq!(blocks.len(), 2, "{blocks:?}");
     assert_eq!(heading(&blocks), "lantern Some(\"wide\") in out/ä/every");
     // A page of a host that named no folder has the default one.
-    let plain = PageData::of(&Page::new(&root, "docs/A.md"));
+    let plain = Page::new(&root, "docs/A.md");
     assert_eq!(
         heading(&host.render(&plain, "every", "a", None)),
         "a None in artifacts/every"
     );
+    let page = PageData::of(&page);
     assert_eq!(
-        host.ask(Resolve {
-            component: "again".into(),
-            page: page.clone(),
-            argument: "a".into(),
-            option: Some("o".into()),
-        }),
+        host.ask(Resolve::new(
+            "again".into(),
+            page.clone(),
+            "a".into(),
+            Some("o".into()),
+        )),
         Ok(Err("again takes no option, not \"o\" on a".into()))
     );
     assert_eq!(
-        host.ask(CacheVersion {
-            component: "every".into(),
-            page,
-        }),
+        host.ask(CacheVersion::new("every".into(), page)),
         Ok(Some(format!("v1:{}|docs/ünï code.md", root.display())))
     );
 }
@@ -100,7 +99,7 @@ fn a_component_renders_through_the_harness_with_its_pages_artifacts_folder() {
 #[test]
 fn a_components_problem_and_one_the_plugin_lacks_are_shown_as_a_host_shows_them() {
     let host = Host::new(&every::PIPED);
-    let page = PageData::of(&Page::new(Path::new("/harness/problem"), "docs/A.md"));
+    let page = Page::new(Path::new("/harness/problem"), "docs/A.md");
     assert_eq!(
         host.render(&page, "every", "bad", None),
         [error("every refuses \"bad\" on docs/A.md")]
@@ -124,11 +123,11 @@ fn one_renders_components_share_what_they_load_and_another_render_loads_again() 
             .filter(|loaded| **loaded == root)
             .count()
     };
-    let page = PageData::of(&Page::new(&root, "docs/A.md"));
+    let page = Page::new(&root, "docs/A.md");
     host.render(&page, "every", "a", None);
     host.render(&page, "again", "b", None);
     assert_eq!(loads(), 1);
-    let another = PageData::of(&Page::new(&root, "docs/A.md"));
+    let another = Page::new(&root, "docs/A.md");
     host.render(&another, "again", "c", None);
     assert_eq!(loads(), 2);
 }
@@ -138,40 +137,21 @@ fn a_card_kind_answers_through_the_harness() {
     let host = Host::new(&every::PIPED);
     let kind = || "every".to_string();
     let picked = card("Pick every widget.\n*Slot:* North · cover");
+    assert_eq!(host.ask(Recognises::new(kind(), picked.clone())), Ok(true));
     assert_eq!(
-        host.ask(Recognises {
-            kind: kind(),
-            card: picked.clone(),
-        }),
-        Ok(true)
-    );
-    assert_eq!(
-        host.ask(Recognises {
-            kind: kind(),
-            card: card("another card"),
-        }),
+        host.ask(Recognises::new(kind(), card("another card"))),
         Ok(false)
     );
     assert_eq!(
-        host.ask(Slot {
-            kind: kind(),
-            card: picked.clone(),
-        }),
+        host.ask(Slot::new(kind(), picked.clone())),
         Ok(Some("North · cover".into()))
     );
     assert_eq!(
-        host.ask(TriageCategory {
-            kind: kind(),
-            card: picked.clone(),
-        }),
+        host.ask(TriageCategory::new(kind(), picked.clone())),
         Ok(Some("docs/DECISIONS.md · Widgets".into()))
     );
     assert_eq!(
-        host.ask(Pictures {
-            kind: kind(),
-            root: root("cards"),
-            card: picked.clone(),
-        }),
+        host.ask(Pictures::new(kind(), root("cards"), picked.clone())),
         Ok(vec![
             Picture {
                 src: Some("/harness/cards/pick-widget/0.png".into()),
@@ -186,25 +166,16 @@ fn a_card_kind_answers_through_the_harness() {
         ])
     );
     assert_eq!(
-        host.ask(Chosen {
-            kind: kind(),
-            card: picked,
-        }),
+        host.ask(Chosen::new(kind(), picked)),
         Ok(Ok(Some("B".into())))
     );
     assert_eq!(
-        host.ask(Chosen {
-            kind: kind(),
-            card: card("a broken card"),
-        }),
+        host.ask(Chosen::new(kind(), card("a broken card"))),
         Ok(Err("pick-widget names no candidate".into()))
     );
     // A kind the plugin lacks is refused by name.
     assert_eq!(
-        host.ask(Recognises {
-            kind: "no-such".into(),
-            card: card("every"),
-        }),
+        host.ask(Recognises::new("no-such".into(), card("every"))),
         Err("the plugin has no card kind \"no-such\"".into())
     );
 }

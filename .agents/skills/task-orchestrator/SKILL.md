@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 524a1c6b88ab4df3 files=SKILL.md -->
+<!-- symphony-stamp: 6bbdd615e107de96 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -45,8 +45,8 @@ full suite).
    a sleep-ordered step or a timeout under load) is discarded in its red's own fix,
    with a line on the red's thread naming it, the evidence and what it proved; the
    release waits for no card, rerun or rewrite of it, and you hold no other work back
-   to keep the load down for a run. The owner, 2026-11-13:
-   "A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
+   to keep the load down for a run: a rerun neither fails nor passes on the machine's
+   load, and a test that does is discarded and the run moves on.
    A red whose release run held its commit as the release candidate says so in
    its text: brief its executor to start from the local branch release-candidate, never
    main, and to merge no main before its approve; its own land moves the candidate, and

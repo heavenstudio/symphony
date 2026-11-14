@@ -1,10 +1,9 @@
 //! The regenerator: what the project's `[land] generators` make of the default branch, made after a
 //! land and never on its path, so a land is its merge, its move and its push alone ([`super`]).
 //!
-//! The owner's rule, 2026-11-12: "There should only be one version being built for main at a
-//! time, and once a version is built, it could then build the next most recent one. It should not
-//! cancel a previous in progress build and let it finish. This way there's no queue, just a limit
-//! of 1 per time that possibly skips some merges from building entirely".
+//! Only one version is built for main at a time. Once a version is built, the next build takes the
+//! most recent one; a build in progress is never cancelled, but left to finish. So there is no
+//! queue, only a limit of one at a time, which may skip some merges from building entirely.
 //!
 //! A land that moved the default branch starts it, detached ([`start`]), and waits for nothing it
 //! does; while one runs ([`LOCK`], which names its process and start) a land starts nothing and
