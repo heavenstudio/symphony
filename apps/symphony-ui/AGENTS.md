@@ -351,7 +351,14 @@ never the whole target, which the release run runs.
   and the queue's transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
-  a week switch and older paging. Thread history, subtasks, hierarchy groups
+  a week switch and older paging. A feed event that changes what a view lists (a task, a message
+  while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
+  work does only when it puts a task in another stage (`MachineWork::places_alike`), not at each
+  heartbeat. An answer is dropped only for another view (search, window, connection, board
+  version, `board_live::BoardData::view`) or a newer read of the same part, never for an event
+  that came while it was read: the events since are replayed onto it, and the refresh reads again
+  (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
+  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history, subtasks, hierarchy groups
   and agents page separately. A reconnect catches up a loaded thread by
   message id before following the feed again. Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
@@ -365,7 +372,9 @@ never the whole target, which the release run runs.
   at any width (the owner's), with placeholder rows, so nothing outside it moves and
   the brief starts near the page's top; "Show all" grows it, its words the phone's
   steps or, wide, the lanes, which a box too short for them ends under the last whole
-  one (`task_timeline::lane_edge`), keeping that height for the next visit. Near the screen it
+  one (`task_timeline::lane_edge`), keeping for the next visit the height a 240 px box
+  would end at (`task_timeline::kept_wide`), so a box kept short grows back as the task
+  gains lanes. Near the screen it
   asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
   (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
   and only a box whose `data-slug` is the task asked for. Boxes are numbered as
