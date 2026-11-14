@@ -342,12 +342,27 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         !links.contains("/lamps"),
         "a plain project adds no page: {links}"
     );
-    assert!(links.contains(r#"href="/docs/DECISIONS.md""#), "{links}");
+    assert!(
+        !links.contains("Decision register") && !links.contains("DECISIONS.md"),
+        "a project without a register (a new one) links to none: {links}"
+    );
     assert!(
         !links.contains("How review works"),
         "a project without a review guide links to none: {links}"
     );
     let now = Moment::parse("2026-10-08 10:12").unwrap();
+    let registered = symphony_api::ProjectView {
+        register: "docs/DECISIONS.md".into(),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(
+        rsx! { BoardView { board: board("board.json"), now, project: registered } },
+    );
+    assert!(
+        self::links(&html)
+            .contains(r#"<a class="pill" href="/docs/DECISIONS.md">Decision register</a>"#),
+        "{html}"
+    );
     let project = symphony_api::ProjectView {
         name: "Orbit".into(),
         register: "notes/register.md".into(),
