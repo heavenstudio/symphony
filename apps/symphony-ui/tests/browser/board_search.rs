@@ -1,7 +1,8 @@
-//! A search on the task board (`board_live`): its counts and each column on the screen are read
-//! once and drawn, however the feed moves meanwhile (app/board-search-slow-to-fill). A loaded
-//! machine's work comes on the feed every second; each one used to drop every column read in
-//! flight and read them all again, so a search's cards stayed grey for 5 to 60 s.
+//! A search on the task board (the React client's `src/boardlive.tsx`): its counts and each
+//! column on the screen are read once and drawn, however the feed moves meanwhile
+//! (app/board-search-slow-to-fill). A loaded machine's work comes on the feed every second; each
+//! one used to drop every column read in flight and read them all again, so a search's cards
+//! stayed grey for 5 to 60 s.
 
 use serde_json::{Value, json};
 

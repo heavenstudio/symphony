@@ -143,7 +143,8 @@ page and its data the rest (measured by the port's budget tests at `a8b379be`, r
 thread).
 
 **The chains.** What waits on what, from the same runs (read in the timings, and in the client's
-code, `apps/symphony-ui/src/live.rs`, `keep_live`; `board_live.rs`, `column`):
+code, `apps/symphony-ui/src/live.rs`, `keep_live`; `board_live.rs`, `column`, now the React
+client's `apps/symphony-web/src/boardlive.tsx`, `LiveBoard.column`):
 
 - **The board:** `/api/board` (78 to 80 ms), then the header's `/api/activity` and
   `/api/pending`, then the counts and the machine's work (170 to 177 ms), then each column near
