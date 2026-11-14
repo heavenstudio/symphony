@@ -5,27 +5,68 @@
 //! member inherits from the workspace as `cargo publish` does, and from each manifest's own
 //! `include`, which the metadata leaves out.
 
+#[path = "common/tree.rs"]
+mod tree;
+
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use tree::Tree;
 
-/// The members crates.io gets, by package name: the plugin kit, the helpers and the app's wire types.
-const PUBLISHED: [&str; 9] = [
+/// The members crates.io gets, by package name: the plugin kit, the helpers, and the product, the
+/// app's wire types among it.
+const PUBLISHED: [&str; 13] = [
     "process-cwd",
     "repository-read",
     "symphony-api",
+    "symphony-app",
     "symphony-args",
     "symphony-blocks",
+    "symphony-board",
+    "symphony-chrome",
     "symphony-docs",
     "symphony-env",
     "symphony-plugin",
     "symphony-schema",
+    "symphony-server",
 ];
 
 /// The plugin kit, whose three packages carry one version.
 const KIT: [&str; 3] = ["symphony-blocks", "symphony-docs", "symphony-plugin"];
+
+/// The product, whose five packages carry one version and require each other at exactly it (`=`):
+/// a version below 1.0 that promises no name, so no two of them are ever taken at different ones.
+const PRODUCT: [&str; 5] = [
+    "symphony-api",
+    "symphony-app",
+    "symphony-board",
+    "symphony-chrome",
+    "symphony-server",
+];
+
+/// The files a published package carries as a copy of one outside it, which it cannot read from
+/// there once packaged, each beside the file it copies: the copy first. The client reads its
+/// stylesheets through `asset!`, which takes no file outside its crate, and the board's fixtures
+/// find the source root by the descriptor-closing script where it is, so neither can move.
+const COPIES: [(&str, &str); 3] = [
+    (
+        "apps/symphony-server/src/board.css",
+        "apps/symphony-ui/assets/board.css",
+    ),
+    (
+        "apps/symphony-server/src/frame.css",
+        "apps/symphony-ui/assets/frame.css",
+    ),
+    (
+        "crates/chrome-devtools/src/fixture_process.sh",
+        "tools/fixture_process.sh",
+    ),
+];
+
+/// The largest `.crate` crates.io takes: 10 MiB.
+const UPLOAD_LIMIT: u64 = 10 * 1024 * 1024;
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -234,7 +275,8 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     if include.is_empty() {
         lacks.push("no `include`, so its tests and fixtures would be packaged".to_owned());
     }
-    for needed in ["README.md", "LICENSE"] {
+    let readme = package["readme"].as_str().unwrap_or("README.md");
+    for needed in [readme, "LICENSE"] {
         if !include.is_empty() && !include.contains(&needed) {
             lacks.push(format!("its `include` leaves out {needed}"));
         }
@@ -255,10 +297,12 @@ fn keyword_shape(keyword: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+'))
 }
 
-/// What a published package's dependencies would make crates.io refuse, each as a line: a git
-/// source; a workspace member it builds with that is not published, or that it names with no
-/// version or one the member is not at; a development dependency on an unpublished member named
-/// with a version (one named by `path` alone is dropped from the published manifest).
+/// What a published package's dependencies would make crates.io refuse, or the version lines
+/// break, each as a line: a git source; a workspace member it builds with that is not published,
+/// or that it names with no version or one the member is not at, or not as its line asks (exactly,
+/// `=`, between two of the [`PRODUCT`]'s packages, else by caret); a development dependency on an
+/// unpublished member named with a version (one named by `path` alone is dropped from the
+/// published manifest).
 fn refused(package: &Value, versions: &[(String, String, bool)]) -> Vec<String> {
     let mut refused = Vec::new();
     for dependency in package["dependencies"].as_array().unwrap() {
@@ -288,11 +332,19 @@ fn refused(package: &Value, versions: &[(String, String, bool)]) -> Vec<String> 
             }
         } else if !sibling_published {
             refused.push(format!("{dep} is not published"));
-        } else if req != format!("^{version}") {
-            refused.push(format!(
-                "{dep} is required as {req:?}, where its version is {version}: name it \
-                 `{{ path = …, version = \"{version}\" }}`"
-            ));
+        } else {
+            let exact = PRODUCT.contains(&name(package)) && PRODUCT.contains(&dep);
+            let (wanted, written) = if exact {
+                (format!("={version}"), format!("={version}"))
+            } else {
+                (format!("^{version}"), version.clone())
+            };
+            if req != wanted {
+                refused.push(format!(
+                    "{dep} is required as {req:?}, where its version is {version}: name it \
+                     `{{ path = …, version = \"{written}\" }}`"
+                ));
+            }
         }
     }
     refused
@@ -341,20 +393,140 @@ fn every_member_is_published_whole_or_kept_back() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-#[test]
-fn the_kits_packages_carry_one_version() {
-    let members = members();
-    let kit: BTreeSet<(&str, &str)> = members
+/// That the packages `line` names, all members, carry one version, `what` naming them in a failure.
+fn one_version(line: &[&str], what: &str) {
+    let packages: BTreeSet<(&str, &str)> = members()
         .iter()
-        .filter(|package| KIT.contains(&name(package)))
+        .filter(|package| line.contains(&name(package)))
         .map(|package| (name(package), text(package, "version")))
         .collect();
-    let versions: BTreeSet<&str> = kit.iter().map(|(_, version)| *version).collect();
-    assert_eq!(kit.len(), KIT.len(), "a kit package is missing: {kit:?}");
+    let versions: BTreeSet<&str> = packages.iter().map(|(_, version)| *version).collect();
+    assert_eq!(
+        packages.len(),
+        line.len(),
+        "a package of {what} is missing: {packages:?}"
+    );
     assert_eq!(
         versions.len(),
         1,
-        "the kit's packages differ in version: {kit:?}"
+        "{what}'s packages differ in version: {packages:?}"
+    );
+}
+
+#[test]
+fn the_kits_packages_carry_one_version() {
+    one_version(&KIT, "the kit");
+}
+
+#[test]
+fn the_products_packages_carry_one_version() {
+    one_version(&PRODUCT, "the product");
+}
+
+/// A copy a package carries in place of a file outside it is that file, byte for byte, and a file
+/// of its own: a link would package the file it leads to, or nothing where links are not kept.
+#[test]
+fn every_copy_a_package_carries_is_the_file_it_copies() {
+    let root = workspace();
+    let mut wrong = Vec::new();
+    for (copy, source) in COPIES {
+        let regular = std::fs::symlink_metadata(root.join(copy)).is_ok_and(|meta| meta.is_file());
+        let same =
+            std::fs::read(root.join(copy)).ok() == Some(std::fs::read(root.join(source)).unwrap());
+        if !regular || !same {
+            wrong.push(format!(
+                "{copy} is not a copy of {source}: `cp {source} {copy}`"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// No file a published package carries, its manifest's comments among them, gives a rule as the
+/// owner's words, dated or quoted: each says the rule it sets, without the quote, the date or the
+/// card. What each package carries is what `cargo package --list` names.
+#[test]
+fn no_published_package_carries_the_owners_words() {
+    let words =
+        regex::Regex::new(r#"(?i)owner('s (word|rule))?,? (of )?20\d\d-\d\d|owner's ""#).unwrap();
+    let mut found = Vec::new();
+    for package in members().iter().filter(|package| published(package)) {
+        let out = Command::new(env!("CARGO"))
+            .args([
+                "package",
+                "--list",
+                "--allow-dirty",
+                "--offline",
+                "-p",
+                name(package),
+            ])
+            .current_dir(workspace())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for file in String::from_utf8_lossy(&out.stdout).lines() {
+            let text = std::fs::read_to_string(folder(package).join(file)).unwrap_or_default();
+            found.extend(
+                text.lines()
+                    .enumerate()
+                    .filter(|(_, line)| words.is_match(line))
+                    .map(|(at, line)| format!("{}: {file}:{}: {line}", name(package), at + 1)),
+            );
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "the owner's words, dated or quoted, to say as the rule they set:\n{}",
+        found.join("\n")
+    );
+}
+
+/// The server's package carries the client it embeds, every build its folder keeps: the day that
+/// grows past what crates.io takes is a red here, not an upload refused. Packaged by Cargo itself,
+/// into a target folder of the test's own, building nothing (`--no-verify`) and resolving none of
+/// its siblings (`--exclude-lockfile`), from the tree as it stands (`--allow-dirty`): a size, not
+/// a publication.
+#[test]
+fn the_servers_package_is_one_crates_io_takes() {
+    let target = Tree::new();
+    let out = Command::new(env!("CARGO"))
+        .args([
+            "package",
+            "--package",
+            "symphony-server",
+            "--no-verify",
+            "--exclude-lockfile",
+            "--allow-dirty",
+            "--offline",
+            "--quiet",
+        ])
+        .env("CARGO_TARGET_DIR", &target.root)
+        .current_dir(workspace())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "cargo package failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let version = members()
+        .iter()
+        .find(|package| name(package) == "symphony-server")
+        .map(|package| text(package, "version"))
+        .unwrap();
+    let crate_file = format!("symphony-server-{version}.crate");
+    let size = std::fs::metadata(target.path(&format!("package/{crate_file}")))
+        .unwrap()
+        .len();
+    assert!(
+        size <= UPLOAD_LIMIT,
+        "{crate_file} is {size} bytes, past the {UPLOAD_LIMIT} crates.io takes: the client builds \
+         it carries (apps/symphony-server/client/public) are to be cut to the newest \
+         (docs/RELEASES.md, \"Packages on crates.io\")"
     );
 }
 
