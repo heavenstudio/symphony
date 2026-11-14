@@ -6,13 +6,16 @@ import {
   drawn,
   FRESH,
   failed,
+  forget,
   keepLater,
+  left,
   lost,
   opened,
   QUEUE,
   readKept,
   shown,
   visitLater,
+  waits,
 } from "./cache";
 import { CACHE_FORMAT } from "./wire";
 
@@ -59,6 +62,25 @@ describe("what a page shows from this device", () => {
     expect(shown(f)).toEqual([9, true]);
     expect(lost(f)).toBe(f);
     expect(shown(answered(opened(f), QUEUE))).toBeNull();
+  });
+
+  it("of a route the page left is no longer shown or asked for", () => {
+    let f = drawn(FRESH, "page", 3);
+    f = drawn(f, "thread", 2);
+    f = failed(failed(f, "page"), BOARD);
+    expect([waits(f, "page"), waits(f, "thread"), waits(f, BOARD)]).toEqual([true, true, false]);
+    f = left(f, ["page", "thread"]);
+    expect([waits(f, "page"), waits(f, "thread")]).toEqual([false, false]);
+    // Nothing drawn is left, though the feed is not open.
+    expect(shown(f)).toBeNull();
+    // The next route's copy, kept later than the one left; the board's read still fails.
+    expect(shown(drawn(f, "page", 8))).toEqual([8, true]);
+
+    let still = left(drawn(drawn(FRESH, "counts", 1), "page", 2), ["page"]);
+    // What is still drawn stays, saved when it was.
+    expect(shown(still)).toEqual([1, false]);
+    still = opened(answered(still, "counts"));
+    expect(shown(left(still, ["page"]))).toBeNull();
   });
 
   it("changes by new values, the old one as it was", () => {
@@ -113,6 +135,14 @@ describe("the shell's store", () => {
     expect(await readKept(boardItem(""), QUEUE, (read) => read)).toBeNull();
     keepLater(boardItem(""), QUEUE, "", 1);
     visitLater(boardItem(""));
+    await forget(boardItem(""));
+  });
+
+  it("forgets an item and every part of it", async () => {
+    const store = fake(null);
+    vi.stubGlobal("symphonyCache", store);
+    await forget(boardItem("s"));
+    expect(store.forget).toHaveBeenCalledWith(CACHE_FORMAT, "", "board:@s/");
   });
 
   it("keeps a read and a visit, the page not waiting", () => {

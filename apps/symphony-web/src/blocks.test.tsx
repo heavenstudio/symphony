@@ -11,6 +11,7 @@ import {
   SpansView,
   unsupported,
 } from "./blocks";
+import { writtenStyle } from "./media";
 import { CASES } from "./testing";
 import type { NearViewportProps } from "./viewport";
 import type {
@@ -692,12 +693,13 @@ describe("a presentation", () => {
       attributes({
         class: "a",
         id: "b",
-        attributes: { "data-tip": "Tip", tabindex: "0", style: "color: red" },
+        attributes: { "data-tip": "Tip", tabindex: "0", style: "color: red !important" },
       }),
     ).toEqual({
       "data-tip": "Tip",
       tabIndex: "0",
-      style: { color: "red" },
+      // The style is written as given, by its ref.
+      ref: writtenStyle("color: red !important"),
       title: "Tip",
       className: "a",
       id: "b",

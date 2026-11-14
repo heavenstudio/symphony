@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ANSWER_MS, Failure, getIf, getJson, inTime, NO_ANSWER, post, said } from "./request";
+import {
+  ANSWER_MS,
+  cursorOf,
+  Failure,
+  getDocument,
+  getIf,
+  getJson,
+  inTime,
+  NO_ANSWER,
+  post,
+  said,
+} from "./request";
 import { UNREACHABLE } from "./trouble";
+import { VERSION_HEADER } from "./wire";
 
 /** A response of `status` with the JSON `body` and the headers given. */
 const answer = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
@@ -85,6 +97,55 @@ describe("a read of what this device kept", () => {
     fetched.mockResolvedValue(answer(200, { n: 2 }, { ETag: '"e2"' }));
     expect(await getIf("/api/queue", "")).toEqual({ same: false, value: { n: 2 }, etag: '"e2"' });
     expect(fetched.mock.calls[0]?.[1]).not.toHaveProperty("headers");
+  });
+});
+
+describe("a document's read", () => {
+  it("is its answer with the feed's cursor it names, on a 304 as on a 200", async () => {
+    fetched.mockResolvedValue(
+      new Response(null, { status: 304, headers: { [VERSION_HEADER]: "41" } }),
+    );
+    expect(await getDocument("/api/document?path=docs%2FA.md", '"e1"')).toEqual({
+      answer: { same: true },
+      cursor: 41,
+    });
+    expect(fetched.mock.calls[0]?.[1]).toMatchObject({ headers: { "If-None-Match": '"e1"' } });
+    fetched.mockResolvedValue(answer(200, { n: 1 }, { ETag: '"e2"', [VERSION_HEADER]: "42" }));
+    expect(await getDocument("/api/document", "")).toEqual({
+      answer: { same: false, value: { n: 1 }, etag: '"e2"' },
+      cursor: 42,
+    });
+    fetched.mockResolvedValue(answer(200, { n: 1 }));
+    expect((await getDocument("/api/document", ""))?.cursor).toBeNull();
+  });
+
+  it("is none for a document the server does not have, and fails as any read else", async () => {
+    fetched.mockResolvedValue(answer(404, { error: "No such document." }));
+    expect(await getDocument("/api/document", "")).toBeNull();
+    fetched.mockResolvedValue(answer(500));
+    await expect(getDocument("/api/document", "")).rejects.toMatchObject({ kind: "uncertain" });
+    fetched.mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(getDocument("/api/document", "")).rejects.toEqual(
+      new Failure("uncertain", UNREACHABLE),
+    );
+  });
+
+  it.each([
+    ["0", 0],
+    ["+7", 7],
+    ["007", 7],
+    [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+    [null, null],
+    ["", null],
+    ["+", null],
+    ["-1", null],
+    [" 1", null],
+    ["1.5", null],
+    ["1e3", null],
+    ["0x10", null],
+    ["18446744073709551615", null],
+  ])("names the cursor %j as %j", (header, cursor) => {
+    expect(cursorOf(header)).toBe(cursor);
   });
 });
 

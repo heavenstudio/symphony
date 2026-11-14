@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DocumentPicture,
-  declarations,
   elementHtml,
   encoded,
   FileViewer,
@@ -13,6 +12,7 @@ import {
   MockupFrame,
   PictureView,
   WAITING,
+  writtenStyle,
 } from "./media";
 import { CASES } from "./testing";
 import type { Image, Media, Viewer } from "./wire";
@@ -178,7 +178,6 @@ describe("a document's picture", () => {
       'data-full="/original.png"',
       'loading="lazy"',
       'decoding="async"',
-      'style="max-width:100%;--tint:red"',
       'tabindex="0"',
       'aria-label="A lamp"',
     ]) {
@@ -299,32 +298,98 @@ describe("media as the blocks hold them", () => {
   });
 });
 
-describe("CSS declarations", () => {
-  it("are React's style, each property by React's name", () => {
-    expect(
-      declarations("color: red; font-size:12px;;-webkit-line-clamp: 2; --tint: #fff; -ms-x: 1"),
-    ).toEqual({
-      color: "red",
-      fontSize: "12px",
-      WebkitLineClamp: "2",
-      "--tint": "#fff",
-      msX: "1",
-    });
+describe("a style", () => {
+  /**
+   * An element as a ref sees it: the attributes written on it, by name, and its style's
+   * properties, read from its style attribute (`name: value`, by `;`) and written back to it as a
+   * browser writes them, each `name: value;`.
+   */
+  function element(own: [string, string][] = []) {
+    const attributes = new Map<string, string>();
+    const properties = new Map<string, string>();
+    const serialize = () =>
+      attributes.set(
+        "style",
+        [...properties].map(([name, value]) => `${name}: ${value};`).join(" "),
+      );
+    const parse = (css: string) => {
+      properties.clear();
+      for (const [name, value] of css.split(";").map((part) => part.split(":"))) {
+        if (name !== undefined && value !== undefined) properties.set(name.trim(), value.trim());
+      }
+    };
+    for (const [name, value] of own) properties.set(name, value);
+    if (own.length > 0) serialize();
+    const node = {
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      setAttribute: (name: string, value: string) => {
+        attributes.set(name, value);
+        if (name === "style") parse(value);
+      },
+      removeAttribute: (name: string) => {
+        attributes.delete(name);
+        if (name === "style") properties.clear();
+      },
+      style: {
+        get length() {
+          return properties.size;
+        },
+        item: (at: number) => [...properties.keys()][at] ?? "",
+        getPropertyValue: (name: string) => properties.get(name) ?? "",
+        setProperty: (name: string, value: string) => {
+          properties.set(name, value);
+          serialize();
+        },
+      },
+    };
+    return { node: node as unknown as Element, attributes, properties };
+  }
+
+  it("is written as given, important values and comments kept, and taken away with its element", () => {
+    const css = "color: red !important; /* a; b */ width: 3em";
+    const { node, attributes } = element();
+    const undo = writtenStyle(css)(node);
+    expect(attributes.get("style")).toBe(css);
+    undo?.();
+    expect(attributes.has("style")).toBe(false);
   });
 
-  it("keep a semicolon or a colon inside parentheses or quotes in the value", () => {
-    expect(
-      declarations(
-        'background: url("data:image/png;base64,AA") no-repeat; content: "a;b\\"c"; width: calc(1px + (2px))',
-      ),
-    ).toEqual({
-      background: 'url("data:image/png;base64,AA") no-repeat',
-      content: '"a;b\\"c"',
-      width: "calc(1px + (2px))",
-    });
+  it("keeps each property the element had that it does not set, as the Dioxus client does", () => {
+    const { node, attributes, properties } = element([
+      ["text-align", "center"],
+      ["outline", "none"],
+    ]);
+    const before = attributes.get("style");
+    const undo = writtenStyle("outline: 1px dashed red; color: blue")(node);
+    expect([...properties]).toEqual([
+      ["outline", "1px dashed red"],
+      ["color", "blue"],
+      ["text-align", "center"],
+    ]);
+    expect(attributes.get("style")).toBe(
+      "outline: 1px dashed red; color: blue; text-align: center;",
+    );
+    // Drawn without it, or with another, the element's style is as it was before.
+    undo?.();
+    expect(attributes.get("style")).toBe(before);
+    expect([...properties]).toEqual([
+      ["text-align", "center"],
+      ["outline", "none"],
+    ]);
   });
 
-  it("skip a declaration with no name or no value", () => {
-    expect(declarations("color; : red; width: ; TOP: 1px")).toEqual({ top: "1px" });
+  it("is the same ref each time for the same words, and none for no element", () => {
+    expect(writtenStyle("color: red")).toBe(writtenStyle("color: red"));
+    expect(writtenStyle("color: red")).not.toBe(writtenStyle("color: blue"));
+    expect(writtenStyle("color: red")(null)).toBeUndefined();
+  });
+
+  it("is no attribute React draws on a document's picture: the ref writes it", () => {
+    const styled: Image = {
+      src: "/a.png",
+      alt: "",
+      presentation: { attributes: { style: "x: 1" } },
+    };
+    expect(renderToStaticMarkup(<DocumentPicture image={styled} />)).not.toContain("style=");
   });
 });
