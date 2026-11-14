@@ -271,7 +271,11 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
     let site = served(&crowded());
     let Some(mut chrome) = chrome() else { return };
     screen(&mut chrome, 1440, 900, false);
-    open(&mut chrome, &site, "[data-ready=reports] #chart-open .chart-plot");
+    open(
+        &mut chrome,
+        &site,
+        "[data-ready=reports] #chart-open .chart-plot",
+    );
     assert_eq!(
         asked(&site),
         ["grain=hour&days=1"],
@@ -310,7 +314,11 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
     assert_eq!(open_work(&mut chrome), hidden);
     // The next visit asks for the window chosen and hides what was hidden.
     chrome.open("about:blank");
-    open(&mut chrome, &site, "[data-ready=reports] #chart-open .chart-plot");
+    open(
+        &mut chrome,
+        &site,
+        "[data-ready=reports] #chart-open .chart-plot",
+    );
     assert_eq!(
         asked(&site).last().map(String::as_str),
         Some("grain=day&days=14"),
