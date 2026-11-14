@@ -2165,7 +2165,12 @@ fn a_page_the_page_opens_brings_it_back_in_front_unwaited_as_it_is_told_of_once_
     let told = chrome
         .events()
         .iter()
-        .filter(|event| event["method"].as_str().unwrap().starts_with("Target.target"))
+        .filter(|event| {
+            event["method"]
+                .as_str()
+                .unwrap()
+                .starts_with("Target.target")
+        })
         .count();
     assert_eq!(told, 12);
     drop(chrome);
