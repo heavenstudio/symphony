@@ -33,7 +33,13 @@ fn workspace() -> PathBuf {
 /// (`--no-deps`, so nothing is fetched).
 fn members() -> Vec<Value> {
     let out = Command::new(env!("CARGO"))
-        .args(["metadata", "--no-deps", "--format-version", "1", "--offline"])
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
         .current_dir(workspace())
         .output()
         .unwrap();
@@ -84,11 +90,16 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
         }
     }
     if text(package, "license") != "MIT" {
-        lacks.push(format!("`license` is {:?}, not \"MIT\"", text(package, "license")));
+        lacks.push(format!(
+            "`license` is {:?}, not \"MIT\"",
+            text(package, "license")
+        ));
     }
     match package["readme"].as_str() {
         Some(readme) if here.join(readme).is_file() => {}
-        Some(readme) => lacks.push(format!("its `readme` {readme} is not a file in the package")),
+        Some(readme) => lacks.push(format!(
+            "its `readme` {readme} is not a file in the package"
+        )),
         None => lacks.push("no `readme`".to_owned()),
     }
     if std::fs::read(here.join("LICENSE")).ok().as_deref() != Some(licence) {
@@ -96,7 +107,9 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     }
     let keywords = package["keywords"].as_array().map_or(0, Vec::len);
     if !(1..=5).contains(&keywords) {
-        lacks.push(format!("{keywords} `keywords`, where crates.io takes 1 to 5"));
+        lacks.push(format!(
+            "{keywords} `keywords`, where crates.io takes 1 to 5"
+        ));
     }
     if package["categories"].as_array().is_none_or(Vec::is_empty) {
         lacks.push("no `categories`".to_owned());
@@ -215,5 +228,9 @@ fn the_kits_packages_carry_one_version() {
         .collect();
     let versions: BTreeSet<&str> = kit.iter().map(|(_, version)| *version).collect();
     assert_eq!(kit.len(), KIT.len(), "a kit package is missing: {kit:?}");
-    assert_eq!(versions.len(), 1, "the kit's packages differ in version: {kit:?}");
+    assert_eq!(
+        versions.len(),
+        1,
+        "the kit's packages differ in version: {kit:?}"
+    );
 }
