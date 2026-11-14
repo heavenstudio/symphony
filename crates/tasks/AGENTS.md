@@ -1040,7 +1040,11 @@ field `_board.needs`, which only `Store::set_needs` (`store/work/needs.rs`, `tas
 a thread line each. The assessor is a role in name, with no row: the write is refused by
 `Held::unfresh`, the verdict's rule. `tasks stamps` and `tasks needs`
 (`src/cli/commands/stamps.rs`) read the catalogue and resolve the tip in the main checkout. Their
-tests: `tests/store/needs.rs`, `tests/cli/stamps.rs`. Nothing reads the needs to land yet.
+tests: `tests/store/needs.rs`, `tests/cli/stamps.rs`. `stamps/read.rs` holds each stamp's reader
+at a tip (`tests` from the recorder's runs, `pictures` and `owner` from the thread), the rule that
+a line names the tip, and `read::needed`, the stamps a task needs there; they decide nothing, and
+the Symphony's task page draws them (`symphony::gates::stamps`). Nothing reads the needs to land
+yet.
 `slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
 A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open

@@ -10,7 +10,8 @@
 //! - Its runs are the builds and tests the board's recorder kept for it (docs/MACHINE_WORK.md),
 //!   a step inside one of them left to that one; none until one is kept.
 //! - Its gates are the gates answer's states, past and current ([`crate::gates::answer`]), a lane
-//!   each, by name. The review gate's lane begins where the task first went to review.
+//!   each, by name, but none for a stamp left out (`gates::stamps::left_out`), which the gates
+//!   list. The review gate's lane begins where the task first went to review.
 //!
 //! [`build`] puts them together from what was read; [`answer`] reads the thread and the recorder's
 //! history once, for the timeline's own lanes and for the gates beside them.
@@ -393,9 +394,11 @@ pub fn answer(
         .as_deref()
         .map(crate::gates::runs)
         .unwrap_or_default();
-    let gates = crate::gates::answer_from(store, record, root, pending, kept, &thread, &all)
+    let mut gates = crate::gates::answer_from(store, record, root, pending, kept, &thread, &all)
         .map(|answer| answer.gates)
         .unwrap_or_default();
+    // A stamp left out has no lane: its gate, listed beside the timeline, says why.
+    gates.retain(|gate| !crate::gates::stamps::left_out(gate));
     let rotated = folder
         .as_deref()
         .is_some_and(|folder| folder.join(recorded::ROTATED).exists());

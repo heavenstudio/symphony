@@ -1,0 +1,289 @@
+//! Where each stamp stands at a tip, by its reader (docs/analysis/needed-stamps.md, "The default
+//! catalogue"): [`tests`] from the recorder's runs, [`pictures`] and [`owner`] from the task's
+//! thread, and [`names`], by which each of them, and the task page's review gate, knows that a line
+//! names the tip. A stamp stands on the commit its evidence names alone: evidence naming another,
+//! a merge of the default branch included, is stale and reads not met, naming the commit it
+//! stood on. [`needed`] says which stamps a task needs at a tip, from its assessment and the
+//! catalogue.
+//!
+//! They read and decide nothing: the task page's gates (`symphony::gates`) draw them, and nothing
+//! reads them to land yet.
+
+use super::{Catalogue, Needs, short};
+use crate::Message;
+use crate::cli::machine_work::recorded::{Phase, Record, Step};
+
+/// The route the owner's uploads are served under, `<sha256>.<ext>` after it, whatever the
+/// project's artifacts folder is called: the Symphony's `uploads::ROUTE`.
+pub const UPLOADS: &str = "/artifacts/uploads/";
+/// The extensions of the pictures a page draws, as the uploads' are.
+pub const PICTURES: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+/// Who writes the owner's posts: only the Symphony, as the command line refuses to act as it.
+const OWNER: &str = "owner";
+/// The word an approve starts with.
+const APPROVE: &str = "approve";
+
+/// Where a stamp stands at a tip, by its reader: met or not, and what it read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Reading {
+    /// Whether it stands on the tip.
+    pub met: bool,
+    /// Who gave what it read: a handle, or `owner`.
+    pub by: Option<String>,
+    /// When, in the board's seconds.
+    pub at: Option<f64>,
+    /// The commit what it read names: the tip when met, the one it stood on when stale.
+    pub commit: Option<String>,
+    /// One line saying where it stands.
+    pub detail: String,
+    /// The thread's line that holds what it read.
+    pub line: Option<i64>,
+}
+
+/// Whether `text` names `tip`, a whole commit id: one of its words that may name a commit
+/// ([`crate::land::named`]) is where the tip's id starts.
+pub fn names(text: &str, tip: &str) -> bool {
+    crate::land::named(text)
+        .into_iter()
+        .any(|word| tip.starts_with(word))
+}
+
+/// The first word of `text` that may name a commit, as written.
+pub fn named(text: &str) -> Option<&str> {
+    crate::land::named(text).into_iter().next()
+}
+
+/// The stamps a task with the assessment `needs` needs at `tip`, in the catalogue's order: the
+/// assessment's on the tip it read; on another tip, or none (an assessment made from the brief),
+/// those and the catalogue's defaults, since an assessment lowers what a task needs only on the
+/// tip it read; with no assessment, the defaults. A stamp the catalogue no longer has is none.
+pub fn needed(catalogue: &Catalogue, needs: Option<&Needs>, tip: Option<&str>) -> Vec<String> {
+    let defaults = catalogue.defaults();
+    let Some(needs) = needs else {
+        return defaults;
+    };
+    let on_tip = needs.tip.is_some() && needs.tip.as_deref() == tip;
+    let named = |name: &&str| {
+        needs.stamps.iter().any(|stamp| stamp == name)
+            || (!on_tip && defaults.iter().any(|stamp| stamp == name))
+    };
+    (catalogue.names().into_iter())
+        .filter(named)
+        .map(str::to_string)
+        .collect()
+}
+
+/// When `run` began: started, else queued.
+fn began(run: &Record) -> f64 {
+    run.started_at.unwrap_or(run.queued_at)
+}
+
+/// Why the finished `run` is red, `None` when it is green.
+fn red(run: &Record) -> Option<String> {
+    match (run.exit_code, run.signal) {
+        (Some(0), _) => None,
+        (Some(code), _) => Some(format!("exit {code}")),
+        (None, Some(signal)) => Some(format!("ended by signal {signal}")),
+        (None, None) => Some("ended without a status".into()),
+    }
+}
+
+/// `labels` as a line names them, the first `n` and how many more.
+fn listed(labels: &[&str]) -> String {
+    const SHOWN: usize = 3;
+    let mut said = (labels.iter().take(SHOWN))
+        .map(|label| format!("`{label}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if labels.len() > SHOWN {
+        said.push_str(&format!(" and {} more", labels.len() - SHOWN));
+    }
+    said
+}
+
+/// The `tests` stamp at `tip`, from `runs`, the recorder's, of which those whose task `ours` names
+/// are the task's (its own, or work under it): met when the newest run at the tip of each build
+/// and test command the task ran there is green, and one test run at least is among them; not met
+/// while one is red, still going or queued, or none ran at the tip, the last run elsewhere named.
+pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading {
+    let mut mine: Vec<&Record> = (runs.iter())
+        .filter(|run| run.commit.is_some() && run.task.as_deref().is_some_and(&ours))
+        .collect();
+    mine.sort_by(|a, b| began(a).total_cmp(&began(b)));
+    // The newest run at the tip of each command, in the order each was first run there.
+    let mut newest: Vec<&Record> = Vec::new();
+    for run in mine.iter().filter(|run| run.commit.as_deref() == Some(tip)) {
+        match newest.iter_mut().find(|kept| kept.label == run.label) {
+            Some(kept) => *kept = run,
+            None => newest.push(run),
+        }
+    }
+    let at_tip = short(tip);
+    let Some(last) = newest.iter().max_by(|a, b| began(a).total_cmp(&began(b))) else {
+        return match mine.last() {
+            Some(last) => {
+                let commit = last.commit.clone().unwrap_or_default();
+                Reading {
+                    by: last.handle.clone(),
+                    at: last.ended_at.or(Some(began(last))),
+                    detail: format!(
+                        "No build or test at {at_tip}: the last ran at {}",
+                        short(&commit)
+                    ),
+                    commit: Some(commit),
+                    ..Reading::default()
+                }
+            }
+            None => Reading {
+                commit: Some(tip.to_string()),
+                detail: format!("No build or test recorded for it at {at_tip}"),
+                ..Reading::default()
+            },
+        };
+    };
+    let reading = |met: bool, detail: String| Reading {
+        met,
+        by: last.handle.clone(),
+        at: last.ended_at.or(Some(began(last))),
+        commit: Some(tip.to_string()),
+        detail,
+        line: None,
+    };
+    let reds: Vec<(&str, String)> = (newest.iter())
+        .filter(|run| run.state == Step::Finished)
+        .filter_map(|run| red(run).map(|why| (run.label.as_str(), why)))
+        .collect();
+    if let Some((label, why)) = reds.first() {
+        let more = match reds.len() {
+            1 => String::new(),
+            n => format!(" ({} more red)", n - 1),
+        };
+        return reading(false, format!("`{label}` red at {at_tip}: {why}{more}"));
+    }
+    let going: Vec<&str> = (newest.iter())
+        .filter(|run| run.state != Step::Finished)
+        .map(|run| run.label.as_str())
+        .collect();
+    if !going.is_empty() {
+        return reading(false, format!("{} still going at {at_tip}", listed(&going)));
+    }
+    let labels: Vec<&str> = newest.iter().map(|run| run.label.as_str()).collect();
+    if !newest.iter().any(|run| run.phase == Phase::Test) {
+        return reading(
+            false,
+            format!(
+                "No test ran at {at_tip}: {} green, no test among them",
+                listed(&labels)
+            ),
+        );
+    }
+    reading(true, format!("Green at {at_tip}: {}", listed(&labels)))
+}
+
+/// Whether `text` shows a picture: a file with a picture's extension ([`PICTURES`]) under
+/// `folder` (the task's artifacts folder, `artifacts/SLUG/`, named where a path starts: the text's
+/// start, a `/` or a character no file name holds) or an upload ([`UPLOADS`]).
+pub fn shows_picture(text: &str, folder: &str) -> bool {
+    let in_name = |c: char| c.is_alphanumeric() || "-_.".contains(c);
+    [folder, UPLOADS].into_iter().any(|prefix| {
+        text.match_indices(prefix).any(|(at, _)| {
+            if !prefix.starts_with('/') && text[..at].chars().next_back().is_some_and(in_name) {
+                return false;
+            }
+            let path = text[at + prefix.len()..]
+                .split(|c: char| c.is_whitespace() || "()[]<>`\"',".contains(c))
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(['.', ':', ';', '!', '?']);
+            path.rsplit_once('.').is_some_and(|(name, extension)| {
+                !name.is_empty() && PICTURES.contains(&extension.to_ascii_lowercase().as_str())
+            })
+        })
+    })
+}
+
+/// The task `slug`'s artifacts folder under the project's, `artifacts`: where its pictures go.
+pub fn folder(artifacts: &str, slug: &str) -> String {
+    format!("{}/{slug}/", artifacts.trim_end_matches('/'))
+}
+
+/// The `pictures` stamp at `tip`, from the task's `thread`: met by a post naming the tip and
+/// showing at least one picture under `folder` ([`folder`]) or uploaded ([`shows_picture`]); not
+/// met while the newest such post names another commit or none, or there is none.
+pub fn pictures(thread: &[Message], tip: &str, folder: &str) -> Reading {
+    let shown =
+        (thread.iter()).filter(|post| post.kind != "system" && shows_picture(&post.text, folder));
+    let at_tip = short(tip);
+    let Some((post, reading)) = newest(shown, tip, |post| post.sender.clone()) else {
+        return Reading {
+            commit: Some(tip.to_string()),
+            detail: format!("No picture posted at {at_tip}"),
+            ..Reading::default()
+        };
+    };
+    let detail = match (reading.met, reading.commit.as_deref()) {
+        (true, _) => format!("Pictures at {at_tip}, posted by {}", post.sender),
+        (false, Some(commit)) => format!("Pictures posted at {}, none at {at_tip}", short(commit)),
+        (false, None) => format!("Pictures posted naming no commit, none at {at_tip}"),
+    };
+    Reading { detail, ..reading }
+}
+
+/// A stamp's evidence among `posts`, a thread's oldest first, at `tip`: the newest post naming the
+/// tip, met; else the newest of them, not met, its commit the one it names (none when it names
+/// none); `None` with no post. `by` says who gave it; the caller words the detail.
+fn newest<'a>(
+    mut posts: impl DoubleEndedIterator<Item = &'a Message> + Clone,
+    tip: &str,
+    by: impl Fn(&Message) -> String,
+) -> Option<(&'a Message, Reading)> {
+    let (post, met) = match posts.clone().rfind(|post| names(&post.text, tip)) {
+        Some(post) => (post, true),
+        None => (posts.next_back()?, false),
+    };
+    let commit = if met { Some(tip) } else { named(&post.text) };
+    let reading = Reading {
+        met,
+        by: Some(by(post)),
+        at: Some(post.ts),
+        commit: commit.map(str::to_string),
+        detail: String::new(),
+        line: Some(post.id),
+    };
+    Some((post, reading))
+}
+
+/// Whether `post` is the owner's approve: a line of the owner's whose first word is `approve`.
+pub fn owner_approves(post: &Message) -> bool {
+    let first = (post.text.trim_start())
+        .split(|c: char| c.is_whitespace() || c == ':')
+        .next()
+        .unwrap_or_default();
+    post.sender == OWNER && post.kind != "system" && first.eq_ignore_ascii_case(APPROVE)
+}
+
+/// The `owner` stamp at `tip`, from the task's `thread`: met by the owner's approve naming the tip
+/// ([`owner_approves`]), which its page posts (`approve FULL_SHA`) or the owner writes; not met
+/// while the newest names another commit or none, or there is none.
+pub fn owner(thread: &[Message], tip: &str) -> Reading {
+    let approves = thread.iter().filter(|post| owner_approves(post));
+    let at_tip = short(tip);
+    let Some((_, reading)) = newest(approves, tip, |_| OWNER.into()) else {
+        return Reading {
+            commit: Some(tip.to_string()),
+            detail: format!("Waits on the owner's approve of {at_tip}"),
+            ..Reading::default()
+        };
+    };
+    let detail = match (reading.met, reading.commit.as_deref()) {
+        (true, _) => format!("Approved by the owner at {at_tip}"),
+        (false, Some(commit)) => {
+            format!("The owner approved {}, not the tip {at_tip}", short(commit))
+        }
+        (false, None) => format!("The owner approved naming no commit, not the tip {at_tip}"),
+    };
+    Reading { detail, ..reading }
+}
+
+#[cfg(test)]
+mod tests;

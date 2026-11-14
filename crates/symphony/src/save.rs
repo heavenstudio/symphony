@@ -399,24 +399,35 @@ impl Saves {
                 let actions = plugins.board_actions();
                 // The board action that made the offer, by the name the offer gave.
                 let named = string(payload, "action");
-                let Some(action) = actions.iter().find(|action| action.name() == named) else {
-                    return Err(Failure {
-                        status: 404,
-                        error: "no such board action".into(),
-                    });
+                let done = match actions.iter().find(|action| action.name() == named) {
+                    Some(action) => action.submit(
+                        &self.root,
+                        &symphony_plugin::TaskRef {
+                            slug,
+                            status: &task.status,
+                            branch: &branch,
+                        },
+                        &symphony_plugin::Submission {
+                            payload: string(payload, "payload").into(),
+                            note: string(payload, "note").into(),
+                        },
+                    )?,
+                    // The Symphony's own, where no plugin's has its name: the owner's approve of
+                    // the tip its offer showed, the line the `owner` stamp reads.
+                    None if named == crate::gates::stamps::OWNER_APPROVE => {
+                        symphony_plugin::Submitted {
+                            said: crate::gates::stamps::approve_line(string(payload, "payload"))
+                                .map_err(|error| Failure { status: 400, error })?,
+                            released: Vec::new(),
+                        }
+                    }
+                    None => {
+                        return Err(Failure {
+                            status: 404,
+                            error: "no such board action".into(),
+                        });
+                    }
                 };
-                let done = action.submit(
-                    &self.root,
-                    &symphony_plugin::TaskRef {
-                        slug,
-                        status: &task.status,
-                        branch: &branch,
-                    },
-                    &symphony_plugin::Submission {
-                        payload: string(payload, "payload").into(),
-                        note: string(payload, "note").into(),
-                    },
-                )?;
                 // With a note the owner's line waits on an agent: it opens the task's ask.
                 if string(payload, "note").trim().is_empty() {
                     store.say(slug, "owner", &done.said, None)?;

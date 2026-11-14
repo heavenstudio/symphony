@@ -331,11 +331,13 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
                 .is_some_and(|offset| offset % 60 == 0)),
         "{zone}"
     );
+    // The task is open and never assessed: the stamps the Symphony's catalogue leaves out by
+    // default have no lane, as the pictures have none.
     assert_eq!(answer, expected(&zone));
     assert!(answer.get("runs_from").is_none(), "nothing rotated out");
 
     // No run kept for it: no runs at all, not runs of nothing. Never in review, it has no review
-    // lane yet: the Symphony's own review gate, its only gate, starts at the move to review.
+    // lane yet: the Symphony's own review gate, its only stamp needed, starts at the move to review.
     let (status, answer) = ask("/api/task-timeline?slug=tools/quiet");
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["runs"], json!([]));
@@ -346,6 +348,14 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         "made ready at the board's clock and waiting since"
     );
     assert_eq!(answer["gates"], json!([]));
+    // Its gates list the stamps the timeline leaves out, waived.
+    let (status, answer) = ask("/api/task-gates?slug=tools/quiet");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let waived: Vec<&str> = (answer["gates"].as_array().unwrap().iter())
+        .filter(|gate| gate["state"] == "waived")
+        .map(|gate| gate["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(waived, ["tests", "pictures", "owner"], "{answer}");
 
     let (status, answer) = ask("/api/task-timeline?slug=tools/missing");
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
