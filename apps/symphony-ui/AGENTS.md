@@ -286,13 +286,14 @@ never the whole target, which the release run runs.
   in the main module: dioxus-web makes at launch the event converter and the document that
   reach them, and the splitter keeps there every function of a table the main module reaches
   ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). The
-  client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it never
-  drew) and the media layer's notice moving to the program's script
-  (`perf/tasks-first-visit-gets-room`, against main's build at 20a85ac) take `/tasks` to
-  280,755 bytes (from 299,211: the board's WASM 247,338 from 265,725, the shell 7,804 from
-  7,851), `/agents` and a task page to 548,932 and 549,525 (from 567,174 and 567,767, the task
-  pages' chunk 18 KB less) and `/reports` to 298,944 (from 298,789), the program's script now
-  holding the notice; every other page takes 35 to 50 bytes less. Each
+  client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it does
+  not draw: `symphony-api`'s feature `skip-board-fields`, which `Cargo.toml` turns on for the
+  wasm32 build alone) and the media layer's notice moving to the program's script
+  (`perf/tasks-first-visit-gets-room`, against main's build at 0d63e30) take `/tasks` to
+  280,752 bytes (from 299,189: the board's WASM 247,325 from 265,716, the shell 7,817 from
+  7,851), `/agents` and a task page to 548,846 and 549,439 (from 567,094 and 567,687, the task
+  pages' chunk 18 KB less) and `/reports` to 298,888 (from 298,707), the program's script now
+  holding the notice; every other page stays within 50 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
