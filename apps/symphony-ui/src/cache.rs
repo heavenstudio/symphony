@@ -255,7 +255,7 @@ impl Freshness {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use browser::{forget, keep, keep_later, read, read_raw, read_sent, visit, visit_later};
+pub use browser::{forget, keep, keep_later, read, visit, visit_later};
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
@@ -315,7 +315,7 @@ mod browser {
     }
 
     /// `part` of `item` as kept, its value as the browser parsed it.
-    pub async fn read_raw(item: &Item, part: &str) -> Option<Kept<JsValue>> {
+    async fn read_raw(item: &Item, part: &str) -> Option<Kept<JsValue>> {
         let kept = answer(store_read(CACHE_FORMAT, &project(), &item.id, part)).await?;
         Some(Kept {
             value: field(&kept, "value"),
@@ -327,22 +327,13 @@ mod browser {
     /// `part` of `item` as kept, read as `T`. A value this client cannot read is a miss, and its
     /// item is forgotten, so the page fetches it whole.
     pub async fn read<T: DeserializeOwned>(item: &Item, part: &str) -> Option<Kept<T>> {
-        read_sent(item, part).await.map(|(kept, _)| kept)
-    }
-
-    /// [`read`], with the value as the browser parsed it beside it: what a page keeps again as it
-    /// came, rather than writing it from its type.
-    pub async fn read_sent<T: DeserializeOwned>(
-        item: &Item,
-        part: &str,
-    ) -> Option<(Kept<T>, JsValue)> {
-        let raw = read_raw(item, part).await?;
-        let value = raw.value.clone();
-        let kept = raw.readable(serde_wasm_bindgen::from_value);
+        let kept = read_raw(item, part)
+            .await?
+            .readable(serde_wasm_bindgen::from_value);
         if kept.is_none() {
             forget(item).await;
         }
-        Some((kept?, value))
+        kept
     }
 
     /// Keep `value`, answered with `etag`, as `part` of `item`; `ahead` for a page read before

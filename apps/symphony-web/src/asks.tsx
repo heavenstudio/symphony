@@ -3,7 +3,7 @@
 // threads, never a half-typed answer: each draft is its composer's own.
 
 import { useEffect, useState } from "react";
-import { AttachControls, useAttach } from "./attach";
+import { type Attach, AttachControls, useAttach } from "./attach";
 import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { readAsks } from "./document-read";
@@ -57,6 +57,109 @@ export function selection(): [string, string] {
   return [anchor, [...quote].slice(0, 4000).join("")];
 }
 
+/** What a read of a document's asks shows: its threads, the chat's recipient, and why it failed. */
+export interface AsksShown {
+  asks: (asks: Ask[]) => void;
+  recipient: (recipient: string | null) => void;
+  trouble: (trouble: string | null) => void;
+}
+
+/** How long a failed read of the asks waits before it is asked again. */
+export const RETRY_MS = 3_000;
+
+/**
+ * Read the asks at `endpoint` until a read answers, asking again `RETRY_MS` after each that
+ * failed and saying why it did; nothing more once `signal` ended, its request given up with it.
+ */
+export async function readAsksUntilAnswered(
+  endpoint: string,
+  signal: AbortSignal,
+  shown: AsksShown,
+): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      const read = readAsks(await getJson(endpoint, signal));
+      if (signal.aborted) return;
+      if (read === null) throw new Error("The server's asks could not be read");
+      shown.asks(read.asks);
+      shown.recipient(read.recipient);
+      shown.trouble(null);
+      return;
+    } catch (error) {
+      if (signal.aborted) return;
+      shown.trouble(said(error));
+    }
+    await sleep(RETRY_MS, signal);
+  }
+}
+
+/**
+ * Read the asks at `endpoint` once, after a question or a follow-up was sent, without waiting for
+ * the feed: its threads shown when it answers before `signal` ends, nothing said when it fails
+ * (the feed's next read says it).
+ */
+export async function readAsksAgain(
+  endpoint: string,
+  signal: AbortSignal,
+  shown: (asks: Ask[]) => void,
+): Promise<void> {
+  try {
+    const read = readAsks(await getJson(endpoint, signal));
+    if (read !== null && !signal.aborted) shown(read.asks);
+  } catch {
+    // The feed's next read says what failed.
+  }
+}
+
+/** Whether a composer may send: words or a file to send. */
+const ready = (text: string, empty: boolean) => text.trim() !== "" || !empty;
+
+/** What a composer's send reads of its composer as drawn, and what it sets there. */
+export interface Draft {
+  /** Where this device keeps the draft. */
+  key: string;
+  text: string;
+  sending: boolean;
+  attach: Pick<Attach, "busy" | "empty" | "compose" | "clear">;
+  /** The composer's mount: nothing is set once it ended. */
+  mount: AbortSignal;
+  setText: (text: string) => void;
+  setSending: (sending: boolean) => void;
+  setTrouble: (trouble: string | null) => void;
+  /** What a send that went through does next: the asks read again. */
+  onSent: () => void;
+}
+
+/**
+ * Post `draft`'s words with its files' lines to `route`, the fields `fields` makes of them: once
+ * sent, the box, its files and the draft kept are emptied (`onSent` after); a failure says why,
+ * the draft kept. Nothing is sent while a send is on its way, the page may show what is out of
+ * date, a file is still uploading or there is nothing to send, and nothing more is set once the
+ * composer's mount ended while the server answered.
+ */
+export async function sendDraft(
+  draft: Draft,
+  route: string,
+  fields: (composed: string) => Record<string, unknown>,
+): Promise<void> {
+  const { attach } = draft;
+  if (draft.sending || STALE.get() || attach.busy || !ready(draft.text, attach.empty)) return;
+  draft.setSending(true);
+  draft.setTrouble(null);
+  try {
+    await post(route, fields(attach.compose(draft.text)));
+    if (draft.mount.aborted) return;
+    draft.setText("");
+    attach.clear();
+    save(draft.key, "");
+    draft.onSent();
+  } catch (error) {
+    if (draft.mount.aborted) return;
+    draft.setTrouble(said(error));
+  }
+  draft.setSending(false);
+}
+
 export interface AsksProps {
   /** The document's path, as its page's route names it. */
   path: string;
@@ -99,37 +202,18 @@ function AsksBody({ path, scope }: AsksProps) {
   useEffect(() => {
     void heard;
     const reading = new AbortController();
-    const signal = reading.signal;
-    void (async () => {
-      while (!signal.aborted) {
-        try {
-          const read = readAsks(await getJson(endpoint, signal));
-          if (signal.aborted) return;
-          if (read === null) throw new Error("The server's asks could not be read");
-          setAsks((now) => (JSON.stringify(now) === JSON.stringify(read.asks) ? now : read.asks));
-          setRecipient(read.recipient);
-          setTrouble(null);
-          return;
-        } catch (error) {
-          if (signal.aborted) return;
-          setTrouble(said(error));
-        }
-        await sleep(3_000, signal);
-      }
-    })();
+    void readAsksUntilAnswered(endpoint, reading.signal, {
+      asks: (read) => setAsks((now) => (JSON.stringify(now) === JSON.stringify(read) ? now : read)),
+      recipient: setRecipient,
+      trouble: setTrouble,
+    });
     return () => reading.abort();
   }, [endpoint, heard]);
   // A question or a follow-up sent is read at once, without waiting for the feed.
   useEffect(() => {
     if (sent === 0) return;
     const reading = new AbortController();
-    void getJson(endpoint, reading.signal).then(
-      (value) => {
-        const read = readAsks(value);
-        if (read !== null && !reading.signal.aborted) setAsks(read.asks);
-      },
-      () => {},
-    );
+    void readAsksAgain(endpoint, reading.signal, setAsks);
     return () => reading.abort();
   }, [endpoint, sent]);
   const onSent = () => setSent((count) => count + 1);
@@ -151,9 +235,6 @@ function AsksBody({ path, scope }: AsksProps) {
   );
 }
 
-/** Whether a composer may send: nothing on its way, and words or a file to send. */
-const ready = (text: string, empty: boolean) => text.trim() !== "" || !empty;
-
 function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
   const key = `review-ask:${scope}/${path}`;
   const [text, setText] = useState(() => load(key) ?? "");
@@ -165,24 +246,9 @@ function NewAsk({ path, scope, onSent }: AsksProps & { onSent: () => void }) {
   const mount = useMount();
   // The question waits while the page may show what is out of date; the draft stays editable.
   const stale = useStore(STALE);
-  const send = async () => {
-    if (sending || STALE.get() || attach.busy || !ready(text, attach.empty)) return;
-    setSending(true);
-    setTrouble(null);
-    const question = attach.compose(text);
-    try {
-      await post(`${scope}/api/ask`, { path, question, anchor, quote });
-      if (mount.aborted) return;
-      setText("");
-      attach.clear();
-      save(key, "");
-      onSent();
-    } catch (error) {
-      if (mount.aborted) return;
-      setTrouble(said(error));
-    }
-    setSending(false);
-  };
+  const draft = { key, text, sending, attach, mount, setText, setSending, setTrouble, onSent };
+  const send = () =>
+    sendDraft(draft, `${scope}/api/ask`, (question) => ({ path, question, anchor, quote }));
   return (
     <>
       <Button
@@ -255,24 +321,12 @@ export function AskThread({ ask, scope, onSent }: { ask: Ask; scope: string; onS
   const mount = useMount();
   // The follow-up waits while the page may show what is out of date; the draft stays editable.
   const stale = useStore(STALE);
-  const send = async () => {
-    if (sending || STALE.get() || attach.busy || !ready(text, attach.empty)) return;
-    setSending(true);
-    setTrouble(null);
-    const message = attach.compose(text);
-    try {
-      await post(`${scope}/api/ask-reply`, { id: String(ask.id), text: message });
-      if (mount.aborted) return;
-      setText("");
-      attach.clear();
-      save(key, "");
-      onSent();
-    } catch (error) {
-      if (mount.aborted) return;
-      setTrouble(said(error));
-    }
-    setSending(false);
-  };
+  const draft = { key, text, sending, attach, mount, setText, setSending, setTrouble, onSent };
+  const send = () =>
+    sendDraft(draft, `${scope}/api/ask-reply`, (message) => ({
+      id: String(ask.id),
+      text: message,
+    }));
   return (
     <article className="ask-thread card" id={`ask-${ask.id}`} data-deferred={!shown} ref={watch}>
       {shown && (

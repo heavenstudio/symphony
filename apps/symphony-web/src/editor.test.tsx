@@ -1,9 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { words } from "./document";
-import { Editor, type EditorProps, heldBy, refusal, request } from "./editor";
+import { Unanswered, words } from "./document";
+import type { DocumentLive } from "./document-live";
+import {
+  Editor,
+  type EditorProps,
+  heldBy,
+  refusal,
+  request,
+  SaveControl,
+  type SaveField,
+} from "./editor";
 import { STALE } from "./shared";
-import { memoryStorage } from "./testing";
+import { type Asked, asking, memoryStorage, reply, server } from "./testing";
+import type { Document } from "./wire";
 import { CHECKING } from "./words";
 
 let storage: Storage;
@@ -172,5 +182,364 @@ describe("a section's editor", () => {
     expect(html.match(new RegExp(`disabled=""[^>]*>${CHECKING}</button>`, "g"))).toHaveLength(6);
     expect(button(html, "Discard draft")).not.toContain("disabled");
     expect(html).not.toMatch(/<textarea[^>]*disabled/);
+  });
+});
+
+/** What a save showed, each state's values in the order it set them. */
+function shownOf() {
+  return {
+    text: vi.fn<(value: string) => void>(),
+    pending: vi.fn<(value: boolean) => void>(),
+    error: vi.fn<(value: string | null) => void>(),
+    saved: vi.fn<(value: string | null) => void>(),
+    unanswered: vi.fn<(value: Unanswered | null) => void>(),
+  };
+}
+
+/** A box's files: none, unless `over` says otherwise; its words sent as they are. */
+const attachOf = (over: Partial<SaveField["attach"]> = {}) => ({
+  busy: false,
+  empty: true,
+  compose: (text: string) => text,
+  clear: vi.fn(),
+  ...over,
+});
+
+/** A document whose card `slug`'s thread holds the owner's `lines`, each a verdict and words. */
+function withLines(slug: string, lines: [string, string][]): Document {
+  const entries = lines.map(([verdict, text]) => ({
+    who: "owner" as const,
+    timestamp: null,
+    verdict,
+    blocks: [{ type: "paragraph" as const, spans: [{ type: "text" as const, text }] }],
+  }));
+  return {
+    version: 7,
+    path: "docs/a.md",
+    title: "A",
+    waiting: [],
+    crumbs: [],
+    headings: [],
+    sections: [],
+    cards: [],
+    threads: { [slug]: { blocks: [{ type: "thread", entries }] } },
+    tasks: [],
+  };
+}
+
+/** A page whose latest copy is `latest`, and the cards it released. */
+const pageOf = (latest: Document) =>
+  ({ state: { latest }, released: new Map<string, number>() }) as unknown as DocumentLive;
+
+/** A save of the box's `typed` words in the section `over` names (a comment after L12 else). */
+function saving(over: Partial<SaveField> = {}, typed = "Keep it") {
+  const shown = shownOf();
+  const left = new AbortController();
+  const field: SaveField = {
+    path: "docs/a.md",
+    scope: "",
+    sectionKey: "L12",
+    slug: null,
+    afterLine: 12,
+    kind: "comment",
+    gone: false,
+    page: null,
+    attach: attachOf(),
+    setEditing: vi.fn(),
+    ...over,
+  };
+  return { control: new SaveControl(typed, field, left.signal, shown), shown, field, left };
+}
+
+/** A card's save: the card `alpha`, whose thread has one line of the owner's. */
+const cardSave = (typed = "Keep it") => {
+  const page = pageOf(withLines("alpha", [["question", "Why?"]]));
+  return { page, ...saving({ slug: "alpha", sectionKey: "card:alpha", page }, typed) };
+};
+
+const TAP = "review-tap:docs/a.md:card:alpha";
+
+/** The tap a request's body names, if any. */
+const tapOf = (one: Asked | undefined) => (one?.body as { tap?: string } | undefined)?.tap;
+
+describe("a section's draft", () => {
+  it("is kept on this device as it is typed, and Discard empties it and closes the form", () => {
+    const { control, shown, field } = saving({}, "");
+    control.type("Half a thought");
+    expect(storage.getItem("review-draft:docs/a.md:L12")).toBe("Half a thought");
+    expect(control.typed).toBe("Half a thought");
+    expect(shown.text).toHaveBeenLastCalledWith("Half a thought");
+    control.discard();
+    expect(storage.getItem("review-draft:docs/a.md:L12")).toBe("");
+    expect(control.typed).toBe("");
+    expect(shown.text).toHaveBeenLastCalledWith("");
+    expect(field.attach.clear).toHaveBeenCalledTimes(1);
+    expect(field.setEditing).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("a section's save", () => {
+  it("posts a comment after the section's last line, and once saved empties the box and closes", async () => {
+    const asked = server();
+    storage.setItem("review-draft:docs/a.md:L12", "Keep it");
+    const { control, shown, field } = saving({ kind: "question" });
+    const done = control.send("comment");
+    expect(shown.pending.mock.calls).toEqual([[true]]);
+    expect(shown.error.mock.calls).toEqual([[null]]);
+    expect(shown.saved.mock.calls).toEqual([[null]]);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/comment");
+    expect(asked[0]?.body).toEqual({
+      path: "docs/a.md",
+      text: "Keep it",
+      after_line: 12,
+      kind: "question",
+    });
+    // A second press while the first is on its way sends nothing.
+    await control.send("comment");
+    expect(asked).toHaveLength(1);
+    asked[0]?.answer(reply(200, { ok: true }));
+    await done;
+    expect(shown.text).toHaveBeenLastCalledWith("");
+    expect(storage.getItem("review-draft:docs/a.md:L12")).toBe("");
+    expect(field.attach.clear).toHaveBeenCalledTimes(1);
+    expect(shown.saved).toHaveBeenLastCalledWith("Comment saved");
+    expect(field.setEditing).toHaveBeenCalledWith(false);
+    expect(shown.pending).toHaveBeenLastCalledWith(false);
+    expect(control.sending).toBe(false);
+    // No card: no tap kept, nothing released.
+    expect(storage.getItem(TAP)).toBeNull();
+  });
+
+  it("of a checkout's section posts under its scope, with its files' lines", async () => {
+    const asked = server();
+    const compose = (text: string) => `${text}\nFile: /uploads/a.png`;
+    const files = attachOf({ empty: false, compose });
+    const { control } = saving({ scope: "feature", attach: files }, "A title");
+    const done = control.send("comment");
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/@feature/api/comment");
+    expect(asked[0]?.body).toMatchObject({ text: "A title\nFile: /uploads/a.png" });
+    asked[0]?.answer(reply(200, {}));
+    await done;
+  });
+
+  it("sends nothing for a block gone, words missing, a file uploading or a page out of date", async () => {
+    const asked = server();
+    const gone = saving({ gone: true });
+    await gone.control.send("comment");
+    expect(gone.shown.error).toHaveBeenCalledWith("This block was removed; your draft is kept.");
+    const wordless = saving({}, " ");
+    await wordless.control.send("comment");
+    expect(wordless.shown.error).toHaveBeenCalledWith("Type a message first");
+    const uploading = saving({ attach: attachOf({ busy: true }) });
+    await uploading.control.send("comment");
+    expect(uploading.shown.error).toHaveBeenCalledWith("A file is still uploading");
+    STALE.set(true);
+    const stale = saving();
+    await stale.control.send("comment");
+    // The page may show what is out of date: the save waits, saying nothing of its own.
+    expect(stale.shown.error).not.toHaveBeenCalled();
+    for (const { shown } of [gone, wordless, uploading, stale]) {
+      expect(shown.pending).not.toHaveBeenCalled();
+    }
+    await asking(asked, 0);
+  });
+
+  it("sends a card's verdict under a tap kept until a reply answers it, and releases the card", async () => {
+    const asked = server();
+    const { control, shown, page } = cardSave();
+    const done = control.send("approved");
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/decision");
+    const body = asked[0]?.body as Record<string, unknown>;
+    expect(body).toMatchObject({ slug: "alpha", state: "approved", note: "Keep it" });
+    expect(body.tap).toMatch(/^ui-/);
+    // Kept before the reply: a retry after a reload goes under the same tap.
+    expect(storage.getItem(TAP)).toBe(`${body.tap}\napproved\nKeep it`);
+    asked[0]?.answer(reply(200, { ok: true }));
+    await done;
+    expect(storage.getItem(TAP)).toBe("");
+    // The card had one line of the owner's: it shows the answer once it has two.
+    expect(page.released.get("card:alpha")).toBe(2);
+    expect(shown.saved).toHaveBeenLastCalledWith("Verdict saved: approved");
+    expect(shown.unanswered.mock.calls).toEqual([[null]]);
+  });
+
+  it("sends a card's message under no tap", async () => {
+    const asked = server();
+    const { control, shown } = cardSave("Hello");
+    const done = control.send("message");
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/message");
+    expect(asked[0]?.body).toEqual({ path: "docs/a.md", text: "Hello", slug: "alpha" });
+    expect(storage.getItem(TAP)).toBeNull();
+    asked[0]?.answer(reply(200, {}));
+    await done;
+    expect(shown.saved).toHaveBeenLastCalledWith("Message sent");
+  });
+
+  it("takes a tap kept for the same words across a reload, never for others", async () => {
+    const asked = server();
+    storage.setItem(TAP, "ui-kept\napproved\nKeep it");
+    const same = cardSave().control.send("approved");
+    await asking(asked, 1);
+    expect(asked[0]?.body).toMatchObject({ tap: "ui-kept" });
+    asked[0]?.answer(reply(200, {}));
+    await same;
+    storage.setItem(TAP, "ui-kept\napproved\nKeep it");
+    const other = cardSave("Changed my mind").control.send("rejected");
+    await asking(asked, 2);
+    expect(tapOf(asked[1])).toMatch(/^ui-\d/);
+    asked[1]?.answer(reply(200, {}));
+    await other;
+  });
+
+  it("says a refusal in the server's words, and leaves nothing unanswered", async () => {
+    const asked = server();
+    const { control, shown } = cardSave();
+    const done = control.send("approved");
+    await asking(asked, 1);
+    asked[0]?.answer(reply(409, { error: "the card moved" }));
+    await done;
+    expect(shown.error).toHaveBeenLastCalledWith(expect.stringContaining("the card moved"));
+    expect(shown.unanswered).not.toHaveBeenCalled();
+    expect(control.waiting).toBeNull();
+    expect(shown.pending).toHaveBeenLastCalledWith(false);
+    // The tap stays for a retry of the same words.
+    expect(storage.getItem(TAP)).toMatch(/^ui-.*\napproved\nKeep it$/);
+  });
+
+  it("leaves a comment no reply answered as it is: only a card's save waits on the feed", async () => {
+    const asked = server();
+    const { control, shown } = saving();
+    const done = control.send("comment");
+    await asking(asked, 1);
+    asked[0]?.answer(reply(500, { error: "the disk is full" }));
+    await done;
+    expect(shown.error).toHaveBeenLastCalledWith(expect.stringContaining("the disk is full"));
+    expect(shown.unanswered).not.toHaveBeenCalled();
+  });
+
+  it("retries a card's save no reply answered under its tap, and its repeat releases the card", async () => {
+    const asked = server();
+    const { control, shown, page } = cardSave();
+    const first = control.send("approved");
+    await asking(asked, 1);
+    const tapped = tapOf(asked[0]);
+    asked[0]?.answer(reply(500, { error: "the disk is full" }));
+    await first;
+    expect(control.waiting).toEqual(
+      new Unanswered([words("approved", "Keep it")], tapped ?? null, 1),
+    );
+    expect(shown.unanswered).toHaveBeenLastCalledWith(control.waiting);
+    // The owner changes the words and the verdict: the retry goes under the same tap.
+    control.type("No");
+    const retry = control.send("rejected");
+    await asking(asked, 2);
+    expect(asked[1]?.body).toMatchObject({ state: "rejected", note: "No", tap: tapped });
+    // The server had written the first sending: it names those words.
+    asked[1]?.answer(reply(200, { repeat: true, state: "approved", note: "Keep it" }));
+    await retry;
+    expect(control.waiting).toBeNull();
+    expect(page.released.get("card:alpha")).toBe(2);
+    expect(shown.saved).toHaveBeenLastCalledWith(
+      "Verdict saved: approved; your change was not sent: send it again to add it",
+    );
+    // Words sent and not held stay as the card's draft, the form closed.
+    expect(shown.text).not.toHaveBeenCalledWith("");
+  });
+
+  it("releases nothing for a repeat of a tap this page never left unanswered", async () => {
+    const asked = server();
+    storage.setItem(TAP, "ui-kept\napproved\nKeep it");
+    const { control, page } = cardSave();
+    const done = control.send("approved");
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { repeat: true, state: "approved", note: "Keep it" }));
+    await done;
+    expect(page.released.has("card:alpha")).toBe(false);
+  });
+
+  it("does nothing more once the page left while the server answered", async () => {
+    const asked = server();
+    const answers = [reply(200, { ok: true }), reply(500, { error: "the disk is full" })];
+    for (const [at, answer] of answers.entries()) {
+      storage.setItem("review-draft:docs/a.md:card:alpha", "Keep it");
+      const { control, shown, page, field, left } = cardSave();
+      const done = control.send("approved");
+      await asking(asked, at + 1);
+      const tapped = storage.getItem(TAP);
+      left.abort();
+      asked[at]?.answer(answer);
+      await done;
+      expect(shown.pending.mock.calls).toEqual([[true]]);
+      expect(shown.saved.mock.calls).toEqual([[null]]);
+      expect(shown.error.mock.calls).toEqual([[null]]);
+      expect(shown.text).not.toHaveBeenCalled();
+      expect(shown.unanswered).not.toHaveBeenCalled();
+      expect(field.setEditing).not.toHaveBeenCalled();
+      expect(page.released.size).toBe(0);
+      // What this device keeps stays for the page that comes back: the draft and the tap.
+      expect(storage.getItem("review-draft:docs/a.md:card:alpha")).toBe("Keep it");
+      expect(storage.getItem(TAP)).toBe(tapped);
+    }
+  });
+});
+
+describe("a card's save no reply answered", () => {
+  /** A card's save the server gave no reply to, the feed still to answer it. */
+  async function unanswered(typed = "Keep it") {
+    const asked = server();
+    const save = cardSave(typed);
+    const done = save.control.send("approved");
+    await asking(asked, 1);
+    asked[0]?.answer(reply(500, { error: "the disk is full" }));
+    await done;
+    save.shown.error.mockClear();
+    return save;
+  }
+
+  const answeredLine = () =>
+    withLines("alpha", [
+      ["question", "Why?"],
+      ["approved", "Keep it"],
+    ]);
+
+  it("is answered by the feed once the card shows the owner's line it brought", async () => {
+    const { control, shown, page, field } = await unanswered();
+    // The card as it was answers nothing.
+    control.heard(withLines("alpha", [["question", "Why?"]]));
+    expect(control.waiting).not.toBeNull();
+    expect(shown.error).not.toHaveBeenCalled();
+    control.heard(answeredLine());
+    expect(control.waiting).toBeNull();
+    expect(shown.unanswered).toHaveBeenLastCalledWith(null);
+    expect(page.released.get("card:alpha")).toBe(2);
+    expect(storage.getItem(TAP)).toBe("");
+    expect(shown.error).toHaveBeenLastCalledWith(null);
+    expect(shown.saved).toHaveBeenLastCalledWith("Verdict saved: approved");
+    expect(shown.text).toHaveBeenLastCalledWith("");
+    expect(field.setEditing).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps words the owner wrote since sending, the form open", async () => {
+    const { control, shown, field } = await unanswered();
+    control.type("Keep it, and more");
+    control.heard(answeredLine());
+    expect(shown.saved).toHaveBeenLastCalledWith("Verdict saved: approved");
+    expect(shown.text).toHaveBeenLastCalledWith("Keep it, and more");
+    expect(field.setEditing).not.toHaveBeenCalled();
+  });
+
+  it("waits while another save is on its way, and is nothing to a page with no model", async () => {
+    const { control, field } = await unanswered();
+    control.sending = true;
+    control.heard(answeredLine());
+    expect(control.waiting).not.toBeNull();
+    control.sending = false;
+    control.field = { ...field, page: null };
+    control.heard(answeredLine());
+    expect(control.waiting).not.toBeNull();
   });
 });

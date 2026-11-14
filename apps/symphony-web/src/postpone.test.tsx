@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PostponeControls, postpone, seen } from "./postpone";
+import { PostponeControls, postpone, press, seen } from "./postpone";
 import { STALE } from "./shared";
 import { asking, reply, server } from "./testing";
 
@@ -92,6 +92,70 @@ describe("Later and its Undo", () => {
     expect(await done).toBeNull();
     expect(go).not.toHaveBeenCalled();
     expect(refreshed.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("a press of Later", () => {
+  afterEach(() => {
+    STALE.set(false);
+    vi.unstubAllGlobals();
+  });
+  const frame = () => ({ refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() });
+  const card = { path: "docs/A.md", slug: "s", postponed: false };
+  const shownOf = () => ({
+    pending: vi.fn<(pending: boolean) => void>(),
+    error: vi.fn<(error: string | null) => void>(),
+  });
+
+  it("is on its way until the server answers, then goes to the card named next", async () => {
+    const asked = server();
+    const shown = shownOf();
+    const go = vi.fn();
+    const done = press(card, false, new AbortController().signal, frame(), shown, go);
+    expect(shown.pending.mock.calls).toEqual([[true]]);
+    expect(shown.error.mock.calls).toEqual([[null]]);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
+    await done;
+    expect(go).toHaveBeenCalledWith("/docs/B.md#t");
+    expect(shown.error.mock.calls).toEqual([[null], [null]]);
+    expect(shown.pending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("says what failed, its button pressable again", async () => {
+    const asked = server();
+    const shown = shownOf();
+    const done = press(card, false, new AbortController().signal, frame(), shown, vi.fn());
+    await asking(asked, 1);
+    asked[0]?.answer(reply(409, { error: "The card moved." }));
+    await done;
+    expect(shown.error).toHaveBeenLastCalledWith("The card moved.");
+    expect(shown.pending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("sends nothing while one is on its way or the page may be out of date", async () => {
+    const asked = server();
+    const shown = shownOf();
+    await press(card, true, new AbortController().signal, frame(), shown, vi.fn());
+    STALE.set(true);
+    await press(card, false, new AbortController().signal, frame(), shown, vi.fn());
+    expect(shown.pending).not.toHaveBeenCalled();
+    await asking(asked, 0);
+  });
+
+  it("shows nothing more once the page is gone before the server answers", async () => {
+    const asked = server();
+    for (const [at, answer] of [reply(200, {}), reply(409, { error: "moved" })].entries()) {
+      const shown = shownOf();
+      const left = new AbortController();
+      const done = press(card, false, left.signal, frame(), shown, vi.fn());
+      await asking(asked, at + 1);
+      left.abort();
+      asked[at]?.answer(answer);
+      await done;
+      expect(shown.pending.mock.calls).toEqual([[true]]);
+      expect(shown.error.mock.calls).toEqual([[null]]);
+    }
   });
 });
 

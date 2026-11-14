@@ -69,6 +69,34 @@ export async function seen(
   }
 }
 
+/** What a press of Later shows: whether it is on its way, and what failed. */
+export interface Pressed {
+  pending: (pending: boolean) => void;
+  error: (error: string | null) => void;
+}
+
+/**
+ * A press of Later or its Undo on `card`: nothing while one is on its way (`pending`) or the page
+ * may show what is out of date, as the card may have moved since; else `postpone`, and what failed
+ * said once the server answered, nothing more once `mount` ended meanwhile.
+ */
+export async function press(
+  card: Postponed,
+  pending: boolean,
+  mount: AbortSignal,
+  frame: FrameRefresh,
+  shown: Pressed,
+  go: (address: string) => void,
+): Promise<void> {
+  if (pending || STALE.get()) return;
+  shown.pending(true);
+  shown.error(null);
+  const failure = await postpone(card, mount, frame, go);
+  if (mount.aborted) return;
+  shown.error(failure);
+  shown.pending(false);
+}
+
 export interface PostponeProps extends Postponed {
   /**
    * What the reader is doing with the card on its document's page (the address's anchor and
@@ -100,17 +128,17 @@ export function PostponeControls({
   // While the page may show what is out of date, the card may have moved since: wait for it.
   const checking = useStore(STALE);
   const label = pending ? "Saving…" : checking ? CHECKING : postponed ? "Undo Later" : "Later";
-  const act = async () => {
-    if (pending || STALE.get()) return;
-    setPending(true);
-    setError(null);
-    const failure = await postpone({ path, slug, postponed, scope }, mount, frame, (address) => {
-      location.href = address;
-    });
-    if (mount.aborted) return;
-    setError(failure);
-    setPending(false);
-  };
+  const act = () =>
+    press(
+      { path, slug, postponed, scope },
+      pending,
+      mount,
+      frame,
+      { pending: setPending, error: setError },
+      (address) => {
+        location.href = address;
+      },
+    );
   return (
     <span className="postpone-controls">
       {postponed && <small className="postponed">postponed</small>}

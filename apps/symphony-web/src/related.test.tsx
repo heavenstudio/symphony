@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ComparisonNote, DocumentWithTasks, RelatedTask, SectionDifference } from "./related";
@@ -22,6 +22,28 @@ const row = (one: DocumentTask) =>
   renderToStaticMarkup(
     (RelatedTask({ task: one }) as ReactElement<{ children: ReactNode }>).props.children,
   );
+
+type Node = ReactElement<{ children?: ReactNode; className?: string; task?: DocumentTask }>;
+
+/** Every element of `node`'s tree, as its components wrote them, none of them run. */
+const elements = (node: ReactNode): Node[] => {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!isValidElement(node)) return [];
+  const element = node as Node;
+  return [element, ...elements(element.props.children)];
+};
+
+/**
+ * The slugs of the rows under the panel's element of class `className`, in their order: the
+ * rows themselves draw only once near the screen, so the markup cannot name them.
+ */
+const rowsUnder = (tasks: DocumentTask[], className: string): string[] => {
+  const tree = DocumentWithTasks({ tasks, children: null });
+  const shelf = elements(tree).find((element) => element.props.className === className);
+  return elements(shelf?.props.children)
+    .filter((element) => element.type === RelatedTask)
+    .map((element) => element.props.task?.slug ?? "");
+};
 
 describe("a document's related tasks", () => {
   it("are a panel beside the prose, each title as text", () => {
@@ -70,12 +92,13 @@ describe("a document's related tasks", () => {
   });
 
   it("fold the finished work under its count, below the open work", () => {
-    const html = panel([
+    const tasks = [
       task("perf/one", "One", "done"),
       task("perf/open", "Open", "ready"),
       task("perf/two", "Two", "cancelled"),
       task("verdicts/2026-11-11-1244", "Answer the owner on lamp-a-pic", "done"),
-    ]);
+    ];
+    const html = panel(tasks);
     const open = html.indexOf('class="doc-tasks-open"');
     const folded = html.indexOf(
       '<details class="doc-tasks-finished"><summary>2 finished</summary>',
@@ -85,6 +108,10 @@ describe("a document's related tasks", () => {
     expect(html).not.toContain('<details class="doc-tasks-finished" open');
     expect(html.slice(open, folded).match(/<li /g)).toHaveLength(1);
     expect(html.slice(folded).match(/<li /g)).toHaveLength(2);
+    // Which rows: the open one above, the finished ones folded in the board's order, and the
+    // verdicts' task on neither side.
+    expect(rowsUnder(tasks, "doc-tasks-open")).toEqual(["perf/open"]);
+    expect(rowsUnder(tasks, "doc-tasks-finished")).toEqual(["perf/one", "perf/two"]);
   });
 
   it("are only the count when all of them are finished", () => {

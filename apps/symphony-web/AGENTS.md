@@ -141,9 +141,10 @@ stay the Dioxus program's kinds, which the shell mounts beside any page. A page 
 mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
 the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
 overlay's picture viewer, which it reaches through the shell's `reviewOverlay` as the Dioxus
-pages do, all of it ending with the kind's mount. A document adds its contents' watch to it
-(`contents.ts`: the outline folded on its own while a drawn table is wider than its box, unless
-the reader chose), under the same signal: one runtime for both kinds.
+pages do, all of it ending with the kind's mount: one runtime for both kinds. A document's
+contents watch (`contents.ts`: the outline folded on its own while a drawn table is wider than its
+box, unless the reader chose) is no part of it: it runs from the mount of a body that has the
+outline to its unmount, under the signal of that body's own effect (`DocumentBody`).
 
 A read the page gives up is given up on the wire too: `getJson(url, signal)` and `exchange` take
 the signal of what asked, so a read the feed's news replaces, or one a page left behind, is
