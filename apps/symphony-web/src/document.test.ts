@@ -144,6 +144,13 @@ describe("a document's feed changes", () => {
     ]);
     expect(untouched?.start).toBe(0);
     expect(state.shown.sections.map((one) => one.key)).toEqual(BEFORE.map(([key]) => key));
+    // The sections an order does not name follow those it names, in the order they had.
+    const named = change(state, delta({ order: ["card:alpha"] }));
+    expect(named.latest.sections.map((one) => one.key)).toEqual([
+      "card:alpha",
+      "waiting",
+      "card:bravo",
+    ]);
   });
 
   it("set and clear threads and cards, and the fields they name", () => {
@@ -540,6 +547,14 @@ describe("a save no reply answered", () => {
       thread.entries[0].blocks.push({ type: "rule" });
     }
     expect(two.held(unworded, "card:alpha")).toBeNull();
+    // A line whose verdict the server left out, which the guard reads as none as serde does, is
+    // no sending's: each sent one had a verdict.
+    const unruled = answered(document(AFTER), "alpha", [["approved", said("Keep it")]]);
+    const ruled = unruled.threads.alpha?.blocks[0];
+    if (ruled?.type === "thread" && ruled.entries[0] !== undefined) {
+      Reflect.deleteProperty(ruled.entries[0], "verdict");
+    }
+    expect(two.held(unruled, "card:alpha")).toBeNull();
   });
 });
 
@@ -700,6 +715,12 @@ describe("a document's bodies", () => {
     // A card body whose card the outline does not hold changes no card.
     const carded = drawBodies({ ...outline, cards: [] }, kept);
     expect(carded.cards).toEqual([]);
+    // A section that is no card's takes its blocks alone.
+    const whole = outlined(full);
+    const intro = drawBodies(whole, bodies(full, keys("intro")));
+    expect(intro.sections.map((one) => one.blocks)).toEqual([full.sections[0]?.blocks, [], []]);
+    expect(intro.cards).toEqual(whole.cards);
+    expect(intro.threads).toEqual({});
     // Nothing drawn leaves the outline as it was.
     expect(drawBodies(outline, [])).toBe(outline);
   });

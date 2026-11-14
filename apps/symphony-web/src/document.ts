@@ -44,12 +44,12 @@ export function put<T>(record: Record<string, T>, key: string, value: T): void {
   });
 }
 
-/** `items` sorted by `rank`, which is stable: two of a rank keep their order. */
+/** `items` sorted by `rank`; the sort is stable, so two of a rank keep their order. */
 function ranked<T>(items: T[], rank: (item: T) => number): T[] {
   return items
-    .map((item, at) => [rank(item), at, item] as const)
-    .sort(([a, at], [b, bt]) => a - b || at - bt)
-    .map(([, , item]) => item);
+    .map((item) => [rank(item), item] as const)
+    .sort(([a], [b]) => a - b)
+    .map(([, item]) => item);
 }
 
 /** Where `key` is in `keys`, past the end when it is not there. */

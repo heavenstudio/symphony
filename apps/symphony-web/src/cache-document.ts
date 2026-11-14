@@ -125,7 +125,7 @@ export class Bodies {
     const valid = validators(outline);
     const drawn: Body[] = [];
     for (const key of Object.keys(kept).sort()) {
-      const one = Object.hasOwn(kept, key) ? kept[key] : undefined;
+      const one = kept[key];
       if (one !== undefined && one.body.section.key === key && valid.get(key) === one.validator) {
         this.taken.set(key, one.validator);
         this.unconfirmed.add(key);
@@ -222,7 +222,8 @@ export class Bodies {
   unkept(): Map<string, string> | null {
     if (!this.dirty) return null;
     this.dirty = false;
-    return new Map([...this.taken].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    // A map's keys are never equal.
+    return new Map([...this.taken].sort(([a], [b]) => (a < b ? -1 : 1)));
   }
 
   /**

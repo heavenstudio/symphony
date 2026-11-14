@@ -310,4 +310,20 @@ describe("a document read ahead", () => {
     }));
     expect(split(differs)[1]).toEqual({});
   });
+
+  it("keeps a card's body under its own hash where the outline hashes no thread", () => {
+    // The server leaves the thread hashes out when it holds none.
+    const read = documentOf(DOCUMENT, "Said");
+    const { thread_hashes: _, ...first } = firstPart(read, ["card:palette"], "t1");
+    expect(validated(split(first)[1])).toEqual([["card:palette", "p1/"]]);
+    const { thread_hashes: __, ...outline } = outlineOf(read, "t1");
+    const device = new Bodies();
+    device.answered(outline, keys());
+    expect(device.read(ALL, read.sections)).toBe(true);
+    expect(validated(device.kept(read))).toEqual([
+      ["intro", "i1"],
+      ["card:palette", "p1/"],
+      ["lamps", "l1"],
+    ]);
+  });
 });
