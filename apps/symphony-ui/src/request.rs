@@ -123,8 +123,10 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
 /// A read's fetch, aborted when the read is dropped before it ends: a task page that left, or a
 /// newer read of its gates, holds no connection open for an answer nobody will read. A post is
 /// never aborted that way: it may already have reached the server, and it goes on as `keepalive`
-/// does. Only the task pages' module drops reads it no longer wants, so only it carries this; every
-/// other module's `send` is the one it had before.
+/// does. The task pages drop reads they no longer want, so the program they are part of carries
+/// this (`page-program` turns on `page-tasks`), for every kind of it: the task pages, Reports, the
+/// chat, the menus and the timeline. The board's, home's, the documents' and the queue's `send` is
+/// the one it had before.
 #[cfg(feature = "page-tasks")]
 struct Abandoned(Option<AbortController>);
 

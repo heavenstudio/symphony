@@ -1,6 +1,6 @@
 //! The shell's own failure notices: a page module or the conversation that fails to load is
 //! said in the shell's notice region, contained on the page, and retried in place.
-use super::{SHOWN, chrome, chrome::Chrome, site, wait_for_board};
+use super::{SHOWN, assets::module, chrome, chrome::Chrome, dist, site, wait_for_board};
 use serde_json::json;
 
 enum HeaderPresence {
@@ -90,11 +90,13 @@ fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
     );
 }
 
-/// A real failed module request with a visible alert, restored network and no loaded panel.
+/// A real failed module request with a visible alert, restored network and no loaded panel: the
+/// chat's own file, its chunk of the program (the program's script and main module are shared).
 fn fail_panel(browser: &mut Chrome) {
+    let chunk = module(dist(), "panel").chunk().clone();
     browser.call(
         "Network.setBlockedURLs",
-        json!({"urls":["*assets/panel-*.js"]}),
+        json!({"urls":[format!("*{chunk}")]}),
     );
     browser.eval("document.querySelector('#quick-open').click()");
     wait_for(

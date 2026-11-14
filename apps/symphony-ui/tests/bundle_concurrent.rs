@@ -20,11 +20,12 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-const KINDS: [&str; 8] = [
-    "board", "tasks", "docs", "review", "queue", "panel", "overlay", "timeline",
-];
+/// The four page kinds built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 4] = ["board", "docs", "review", "queue"];
+const PROGRAM: [&str; 5] = ["tasks", "reports", "panel", "overlay", "timeline"];
 
 /// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
+/// The program's build writes its main module, a chunk for each of its kinds and their own styles.
 const DX: &str = r#"#!/bin/bash
 set -euo pipefail
 while [ "$#" -gt 0 ]; do
@@ -47,7 +48,16 @@ fi
 printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
 printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
-printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$work/public/assets/board-$kind.css"
+if [ "$kind" = program ]; then
+    for chunk in 0_overlay 1_panel 2_reports 3_tasks 4_timeline; do
+        printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$chunk" > "$work/public/assets/module_$chunk-$kind.wasm"
+    done
+    for own in reports task-timeline style; do
+        printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$own" > "$work/public/assets/$own-$kind.css"
+    done
+else
+    printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$work/public/assets/board-$kind.css"
+fi
 mkdir -p "$out"
 cp -R "$work/public" "$out/"
 "#;
@@ -73,6 +83,7 @@ impl Fixture {
             "apps/symphony-ui/Dioxus.toml",
             "apps/symphony-ui/assets/shell.js",
             "apps/symphony-ui/assets/cache.js",
+            "apps/symphony-ui/assets/chunks.js",
             "apps/symphony-server/src/notices.css",
             "tools/check_lock.sh",
             "Cargo.toml",
@@ -164,7 +175,10 @@ impl Fixture {
             .next()
             .unwrap();
         let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-        assert_eq!(manifest.as_object().unwrap().len(), KINDS.len());
+        assert_eq!(
+            manifest.as_object().unwrap().len(),
+            KINDS.len() + PROGRAM.len()
+        );
         // The stage holds its build alone, and its builds.json names every file of it by its shell,
         // for publish-client to keep beside the builds published before it.
         let mut files: Vec<String> = fs::read_dir(public.join("assets"))
@@ -172,8 +186,13 @@ impl Fixture {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         files.sort();
-        // Each kind's script, wasm and style sheet, and the shell.
-        assert_eq!(files.len(), 3 * KINDS.len() + 1, "{files:?}");
+        // Each kind's script, wasm and style sheet; the program's script and main module, a chunk
+        // for each of its kinds and its three own style sheets; and the shell.
+        assert_eq!(
+            files.len(),
+            3 * KINDS.len() + 2 + PROGRAM.len() + 3 + 1,
+            "{files:?}"
+        );
         let builds: serde_json::Value =
             serde_json::from_slice(&fs::read(public.join("builds.json")).unwrap()).unwrap();
         assert_eq!(
@@ -205,6 +224,48 @@ impl Fixture {
             assert_eq!(
                 read_asset(styles[0].as_str().unwrap()),
                 format!("/*{id}-{kind}*/body{{}}").as_bytes()
+            );
+        }
+        let read_asset = |url: &serde_json::Value| {
+            fs::read(public.join(url.as_str().unwrap().trim_start_matches('/'))).unwrap()
+        };
+        for (at, kind) in ["overlay", "panel", "reports", "tasks", "timeline"]
+            .iter()
+            .enumerate()
+        {
+            let entry = &manifest[kind];
+            assert!(
+                String::from_utf8(read_asset(&entry["script"]))
+                    .unwrap()
+                    .contains(&format!("/*{id}*/")),
+                "{kind}"
+            );
+            assert_eq!(
+                read_asset(&entry["wasm"]),
+                format!("\0asm\x01\0\0\0{id}-program").as_bytes()
+            );
+            assert_eq!(
+                read_asset(&entry["chunk"]),
+                format!("\0asm\x01\0\0\0{id}-{at}_{kind}").as_bytes()
+            );
+            let own = match *kind {
+                "reports" => Some("reports"),
+                "timeline" => Some("task-timeline"),
+                "panel" | "overlay" => Some("style"),
+                _ => None,
+            };
+            let styles: Vec<_> = entry["styles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(read_asset)
+                .collect();
+            assert_eq!(
+                styles,
+                own.map(|own| format!("/*{id}-{own}*/body{{}}").into_bytes())
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "{kind}"
             );
         }
     }
@@ -241,6 +302,8 @@ release-inputs)
         printf '%s\n' "$BUNDLE_ROOT"
     fi ;;
 publish-client) mv "$2" "$3" ;;
+# The repair itself has its own tests and the real build's: here its output is dx's as it is.
+split-repair) ;;
 *) exit 97 ;;
 esac
 "#,

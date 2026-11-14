@@ -93,9 +93,17 @@ const WORKSPACE_INPUTS: [&str; 5] = [
     "apps/symphony-server/src/notices.css",
 ];
 
+/// The sources of the split repair, a file and a folder: `bundle.sh` runs it on the program's
+/// chunks, so what it writes is the client's bytes too, and a change to it builds a new client.
+const SPLIT_REPAIR: [&str; 2] = [
+    "crates/symphony/src/cli/commands/split_repair.rs",
+    "crates/symphony/src/cli/commands/split_repair",
+];
+
 /// What of the checkout the client's build reads, from Cargo's metadata of the workspace: the
-/// client's package and every local package it builds with, whole, the [`WORKSPACE_INPUTS`], and
-/// the other members' manifests, without which Cargo would not load the workspace or keep its lock.
+/// client's package and every local package it builds with, whole, the [`WORKSPACE_INPUTS`], the
+/// [`SPLIT_REPAIR`]'s sources and the other members' manifests, without which Cargo would not load
+/// the workspace or keep its lock.
 /// The other members' sources, the documents, the board, the agents' folders and every derived
 /// folder are no input.
 struct Inputs {
@@ -206,6 +214,7 @@ impl Inputs {
         WORKSPACE_INPUTS
             .iter()
             .any(|input| path == Path::new(input))
+            || SPLIT_REPAIR.iter().any(|input| path.starts_with(input))
             || self.packages.iter().any(|folder| path.starts_with(folder))
             || self
                 .members

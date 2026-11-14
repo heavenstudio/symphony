@@ -140,13 +140,15 @@ fn return_held(chrome: &mut Chrome, site: &Site, reads: &[&str]) -> Vec<usize> {
     before
 }
 
-/// The page shows what this device kept, saying `said` of it.
+/// The page shows what this device kept, saying `said` of it. It is asked right after the page
+/// opens, before its module (the program's script, main module and chunk) has drawn a `main`: none
+/// yet is not yet, never a failure.
 #[track_caller]
 fn from_the_device(chrome: &mut Chrome, said: &str) {
     shows(
         chrome,
         &format!(
-            "(main => main.dataset.feed === 'stale' && main.dataset.cache === 'device' && document.querySelector('.page-notices .device-notice')?.textContent === {})(document.querySelector('main'))",
+            "(main => main?.dataset.feed === 'stale' && main.dataset.cache === 'device' && document.querySelector('.page-notices .device-notice')?.textContent === {})(document.querySelector('main'))",
             json!(said)
         ),
         "the notice of a copy from this device",
