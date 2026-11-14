@@ -23,11 +23,15 @@ types cross.
   markup rules the Symphony reads files by (`text`: Python's whitespace, lines and `strip`, a file
   read with universal newlines and written whole; `markup`: HTML escaping and URL quoting).
 
-The kit's crates depend on no other workspace crate but each other. They carry one version, 1.0.0
-now, and are made to be published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)). The
-app's own wire types, which move with the server and the client, are `symphony-api`'s, which
-re-exports the vocabulary under the same names; the library re-exports the text, markup and `error`
-under its old names.
+The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
+standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
+on Unix (its device, inode and change time). They carry one version, 1.0.0 now, and are made to be
+published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)), so they export what a plugin
+uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
+the library's board cache share, and no more: the text rules only the library uses (a one-sided
+strip, a path as `pathlib` prints it) are the library's own. The app's own wire types, which move with the server and the
+client, are `symphony-api`'s, which re-exports the vocabulary under the same names; the library
+re-exports the text, markup and `error` under its old names.
 
 Beside the kit, a plugin takes what it wants of the helpers, each on a version line of its own:
 `process-cwd` (children started without a fork, and without the session or the marks of the
@@ -38,7 +42,9 @@ plugin built on these alone links no Symphony library.
 
 A plugin's tests ask its components and card kinds as a host does, through the protocol's requests
 and answers, with no host linked: `symphony_plugin::testing::Host` hands each request to the plugin
-as `serve` would, and its `render` shows a refusal as the host does, as `error`'s block.
+as `serve` would, and its `render` of a `Page` the test makes shows a refusal as the host does, as
+`error`'s block. A test makes each other request by its `new` (`Recognises::new(kind, card)`), and a
+card's data by `CardData::of` from the `Card` it writes.
 
 ## Turning it on
 
@@ -198,6 +204,21 @@ page its project's artifacts folder (`artifacts` in its page, the checkout's `ar
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
 - A field missing is refused, unless its type gives it a default (a gate's `by` or `at`, a viewer's
   `views`, a page's `render` or `artifacts`). A new field comes with a default, or with a new major.
+  So that such a field is a new minor of the kit's crates too, every struct of
+  `symphony_plugin::protocol` is `#[non_exhaustive]` and is made by its constructors, never by its
+  fields: a request by its `new`; a page, a card, a task, a file or a problem by its `of`; a
+  declaration, and what it lists, by its `of` from a plugin (or from its `Default`, its fields set
+  after); a version by its `new`; a line by `Envelope::asking`, `cancelling` or `answering`. A
+  request's `new` takes every field its call has, so a field added to a call's own changes it: no
+  call has a field a later minor added yet, and the first gives `calls!` a group of fields after
+  the call's own that `new` leaves out and fills with their defaults, set on the request after.
+  `Request` is `#[non_exhaustive]` as well, as a new call is a minor of the protocol and a new
+  variant of it, and a match on it outside the kit ends with `_`. The protocol's other enums stay
+  exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major
+  of the protocol, and `Lined` never goes on the wire. The seam types and the vocabulary (`Card`,
+  `Picture`, `TaskOffer`, `Submission`, `Theme`, `Block`…) are not marked, as a plugin and its
+  tests build them by their fields: a field or a variant added to one is a new major of the kit,
+  whichever minor of the protocol carries it.
 - A call the plugin does not know, a request missing a field, or a second member beside the call is
   answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
   place.

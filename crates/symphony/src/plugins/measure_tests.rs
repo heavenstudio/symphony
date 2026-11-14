@@ -22,10 +22,7 @@ fn new_meter(path: &Path, loopback: bool) -> Meter {
 }
 
 fn validate(value: FieldValue) -> Validate {
-    Validate {
-        field: "effort".into(),
-        value,
-    }
+    Validate::new("effort".into(), value)
 }
 
 #[test]
@@ -93,15 +90,13 @@ fn an_answer_that_reads_back_otherwise_is_named_and_what_came_back_is_the_answer
     };
     let trip = round_trip(
         || panic!("the request reads back"),
-        || AnswerGates {
-            answerer: "stamps".into(),
-            root: "/r".into(),
-            task: TaskData {
-                slug: "a/b".into(),
-                status: "review".into(),
-                branch: "a/b".into(),
-            },
-            tip: None,
+        || {
+            let task = TaskRef {
+                slug: "a/b",
+                status: "review",
+                branch: "a/b",
+            };
+            AnswerGates::new("stamps".into(), "/r".into(), TaskData::of(&task), None)
         },
         |_: AnswerGates| Ok(vec![at(Some(f64::NAN))]),
     );
@@ -114,10 +109,12 @@ fn a_request_that_cannot_be_written_is_named_and_the_call_is_made_linked() {
     use std::os::unix::ffi::OsStrExt as _;
     let trip = round_trip(
         || Some(Reply::Json("linked".into())),
-        || Serve {
-            route: "widgets".into(),
-            root: PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff")),
-            rest: String::new(),
+        || {
+            Serve::new(
+                "widgets".into(),
+                PathBuf::from(std::ffi::OsStr::from_bytes(b"/r/\xff")),
+                String::new(),
+            )
         },
         |_: Serve| panic!("the far side is not asked a request that was never sent"),
     );
