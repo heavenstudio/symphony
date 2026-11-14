@@ -125,11 +125,17 @@ fn a_board_server_names_the_common_dir_of_the_data_it_serves() {
     }
     let bare = format!("/opt/bin/surreal start --bind {ADDR} {data}");
     assert_eq!(board_served(&bare), Some(common.clone()));
-    // A scratch board's supervisor, other data, data in no git common dir, another command.
+    // A scratch board's supervisor, other data, data in no git common dir, a folder of the
+    // board's last name elsewhere in the common dir, another command.
     let loose = root.join("loose").join(FOLDER);
     let elsewhere = store(&loose.join("data"));
     fs::create_dir_all(&loose).unwrap();
+    fs::create_dir_all(common.join("elsewhere/tasks")).unwrap();
     for line in [
+        format!(
+            "{SURREAL} start --bind {ADDR} {}",
+            store(&common.join("elsewhere/tasks/data"))
+        ),
         supervisor_line(SURREAL, &data),
         format!("{SURREAL} start --bind {ADDR} memory"),
         format!("{SURREAL} start --bind {ADDR} {data}-old"),
@@ -146,30 +152,6 @@ fn a_board_server_names_the_common_dir_of_the_data_it_serves() {
     ] {
         assert_eq!(board_served(&line), None, "{line}");
     }
-    fs::remove_dir_all(&root).unwrap();
-}
-
-#[test]
-fn an_older_builds_board_server_names_its_common_dir_until_the_move_fences_its_old_folder() {
-    let root = std::env::temp_dir().join(format!("board-served-old-{}", std::process::id()));
-    let common = root.join("repo/.git");
-    let (_, old) = crate::unmoved::OLD[0];
-    fs::create_dir_all(common.join(old)).unwrap();
-    fs::write(common.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-    // The server an older build started on the data in the board's old folder.
-    let line = server_line(START, SURREAL, &store(&common.join(old).join("data")));
-    assert_eq!(board_served(&line), Some(common.clone()), "{line}");
-    // The move left a one-line file at the old name: nothing serves a board from there.
-    fs::remove_dir_all(common.join(old)).unwrap();
-    fs::write(common.join(old), "moved by tools/move-state.sh\n").unwrap();
-    assert_eq!(board_served(&line), None, "{line}");
-    // Another folder of the same last name is no board's.
-    let other = store(&common.join("elsewhere/tasks/data"));
-    fs::create_dir_all(common.join("elsewhere/tasks")).unwrap();
-    assert_eq!(
-        board_served(&format!("{SURREAL} start --bind {ADDR} {other}")),
-        None
-    );
     fs::remove_dir_all(&root).unwrap();
 }
 

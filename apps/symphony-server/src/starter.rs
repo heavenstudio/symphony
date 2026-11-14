@@ -55,16 +55,6 @@ pub(crate) fn one(
     if_up: bool,
     shared: bool,
 ) -> Result<Started, String> {
-    // A checkout whose state an older build keeps in its old folders registers nothing and starts
-    // nothing from here: its board would start empty beside the old one, and its build install
-    // beside it. One registered otherwise (an older build's `project add`) is served, and nothing
-    // is made in it: its board refuses with the move's line, and its health record is kept in
-    // memory (`board_health::file`).
-    for (new, _) in symphony_board::unmoved::OLD {
-        if let Some(why) = symphony_board::unmoved::refusal(&checkout.common, new) {
-            return Err(why);
-        }
-    }
     if checkout.linked() && checkout.mainless() {
         return Err(format!(
             "{} is a linked worktree of {}, a repository git names no main checkout of for the \

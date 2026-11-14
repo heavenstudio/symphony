@@ -100,17 +100,8 @@ impl Drop for Starters {
 impl Home {
     /// The starters' lock, taken to do `doing`: at once when it is free, else once its holder lets
     /// it go, saying what it waits on meanwhile, or refused once this board's bound on the wait
-    /// passes ([`Home::waiting_at_most`]). None of a repository whose board an older build keeps
-    /// in its old folder ([`crate::unmoved`]), which a start, hold or snapshot here would leave
-    /// beside an empty one.
+    /// passes ([`Home::waiting_at_most`]).
     pub(super) fn lock(&self, doing: Doing) -> Result<Starters, ServerError> {
-        if let Some(why) = self
-            .common
-            .as_deref()
-            .and_then(|common| crate::unmoved::refusal(common, super::FOLDER))
-        {
-            return Err(ServerError::Io(why));
-        }
         fs::create_dir_all(&self.dir).map_err(io("could not make", &self.dir))?;
         let path = self.dir.join(LOCK);
         let file = OpenOptions::new()

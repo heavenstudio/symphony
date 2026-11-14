@@ -144,7 +144,7 @@ fn fetch_line(surreal: &Path, build: &str, sha: &str, os: &str) -> Option<String
 pub const FOLDER: &str = crate::folders::TASKS;
 
 /// In the board's folder: where the server answers, the lock its starters take, its log, its data.
-const ADDRESS: &str = "server.json";
+pub(crate) const ADDRESS: &str = "server.json";
 const LOCK: &str = "lock";
 const LOG: &str = "server.log";
 const DATA: &str = "data";
@@ -359,9 +359,6 @@ pub struct Home {
     storage: Storage,
     /// Whether its servers are supervised; by its place ([`scratch`]) unless a test says.
     supervised: Option<bool>,
-    /// The git common dir whose board this is ([`Home::in_common`]): none starts, stops or holds
-    /// while an older build's board is still in its old folder there ([`crate::unmoved`]).
-    common: Option<PathBuf>,
     /// Whether a snapshot of its store is taken before each start ([`snapshot`]); by its place
     /// unless a test says.
     snapshotting: Option<bool>,
@@ -383,7 +380,6 @@ impl Home {
             closing: CLOSING,
             storage: Storage::BOARD,
             supervised: None,
-            common: None,
             snapshotting: None,
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
@@ -414,13 +410,10 @@ impl Home {
     /// The board of the repository whose common dir is `common`: `symphony/tasks/` there, served by
     /// the pinned `surreal` beside it ([`surreal_fetch`]), or by `named` (`SYMPHONY_SURREAL`'s).
     pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
-        Home {
-            common: Some(common.to_path_buf()),
-            ..Home::new(
-                &common.join(FOLDER),
-                &named.map_or_else(|| pinned(common), Path::to_path_buf),
-            )
-        }
+        Home::new(
+            &common.join(FOLDER),
+            &named.map_or_else(|| pinned(common), Path::to_path_buf),
+        )
     }
 
     /// How long a server that is starting, or that runs and does not answer, is waited for.
@@ -1134,8 +1127,7 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
 /// The common dir of the repository whose board `command` serves, a command line as `ps` prints it:
 /// a server started as [`START`] starts one, `… start [OPTIONS] --bind ADDR surrealkv://DIR`, its
 /// data `DIR` the board's own (`COMMON/symphony/tasks/data`) in a git common dir (one holding
-/// `HEAD`), or an older build's in the board's old folder while that is still a folder, before the
-/// move ([`crate::unmoved`]). None for any other command line: a server on other data or in memory,
+/// `HEAD`). None for any other command line: a server on other data or in memory,
 /// any other program, and a scratch board's supervisor shell, whose last argument is its log.
 pub fn board_served(command: &str) -> Option<PathBuf> {
     let at = command.rfind(" surrealkv://")?;
@@ -1154,18 +1146,14 @@ pub fn board_served(command: &str) -> Option<PathBuf> {
     common.join("HEAD").is_file().then(|| common.to_path_buf())
 }
 
-/// The folder `folder` is the board's folder of, as [`board_served`] reads it: [`FOLDER`] in it, or
-/// the board's old folder ([`crate::unmoved::OLD`]) while that is still a folder.
+/// The common dir `folder` is the board's folder of, as [`board_served`] reads it: [`FOLDER`] in it.
 fn common_of(folder: &Path) -> Option<&Path> {
-    let named = if folder.ends_with(FOLDER) {
-        FOLDER
-    } else {
-        let (_, old) = crate::unmoved::OLD.iter().find(|(new, _)| *new == FOLDER)?;
-        (folder.ends_with(old) && folder.is_dir()).then_some(*old)?
-    };
+    if !folder.ends_with(FOLDER) {
+        return None;
+    }
     folder
         .ancestors()
-        .nth(Path::new(named).components().count())
+        .nth(Path::new(FOLDER).components().count())
 }
 
 /// Whether `command`, a command line as `ps` prints it, ends with the argument `last`.

@@ -52,15 +52,8 @@ never the whole target, which the release run runs.
   kind takes. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
-  bundle.sh runs when one is missing. Until `tools/move-state.sh` moves a
-  repository's state, the copies an older build installed stand in its old
-  folder, and every build of the old code runs them there: a build of this
-  code runs them there too (`tools.sh --folder` names the folder a build runs
-  them from), installs none beside them, and refuses what they lack, naming
-  the move (`tests/tools.rs`). No build removes them, since another worktree's
-  build may be running them; only the move takes them away, while nothing
-  builds, and it refuses while a process has a file open under them or works
-  there. A build runs dx from neither folder: dx makes itself the rustc wrapper of
+  bundle.sh runs when one is missing (`tools.sh --folder` names that folder,
+  `tests/tools.rs`). A build does not run dx from there: dx makes itself the rustc wrapper of
   the workspace's own crates by its canonical path, which Cargo mixes into their
   symbol names, and so into every byte of the wasm and every asset name. So
   `bundle.sh` runs it as `/private/tmp/symphony-client-tools/dx-0.7.10/bin/dx`,

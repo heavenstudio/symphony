@@ -37,8 +37,7 @@ const DAY_S: f64 = 86_400.0;
 /// Where `env`'s runs are kept: the folder [`FOLDER_VAR`] names; none for a run whose work folder
 /// `TASKS_WORK` names, or whose board `TASKS_SERVER` does (a test's), without it; else [`FOLDER`]
 /// in the git common dir of its working directory, `symphony/runs.<database>/` for a board
-/// database other than the live one; none while an older build's runs are still in their old
-/// folder there ([`crate::unmoved`]).
+/// database other than the live one.
 pub fn folder(env: &Env) -> Option<PathBuf> {
     if let Some(named) = env.var(FOLDER_VAR) {
         return Some(PathBuf::from(named));
@@ -47,9 +46,6 @@ pub fn folder(env: &Env) -> Option<PathBuf> {
         return None;
     }
     let common = crate::git::common_dir(&env.cwd).ok()?;
-    if crate::unmoved::refusal(&common, FOLDER).is_some() {
-        return None;
-    }
     Some(common.join(match env.var("TASKS_DATABASE") {
         Some(database) if database != crate::DATABASE => format!("{FOLDER}.{database}"),
         _ => FOLDER.to_string(),
