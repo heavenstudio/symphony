@@ -88,6 +88,12 @@ fn read_text_reads_universal_newlines_and_sees_a_file_replaced() {
     assert_eq!(read_text(&file.0).unwrap(), "a\nb\nc\n");
     write_whole(&file.0, "other\n").unwrap();
     assert_eq!(read_text(&file.0).unwrap(), "other\n");
+    // A relative path is read from the working folder, the package's own under `cargo test`.
+    assert!(
+        read_text(Path::new("Cargo.toml"))
+            .unwrap()
+            .contains("name = \"symphony-docs\"")
+    );
 }
 
 #[test]
