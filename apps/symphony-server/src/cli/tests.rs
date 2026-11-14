@@ -112,6 +112,15 @@ fn a_port_alone_or_named_and_hosts_are_read() {
     assert_eq!(hosts.root, Some(PathBuf::from("/x")));
 }
 
+/// `--version` alone is answered before anything is parsed or started (its line is
+/// `symphony_args::version`'s, pinned there); beside another word it is no option the server reads.
+#[test]
+fn version_alone_is_answered_and_starts_nothing() {
+    assert_eq!(main(&args("--version")), 0);
+    assert!(USAGE.contains("symphony-server --version"));
+    assert!(parse(&args("--port 9000 --version")).is_err());
+}
+
 #[test]
 fn if_up_asks_for_the_running_server_alone() {
     let Ok(Action::Start(options)) = parse(&args("--if-up --open")) else {

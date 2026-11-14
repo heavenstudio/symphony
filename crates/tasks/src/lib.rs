@@ -121,6 +121,7 @@ positional arguments:
 
 options:
   -h, --help      show this help message and exit
+  --version       say the version and exit
   --board         the board this run reaches, not one at ADDR
   --out           with --board: write its dump, change nothing
 
@@ -146,6 +147,9 @@ pub fn copy_main(
     out: &mut dyn std::io::Write,
     err: &mut dyn std::io::Write,
 ) -> i32 {
+    if symphony_args::version(args, "tasks-copy", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
     match copy(args, env, input, out) {
         Ok(Some(said)) => {
             let _ = writeln!(out, "tasks-copy: {said}");
@@ -229,6 +233,25 @@ fn copy(
 const RECLAIM_USAGE: &str =
     "usage: tasks-reclaim, in a checkout of the board's repository, or tasks-reclaim --dir FOLDER";
 
+/// The reclaim's `--help`: what it does, its one option and the variable it reads.
+pub const RECLAIM_HELP: &str =
+    "usage: tasks-reclaim, in a checkout of the board's repository, or tasks-reclaim --dir FOLDER
+
+Rebuild the store of the board in this checkout's git common dir from an export
+of itself, which holds only what is live: its server is stopped meanwhile and
+started again on the new store. The old store is kept as a snapshot, and the
+line it ends with says where and until when.
+
+options:
+  -h, --help        show this help message and exit
+  --version         say the version and exit
+  --dir FOLDER      a board folder elsewhere, a copy of the board's to rehearse on
+
+environment:
+  SYMPHONY_SURREAL  the SurrealDB binary that serves the store, in place of
+                    the pinned one beside the common dir
+";
+
 /// `tasks-reclaim`: the store of the board in the git common dir of `env`'s working directory rebuilt
 /// from an export of itself ([`server::Home::reclaim`]), the board's server down meanwhile; or, with
 /// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
@@ -240,6 +263,15 @@ pub fn reclaim_main(
     out: &mut dyn std::io::Write,
     err: &mut dyn std::io::Write,
 ) -> i32 {
+    if symphony_args::version(args, "tasks-reclaim", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
+    if let [help] = args
+        && (help == "--help" || help == "-h")
+    {
+        let _ = write!(out, "{RECLAIM_HELP}");
+        return 0;
+    }
     let folder = match args {
         [] => Ok(None),
         [dir, folder] if dir == "--dir" => Ok(Some(env.cwd.join(folder))),
@@ -346,6 +378,65 @@ mod reclaim_tests {
             assert_eq!(
                 String::from_utf8(err).unwrap(),
                 format!("❌ tasks-reclaim: {RECLAIM_USAGE}\n")
+            );
+        }
+    }
+
+    #[test]
+    fn help_alone_says_what_it_does_on_stdout_and_exits_zero() {
+        let env = cli::Env::of_process();
+        for help in ["--help", "-h"] {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            assert_eq!(
+                reclaim_main(&[help.to_string()], &env, &mut out, &mut err),
+                0
+            );
+            assert_eq!(String::from_utf8(out).unwrap(), RECLAIM_HELP);
+            assert!(err.is_empty());
+        }
+        assert!(RECLAIM_HELP.starts_with(RECLAIM_USAGE));
+        for word in ["--dir FOLDER", "SYMPHONY_SURREAL", "snapshot"] {
+            assert!(RECLAIM_HELP.contains(word), "{word}");
+        }
+        // Beside another argument it is no form of the reclaim's.
+        let args = ["--help".to_string(), "more".to_string()];
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(reclaim_main(&args, &env, &mut out, &mut err), 2);
+        assert!(out.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    /// Each board command's answer to `--version` alone, with its exit code and what it said on
+    /// stderr.
+    fn answers(command: &str) -> (i32, String, Vec<u8>) {
+        let env = cli::Env::of_process();
+        let args = ["--version".to_string()];
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = match command {
+            "tasks" => cli::main(&args, &env, &mut &b""[..], &mut out, &mut err),
+            "agent-send" => cli::agent_send::main(&args, &env, &mut out, &mut err),
+            "tasks-copy" => copy_main(&args, &env, &mut &b""[..], &mut out, &mut err),
+            "tasks-reclaim" => reclaim_main(&args, &env, &mut out, &mut err),
+            _ => unreachable!("{command}"),
+        };
+        (code, String::from_utf8(out).unwrap(), err)
+    }
+
+    #[test]
+    fn each_board_command_says_its_name_and_the_packages_version_and_reaches_no_board() {
+        for command in ["tasks", "agent-send", "tasks-copy", "tasks-reclaim"] {
+            assert_eq!(
+                answers(command),
+                (
+                    0,
+                    format!("{command} {}\n", env!("CARGO_PKG_VERSION")),
+                    Vec::new()
+                ),
+                "{command}"
             );
         }
     }

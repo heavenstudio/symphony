@@ -19,6 +19,15 @@ impl Tree {
         Tree { root }
     }
 
+    /// A temporary root that is a git checkout's top folder, as `symphony init` asks of the
+    /// folder it sets up: its `.git` with a HEAD on `main`, which is all the board's own lookup
+    /// reads (`symphony_board::git`), and no `git` process run.
+    pub fn checkout() -> Tree {
+        let tree = Tree::new();
+        tree.write(".git/HEAD", "ref: refs/heads/main\n");
+        tree
+    }
+
     pub fn path(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
     }

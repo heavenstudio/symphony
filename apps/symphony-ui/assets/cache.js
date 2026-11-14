@@ -199,7 +199,9 @@ window.symphonyCache = (() => {
         // Read the item ahead of its visit (shell.js, `ahead`): each of `reads`, [part, url], with
         // `fetch` at the lowest priority, marked as a prefetch and naming the tag kept for its part,
         // so an unchanged one costs no body; what the server sends is kept unvisited. Nothing for
-        // an item a visit kept, nor before the page's own code named its format.
+        // an item a visit kept, nor before the page's own code named its format. Every answer's
+        // body is read to its end, a refusal's too: the browser ends a read only once its body is
+        // read, and one left unread stays in flight for as long as the page is open.
         ahead: async (fetch, project, id, kind, reads) => {
             const format = named;
             const tags = format === undefined ? null : await within(format, ["items", "parts"], (stores, give) => {
@@ -223,6 +225,7 @@ window.symphonyCache = (() => {
                 try {
                     const response = await fetch(url, { priority: "low", cache: "no-store", headers });
                     if (response.status === 200) await keep(format, project, id, kind, part, response.headers.get("ETag") || "", await response.json(), undefined, true);
+                    else await response.arrayBuffer();
                 } catch (_) { /* Read when opened, then. */ }
             }
         },

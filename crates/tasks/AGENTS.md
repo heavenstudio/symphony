@@ -6,8 +6,9 @@ the root guide](../../AGENTS.md#rust).
 The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/TASKS.md)): its
 store over SurrealDB, the server it starts in `symphony/tasks/` in the git common
 dir, and the `tasks` binary, which is `just tasks`. Here `just tasks` and `just
-agent-send` go through `tools/rs-bin.sh`, which builds with Cargo before every
-run; in a project they are the recipes `symphony init` installs, which run its
+agent-send` go through `tools/rs-bin.sh`, which builds with Cargo before a run
+once anything Cargo reads changed ([the root guide](../../AGENTS.md#rust)); in a
+project they are the recipes `symphony init` installs, which run its
 linked build. The board clients of `just symphony-cli` (`taskcli.rs`) run the
 `tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, else
 the main checkout's, else `tasks` on PATH; `SYMPHONY_TASKS_CLI` names another
@@ -405,8 +406,8 @@ A reviewer launched on an instruction child resumes that child's recorded conver
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a terminal immediately, including through descendant sessions, for as
 long as it waits. A role on open work keeps it until its agent has sat idle at its prompt
-`reap::IDLE_HOUR` (the owner, 2026-11-08: "Only sessions doing active work or that will soon
-(less than one hour) have active work should be kept open"): an executor `in_progress`,
+`reap::IDLE_HOUR`, as only a session doing active work, or one that will have some within the
+hour, is kept open: an executor `in_progress`,
 `blocked` or in `review`, a reviewer of work in review, and a reviewer whose changes verdict
 returned the task to `in_progress`, awaiting its re-review. That includes landing changes posted
 as a message to the executor before it moves the task back. The hour starts again when the role
@@ -562,7 +563,10 @@ relinked nothing, and macOS assesses each new executable file at its first run,
 for seconds. So `tools/rs-bin.sh` runs `rs-bin/NAME` in the target folder, a
 hard link to that copy renewed only when the copy's modification time or size
 moved (the copy keeps the time of the build it copies): a no-op build runs the
-file the last run ran. `--build` prints that path, `--link` points
+file the last run ran, and a run whose stamp (`rs-bin/.NAME.fresh`) finds nothing
+Cargo reads changed since that build began runs it without asking Cargo
+(`tests/launcher/fresh.rs`).
+`--build` and `--link` always build; `--build` prints that path, `--link` points
 `.target/bin/NAME` at it by a rename (the link the heartbeat hook runs, building
 nothing), and `--where` names Cargo's own copy without building. A
 `.target/bin/NAME` link to Cargo's copy is pointed at `rs-bin/NAME` by the next
@@ -986,8 +990,8 @@ the command line run in process) and `tests/cli/api.rs`.
 a land that closed its task starts it detached (`regenerate::start`, the test's build
 `TASKS_BIN` names, else the running one, else the main checkout's), only on the
 repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
-`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
-one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. One build of main runs at a time
+([TASKS](../../docs/TASKS.md#the-regenerator)): it try-locks
 `symphony/tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
 start that finds the lock held (`holder`) starts nothing and signals nothing, and one
 whose holder died finds it free. A round is never cut short; once it lets go of the lock

@@ -23,6 +23,7 @@ shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
 Symphony. It starts detached, so it outlives whoever started it, and that is
 also the restart: a server that was killed is started again on the same data.
+A start says so in one line on stderr, as it takes seconds.
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -303,9 +304,10 @@ build linked at `.target/bin/tasks`, else, from a linked worktree, the main
 checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
 to make when it finds none. The Symphony's own board clients find it the same
 way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
-`tools/rs-bin.sh` builds the binary before every run, so the first command after
-a change to its sources takes a minute or two, later ones only Cargo's check
-that nothing changed. On the live board it is the main checkout's build, from
+`tools/rs-bin.sh` builds the binary before a run once its sources or settings
+changed, so the first command after such a change takes a minute or two, and
+later ones run the build without asking Cargo ([the launcher](../AGENTS.md#rust)).
+On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
@@ -357,7 +359,10 @@ checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
 it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there.
+there. A new project's board is made by its first board command, `just tasks list`
+say, which `symphony init` lists among the steps left too while the board is not
+made: the Symphony only reads a board, and its board page says so, in the
+refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
@@ -1108,7 +1113,7 @@ processes cannot be listed reads `health: unknown`. `last_tool_call` is the time
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
-an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the open
+an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
 tasks an orchestrator (or any session holding open work's slot) holds against the
 cap, and `null` otherwise. `session_url` is the web address the session gave
 ([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
@@ -1784,7 +1789,7 @@ and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
 role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
-HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder that is
+HANDLE's counted tasks past it ([Slots](#slots)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
@@ -2107,7 +2112,7 @@ reviewer = "opus"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
-  orchestrator's open tasks), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
   machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
   launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
   also read from `[board]` where `[limits]` names none, where a build that does not know
@@ -2154,8 +2159,9 @@ reviewer = "opus"
 
 ## Slots
 
-An orchestrator holds at most a set number of open tasks, its slots, so work is
-pushed to done before new work starts (`crates/tasks/src/slots.rs`).
+An orchestrator holds at most a set number of tasks being built, its slots, so
+work is pushed to review and done before new work starts
+(`crates/tasks/src/slots.rs`).
 The number is the project's: `orchestrator_slots` in the `[limits]` table of
 `symphony.toml` ([Limits and models](#limits-and-models)), else in its `[board]` table,
 where builds before `[limits]` read it, from the repository's main checkout, as
@@ -2163,10 +2169,11 @@ where builds before `[limits]` read it, from the repository's main checkout, as
 capped. A value that does not parse, or one below 1, is said on stderr with its line
 (`⚠ …; no cap on an orchestrator's open tasks applies`) and caps nothing.
 
-- **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
-  the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
-  `done` or `cancelled`, or leaves the open statuses another way.
+- **A slot** is held by a task `in_progress`, or `blocked` under a hold that
+  keeps the slot (below). A task in `review` is open and holds none (below);
+  other `blocked` work, `backlog`, `concept`, `design` and `ready` hold none
+  either. A slot frees when its task moves to `review`, is `done` or
+  `cancelled`, or leaves the statuses that hold one another way.
 - **Work in review takes no slot.** The cap counts the tasks being built, not
   the review of them: a task's slot frees when it moves to `review`, and a move
   into `review` is never refused. The work under a task in review goes with it,
@@ -2175,8 +2182,8 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   either, and starts at any count. The task's return to `in_progress`, on a
   changes verdict or a move, goes between open statuses and starts nothing: it
   is never refused, and counts again from then, as it was being worked already.
-- **Each open task, one slot.** A subtask holds a slot of its own, so
-  gathering open work under one task frees none. Two kinds of task share the
+- **Each task being built, one slot.** A subtask holds a slot of its own, so
+  gathering work in progress under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
   `SLUG/review`) counts with the task it reviews when the board holds that
   task, and an instruction subtask (`instruction: true`) with the nearest
@@ -2560,8 +2567,10 @@ The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
 this browser last drew the task's timeline, at most 240 px on a phone and wide (the
 owner's choice, so the brief and the thread start near the page's top), with
 placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out (the latest steps in
-view on a phone, the first lanes wide), and "Show all" lets it grow.
+adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
+steps in view), and wide the lanes ending under the last that fits whole, the box kept
+that tall for the next visit. "Show all" lets it grow, naming what it shows: the steps
+on a phone, the lanes wide.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

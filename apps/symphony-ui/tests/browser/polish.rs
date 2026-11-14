@@ -1312,6 +1312,44 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
     }
 }
 
+/// The lower row's columns are each as tall as their own cards (app/visual-polish-3): a long
+/// Cancelled never stretches Backlog and Blocked beside it to its height.
+#[test]
+fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
+    let site = bare_site();
+    let mut board = every_status();
+    let tasks = board["tasks"].as_array_mut().unwrap();
+    for n in 1..=12 {
+        tasks.push(json!({"slug": format!("filters/cancelled-{n}"), "title": format!("A cancelled task {n}"),
+            "body": "", "status": "cancelled", "priority": 2, "parent": null, "created_by": "owner",
+            "created": 0.0, "updated": 4102444800.0, "links": [], "depends": [], "roles": [],
+            "instruction": false}));
+    }
+    board["counts"][8] = json!(["cancelled", 13]);
+    site.set_json("/api/task-board", &board);
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    assert!(
+        page.wait_for(
+            "['backlog', 'blocked', 'cancelled'].every(status => document.querySelector(`.offline .column[data-status=${status}] .taskcard`) !== null)",
+            SHOWN
+        ),
+        "{}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    let heights = page.eval(
+        "Object.fromEntries(['backlog', 'blocked', 'cancelled'].map(status => [status, \
+         Math.round(document.querySelector(`.offline .column[data-status=${status}]`).getBoundingClientRect().height)]))",
+    );
+    let height = |status: &str| heights[status].as_f64().unwrap();
+    assert!(
+        height("backlog") * 3.0 < height("cancelled")
+            && height("blocked") * 3.0 < height("cancelled"),
+        "one card's columns are a card's height, not the thirteen's: {heights}"
+    );
+}
+
 /// Thirty ready tasks numbered 1 to 30, in the order their slugs sort as text (`-1`, `-10`, …),
 /// as the board answers the tasks page. They carry what cards on a live board carry, so their
 /// heights differ as real cards' do: one role chip or two, a link chip or two on some, and titles

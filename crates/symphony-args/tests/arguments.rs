@@ -1,4 +1,5 @@
-//! Pin argument parsing, option prefixes and command selection without linking the app.
+//! Pin argument parsing, option prefixes, command selection and `--version` without linking the
+//! app.
 
 use symphony_args::{Flag, command_at, parse};
 
@@ -198,4 +199,32 @@ fn a_refusal_writes_the_usage_then_the_error_and_exits_two() {
         String::from_utf8(err).unwrap(),
         "usage: symphony screens [--root ROOT]\nsymphony screens: error: unrecognized arguments: x\n"
     );
+}
+
+#[test]
+fn version_alone_is_answered_with_the_name_and_version_and_any_other_line_is_left() {
+    let mut out = Vec::new();
+    assert!(symphony_args::version(
+        &args(&["--version"]),
+        "tasks",
+        "0.1.0",
+        &mut out
+    ));
+    assert_eq!(String::from_utf8(out).unwrap(), "tasks 0.1.0\n");
+    for line in [
+        &[][..],
+        &["-V"],
+        &["--versio"],
+        &["--version", "list"],
+        &["list", "--version"],
+        &["--as", "h", "--version"],
+        &["--", "--version"],
+    ] {
+        let mut out = Vec::new();
+        assert!(
+            !symphony_args::version(&args(line), "tasks", "0.1.0", &mut out),
+            "{line:?}"
+        );
+        assert!(out.is_empty(), "{line:?}");
+    }
 }

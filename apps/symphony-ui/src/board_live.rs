@@ -174,12 +174,18 @@ pub fn TasksPage() -> Element {
     });
     let device = freshness.read().shown();
     let ready = data.read().ready;
+    let error = data.read().error.clone();
+    // A first read that failed, nothing drawn yet (a page drawn from this device is ready), says
+    // why in place of the ghost, once: the notices leave it out while it stands.
+    let unread = !ready && !error.is_empty();
     // The heading stays one node from the ghost to the board, so the link keeps its focus.
     rsx! { main { "data-ready": "board", "data-feed": if stale() || device.is_some() { "stale" } else { "live" },
-        "data-cache": device.map(|_| "device"), "aria-busy": "{!ready}",
-        if !ready { span { class: "status-text", role: "status", "Loading tasks…" } }
+        "data-cache": device.map(|_| "device"), "aria-busy": "{!ready && !unread}",
+        if !ready && !unread { span { class: "status-text", role: "status", "Loading tasks…" } }
         div { class: "page-head", h1 { {symphony_api::page_names::BOARD} } a { href: crate::project::href("/agents"), "Who is connected" } }
-        if ready {
+        if unread {
+            crate::tasks::UnreadBoard { why: error.clone(), retry: move |_| { spawn(counts(data, freshness)); } }
+        } else if ready {
             // Each column reserves its own rows while they load: the board's controls show at once.
             crate::tasks::TaskBoard {
                 tasks: data.read().tasks.clone(), counts: data.read().counts.clone(),
@@ -190,7 +196,7 @@ pub fn TasksPage() -> Element {
                 onload: move |(status, more, query, days)| { spawn(column(status, more, query, days, data, freshness)); },
             }
         } else { crate::tasks::GhostBoard { shape: crate::tasks::recall_shape(crate::platform::current().load(crate::tasks::SHAPE).as_deref()) } }
-        PageNotices { reconnecting: stale(), error: data.read().error.clone(), device }
+        PageNotices { reconnecting: stale(), error: if unread { String::new() } else { error }, device }
     } }
 }
 
@@ -717,7 +723,7 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                     keep_shape(d);
                 }
             }
-            "task" | "task-summary" => {
+            "task" => {
                 let mut change: ItemChange<Task> =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
                 d.from_device.retain(|slug| slug != &change.key);
@@ -743,6 +749,12 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
                 refresh |=
                     searching || change.fields.status.is_some() || change.fields.parent.is_some();
             }
+            // A holder's health: its roles on every card say it.
+            "session" => crate::tasks::holder_health(
+                &mut d.tasks,
+                &field(&value, "key").as_string().unwrap_or_default(),
+                field(&field(&value, "value"), "health").as_string(),
+            ),
             "message" => refresh |= searching,
             "task-signoff" if searching => refresh = true,
             "task-signoff" => {

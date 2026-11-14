@@ -300,10 +300,9 @@ gone.
 
 ## Read ahead
 
-The owner's rulings on the build's thread: "eager loading of content of both tasks and docs of
-related / adjacent info based on links present on a page", and "Large documents should not be eager
-loaded… a given amount of its content could be pre-loaded (equivalent to a screen render or a bit
-more of it)." As built (`perf/client-cache/ahead`):
+The rulings on the build's thread: a page loads eagerly the tasks and documents of related and
+adjacent information its links name, and a large document is never loaded whole that way, only a
+given amount of its content, a screen's worth or a little more. As built (`perf/client-cache/ahead`):
 
 - **When.** Once a page has its data and the browser is idle (the shell's `settled`, which its
   warm-up of the persistent modules waits for too) and its feed is open, the shell reads ahead
@@ -317,7 +316,10 @@ more of it)." As built (`perf/client-cache/ahead`):
   its reads in flight does not see, at `priority: "low"`, past the HTTP cache, marked
   `Purpose: prefetch` and naming the tag kept for it (`assets/cache.js`, `ahead`), so an item read
   ahead before costs a `304`. A task: its `/api/task-page` and its thread's newest page, the two
-  reads its visit keeps. A document: its first part, `/api/document?view=first`.
+  reads its visit keeps. A document: its first part, `/api/document?view=first`. Every answer's
+  body is read to its end, a refusal's too (a link to a document the project lacks answers
+  `404`): Chrome ends a read only once the page has read its body, and a read left unread stays in
+  flight for as long as the page is open, so `symphony shot` would wait on it.
 - **A document's first part.** The outline's head with all its headings, so a visit draws the
   contents whole at once and nothing moves when the outline answers, and, whole, the leading
   sections that fit with it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its
