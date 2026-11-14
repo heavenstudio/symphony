@@ -146,6 +146,10 @@ fn the_counts_link_to_where_their_detail_lives() {
         let tile = format!(r#"href="{href}"><b>{value}</b><span>{label}</span>"#);
         assert!(html.contains(&tile), "{tile}\nin {html}");
     }
+    // The tasks tile counts the status, which the board splits into In progress, Build and Test,
+    // and says so.
+    let tasks = r#"<span>tasks in progress · in review</span><small>in progress includes Build and Test</small>"#;
+    assert!(html.contains(tasks), "{tasks}\nin {html}");
     // Today's replies have no page: their tile is a button that opens the activity panel.
     let replies = r#"<button type="button" class="tile card tone-answered" aria-controls="activity-panel"><b>6</b><span>answered by agents today</span>"#;
     assert!(html.contains(replies), "{replies}\nin {html}");
