@@ -319,7 +319,11 @@ never the whole target, which the release run runs.
   548,635 (from 548,627 and 549,220) and `/docs/` to 506,544 (from 507,082); the warmed chat and
   menus take 604,993 outside home's (from 603,664), the media sheet home no longer holds under
   the program's name among them. The task board's move to the React client, against main's build
-  at 0d0a7ec, takes `/tasks` to TASKS_BYTES. Each
+  at 31662db, takes `/tasks` to 115,033 bytes (from 280,819) and its cap to 150,000: its entry
+  (13,511 on the wire), the chunk the four web kinds share (75,696) and the one it shares with
+  the queue (3,505), where the board's WASM and glue were; `/` takes 109,043 (from 108,355),
+  `/queue` 105,685 (from 104,996) and `/reports` 106,622 (from 106,460), and every other page
+  stays within 130 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

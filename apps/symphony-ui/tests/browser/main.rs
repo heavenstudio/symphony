@@ -78,8 +78,8 @@ use site::Site;
 /// modest room: lowered from the owner's 300,000 by that move, never raised.
 const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// The task board's first-visit cap (`/tasks`), lowered from the owner's 300,000 once the board
-/// moved to the React client: 113,550 bytes on the fixture then, beside Reports and the queue, the
-/// rest room for the code the kinds moving after it share with it.
+/// moved to the React client: 115,033 bytes on the fixture then, beside home, Reports and the
+/// queue, the rest room for the code the kinds moving after it share with it.
 const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
