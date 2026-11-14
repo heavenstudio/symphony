@@ -86,8 +86,7 @@ impl ProjectView {
             && (path.ends_with('/')
                 || entrypoints.contains(&page)
                 || !name.contains('.')
-                || is_markdown(name)
-                || is_html(name))
+                || is_page(name))
     }
 
     /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
@@ -96,9 +95,7 @@ impl ProjectView {
     pub fn is_folder_route(&self, path: &str) -> bool {
         let page = path.trim_end_matches('/');
         self.is_document_route(path)
-            && (path.ends_with('/')
-                || self.entrypoints().contains(&page)
-                || !(is_markdown(page) || is_html(page)))
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_page(page))
     }
 
     /// Whether `path` is a document route naming an HTML page: the app draws it whole in a
@@ -185,23 +182,28 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "favicon.ico",
 ];
 
-/// Whether `name`, a route or a file name, names a Markdown file: the docs tree holds `.md` alone, as
-/// docs-index lists it, so the comparison keeps its case.
-fn is_markdown(name: &str) -> bool {
-    std::path::Path::new(name)
-        .extension()
-        .is_some_and(|extension| extension == "md")
+/// Whether `name`, a route or a file name, names a document: a Markdown file, `.md` with its case
+/// kept (the docs tree holds `.md` alone, as docs-index lists it), or an HTML page ([`is_html`]).
+fn is_page(name: &str) -> bool {
+    extension(name).is_some_and(|extension| extension == "md" || html_extension(extension))
 }
 
 /// Whether `name`, a route or a file name, names an HTML page: `.html` or `.htm`, in any case, as
 /// the server's HTML renderer takes them.
 pub fn is_html(name: &str) -> bool {
-    std::path::Path::new(name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
-        })
+    extension(name).is_some_and(html_extension)
+}
+
+/// What follows the last dot of the last part of `name`, a route or a file name: none when that
+/// part holds no dot, or only the one it starts with (`.html` names no page).
+fn extension(name: &str) -> Option<&str> {
+    let last = name.rsplit('/').next()?;
+    let (stem, extension) = last.rsplit_once('.')?;
+    (!stem.is_empty()).then_some(extension)
+}
+
+fn html_extension(extension: &str) -> bool {
+    extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
 }
 
 /// Whether the route `path` is `route` or lies under it; every path lies under the empty route.
