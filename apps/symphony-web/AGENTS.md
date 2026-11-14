@@ -43,8 +43,9 @@ lockfile written again, in a task of their own.
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
-`just client-lint` (`check.sh`) runs the wire types' check, Biome, `tsc --noEmit` and the unit
-tests with their coverage, each whatever the ones before it did, and `just lint-rs` runs it, so a
+`just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
+writes them, Biome, `tsc --noEmit` and the unit tests with their coverage, each whatever the ones
+before it did, and `just lint-rs` runs it, so a
 task's gate and the release run's lint both do. `just client-wire` writes the wire types.
 
 ## The wire types
@@ -67,8 +68,8 @@ see is a port left undone by a `just client-wire` run alone (the review reads th
 change outside the functions named (a helper they call that is not listed), and an input no case
 lists on which the two disagree. Each function is read from its `fn` line to the line at its
 indentation that closes it, rustfmt's form, which `cargo fmt --check` holds, so no brace in a
-string, a character or a comment cuts it short (the reader's tests: `just test-rs -p symphony-api
---features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
+string, a character or a comment cuts it short (the reader's tests, which `just client-lint` runs:
+`just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
 A read is checked where it arrives (`readQueue`, `readPageBoard`): a guard checks the fields

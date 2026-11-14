@@ -28,9 +28,9 @@ _lint-rs:
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
     @just --justfile {{quote(justfile())}} client-lint
 
-# The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's,
-# Biome's lint and format and TypeScript's types, every warning an error, and its unit tests. Part
-# of `just lint-rs`.
+# The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
+# and the tests of the example that writes them, Biome's lint and format and TypeScript's types,
+# every warning an error, and its unit tests. Part of `just lint-rs`.
 client-lint:
     @{{record}} --pipeline lint --step client-lint build "just client-lint" bash apps/symphony-web/check.sh
 

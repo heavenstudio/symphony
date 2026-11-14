@@ -144,7 +144,8 @@ describe("a page loaded again for the build the server serves", () => {
 describe("the board's loop", () => {
   /**
    * A loop over the stubbed server, for the board item, on a page whose window and document hear
-   * events and that has no EventSource, so its feed cannot open. What it drew, kept and waited.
+   * events and that has no EventSource unless its test gives it one (`feeds`), so its feed cannot
+   * open. What it drew, kept and waited.
    */
   const loop = (waitBack: (page: AbortController) => Promise<void> = async () => {}) => {
     const asked = server();
@@ -243,6 +244,55 @@ describe("the board's loop", () => {
     await done;
     expect(keep).not.toHaveBeenCalled();
     expect(did).toEqual([]);
+    expect(paused).toEqual([]);
+  });
+
+  it("says nothing of a failed read once the page is gone before it fails", async () => {
+    const { asked, page, did, paused, done } = loop();
+    await asking(asked, 1);
+    page.abort();
+    asked[0]?.answer(reply(200, { version: "seven" }, "b1"));
+    await done;
+    expect(did).toEqual([]);
+    expect(paused).toEqual([]);
+  });
+
+  /** The page's EventSource, each stream it opens kept in order: where, and how often closed. */
+  const feeds = () => {
+    const opened: { url: string; closed: number; source: EventTarget }[] = [];
+    vi.stubGlobal("location", { href: "http://127.0.0.1/queue" });
+    vi.stubGlobal(
+      "EventSource",
+      class extends EventTarget {
+        private readonly stream: (typeof opened)[number];
+        constructor(url: string) {
+          super();
+          this.stream = { url, closed: 0, source: this };
+          opened.push(this.stream);
+        }
+        close() {
+          this.stream.closed += 1;
+        }
+      },
+    );
+    return opened;
+  };
+
+  it("draws and waits for nothing more once the page is gone while it follows the feed", async () => {
+    const opened = feeds();
+    const { asked, page, did, paused, done } = loop();
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await asking(opened, 1);
+    expect(opened[0]?.url).toBe("http://127.0.0.1/api/feed?since=7&document=");
+    opened[0]?.source.dispatchEvent(new Event("open"));
+    await new Promise((settled) => setTimeout(settled, 0));
+    expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
+    // The shell stops the kind while the feed is open and quiet.
+    page.abort();
+    await done;
+    expect(opened.map(({ closed }) => closed)).toEqual([1]);
+    expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
     expect(paused).toEqual([]);
   });
 });

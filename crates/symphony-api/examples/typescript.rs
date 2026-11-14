@@ -272,7 +272,8 @@ fn carried() -> Result<Value, String> {
 /// is that line's indentation and `}`, rustfmt's form, which `cargo fmt --check` in `just lint-rs`
 /// holds; so no brace inside it, in a string, a character or a comment, ends it early. A function
 /// declared on no line or on two, or with no such closing line, stops the example. Its tests run
-/// with `just test-rs -p symphony-api --features typescript --example typescript`.
+/// with `just test-rs -p symphony-api --features typescript --example typescript`, which `just
+/// client-lint` runs (apps/symphony-web/check.sh).
 fn source<'a>(text: &'a str, name: &str) -> Result<Vec<&'a str>, String> {
     let lines: Vec<&str> = text.lines().collect();
     let declared: Vec<usize> = (0..lines.len())
