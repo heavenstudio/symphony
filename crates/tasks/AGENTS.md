@@ -96,7 +96,10 @@ migrate`) whose move would leave behind a writer seen in the last week
 (`RECENT`), its own line aside, is refused before it moves anything, naming each
 (`writers::left_behind`); `Opening::leave_behind` (`--leave-behind`) moves it
 all the same. Only the migrate asks, so main's build still moves this
-repository's board at its first command. `Store::writers` lists the lines.
+repository's board at its first command. The Symphony opens its board to read
+(`taskview/connect.rs`) and keeps no line, though it writes through that store:
+it takes a new schema only by its reload after the move, so counting it would
+refuse every refresh's migrate; keep it uncounted. `Store::writers` lists the lines.
 The dump and the copy carry no line. A line's time is the machine's clock
 (`writers::seen_now`), never the store's `Clock`: the opening must not read
 that clock, whose first read a test's fixture takes as its rule's own, so a test

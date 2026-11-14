@@ -276,8 +276,10 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     opened(&already, &migrate, HOST).unwrap();
     assert_eq!(version(&already), Some(this() + 1));
 
-    // Two writers behind, on two hosts: both named, by program then host.
-    let two = board_with_gate(HOUR);
+    // Two writers behind, on two hosts: both named, by program then host. A line two hours old
+    // reads "2 h" for half an hour more, whatever a loaded machine takes between its age and the
+    // migrate's read.
+    let two = board_with_gate(2.0 * HOUR);
     opened(&two, &Opening::write().by(gate()), "studio").unwrap();
     age(&two, "gate-review", "studio", 2.0 * DAY);
     let why = refused(opened(&two, &migrate, HOST).map(drop));
@@ -290,8 +292,7 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     );
     let (studio, here) = (
         why.find("on studio, last seen 48 h ago").unwrap(),
-        why.find(&format!("on {HOST}, last seen 60 min ago"))
-            .unwrap(),
+        why.find(&format!("on {HOST}, last seen 2 h ago")).unwrap(),
     );
     assert!(studio < here, "{why}");
     assert_eq!(version(&two), Some(this()));

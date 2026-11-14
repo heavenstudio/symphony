@@ -137,9 +137,10 @@ and when it was last seen, by the machine's clock, which `TASKS_NOW` does not se
 programs (`tasks`, `agent-send`, `tasks-copy`) keep one, and so does a project's own program that
 opens the board to write through the board's crate. The heartbeat and the recorder, which take the
 board's tables as they are, keep none: the `tasks` build they run keeps its line by its other
-commands. The line is read in the opening's one read of the board's schema and written only when it is missing, names another schema, or is an hour old, so a
-board command sends no request for it most of the time and "last seen" is good to the hour. A reader
-(the Symphony) keeps none. A writer refused a board behind its build (a project's live board,
+commands. The line is read in the opening's one read of the board's schema and written only when
+it is missing, names another schema, or is an hour old, so a board command sends no request for it
+most of the time and "last seen" is good to the hour. A reader keeps none, and the Symphony opens
+its board to read. A writer refused a board behind its build (a project's live board,
 which only `just tasks migrate` moves) still writes its line, so a writer rebuilt for the next
 schema counts as rebuilt once it has run; one refused a board ahead of its build writes nothing,
 refused before any write. The table holds no event, so a line written moves no board marker, and
@@ -155,15 +156,31 @@ until it is. A writer not seen for a week is not counted. Only the migrate asks:
 default branch commits the board's source, as this repository's does, main's build moves the board
 at its first command once a schema lands, and names no writer.
 
-The record arrives with schema 18, a raise of its own. A build from before it never writes a
-line, so the move to 18 cannot name the writers it would leave behind: each project makes that
-move once by hand, with its own `just tasks migrate` in its main checkout, after it has rebuilt
-every program that writes its board at 18 (its linked `tasks`, `agent-send` and `symphony`, and
-any program of its own that opens the board through the board's crate). From that move on, no
-build from before the record can write the board, as an older writer is refused, so every writer
-that can is one that keeps its line, and each later move names those it would leave behind. A
-release's refresh runs the project's `just tasks migrate` ([RELEASES](RELEASES.md#the-refresh)),
-so a writer it would leave behind stops the refresh's move there, named.
+The shared server is not counted. The Symphony opens a board to read
+(`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's
+saves and chat, asks, a task's priority, fields and cancels), and only an opening to write keeps a
+line. Counting it would stop every move: the server takes a build of the new schema only by its
+reload after the move ([RELEASES](RELEASES.md#the-refresh)), so its line would always be behind
+when the migrate reads it, and every refresh's migrate would refuse. Meanwhile a server one schema
+behind its board reads on, and every write it sends is refused: the owner's saves and chat, with
+the asks they open, wait in its journal, which it tries again each tick until a server that can
+write hands them over, while its other writes (the owner's message on a task, a priority, a field,
+a cancel, an ask it would close) are refused until it has reloaded. A server two schemas behind
+reads nothing of its board.
+
+The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
+move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
+build moves the board at its first board command once the raise lands, as for any schema here,
+with no migrate and no writer check. A consuming project's board is moved by the refresh of the
+first release that carries 18 ([RELEASES](RELEASES.md#the-refresh)): its `just tasks migrate`
+runs whenever the schema the project's pin locks is above its board's, and moves the board without
+naming anyone. From then on every program of the project's still built at its old pin (a linked
+`tasks` or `agent-send` not rebuilt, a program of its own that opens the board through the board's
+crate) is refused the board, naming itself as the program to rebuild; the project rebuilds each at
+its new pin right after the refresh, and each keeps its line once it has run. From 18 on, every
+build that can write a board keeps its line, so each later move names the writers it would leave
+behind, the refresh's migrate included: that move stops, naming them, until each is rebuilt and
+run once.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
