@@ -680,9 +680,11 @@ exit 0
 "#;
 
 /// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
-/// made the file that names; `test` saying the client it was handed and the steps folder it sees,
-/// red under `FAIL_TESTS`.
+/// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
+/// and binaries' own tests and the doc tests; `test` (the tests' build and each lane) saying the
+/// client it was handed and the steps folder it sees, red under `FAIL_TESTS`.
 const RECIPES_CARGO: &str = r#"#!/bin/sh
+if [ "$1" = metadata ]; then exit 0; fi
 if [ "$1" = fmt ] && [ -n "${HOLD_LINT:-}" ]; then : > "$HOLD_LINT"; sleep 60; fi
 if [ "$1" = fmt ] && [ -n "${FAIL_LINT:-}" ]; then echo 'fmt stand-in: a diff'; exit 8; fi
 if [ "$1" = test ]; then
@@ -712,7 +714,7 @@ impl Recipes {
         for name in ["justfile", "symphony.just"] {
             fs::copy(tool("..").join(name), tree.join(name)).unwrap();
         }
-        for name in ["cargo.sh", "record.sh", "verify.sh"] {
+        for name in ["cargo.sh", "record.sh", "test-lanes.sh", "verify.sh"] {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
         executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
@@ -1025,11 +1027,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("client-check", 1, "just client-check build/verified-client"),
             ("size-check", 3, "just size-check"),
             ("docs-audit", 0, "just symphony-cli docs-audit --check"),
-            (
-                "tests",
-                9,
-                "tools/cargo.sh test --workspace --locked --no-fail-fast"
-            ),
+            ("tests", 9, "tools/test-lanes.sh"),
         ]
     );
     let path = |name: &str| steps.iter().find(|step| step.0 == name).unwrap().2.clone();
@@ -1119,8 +1117,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     );
     assert_eq!(
         steps[4].3,
-        "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/cargo.sh test \
-         --workspace --locked --no-fail-fast"
+        "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/test-lanes.sh"
     );
     assert!(
         String::from_utf8(red.stdout)

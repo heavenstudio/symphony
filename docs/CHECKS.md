@@ -297,6 +297,24 @@ never served. When the client check is red on a client it built, the tests run a
 when it built none, or did not run, the browser tests build the client themselves, red if that
 build fails too. The tests' log and the summary say which.
 
+**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds every test of the
+workspace once, then runs them in lanes side by side, each lane one `cargo test --workspace` over
+the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the server's `after_*`
+targets, the libraries' and binaries' own tests, the rest, and the doc tests
+(`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
+step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
+lane by its name. The build and every lane
+give build scripts and proc macros the rest of the build's debug info, so every lane's units are
+the build's and no lane builds or links anything while the others run. Each lane's output follows
+the one before it whole in the step's log, then every red lane's list of the targets that failed as
+one list in cargo's words, the last the release run's reader keeps. The lanes share no port, store
+or build folder they write: every server, store and browser a test starts takes a port the system
+picks and a folder of its own; the one test writing the build folder (`wasm_build`, which links
+`symphony-build` there again) runs in the rest with every `symphony-app` target and `standalone`,
+which copies that folder; and the binaries a test would build for itself under its case's clock
+are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
+run alone builds them as before).
+
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
 price of focused gates without their full run, and narrows once it also runs each day. The

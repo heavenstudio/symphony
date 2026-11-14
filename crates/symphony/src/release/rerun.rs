@@ -586,6 +586,28 @@ error: 6 targets failed:
     }
 
     #[test]
+    fn a_test_run_in_lanes_reruns_each_red_lanes_failed_tests_and_nothing_a_test_printed() {
+        // tools/test-lanes.sh: each lane's output whole, after the build's `Executable` lines, a
+        // test printing a list of its own, each red lane's list, then the lists as one.
+        let log = read_in(include_str!("fixtures/tests-lanes-red.log"));
+        assert_eq!(
+            log.targets,
+            [
+                target("-p symphony-board --test sweep", &["land::a"]),
+                target("-p symphony-app --test release", &["cut::b"]),
+            ]
+        );
+        assert_eq!(log.went, None);
+        assert_eq!(
+            arguments(&log.targets),
+            [
+                "-p symphony-board --test sweep -- land::a --exact",
+                "-p symphony-app --test release -- cut::b --exact",
+            ]
+        );
+    }
+
+    #[test]
     fn only_a_build_file_missing_counts_as_gone() {
         // A process cargo could not run for another reason, and a file of the sources rustc could
         // not find, are failures of the target's own.

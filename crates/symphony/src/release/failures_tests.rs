@@ -20,6 +20,9 @@ const TESTS_STOPPED: &str = include_str!("fixtures/tests-stopped.log");
 /// Its size check, made red: cargo's release build (among its crates `gix-error`), then the size
 /// budget's lines, one binary past its line, and just's.
 const SIZE_CHECK_RED: &str = include_str!("fixtures/size-check-red.log");
+/// A tests' step run in lanes (tools/test-lanes.sh): the build, then each lane's output whole, two
+/// of them red, each with its own list, one a test printed among them, then the lists as one.
+const TESTS_LANES_RED: &str = include_str!("fixtures/tests-lanes-red.log");
 
 fn read_in(text: &str) -> Failures {
     let tree = Tree::new();
@@ -60,6 +63,23 @@ fn a_test_runs_red_names_each_failed_test_with_where_it_panicked_then_cargos_lis
         ],
         "the tests' own output (a refusal, a recipe failed), the doc-tests and the run's last \
          lines are not named"
+    );
+}
+
+#[test]
+fn a_test_run_in_lanes_names_each_failed_test_then_the_lists_of_its_red_lanes_as_one() {
+    assert_eq!(
+        quoted_lines(TESTS_LANES_RED).unwrap(),
+        [
+            "test land::a ... FAILED",
+            "    panicked at crates/tasks/tests/sweep/land.rs:5:9: the land never ended",
+            "test cut::b ... FAILED",
+            "    panicked at crates/symphony/tests/release/cut.rs:7:5: assertion failed: green",
+            "error: 2 targets failed:",
+            "    `-p symphony-board --test sweep`",
+            "    `-p symphony-app --test release`",
+        ],
+        "neither a lane's own list nor one a test printed is the run's"
     );
 }
 

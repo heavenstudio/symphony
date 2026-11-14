@@ -8,7 +8,8 @@
 #                   compared with the committed distribution
 #     size-check    the size-check recipe: the shipped binaries' size budgets
 #     docs-audit    the docs audit, `symphony docs-audit --check`
-#     tests         every test target of the workspace, the browser tests among them
+#     tests         every test target of the workspace, the browser tests among them, built once and
+#                   run in lanes side by side (tools/test-lanes.sh)
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
@@ -142,7 +143,7 @@ for step in "${chosen[@]}"; do
             just --justfile "$justfile" symphony-cli docs-audit --check
         ;;
     tests)
-        tests=(tools/cargo.sh test --workspace --locked --no-fail-fast)
+        tests=(tools/test-lanes.sh)
         if [ -n "$fresh" ]; then
             how="the tests ran against the client the client check built in this verify: $fresh"
             case " ${red[*]-} " in
