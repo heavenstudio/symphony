@@ -64,11 +64,13 @@ full suite).
    explicit stacking and source-availability rules in the task. Coordinate file
    ownership and record actual conflicts on the thread.
 5. Assign disjoint files and complete briefs. Put repeated instructions in skills.
-   Register a worker handle, reserve the instruction with --for HANDLE, and give
-   it only $work SLUG HANDLE (Claude: /work SLUG HANDLE), a reviewer only
-   $review-task SLUG HANDLE (Claude: /review-task SLUG HANDLE). The work skill owns
-   claiming, milestones and finishing, the review-task skill the verdict. Use a
-   separate checkout per executor.
+   Register a worker handle and give it only $work SLUG HANDLE (Claude: /work SLUG
+   HANDLE), a reviewer's handle only $review-task SLUG HANDLE (Claude: /review-task
+   SLUG HANDLE), on the task itself: its brief and thread are their assignment, with
+   no work or review subtask, and what more they need goes on the thread. The work
+   skill owns claiming, milestones and finishing, the review-task skill the reviewer's
+   role on the task and the verdict. A later review round resumes the same reviewer
+   with the new tip, never a fresh one. Use a separate checkout per executor.
 6. Choose a supported launch method under project policy: an in-process agent,
    a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
    just tasks limits names for its role, and its required effort. A terminal is for
@@ -86,8 +88,7 @@ full suite).
    board refuses the verdict of a session that executed the task or a slice of it (a
    subtask filed without --instruction), and, but on a fast fix, the reviewer's role
    and the verdict of one that orchestrates it, orchestrated it or filed it, you
-   included; a fresh reviewer gives it, as the one that claimed its --instruction
-   review subtask does.
+   included; a fresh reviewer gives it, holding the reviewer role on the task.
    Land an approved task with just land SLUG --as HANDLE, in the background (it
    merges and checks in a fresh worktree, which can take many minutes), never a
    merge by hand: by default it lands only the tip a fresh reviewer approved, checks
