@@ -45,6 +45,11 @@ fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_i
         Vec::<&str>::new(),
         "no red to end"
     );
+    // A red in review with its mark lifted is work in review: it and red/fix count nothing.
+    let in_review = open.changed("red", Some("review"), None, &[]);
+    let lifted = in_review.unmarked("red");
+    assert_eq!(changed(&in_review, &lifted), Vec::<&str>::new());
+    assert_eq!(lifted.reviews()["o"]["red"].len(), 2, "red and red/fix");
     let under = open.changed("red/new", Some("in_progress"), None, &[]);
     assert_eq!(
         (changed(&open, &under), reds(&open, &under)),

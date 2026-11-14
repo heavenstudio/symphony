@@ -361,7 +361,7 @@ impl<'a> Ledger<'a> {
     /// Whether `slug` is work in review: it, the task it reviews or a task above them is in review.
     /// So a reviewer's mirror or instruction subtask under a task in review is that task's review,
     /// whatever its own status, as red work is judged by the red above it.
-    pub fn reviewing(&self, slug: &'a str) -> bool {
+    fn reviewing(&self, slug: &'a str) -> bool {
         let in_review = |at: &str| self.tasks.get(at).is_some_and(|t| t.status == REVIEW);
         in_review(slug) || self.chain(slug).into_iter().any(in_review)
     }

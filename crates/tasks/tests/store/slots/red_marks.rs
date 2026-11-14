@@ -72,9 +72,12 @@ fn an_owners_cancel_that_read_no_task_is_refused_there_never_closing_a_red_filed
 
 #[test]
 fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_and_once() {
-    // O at the cap of eight beside the red in review, with work in progress under it.
+    // O at the cap of eight beside the red, back in progress on its reviewer's changes, with work in
+    // progress under it.
     let f = beside_a_red(8, true);
     let store = capped(&f, 8);
+    let back = store.verdict(RED, "lark", "changes", "not yet").unwrap();
+    assert!(back.red() && back.status == "in_progress", "{back:?}");
     assert_eq!(
         refused(store.unmark_red(RED, O)),
         format!(
@@ -83,23 +86,12 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
     );
     let kept = store.get(RED).unwrap();
     assert!(kept.red(), "{kept:?}");
-    // Its filer lifts the mark, never refused: the red, in review, is work in review now, the work
-    // under it with it, named apart.
+    // Its filer lifts the mark past the cap, never refused: the red and the work under it count.
     let lifted = store.unmark_red(RED, F).unwrap();
-    assert!(!lifted.red() && lifted.status == "review", "{lifted:?}");
-    let said = refused(store.claim("work/next", K));
     assert!(
-        said.starts_with("work/next cannot start: olive-orch holds 8 open tasks")
-            && said.ends_with(&format!(
-                "; not counted, as work in review takes no slot: tests/main-red-race (review) with fix/under (in_progress){}",
-                reserve_hint("work/next")
-            )),
-        "{said}"
+        !lifted.red() && lifted.status == "in_progress",
+        "{lifted:?}"
     );
-    // Its reviewer's changes return it to work past the cap, never refused: it counts, with the
-    // work under it.
-    let back = store.verdict(RED, "lark", "changes", "not yet").unwrap();
-    assert_eq!(back.status, "in_progress", "{back:?}");
     let said = refused(store.claim("work/next", K));
     assert!(
         said.starts_with("work/next cannot start: olive-orch holds 9 open tasks")
