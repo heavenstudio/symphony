@@ -55,10 +55,12 @@ the constants it names (the feed's path and events, the Symphony's routes, the c
 that crate's `typescript` example prints them through ts-rs (the derives sit behind the crate's
 `typescript` feature, which no build of the server or the Dioxus client turns on). It is never
 edited by hand: `just client-wire` writes it, and `just client-lint` fails when the committed file
-is not what the Rust types print. `src/wire.cases.json` comes from the same example: what the
-crate's functions the client carries in TypeScript answer for a set of inputs (`here`, `strip`,
-the routes of a project's view, an HTML page's name, a card's topic), with a sample of each read
-the client checks at run time, so the unit tests hold the TypeScript to the Rust. The cases only
+is not what the Rust types print (`crates/symphony-blocks`' block types too, behind its own
+`typescript` feature). `src/wire.cases.json` comes from the same example: what the functions of
+both crates the client carries in TypeScript answer for a set of inputs (`here`, `strip`, the
+routes of a project's view, an HTML page's name, a card's topic, a viewer's element), with a
+sample of each read the client checks at run time (the blocks' holding every kind, which
+`blocks.test.tsx` draws), so the unit tests hold the TypeScript to the Rust. The cases only
 check the inputs they list, so the file holds the source of each function the client carries as
 well (`carried`, from the example's `CARRIED`, each naming the TypeScript that carries it): a
 change to one fails `just client-lint` even where no case's input shows it. The change is then

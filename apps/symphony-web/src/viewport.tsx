@@ -2,7 +2,14 @@
 // first visit (open forms and media stay as they are). The sentinel reaches 600 px each way
 // (`.viewport-sentinel`). A page's ghost draws each part it drew before at the height it took.
 
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { sleep } from "./feed";
 import { anchor, scrollAnchor } from "./route";
 import { load, save } from "./storage";
@@ -127,6 +134,34 @@ export function NearViewport({
       )}
     </Box>
   );
+}
+
+/**
+ * The latch of a part that keeps its own box until it comes into view (a picture, a mockup, a
+ * viewer, a table's row): whether it has, and the ref that names the element to watch. Once shown
+ * it stays shown, and a new element in its place is watched in turn. Where there is no
+ * IntersectionObserver (a browser without one, or the unit tests' Node) it shows at once.
+ */
+export function useVisibility(initial = false): [boolean, (node: Element | null) => () => void] {
+  const [shown, setShown] = useState(() => initial || typeof IntersectionObserver === "undefined");
+  const watch = useCallback(
+    (node: Element | null) =>
+      node === null || shown ? () => {} : watchUntilShown(node, () => setShown(true)),
+    [shown],
+  );
+  return [shown, watch];
+}
+
+/** Watch `node` until it comes into view, then call `reveal`; what it returns stops the watch. */
+export function watchUntilShown(node: Element, reveal: () => void): () => void {
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) reveal();
+  });
+  observer.observe(node);
+  return () => {
+    observer.disconnect();
+    observer.takeRecords();
+  };
 }
 
 /** Where this browser keeps the heights parts of pages were last drawn at, newest first. */

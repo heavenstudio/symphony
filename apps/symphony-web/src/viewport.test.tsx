@@ -10,7 +10,9 @@ import {
   onScreen,
   recallHeight,
   Skeleton,
+  useVisibility,
   waitsNear,
+  watchUntilShown,
 } from "./viewport";
 
 describe("a placeholder's lines", () => {
@@ -178,5 +180,63 @@ describe("content near the screen", () => {
       expect(markup).toContain("<b>content</b>");
       expect(markup).toContain("min-height:0px");
     }
+  });
+});
+
+/** An IntersectionObserver whose callback a test calls, and what each was asked to do. */
+function observers() {
+  const made: { said: (entries: { isIntersecting: boolean }[]) => void; log: string[] }[] = [];
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      log: string[] = [];
+      constructor(said: (entries: { isIntersecting: boolean }[]) => void) {
+        made.push({ said, log: this.log });
+      }
+      observe(node: { id: string }) {
+        this.log.push(`observe ${node.id}`);
+      }
+      disconnect() {
+        this.log.push("disconnect");
+      }
+      takeRecords() {
+        this.log.push("takeRecords");
+        return [];
+      }
+    },
+  );
+  return made;
+}
+
+function Latched({ initial = false }: { initial?: boolean }) {
+  const [shown] = useVisibility(initial);
+  return <i>{shown ? "shown" : "waiting"}</i>;
+}
+
+describe("a part that keeps its box until it comes into view", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("waits where the browser can tell, unless it starts shown", () => {
+    observers();
+    expect(renderToStaticMarkup(<Latched />)).toBe("<i>waiting</i>");
+    expect(renderToStaticMarkup(<Latched initial />)).toBe("<i>shown</i>");
+  });
+
+  it("shows at once where nothing can tell it came into view", () => {
+    expect(renderToStaticMarkup(<Latched />)).toBe("<i>shown</i>");
+  });
+
+  it("is shown once its element crosses into view, and its watch then stops", () => {
+    const made = observers();
+    const shown: string[] = [];
+    const stop = watchUntilShown({ id: "row" } as unknown as Element, () => shown.push("row"));
+    const [watched] = made;
+    expect(watched?.log).toEqual(["observe row"]);
+    watched?.said([{ isIntersecting: false }]);
+    expect(shown).toEqual([]);
+    watched?.said([{ isIntersecting: false }, { isIntersecting: true }]);
+    expect(shown).toEqual(["row"]);
+    stop();
+    expect(watched?.log).toEqual(["observe row", "disconnect", "takeRecords"]);
   });
 });

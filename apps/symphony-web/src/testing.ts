@@ -5,11 +5,14 @@
 
 import { expect, vi } from "vitest";
 import type {
+  Block,
   MachineObservation,
   MachineWork,
   ProjectView,
   Role,
   Task,
+  View,
+  Viewer,
   WorkKind,
   WorkOperation,
   WorkState,
@@ -40,6 +43,11 @@ export const CASES = cases as unknown as {
     /** Two works by their names, and whether they place every task alike. */
     alike: [string, string, boolean][];
   };
+  fileAddress: [string, string][];
+  /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
+  elementHtml: [Viewer, string, string, string | null, string | null][];
+  encoded: [View, string][];
+  /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
     queue: unknown;
     emptyQueue: unknown;
@@ -52,6 +60,7 @@ export const CASES = cases as unknown as {
     bareChange: unknown;
     taskAdded: unknown;
     taskRemoved: unknown;
+    blocks: Block[];
   };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];

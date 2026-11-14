@@ -10,6 +10,7 @@ use crate::Media;
 macro_rules! vocabulary {
     ($name:ident { $($variant:ident => $word:literal),+ $(,)? }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
         pub enum $name { $(#[serde(rename = $word)] $variant),+ }
         impl $name {
             pub fn as_str(self) -> &'static str { match self { $(Self::$variant => $word),+ } }
@@ -30,6 +31,7 @@ vocabulary!(CalloutKind { Comment => "comment", Like => "like", Dislike => "disl
 vocabulary!(FigureSize { Small => "small", Row => "row", Large => "large", Tile => "tile", Cell => "cell", Slot => "slot", Wide => "wide" });
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Block {
     Heading {
@@ -141,6 +143,7 @@ pub enum Block {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Span {
     Text {
@@ -208,6 +211,7 @@ pub enum Span {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct LinkTarget {
     /// Project-relative path, or the current document for a fragment-only link.
     pub path: String,
@@ -215,6 +219,7 @@ pub struct LinkTarget {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Presentation {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class: String,
@@ -243,6 +248,7 @@ impl Presentation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Image {
     pub src: String,
     pub alt: String,
@@ -250,6 +256,7 @@ pub struct Image {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Cell {
     pub header: bool,
     pub spans: Vec<Span>,
@@ -257,6 +264,7 @@ pub struct Cell {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Verdict {
     pub group: CardGroup,
     pub open: bool,
@@ -265,6 +273,7 @@ pub struct Verdict {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ThreadEntry {
     pub who: ThreadAuthor,
     pub timestamp: Option<String>,
@@ -273,6 +282,7 @@ pub struct ThreadEntry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
 pub enum ContainerKind {
     Div,
@@ -287,6 +297,7 @@ pub enum ContainerKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
 pub enum InlineKind {
     Span,
@@ -304,6 +315,7 @@ pub enum InlineKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct VectorShape {
     pub kind: VectorKind,
     /// Geometry and paint attributes recognized for this SVG primitive, never markup.
@@ -311,6 +323,7 @@ pub struct VectorShape {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
 pub enum VectorKind {
     Path,
