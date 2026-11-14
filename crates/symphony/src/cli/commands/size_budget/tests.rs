@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_tree::Tree;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// A checkout with `budget` as its budget file, the client files `client` (path, bytes) and the
@@ -457,6 +458,202 @@ fn the_size_check_recipe_builds_every_shipped_binary_and_no_other() {
             .any(|line| line.contains("symphony-build size-budget . ")),
         "{recipe:?}"
     );
+}
+
+/// The client's package: `wasm-release`, the profile it is built with, inherits the release
+/// profile's package overrides, and an override wins over the inheriting profile's own settings.
+const CLIENT_PACKAGE: &str = "symphony-ui";
+
+fn manifest_at(path: &Path) -> toml::Table {
+    toml::from_str(&fs::read_to_string(path).unwrap())
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+/// The folders of the local packages a manifest in `folder` builds with: what its
+/// `[dependencies]`, and its targets' own, name by a `path`, theirs or the workspace's
+/// (`workspace` the workspace's manifest, in `root`). A development dependency builds no binary.
+fn local_dependencies(
+    own: &toml::Table,
+    folder: &Path,
+    workspace: &toml::Table,
+    root: &Path,
+) -> Vec<PathBuf> {
+    let targets = (own.get("target").and_then(toml::Value::as_table))
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, target)| target.get("dependencies"));
+    let tables = (own.get("dependencies").into_iter())
+        .chain(targets)
+        .filter_map(toml::Value::as_table);
+    let shared = (workspace.get("workspace"))
+        .and_then(|table| table.get("dependencies"))
+        .and_then(toml::Value::as_table);
+    let mut folders = Vec::new();
+    for (name, dependency) in tables.flatten() {
+        let path_of = |dependency: &toml::Value| {
+            dependency
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        };
+        if let Some(path) = path_of(dependency) {
+            folders.push(folder.join(path));
+        } else if dependency.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+            && let Some(path) = shared.and_then(|shared| shared.get(name)).and_then(path_of)
+        {
+            folders.push(root.join(path));
+        }
+    }
+    folders
+}
+
+/// What of the release profile's package overrides breaks Cargo.toml's rule, one line each: every
+/// member but the client's packages builds as one codegen unit and repeats the profile's `strip =
+/// true` (Cargo builds a package with an override of its own at the default strip, which keeps the
+/// symbol table), and the client's packages, the client and each local package it builds with,
+/// have none, so the client builds as `wasm-release` says.
+fn release_overrides_out_of_rule(root: &Path) -> Vec<String> {
+    let workspace = manifest_at(&root.join("Cargo.toml"));
+    let overrides = (workspace.get("profile"))
+        .and_then(|profile| profile.get("release"))
+        .and_then(|release| release.get("package"))
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default();
+    let name_in = |folder: &Path| -> String {
+        let own = manifest_at(&folder.join("Cargo.toml"));
+        own["package"]["name"].as_str().unwrap().to_owned()
+    };
+    let members: BTreeMap<String, PathBuf> = (workspace["workspace"]["members"].as_array())
+        .unwrap()
+        .iter()
+        .map(|member| {
+            let folder = root.join(member.as_str().unwrap());
+            (name_in(&folder), folder)
+        })
+        .collect();
+    let mut client = std::collections::BTreeSet::new();
+    let mut next: Vec<PathBuf> = members.get(CLIENT_PACKAGE).cloned().into_iter().collect();
+    while let Some(folder) = next.pop() {
+        if client.insert(name_in(&folder)) {
+            let own = manifest_at(&folder.join("Cargo.toml"));
+            next.extend(local_dependencies(&own, &folder, &workspace, root));
+        }
+    }
+    let mut out = Vec::new();
+    for name in members.keys() {
+        let settings = overrides.get(name);
+        if client.contains(name) {
+            if settings.is_some() {
+                out.push(format!(
+                    "{name}: the client builds it, and `wasm-release` would take its override"
+                ));
+            }
+            continue;
+        }
+        let setting = |key: &str| settings.and_then(|settings| settings.get(key));
+        if setting("codegen-units").and_then(toml::Value::as_integer) != Some(1) {
+            out.push(format!("{name}: no `codegen-units = 1`"));
+        }
+        if setting("strip").and_then(toml::Value::as_bool) != Some(true) {
+            out.push(format!("{name}: no `strip = true`"));
+        }
+    }
+    out
+}
+
+// Every member a shipped binary may link builds as one codegen unit in release and stays stripped,
+// and the client builds as its own profile says (Cargo.toml, docs/CHECKS.md "Size budgets"): a
+// member added later neither compiles a generic once per unit nor keeps its symbol table.
+#[test]
+fn every_member_but_the_clients_builds_as_one_codegen_unit_and_stays_stripped() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert_eq!(
+        release_overrides_out_of_rule(&root),
+        Vec::<String>::new(),
+        "Cargo.toml's `[profile.release.package.NAME]` of the workspace's members"
+    );
+}
+
+#[test]
+fn an_override_out_of_the_rule_is_named_and_the_client_is_followed_through_its_paths() {
+    let tree = Tree::new();
+    let package = |folder: &str, name: &str, rest: &str| {
+        tree.write(
+            &format!("{folder}/Cargo.toml"),
+            &format!("[package]\nname = \"{name}\"\n\n{rest}"),
+        );
+    };
+    // The client builds `api`, and through it `blocks` (by the workspace's table), and `kit` by a
+    // target's table; `fixtures` is only its development dependency, so it is no client's package.
+    package(
+        "ui",
+        CLIENT_PACKAGE,
+        "[dependencies]\napi = { path = \"../crates/api\" }\nserde = \"1\"\n\n\
+         [target.'cfg(target_arch = \"wasm32\")'.dependencies]\nkit = { path = \"../kit\" }\n\n\
+         [dev-dependencies]\nfixtures = { path = \"../fixtures\" }\n",
+    );
+    package(
+        "crates/api",
+        "api",
+        "[dependencies]\nblocks.workspace = true\n",
+    );
+    package("crates/blocks", "blocks", "");
+    package("kit", "kit", "");
+    package("fixtures", "fixtures", "");
+    package(
+        "server",
+        "server",
+        "[dependencies]\napi = { path = \"../crates/api\" }\n",
+    );
+    package("board", "board", "");
+    package("cli", "cli", "");
+    let workspace = |overrides: &str| {
+        tree.write(
+            "Cargo.toml",
+            &format!(
+                "[workspace]\nmembers = [\"ui\", \"crates/api\", \"crates/blocks\", \"kit\", \
+                 \"fixtures\", \"server\", \"board\", \"cli\"]\n\n\
+                 [workspace.dependencies]\nblocks = {{ path = \"crates/blocks\" }}\n\n\
+                 [profile.release]\nstrip = true\n\n{overrides}"
+            ),
+        );
+    };
+    let unit = |name: &str| {
+        format!("[profile.release.package.{name}]\ncodegen-units = 1\nstrip = true\n\n")
+    };
+    workspace(
+        &["fixtures", "server", "board", "cli", "comrak"]
+            .map(unit)
+            .concat(),
+    );
+    assert_eq!(
+        release_overrides_out_of_rule(&tree.path("")),
+        Vec::<String>::new()
+    );
+
+    // A member with no override, one that leaves out strip, one at another count, and a package
+    // the client builds with an override of its own.
+    workspace(&format!(
+        "{}[profile.release.package.server]\ncodegen-units = 1\n\n\
+         [profile.release.package.board]\ncodegen-units = 16\nstrip = true\n\n{}",
+        unit("fixtures"),
+        unit("blocks"),
+    ));
+    assert_eq!(
+        release_overrides_out_of_rule(&tree.path("")),
+        [
+            "blocks: the client builds it, and `wasm-release` would take its override",
+            "board: no `codegen-units = 1`",
+            "cli: no `codegen-units = 1`",
+            "cli: no `strip = true`",
+            "server: no `strip = true`",
+        ]
+    );
+
+    // With no override at all, each member but the client's four lacks both.
+    workspace("");
+    assert_eq!(release_overrides_out_of_rule(&tree.path("")).len(), 8);
 }
 
 #[test]

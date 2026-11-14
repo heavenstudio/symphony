@@ -383,7 +383,16 @@ binary to find them by, and no code loads these: the trie the flag leaves out is
 the server and 330 KB of `symphony` and of `tasks`. Two dependencies build in one codegen unit
 (`Cargo.toml`), comrak and regex-syntax, whose large constant tables each unit that reads one
 would otherwise hold a copy of: about 200 KB of the server and of `symphony`, and 100 KB of
-`tasks`.
+`tasks`. So does each member of the workspace but the client's packages (the client and the local
+packages it builds with, `symphony-api` and `symphony-blocks`): in the compiler's 16 units a crate
+compiles a generic or helper into each unit that reaches it and inlines across none of them, and
+in one it compiles it once, about 2 MB of the server, 1.2 MB of `symphony`, 1.1 MB of `tasks` and
+0.5 MB of `agent-send`. It costs only those crates' release compile, and a change's size no longer
+moves with code shifting between units. Each of those members' settings repeats `strip = true`, as
+Cargo builds a package with settings of its own at the default strip, which keeps the symbol
+table; the client's packages have none, as `wasm-release`, the client's profile, takes the release
+profile's package settings over its own. A test of `symphony-build size-budget` holds every member
+to that.
 
 The release profile leaves out the symbol table (`strip = true`), and with no export trie either,
 nothing in a shipped binary names a function. A panic still prints its thread, file:line:col and
@@ -391,13 +400,15 @@ message, but `RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw a
 lldb and atos (so `sample`, a crash report and Instruments) name no frame. A build to debug or
 profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps every name.
 
-The release profile, the two codegen units and the link flag are this workspace's: a consuming
+The release profile, the codegen units and the link flag are this workspace's: a consuming
 project that builds its own host or board binaries in a workspace of its own gets them only by
 setting them there. That is `strip = true` under `[profile.release]` and a
-`[profile.release.package.NAME]` with `codegen-units = 1` for comrak and for regex-syntax in its
-workspace's `Cargo.toml`, and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols`
-printed by its host package's own `build.rs`, as Cargo passes a link argument only to the bins of
-the package that prints it, never to a dependent's.
+`[profile.release.package.NAME]` with `codegen-units = 1` for comrak, for regex-syntax and for
+each Symphony package its binaries link, in its workspace's `Cargo.toml` (one for a package that
+holds a binary repeats `strip = true`, or that binary keeps its symbol table), and, on macOS,
+`cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols` printed by its host package's own
+`build.rs`, as Cargo passes a link argument only to the bins of the package that prints it, never
+to a dependent's.
 
 It is a step of `just verify` (`size-check`), so [the release run](#the-release-run) runs it on
 main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a
