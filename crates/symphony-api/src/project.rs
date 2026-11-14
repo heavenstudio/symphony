@@ -70,8 +70,8 @@ impl ProjectView {
 
     /// Whether `path` (a route, no leading slash) is a document page or a folder page of one of
     /// the entrypoints: under one, on no route the Symphony or a plugin's page answers (which
-    /// win), and a folder (a trailing slash, or an entrypoint's own route) or a name with no dot
-    /// or a Markdown one. A file of any other type is served as itself.
+    /// win), and a folder (a trailing slash, or an entrypoint's own route) or a name with no dot,
+    /// a Markdown one or an HTML one. A file of any other type is served as itself.
     pub fn is_document_route(&self, path: &str) -> bool {
         let page = path.trim_end_matches('/');
         let pages = self.nav.iter().map(|item| item.href.trim_matches('/'));
@@ -86,16 +86,23 @@ impl ProjectView {
             && (path.ends_with('/')
                 || entrypoints.contains(&page)
                 || !name.contains('.')
-                || is_markdown(name))
+                || is_page(name))
     }
 
     /// Whether `path` is a document route ([`ProjectView::is_document_route`]) naming a folder page
-    /// rather than a document: a trailing slash, an entrypoint's own route, or a name that is not
-    /// Markdown. A folder or an entrypoint named `guide.md` is a folder page.
+    /// rather than a document: a trailing slash, an entrypoint's own route, or a name that is
+    /// neither Markdown nor HTML. A folder or an entrypoint named `guide.md` is a folder page.
     pub fn is_folder_route(&self, path: &str) -> bool {
         let page = path.trim_end_matches('/');
         self.is_document_route(path)
-            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_markdown(page))
+            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_page(page))
+    }
+
+    /// Whether `path` is a document route naming an HTML page: the app's page, whatever the request,
+    /// which draws the document whole in a sandboxed frame loading its file's own address
+    /// ([`file_address`]).
+    pub fn is_html_route(&self, path: &str) -> bool {
+        self.is_document_route(path) && !self.is_folder_route(path) && is_html(path)
     }
 
     /// The URL of the first entrypoint's folder page: `/docs/`, or `/` at the root.
@@ -176,12 +183,53 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "favicon.ico",
 ];
 
-/// Whether `name`, a route or a file name, names a Markdown file: the docs tree holds `.md` alone, as
-/// docs-index lists it, so the comparison keeps its case.
-fn is_markdown(name: &str) -> bool {
-    std::path::Path::new(name)
-        .extension()
-        .is_some_and(|extension| extension == "md")
+/// Whether `name`, a route or a file name, names a document: a Markdown file, `.md` with its case
+/// kept (the docs tree holds `.md` alone, as docs-index lists it), or an HTML page ([`is_html`]).
+fn is_page(name: &str) -> bool {
+    extension(name).is_some_and(|extension| extension == "md" || html_extension(extension))
+}
+
+/// Whether `name`, a route or a file name, names an HTML page: `.html` or `.htm`, in any case, as
+/// the server's HTML renderer takes them.
+pub fn is_html(name: &str) -> bool {
+    extension(name).is_some_and(html_extension)
+}
+
+/// What follows the last dot of the last part of `name`, a route or a file name: none when that
+/// part holds no dot, or only the one it starts with (`.html` names no page).
+fn extension(name: &str) -> Option<&str> {
+    let last = name.rsplit('/').next()?;
+    let (stem, extension) = last.rsplit_once('.')?;
+    (!stem.is_empty()).then_some(extension)
+}
+
+fn html_extension(extension: &str) -> bool {
+    extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+}
+
+/// The query key that asks an HTML document's route for the file itself, in its sandbox: the
+/// address the document's frame and a Markdown document's mockup frame load ([`file_address`]).
+/// Without it the route is the app's page, whatever headers the request carries. A query names no
+/// file, so the address is the route's own folder for the files beside it and no file's name.
+pub const FILE_QUERY: &str = "raw";
+
+/// Whether `query`, a URL's query without its `?`, asks for the file: it holds [`FILE_QUERY`], with
+/// a value or none.
+pub fn asks_for_file(query: &str) -> bool {
+    query
+        .split('&')
+        .any(|pair| pair.split('=').next() == Some(FILE_QUERY))
+}
+
+/// `src`, an HTML document's address (its route, or a path of the site), asking for the file:
+/// [`FILE_QUERY`] added to its query, before its fragment, unless it asks already.
+pub fn file_address(src: &str) -> String {
+    let (address, fragment) = src.split_at(src.find('#').unwrap_or(src.len()));
+    match address.split_once('?') {
+        Some((_, query)) if asks_for_file(query) => src.to_string(),
+        Some(_) => format!("{address}&{FILE_QUERY}{fragment}"),
+        None => format!("{address}?{FILE_QUERY}{fragment}"),
+    }
 }
 
 /// Whether the route `path` is `route` or lies under it; every path lies under the empty route.

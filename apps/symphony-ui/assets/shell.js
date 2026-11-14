@@ -477,12 +477,15 @@ function route(path) {
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";
     // A document or folder page of an entrypoint (ProjectView::is_document_route): a trailing
-    // slash or an entrypoint's own route names a folder, whatever its name holds.
+    // slash or an entrypoint's own route names a folder, whatever its name holds; an HTML page (a
+    // name before `.html` or `.htm`: `.html` alone names none, as symphony_api::is_html) is a
+    // document, its frame drawn in the documents' kind.
     const urls = view.entrypoints?.length ? view.entrypoints : ["docs"];
     const name = clean.split("/").pop();
     if (!SYMPHONY_ROUTES.concat(pages).some(taken => within(taken, clean))
         && urls.some(url => within(url, clean))
-        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md"))) return "docs";
+        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md")
+            || /.\.html?$/i.test(name))) return "docs";
     return clean === "" ? "review" : null;
 }
 

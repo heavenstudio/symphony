@@ -265,6 +265,112 @@ async fn a_project_served_at_the_root_answers_only_the_names_its_folder_holds() 
     assert!(page.contains("No project is called <q>docs</q>"), "{page}");
 }
 
+/// An HTML document through the whole routing, the machine's and its project's: its route is the
+/// project's app page whatever headers ask for it, none among them, as a browser asks a plain-http
+/// address that is not loopback's (a phone over the tailnet); its file's address is the file,
+/// under its sandbox and its entrypoint's bounds, for a frame, an object, an embed or a request
+/// with no headers; an HTML file outside every entrypoint keeps the plain sandbox at either
+/// address; and a document's own folder's files load as they are.
+#[tokio::test]
+async fn an_html_document_is_its_projects_page_at_its_route_and_its_file_at_its_files_address() {
+    let machine = Machine::new();
+    let page = "<!doctype html><title>Readout</title><script>document.title = 'ran'</script>";
+    machine.tree.write("alpha/docs/analysis/readout.html", page);
+    machine
+        .tree
+        .write("alpha/docs/analysis/board.css", "body { margin: 0 }");
+    machine.tree.write("alpha/outside.html", page);
+    let app = text(machine.get("/alpha/docs/README.md", &[]).await).await;
+    assert!(app.contains("\"base\":\"/alpha\""), "{app}");
+    let page_load = (
+        "accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    );
+    for headers in [
+        &[][..],
+        &[page_load],
+        &[page_load, PAGE, ("sec-fetch-dest", "document")],
+        &[page_load, ("sec-fetch-dest", "iframe")],
+    ] {
+        let route = machine
+            .get("/alpha/docs/analysis/readout.html", headers)
+            .await;
+        assert_eq!(route.status(), StatusCode::OK, "{headers:?}");
+        assert_eq!(text(route).await, app, "{headers:?}");
+    }
+    let bounded = "sandbox allow-scripts; default-src 'unsafe-inline' 'unsafe-eval' data: blob: \
+                   127.0.0.1:1/alpha/docs/; connect-src 'none'";
+    for (path, policy) in [
+        ("/alpha/docs/analysis/readout.html?raw", bounded),
+        ("/alpha/docs/analysis/readout.html?state=b&raw", bounded),
+        ("/alpha/outside.html?raw", "sandbox allow-scripts"),
+        ("/alpha/outside.html", "sandbox allow-scripts"),
+    ] {
+        for headers in [
+            &[][..],
+            &[page_load],
+            &[page_load, ("sec-fetch-dest", "iframe")],
+            &[("sec-fetch-dest", "object")],
+            &[("sec-fetch-dest", "embed")],
+        ] {
+            let file = machine.get(path, headers).await;
+            assert_eq!(file.status(), StatusCode::OK, "{path} {headers:?}");
+            let said = |name| file.headers()[name].to_str().unwrap().to_string();
+            assert_eq!(
+                [
+                    said(header::CONTENT_SECURITY_POLICY),
+                    said(header::CONTENT_TYPE),
+                    said(header::X_CONTENT_TYPE_OPTIONS),
+                ],
+                [policy, "text/html; charset=utf-8", "nosniff"],
+                "{path} {headers:?}"
+            );
+            assert_eq!(text(file).await, page, "{path} {headers:?}");
+        }
+    }
+    let beside = machine.get("/alpha/docs/analysis/board.css", &[]).await;
+    assert_eq!(beside.status(), StatusCode::OK);
+    assert_eq!(text(beside).await, "body { margin: 0 }");
+    for missing in [
+        "/alpha/docs/analysis/missing.html?raw",
+        "/alpha/docs/analysis/..%2f..%2foutside.html?raw",
+    ] {
+        let response = machine.get(missing, &[]).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{missing}");
+    }
+}
+
+/// A legacy alias whose path climbs out of its project (`..`, escaped or not) is no page: its
+/// redirect, put back under the project's prefix, would land in another project's files, past the
+/// path an HTML document's policy bounds its loads by.
+#[tokio::test]
+async fn a_legacy_alias_that_would_leave_its_project_is_not_found() {
+    let machine = Machine::new();
+    machine
+        .tree
+        .write("beta/docs/data.js", "window.secret = 1;");
+    for path in [
+        "/alpha/history/..%2f..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/history/..%2F..%2Fbeta/docs/data.js",
+        "/alpha/app/..%2f..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/doc/.%2e/.%2e/beta/docs/data.js",
+        "/alpha/diff/abc/..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/history/docs/.%2fdata.js",
+    ] {
+        let response = machine.get(path, &[]).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            response.headers().get(header::LOCATION).is_none(),
+            "{path}: {:?}",
+            response.headers()
+        );
+    }
+    // A path that stays in the project still redirects there.
+    let kept = machine.get("/alpha/history/docs/README.md", &[]).await;
+    assert_eq!(kept.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(location(&kept), "/alpha/docs/README.md");
+}
+
 #[tokio::test]
 async fn a_project_answers_under_its_prefix_and_a_subresource_in_its_page_in_place() {
     let machine = Machine::new();

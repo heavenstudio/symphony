@@ -97,8 +97,8 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         (project.name.as_str(), project.id.as_str()),
         ("Night Shift", "df")
     );
-    // An entrypoint shows every Markdown file in its folder and passes over no history folder;
-    // the register sits in the first entrypoint's folder, unless named.
+    // An entrypoint shows every Markdown and HTML document in its folder and passes over no
+    // history folder; the register sits in the first entrypoint's folder, unless named.
     let project = parsed(&entry("/", "notes/")).unwrap();
     assert_eq!(
         project.entrypoints,
@@ -107,7 +107,7 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
             folder: "notes".into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec![symphony::entrypoint::MARKDOWN],
+            types: vec![symphony::entrypoint::MARKDOWN, symphony::entrypoint::HTML],
             history: Vec::new(),
         }]
     );
@@ -301,7 +301,7 @@ fn an_entrypoint_that_cannot_serve_is_refused_by_name() {
     for (text, says) in [
         (
             format!("{}types = [\"markdown\", \"rust\"]\n", entry("/", ".")),
-            "[[entrypoints]] / type \"rust\": no renderer handles it (the renderers are markdown, media)",
+            "[[entrypoints]] / type \"rust\": no renderer handles it (the renderers are markdown, html, media)",
         ),
         (
             format!("{docs}types = []\n"),

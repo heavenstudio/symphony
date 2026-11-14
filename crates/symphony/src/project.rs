@@ -1002,6 +1002,19 @@ impl Project {
         root.join(entry.file(inside)).canonicalize().ok()
     }
 
+    /// The HTML page at `route` in the checkout at `root`, links resolved, with the entrypoint
+    /// serving it: when that entrypoint shows it ([`Entrypoint::html_page`]) and its walk reaches
+    /// it, and is a file. None for any other route: what the app's frame of an HTML document may
+    /// load as that document, and nothing else.
+    pub fn html_page(&self, root: &Path, route: &str) -> Option<(&Entrypoint, PathBuf)> {
+        let (entry, inside) = self.serving(route)?;
+        if !entry.html_page(inside) {
+            return None;
+        }
+        let file = self.reachable(root, entry, inside)?;
+        file.is_file().then_some((entry, file))
+    }
+
     /// Whether the walk from `entry`'s folder reaches the path `inside` it, and as a folder: name by
     /// name, each one listed by [`Project::children`] in the folder before it. `read` gets every
     /// folder whose entries it looked at.
@@ -1264,9 +1277,12 @@ fn entrypoints(
             types: Vec::new(),
             history: Vec::new(),
         };
-        let types = table
-            .types
-            .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]);
+        let types = table.types.unwrap_or_else(|| {
+            crate::entrypoint::DEFAULT_TYPES
+                .iter()
+                .map(|renderer| renderer.name.into())
+                .collect()
+        });
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),
