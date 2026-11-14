@@ -95,7 +95,7 @@ export async function readKept<T>(
   if (kept === null || typeof kept.etag !== "string" || typeof kept.saved !== "number") return null;
   const value = parse(kept.value);
   if (value === null) {
-    await answer((s) => s.forget(CACHE_FORMAT, projectId(), item.id));
+    await forget(item);
     return null;
   }
   return { value, etag: kept.etag, saved: kept.saved };
@@ -111,6 +111,11 @@ export function keepLater(item: Item, part: string, etag: string, value: unknown
 /** The page of `item` was opened: one more visit, the page not waiting. */
 export function visitLater(item: Item): void {
   void answer((s) => s.visit(CACHE_FORMAT, projectId(), item.id, item.kind, item.pinned));
+}
+
+/** Drop `item` and every part of it. */
+export async function forget(item: Item): Promise<void> {
+  await answer((s) => s.forget(CACHE_FORMAT, projectId(), item.id));
 }
 
 /**
@@ -165,6 +170,26 @@ export function opened(f: Freshness): Freshness {
 /** The feed was lost. */
 export function lost(f: Freshness): Freshness {
   return f.open ? { ...f, open: false } : f;
+}
+
+/**
+ * The page opened another of its routes (another document): of `parts`, which it drew for the
+ * route it left, none is shown or asked for any more. With nothing else drawn left unanswered,
+ * nothing it shows came from the device.
+ */
+export function left(f: Freshness, parts: readonly string[]): Freshness {
+  const unanswered = f.unanswered.filter((one) => !parts.includes(one));
+  return {
+    ...f,
+    saved: unanswered.length === 0 ? null : f.saved,
+    unanswered,
+    failing: f.failing.filter((one) => !parts.includes(one)),
+  };
+}
+
+/** Whether `part` was drawn from the cache and the server has not answered it yet. */
+export function waits(f: Freshness, part: string): boolean {
+  return f.unanswered.includes(part);
 }
 
 /**

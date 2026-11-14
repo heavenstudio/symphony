@@ -8,7 +8,7 @@
 // value escaped, as crates/symphony-blocks writes it (`elementHtml`, held to the Rust by the cases
 // it writes), and the client holds no viewer's code.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "./button";
 import { fileAddress, href } from "./project";
 import { useVisibility } from "./viewport";
@@ -253,19 +253,30 @@ export function DocumentPicture({ image }: { image: Image }) {
   const given = image.presentation.attributes ?? {};
   const full = given["data-full"];
   const style = given.style;
-  // The server's attributes, each by the name React gives it (`tabindex` as `tabIndex`).
+  // The server's attributes, each by the name React gives it (`tabindex` as `tabIndex`); the style
+  // is written as given, by the ref below.
   const attributes: object = {
     width: given.width,
     height: given.height,
     loading: given.loading ?? "lazy",
     decoding: given.decoding ?? "async",
-    style: style === undefined ? undefined : declarations(style),
     role: given.role,
     tabIndex: given.tabindex,
     "aria-label": given["aria-label"],
     "aria-hidden": given["aria-hidden"],
     "data-full": full === undefined ? undefined : href(full),
   };
+  const ref = useCallback(
+    (node: Element | null) => {
+      const unwatch = watch(node);
+      const unstyle = style === undefined ? undefined : writtenStyle(style)(node);
+      return () => {
+        unwatch();
+        unstyle?.();
+      };
+    },
+    [watch, style],
+  );
   return (
     <img
       src={shown ? href(image.src) : WAITING}
@@ -274,53 +285,51 @@ export function DocumentPicture({ image }: { image: Image }) {
       id={image.presentation.id ?? ""}
       title={image.presentation.title ?? ""}
       {...attributes}
-      ref={watch}
+      ref={ref}
     />
   );
 }
 
-/**
- * CSS declarations (`color: red; width: 3em`) as React's style takes them: each property named as
- * React names it (`fontSize`, a custom property as written), a `;` or `:` inside parentheses or
- * quotes left in its value.
- */
-export function declarations(css: string): Record<string, string> {
-  const style: Record<string, string> = {};
-  const parts: string[] = [];
-  let depth = 0;
-  let quote = "";
-  let start = 0;
-  for (let at = 0; at < css.length; at += 1) {
-    const char = css[at];
-    if (quote !== "") {
-      if (char === "\\") at += 1;
-      else if (char === quote) quote = "";
-    } else if (char === '"' || char === "'") quote = char;
-    else if (char === "(") depth += 1;
-    else if (char === ")") depth = Math.max(depth - 1, 0);
-    else if (char === ";" && depth === 0) {
-      parts.push(css.slice(start, at));
-      start = at + 1;
-    }
-  }
-  parts.push(css.slice(start));
-  for (const part of parts) {
-    const colon = part.indexOf(":");
-    if (colon < 0) continue;
-    const name = part.slice(0, colon).trim();
-    const value = part.slice(colon + 1).trim();
-    if (name === "" || value === "") continue;
-    style[propertyName(name)] = value;
-  }
-  return style;
-}
+/** A ref that writes a style attribute as given: one element's, of any kind. */
+export type StyleRef = (node: Element | null) => (() => void) | undefined;
 
-/** A CSS property's name as React's style names it: `font-size` as `fontSize`, `--x` as it is. */
-function propertyName(name: string): string {
-  if (name.startsWith("--")) return name;
-  const lower = name.toLowerCase();
-  const vendor = lower.startsWith("-ms-") ? lower.slice(1) : lower;
-  return vendor.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+/** Each style's ref, so an element drawn again with the same style keeps its ref and is let be. */
+const STYLE_REFS = new Map<string, StyleRef>();
+
+/**
+ * A ref that writes `css` as the element's style attribute, as given, as the Dioxus client writes
+ * it. React's `style` takes an object, which it sets property by property: a value with
+ * `!important`, which no property takes, and a declaration after a comment would be lost. As the
+ * Dioxus client's interpreter sets a `style` (dioxus-interpreter-js, `setAttributeInner`), each
+ * property the element already had (a centred container's `text-align`, which React set first)
+ * and the written style does not set is set again after it. The element drawn without it again,
+ * or with another style, has its style as it was before this one was written. One ref per style,
+ * the same each time, so an element drawn again with it is let be.
+ */
+export function writtenStyle(css: string): StyleRef {
+  let ref = STYLE_REFS.get(css);
+  if (ref === undefined) {
+    ref = (node) => {
+      if (node === null) return undefined;
+      const before = node.getAttribute("style");
+      const { style } = node as HTMLElement;
+      const own: [string, string][] = [];
+      for (let at = 0; at < style.length; at += 1) {
+        const name = style.item(at);
+        own.push([name, style.getPropertyValue(name)]);
+      }
+      node.setAttribute("style", css);
+      for (const [name, value] of own) {
+        if (style.getPropertyValue(name) === "") style.setProperty(name, value);
+      }
+      return () => {
+        if (before === null) node.removeAttribute("style");
+        else node.setAttribute("style", before);
+      };
+    };
+    STYLE_REFS.set(css, ref);
+  }
+  return ref;
 }
 
 /** Files to pick from: a card each, one open at a time, in `viewer`. */

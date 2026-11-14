@@ -74,9 +74,10 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`): a guard checks
-the fields the page draws, each of its type, and nothing else, so a field a newer server adds, or
-one it drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
+`document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
+draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
+the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
 `skip-board-fields` is the Dioxus client's: it leaves fields out of its wasm's reader to save
@@ -139,6 +140,14 @@ server, the shared sheet of the Dioxus build (the frame, the components, the boa
 class names this client's markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`). A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
+
+Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
+has its own. A presentation's style is written as given, by a ref (`writtenStyle`): React's `style`
+takes an object, which it sets property by property, and would lose a value marked `!important` or
+a declaration after a comment. As the Dioxus interpreter writes a style, a property the element
+already had and the written style does not set (a centred container's `text-align`) is kept. A
+`javascript:` address in an href or a src is replaced by React 19 with one that throws, where the
+Dioxus client writes it as given: a difference in the safe direction, kept.
 
 ## Reports
 

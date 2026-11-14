@@ -284,6 +284,14 @@
     ["docs/", "docs"],
     ["", "docs"]
   ],
+  "answersVerdicts": [
+    ["verdicts/2026-11-11-1244", true],
+    ["verdicts/", true],
+    ["verdicts", false],
+    ["app/verdicts/a", false],
+    ["Verdicts/a", false],
+    ["", false]
+  ],
   "isHtml": [
     ["a.html", true],
     ["A.HTML", true],
@@ -734,7 +742,12 @@
               "src": "/k.png",
               "alt": "Lumen",
               "presentation": {
-                "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+                "attributes": {
+                  "data-full": "/full.png",
+                  "height": "480",
+                  "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                  "width": "640"
+                }
               }
             }
           },
@@ -768,7 +781,13 @@
           {
             "type": "styled",
             "tag": "span",
-            "presentation": { "class": "tasklink", "attributes": { "data-task": "app/lamps" } },
+            "presentation": {
+              "class": "tasklink",
+              "attributes": {
+                "data-task": "app/lamps",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [
               {
                 "type": "link",
@@ -782,7 +801,13 @@
           {
             "type": "graphic",
             "view_box": "0 0 24 24",
-            "presentation": { "class": "chart", "attributes": { "role": "img" } },
+            "presentation": {
+              "class": "chart",
+              "attributes": {
+                "role": "img",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "shapes": [
               { "kind": "path", "attributes": { "d": "M4 12h16" } },
               { "kind": "circle", "attributes": { "cx": "12", "cy": "12", "r": "4" } },
@@ -805,7 +830,12 @@
                   "src": "/k.png",
                   "alt": "Lumen",
                   "presentation": {
-                    "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+                    "attributes": {
+                      "data-full": "/full.png",
+                      "height": "480",
+                      "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                      "width": "640"
+                    }
                   }
                 },
                 "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
@@ -819,73 +849,133 @@
           {
             "type": "styled",
             "tag": "span",
-            "presentation": { "class": "span" },
+            "presentation": {
+              "class": "span",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "span" }]
           },
           {
             "type": "styled",
             "tag": "small",
-            "presentation": { "class": "small" },
+            "presentation": {
+              "class": "small",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "small" }]
           },
           {
             "type": "styled",
             "tag": "sub",
-            "presentation": { "class": "sub" },
+            "presentation": {
+              "class": "sub",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "sub" }]
           },
           {
             "type": "styled",
             "tag": "sup",
-            "presentation": { "class": "sup" },
+            "presentation": {
+              "class": "sup",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "sup" }]
           },
           {
             "type": "styled",
             "tag": "time",
-            "presentation": { "class": "time" },
+            "presentation": {
+              "class": "time",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "time" }]
           },
           {
             "type": "styled",
             "tag": "mark",
-            "presentation": { "class": "mark" },
+            "presentation": {
+              "class": "mark",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "mark" }]
           },
           {
             "type": "styled",
             "tag": "kbd",
-            "presentation": { "class": "kbd" },
+            "presentation": {
+              "class": "kbd",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "kbd" }]
           },
           {
             "type": "styled",
             "tag": "samp",
-            "presentation": { "class": "samp" },
+            "presentation": {
+              "class": "samp",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "samp" }]
           },
           {
             "type": "styled",
             "tag": "delete",
-            "presentation": { "class": "delete" },
+            "presentation": {
+              "class": "delete",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "delete" }]
           },
           {
             "type": "styled",
             "tag": "insert",
-            "presentation": { "class": "insert" },
+            "presentation": {
+              "class": "insert",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "insert" }]
           },
           {
             "type": "styled",
             "tag": "underline",
-            "presentation": { "class": "underline" },
+            "presentation": {
+              "class": "underline",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "underline" }]
           },
           {
             "type": "styled",
             "tag": "abbreviation",
-            "presentation": { "class": "abbreviation" },
+            "presentation": {
+              "class": "abbreviation",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "abbreviation" }]
           }
         ]
@@ -911,7 +1001,12 @@
           {
             "header": true,
             "spans": [{ "type": "text", "text": "Lamp" }],
-            "presentation": { "attributes": { "scope": "col" } }
+            "presentation": {
+              "attributes": {
+                "scope": "col",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            }
           }
         ],
         "rows": [
@@ -923,7 +1018,12 @@
             }
           ]
         ],
-        "presentation": { "class": "lamps" }
+        "presentation": {
+          "class": "lamps",
+          "attributes": {
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        }
       },
       { "type": "code", "language": "rust", "text": "fn main() {}" },
       {
@@ -938,7 +1038,12 @@
           {
             "type": "styled",
             "tag": "span",
-            "presentation": { "class": "callout-kind" },
+            "presentation": {
+              "class": "callout-kind",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
             "spans": [{ "type": "text", "text": "question" }]
           },
           { "type": "text", "text": "Warm or cold?" }
@@ -991,7 +1096,12 @@
                   "src": "/a.png",
                   "alt": "A",
                   "presentation": {
-                    "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+                    "attributes": {
+                      "data-full": "/full.png",
+                      "height": "480",
+                      "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                      "width": "640"
+                    }
                   }
                 },
                 "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
@@ -1081,7 +1191,12 @@
           "src": "/k.png",
           "alt": "Lumen",
           "presentation": {
-            "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
           }
         }
       },
@@ -1091,7 +1206,12 @@
           "src": "/k.png",
           "alt": "Lumen",
           "presentation": {
-            "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
           }
         },
         "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
@@ -1121,7 +1241,12 @@
           "src": "/k.png",
           "alt": "Lumen",
           "presentation": {
-            "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
           }
         },
         "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
@@ -1135,7 +1260,12 @@
           "src": "/k.png",
           "alt": "Lumen",
           "presentation": {
-            "attributes": { "data-full": "/full.png", "height": "480", "width": "640" }
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
           }
         },
         "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
@@ -1200,58 +1330,399 @@
       {
         "type": "container",
         "tag": "div",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "section",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "figure",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "figcaption",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "aside",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "header",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "footer",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "address",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       },
       {
         "type": "container",
         "tag": "center",
-        "presentation": { "class": "box", "attributes": { "data-kind": "lamp" } },
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
         "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
       }
-    ]
+    ],
+    "outline": {
+      "document": {
+        "version": 12,
+        "path": "docs/lamps/LAMPS.md",
+        "title": "Lamps",
+        "waiting": ["lamp-colour"],
+        "crumbs": [{ "name": "docs", "href": "/docs/" }, { "name": "docs", "href": null }],
+        "headings": [{ "level": 2, "anchor": "colour", "text": "Colour" }],
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            }
+          },
+          {
+            "start": 3,
+            "end": 9,
+            "key": "card:lamp-colour",
+            "hash": "h1",
+            "part": 1,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }]
+          }
+        ],
+        "cards": [
+          {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        ],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          }
+        },
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": { "task": "design/lamps" }
+      },
+      "anchors": { "colour": ["colour"] },
+      "thread_hashes": { "lamp-colour": "t1" }
+    },
+    "bareOutline": {
+      "document": {
+        "version": 0,
+        "path": "docs/A.md",
+        "title": "A",
+        "waiting": [],
+        "crumbs": [],
+        "headings": [],
+        "sections": [],
+        "cards": [],
+        "threads": {},
+        "tasks": []
+      },
+      "anchors": {}
+    },
+    "sections": {
+      "version": 13,
+      "change": {
+        "path": "docs/lamps/LAMPS.md",
+        "removed": true,
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": 0,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            }
+          }
+        ],
+        "deleted": ["old"],
+        "positions": [{ "key": "colour", "start": 4, "end": 10, "part": null }],
+        "order": ["colour", "card:lamp-colour"],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          },
+          "lamp-size": null
+        },
+        "title": "Lamps",
+        "waiting": [],
+        "crumbs": [{ "name": "docs", "href": null }],
+        "headings": [],
+        "cards": [
+          {
+            "key": "lamp-colour",
+            "value": {
+              "slug": "lamp-colour",
+              "state": "pending",
+              "text": "Which colour?",
+              "group": "decide",
+              "open": true
+            }
+          },
+          { "key": "lamp-size", "removed": true }
+        ],
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": []
+      }
+    },
+    "change": {
+      "path": "docs/lamps/LAMPS.md",
+      "removed": true,
+      "sections": [
+        {
+          "start": 3,
+          "end": 9,
+          "key": "colour",
+          "hash": "h1",
+          "part": 0,
+          "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+          "comparison": {
+            "kind": "changed",
+            "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+          }
+        }
+      ],
+      "deleted": ["old"],
+      "positions": [{ "key": "colour", "start": 4, "end": 10, "part": null }],
+      "order": ["colour", "card:lamp-colour"],
+      "threads": {
+        "lamp-colour": {
+          "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+        },
+        "lamp-size": null
+      },
+      "title": "Lamps",
+      "waiting": [],
+      "crumbs": [{ "name": "docs", "href": null }],
+      "headings": [],
+      "cards": [
+        {
+          "key": "lamp-colour",
+          "value": {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        },
+        { "key": "lamp-size", "removed": true }
+      ],
+      "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+      "comparison": []
+    },
+    "bareChange": { "path": "docs/A.md" },
+    "folder": {
+      "path": "docs",
+      "title": "Docs",
+      "crumbs": [{ "name": "docs", "href": null }],
+      "docs": 4,
+      "intro": {
+        "version": 12,
+        "path": "docs/lamps/LAMPS.md",
+        "title": "Lamps",
+        "waiting": ["lamp-colour"],
+        "crumbs": [{ "name": "docs", "href": "/docs/" }, { "name": "docs", "href": null }],
+        "headings": [{ "level": 2, "anchor": "colour", "text": "Colour" }],
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            }
+          },
+          {
+            "start": 3,
+            "end": 9,
+            "key": "card:lamp-colour",
+            "hash": "h1",
+            "part": 1,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }]
+          }
+        ],
+        "cards": [
+          {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        ],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          }
+        },
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": { "task": "design/lamps" }
+      },
+      "entries": [
+        {
+          "kind": "folder",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        },
+        {
+          "kind": "doc",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        }
+      ]
+    },
+    "bareFolder": {
+      "path": "docs",
+      "title": "Docs",
+      "crumbs": [{ "name": "docs", "href": null }],
+      "docs": 4,
+      "intro": null,
+      "entries": [
+        {
+          "kind": "folder",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        },
+        {
+          "kind": "doc",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        }
+      ]
+    },
+    "versions": { "versions": [{ "sha": "0123abc", "date": "2026-11-14", "subject": "Lamps" }] },
+    "diff": { "sha": "0123abc", "subject": "Lamps", "diff": "-a\n+b" },
+    "asks": {
+      "asks": [
+        {
+          "id": 7,
+          "path": "docs/lamps/LAMPS.md",
+          "anchor": "colour",
+          "quote": "warm",
+          "question": "Why?",
+          "asked": 1.0,
+          "updated": 2.5,
+          "answers": [{ "text": "Because.", "by": "agent", "at": 2.0 }],
+          "messages": [
+            {
+              "seq": 1,
+              "kind": "question",
+              "by": "owner",
+              "text": "Why?",
+              "at": 1.5,
+              "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Why?" }] }]
+            },
+            { "seq": 1, "kind": "question", "by": "owner", "text": "Why?", "at": 1.5 }
+          ],
+          "status": "open"
+        }
+      ],
+      "listening": true,
+      "recipient": "amber-heron"
+    },
+    "noAsks": { "asks": [], "listening": false, "recipient": null }
   },
   "carried": [
     {
@@ -1460,6 +1931,15 @@
         "        .and_then(|path| path.split_once('/'))",
         "        .map_or(\"docs\", |(folder, _)| folder)",
         "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/lib.rs answers_verdicts",
+      "typescript": "answersVerdicts, src/document.ts",
+      "source": [
+        "    pub fn answers_verdicts(&self) -> bool {",
+        "        self.slug.starts_with(VERDICT_TASKS)",
+        "    }"
       ]
     },
     {
