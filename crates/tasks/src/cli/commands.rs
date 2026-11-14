@@ -357,14 +357,16 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "claim" => {
             let t = store.claim(&c.arg("slug"), &c.actor()?)?;
-            // An instruction subtask's slug is never a branch; any other task's is the one it lands.
-            c.say(&if t.instruction {
-                format!("claimed {}", t.slug)
-            } else {
+            // Only a top-level task's slug is the branch that lands: a slice works on its parent's
+            // branch, and an instruction subtask's slug is never one.
+            let lands = crate::on_review::delivery_task(t.parent.as_deref(), t.instruction);
+            c.say(&if lands {
                 format!(
                     "claimed {0}: its work goes on the branch {0}, which the land takes",
                     t.slug
                 )
+            } else {
+                format!("claimed {}", t.slug)
             });
         }
         "reserve" => {
@@ -398,11 +400,14 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "verdict" => {
             let slug = c.arg("slug");
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
-            // Done is not landed: an approve says what lands it.
-            c.say(&if t.status == "done" {
-                crate::land::approved(c.env, &slug)
-            } else {
-                format!("{slug} is {}", t.status)
+            // Done is not landed: an approve says what lands it, a subtask's the task it is under.
+            c.say(&match (t.status.as_str(), t.parent.as_deref()) {
+                ("done", None) => crate::land::approved(c.env, &slug),
+                ("done", Some(parent)) => format!(
+                    "{slug} is approved: done on the board; its work lands when the task it is \
+                     under, {parent}, does"
+                ),
+                (status, _) => format!("{slug} is {status}"),
             });
             finish::after_finish(store, c, &t);
         }

@@ -1,4 +1,4 @@
-# symphony-stamp: 30197f9a8ba1a3c5
+# symphony-stamp: ae7df52550f847d4
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
@@ -62,8 +62,8 @@ symphony-cli *ARGS:
 symphony-status *ARGS:
     @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli status "$@"
 
-# With the slug `L<line>` it is the answer that resolves that line's comment, and `--as` names the
-# session that answers the owner's ask.
+# A reply with the slug `L<line>` is the answer that resolves that line's comment, and `--as` names
+# the session that answers the owner's ask.
 # An agent's line under a card: `just symphony-reply PATH SLUG TEXT [--question] [--as HANDLE]`.
 [positional-arguments]
 [no-exit-message]
@@ -76,11 +76,12 @@ symphony-reply *ARGS:
 symphony-ask *ARGS:
     @{{ _symphony_unasked }}{{ quote(just_executable()) }} --justfile {{ quote(justfile()) }} symphony-cli ask "$@"
 
-# It merges the branch named as the task on the default branch, checks it, pushes it and closes the
-# task (`just tasks land --help`). It sets SYMPHONY_LAND, without which `tasks land` refuses:
-# `just tasks land` by itself never lands. `symphony init` allows it unasked: this land lands only
-# what its approval check passes, a fresh reviewer's approve standing on the tip; a `land` of the
-# project's own replaces it, gets the same allow rule, and its landing policy decides what it lands.
+# The default landing merges the branch named as the task on the default branch, checks it, pushes
+# it and closes the task (`just tasks land --help`). It sets SYMPHONY_LAND, without which
+# `tasks land` refuses: `just tasks land` by itself never lands. `symphony init` allows it unasked:
+# this land lands only what its approval check passes, a fresh reviewer's approve standing on the
+# tip; a `land` of the project's own replaces it, gets the same allow rule, and its landing policy
+# decides what it lands.
 # Land a task's approved branch: `just land SLUG --as HANDLE`.
 [positional-arguments]
 [no-exit-message]

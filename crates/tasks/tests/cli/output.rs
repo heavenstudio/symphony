@@ -80,6 +80,23 @@ fn each_command_says_what_it_did_in_one_line() {
     // An instruction subtask's slug is never a branch: its claim names none.
     says(&exe, &["claim", "sim/b/m"], "claimed sim/b/m\n");
     says(&exe, &["done", "sim/b/m", "4 ms"], "sim/b/m is done\n");
+    // Nor is a slice's, which works on its parent's branch and lands with it: its claim names no
+    // branch.
+    c.ok(&orch, &["create", "sim/b/s", "S", "--parent", "sim/b"]);
+    says(&exe, &["claim", "sim/b/s"], "claimed sim/b/s\n");
+    // A subtask never goes to review, but a task put under another while in review is one: its
+    // approve names no land of its own.
+    c.ok(&orch, &["create", "sim/c", "C"]);
+    c.ok(&exe, &["claim", "sim/c"]);
+    c.ok(&exe, &["move", "sim/c", "review"]);
+    c.ok(&rev, &["role", "sim/c", "reviewer"]);
+    c.ok(&orch, &["parent", "sim/c", "sim/b"]);
+    says(
+        &rev,
+        &["verdict", "sim/c", "approve"],
+        "sim/c is approved: done on the board; its work lands when the task it is under, sim/b, \
+         does\n",
+    );
     says(&exe, &["next"], "sim/b  p2  B\n");
     says(&exe, &["leave"], "left\n");
 }

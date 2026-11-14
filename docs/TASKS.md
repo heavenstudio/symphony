@@ -1516,9 +1516,11 @@ reason with no words is refused.
 ### The default landing
 
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
-task's branch, named as its slug, on the default branch. `just tasks claim` says so of any task
-but an instruction subtask, an approve says that the task is done on the board but not on the
-default branch until it lands, and the line that lands it (or the project's own `land`), and a land
+task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
+task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
+of one says that the task is done on the board but not on the default branch until it lands, and
+the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
+with the task it is under, and a land
 with no branch so named names the branch whose tip is the commit the approve names, and the rename
 (`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
