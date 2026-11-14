@@ -1987,9 +1987,10 @@ its own work.
 
 Every instruction an orchestrator gives an agent is a **subtask**: a task made
 with `--parent`, whose description is the instruction, word for word. The agent's
-whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), never a brief
-in a file. A parent's subtasks nest to any depth; a task is never its own
-ancestor (`just tasks parent SLUG PARENT` moves one, and refuses a cycle).
+whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), a reviewer's
+`/review-task SLUG HANDLE` (`.agents/skills/review-task/SKILL.md`), never a brief in a file.
+A parent's subtasks nest to any depth; a task is never its own ancestor (`just tasks parent
+SLUG PARENT` moves one, and refuses a cycle).
 
 ```
 just tasks create perf/x/review "Review perf/x" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
