@@ -37,8 +37,10 @@ Private snapshot patches retain the existing dependency versions and features;
 the source workspace's manifests and lockfile stay intact. A publication keeps the two builds
 before it whole, and a same-name byte collision refuses it.
 
-Consumers take the libraries from this repository's `main` branch and commit the selected revision
-in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,
+Consumers take the libraries at a release tag of this repository and commit its revision in their
+Cargo lockfile ([RELEASES](docs/RELEASES.md)); the plugin kit and the helpers are made to be
+published on crates.io by version as well
+([RELEASES](docs/RELEASES.md#packages-on-cratesio)). A consuming project's host supplies its plugins and its own verification,
 approval and landing policy. Symphony supplies no standalone landing/stamp backend.
 
 ## License

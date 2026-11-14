@@ -24,6 +24,37 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
   commit.
 
+## Packages on crates.io
+
+The plugin kit and the helpers a project links are made to be published on crates.io, each by
+its version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
+crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-versioning)).
+
+- **The kit:** `symphony-plugin`, `symphony-api` and `symphony-docs`, one version for the three,
+  0.1.0. It takes 1.0.0 once its blocks have left the app's wire types in `symphony-api`: until
+  then a release that changed a wire type would need a new major.
+- **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
+  `repository-read`, each on a version line of its own from 1.0.0.
+- **The rest** (`symphony`, `symphony-board`, `symphony-server`, `chrome-devtools`, `symphony-ui`
+  and `test-time`) keep the workspace's `publish = false`.
+
+A published package's manifest says `publish = true` with a description, the repository, a readme
+of its own, keywords, categories and an `include` list (its sources, readme and LICENSE: no tests
+or fixtures). Its LICENSE is a link to the root's, which packaging copies in. It names a published
+sibling by `path` and `version`, and an unpublished one only as a development dependency, by `path`
+alone, which publishing drops. `crates/symphony/tests/packages.rs` holds which members are
+published and that each carries all of this.
+
+A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
+publishes yet. The first publication is the owner's act, or runs on the owner's word, with the
+owner's crates.io token in the owner's environment; no agent logs in or reads a token. Up to it,
+the packages are proven by `cargo publish --dry-run` naming the eight together, which packages them
+in dependency order and builds each against the others as packaged, before any is on crates.io.
+Until the library, the board and the server are published too, a project takes all of Symphony at
+a release tag, as above: a kit from crates.io beside a library from Git would be two copies of the
+kit, whose types do not match
+([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
+
 ## The release run
 
 `just release` (`symphony release`, `crates/symphony/src/release.rs`) cuts the releases, and is the

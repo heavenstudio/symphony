@@ -415,7 +415,8 @@ of its own:
 Over Git this works without a registry: a consumer names the kit's three packages at one kit tag
 (one source, one copy each), and each helper at its own tag (two sources, but they share no
 types). A registry is needed only once version ranges must unify, such as two kit-dependent crates
-of a consumer each asking for a different minor.
+of a consumer each asking for a different minor. The owner chose one all the same, after B: the
+versions live on crates.io ([below](#open-choices)).
 
 - **A consumer stays behind on** its kit version, and so its plugin, while the machine's server
   speaks that kit's protocol major; on each helper as long as it likes, since nothing on the machine
@@ -426,10 +427,11 @@ of a consumer each asking for a different minor.
 - **The work here, in order:**
   1. The block vocabulary and the seams' data out of `symphony-api` into the kit, so the app's
      wire types move without touching it.
-  2. Version lines: a real `version` in each promised package's manifest (0.1.0 everywhere today),
-     a tag line for each (`kit-vX.Y.Z`, `process-cwd-vX.Y.Z`), and `cargo-semver-checks` against the
-     previous tag in the release run and at a task's gate when the package changed. The guards
-     narrow to these packages and keep what semver checks miss (a generic function named alone).
+  2. Version lines: a real `version` in each promised package's manifest (0.1.0 everywhere when
+     this was read), each version published on crates.io ([below](#open-choices)), and
+     `cargo-semver-checks` against the previous version in the release run and at a task's gate
+     when the package changed. The guards narrow to these packages and keep what semver checks
+     miss (a generic function named alone).
   3. No promised package shows another's type unless they share a line; the library's and the
      board's re-exports of the helpers stop mattering once no consumer links those two.
   4. A's steps 1 to 5.
@@ -538,18 +540,21 @@ the contract.
 
 B decides the rest:
 
-- **Where versions live:** a line of tags in this repository for the kit and one for each helper,
-  cut by the release run; Git is enough (the options' table, Distribution).
+- **Where versions live:** on crates.io, by the owner's word after B, 2026-11-13: "I would like to
+  publish crates (MIT license) to crates.io as the pacakge manager". So not on lines of tags in this
+  repository, which the options' table (Distribution) found enough for B: the kit and the helpers
+  are published there, each version once ([RELEASES](../RELEASES.md#packages-on-cratesio)).
 - **The board's rules:** the board commands stay one per machine and move at its update, so a
   changed rule reaches every project at once, the release's notes saying so. `tasks api` promises
   what its calls take and answer, not the rules behind them.
 - **An old protocol major:** the protocol is on its first, and no settings key or command is
   retired, so how long an old major is kept is asked when a second is planned.
 
-The kit's first number is no choice of its own: Cargo reads a change of 0.y as it reads a new
-major, and a Git dependency names a tag, never a range, so 0.x and 1.0 promise a project the same.
-The kit and each helper take 1.0.0 at their first tag, the number whose majors and minors B's
-promise is written in.
+The first numbers: each helper starts at 1.0.0, the number whose majors and minors B's promise is
+written in. The kit starts at 0.1.0, one version for its three packages, and takes 1.0.0 once its
+blocks have left the app's wire types in `symphony-api`: until then nearly every release, changing
+a wire type, would need a new major, which says nothing. Cargo reads a change of 0.y as it reads a
+new major, so a project naming the kit at 0.1 takes any 0.1.z and never a 0.2.
 
 ## Verified and inferred
 
