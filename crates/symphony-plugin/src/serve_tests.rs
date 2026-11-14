@@ -253,6 +253,7 @@ fn a_slow_call_holds_one_worker_and_the_others_answer_meanwhile() {
         root: "/r".into(),
         doc_path: "docs/A.md".into(),
         render,
+        artifacts: "artifacts".into(),
     };
     let render = |argument: &str| Render {
         component: "moody".into(),
@@ -285,6 +286,7 @@ fn the_requests_of_one_render_share_one_page_and_a_render_of_its_own_shares_none
             root: "/r".into(),
             doc_path: "docs/A.md".into(),
             render,
+            artifacts: "artifacts".into(),
         };
         if call == "version" {
             return asking(
@@ -337,12 +339,27 @@ fn the_requests_of_one_render_share_one_page_and_a_render_of_its_own_shares_none
 }
 
 #[test]
+fn a_page_of_its_own_or_of_a_render_holds_the_artifacts_folder_it_was_asked_with() {
+    let pages = Pages::default();
+    for render in [0, 7] {
+        let data = PageData {
+            root: "/r".into(),
+            doc_path: "docs/A.md".into(),
+            render,
+            artifacts: "out/ä".into(),
+        };
+        assert_eq!(pages.with(&data, |page| page.artifact("x")), "out/ä/x");
+    }
+}
+
+#[test]
 fn a_process_keeps_the_newest_renders_pages_and_loads_an_older_ones_again() {
     let pages = Pages::default();
     let data = |render| PageData {
         root: "/r".into(),
         doc_path: "docs/A.md".into(),
         render,
+        artifacts: "artifacts".into(),
     };
     let load = |render: u64| {
         pages.with(&data(render), |page| {

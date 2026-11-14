@@ -111,13 +111,9 @@ pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     commands::build(args, out, err)
 }
 
-pub use symphony_args::{Flag, Parsed, command_at, parse};
-
-/// A refusal of the command line, as argparse words one: the usage, then the error. Exit 2.
-pub fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
-    let _ = writeln!(err, "{usage}\nsymphony {command}: error: {problem}");
-    2
-}
+/// The command line's reading and a refusal of it, as argparse words one: the helper
+/// `symphony-args`, which a plugin's commands use too.
+pub use symphony_args::{Flag, Parsed, command_at, parse, refuse};
 
 /// This process's environment, each variable whose name and value are text: what [`main`] reads.
 fn process_env() -> BTreeMap<String, String> {

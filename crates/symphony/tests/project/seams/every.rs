@@ -166,7 +166,7 @@ impl Component for Every {
                 level: 2,
                 anchor: argument.into(),
                 spans: vec![Span::Text {
-                    text: format!("{argument} {option:?}"),
+                    text: format!("{argument} {option:?} in {}", page.artifact("every")),
                 }],
             },
             Block::Paragraph {

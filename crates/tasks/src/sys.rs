@@ -43,42 +43,14 @@ unsafe extern "C" {
     fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
 }
 
-/// What ties a process to its starter's session: the board handle (`TASKS_SESSION`), and hc's
-/// terminal, its socket, the core and the scope.
-pub const SESSION_VARS: [&str; 5] = [
-    "TASKS_SESSION",
-    "HC_TERMINAL_ID",
-    "HC_TERMINAL_SOCKET",
-    "HC_SESSION",
-    "HC_SCOPE",
-];
-
-/// `command` keeps none of [`SESSION_VARS`], from this process's environment, from one it was
-/// given, or set on it before. A launcher handed a command calls it on every one.
-pub fn sessionless(command: &mut Command) -> &mut Command {
-    for name in SESSION_VARS {
-        command.env_remove(name);
-    }
-    command
-}
-
-/// What marks how a process was asked for, which no child of it is: the marker the recipes an agent
-/// runs unasked set ([`crate::confine::MARKER`]), under which that one command writes only into its
-/// checkout, and the `land` recipe's ([`crate::land::RECIPE`]), without which `tasks land` refuses.
-/// A child the board starts runs the project's own command (`[board] on_land` and `on_review`, a
-/// check, a generator, git and its hooks) or the board's own work: one that kept the first would
-/// refuse its own writes outside that checkout, a test's in its temporary folder among them, and
-/// one that kept the second could land.
-pub const MARKS: [&str; 2] = [crate::confine::MARKER, crate::land::RECIPE];
-
-/// `command` keeps none of [`MARKS`], from this process's environment, from one it was given, or
-/// set on it before.
-pub fn unmarked(command: &mut Command) -> &mut Command {
-    for name in MARKS {
-        command.env_remove(name);
-    }
-    command
-}
+/// What ties a process to its starter's session ([`SESSION_VARS`], [`sessionless`]) and what marks
+/// how it was asked for ([`MARKS`], [`unmarked`]): the marker the recipes an agent runs unasked set
+/// ([`crate::confine::MARKER`]) and the `land` recipe's ([`crate::land::RECIPE`]), which a test
+/// here holds equal to the leaf's. The lists live in the leaf the cwd scans share
+/// ([`process_cwd::session`]), so a plugin's process starts its children without them and without
+/// linking the board. A child the board starts runs the project's own command (`[board] on_land`
+/// and `on_review`, a check, a generator, git and its hooks) or the board's own work.
+pub use process_cwd::session::{MARKS, SESSION_VARS, sessionless, unmarked};
 
 /// A command for `program` with this process's environment but [`SESSION_VARS`] and [`MARKS`].
 /// What the caller sets on it after it keeps: a call that must keep one of them sets it there, and
@@ -360,6 +332,12 @@ mod tests {
             "{said}{}",
             String::from_utf8_lossy(&done.stderr)
         );
+    }
+
+    #[test]
+    fn the_marks_no_child_keeps_are_the_unasked_recipes_and_the_lands() {
+        // The leaf names them so a plugin's process drops them too; the board's are these.
+        assert_eq!(MARKS, [crate::confine::MARKER, crate::land::RECIPE]);
     }
 
     #[test]
