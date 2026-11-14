@@ -1,0 +1,27 @@
+{
+  "version": 4182,
+  "change": {
+    "path": "docs/DECISIONS.md",
+    "sections": [
+      {"start": 1, "end": 3, "key": "intro", "hash": "0123456789abcdef", "part": 0, "blocks": [
+        {"type": "paragraph", "spans": [{"type": "text", "text": "What the owner decides."}]}
+      ]},
+      {"start": 5, "end": 12, "key": "card:palette", "hash": "fedcba9876543210", "part": 1, "blocks": [
+        {"type": "card", "slug": "palette", "mark": "pending", "title": "Palette",
+          "body": [{"type": "paragraph", "spans": [{"type": "text", "text": "Choose the palette."}]}],
+          "verdict": {"group": "decide", "open": true, "posted": "2026-11-12 09:00", "decided": null},
+          "thread": [], "line": 5, "line_offset": null, "comparison": []}
+      ]}
+    ],
+    "threads": {
+      "palette": {"blocks": [{"type": "thread", "entries": [
+        {"who": "agent", "timestamp": "2026-11-12 09:00", "verdict": null, "blocks": [
+          {"type": "paragraph", "spans": [{"type": "text", "text": "Posted."}]}
+        ]}
+      ]}]}
+    },
+    "cards": [
+      {"key": "palette", "value": {"slug": "palette", "state": "pending", "text": "Choose the palette.", "group": "decide", "open": true}}
+    ]
+  }
+}

@@ -159,11 +159,44 @@ never the whole target, which the release run runs.
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
   every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
   draws nothing from the device.
+  A document keeps `Item::document(path, false)`: its outline (`outline`,
+  `/api/document?view=outline`) and the bodies of the sections it drew (`sections`, one map by
+  key, each with its card and thread and the validator it was taken under,
+  `cache::document::KeptBody`). A section's validator is its outline `hash` and, for a card, its
+  thread's hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a
+  section showing a difference from main is never kept. Opened, the page counts a visit and draws
+  the outline and every body current by it at once (`docs_live::from_device`), then reads the
+  outline naming its copy's tag (`request::get_document`). The server tags a document read
+  without the feed's cursor, so an unchanged document is a `304` however the board moved, and
+  names the cursor in a header (`symphony_api::VERSION_HEADER`), on the `304` too, from which the
+  feed opens. The bodies the server's outline names alike stay and are read no more
+  (`cache::document::Bodies`), on a reconnect as on a return; the others are read as the page
+  wants them, and no body is read before the outline answers. A body the feed changed is kept
+  again only once a later outline names it. An entrypoint's own page, the main checkout's, is kept
+  pinned (`Item::document("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
+  server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
+  so it outlives the documents visited once. No other folder page is kept. A document the server no
+  longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
-  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` and
-  `cache_tasks.rs` hold the reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
-  does and logs each answer).
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs`,
+  `cache_tasks.rs` and `cache_documents.rs` hold the reads back on the stand-in
+  (`Site::hold_route`, which answers `If-None-Match` as the server does and logs each answer;
+  `Site::set_document` serves a document's outline, its first part and its sections by their keys
+  as the server does).
+  Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
+  first 8 task and document links on the screen in its `main` (`ahead` in `assets/shell.js` and
+  `assets/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
+  unvisited. A task is its page and its thread's newest page; a document its first part
+  (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
+  within `symphony_api::AHEAD_BYTES`; the server does not follow it), whose contents and bodies a
+  visit draws at once, so nothing moves when its outline answers, and keeps as its own
+  (`cache::document::split`). Never on save-data or a 3g or slower link, never a link that acts, a
+  search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
+  API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
+  `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
+  raced by the reads ahead; `tests/browser/cache_ahead.rs` covers them.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
@@ -195,7 +228,19 @@ never the whole target, which the release run runs.
   about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
   7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
   462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
-  unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
+  unchanged, its page and thread each a `304` of 82) and a document at 464,410. Documents
+  drawn from the device, an entrypoint's page kept and the reads ahead
+  (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
+  about 0.9 KB of the shell and the documents' kind about 30.4 KB (`wasm_size` on the named
+  copies: `docs_live`'s draw from the device, reads and keeping 9.0 KB, the cache's bindings
+  3.5 KB, and the maps it adds with their trees and sorts about 9.8 KB of `alloc` and
+  `core::slice`, a stable sort compiled for each `collect` into a map): `/tasks` takes 296,924 bytes
+  (3,076 under the cap, from 295,902), `/` 237,202 (from 236,322) and `/docs/` 505,402 (from
+  474,965); a document's return takes 1,633 (from 2,371), the budget's stand-in naming no cursor
+  on its document reads, so its outline's `304` is read again whole. The reads ahead start only
+  once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
+  budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
+  the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. A task page's
   timeline, its own module, which carries none of the cache's code, comes once the page has
   drawn and is idle: 202,155 bytes outside its first visit (its WASM 186,101, glue 12,344,
   style sheet 2,605 and first read 1,105), and `/agents` never loads it. Once a page has its

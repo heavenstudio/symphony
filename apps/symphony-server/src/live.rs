@@ -562,6 +562,24 @@ impl Hub {
     }
 
     pub fn document(&self, scope: &str, rel: &str) -> Result<symphony_api::Document, String> {
+        self.rendered(scope, rel, true)
+    }
+
+    /// `rel` rendered as [`Hub::document`] renders it, for a page reading it ahead
+    /// (`/api/document?view=first`): not followed, so it publishes no change and the documents'
+    /// refresh never renders it again. The visit's own outline read follows it.
+    pub fn document_ahead(&self, scope: &str, rel: &str) -> Result<symphony_api::Document, String> {
+        self.rendered(scope, rel, false)
+    }
+
+    /// `rel` rendered in `scope` at the feed's cursor; while `follow`, any change from the page's
+    /// copy published first and the copy replaced, the document followed from then on.
+    fn rendered(
+        &self,
+        scope: &str,
+        rel: &str,
+        follow: bool,
+    ) -> Result<symphony_api::Document, String> {
         let root = if scope.is_empty() {
             self.root.clone()
         } else {
@@ -579,6 +597,11 @@ impl Hub {
         // A panic under this lock leaves nothing half done: it guards no data.
         let _rendering = self.rendering.lock().unwrap_or_else(|e| e.into_inner());
         let mut doc = self.render_document(&root, rel, scope)?;
+        if !follow {
+            let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+            doc.version = pages.get(scope).ok_or_else(removed)?.board.version;
+            return Ok(doc);
+        }
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
         let page = pages.get_mut(scope).ok_or_else(removed)?;
         // A GET can observe an edit before the watcher. Publish it before handing out its cursor,
