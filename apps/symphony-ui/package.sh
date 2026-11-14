@@ -34,9 +34,47 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
 fi
 # The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
 program_kinds=(tasks reports panel overlay timeline)
+# Whether the wasm module $1 holds custom sections alone (a name and its bytes, never code, data or
+# a table entry): past its 8-byte header, each section is its id, its size in LEB128 and its bytes.
+custom_only() {
+    local bytes at=8 size bits byte
+    [ "$(($(wc -c < "$1")))" -le 4096 ] || return 1
+    read -r -a bytes <<< "$(od -An -v -tu1 "$1" | tr -s ' \n' '  ')"
+    [ "${bytes[*]:0:4}" = "0 97 115 109" ] || return 1
+    while [ "$at" -lt "${#bytes[@]}" ]; do
+        [ "${bytes[at]}" = 0 ] || return 1
+        at=$((at + 1))
+        size=0
+        bits=0
+        while :; do
+            [ "$at" -lt "${#bytes[@]}" ] || return 1
+            byte="${bytes[at]}"
+            at=$((at + 1))
+            size=$((size | (byte & 127) << bits))
+            bits=$((bits + 7))
+            [ "$byte" -ge 128 ] || break
+        done
+        at=$((at + size))
+    done
+    [ "$at" = "${#bytes[@]}" ]
+}
 # The program last: its styles are placed by what the other kinds load.
 for module_kind in board docs review queue program; do
     module="$out/.modules/$module_kind"
+    # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
+    # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
+    # chunk alone), so it is not published. One that holds anything but custom sections fails the
+    # build, as the kinds would then miss what it holds.
+    if [ "$module_kind" = program ]; then
+        for split in "$module/public/assets"/chunk_*_split-*.wasm; do
+            [ -e "$split" ] || continue
+            if ! custom_only "$split"; then
+                echo "symphony-ui: the program's shared chunk $(basename "$split") is not empty, and no kind loads it; refusing to package it" >&2
+                exit 2
+            fi
+            rm -f "$split"
+        done
+    fi
     bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
     script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
     original="$(basename "$script")"

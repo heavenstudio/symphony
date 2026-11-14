@@ -42,7 +42,7 @@ fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-# The tools' folder, as tools.sh finds it: symphony/tools, or an older build's until the move.
+# The tools' folder, as tools.sh finds it: symphony/tools in the common dir.
 tools="$(SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh" --folder)"
 dx="$tools/dx-0.7.10/bin/dx"
 export DX_HOME="$tools/dx-home"

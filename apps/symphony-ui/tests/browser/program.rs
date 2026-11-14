@@ -1,8 +1,9 @@
 //! The program (src/split.rs): the task pages with `/agents`, Reports, the chat, the menus and the
 //! task timeline share one script and main module, each kind with a chunk of its own. A move
-//! between its pages fetches the page's chunk alone, never the script or the main module again;
-//! a chunk that does not load ends in the shell's `gone` state (assets/shell.js), never a page
-//! left waiting.
+//! between its pages fetches the page's chunk alone, never the script or the main module again.
+//! The page shown before stays until the chunk is in; a chunk that does not load ends in the shell's
+//! `gone` state (assets/shell.js) with that page under its notice, never an empty page or one left
+//! waiting.
 
 use serde_json::json;
 
@@ -45,6 +46,14 @@ fn shows(chrome: &mut Chrome, selector: &str) {
         "{selector} is not shown: {:?}",
         chrome.eval("document.body.innerText.slice(0, 2000)")
     );
+}
+
+/// Whether an element `selector` names is drawn, none of its parents hidden.
+fn drawn(chrome: &mut Chrome, selector: &str) -> bool {
+    chrome.eval(&format!(
+        "[...document.querySelectorAll({})].some(element => element.getClientRects().length > 0)",
+        json!(selector)
+    )) == json!(true)
 }
 
 /// How many times the stand-in was asked for each of `files`.
@@ -99,6 +108,44 @@ fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_pro
     );
 }
 
+#[test]
+fn a_move_into_a_program_page_keeps_the_page_before_shown_until_its_chunk_is_in() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    shows(&mut chrome, "[data-slug='tools/example']");
+    // Each kind the program's loader is asked for, in turn, as the program's script installs it.
+    chrome.eval(
+        "(() => { let loader; Object.defineProperty(globalThis, 'reviewChunk', { configurable: true, get: () => loader, set: load => { loader = kind => { (window.__asked ||= []).push(kind); return load(kind); }; } }); })()",
+    );
+    let chunk = module(dist(), "tasks").chunk().clone();
+    site.hold_route(&chunk, true);
+    follow(&mut chrome, "/task/visual/in-progress");
+    // Asked for the task pages' chunk, which is held, the move waits on it alone: the board stays
+    // shown, its header with it, until the chunk is in.
+    assert!(
+        chrome.wait_for("window.__asked?.includes('tasks') === true", SHOWN),
+        "the task pages' chunk is never asked for: {:?}",
+        chrome.eval("window.__asked")
+    );
+    assert_eq!(
+        chrome.eval("document.documentElement.dataset.navigation"),
+        json!("loading")
+    );
+    assert!(
+        drawn(&mut chrome, "[data-slug='tools/example']"),
+        "the board is hidden before the task page can draw"
+    );
+    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
+    assert!(!drawn(&mut chrome, "article.task"));
+    site.hold_route(&chunk, false);
+    shows(&mut chrome, "article.task");
+    assert!(
+        !drawn(&mut chrome, "[data-slug='tools/example']"),
+        "the board is hidden once the task page draws"
+    );
+}
+
 /// The page's own shell, as its script names it.
 fn shell(chrome: &mut Chrome) -> String {
     chrome
@@ -139,6 +186,13 @@ fn a_page_whose_chunk_does_not_load_ends_in_the_gone_state_never_left_waiting() 
     );
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
     assert_eq!(loads(&site), 0, "{:?}", site.requests());
+    // What it leaves on screen: the task page and its header, under the notice.
+    assert!(
+        drawn(&mut chrome, "article.task"),
+        "the task page is hidden under the notice"
+    );
+    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
+    assert!(!drawn(&mut chrome, "[data-ready=reports]"));
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");

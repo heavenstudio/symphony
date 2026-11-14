@@ -196,7 +196,8 @@ if [ "$kind" = program ]; then
     # dx --wasm-split's output, which the real split-repair reads: the program dx linked, with its
     # linking section; a main module that defines its memory and holds the program's data ("ok",
     # or PROGRAM_DATA when a case asks for another); an empty chunk for each split point and the
-    # empty shared one; a script naming every module; the page naming the script.
+    # shared one, a custom section alone as dx leaves it (a type section too when a case sets
+    # PROGRAM_SHARED); a script naming every module; the page naming the script.
     assets="$out/public/assets"
     linked="$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release"
     mkdir -p "$linked"
@@ -209,6 +210,8 @@ if [ "$kind" = program ]; then
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
     } > "$assets/symphony-ui-dxh2.js"
+    printf '\0\12\11producers' >> "$assets/chunk_0_split-dxh1.wasm"
+    if [ -n "${PROGRAM_SHARED:-}" ]; then printf '\1\1\0' >> "$assets/chunk_0_split-dxh1.wasm"; fi
     printf '<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n' > "$out/public/index.html"
     # Styles the other kinds load too, and the program kinds' own; and PROGRAM_STYLE, one no kind
     # takes, when a case asks for it.
@@ -405,6 +408,21 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
             "{kind}"
         );
     }
+    // The shared chunk dx leaves empty, which no kind loads, is not published.
+    let published: Vec<_> = fs::read_dir(out.join("public/assets"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert!(
+        published.iter().all(|name| !name.starts_with("chunk_")),
+        "{published:?}"
+    );
+    assert!(
+        published
+            .iter()
+            .any(|name| name.starts_with("module_0_overlay-")),
+        "{published:?}"
+    );
 }
 
 /// `cargo symphony-ui dist build/ui` run with the stand-in tools and `vars`, as the dist test runs
@@ -439,6 +457,21 @@ fn a_program_split_repair_refuses_fails_the_build_and_publishes_nothing() {
         said.contains(
             "symphony-build split-repair: symphony-ui_bg-dxh0.wasm: the main module holds"
         ),
+        "{said}"
+    );
+    assert!(!public.exists());
+}
+
+/// A shared chunk that holds anything but custom sections is refused: no kind would load it.
+#[test]
+fn a_program_shared_chunk_that_is_not_empty_fails_the_package_and_publishes_nothing() {
+    let scratch = Scratch::new("wasm-build-shared");
+    let (done, public) = dist_with(&scratch, &[("PROGRAM_SHARED", "filled")]);
+    let said = String::from_utf8_lossy(&done.stderr);
+    assert!(!done.status.success(), "{said}");
+    assert!(
+        said.contains("symphony-ui: the program's shared chunk chunk_0_split-")
+            && said.contains(".wasm is not empty, and no kind loads it; refusing to package it"),
         "{said}"
     );
     assert!(!public.exists());

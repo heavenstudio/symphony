@@ -45,12 +45,16 @@ never the whole target, which the release run runs.
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
-  the shell's `gone` state, never a page left waiting, follows. A chunk mounts its kind's root
+  the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
+  before it stops the page shown, which stays until the chunk is in, and under the shell's
+  notice when it does not load. A chunk mounts its kind's root
   in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
   of their own, under their 300,000-byte caps, which a program shared with them would pass. The
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the program's styles another kind loads too and its own by name, and refuses a style no
-  kind takes. Without `--debug-symbols false` dx 0.7 emits 260 KB of
+  kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
+  never fills, and no kind loads), and refuses one that holds more than custom sections.
+  Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
   bundle.sh runs when one is missing (`tools.sh --folder` names that folder,
@@ -322,9 +326,10 @@ never the whole target, which the release run runs.
   the task or its runs change, a newer read aborting the one before. Until then
   it is its own outline, the shape the server or this browser last saw (`Room`);
   a task nothing gates shows none, and a failed read says so in its place. In the
-  tasks module alone, a read dropped before its answer aborts its fetch
-  (`request.rs`, `page-tasks`), so every other module's transport is unchanged; a
-  post never does. As attach.rs does, it puts its own style
+  program alone (the task pages, Reports, the chat, the menus and the timeline, which
+  share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
+  `page-tasks`, which `page-program` turns on), so the board's, home's, the documents'
+  and the queue's transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups

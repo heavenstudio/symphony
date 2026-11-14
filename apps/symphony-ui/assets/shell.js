@@ -91,8 +91,12 @@ async function initialize(kind) {
         if (failed.has(kind)) await module.default({ module_or_path: spec.wasm });
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
-        return window[`reviewModule_${kind}`];
     } catch (error) { failed.add(kind); throw error; }
+    // A program kind draws nothing before its chunk is in: awaited here, the page shown before stays
+    // until then, and a chunk that does not load rejects while it still shows (chunks.js forgets the
+    // failure, so a retry fetches it again). The kind's `run` then finds the chunk in.
+    if (spec.chunk) await window.reviewChunk(kind);
+    return window[`reviewModule_${kind}`];
 }
 
 // Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
@@ -481,8 +485,9 @@ async function show(generation, scroll) {
     if (!kind) { location.reload(); return; }
     if (active?.kind !== kind) {
         const spec = modules[kind];
-        // Keep the previous page while its replacement loads. Its styles are requested with its
-        // script and wasm; insets and row geometry must apply before page effects can anchor.
+        // Keep the previous page while its replacement loads (its script, wasm and any chunk), and
+        // under the notice when it does not. Its styles are requested with its script and wasm;
+        // insets and row geometry must apply before page effects can anchor.
         const mount = mountFor(kind);
         const [imported] = await Promise.all([initialize(kind), styles(spec)]);
         if (generation !== requested) return;

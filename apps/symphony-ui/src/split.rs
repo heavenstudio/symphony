@@ -13,8 +13,9 @@
 //! The splitter's own loader (`__wasm_split_load_…`) is never imported: it logs a failed fetch and
 //! never answers, which would leave a page waiting. The program's script carries a loader of its own
 //! instead (`reviewChunk`, which package.sh writes with the kind-to-chunk map), and it rejects on any
-//! failure: a kind's `run` awaits [`Chunk::load`] before its root shows anything, so a chunk that
-//! fails rejects `run`, and the shell ends in its `gone` state (assets/shell.js).
+//! failure. The shell awaits it before it stops the page shown (assets/shell.js `initialize`), and a
+//! kind's `run` awaits [`Chunk::load`] before its root shows anything, so a chunk that fails leaves
+//! the page shown before under the shell's `gone` state, never an empty page or one left waiting.
 
 use std::cell::Cell;
 

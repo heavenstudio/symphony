@@ -1139,7 +1139,9 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser
             .requests()
             .iter()
-            .filter(|request| request.url.ends_with(&panel) && request.status == 200)
+            .filter(|request| {
+                request.url.ends_with(&panel) && request.status == 200 && !request.prefetch
+            })
             .count(),
         1,
         "reopening activity should reuse its deferred module"
