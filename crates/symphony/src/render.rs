@@ -61,6 +61,12 @@ pub struct Section {
     pub media: Vec<Media>,
 }
 
+/// `text`, Markdown, as plain HTML: converted as a document is, its headings given the ids a
+/// document's anchors name, with no card, callout, link or component of a document's.
+pub fn plain_html(text: &str) -> String {
+    markdown::convert(text)
+}
+
 /// A block of text between blank lines (a card with its whole thread, a fence whole).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
