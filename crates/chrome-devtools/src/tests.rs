@@ -627,6 +627,8 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         backstop: BACKSTOP_FLOOR,
         frame: None,
         following: false,
+        dismissing: false,
+        frame_domains: Vec::new(),
     };
     let failure = chrome
         .read(false)
@@ -1380,6 +1382,8 @@ fn with_peer<T: Send + 'static>(
         backstop,
         frame: None,
         following: false,
+        dismissing: false,
+        frame_domains: Vec::new(),
     };
     (chrome, served)
 }
@@ -1922,6 +1926,29 @@ fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
     assert!(peer.join().unwrap());
 }
 
+#[test]
+fn a_chrome_that_refuses_to_tell_of_shared_workers_still_has_frames_followed() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut refused = false;
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+            } else if command["method"] == "Target.setDiscoverTargets" {
+                // Asked of the browser's own session, and refused there.
+                refused = command["sessionId"].is_null();
+                peer.send(json!({"id": command["id"], "error": {"message": "refused fixture"}}));
+            } else {
+                peer.reply(&command, json!({}));
+            }
+        }
+        refused
+    });
+    chrome.follow_frames().unwrap();
+    assert!(chrome.following);
+    drop(chrome);
+    assert!(peer.join().unwrap());
+}
+
 /// `Target.attachedToTarget` for a target of `kind` on `session`, held there (`waiting`) or not.
 fn attached(session: &str, kind: &str, waiting: bool) -> Value {
     json!({"sessionId": "page", "method": "Target.attachedToTarget", "params": {
@@ -1930,8 +1957,7 @@ fn attached(session: &str, kind: &str, waiting: bool) -> Value {
 }
 
 #[test]
-fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and_a_worker_only_runs()
- {
+fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_before_it_runs() {
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
         // Every command but the observer's turns and the page's probes: its session, its method and
         // its parameters.
@@ -1947,17 +1973,19 @@ fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and
                 command["params"].clone(),
             ));
             // The targets the page starts, told of before the reply, as Chrome does.
-            match command["method"].as_str() {
-                Some("Fixture.before") => {
+            match (command["method"].as_str(), command["sessionId"].as_str()) {
+                (Some("Fixture.before"), _) => {
                     peer.send(attached("unfollowed", "iframe", true));
                     peer.reply(&command, json!({}));
                 }
-                Some("Target.setAutoAttach") if command["sessionId"] == "page" => {
+                (Some("Target.setAutoAttach"), Some("page")) => {
                     peer.send(attached("frame", "iframe", true));
                     peer.send(attached("worker", "worker", true));
                     peer.send(attached("running", "iframe", false));
+                    peer.send(attached("service", "service_worker", true));
                     peer.reply(&command, json!({}));
                 }
+                (Some("Target.setDiscoverTargets"), None) => peer.reply(&command, json!({})),
                 _ => {}
             }
         }
@@ -1965,6 +1993,7 @@ fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and
     });
     // Until frames are followed, a target the page starts is kept and left as it is.
     chrome.call("Fixture.before", json!({})).unwrap();
+    chrome.enable_in_frames(&["Runtime.enable", "Log.enable"]);
     chrome.follow_frames().unwrap();
     let kept: Vec<&Value> = chrome
         .events
@@ -1972,7 +2001,10 @@ fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and
         .filter(|event| event["method"] == "Target.attachedToTarget")
         .map(|event| &event["params"]["sessionId"])
         .collect();
-    assert_eq!(kept, ["unfollowed", "frame", "worker", "running"]);
+    assert_eq!(
+        kept,
+        ["unfollowed", "frame", "worker", "running", "service"]
+    );
     drop(chrome);
     let follow = json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true});
     let command = |session: &str, method: &str, params: &Value| {
@@ -1984,18 +2016,96 @@ fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and
         [
             command("page", "Fixture.before", &none),
             command("page", "Target.setAutoAttach", &follow),
-            // A held frame: its network and page events on and its own frames followed, then
-            // let run.
+            // A held frame: its network and page events on, and what was asked for frames, and its
+            // own frames followed, then let run.
             command("frame", "Network.enable", &none),
             command("frame", "Page.enable", &none),
+            command("frame", "Runtime.enable", &none),
+            command("frame", "Log.enable", &none),
             command("frame", "Target.setAutoAttach", &follow),
             command("frame", "Runtime.runIfWaitingForDebugger", &none),
-            // A worker is only let run.
+            // A held worker: its network events on and the workers it starts followed.
+            command("worker", "Network.enable", &none),
+            command("worker", "Target.setAutoAttach", &follow),
             command("worker", "Runtime.runIfWaitingForDebugger", &none),
             // A frame already running is followed and has nothing to be let do.
             command("running", "Network.enable", &none),
             command("running", "Page.enable", &none),
+            command("running", "Runtime.enable", &none),
+            command("running", "Log.enable", &none),
             command("running", "Target.setAutoAttach", &follow),
+            // Any other target is only let run.
+            command("service", "Runtime.runIfWaitingForDebugger", &none),
+            // Of the browser's own session, only to tell of shared workers: nothing attached.
+            command(
+                "",
+                "Target.setDiscoverTargets",
+                &json!({"discover": true, "filter": [{"type": "shared_worker"}]}),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_dialog_is_answered_on_the_session_it_opened_on_once_dialogs_are_dismissed_and_kept() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut answered = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            if command["method"] == "Fixture.open" {
+                // Each kind of dialog, on the page and in a followed frame, told of before the
+                // reply.
+                for (session, kind) in [
+                    ("page", "alert"),
+                    ("frame", "confirm"),
+                    ("page", "prompt"),
+                    ("page", "beforeunload"),
+                ] {
+                    peer.send(
+                        json!({"sessionId": session, "method": "Page.javascriptDialogOpening",
+                        "params": {"type": kind, "message": kind, "url": "http://a/"}}),
+                    );
+                }
+                peer.reply(&command, json!({}));
+                continue;
+            }
+            answered.push((
+                command["sessionId"].as_str().unwrap_or("").to_string(),
+                command["method"].as_str().unwrap_or("").to_string(),
+                command["params"].clone(),
+            ));
+        }
+        answered
+    });
+    // Not dismissing, a dialog is only kept.
+    chrome.call("Fixture.open", json!({})).unwrap();
+    chrome.dismiss_dialogs();
+    chrome.call("Fixture.open", json!({})).unwrap();
+    let kept = chrome
+        .events()
+        .iter()
+        .filter(|event| event["method"] == "Page.javascriptDialogOpening")
+        .count();
+    assert_eq!(kept, 8);
+    drop(chrome);
+    let answer = |session: &str, accept: bool| {
+        (
+            session.to_string(),
+            "Page.handleJavaScriptDialog".to_string(),
+            json!({"accept": accept}),
+        )
+    };
+    // Dismissed, but a beforeunload, which lets the page leave.
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            answer("page", false),
+            answer("frame", false),
+            answer("page", false),
+            answer("page", true),
         ]
     );
 }
@@ -3000,6 +3110,259 @@ fn a_frame_moving_between_processes_is_followed_by_its_id_and_only_its_removal_g
             "{url}"
         );
     }
+}
+
+/// `Page.frameNavigated` on `session`: `frame`, within `parent` (none for the page's own), went to
+/// the document of loader `loader`.
+fn navigated(session: &str, frame: &str, parent: Option<&str>, loader: &str) -> Value {
+    let mut told = json!({"id": frame, "loaderId": loader, "url": format!("http://{frame}/")});
+    if let Some(parent) = parent {
+        told["parentId"] = json!(parent);
+    }
+    on(session, "Page.frameNavigated", json!({"frame": told}))
+}
+
+/// `Page.frameAttached` on `session`: `frame` within `parent`.
+fn attached_frame(session: &str, frame: &str, parent: &str) -> Value {
+    on(
+        session,
+        "Page.frameAttached",
+        json!({"frameId": frame, "parentFrameId": parent}),
+    )
+}
+
+#[test]
+fn a_frame_going_on_to_another_document_takes_the_frames_its_document_held_along() {
+    let inner = "http://c/inner.html";
+    let events = [
+        // A frame of another site (`b`, in a process of its own, session `bs`) holds a frame of a
+        // third (`c`, session `cs`) whose document still arrives, with a picture of its own open.
+        attached_frame("page", "b", "top"),
+        navigated("bs", "b", Some("top"), "b1"),
+        attached_frame("bs", "c", "b"),
+        sent("bs", "c1", "Document", Some("c"), inner, inner),
+        on(
+            "cs",
+            "Network.responseReceived",
+            json!({"requestId": "c1", "response": {"status": 200}}),
+        ),
+        sent("cs", "picture", "Image", Some("c"), inner, "http://c/p.png"),
+        // `b` goes on to a document of the page's own site, in the page's process: its session
+        // ends, and no removal of `c` is told of.
+        sent(
+            "bs",
+            "b2",
+            "Document",
+            Some("b"),
+            "http://a/b2.html",
+            "http://a/b2.html",
+        ),
+        detached("bs"),
+        attached_frame("page", "b", "top"),
+        navigated("page", "b", Some("top"), "b2"),
+        // Its new document holds a frame of its own, still loading.
+        attached_frame("page", "d", "b"),
+        sent(
+            "page",
+            "d1",
+            "Document",
+            Some("d"),
+            "http://a/d.html",
+            "http://a/d.html",
+        ),
+    ];
+    let requests = crate::requests(&events, Some("top"));
+    // What `c` held went with `b`'s document, whatever kind.
+    assert_eq!(
+        said(&requests, inner),
+        (Some(inner), false, Some(crate::FRAME_REMOVED), true)
+    );
+    assert_eq!(
+        said(&requests, "http://c/p.png"),
+        (Some(inner), false, Some(crate::FRAME_REMOVED), true)
+    );
+    // `b` itself, and the frame its new document holds, still load.
+    for url in ["http://a/b2.html", "http://a/d.html"] {
+        assert_eq!(
+            said(&requests, url),
+            (Some(url), false, None, false),
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn a_frames_document_still_arriving_is_given_up_once_the_frame_goes_on_to_another() {
+    let [one, two, three] = ["http://a/1.html", "http://a/2.html", "http://a/3.html"];
+    let document =
+        |id: &str, frame: &str, url: &str| sent("page", id, "Document", Some(frame), url, url);
+    let mut events = vec![
+        // `f`'s first document is answered, its body still arriving, when the page sends it to a
+        // second, then a third before the second's arrival is told of.
+        document("f1", "f", one),
+        on(
+            "page",
+            "Network.responseReceived",
+            json!({"requestId": "f1", "response": {"status": 200}}),
+        ),
+        navigated("page", "f", Some("top"), "f1"),
+        document("f2", "f", two),
+        document("f3", "f", three),
+        navigated("page", "f", Some("top"), "f2"),
+        // `g` goes on to a `srcdoc` document, no request of its own, leaving its first behind; what
+        // its new one asks for after goes on.
+        document("g1", "g", "http://a/g.html"),
+        navigated("page", "g", Some("top"), "srcdoc"),
+        sent(
+            "page",
+            "g-picture",
+            "Image",
+            Some("g"),
+            "about:srcdoc",
+            "http://a/g.png",
+        ),
+        // `h`'s first document finished before it went on: it stays finished.
+        document("h1", "h", "http://a/h.html"),
+        finished("page", "h1"),
+        document("h2", "h", "http://a/h2.html"),
+        navigated("page", "h", Some("top"), "h2"),
+    ];
+    let requests = crate::requests(&events, Some("top"));
+    assert_eq!(
+        said(&requests, one),
+        (Some(one), false, Some(crate::DOCUMENT_LEFT), true)
+    );
+    // The document it went to, and a navigation started after it, still load.
+    for url in [two, three, "http://a/h2.html"] {
+        assert_eq!(
+            said(&requests, url),
+            (Some(url), false, None, false),
+            "{url}"
+        );
+    }
+    assert_eq!(
+        said(&requests, "http://a/g.html"),
+        (
+            Some("http://a/g.html"),
+            false,
+            Some(crate::DOCUMENT_LEFT),
+            true
+        )
+    );
+    assert_eq!(
+        said(&requests, "http://a/g.png"),
+        (Some("about:srcdoc"), false, None, false)
+    );
+    assert_eq!(
+        said(&requests, "http://a/h.html"),
+        (Some("http://a/h.html"), true, None, false)
+    );
+    // The third arriving leaves the second behind in turn.
+    events.push(navigated("page", "f", Some("top"), "f3"));
+    let requests = crate::requests(&events, Some("top"));
+    assert_eq!(
+        said(&requests, two),
+        (Some(two), false, Some(crate::DOCUMENT_LEFT), true)
+    );
+    assert_eq!(said(&requests, three), (Some(three), false, None, false));
+}
+
+/// `Target.attachedToTarget` on `on` for target `target` of `kind`, on session `session`, its
+/// address `url`.
+fn started(on: &str, session: &str, target: &str, kind: &str, url: &str) -> Value {
+    json!({"method": "Target.attachedToTarget", "sessionId": on, "params": {
+        "sessionId": session, "waitingForDebugger": true,
+        "targetInfo": {"targetId": target, "type": kind, "url": url}}})
+}
+
+/// `Target.targetCreated` on the browser's own session for target `target` of `kind`, its address
+/// `url`: told of by discovery, attached to nothing.
+fn created(target: &str, kind: &str, url: &str) -> Value {
+    json!({"method": "Target.targetCreated", "params": {
+        "targetInfo": {"targetId": target, "type": kind, "url": url, "attached": false}}})
+}
+
+#[test]
+fn a_followed_workers_requests_are_its_own_by_its_script_and_a_discovered_shared_workers_script_is_given_up()
+ {
+    let [dedicated, framed, late, shared, service] = [
+        "http://a/w.js",
+        "http://b/v.js",
+        "http://a/late.js",
+        "http://a/shared.js",
+        "http://a/sw.js",
+    ];
+    // The page fetching its own address: its document's, by its loader, never a worker's script.
+    let mut itself = sent(
+        "page",
+        "self",
+        "Fetch",
+        Some("top"),
+        "http://a/",
+        "http://a/",
+    );
+    itself["params"]["loaderId"] = json!("L");
+    let events = [
+        // A dedicated worker of the page: its script starts on the page's session, made for the
+        // page's frame and named by the worker's target, and ends on the worker's own.
+        sent("page", "W", "Script", Some("top"), dedicated, dedicated),
+        started("page", "ws", "W", "worker", dedicated),
+        finished("ws", "W"),
+        sent("ws", "data", "Fetch", None, dedicated, "http://a/data.json"),
+        // One of a frame in a process of its own (session `fs`): made for the frame, still a
+        // worker's, never the frame named by the worker's script.
+        sent("fs", "V", "Script", Some("inner"), framed, framed),
+        started("fs", "vs", "V", "worker", framed),
+        // A dedicated worker whose script's answer has not started: no target names it yet (it
+        // attaches only then), and a target of another kind told of by its id names nothing.
+        sent("page", "L", "Script", Some("top"), late, late),
+        created("L", "worker", late),
+        // A shared worker, which the browser runs and nothing follows: discovered, by the target
+        // its script's request is named by, its script starts on the page's session, and its
+        // answer goes to the worker.
+        created("S", "shared_worker", shared),
+        sent("page", "S", "Script", Some("top"), shared, shared),
+        itself,
+        // A service worker, not followed: its requests are its page's, as before.
+        started("page", "sws", "SW", "service_worker", service),
+        sent("sws", "cached", "Fetch", None, service, "http://a/cached"),
+        // The dedicated worker ends with its fetch still open.
+        detached("ws"),
+    ];
+    let requests = crate::requests(&events, Some("top"));
+    let whose = |url: &str| {
+        let request = requests
+            .iter()
+            .find(|request| request.url == url)
+            .unwrap_or_else(|| panic!("{url} in {requests:#?}"));
+        (
+            request.worker.as_deref(),
+            request.frame.as_deref(),
+            request.finished,
+            request.failed.as_deref(),
+            request.canceled,
+        )
+    };
+    assert_eq!(whose(dedicated), (Some(dedicated), None, true, None, false));
+    assert_eq!(
+        whose("http://a/data.json"),
+        (
+            Some(dedicated),
+            None,
+            false,
+            Some(crate::WORKER_ENDED),
+            true
+        )
+    );
+    assert_eq!(whose(framed), (Some(framed), None, false, None, false));
+    // Still open: waited for.
+    assert_eq!(whose(late), (None, None, false, None, false));
+    assert_eq!(
+        whose(shared),
+        (None, None, false, Some(crate::SHARED_WORKER_SCRIPT), true)
+    );
+    assert_eq!(whose("http://a/"), (None, None, false, None, false));
+    assert_eq!(whose("http://a/cached"), (None, None, false, None, false));
 }
 
 #[test]
