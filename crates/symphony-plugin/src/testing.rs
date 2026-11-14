@@ -7,7 +7,7 @@
 //! the test as it would fail the page.
 //!
 //! ```
-//! use symphony_plugin::protocol::{CardData, PageData, Recognises};
+//! use symphony_plugin::protocol::{CardData, Recognises};
 //! use symphony_plugin::testing::Host;
 //! use symphony_plugin::vocabulary::{Block, Span};
 //! use symphony_plugin::{Card, CardKind, Component, Page, Plugin};
@@ -31,22 +31,19 @@
 //! }
 //!
 //! let host = Host::new(&Hello);
-//! let page = PageData::of(&Page::new("/p".as_ref(), "docs/A.md").in_artifacts("out"));
+//! let page = Page::new("/p".as_ref(), "docs/A.md").in_artifacts("out");
 //! assert_eq!(
 //!     host.render(&page, "hello", "you", None),
 //!     [Block::Paragraph { spans: vec![Span::Text { text: "hello you in out/x".into() }] }]
 //! );
-//! let card = CardData {
-//!     slug: "a".into(), doc: "docs/A.md".into(), topic: "General".into(), text: "Hi".into(),
-//!     thread: Vec::new(),
-//! };
-//! assert_eq!(host.ask(Recognises { kind: "hello".into(), card }), Ok(true));
+//! let card = Card { slug: "a", doc: "docs/A.md", topic: "General", text: "Hi", thread: &[] };
+//! assert_eq!(host.ask(Recognises::new("hello".into(), CardData::of(&card))), Ok(true));
 //! ```
 
 use crate::protocol::{Answered, Ask, Declaration, Declare, PROTOCOL, PageData, Render, Request};
 use crate::serve::{Pages, answered};
 use crate::vocabulary::Block;
-use crate::{Plugin, error};
+use crate::{Page, Plugin, error};
 
 /// A host of one plugin, in this process: each call goes to the plugin as its JSON request and
 /// comes back as its JSON answer.
@@ -85,24 +82,26 @@ impl<'p> Host<'p> {
 
     /// What the plugin declares to a host of this build's protocol, the first request a host makes.
     pub fn declaration(&self) -> Result<Declaration, String> {
-        self.ask(Declare { protocol: PROTOCOL })
+        self.ask(Declare::new(PROTOCOL))
     }
 
     /// The component `component` for `argument` and `option` on `page`, as a host shows it: its
-    /// blocks, or its problem in their place ([`error`]), a refused call's included.
+    /// blocks, or its problem in their place ([`error`]), a refused call's included. Two renders on
+    /// one `page` are one render's requests, so its components share what they load
+    /// ([`Page::once`]); another `page` loads again.
     pub fn render(
         &self,
-        page: &PageData,
+        page: &Page<'_>,
         component: &str,
         argument: &str,
         option: Option<&str>,
     ) -> Vec<Block> {
-        self.ask(Render {
-            component: component.into(),
-            page: page.clone(),
-            argument: argument.into(),
-            option: option.map(str::to_string),
-        })
+        self.ask(Render::new(
+            component.into(),
+            PageData::of(page),
+            argument.into(),
+            option.map(str::to_string),
+        ))
         .and_then(|answer| answer)
         .unwrap_or_else(|problem| vec![error(&problem)])
     }
