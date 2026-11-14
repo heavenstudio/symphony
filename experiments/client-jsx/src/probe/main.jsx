@@ -5,11 +5,11 @@
 //
 // `probe.html?NAME` draws one library's probe, its chunk imported by hand so that the bytes it
 // adds are its chunk's alone; with no name the page draws only the runtime, the baseline.
-// `primitives` is Radix (a select, a menu, a dialog), `query` TanStack Query (reads, paging, a
-// feed event's re-read), `virtual` TanStack Virtual (a 2,000-card column), and `slider` a control
-// that is known not to work on Preact, to show the checks can tell. Each marks its root
-// `data-ready` once drawn; the checks are driven from outside by a headless browser
-// (README, "The probe").
+// `primitives` is Radix (a select, a menu, a dialog, tabs, a tooltip, a checkbox), `query`
+// TanStack Query (reads, paging, a feed event's re-read), `virtual` TanStack Virtual (a 2,000-card
+// column), and `slider` a control that is known not to work on Preact, to show the checks can
+// tell. Each marks its root `data-ready` once drawn; the checks are driven from outside by a
+// headless browser (README, "The probe").
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
