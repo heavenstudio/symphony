@@ -787,6 +787,24 @@ pub fn GhostBoard(shape: Vec<(String, usize)>) -> Element {
     }
 }
 
+/// The task board whose first read failed, with nothing drawn from this device: why, in the read's
+/// own words (a board not made yet names the command that makes it), and a retry, in place of the
+/// ghost, which would wait for ever. The page reads again by itself too, and draws the board once a
+/// read answers. `trouble::Trouble`'s markup, written out as the task groups' is: the component
+/// would add to the board module's first load.
+#[component]
+pub fn UnreadBoard(why: String, retry: EventHandler<()>) -> Element {
+    rsx! {
+        section { class: "trouble card unread-board", role: "status",
+            h2 { "The task board could not be read" }
+            p { "{crate::trouble::failed(&why)}" }
+            p { class: "trouble-actions",
+                crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || retry.call(())), "Retry" }
+            }
+        }
+    }
+}
+
 /// A column of the board's ghost: its status's colour, a bar for its heading, a card for each of
 /// its `count` tasks (a page's at most, as `cards` kept them) and the room of the Load more button
 /// past a page, as its column reserves them ([`first_page_height`]); Build and Test's lines of
@@ -1581,6 +1599,44 @@ mod tests {
         ] {
             assert!(!classes.contains(&real), "the ghost is a .{real}: {html}");
         }
+    }
+
+    /// A board whose first read was refused says why in place of its ghost, in the server's words
+    /// (a board not made yet names the command that makes it), with a retry, and draws none of the
+    /// board's classes nor the ghost's.
+    #[test]
+    fn a_board_whose_first_read_failed_says_why_in_place_of_its_ghost() {
+        let html = render(|| {
+            rsx! { super::UnreadBoard {
+                why: "the task board cannot be reached: the alpha board is not made yet, and a \
+                      reader never makes a board: nothing was read or written; `just tasks list` \
+                      in alpha makes it (the server answered 503)",
+                retry: |_| {},
+            } }
+        });
+        assert!(
+            html.starts_with(
+                "<section class=\"trouble card unread-board\" role=\"status\"><h2>The task board \
+                 could not be read</h2><p>the task board cannot be reached: the alpha board is not \
+                 made yet, and a reader never makes a board: nothing was read or written; `just \
+                 tasks list` in alpha makes it (the server answered 503).</p>"
+            ),
+            "{html}"
+        );
+        assert!(html.contains(">Retry</button>"), "{html}");
+        for drawn in ["ghost-", "kanban", "bone"] {
+            assert!(!html.contains(drawn), "{drawn}: {html}");
+        }
+        // A server out of reach sends the reader to the connection, as every page does.
+        let html = render(|| {
+            rsx! { super::UnreadBoard { why: crate::trouble::UNREACHABLE, retry: |_| {} } }
+        });
+        assert!(
+            html.contains(
+                "<p>The server could not be reached. Check the connection and try again.</p>"
+            ),
+            "{html}"
+        );
     }
 
     #[test]

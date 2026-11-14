@@ -321,7 +321,7 @@ fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers()
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();
     assert!(allowed_here.contains("land"), "{allowed_here:?}");
-    let tree = super::support::Tree::new();
+    let tree = super::support::Tree::checkout();
     let done = std::process::Command::new(super::common::BIN)
         .args(["init", "--root"])
         .arg(&tree.root)

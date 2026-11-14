@@ -23,6 +23,7 @@ shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
 Symphony. It starts detached, so it outlives whoever started it, and that is
 also the restart: a server that was killed is started again on the same data.
+A start says so in one line on stderr, as it takes seconds.
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -358,7 +359,10 @@ checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
 it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there.
+there. A new project's board is made by its first board command, `just tasks list`
+say, which `symphony init` lists among the steps left too while the board is not
+made: the Symphony only reads a board, and its board page says so, in the
+refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
