@@ -9,5 +9,6 @@ use regex::Regex;
 
 /// The owner's words, dated or quoted, as a line of text gives them.
 pub fn pattern() -> Regex {
-    Regex::new(r#"(?i)owner('s)?( (word|rule))?,? (of )?20\d\d-\d\d|owner's "|the owner: ""#).unwrap()
+    Regex::new(r#"(?i)owner('s)?( (word|rule))?,? (of )?20\d\d-\d\d|owner's "|the owner: ""#)
+        .unwrap()
 }

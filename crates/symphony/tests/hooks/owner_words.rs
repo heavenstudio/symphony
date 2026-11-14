@@ -133,7 +133,10 @@ fn an_attribution_is_found_dated_or_quoted_and_across_a_line_break() {
         ("a rule (the owner,\n2026-11-08: \"keep it\")", 1),
         ("the cap is the owner's of 2026-11-11: \"300\"", 1),
         ("reported beside the total (the owner's, 2026-11-11).", 1),
-        ("one Dioxus app (the owner: \"switch to it\"), the browser now", 1),
+        (
+            "one Dioxus app (the owner: \"switch to it\"), the browser now",
+            1,
+        ),
         ("That is the owner's \"stamps\" line.", 1),
         ("by the owner's word of 2026-11-12,", 1),
         ("prose first\nThe owner, 2026-11-13: \"a rerun\"", 2),
