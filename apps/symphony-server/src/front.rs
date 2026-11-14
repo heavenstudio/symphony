@@ -445,8 +445,15 @@ pub(crate) fn names_loopback(host: &str) -> bool {
 
 /// Saves own their request body; reads need only its metadata. Unknown routes end here, and so
 /// does every miss a read answers with no body (a file nothing serves, say): each is the one page
-/// or API error a miss is ([`crate::pages::missing`]).
+/// or API error a miss is ([`crate::pages::missing`]). A project whose folder no longer holds it
+/// ([`crate::live::Hub::holds_its_project`]) is answered nothing more: each read or save would reach
+/// the board of whatever checkout holds its folder, and start it.
 async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response {
+    if let Some(hub) = shared.api.get()
+        && !hub.holds_its_project()
+    {
+        return lost(&request, &hub.gone());
+    }
     if crate::write::handles(&request) {
         return crate::write::answer(&shared, request).await;
     }
@@ -483,6 +490,27 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
         return missing(&shared, &request, response.status());
     }
     response
+}
+
+/// What a project whose folder no longer holds it answers every request with: `why`, as a page to a
+/// browser loading one and as JSON to a read or a save.
+fn lost(request: &Request, why: &str) -> Response {
+    if !crate::projects::navigation(request.method(), request.headers()) {
+        return crate::pages::json(StatusCode::SERVICE_UNAVAILABLE, why);
+    }
+    let said = format!(
+        "<p><strong>The Symphony does not serve this project now</strong>: {}</p>",
+        symphony::markup::escape(why)
+    );
+    crate::pages::html(
+        StatusCode::SERVICE_UNAVAILABLE,
+        crate::pages::machine(
+            "Not served · Symphony",
+            "not served",
+            &crate::pages::notice("alert", &said),
+            "",
+        ),
+    )
 }
 
 /// A thread named `name`, running `body`.

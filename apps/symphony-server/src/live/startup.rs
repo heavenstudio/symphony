@@ -42,9 +42,12 @@ impl Hub {
             ));
         }
         drop(worker);
-        // The worker has ended, so no tick records after the hour so far is written.
-        self.stop_agents();
-        self.health.stop_hours(self.now());
+        // The worker has ended, so no tick records after the hour so far is written. A project
+        // removed under the server records nothing: its records would make its folders anew.
+        if self.holds_its_project() {
+            self.stop_agents();
+            self.health.stop_hours(self.now());
+        }
     }
 
     /// Install watcher `W` and documents. The owned worker starts its board read when activated,

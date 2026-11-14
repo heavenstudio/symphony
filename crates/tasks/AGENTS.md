@@ -48,7 +48,10 @@ entry for the repository's main checkout, else that checkout's folder name
 does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
 and the staffing lock stay there too. A fixture repository under a checkout's
-`artifacts/` is its own project, so no test reaches the board around it.
+`artifacts/` is its own project, so no test reaches the board around it. The
+Symphony reaches a project's board from the project's folder (`project::at`): a
+folder that is gone is refused as a project with no board, never walked up from
+to the checkout that held it, whose board the reach would start.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
 live board's is: a supervisor shell ends it once the process that started it
