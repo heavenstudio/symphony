@@ -201,6 +201,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 }
                 return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
             }
+            // Through `just tasks`, which an agent runs unasked, a Codex thread is the caller's own:
+            // the board writes it into the handle's launch record for a restore to resume.
+            if let Some(address) = address.as_deref() {
+                crate::launch::own_thread(c.env, address).map_err(Stop::Refused)?;
+            }
             store.callback_in(
                 &actor,
                 address.as_deref(),

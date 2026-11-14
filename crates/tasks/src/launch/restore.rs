@@ -72,6 +72,20 @@ fn restore_one(
             session.handle
         )));
     }
+    // Through a recipe an agent runs unasked, a record names a folder it makes again and starts an
+    // agent in: only one in the project ([`super::Bounds`]), whenever the record was written, and
+    // used as the check resolved it, not resolved again.
+    let worktree = match &machine.bounds {
+        Some(bounds) => bounds
+            .admit(
+                &format!("{}'s recorded worktree", session.handle),
+                Path::new(&session.worktree),
+            )
+            .map_err(Error::Refused)?
+            .to_string_lossy()
+            .into_owned(),
+        None => session.worktree.clone(),
+    };
     if let Some(terminal) = running_as(hc, &session.handle)? {
         return Err(Error::Refused(format!(
             "{} still runs in terminal {terminal}: close it before restoring",
@@ -96,16 +110,16 @@ fn restore_one(
             hold,
         )?;
     }
-    if !Path::new(&session.worktree).is_dir() {
+    if !Path::new(&worktree).is_dir() {
         if !session.branch.is_empty() && branch_exists(&machine.root, &session.branch) {
             git(
                 &machine.root,
-                &["worktree", "add", &session.worktree, &session.branch],
+                &["worktree", "add", &worktree, &session.branch],
             )?;
         } else {
             git(
                 &machine.root,
-                &["worktree", "add", "--detach", &session.worktree, "main"],
+                &["worktree", "add", "--detach", &worktree, "main"],
             )?;
         }
     }
@@ -144,7 +158,7 @@ fn restore_one(
         machine,
         &mut terminal,
         &Start {
-            cwd: &session.worktree,
+            cwd: &worktree,
             handle: &session.handle,
             stream: tab
                 .filter(|t| !t.is_empty())

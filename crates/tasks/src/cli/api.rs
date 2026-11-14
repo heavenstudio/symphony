@@ -17,6 +17,7 @@
 //! types.
 
 use super::shape;
+use crate::launch::Bounds;
 use crate::pyjson::{self, Py};
 use crate::{Beat, Error, NewAsk, NewLaunch, NewSession, NewTask, Store};
 use serde::de::DeserializeOwned;
@@ -297,6 +298,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "bind_agent" => {
             args!(agent: need, handle: actor, session: or(false));
             let (agent, handle): (String, String) = (agent, handle);
+            // Through `just tasks`, which an agent runs unasked: no binding, whose id staffing may
+            // record as the handle's conversation ([`crate::launch::may_bind`]).
+            if let Some(env) = &board.context {
+                crate::launch::may_bind(env).map_err(Fail::Refused)?;
+            }
             Py::Bool(board.get()?.bind_agent(&agent, &handle, session)?)
         }
         "agent_beat" => {
@@ -353,6 +359,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "record_launch" => {
             let new: NewLaunch = a.rest()?;
             super::check_actor(&new.handle)?;
+            // Through `just tasks`, which an agent runs unasked: no record a restore would start
+            // outside the project in, nor one naming a conversation the board did not record.
+            if let Some(bounds) = board.context.as_ref().and_then(Bounds::unasked) {
+                bounds.record(&new).map_err(Fail::Refused)?;
+            }
             shape::launch(&board.get()?.record_launch(&new)?)
         }
         "task_sessions" => {
