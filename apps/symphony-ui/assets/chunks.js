@@ -21,3 +21,17 @@ globalThis.reviewChunk = (() => {
         throw error;
     });
 })();
+
+// The program's media layer is a chunk of its own, loaded once a page shows media (src/split.rs
+// `MediaPart`), which no kind is: a load that fails leaves the page as it is, and the layer calls
+// the first of these. A gone build loads the page again, as for a kind (the shell's `gone`);
+// otherwise the shell's alert says so, whose retry shows the media again, which asks for the chunk
+// again, and the layer calls the second once it is in, which takes the alert down, as a move to
+// another page does, as the shell's own alert of a page that did not load.
+globalThis.reviewMediaFailed = async error => {
+    if (await reviewShell.gone()) return;
+    console.error("Media could not be loaded", error);
+    reviewShell.alarm("media-error", "Media could not be loaded. ", "Retry loading media", () => dispatchEvent(new Event("review:media")));
+};
+globalThis.reviewMediaLoaded = () => document.getElementById("media-error")?.remove();
+addEventListener("review:navigate", reviewMediaLoaded);

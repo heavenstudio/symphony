@@ -235,6 +235,31 @@ fn a_media_layer_whose_chunk_does_not_load_says_so_and_its_retry_loads_it() {
     );
 }
 
+/// The media layer's notice comes down once the page moves on, as the shell's own notice of a page
+/// that did not load does: the page it named is no longer shown.
+#[test]
+fn a_media_notice_comes_down_once_the_page_moves_on() {
+    let site = picture_site();
+    site.retire(&media_chunk(dist()));
+    let Some(mut chrome) = chrome() else { return };
+    show_picture(&mut chrome, &site);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#media-error[role=alert]') !== null",
+            SHOWN
+        ),
+        "a media layer that does not load is silent: {:?}",
+        site.requests()
+    );
+    follow(&mut chrome, "/tasks");
+    shows(&mut chrome, "[data-slug='tools/example']");
+    assert_eq!(
+        chrome.eval("document.getElementById('media-error') === null && window.__kept === true"),
+        json!(true),
+        "the notice stays up on the board, or the page was loaded again"
+    );
+}
+
 #[test]
 fn a_media_layer_whose_build_is_gone_loads_the_page_again() {
     let site = picture_site();

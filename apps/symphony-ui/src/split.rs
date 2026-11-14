@@ -143,10 +143,11 @@ fn use_loaded(name: &'static str, bit: u8, shown: Option<Signal<bool>>) -> bool 
     ready()
 }
 
-/// What the shell hears of a load of the media layer's chunk (assets/shell.js): one that failed
-/// (`reviewMediaFailed`, which loads the page again when its build is gone and otherwise says so
-/// with a retry), or one that worked (`reviewMediaLoaded`, which takes down the notice an earlier
-/// failure put up). Called as `fetch` calls `reviewChunk`, it needs no import of its own.
+/// What the program's chunk loader hears of a load of the media layer's chunk (assets/chunks.js):
+/// one that failed (`reviewMediaFailed`, which loads the page again when its build is gone and
+/// otherwise says so with the shell's retry), or one that worked (`reviewMediaLoaded`, which takes
+/// down the notice an earlier failure put up). Called as `fetch` calls `reviewChunk`, it needs no
+/// import of its own.
 fn media_said(loaded: Result<(), JsValue>) {
     let (name, error) = match loaded {
         Ok(()) => ("reviewMediaLoaded", JsValue::UNDEFINED),
@@ -282,7 +283,7 @@ pub(crate) fn TimelinePart() -> Element {
 /// media wait for it as they wait for the activation. A chunk that does not load leaves the page as
 /// it is and sets `needed` back, so the next media the page shows asks for it again; the shell
 /// loads the page again when its build is gone, as for a kind, and otherwise says so with a retry
-/// that shows the media again (`reviewMediaFailed`, assets/shell.js), its notice taken down once
+/// that shows the media again (`reviewMediaFailed`, assets/chunks.js), its notice taken down once
 /// the chunk is in.
 #[component]
 pub(crate) fn MediaPart(needed: Signal<bool>) -> Element {

@@ -449,8 +449,12 @@ pub struct Task {
     pub depends: Vec<String>,
     pub roles: Vec<Role>,
     pub instruction: bool,
-    /// The plugins' board fields: plugin name, then field name, then its value.
+    /// The plugins' board fields: plugin name, then field name, then its value. The browser's
+    /// client (wasm32) draws none of them, so it reads none and keeps the map empty: its reader of
+    /// the two maps and of their values, a number's text parser among it, was 18 KB gzipped of the
+    /// board's module, every first visit to /tasks.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[cfg_attr(target_arch = "wasm32", serde(skip_deserializing))]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
 }
 
