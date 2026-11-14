@@ -19,7 +19,8 @@ fn no_table_is_no_model_and_empty_tables_are_the_same_project_as_none() {
 #[test]
 fn each_roles_model_and_each_limit_is_a_setting() {
     let project = parsed(
-        "[agents.models]\norchestrator = \"fable\"\nexecutor = \"opus\"\nreviewer = \"sonnet\"\n\n\
+        "[agents.models]\norchestrator = \"fable\"\nexecutor = \"opus\"\nreviewer = \"sonnet\"\n\
+         assessor = \"haiku\"\n\n\
          [limits]\norchestrator_slots = 5\nlow_volume = 0\nmachine_agents = 6\n",
     )
     .unwrap();
@@ -29,6 +30,7 @@ fn each_roles_model_and_each_limit_is_a_setting() {
             orchestrator: Some("fable".into()),
             executor: Some("opus".into()),
             reviewer: Some("sonnet".into()),
+            assessor: Some("haiku".into()),
         }
     );
     // An `[agents]` table writing its launch inline beside them, as this repository's does.

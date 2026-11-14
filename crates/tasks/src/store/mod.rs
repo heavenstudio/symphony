@@ -673,6 +673,9 @@ impl Store {
                 body.push('\n');
                 body.push_str(&work::reason_written());
             }
+            if change.needs.is_some() {
+                body.push_str(work::NEEDS_WRITTEN);
+            }
             if change.status.is_some() {
                 body.push_str(&format!(
                     "{}\n{}",
@@ -1059,6 +1062,9 @@ struct Change {
     reason: Option<String>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
+    /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
+    /// [`Store::set_needs`]).
+    needs: Option<Value>,
 }
 
 /// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
@@ -1130,6 +1136,7 @@ impl Change {
             "updated": self.status.as_ref().map(|_| now),
             "say": say,
             "move_reason": self.reason,
+            "needs": self.needs,
         })
     }
 }

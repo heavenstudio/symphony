@@ -142,6 +142,7 @@ orchestrator_slots = 8
             "orchestrator             -       whoever starts one chooses",
             "executor                 opus    [agents] launch model, line 2",
             "reviewer                 sonnet  [agents.models] reviewer, line 5",
+            "assessor                 haiku   the smallest claude offers",
             "LEFT OUT [limits] staff (line 10): this build does not know it",
         ]
     );

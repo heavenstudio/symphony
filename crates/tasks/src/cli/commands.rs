@@ -26,6 +26,7 @@ mod finish;
 mod limits;
 mod list;
 mod panes;
+mod stamps;
 mod stats;
 mod wait;
 
@@ -303,6 +304,8 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "limits" => limits::run(store, c)?,
+        "stamps" => stamps::stamps(store, c)?,
+        "needs" => stamps::needs(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;

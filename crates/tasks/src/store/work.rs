@@ -27,6 +27,9 @@ pub(super) use given::{FENCES, Pass, gives};
 mod moves;
 use moves::Moving;
 
+mod needs;
+pub(super) use needs::NEEDS_WRITTEN;
+
 mod owner_task;
 
 mod red;

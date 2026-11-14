@@ -21,7 +21,7 @@ const SOURCES: [&str; 3] = [
 
 /// Each struct a table is read into: the source holding it, from the workspace's root, its name,
 /// and the table as the reference's heading names it.
-const TABLES: [(&str, &str, &str); 14] = [
+const TABLES: [(&str, &str, &str); 16] = [
     (FILE, "FileProject", "[project]"),
     (FILE, "FileEntrypoint", "[[entrypoints]]"),
     (FILE, "FilePlugins", "[plugins]"),
@@ -40,6 +40,8 @@ const TABLES: [(&str, &str, &str); 14] = [
     (SOURCES[1], "WipGuidance", "[board.machine_wip.MACHINE]"),
     (FILE, "FileReleases", "[releases]"),
     (FILE, "FileLimits", "[limits]"),
+    (FILE, "FileStamps", "[stamps]"),
+    ("crates/tasks/src/stamps.rs", "Written", "[stamps.NAME]"),
 ];
 
 fn read(file: &str) -> String {

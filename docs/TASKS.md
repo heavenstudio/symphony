@@ -2093,6 +2093,44 @@ still running after 60 s is abandoned and asked again; while four of one
 answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
 its own work.
 
+## Needed stamps
+
+What a task needs to land is the stamps its risk calls for, named by an assessor from one
+catalogue ([the design](analysis/needed-stamps.md)). The board holds the catalogue's reading and
+each task's needs (`crates/tasks/src/stamps.rs`); nothing reads the needs to land yet, so the
+default landing still goes by a fresh reviewer's approve ([the default
+landing](#the-default-landing)).
+
+- **The catalogue** is the project's `[stamps]` ([PROJECT_FILE](PROJECT_FILE.md#stamps)), read
+  from the main checkout's committed `symphony.toml`, so neither a branch nor an edit not yet
+  committed changes what a task is held to; with none written, the Symphony's four: `tests`,
+  `review` (needed by default, today's rule), `pictures` and `owner`. A command that reads a
+  catalogue the board cannot read (a stamp with no reader, a key no stamp has, a table naming
+  none) is refused, naming it.
+- **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
+  `met`, `applies` and `skips`, the stamps a task nobody assessed needs marked `(needed by
+  default)`. Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
+  stand (the newest assessment, its tip, who and why, or the catalogue's defaults with none);
+  `TIP`, its branch and that branch's tip in the main checkout (none before the branch is made,
+  when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
+  since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
+  for, so an assessor need not find the tests in a diff.
+- **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
+  reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
+  the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
+  HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
+  task's repository: `--tip` is resolved there to its whole commit, refused when it names none.
+  It refuses a stamp the catalogue lacks, `none` beside a stamp, an empty reason and a task
+  done or cancelled. Each write is a line on the thread, which keeps every assessment: `needs
+  tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by
+  HANDLE`.
+- **The assessor** is a role in name, with no row on the task: `just tasks needs` is refused,
+  by the rule a reviewer's verdict is held to, to a session that executed the task or work under
+  it (an instruction subtask's agent excepted), orchestrates or orchestrated it, or filed it, so
+  whoever writes the needs is none of those, and the field and its line name it. Its orchestrator
+  starts it as a session of its own, on `[agents.models] assessor` ([Limits and
+  models](#limits-and-models)).
+
 ## Subtasks
 
 A task's own executor and reviewer need no subtask: the task's brief and thread are their
@@ -2165,12 +2203,15 @@ machine_agents = 12     # the agents this machine runs
 orchestrator = "fable"
 executor = "opus"
 reviewer = "opus"
+assessor = "haiku"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
   orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
-  machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
-  launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
+  machine runs), `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
+  launch`'s `model`, else the board's own, as **Models** below says), and `assessor` the
+  smallest model its agent offers (Claude's `haiku`; for Codex, whose smallest the board does
+  not name, as for the others). `orchestrator_slots` is
   also read from `[board]` where `[limits]` names none, where a build that does not know
   `[limits]` reads it; written in both with two values, `[limits]`'s holds and the other is
   said on stderr.
@@ -2186,11 +2227,14 @@ reviewer = "opus"
   `[agents] launch`'s agent on its role's model, else on `[agents] launch`'s `model`, else on
   the board's own; `--model` and `--kind` win, and a role's model goes with the project's
   agent. No board launch starts an orchestrator: with no model written for it, whoever starts
-  one chooses. An agent starting a subagent passes the model `just tasks limits` names for the
+  one chooses. An assessor ([Needed stamps](#needed-stamps)) decides which of a few stamps
+  apply, from a diff and their guidelines, so with no model written it runs on the smallest its
+  agent offers. An agent starting a subagent passes the model `just tasks limits` names for the
   subagent's role.
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
-  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, or `default`), the
+  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the smallest claude
+  offers`, or `default`), the
   machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
   not know, left out.
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open

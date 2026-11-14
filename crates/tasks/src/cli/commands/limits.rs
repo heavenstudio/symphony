@@ -110,6 +110,7 @@ pub fn lines(
                         "model",
                     ),
                     Chosen::Board => format!("the board's own for {agent}"),
+                    Chosen::Smallest => format!("the smallest {agent} offers"),
                     Chosen::Starter => "whoever starts one chooses".into(),
                 };
                 lines.push(row(role, model.unwrap_or_else(|| "-".into()), from));

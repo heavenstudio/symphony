@@ -9,6 +9,7 @@ use symphony::project::{Entrypoint, FILE, PANES, Project, TRANSPORTS, slug};
 use super::Tree;
 mod limits;
 mod machine_work;
+mod stamps;
 
 /// A project folder called `name` inside a temporary tree.
 fn folder(tree: &Tree, name: &str) -> std::path::PathBuf {
