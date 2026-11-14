@@ -782,6 +782,16 @@ window.IntersectionObserver = class extends Observer {
     }
 };"#;
 
+/// A page script under which, once the test sets `window.__gap` to a count of milliseconds, the
+/// clocks the page reads from one frame to the next (`performance.now()` and each frame's time)
+/// run that far ahead, as after a tab hidden that long, which draws no frame meanwhile.
+const GAP: &str = "window.__gap = 0;
+(() => {
+    const now = performance.now.bind(performance), frame = window.requestAnimationFrame.bind(window);
+    performance.now = () => now() + window.__gap;
+    window.requestAnimationFrame = callback => frame(stamp => callback(stamp + window.__gap));
+})();";
+
 /// Counting frames from now (`window.__drawn`): the first in which the message `#message-7` holds
 /// the box it reserves, and the first in which its own box has taken that box's place.
 const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
@@ -791,11 +801,20 @@ const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
     if (slot && !waiting) __drawn.drawn = at; else requestAnimationFrame(() => frame(at + 1));
 })(0)";
 
+/// A message far taller than the box the thread reserves for it.
+const LONG: [&str; 4] = [
+    "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
+    "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
+    "A third, so the message stands far taller than the box the thread kept for it.",
+    "And a fourth, the last of them.",
+];
+
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     // A busy machine's frames: the message's box gives way to it frames after it is drawn.
     message_lands_above_the_composer(
         6,
+        0,
         0,
         &[
             "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread.",
@@ -805,25 +824,25 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
 
 #[test]
 fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
-    // A slow phone: the message's own box, far taller than the one it reserves, comes ninety frames
-    // after that box: the hold lasts until it is drawn, however many frames that takes.
-    message_lands_above_the_composer(
-        1,
-        90,
-        &[
-            "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
-            "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
-            "A third, so the message stands far taller than the box the thread kept for it.",
-            "And a fourth, the last of them.",
-        ],
-    );
+    // A slow phone: the message's own box comes ninety frames after the box it reserves: the hold
+    // lasts until it is drawn, however many frames that takes.
+    message_lands_above_the_composer(1, 90, 0, &LONG);
+}
+
+#[test]
+fn a_message_drawn_after_the_tab_was_hidden_leaves_the_owner_typing_in_place() {
+    // The tab hidden for forty seconds while the message waits to draw, then shown again: the page
+    // drew no frame meanwhile, so the hold's backstop has spent none of its thirty seconds of
+    // drawing, and the message's own box, ninety frames on, is still held.
+    message_lands_above_the_composer(1, 90, 40_000, &LONG);
 }
 
 /// The task's page on a phone, scrolled down to its composer with a reply typed in it, as a message
 /// of `paragraphs` lands above it from the feed on a machine `throttle` times slower, the message's
-/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]): the composer keeps its
-/// place, the focus and the reply.
-fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str]) {
+/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]), and the page's clocks
+/// `gap` ms ahead from the frame after that box is drawn ([`GAP`]): the composer keeps its place,
+/// the focus and the reply.
+fn message_lands_above_the_composer(throttle: u32, late: u32, gap: u32, paragraphs: &[&str]) {
     let site = site();
     // A thread long enough to put the composer below the first screen.
     let entries: Vec<Value> = (1..=6)
@@ -835,7 +854,7 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str
         "/api/task-history",
         &json!({"entries": entries, "before": null, "after": 6}),
     );
-    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS]) else {
+    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS, GAP]) else {
         return;
     };
     browser.open(&site.url(TASK));
@@ -895,6 +914,15 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str
         4183,
         &json!({"version": 4183, "changes": [{"region": "message", "data": message}]}).to_string(),
     );
+    if gap > 0 {
+        // The hold has begun by the time the box is drawn: it is called before the update is set.
+        assert!(
+            browser.wait_for("window.__drawn.reserved !== null", SHOWN),
+            "the message's box was never reserved: {}",
+            browser.eval(PAGE)
+        );
+        browser.eval(&format!("window.__gap = {gap}"));
+    }
     assert!(
         browser.wait_for(
             "document.querySelectorAll('#task-thread .entry').length === 7",

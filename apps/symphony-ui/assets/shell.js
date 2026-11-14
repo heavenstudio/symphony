@@ -263,9 +263,11 @@ window.reviewOverlay = request => {
 // what lands at the top. Each frame the box and then the page scroll by however far it moved, until
 // four pass with nothing moved and no reserved box within 600 px of the screen waiting to draw (its
 // `.viewport-sentinel`'s reach): however many frames that box takes, as on a slow phone, and thirty
-// seconds at most, a backstop only a box that never draws reaches (as `viewport::KEEP_MS`). A move
-// the box and the page cannot take back (one at its end) counts as nothing moved once it stays.
-// The reader's own scroll, click or key (typing in a field aside) ends the hold.
+// seconds of the page drawing at most, a backstop only a box that never draws reaches (as
+// `viewport::KEEP_MS`). The time between two frames counts a tenth of a second at most, so a
+// hidden tab, which draws none and lets nothing draw, spends none of it. A move the box and the
+// page cannot take back (one at its end) counts as nothing moved once it stays. The reader's own
+// scroll, click or key (typing in a field aside) ends the hold.
 window.reviewHoldPlace = rows => {
     const scrollerOf = node => {
         while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
@@ -281,14 +283,15 @@ window.reviewHoldPlace = rows => {
     const scroller = scrollerOf(anchor), page = scrollY > 0;
     if (scroller ? scroller.scrollTop <= 0 : !page) return;
     const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
-    const until = performance.now() + 30000;
-    let stopped = false, quiet = 0, stuck = 0;
+    let stopped = false, quiet = 0, stuck = 0, drawing = 0, last;
     const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
     const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
         const r = box.getBoundingClientRect();
         return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
     });
-    const hold = () => {
+    const hold = stamp => {
+        drawing += Math.min(stamp - (last ?? stamp), 100);
+        last = stamp;
         if (!stopped && anchor.isConnected) {
             const moved = anchor.getBoundingClientRect().top - top;
             let left = moved;
@@ -304,7 +307,7 @@ window.reviewHoldPlace = rows => {
             }
             quiet = Math.abs(moved - stuck) >= 0.5 || near() ? 0 : quiet + 1;
             stuck = left;
-            if (quiet < 4 && performance.now() < until) return requestAnimationFrame(hold);
+            if (quiet < 4 && drawing < 30000) return requestAnimationFrame(hold);
         }
         gestures.forEach(kind => removeEventListener(kind, gesture, true));
     };
