@@ -1,6 +1,9 @@
 //! Read-only board placement. Operational stages never change lifecycle or admission.
 
-use crate::{MachineWork, Task, TaskStatus, WorkFreshness, WorkKind, WorkOperation, WorkState};
+use crate::{
+    MachineObservation, MachineWork, Task, TaskStatus, WorkFreshness, WorkKind, WorkOperation,
+    WorkState,
+};
 use serde::{Deserialize, Serialize};
 
 /// Compact task board: briefs are fetched only when the owner opens a task.
@@ -61,18 +64,23 @@ impl MachineWork {
         }
         let mut stage = TaskStage::Lifecycle(&task.status);
         let mut priority = 0;
-        for operation in self.placing(Some(&task.slug)) {
-            // Queued Build < queued Test < running Build < running Test.
-            let candidate = 1
-                + 2 * u8::from(operation.state == WorkState::Running)
-                + u8::from(operation.kind == WorkKind::Test);
-            if candidate > priority {
-                priority = candidate;
-                stage = if operation.kind == WorkKind::Test {
-                    TaskStage::Test
-                } else {
-                    TaskStage::Build
-                };
+        for machine in &self.machines {
+            for operation in &machine.operations {
+                if !operation.is_for(&task.slug) || !self.can_place(machine, operation) {
+                    continue;
+                }
+                // Queued Build < queued Test < running Build < running Test.
+                let candidate = 1
+                    + 2 * u8::from(operation.state == WorkState::Running)
+                    + u8::from(operation.kind == WorkKind::Test);
+                if candidate > priority {
+                    priority = candidate;
+                    stage = if operation.kind == WorkKind::Test {
+                        TaskStage::Test
+                    } else {
+                        TaskStage::Build
+                    };
+                }
             }
         }
         stage
@@ -85,41 +93,37 @@ impl MachineWork {
     /// without the work (`work=0`), so the board reads its counts and columns again only when
     /// this is false. Two works placing alike in another order count as different.
     pub fn places_alike(&self, other: &MachineWork) -> bool {
-        fn key(op: &WorkOperation) -> (Option<&str>, &[String], bool, bool) {
-            (
-                op.task.as_deref(),
-                op.under.as_slice(),
-                op.kind == WorkKind::Test,
-                op.state == WorkState::Running,
-            )
+        fn placing(work: &MachineWork) -> Vec<(&Option<String>, &Vec<String>, bool, bool)> {
+            let mut placing = Vec::new();
+            for machine in &work.machines {
+                for operation in &machine.operations {
+                    if work.can_place(machine, operation) {
+                        placing.push((
+                            &operation.task,
+                            &operation.under,
+                            operation.kind == WorkKind::Test,
+                            operation.state == WorkState::Running,
+                        ));
+                    }
+                }
+            }
+            placing
         }
-        self.placing(None).map(key).eq(other.placing(None).map(key))
+        placing(self) == placing(other)
     }
 
-    /// The operations that can place a task in Build or Test, `slug`'s alone when it names one,
-    /// in the machines' order: current evidence on a fresh or partial machine, recorded by that
-    /// machine, with an operation id, of a build or a test, which no other report of the same
-    /// operation contradicts (looked for last, among every machine's).
-    fn placing<'a>(&'a self, slug: Option<&'a str>) -> impl Iterator<Item = &'a WorkOperation> {
-        self.machines
-            .iter()
-            .filter(|machine| {
-                matches!(
-                    machine.freshness,
-                    WorkFreshness::Fresh | WorkFreshness::Incomplete
-                )
-            })
-            .flat_map(|machine| {
-                machine.operations.iter().filter(move |operation| {
-                    operation.machine_id.as_deref() == Some(&machine.machine_id)
-                })
-            })
-            .filter(move |operation| {
-                slug.is_none_or(|slug| operation.is_for(slug))
-                    && !operation.operation_id.as_deref().is_none_or(str::is_empty)
-                    && matches!(operation.kind, WorkKind::Build | WorkKind::Test)
-                    && !self.conflicts(operation)
-            })
+    /// Whether `operation`, as `machine` reports it, can place a task in Build or Test: current
+    /// evidence on a fresh or partial machine, recorded by that machine, with an operation id, of
+    /// a build or a test, which no other report of the same operation contradicts (looked for
+    /// last, among every machine's).
+    fn can_place(&self, machine: &MachineObservation, operation: &WorkOperation) -> bool {
+        matches!(
+            machine.freshness,
+            WorkFreshness::Fresh | WorkFreshness::Incomplete
+        ) && operation.machine_id.as_deref() == Some(&machine.machine_id)
+            && !operation.operation_id.as_deref().is_none_or(str::is_empty)
+            && matches!(operation.kind, WorkKind::Build | WorkKind::Test)
+            && !self.conflicts(operation)
     }
 
     fn conflicts(&self, operation: &WorkOperation) -> bool {

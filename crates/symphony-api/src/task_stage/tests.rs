@@ -302,8 +302,12 @@ fn a_heartbeat_places_alike_and_so_does_what_places_no_task() {
     }
     // What can place no task: a command, a reservation, another machine's report on this one, an
     // operation with no id, a machine whose evidence is stale, and work assigned to no machine.
-    machine.operations.push(operation("command", "running", "c"));
-    machine.operations.push(operation("reservation", "queued", "r"));
+    machine
+        .operations
+        .push(operation("command", "running", "c"));
+    machine
+        .operations
+        .push(operation("reservation", "queued", "r"));
     machine.operations.push(WorkOperation {
         machine_id: Some("foreign".into()),
         ..operation("build", "running", "f")

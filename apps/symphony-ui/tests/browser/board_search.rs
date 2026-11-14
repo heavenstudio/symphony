@@ -75,12 +75,18 @@ fn site() -> Site {
     site.set_json(&counts_read(), &listing(&[], &both));
     site.set_json(
         &column_read("ready"),
-        &listing(&[("found/ready-a", "ready"), ("found/ready-b", "ready")], &both),
+        &listing(
+            &[("found/ready-a", "ready"), ("found/ready-b", "ready")],
+            &both,
+        ),
     );
     site.set_json(
         &column_read("in_progress"),
         &listing(
-            &[("found/doing-a", "in_progress"), ("found/doing-b", "in_progress")],
+            &[
+                ("found/doing-a", "in_progress"),
+                ("found/doing-b", "in_progress"),
+            ],
             &both,
         ),
     );
@@ -117,14 +123,19 @@ fn search(site: &Site, chrome: &mut Chrome, from: usize) {
         "const input = document.querySelector('input[type=search]'); input.value = '{WORD}'; \
          input.dispatchEvent(new Event('input', {{bubbles: true}})); true"
     ));
-    until(chrome, site, "the search's counts answered and both columns asked", || {
-        let asked = searched(site, from);
-        site.answers("/api/task-board")
-            .iter()
-            .any(|answer| answer.target == counts_read() && answer.status == 200)
-            && asked.contains(&column_read("ready"))
-            && asked.contains(&column_read("in_progress"))
-    });
+    until(
+        chrome,
+        site,
+        "the search's counts answered and both columns asked",
+        || {
+            let asked = searched(site, from);
+            site.answers("/api/task-board")
+                .iter()
+                .any(|answer| answer.target == counts_read() && answer.status == 200)
+                && asked.contains(&column_read("ready"))
+                && asked.contains(&column_read("in_progress"))
+        },
+    );
 }
 
 /// The search's reads the stand-in was asked since `from`, in order.
@@ -243,7 +254,12 @@ fn a_search_draws_the_columns_it_read_while_the_refresh_a_message_asked_for_wait
         "the answers read before the message were dropped, the refresh held: {:#?}",
         site.targets()
     );
-    assert_eq!(rounds(&site, from), [2, 1, 1], "{:#?}", searched(&site, from));
+    assert_eq!(
+        rounds(&site, from),
+        [2, 1, 1],
+        "{:#?}",
+        searched(&site, from)
+    );
     // The refresh goes on once its counts answer: each column read once more, its cards kept.
     site.hold_route(&counts_read(), false);
     until(&mut chrome, &site, "the refresh's columns answered", || {
@@ -257,5 +273,10 @@ fn a_search_draws_the_columns_it_read_while_the_refresh_a_message_asked_for_wait
         })
     });
     assert!(chrome.wait_for(FOUND, SHOWN));
-    assert_eq!(rounds(&site, from), [2, 2, 2], "{:#?}", searched(&site, from));
+    assert_eq!(
+        rounds(&site, from),
+        [2, 2, 2],
+        "{:#?}",
+        searched(&site, from)
+    );
 }
