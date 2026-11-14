@@ -573,7 +573,9 @@ A step moves what it can and nothing more:
   --staged --worktree -- PATH`) when and only when its index entry and its file still hold exactly
   what the move wrote, so nothing of its owner's, staged or not, is touched. One that holds
   anything else is left and named, with the command that puts that one path back (`git -C ROOT
-  restore --staged --worktree -- PATH`).
+  restore --staged --worktree -- PATH`). One that holds what the move wrote and that the run could
+  not put back, or could not read, is named with the command that puts it back (`git -C ROOT
+  restore --source=TIP --staged --worktree -- PATH`), and the step is red.
 - **Its board.** In every refresh but one that leaves its pin beside the release or whose commit
   gate refused the move, the project's live board is moved to the schema of the pin its main locks
   then: the release once its main took it, or an older pin whose schema it is still behind, so a
@@ -600,8 +602,9 @@ A step moves what it can and nothing more:
 Each step ends in one of three:
 
 - **Moved**: all its project could take, it took. Green.
-- **The project's to finish**: its own commit gate refused the move (no branch made, the gate's
-  last lines kept in the step's log); or its hooks refused the fast-forward, or its main checkout
+- **The project's to finish**: its own commit gate refused the move (its hook made `git commit`
+  exit 1; no branch made, the gate's last lines kept in the step's log); or its hooks refused the
+  fast-forward with its main still where it was read, or its main checkout
   is off its default branch or holds tracked edits (the branch `symphony/RELEASE` left for its own
   landing or its owner, its main as it was, its board moved only to the schema of the pin that main
   locks). What stopped it is the project's own, a Symphony change its gate refuses among it, met
@@ -611,10 +614,13 @@ Each step ends in one of three:
   refresh-ID the project's to finish`), the run's record (the step named in `refreshed.theirs`, its
   line in `refreshed.said`) and `--status`.
 - **Red**: the refresh's own work failed. The registry or the release's packages cannot be read, a
-  worktree cannot be made, a lock cannot be moved to the release, a branch is found changed under
-  it (more than the move, or its main moved on while the move was made), a snapshot or a migrate
-  fails, or a board's database is not running or could be replaced by the move. A move its project
-  stopped whose board then fails to move is red too.
+  worktree cannot be made, a lock cannot be moved to the release, the move's commit fails otherwise
+  than by its gate's exit 1 (git's own failure, exit 128, or a commit that could not run), a branch
+  is found changed under it (more than the move, or its main moved on while the move was made or
+  asked for), where its main checkout stands cannot be read, a file the move wrote into that
+  checkout cannot be put back, a snapshot or a migrate fails, or a board's database is not running
+  or could be replaced by the move. A refusal met once the run's time was up or it was told to stop
+  is red, as the run's own, and so is a move its project stopped whose board then fails to move.
 
 A red step says what it found, the release stands (its tag is pushed), and the run exits 1. A red
 before its main moved leaves that main as it was, with the branch made and its board moved only to
@@ -684,8 +690,9 @@ last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 202
 ```
 
 It names each red step and its log, and each step that is its project's to finish (`refresh-ID
-the project's to finish, filed nowhere here; log …`), then, under one of those, what stays by hand
-(*The refresh*, above). The next run is `due` once the count is reached, or the release
+the project's to finish, filed nowhere here; log …`), counted on its first line (`last refresh:
+green, 1 step left to its project, of …`), then, under one of those, what stays by hand (*The
+refresh*, above). The next run is `due` once the count is reached, or the release
 candidate's rerun or drop makes it so, `held for the release candidate` while a red of it waits,
 `in progress` while a run holds the lock, or `off` when `every_landings` is 0. It reads the record
 and this checkout's tags and refs, fetches nothing and writes nothing, so a land the candidate has

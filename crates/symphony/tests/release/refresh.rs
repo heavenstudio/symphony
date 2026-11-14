@@ -544,7 +544,7 @@ fn a_commit_gate_that_refuses_the_move_is_the_projects_to_finish_and_filed_nowhe
         out.contains(&said)
             && out.contains(
                 "exited 1: the gate is red), so nothing of consumer moved: no branch was made, and \
-                 its main is as it was; what its gate refuses (its last lines are in this step's \
+                 its main is as it was: what its gate refuses (its last lines are in this step's \
                  log) is the project's own to meet, and once it passes an orchestrator's `just \
                  release --refresh` makes the move again\n"
             ),
@@ -595,7 +595,7 @@ fn a_commit_gate_that_refuses_the_move_is_the_projects_to_finish_and_filed_nowhe
     let status = fixture.run(NOW + 90.0, &["--status"], 0);
     assert!(
         status.contains(&format!(
-            "last refresh: green, of {RELEASE} by the run {}, ",
+            "last refresh: green, 1 step left to its project, of {RELEASE} by the run {}, ",
             run["id"].as_str().unwrap()
         )) && status.contains("\n  consumer: the project's to finish: its commit gate refused")
             && status.contains(&format!(

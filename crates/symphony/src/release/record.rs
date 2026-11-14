@@ -738,7 +738,7 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
 }
 
 /// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
-/// it and when, then each line it said (a project's pin and board, the shared server), each red
+/// it and when, and how many of its steps are left to their projects, then each line it said (a project's pin and board, the shared server), each red
 /// step with how it ended and each step that is its project's to finish, then what finishes those
 /// ([`BY_HAND`]).
 pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
@@ -748,8 +748,13 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
         return "last refresh: none recorded\n".into();
     };
     let verdict = if refresh.green() { "green" } else { "red" };
+    let left = match refresh.theirs.len() {
+        0 => String::new(),
+        1 => ", 1 step left to its project".into(),
+        n => format!(", {n} steps left to their projects"),
+    };
     let mut text = format!(
-        "last refresh: {verdict}, of {} by the run {}, {} ({})\n",
+        "last refresh: {verdict}{left}, of {} by the run {}, {} ({})\n",
         refresh.release,
         run.id,
         local(run.started_at),
@@ -1297,7 +1302,8 @@ mod tests {
         assert_eq!(
             refresh_status(&[older, newer.clone(), after], NOW),
             format!(
-                "last refresh: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
+                "last refresh: red, 1 step left to its project, of release-2026-11-12 by the run \
+                 newer, {} (1 h ago)\n  \
                  alpha: its pin is on the branch symphony/release-2026-11-12\n  \
                  gamma: the project's to finish: its main checkout is on the branch elsewhere\n  \
                  refresh-beta red: exit 101; log /l\n  \
@@ -1311,10 +1317,20 @@ mod tests {
         refresh.steps.remove(1);
         let said = refresh_status(&[newer.clone()], NOW);
         assert!(
-            said.starts_with("last refresh: green, of release-2026-11-12")
-                && said.ends_with(&format!(
-                    "refresh-gamma the project's to finish, filed nowhere here; log /l\n{by_hand}"
-                )),
+            said.starts_with(
+                "last refresh: green, 1 step left to its project, of release-2026-11-12"
+            ) && said.ends_with(&format!(
+                "refresh-gamma the project's to finish, filed nowhere here; log /l\n{by_hand}"
+            )),
+            "{said}"
+        );
+        // Two left to their projects are counted so.
+        let refresh = newer.refreshed.as_mut().unwrap();
+        refresh.steps.push(green("refresh-delta"));
+        refresh.theirs.push("refresh-delta".into());
+        let said = refresh_status(&[newer.clone()], NOW);
+        assert!(
+            said.starts_with("last refresh: green, 2 steps left to their projects, of "),
             "{said}"
         );
         // A red with none of theirs, and a green one, leave nothing by hand.
@@ -1323,7 +1339,9 @@ mod tests {
         refresh.theirs.clear();
         let said = refresh_status(&[newer], NOW);
         assert!(
-            said.contains("refresh-beta red: exit 101; log /l\n") && !said.contains("by hand"),
+            said.starts_with("last refresh: red, of ")
+                && said.contains("refresh-beta red: exit 101; log /l\n")
+                && !said.contains("by hand"),
             "{said}"
         );
         let mut green = run("green", "release", "green", NOW - 60.0);
