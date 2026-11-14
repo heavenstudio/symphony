@@ -10,7 +10,9 @@
 #     docs-audit    the docs audit, `symphony docs-audit --check`
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
-#     tests         every test target of the workspace, the browser tests among them
+#     tests         every test target of the workspace, the browser tests among them, built once and
+#                   run in lanes side by side (tools/test-lanes.sh), each lane's log in tests-lanes/
+#                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
@@ -149,7 +151,8 @@ for step in "${chosen[@]}"; do
             just --justfile "$justfile" crates-check
         ;;
     tests)
-        tests=(tools/cargo.sh test --workspace --locked --no-fail-fast)
+        tests=(tools/test-lanes.sh)
+        lanes="$logs/tests-lanes"
         if [ -n "$fresh" ]; then
             how="the tests ran against the client the client check built in this verify: $fresh"
             case " ${red[*]-} " in
@@ -158,7 +161,8 @@ for step in "${chosen[@]}"; do
                 ;;
             esac
             run tests "SYMPHONY_UI_DIST=\"\$PWD/$client/public\" ${tests[*]}" \
-                env SYMPHONY_UI_DIST="$fresh" tools/record.sh --step tests test tests "${tests[@]}"
+                env SYMPHONY_UI_DIST="$fresh" SYMPHONY_TEST_LANE_LOGS="$lanes" \
+                tools/record.sh --step tests test tests "${tests[@]}"
         else
             if [ -n "$checked" ]; then
                 why='the client check built no client'
@@ -167,7 +171,8 @@ for step in "${chosen[@]}"; do
             fi
             how="$why, so SYMPHONY_UI_DIST was unset: the browser tests built the client themselves (build/symphony-ui), red if that build failed"
             run tests "${tests[*]}" \
-                env -u SYMPHONY_UI_DIST tools/record.sh --step tests test tests "${tests[@]}"
+                env -u SYMPHONY_UI_DIST SYMPHONY_TEST_LANE_LOGS="$lanes" \
+                tools/record.sh --step tests test tests "${tests[@]}"
         fi
         printf 'verify: tests: %s\n' "$how"
         printf '\nverify: %s\n' "$how" >>"$logs/tests.log"

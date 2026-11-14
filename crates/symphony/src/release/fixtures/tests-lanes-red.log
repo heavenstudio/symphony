@@ -1,0 +1,68 @@
+   Compiling symphony-board v0.1.0 (/work/symphony-wt/release/crates/tasks)
+   Compiling symphony-app v0.1.0 (/work/symphony-wt/release/crates/symphony)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 12s
+  Executable tests/sweep/main.rs (.target/debug/deps/sweep-1a2b3c4d5e6f7081)
+  Executable tests/browser/main.rs (.target/debug/deps/browser-5e6f7a8b9c0d1e2f)
+  Executable tests/release/main.rs (.target/debug/deps/release-3c4d5e6f7a8b9c0d)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running tests/sweep/main.rs (.target/debug/deps/sweep-1a2b3c4d5e6f7081)
+
+running 2 tests
+test land::a ... FAILED
+test land::b ... ok
+
+failures:
+
+---- land::a stdout ----
+
+thread 'land::a' (11) panicked at crates/tasks/tests/sweep/land.rs:5:9:
+the land never ended
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    land::a
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+error: test failed, to rerun pass `-p symphony-board --test sweep`
+error: 1 target failed:
+    `-p symphony-board --test sweep`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s
+     Running tests/browser/main.rs (.target/debug/deps/browser-5e6f7a8b9c0d1e2f)
+
+running 1 test
+test shot::a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running tests/release/main.rs (.target/debug/deps/release-3c4d5e6f7a8b9c0d)
+
+running 1 test
+error: 2 targets failed:
+    `-p a-child-printed --lib`
+    `-p it-too --lib`
+test cut::b ... FAILED
+
+failures:
+
+---- cut::b stdout ----
+
+thread 'cut::b' (12) panicked at crates/symphony/tests/release/cut.rs:7:5:
+assertion failed: green
+
+
+failures:
+    cut::b
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s
+
+error: test failed, to rerun pass `-p symphony-app --test release`
+error: 1 target failed:
+    `-p symphony-app --test release`
+error: 2 targets failed:
+    `-p symphony-board --test sweep`
+    `-p symphony-app --test release`
+
+verify: the tests ran against the client the client check built in this verify: /work/symphony-wt/release/build/verified-client/public
