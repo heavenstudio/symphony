@@ -405,8 +405,8 @@ A reviewer launched on an instruction child resumes that child's recorded conver
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a terminal immediately, including through descendant sessions, for as
 long as it waits. A role on open work keeps it until its agent has sat idle at its prompt
-`reap::IDLE_HOUR` (the owner, 2026-11-08: "Only sessions doing active work or that will soon
-(less than one hour) have active work should be kept open"): an executor `in_progress`,
+`reap::IDLE_HOUR`, as only a session doing active work, or one that will have some within the
+hour, is kept open: an executor `in_progress`,
 `blocked` or in `review`, a reviewer of work in review, and a reviewer whose changes verdict
 returned the task to `in_progress`, awaiting its re-review. That includes landing changes posted
 as a message to the executor before it moves the task back. The hour starts again when the role
@@ -986,8 +986,8 @@ the command line run in process) and `tests/cli/api.rs`.
 a land that closed its task starts it detached (`regenerate::start`, the test's build
 `TASKS_BIN` names, else the running one, else the main checkout's), only on the
 repository's own board unless `TASKS_REGENERATE` says (`regenerate::enabled`), and
-`regenerate::admit` lets it run only under `SYMPHONY_LAND`. It is the owner's rule of
-one build of main at a time, quoted in its module doc and TASKS: it try-locks
+`regenerate::admit` lets it run only under `SYMPHONY_LAND`. One build of main runs at a time
+([TASKS](../../docs/TASKS.md#the-regenerator)): it try-locks
 `symphony/tasks/land/regenerate.lock` and writes its pid and start there (`try_hold`); a land's
 start that finds the lock held (`holder`) starts nothing and signals nothing, and one
 whose holder died finds it free. A round is never cut short; once it lets go of the lock
