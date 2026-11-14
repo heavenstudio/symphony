@@ -114,7 +114,6 @@ pub fn MediaRuntime() -> Element {
         });
         sender
     });
-    #[cfg(not(feature = "overlays"))]
     let commands = sender.clone();
     let controller = use_hook(|| Rc::new(RefCell::new(None::<Controller>)));
     use_effect(move || {
@@ -122,44 +121,37 @@ pub fn MediaRuntime() -> Element {
             *controller.borrow_mut() = Controller::new(sender.clone());
         }
     });
-    #[cfg(not(feature = "overlays"))]
-    {
-        use crate::components::deferred::{close, property, show};
-        let owner = format!("{}-pictures", crate::module::kind());
-        let callback = use_hook(move || {
-            Rc::new(Closure::<dyn FnMut(JsValue)>::new(move |value: JsValue| {
-                let direction = value.as_f64().unwrap_or_default() as isize;
-                let _ = commands.unbounded_send(if direction == 0 {
-                    Action::Close
-                } else {
-                    Action::Move(direction)
-                });
-            }))
-        });
-        let dropped = owner.clone();
-        use_drop(move || close(&dropped));
-        use_effect(move || {
-            if photos.read().is_empty() {
-                close(&owner);
-                return;
-            }
-            let request = js_sys::Object::new();
-            property(&request, "kind", &"picture".into());
-            property(&request, "owner", &owner.clone().into());
-            property(&request, "at", &JsValue::from_f64(at() as f64));
-            if let Ok(photos) = serde_wasm_bindgen::to_value(&*photos.read()) {
-                property(&request, "photos", &photos);
-            }
-            property(&request, "callback", callback.as_ref().as_ref());
-            show(&request);
-        });
-        rsx! {}
-    }
-    #[cfg(feature = "overlays")]
-    rsx! { PictureOverlay { photos: photos(), at: at(), command: move |direction: isize| {
-        if direction == 0 { photos.set(Vec::new()); }
-        else if !photos.peek().is_empty() { at.set((at() as isize + direction).rem_euclid(photos.peek().len() as isize) as usize); }
-    } } }
+    // The overlay module's host draws the viewer, for every module (components/deferred.rs).
+    use crate::components::deferred::{close, property, show};
+    let owner = format!("{}-pictures", crate::module::kind());
+    let callback = use_hook(move || {
+        Rc::new(Closure::<dyn FnMut(JsValue)>::new(move |value: JsValue| {
+            let direction = value.as_f64().unwrap_or_default() as isize;
+            let _ = commands.unbounded_send(if direction == 0 {
+                Action::Close
+            } else {
+                Action::Move(direction)
+            });
+        }))
+    });
+    let dropped = owner.clone();
+    use_drop(move || close(&dropped));
+    use_effect(move || {
+        if photos.read().is_empty() {
+            close(&owner);
+            return;
+        }
+        let request = js_sys::Object::new();
+        property(&request, "kind", &"picture".into());
+        property(&request, "owner", &owner.clone().into());
+        property(&request, "at", &JsValue::from_f64(at() as f64));
+        if let Ok(photos) = serde_wasm_bindgen::to_value(&*photos.read()) {
+            property(&request, "photos", &photos);
+        }
+        property(&request, "callback", callback.as_ref().as_ref());
+        show(&request);
+    });
+    rsx! {}
 }
 
 #[cfg(feature = "overlays")]

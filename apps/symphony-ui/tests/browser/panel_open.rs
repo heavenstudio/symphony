@@ -122,11 +122,13 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
             "the panel's styles are requested while its script is still held"
         );
         assert_eq!(asked(&mut browser, &site, &panel.script, 1), 1);
-        assert_eq!(
-            asked(&mut browser, &site, &panel.wasm, 1),
-            1,
-            "the wasm is asked for beside the held script, not after it"
-        );
+        for file in [&panel.wasm, panel.chunk()] {
+            assert_eq!(
+                asked(&mut browser, &site, file, 1),
+                1,
+                "{file} is asked for beside the held script, not after it"
+            );
+        }
         site.hold_route(&panel.script, false);
         assert!(
             browser.wait_for(
@@ -146,11 +148,14 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
             json!(1),
             "one sheet once the panel is up"
         );
-        assert_eq!(
-            asked(&mut browser, &site, &panel.wasm, 1),
-            1,
-            "the module's initializer took the preloaded wasm, no second request"
-        );
+        for file in [&panel.wasm, panel.chunk()] {
+            assert_eq!(
+                asked(&mut browser, &site, file, 1),
+                1,
+                "the program's initializer and chunk loader took the preloaded {file}, no second \
+                 request"
+            );
+        }
     }
 }
 
@@ -202,11 +207,17 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
+    // The chat and the menus are the program's: its script and main module, and a chunk each.
+    assert_eq!(
+        (&overlay.script, &overlay.wasm),
+        (&panel.script, &panel.wasm)
+    );
     let (warmed, requests) = settled(&mut browser);
-    for file in [&panel.script, &panel.wasm, &overlay.script, &overlay.wasm] {
+    let files = [&panel.script, &panel.wasm, panel.chunk(), overlay.chunk()];
+    for file in files {
         assert!(warmed.contains(file), "{file} is not warmed: {warmed:?}");
     }
-    for file in [&panel.script, &panel.wasm, &overlay.script, &overlay.wasm] {
+    for file in files {
         assert!(
             requests
                 .iter()
@@ -220,7 +231,7 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "first visit {} bytes; warmed at idle, outside it: {prefetched} bytes",
         needed_bytes(&requests)
     );
-    for file in [&panel.script, &panel.wasm] {
+    for file in [&panel.script, &panel.wasm, panel.chunk()] {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
@@ -232,7 +243,7 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "window.reviewPanelReady === true && document.querySelector('#quick-text') !== null",
         SHOWN
     ));
-    for file in [&panel.script, &panel.wasm] {
+    for file in [&panel.script, &panel.wasm, panel.chunk()] {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
@@ -255,34 +266,37 @@ fn linked(browser: &mut Chrome, files: &[&String]) -> Vec<bool> {
 }
 
 #[test]
-fn an_idle_page_warms_the_menus_only_once_the_chat_s_wasm_is_in() {
+fn an_idle_page_warms_the_menus_only_once_the_chat_s_chunk_is_in() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
-    site.hold_route(&panel.wasm, true);
+    site.hold_route(panel.chunk(), true);
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     assert_eq!(
-        asked(&mut browser, &site, &panel.wasm, 1),
+        asked(&mut browser, &site, panel.chunk(), 1),
         1,
-        "the chat's wasm is warmed"
+        "the chat's chunk is warmed"
     );
     browser.pump(Duration::from_millis(500));
     assert_eq!(
-        linked(
-            &mut browser,
-            &[&panel.script, &overlay.script, &overlay.wasm]
-        ),
-        [true, false, false],
-        "the chat's files are warmed together, the menus' wait for its wasm"
+        linked(&mut browser, &[&panel.script, &panel.wasm, overlay.chunk()]),
+        [true, true, false],
+        "the chat's files are warmed together, the menus' chunk waits for the chat's"
     );
-    assert_eq!(asked(&mut browser, &site, &overlay.wasm, 0), 0);
-    site.hold_route(&panel.wasm, false);
+    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
+    site.hold_route(panel.chunk(), false);
     let (warmed, _) = settled(&mut browser);
-    for file in [&overlay.script, &overlay.wasm] {
-        assert!(warmed.contains(file), "{file} is not warmed: {warmed:?}");
-    }
-    assert_eq!(asked(&mut browser, &site, &overlay.wasm, 1), 1);
+    assert!(
+        warmed.contains(overlay.chunk()),
+        "the menus' chunk is not warmed: {warmed:?}"
+    );
+    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
+    assert_eq!(
+        asked(&mut browser, &site, &panel.wasm, 1),
+        1,
+        "the menus' main module is the chat's, warmed once"
+    );
 }
 
 #[test]
@@ -309,20 +323,20 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
         json!(0),
         "the chat's own load is under way and the menus wait for it"
     );
-    assert_eq!(asked(&mut browser, &site, &overlay.wasm, 0), 0);
+    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
     site.hold_route(&panel.script, false);
     assert!(browser.wait_for("window.reviewPanelReady === true", SHOWN));
     assert!(
         browser.wait_for(
             &format!(
                 "document.querySelector(`link[rel=prefetch][href=\"${{{}}}\"]`) !== null",
-                json!(overlay.wasm)
+                json!(overlay.chunk())
             ),
             SHOWN
         ),
         "the menus are warmed once the chat is up"
     );
-    assert_eq!(asked(&mut browser, &site, &overlay.wasm, 1), 1);
+    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
     assert_eq!(
         asked(&mut browser, &site, &panel.wasm, 1),
         1,

@@ -9,7 +9,14 @@
 //!   outside, storage), so the browser and the desktop window run the same app.
 //! - `live` (wasm only): the fetch and the feed.
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "page-program"), forbid(unsafe_code))]
+// The program's split points (`split`) are the one place that calls across a chunk's boundary.
+#![cfg_attr(feature = "page-program", deny(unsafe_code))]
+
+/// The program's split points: its kinds' own parts, each in a chunk of its own.
+#[cfg(all(target_arch = "wasm32", feature = "page-program"))]
+#[allow(unsafe_code)]
+mod split;
 
 #[cfg(any(
     not(target_arch = "wasm32"),
