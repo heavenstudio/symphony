@@ -146,13 +146,48 @@ impl Saves {
         })
     }
 
+    /// The scope and document name a save names: the page's `scope` and `rel`, or those a document
+    /// named `@<tree>/…` carries.
+    fn named<'a>(&self, scope: &'a str, rel: &'a str) -> Result<(&'a str, &'a str), Failure> {
+        Ok(
+            if let Some(path) = rel.trim_start_matches('/').strip_prefix('@') {
+                path.split_once('/')
+                    .ok_or_else(|| crate::project::Project::of(&self.root).not_a_document())?
+            } else {
+                (scope, rel.trim_start_matches('/'))
+            },
+        )
+    }
+
+    /// A card's save from a branch's page, as main's own when the card is main's
+    /// ([`branches::mains_card`]: main's copy of the document holds it, and the branch's page
+    /// draws main's card, or the branch's worktree is gone): its payload with its path the
+    /// document's name, saved under main's scope. None when the save stays the page's. So the
+    /// owner's line on a card main holds is main's, committed there, never left in a worktree a
+    /// land does not carry.
+    fn mains(&self, scope: &str, payload: &Value) -> Option<Value> {
+        let (scope, rel) = self.named(scope, string(payload, "path")).ok()?;
+        if scope.is_empty() {
+            return None;
+        }
+        let tree = branches::trees(&self.root)
+            .into_iter()
+            .find(|t| t.id() == scope);
+        branches::mains_card(
+            &self.root,
+            tree.as_ref().map(|t| t.path.as_path()),
+            rel,
+            string(payload, "slug"),
+        )
+        .then(|| {
+            let mut payload = payload.clone();
+            payload["path"] = json!(rel);
+            payload
+        })
+    }
+
     fn scope(&self, scope: &str, rel: &str) -> Result<(PathBuf, String), Failure> {
-        let (scope, rel) = if let Some(path) = rel.trim_start_matches('/').strip_prefix('@') {
-            path.split_once('/')
-                .ok_or_else(|| crate::project::Project::of(&self.root).not_a_document())?
-        } else {
-            (scope, rel.trim_start_matches('/'))
-        };
+        let (scope, rel) = self.named(scope, rel)?;
         let root = if scope.is_empty() {
             self.root.clone()
         } else {
@@ -234,6 +269,14 @@ impl Saves {
             return Ok(value);
         }
         drop(unpublished);
+        // The owner's line on a card main holds is main's, whichever branch's page it was given on.
+        let moved = matches!(route, "/api/decision" | "/api/message")
+            .then(|| self.mains(scope, payload))
+            .flatten();
+        let (scope, payload) = match &moved {
+            Some(moved) => ("", moved),
+            None => (scope, payload),
+        };
         // The ask this save opens or joins, if it waits on an agent's answer.
         let mut asking: Option<NewAsk> = None;
         let result = match route {

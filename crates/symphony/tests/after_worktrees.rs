@@ -6,6 +6,8 @@ mod audit;
 mod common;
 #[path = "after_worktrees/in_flight.rs"]
 mod in_flight;
+#[path = "after_worktrees/landed.rs"]
+mod landed;
 #[path = "after_worktrees/owner.rs"]
 mod owner;
 #[path = "after_worktrees/owner_save.rs"]
@@ -379,6 +381,21 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
             assert_eq!(updated.queue.waiting[0].slug, "alpha");
         },
     );
+}
+
+#[test]
+fn a_verdict_on_a_landed_branchs_page_is_saved_on_main_and_status_agrees_with_the_page() {
+    landed::a_verdict_on_a_landed_branchs_page_is_mains();
+}
+
+#[test]
+fn a_line_on_mains_card_from_a_live_branchs_page_is_saved_on_main_and_its_own_card_stays_its() {
+    landed::a_line_on_mains_card_from_a_live_branchs_page_is_mains();
+}
+
+#[test]
+fn a_verdict_from_a_gone_worktrees_page_is_saved_on_main_when_main_holds_the_card() {
+    landed::a_verdict_from_a_gone_worktrees_page_is_mains();
 }
 
 #[test]
