@@ -930,88 +930,6 @@ fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     assert_eq!(store.get(SLUG).unwrap().status, "done");
 }
 
-/// The owner's answer on a card only the branch holds is saved into its worktree's register,
-/// uncommitted: a land of its commits would leave it behind, so it is refused, the executor told,
-/// until the answer is committed on the branch and its new tip approved; then it lands with it.
-#[test]
-fn an_owner_answer_no_commit_has_in_the_branchs_worktree_is_refused_until_committed() {
-    const DOC: &str = "docs/DECISIONS.md";
-    let r = Repo::new();
-    manifest(&r, "");
-    let register = "# Decisions\n\n<!-- register:start -->\n- [ ] **card-b** — B.\n  \
-                    [2026-11-14 01:00] agent — Posted.\n<!-- register:end -->\n";
-    let wt = branch(&r, SLUG, DOC, register);
-    let people = approved(&r, SLUG, &format!("{} is good", head(&wt, "HEAD")));
-    let answered = register.replace("- [ ]", "- [x]").replace(
-        "<!-- register:end",
-        "  [2026-11-14 01:52] owner · approved — B\n<!-- register:end",
-    );
-    write(&wt, DOC, &answered);
-    let before = head(&r.root, "main");
-    let (_, result) = landed(&r, SLUG, &people.orch);
-    let line = result.unwrap_err();
-    assert!(line.starts_with(&format!("{SLUG}'s worktree ")), "{line}");
-    assert!(
-        line.ends_with(&format!(
-            "{} ({DOC}) holds the owner's answer no commit has, which a land of its commits \
-             would leave behind",
-            wt.file_name().unwrap().to_string_lossy()
-        )),
-        "{line}"
-    );
-    assert_eq!(head(&r.root, "main"), before, "nothing landed");
-    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
-    assert_eq!(
-        told.text,
-        format!(
-            "land refused: {line}. Commit it on {SLUG} there, then move it back to review (`just \
-             tasks move {SLUG} review`) and ask its reviewer to approve the new tip naming it"
-        )
-    );
-    assert_eq!(told.recipient.as_deref(), Some("@executor"));
-    assert_eq!(fs::read_to_string(wt.join(DOC)).unwrap(), answered);
-    assert!(runs(&r).is_empty());
-
-    // Committed on the branch and approved again, it lands, the owner's answer with it.
-    git(&wt, &["commit", "-qam", "the owner's answer"]);
-    let fixed = head(&wt, "HEAD");
-    let store = &r.board.store;
-    store.move_to(SLUG, "review", &people.exe).unwrap();
-    store
-        .verdict(
-            SLUG,
-            &people.rev,
-            "approve",
-            &format!("{fixed}: carries it"),
-        )
-        .unwrap();
-    landed(&r, SLUG, &people.orch).1.unwrap();
-    assert_eq!(head(&r.root, "main^2"), fixed);
-    assert_eq!(fs::read_to_string(r.root.join(DOC)).unwrap(), answered);
-}
-
-/// An agent's own edit of the branch's documents, uncommitted, holds no owner line: the land is
-/// not refused for it.
-#[test]
-fn an_agents_uncommitted_docs_edit_without_an_owner_line_lands() {
-    const DOC: &str = "docs/DECISIONS.md";
-    let r = Repo::new();
-    manifest(&r, "");
-    let register = "# Decisions\n\n<!-- register:start -->\n- [ ] **card-b** — B.\n  \
-                    [2026-11-14 01:00] agent — Posted.\n<!-- register:end -->\n";
-    let wt = branch(&r, SLUG, DOC, register);
-    let tip = head(&wt, "HEAD");
-    let people = approved(&r, SLUG, &format!("{tip} is good"));
-    let edited = register.replace(
-        "<!-- register:end",
-        "  [2026-11-14 01:52] agent — A note no commit has.\n<!-- register:end",
-    );
-    write(&wt, DOC, &edited);
-    landed(&r, SLUG, &people.orch).1.unwrap();
-    assert_eq!(head(&r.root, "main^2"), tip);
-    assert_eq!(fs::read_to_string(r.root.join(DOC)).unwrap(), register);
-}
-
 /// The refusal of a task in `status` with no approve standing: who approves it, and by what.
 fn unapproved(slug: &str, status: &str) -> String {
     let approve = format!(
@@ -1919,6 +1837,8 @@ fn a_remote_that_cannot_be_reached_is_a_push_to_retry() {
     assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
 }
 
+#[path = "land_answers.rs"]
+mod answers;
 #[path = "land_approval.rs"]
 mod approval;
 #[path = "land_covered.rs"]

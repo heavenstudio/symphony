@@ -872,43 +872,75 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     out
 }
 
-/// Whether the owner's line on the card `slug` of the document `rel`, saved from the page of the
-/// worktree at `tree`, is main's to keep: main's copy of the document (in the checkout at
-/// `main_root`) holds the card, and the worktree is gone (`None`), its branch is in main already
-/// (landed, or with no commit of its own), or its HEAD's copy of the card is the one it forked
-/// with or main's (it did not post the card, as [`tree_scan`] reads it); for each, the branch's
-/// page draws main's card ([`page_cards`]). A card the branch posted, a draft only its worktree
-/// holds and a card main's copy lacks are the branch's: so is a card it posted that main closed
-/// since, though its page then draws main's closed card.
-pub fn mains_card(main_root: &Path, tree: Option<&Path>, rel: &str, slug: &str) -> bool {
+/// Where a branch's page was drawn from: its worktree, or, that gone, its branch by name.
+#[derive(Clone, Copy, Debug)]
+pub enum Page<'a> {
+    Tree(&'a Path),
+    Gone(&'a str),
+}
+
+/// The commit the branch `name` points at in the checkout at `root`: `Some(None)` when there is no
+/// such branch, none when git could not say. The branch is read by its ref's full name alone, so a
+/// name holding a revision's syntax (`main@{1}`) is no branch, never the commit it would name.
+fn branch_tip(root: &Path, name: &str) -> Option<Option<String>> {
+    let named = format!("refs/heads/{name}");
+    let listed = git(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)",
+            &named,
+        ],
+    )?;
+    Some(listed.lines().find_map(|line| {
+        let (refname, commit) = line.split_once('\0')?;
+        (refname == named).then(|| commit.to_string())
+    }))
+}
+
+/// Whether the owner's line on the card `slug` of the document `rel`, saved from a branch's page
+/// (`page`), is main's to keep: exactly when that page draws main's card ([`page_cards`]). Main's
+/// copy of the document (in the checkout at `main_root`) holds the card, and the branch is in main
+/// already (landed, or with no commit of its own), or its copy of the card is the one it forked
+/// with or main's (it did not post the card, as [`tree_scan`] reads it), or it posted the card and
+/// main closed its copy after every line of the page's ([`one::stale`], main's copy as main's file
+/// holds it). The branch is read at its worktree's HEAD, or, the worktree gone, at the branch's
+/// tip: its page was drawn from it; with neither left, the card is main's. A card the branch posted
+/// that main has not closed since, a draft only its worktree holds and a card main's copy lacks
+/// are the branch's, and so is the line whenever git cannot say: the page's save then stands or
+/// fails where the owner sees it, never laid on a card the owner did not read.
+pub fn mains_card(main_root: &Path, page: Page, rel: &str, slug: &str) -> bool {
     let project = Project::of(main_root);
     let card = |text: &str| cards(text).into_iter().find(|card| card.slug == slug);
     let main_file = project.file(rel);
-    if crate::text::read_text(&main_root.join(&main_file))
+    let Some(main_card) = crate::text::read_text(&main_root.join(&main_file))
         .ok()
         .and_then(|text| card(&text))
-        .is_none()
-    {
+    else {
         return false;
-    }
-    let Some(tree) = tree else {
-        return true;
     };
     let main = &project.default_branch;
-    let (Some(head), Some(base)) = (
-        git(tree, &["rev-parse", "HEAD"]),
-        git(tree, &["merge-base", main, "HEAD"]),
-    ) else {
+    let (at, head, file) = match page {
+        Page::Tree(tree) => match git(tree, &["rev-parse", "HEAD"]) {
+            Some(head) => (tree, head.trim().to_string(), Project::of(tree).file(rel)),
+            None => return false,
+        },
+        Page::Gone(branch) => match branch_tip(main_root, branch) {
+            Some(Some(tip)) => (main_root, tip, main_file.clone()),
+            Some(None) => return true,
+            None => return false,
+        },
+    };
+    let Some(base) = git(at, &["merge-base", main, &head]) else {
         return false;
     };
-    let (head, base) = (head.trim(), base.trim());
-    let file = Project::of(tree).file(rel);
+    let base = base.trim();
     let specs = [
         format!("{head}:{file}"),
         format!("{base}:{file}"),
         format!("{main}:{main_file}"),
     ];
-    let Some(texts) = blobs(tree, &specs) else {
+    let Some(texts) = blobs(at, &specs) else {
         return false;
     };
     let Some(posted) = card(&texts[0]) else {
@@ -918,9 +950,39 @@ pub fn mains_card(main_root: &Path, tree: Option<&Path>, rel: &str, slug: &str) 
         return true;
     }
     let copy = shape(&posted);
-    texts[1..]
+    if texts[1..]
         .iter()
         .any(|text| card(text).is_some_and(|held| shape(&held) == copy))
+    {
+        return true;
+    }
+    let drawn = match page {
+        Page::Tree(tree) => page_file(tree, rel, true)
+            .into_iter()
+            .find(|card| card.slug == slug),
+        Page::Gone(_) => Some(posted),
+    };
+    drawn.is_some_and(|drawn| {
+        one::stale(
+            &main_card,
+            closed(&Plugins::of(main_root), &main_card),
+            &drawn,
+        )
+    })
+}
+
+/// The cards of the page `rel` of the checkout at `root` as its file holds them: in a worktree
+/// (`worktree`), its last committed copy while a merge stopped on it ([`crate::merging::committed`]).
+fn page_file(root: &Path, rel: &str, worktree: bool) -> Vec<Decision> {
+    let file = Project::of(root).file(rel);
+    crate::text::read_text(&root.join(&file))
+        .map(|text| {
+            let shown = worktree
+                .then(|| crate::merging::committed(root, &file, &text))
+                .flatten();
+            cards(shown.as_deref().unwrap_or(&text))
+        })
+        .unwrap_or_default()
 }
 
 /// The cards the page `rel` of the worktree at `tree_root` draws in place of its file's copies:
@@ -938,17 +1000,7 @@ pub fn page_cards(
     main_shown: &[Decision],
     marks: &PageMarks,
 ) -> Vec<Decision> {
-    let read = |root: &Path| {
-        let file = Project::of(root).file(rel);
-        crate::text::read_text(&root.join(&file))
-            .map(|text| {
-                let shown = (root != main_root)
-                    .then(|| crate::merging::committed(root, &file, &text))
-                    .flatten();
-                cards(shown.as_deref().unwrap_or(&text))
-            })
-            .unwrap_or_default()
-    };
+    let read = |root: &Path| page_file(root, rel, root != main_root);
     let file = read(tree_root);
     let main: Vec<Decision> = read(main_root)
         .into_iter()

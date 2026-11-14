@@ -183,6 +183,58 @@ pub fn artifacts(root: &Path) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+/// The convention's documents folder, read when a project file names no `[[entrypoints]]`.
+const DOCS: &str = "docs";
+
+/// The folders the Symphony reads a project's documents from, project-relative ("" the project's
+/// root), as the project file `text` names them in `[[entrypoints]] folder` and the Symphony reads
+/// them (`Project::pathspecs`): `docs` when it names none, the convention's. Where an owner's line on
+/// a card can be written. A file that does not read, or a folder outside the project (which the
+/// Symphony refuses), reads as the project's root: every folder, never one too few.
+pub fn documents(text: &str) -> Vec<String> {
+    let root = || vec![String::new()];
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return root();
+    };
+    let Some(written) = table.get("entrypoints") else {
+        return vec![DOCS.into()];
+    };
+    let Some(entries) = written.as_array() else {
+        return root();
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let Some(folder) = entry.get("folder").and_then(toml::Value::as_str) else {
+            return root();
+        };
+        let mut parts = Vec::new();
+        for part in Path::new(folder).components() {
+            match part {
+                std::path::Component::Normal(name) => match name.to_str() {
+                    Some(name) => parts.push(name),
+                    None => return root(),
+                },
+                std::path::Component::CurDir => {}
+                _ => return root(),
+            }
+        }
+        folders.push(parts.join("/"));
+    }
+    if folders.is_empty() {
+        return root();
+    }
+    folders
+}
+
+/// [`documents`] as the project file at `root` names them: the convention's with no file there.
+pub fn documents_at(root: &Path) -> Vec<String> {
+    match std::fs::read_to_string(root.join(FILE)) {
+        Ok(text) => documents(&text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => vec![DOCS.into()],
+        Err(_) => vec![String::new()],
+    }
+}
+
 /// The main checkout of the repository whose common dir is `common`: the folder holding it, when it
 /// is a `.git` folder.
 fn main_checkout(common: &Path) -> Option<&Path> {
@@ -331,6 +383,42 @@ mod tests {
             std::fs::write(root.join(FILE), text).unwrap();
             assert_eq!(artifacts(&root).as_deref(), folder, "{text}");
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_documents_are_the_entrypoints_folders_else_docs_and_the_root_when_unreadable() {
+        let entry = |folder: &str| format!("[[entrypoints]]\nurl = \"u\"\nfolder = {folder}\n");
+        for (text, folders) in [
+            ("[project]\nid = \"x\"\n".to_string(), vec!["docs"]),
+            (String::new(), vec!["docs"]),
+            (entry("\"spec\""), vec!["spec"]),
+            (
+                entry("\"./design/./notes/\"") + &entry("\"docs\""),
+                vec!["design/notes", "docs"],
+            ),
+            (entry("\".\""), vec![""]),
+            // What the Symphony refuses reads as every folder, never one too few.
+            (entry("\"../elsewhere\""), vec![""]),
+            (entry("\"/abs\""), vec![""]),
+            (entry("3"), vec![""]),
+            ("[[entrypoints]]\nurl = \"u\"\n".into(), vec![""]),
+            ("entrypoints = []\n".into(), vec![""]),
+            ("entrypoints = 3\n".into(), vec![""]),
+            ("[project\n".into(), vec![""]),
+        ] {
+            assert_eq!(documents(&text), folders, "{text}");
+        }
+        let root =
+            std::env::temp_dir().join(format!("symphony-project-documents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(documents_at(&root), ["docs"], "no file");
+        std::fs::write(root.join(FILE), entry("\"spec\"")).unwrap();
+        assert_eq!(documents_at(&root), ["spec"]);
+        std::fs::remove_file(root.join(FILE)).unwrap();
+        std::fs::create_dir(root.join(FILE)).unwrap();
+        assert_eq!(documents_at(&root), [""], "a file that does not read");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

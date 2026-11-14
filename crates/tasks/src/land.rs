@@ -17,10 +17,11 @@
 //!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
 //!    naming it. An approve that does not do sends the task back to review for a fresh one; a
 //!    conflict or a red on the tip as approved is said to its executor, which fixes it on the
-//!    branch and sends the task back to review itself, and so is a worktree on the branch that
-//!    holds an owner line no commit has ([`Landing::owner_lines`]): the owner's answer on a card
-//!    only the branch holds, which a land of its commits would leave behind. A tip the default
-//!    branch holds already is
+//!    branch and sends the task back to review itself, and so is a worktree at a commit the land
+//!    brings (on the branch, on another or detached) that holds an owner's answer no commit has
+//!    ([`Landing::owner_lines`]): the owner's answer on a card the branch posted, which a land of
+//!    its commits would leave behind. A worktree git cannot read for that refuses the land, said to
+//!    the one landing. A tip the default branch holds already is
 //!    finished only when this land recorded its merge ([`Record`]): a land interrupted after it
 //!    moved the default branch pushes the commit it checked, writes its landed line and sweeps,
 //!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded, the line
@@ -39,7 +40,8 @@
 //!    ([`Settings::main_check`]). A land runs no generator. This merge is one step,
 //!    [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted pull-request merge would
 //!    replace.
-//! 3. **Moved.** The land records its merge and the commit the check passed on, in
+//! 3. **Moved.** The owner's answers are asked again, as in 1., for one saved while the land
+//!    merged and checked. The land records its merge and the commit the check passed on, in
 //!    `symphony/tasks/land/` and on the thread (which says `checked at` only when a check ran);
 //!    then the main checkout, with no staged or tracked edit and on the default branch,
 //!    fast-forwards to what passed, so the default branch's new tree is the tree the check passed
@@ -50,7 +52,10 @@
 //!    checkout ([`Landing::fast_forward`], [`Landing::restore`]). [`MOVING`] names the move
 //!    meanwhile, so the next land restores what one killed outright left ([`Landing::recover`]).
 //!    When the default branch moved meanwhile, the merge and the check run again on its new tip,
-//!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator.
+//!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator. Once it
+//!    moved, the Symphony saves a line given on the branch's page on the default branch; an
+//!    owner's answer saved into a worktree while it moved is found after, and said on the thread
+//!    to the orchestrator ([`Landing::owner_lines_after`]).
 //! 4. **Pushed.** Unless `[land] push = false` or there is no `origin`: the default branch is
 //!    fetched from `origin`; what it gained there is merged in the same way and checked again,
 //!    never forced, its generated paths kept but where they conflict; then the default branch
@@ -83,12 +88,12 @@
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
-use crate::sweep::git::{ancestor, git, owner_lines_left, rev, succeeds, worktrees};
+use crate::sweep::git::{Answer, Listed, ancestor, answers, git, rev, succeeds, told, worktrees};
 use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{Error, Held, Message, Store, Task, Unfresh};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -246,6 +251,9 @@ pub struct Settings {
     /// orchestrator approves changes none of ([`check_paths`]); [`check_paths::DEFAULT`] unless
     /// the project names its own.
     pub check_paths: Vec<check_paths::Entry>,
+    /// The folders the project's `[[entrypoints]]` serve documents from, where the Symphony writes
+    /// the owner's answers ([`crate::project::documents`]); `docs` unless the project names its own.
+    pub documents: Vec<String>,
 }
 
 /// How long a generator or a land's check takes at most, unless the project names another `[land]
@@ -266,6 +274,7 @@ impl Default for Settings {
             push: true,
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
+            documents: crate::project::documents(""),
         }
     }
 }
@@ -371,6 +380,7 @@ impl Settings {
             push: file.land.push,
             timeout: Duration::from_secs(file.land.timeout_seconds),
             check_paths,
+            documents: crate::project::documents(text),
         })
     }
 
@@ -1776,7 +1786,8 @@ impl Landing<'_> {
         if ancestor(&self.main, &tip, &base) {
             return self.finish(&tip, &base, &approval);
         }
-        self.owner_lines().map_err(|refusal| self.refuse(refusal))?;
+        self.owner_lines(&base, &tip)
+            .map_err(|refusal| self.refuse(refusal))?;
         let covered = covered(&self.main, slug, &base, &tip, &approval).map_err(|line| {
             self.refuse(Refusal::reopening(
                 line,
@@ -1831,6 +1842,7 @@ impl Landing<'_> {
             );
             return Err(self.refuse(Refusal::here(line)));
         };
+        self.owner_lines_after(&base, &tip);
         self.close(&merge, &top, &taken, &covered, false)
     }
 
@@ -2400,6 +2412,9 @@ impl Landing<'_> {
         self.go_on(None)?;
         let recorded = matches!(merging, Merging::Tip(_));
         if let Merging::Tip(tip) = merging {
+            // Asked again right before the move: the owner may have answered while it merged
+            // and checked, and once the default branch holds the tip, nothing is refused.
+            self.owner_lines(base, tip)?;
             // Kept before the default branch moves, so a land stopped after it is one to finish,
             // and only this one.
             let record = Record {
@@ -2729,42 +2744,142 @@ impl Landing<'_> {
             .is_ok_and(|done| done.status.code() == Some(2))
     }
 
-    /// Refused while a worktree on the branch holds an owner line no commit has
-    /// ([`owner_lines_left`]): the owner's answer the Symphony saved into a card only the branch
-    /// holds, which a land of its commits would leave behind. Said to the executor, which commits it
-    /// on the branch and has the new tip approved.
-    fn owner_lines(&self) -> Result<(), Refusal> {
+    /// The worktrees holding an owner's answer that a land of `tip` onto `base` would leave behind,
+    /// each with its answers ([`answers`]): an owner's dated line under a card of the project's
+    /// documents, saved into the worktree and in no commit of it, that the tip does not hold on
+    /// that card either. A worktree counts when its HEAD is a commit the land brings (`git rev-list
+    /// TIP ^BASE`): the task's branch's, and one on another branch or detached at such a commit, as
+    /// a slice's or a reviewer's at the tip. The Symphony saves only into a worktree on a branch,
+    /// but a line stays where it was saved when its worktree is detached after. Why a worktree or
+    /// the commits could not be read, when they could not: the land cannot tell, so it refuses.
+    fn answers_left(&self, base: &str, tip: &str) -> Result<Vec<(Listed, Vec<Answer>)>, String> {
         let slug = self.slug;
-        let mut held = String::new();
-        for entry in worktrees(&self.main)? {
-            if entry
-                .branch
-                .as_deref()
-                .and_then(|b| b.strip_prefix("refs/heads/"))
-                != Some(slug)
+        let listed = worktrees(&self.main)?;
+        let range = format!("^{base}");
+        let brought = told(&self.main, &["rev-list", tip, &range])
+            .map_err(|why| format!("the commits {slug} brings could not be listed: {why}"))?;
+        let brought = String::from_utf8_lossy(&brought.stdout).into_owned();
+        let brought: BTreeSet<&str> = brought.split_whitespace().collect();
+        let mut left = Vec::new();
+        for entry in listed {
+            if entry.bare
+                || entry.prunable
+                || !entry.path.is_dir()
+                || !brought.contains(entry.head.as_str())
             {
                 continue;
             }
-            let files = owner_lines_left(&entry.path);
-            if !files.is_empty() {
-                let and = if held.is_empty() { "" } else { ", " };
-                held = format!("{held}{and}{} ({})", entry.path.display(), files.join(", "));
+            let against = (entry.head != tip).then_some(tip);
+            let found = answers(&entry.path, &self.settings.documents, against).map_err(|why| {
+                format!(
+                    "the worktree {} could not be read for the owner's answers no commit has: {why}",
+                    entry.path.display()
+                )
+            })?;
+            if !found.is_empty() {
+                left.push((entry, found));
             }
         }
+        Ok(left)
+    }
+
+    /// The worktrees [`Landing::answers_left`] found, as a refusal names them: each with the
+    /// branch it is on when that is not the task's, and its files.
+    fn holding(&self, held: &[(Listed, Vec<Answer>)]) -> String {
+        let said: Vec<String> = held
+            .iter()
+            .map(|(entry, found)| {
+                let mut files: Vec<&str> = Vec::new();
+                for answer in found {
+                    if !files.contains(&answer.file.as_str()) {
+                        files.push(&answer.file);
+                    }
+                }
+                let on = match entry
+                    .branch
+                    .as_deref()
+                    .and_then(|b| b.strip_prefix("refs/heads/"))
+                {
+                    Some(branch) if branch == self.slug => String::new(),
+                    Some(branch) => format!(" on {branch}"),
+                    None => format!(" detached at {}", short(&entry.head)),
+                };
+                format!("{}{on} ({})", entry.path.display(), files.join(", "))
+            })
+            .collect();
+        said.join(", ")
+    }
+
+    /// Refused while a worktree the land brings holds an owner's answer no commit has
+    /// ([`Landing::answers_left`]): the owner's answer the Symphony saved into a card the branch
+    /// posted, which a land of its commits would leave behind. Said to the executor, which commits
+    /// it on the branch and has the new tip approved. A worktree git cannot read refuses too, to
+    /// the one landing alone: no branch's commit fixes git, and a land that cannot tell must not
+    /// leave the answer behind. Asked before the merge and again right before the default branch
+    /// moves, so an answer saved while the land merged and checked is not left behind either.
+    fn owner_lines(&self, base: &str, tip: &str) -> Result<(), Refusal> {
+        let slug = self.slug;
+        let held = self.answers_left(base, tip).map_err(|why| {
+            Refusal::here(format!(
+                "{why}: nothing landed, as {slug} may hold the owner's answer there. Run the land \
+                 again once git reads it"
+            ))
+        })?;
         if held.is_empty() {
             return Ok(());
         }
+        let elsewhere = held
+            .iter()
+            .any(|(entry, _)| entry.branch.as_deref() != Some(&format!("refs/heads/{slug}")));
         Err(Refusal::to(
             format!(
-                "{slug}'s worktree {held} holds the owner's answer no commit has, which a land of \
-                 its commits would leave behind"
+                "{slug}'s worktree {} holds the owner's answer no commit has, which a land of its \
+                 commits would leave behind",
+                self.holding(&held)
             ),
             "@executor",
             format!(
-                "Commit it on {slug} there, then move it back to review (`just tasks move {slug} \
-                 review`) and ask its reviewer to approve the new tip naming it"
+                "Commit it on {slug} there{}, then move it back to review (`just tasks move {slug} \
+                 review`) and ask its reviewer to approve the new tip naming it",
+                if elsewhere {
+                    " (from a worktree not on it, copy the line onto its card on {slug})"
+                        .replace("{slug}", slug)
+                } else {
+                    String::new()
+                }
             ),
         ))
+    }
+
+    /// After the default branch moved: an owner's answer [`Landing::answers_left`] finds now was
+    /// saved while the default branch moved, after the last look. The land cannot refuse any more,
+    /// so it says it on the thread to the orchestrator, which puts it on the default branch's card:
+    /// from then on the Symphony saves a line on a landed branch's page on the default branch, and
+    /// the sweep keeps the worktree holding it.
+    fn owner_lines_after(&mut self, base: &str, tip: &str) {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        let said = match self.answers_left(base, tip) {
+            Ok(held) if held.is_empty() => return,
+            Ok(held) => {
+                let cards: Vec<&str> = held
+                    .iter()
+                    .flat_map(|(_, found)| found.iter().map(|a| a.card.as_str()))
+                    .collect();
+                format!(
+                    "land {slug}: {} holds the owner's answer on {} saved while {slug} landed, \
+                     which {default} does not hold: copy it onto that card on {default} and \
+                     commit it there; the sweep keeps that worktree meanwhile",
+                    self.holding(&held),
+                    cards.join(", ")
+                )
+            }
+            Err(why) => format!(
+                "land {slug}: after it landed, {why}: read it by hand for an owner's answer \
+                 {default} lacks; the sweep keeps a worktree it cannot read"
+            ),
+        };
+        self.say(&said);
+        self.post(&said, Some("@orchestrator"));
     }
 
     /// What the executor does when the branch, as approved, cannot land: fix it there and have its
