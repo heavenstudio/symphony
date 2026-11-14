@@ -499,7 +499,8 @@ impl Reached {
 /// The board of the project `env`'s working directory is in ([`crate::project::find`]), its
 /// server started if it is down, or the one `TASKS_SERVER` and `TASKS_DATABASE` name, as
 /// [`writable_board`] reaches it: what the Symphony reads a project's board from. A process Cargo
-/// runs from that project's repository is refused its live board before the server is started.
+/// runs from that project's repository is refused its live board before the server is started. A
+/// working directory that is gone is refused ([`crate::project::at`]), never walked up from.
 pub fn board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Read)
 }
@@ -552,9 +553,11 @@ fn machine(env: &Env) -> Option<PathBuf> {
     .ok()
 }
 
-/// The board of the project `cwd` is in, in that project's common dir. Every reach of a live board
-/// but a raw read's is refused to a process Cargo runs from that board's repository, or one it runs
-/// under, before its server is started ([`crate::live::cargo_refusal`]).
+/// The board of the project `cwd` is in, in that project's common dir: for the Symphony's reaches,
+/// the project whose folder `cwd` is, refused when it is gone ([`crate::project::at`]). Every
+/// reach of a live board but a raw read's is refused to a process Cargo runs from that board's
+/// repository, or one it runs under, before its server is started
+/// ([`crate::live::cargo_refusal`]).
 fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
@@ -580,7 +583,13 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
             live,
         });
     }
-    let project = crate::project::find(cwd, machine(env).as_deref())?;
+    // The Symphony reaches a project's board from the project's folder, which may have been removed
+    // under it; a command looks from where it runs.
+    let project = if matches!(how, Reaching::Read | Reaching::Peek) {
+        crate::project::at(cwd, machine(env).as_deref())?
+    } else {
+        crate::project::find(cwd, machine(env).as_deref())?
+    };
     let common = &project.place.common;
     let live = (db == DATABASE).then(|| crate::live::Live {
         project: project.id.clone(),
