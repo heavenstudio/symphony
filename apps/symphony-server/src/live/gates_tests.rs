@@ -18,13 +18,18 @@ use symphony_api::{GateState, TaskGates};
 use symphony_board::rows::MessageRow;
 
 /// `seed` with a verdict `text` by `by` on `slug`'s thread, the `id`th line, at `NOW + id`.
-fn verdict(mut seed: Seed, id: i64, slug: &str, by: &str, text: &str) -> Seed {
+fn verdict(seed: Seed, id: i64, slug: &str, by: &str, text: &str) -> Seed {
+    said(seed, (id, "verdict"), slug, by, text)
+}
+
+/// `seed` with a line of `kind`, `text` by `by`, on `slug`'s thread, the `id`th, at `NOW + id`.
+fn said(mut seed: Seed, (id, kind): (i64, &str), slug: &str, by: &str, text: &str) -> Seed {
     seed.dump.messages.push(MessageRow {
         id,
         slug: slug.into(),
         sender: by.into(),
         recipient: None,
-        kind: "verdict".into(),
+        kind: kind.into(),
         text: text.into(),
         ts: NOW + f64::from(i32::try_from(id).unwrap()),
     });
@@ -128,6 +133,14 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         (&answer["slug"], &answer["branch"], &answer["tip"]),
         (&json!("tools/x"), &json!("tools/x"), &json!(tip))
     );
+    // The Symphony's stamps no assessment needs are waived, by the defaults, beside the plugin's.
+    let by_default = |name: &str| {
+        (
+            name.to_string(),
+            GateState::Waived,
+            "Not needed by default: no assessment yet".to_string(),
+        )
+    };
     assert_eq!(
         gates(&answer),
         [
@@ -141,6 +154,9 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
                 GateState::Held,
                 "Held by its orchestrator".into()
             ),
+            by_default("tests"),
+            by_default("pictures"),
+            by_default("owner"),
             (
                 "dependency".into(),
                 GateState::Waived,
@@ -152,14 +168,14 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
                 "Approved in round 2 of 2".into()
             ),
         ],
-        "exactly the plugin's four, missing, held, waived, met"
+        "the plugin's four, missing, held, waived, met, its review in place of the Symphony's"
     );
     assert_eq!(
-        answer["gates"][2]["why"],
+        answer["gates"][5]["why"],
         "tools/slot-pool-by-tree shares no code with this branch"
     );
     // Only a path of the app or a web address reaches the page as a link.
-    let links: Vec<&Value> = (0..4).map(|i| &answer["gates"][i]["link"]).collect();
+    let links: Vec<&Value> = [0, 1, 5, 6].map(|i| &answer["gates"][i]["link"]).to_vec();
     assert_eq!(
         links,
         [
@@ -175,9 +191,10 @@ fn a_plugins_gates_come_through_the_api_what_the_task_waits_on_first() {
         (status, &page["gates"]),
         (
             StatusCode::OK,
-            &json!({"count": 4, "waiting": 2, "unsigned": 1})
+            &json!({"count": 7, "waiting": 2, "unsigned": 4})
         ),
-        "the page holds the room its gates took: the certificate alone says no one and no time"
+        "the page holds the room its gates took: the certificate and the stamps waived by default \
+         say no one and no time"
     );
     assert_eq!(calls(&root), [format!("tools/x tools/x {tip}")]);
 
@@ -268,10 +285,20 @@ fn a_plugin_that_errs_panics_or_is_slow_is_one_unknown_gate_and_the_answer_still
         GateState::Missing,
         "Not reviewed yet".to_string(),
     );
+    let by_default = |name: &str| {
+        (
+            name.to_string(),
+            GateState::Waived,
+            "Not needed by default: no assessment yet".to_string(),
+        )
+    };
     let unknown = |said: &str| {
         [
             review.clone(),
             ("shelf-gates".into(), GateState::Unknown, said.into()),
+            by_default("tests"),
+            by_default("pictures"),
+            by_default("owner"),
         ]
     };
     // A plugin that errs or panics is said so within any wait; here one only a stall outlasts.
@@ -365,6 +392,8 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     symphony_board::cli::machine_work::recorded::keep(&work, &run).unwrap();
     let seed = Seed::default()
         .task("tools/green", "done")
+        .task("tools/fixed", "done")
+        .task("tools/dropped", "cancelled")
         .task("tools/unrun", "review")
         .role("tools/unrun", "lucid-heron", "reviewer")
         .task("tools/asks", "in_progress")
@@ -383,6 +412,8 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     let f = Fixture::new(seed);
     let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
 
+    // A task done with no assessment keeps the gates it had before stamps: its approve, which
+    // names no commit (approved by time), is met, and no stamp is drawn.
     let (status, answer) = ask("/api/task-gates?slug=tools/green");
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(
@@ -404,10 +435,57 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     assert_eq!(answer["gates"][0]["past"][0]["state"], "missing");
     assert_eq!(answer["gates"][1]["by"], "quiet-wren");
     assert_eq!(answer["gates"][1]["commit"], json!(green));
+    // Done with no round, a bug fix's waiver as before; cancelled, its review missing as before.
+    let (status, answer) = ask("/api/task-gates?slug=tools/fixed");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let no_branch = |slug: &str| {
+        (
+            "check".to_string(),
+            GateState::Unknown,
+            format!("No branch {slug} in this repository"),
+        )
+    };
+    assert_eq!(
+        gates(&answer),
+        [
+            no_branch("tools/fixed"),
+            (
+                "review".into(),
+                GateState::Waived,
+                "Landed with no review verdict".into()
+            ),
+        ]
+    );
+    assert_eq!(
+        answer["gates"][1]["why"],
+        "a bug fix lands on its evidence, with a reviewer only when its risk calls for one \
+         (workflow/fast-bugfixes)"
+    );
+    let (status, answer) = ask("/api/task-gates?slug=tools/dropped");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        gates(&answer),
+        [
+            (
+                "review".into(),
+                GateState::Missing,
+                "Not reviewed yet".into()
+            ),
+            no_branch("tools/dropped"),
+        ]
+    );
 
     let (status, answer) = ask("/api/task-gates?slug=tools/unrun");
     assert_eq!(status, StatusCode::OK, "{answer}");
     let unrun = git_tip(&root, "tools/unrun");
+    // An open task's gates are its stamps, review needed by default, and the check beside them.
+    let by_default = |name: &str| {
+        (
+            name.to_string(),
+            GateState::Waived,
+            "Not needed by default: no assessment yet".to_string(),
+        )
+    };
     assert_eq!(
         gates(&answer),
         [
@@ -421,6 +499,9 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
                 GateState::Unknown,
                 format!("`just verify` has not run at {}", unrun.get(..7).unwrap())
             ),
+            by_default("tests"),
+            by_default("pictures"),
+            by_default("owner"),
         ]
     );
 
@@ -445,6 +526,8 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
                 GateState::Unknown,
                 format!("`just verify` has not run at {}", asks.get(..7).unwrap())
             ),
+            by_default("tests"),
+            by_default("pictures"),
         ]
     );
     assert_eq!(answer["gates"][1]["link"], "/docs/TOPIC.md#initial-card");
@@ -465,6 +548,337 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     assert!(
         !root.join(shelf::GATES_CALLS).exists(),
         "no plugin was asked"
+    );
+    shared.stop();
+}
+
+#[test]
+fn an_assessed_task_reads_its_stamps_at_the_tip_and_offers_the_owners_approve_until_given() {
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    git(&root, &["branch", "tools/own"]);
+    let tip = commit_on(&root, "tools/own");
+    let f = Fixture::new(Seed::default().task("tools/own", "in_progress"));
+    let assessor = f.session("worker");
+    let needs = Needs {
+        stamps: vec!["owner".into()],
+        tip: Some(tip.clone()),
+        by: assessor.clone(),
+        why: "the owner asked to see the page".into(),
+    };
+    f.store
+        .set_needs("tools/own", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let short = tip.get(..7).unwrap();
+
+    // Only the owner's stamp is needed at the tip the assessment read: it holds the task.
+    let (status, answer) = ask("/api/task-gates?slug=tools/own");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let left_out = |name: &str| {
+        (
+            name.to_string(),
+            GateState::Waived,
+            format!("Left out by the assessment at {short}"),
+        )
+    };
+    assert_eq!(
+        gates(&answer),
+        [
+            (
+                "owner".into(),
+                GateState::Held,
+                format!("Waits on the owner's approve of {short}")
+            ),
+            left_out("tests"),
+            left_out("review"),
+            left_out("pictures"),
+        ]
+    );
+    assert_eq!(answer["gates"][1]["by"], json!(assessor));
+    assert_eq!(answer["gates"][1]["why"], "the owner asked to see the page");
+
+    // The page offers the owner's approve of the tip; given, it is met and offered no more.
+    let (status, offer) = ask("/api/task-offer?slug=tools/own");
+    assert_eq!(status, StatusCode::OK, "{offer}");
+    assert_eq!(
+        offer,
+        json!({"action": "owner-approve", "label": format!("Approve {short}"),
+               "branch": "tools/own", "payload": tip})
+    );
+    let said = symphony::gates::stamps::approve_line(&tip).unwrap();
+    f.store.say("tools/own", "owner", &said, None).unwrap();
+    observe(shared.api.get().unwrap(), &f.store, &[]);
+    let (_, answer) = ask("/api/task-gates?slug=tools/own");
+    assert_eq!(
+        gates(&answer)[3],
+        (
+            "owner".into(),
+            GateState::Met,
+            format!("Approved by the owner at {short}")
+        ),
+        "{answer}"
+    );
+    let (_, offer) = ask("/api/task-offer?slug=tools/own");
+    assert_eq!(offer["payload"], Value::Null, "{offer}");
+
+    // A commit after it: the approve is stale, and the defaults are needed again.
+    git(&root, &["checkout", "-q", "tools/own"]);
+    std::fs::write(root.join("work.txt"), "more work").unwrap();
+    git(&root, &["commit", "-q", "-am", "more work"]);
+    git(&root, &["checkout", "-q", "main"]);
+    let later = git_tip(&root, "tools/own");
+    let (_, answer) = ask("/api/task-gates?slug=tools/own");
+    let now = later.get(..7).unwrap();
+    assert_eq!(
+        gates(&answer),
+        [
+            (
+                "review".into(),
+                GateState::Missing,
+                "Not reviewed yet".into()
+            ),
+            (
+                "owner".into(),
+                GateState::Held,
+                format!("The owner approved {short}, not the tip {now}")
+            ),
+            left_out("tests"),
+            left_out("pictures"),
+        ]
+    );
+    let (_, offer) = ask("/api/task-offer?slug=tools/own");
+    assert_eq!(offer["payload"], json!(later), "{offer}");
+    shared.stop();
+}
+
+/// The recorder's finished run `id` of `label`, for `task` at `commit`, its exit `code`, kept in
+/// `root`'s common dir.
+fn keep_run(root: &Path, id: u32, task: &str, label: &str, (commit, code): (&str, i32)) {
+    use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
+    let at = NOW + f64::from(id) * 60.0;
+    let run = Record {
+        version: 1,
+        operation_id: format!("{id:032x}"),
+        parent_id: None,
+        phase: Phase::Test,
+        label: label.into(),
+        state: Step::Finished,
+        handle: Some("quiet-wren".into()),
+        task: Some(task.into()),
+        checkout: root.display().to_string(),
+        branch: Some(task.into()),
+        commit: Some(commit.into()),
+        machine_id: None,
+        host: "host".into(),
+        pid: 10,
+        child_pid: Some(11),
+        queued_at: at,
+        started_at: Some(at),
+        ended_at: Some(at + 30.0),
+        beat_at: at + 30.0,
+        exit_code: Some(code),
+        signal: None,
+        reason: String::new(),
+        run: None,
+        reading: None,
+    };
+    recorded::keep(&root.join(".git/symphony/tasks/work"), &run).unwrap();
+}
+
+#[test]
+fn a_tasks_tests_stamp_reads_the_runs_of_the_work_under_it_and_no_other_tasks() {
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    git(&root, &["branch", "tools/runs"]);
+    let tip = commit_on(&root, "tools/runs");
+    let mut seed = Seed::default()
+        .task("tools/runs", "in_progress")
+        .task("tools/runs/work", "done")
+        .task("tools/runs/work/deep", "done")
+        .task("tools/other", "in_progress");
+    seed.dump
+        .tasks
+        .iter_mut()
+        .for_each(|task| match task.slug.as_str() {
+            "tools/runs/work" => task.parent = Some("tools/runs".into()),
+            "tools/runs/work/deep" => task.parent = Some("tools/runs/work".into()),
+            _ => {}
+        });
+    let f = Fixture::new(seed);
+    let needs = Needs {
+        stamps: vec!["tests".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "a store query and its test".into(),
+    };
+    f.store
+        .set_needs("tools/runs", &Catalogue::symphony(), &needs)
+        .unwrap();
+    // Work two levels under the task ran its tests green at the tip; another task's run of the same
+    // command there, newer and red, is not the task's.
+    keep_run(&root, 1, "tools/runs/work/deep", "just test-rs", (&tip, 0));
+    keep_run(&root, 2, "tools/other", "just test-rs", (&tip, 101));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let short = tip.get(..7).unwrap();
+
+    let (status, answer) = ask("/api/task-gates?slug=tools/runs");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let left_out = |name: &str| {
+        (
+            name.to_string(),
+            GateState::Waived,
+            format!("Left out by the assessment at {short}"),
+        )
+    };
+    assert_eq!(
+        gates(&answer),
+        [
+            left_out("review"),
+            left_out("pictures"),
+            left_out("owner"),
+            (
+                "tests".into(),
+                GateState::Met,
+                format!("Green at {short}: `just test-rs`")
+            ),
+        ]
+    );
+    assert_eq!(answer["gates"][3]["by"], "quiet-wren");
+    assert_eq!(answer["gates"][3]["commit"], json!(tip));
+    shared.stop();
+}
+
+#[test]
+fn a_landed_tasks_stamps_stand_on_the_tip_its_land_merged_once_the_sweep_removed_its_branch() {
+    use symphony_board::stamps::{NEEDS, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    // Each branch merged on main as the land merges it, then removed as the sweep removes it.
+    let mut landed = Vec::new();
+    for slug in ["tools/landed", "tools/merged"] {
+        git(&root, &["branch", slug]);
+        let tip = commit_on(&root, slug);
+        git(&root, &["merge", "-q", "--no-ff", "-m", "land", slug]);
+        let merge = git_tip(&root, "main");
+        git(&root, &["branch", "-q", "-D", slug]);
+        landed.push((tip, merge));
+    }
+    let [(tip, merge), (other, other_merge)] = <[(String, String); 2]>::try_from(landed).unwrap();
+    let gone = "0123abcd0123abcd0123abcd0123abcd0123abcd";
+    let mut seed = Seed::default()
+        .task("tools/landed", "done")
+        .task("tools/merged", "done")
+        .task("tools/gone", "done");
+    for (slug, at) in [
+        ("tools/landed", &tip),
+        ("tools/merged", &other),
+        ("tools/gone", &gone.to_string()),
+    ] {
+        let needs = Needs {
+            stamps: vec!["tests".into(), "review".into()],
+            tip: Some(at.clone()),
+            by: "slate-owl".into(),
+            why: "a store query and its test".into(),
+        };
+        let task = (seed.dump.tasks.iter_mut())
+            .find(|task| task.slug == slug)
+            .unwrap();
+        task.fields.insert(
+            symphony_board::red::FIELDS.into(),
+            [(NEEDS.to_string(), serde_json::to_value(needs).unwrap())].into(),
+        );
+    }
+    // The landing's line names its merge, whose second parent is the tip; the land's own line,
+    // where no landing names a merge, names the tip it merged.
+    let seed = verdict(
+        seed,
+        1,
+        "tools/landed",
+        "lucid-heron",
+        &format!("approve: {tip}"),
+    );
+    let landing = format!(
+        "landed tools/landed on main at {}",
+        merge.get(..12).unwrap()
+    );
+    let seed = verdict(seed, 2, "tools/landed", "quiet-plover", &landing);
+    let seed = verdict(
+        seed,
+        3,
+        "tools/merged",
+        "lucid-heron",
+        &format!("approve: {other}"),
+    );
+    let land = format!("land tools/merged: merged {other} as {other_merge}; moving main there");
+    let seed = said(seed, (4, "msg"), "tools/merged", "quiet-plover", &land);
+    // A landing naming no commit the repository holds, and no land's line: nothing to read at.
+    let seed = verdict(
+        seed,
+        5,
+        "tools/gone",
+        "lucid-heron",
+        &format!("approve: {gone}"),
+    );
+    let seed = verdict(
+        seed,
+        6,
+        "tools/gone",
+        "quiet-plover",
+        "landed tools/gone on main at 0badc0ffee12",
+    );
+    keep_run(&root, 1, "tools/landed", "just test-rs", (&tip, 0));
+    keep_run(&root, 2, "tools/merged", "just test-rs", (&other, 0));
+    let f = Fixture::new(seed);
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+
+    for (slug, tip) in [("tools/landed", &tip), ("tools/merged", &other)] {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+        let short = tip.get(..7).unwrap();
+        let left_out = format!("Left out by the assessment at {short}");
+        assert_eq!(
+            gates(&answer),
+            [
+                ("pictures".into(), GateState::Waived, left_out.clone()),
+                ("owner".into(), GateState::Waived, left_out),
+                (
+                    "tests".into(),
+                    GateState::Met,
+                    format!("Green at {short}: `just test-rs`")
+                ),
+                (
+                    "review".into(),
+                    GateState::Met,
+                    "Approved in round 1 of 1".into()
+                ),
+            ],
+            "{slug}"
+        );
+        assert_eq!(answer["gates"][3]["commit"], json!(tip), "{slug}");
+    }
+    let (status, answer) = ask("/api/task-gates?slug=tools/gone");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        gates(&answer)[..2],
+        [
+            (
+                "tests".into(),
+                GateState::Unknown,
+                "No branch tools/gone in this repository, nor a land on its thread naming the \
+                 commit it merged"
+                    .into()
+            ),
+            (
+                "review".into(),
+                GateState::Unknown,
+                "Approved in round 1 of 1, but no branch tools/gone is in this repository, nor a \
+                 land on its thread naming the commit it merged"
+                    .into()
+            ),
+        ]
     );
     shared.stop();
 }

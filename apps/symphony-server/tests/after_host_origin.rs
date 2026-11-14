@@ -167,6 +167,34 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
     assert_eq!(response.json()["error"], "no such board action");
     assert_eq!(f.board.thread(slug).unwrap().len(), heard);
     assert_eq!(f.board.get(slug).unwrap().status, "blocked");
+    // The Symphony's own action, beside the plugin's: the owner's approve of the tip its offer
+    // showed, posted as the owner's line the `owner` stamp reads. A payload that is no commit's id
+    // says nothing; neither moves the work.
+    let own = |payload: &str| {
+        f.request(
+            "POST",
+            symphony_api::TASK_ACTION_ROUTE,
+            Some(&host),
+            Some(&origin),
+            &json!({"slug":slug, "action":"owner-approve", "payload":payload, "note":""}),
+        )
+    };
+    let response = own("the tip");
+    assert_eq!(response.status, 400, "{response:?}");
+    assert_eq!(
+        response.json()["error"],
+        "the owner's approve names the commit it approves, 7 to 40 hex digits: not \"the tip\""
+    );
+    assert_eq!(f.board.thread(slug).unwrap().len(), heard);
+    let response = own("0123abc4");
+    assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(response.json()["said"], "approve 0123abc4");
+    let last = f.board.thread(slug).unwrap().pop().unwrap();
+    assert_eq!(
+        (last.sender.as_str(), last.text.as_str()),
+        ("owner", "approve 0123abc4")
+    );
+    assert_eq!(f.board.get(slug).unwrap().status, "blocked");
 }
 
 #[test]

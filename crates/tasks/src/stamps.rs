@@ -15,7 +15,9 @@
 //! writes ([`crate::Store::set_needs`]), each change a line on the task's thread ([`Needs::line`]).
 //! The assessor that writes them is a role in name only: the write itself is refused to a session
 //! that executed the task or work under it, orchestrates or orchestrated it, or filed it, the rule a
-//! reviewer's verdict is held to ([`crate::Held::unfresh`]). Nothing reads the needs to land yet.
+//! reviewer's verdict is held to ([`crate::Held::unfresh`]). Each stamp's reader, and which
+//! stamps a task needs at a tip, are [`read`]'s; the task page's gates draw them, and nothing reads
+//! the needs to land yet.
 
 use crate::land::MANIFEST;
 use crate::sweep::git::{git, succeeds};
@@ -23,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
+
+pub mod read;
 
 /// The stamps the Symphony has a reader for, by name, in the order the catalogue is listed.
 pub const READERS: [&str; 4] = ["tests", "review", "pictures", "owner"];
@@ -222,6 +226,18 @@ impl Catalogue {
             .filter(|done| done.status.success())
             .ok_or_else(|| format!("git cannot read {at} in {}", main.display()))?;
         Catalogue::parse(&String::from_utf8_lossy(&shown.stdout))
+    }
+
+    /// The catalogue of the repository the folder `dir` is in ([`Catalogue::of`] its main
+    /// checkout): the Symphony's own outside a repository, or in one with no main checkout.
+    pub fn at(dir: &Path) -> Result<Catalogue, String> {
+        let main = (crate::git::common_dir(dir).ok()).and_then(|common| {
+            crate::sweep::trigger::main_checkout(&common).map(Path::to_path_buf)
+        });
+        match main {
+            Some(main) => Catalogue::of(&main),
+            None => Ok(Catalogue::symphony()),
+        }
     }
 
     /// Its stamps' names, in order.

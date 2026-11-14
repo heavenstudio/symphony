@@ -98,7 +98,10 @@ main's, or one main changed after the branch forked, is skipped.
   main's. Once main closes a
   card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
   A branch's page draws main's card for every card the branch did not post, and for one main closed
-  after the branch's copy, so a stale copy shows main's resolution.
+  after the branch's copy, so a stale copy shows main's resolution. A card a page draws in another
+  group than its file's copy sits in (an answer given there and saved on main) is drawn in that
+  group, the register regrouped as a save would regroup it, each block still standing for the
+  file's own lines, where a save or a comment from the page lands.
 - **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
   branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
   it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
