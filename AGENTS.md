@@ -308,7 +308,15 @@ checkout counts only when its `worktrees/NAME/gitdir` names that worktree back. 
 --out`, `symphony reply PATH`, `symphony ask --db` or `--root` (the store it makes) and `symphony
 status --tidy --root` refuse any other place with one line naming the path, where it leads and
 the places allowed, and write nothing; under the mark `tasks export` also replaces only an
-earlier snapshot (a file whose first line is `# Task board snapshot`). The binaries run by
+earlier snapshot (a file whose first line is `# Task board snapshot`). An agent the board
+starts there, in auto mode, stays in those places or under the project's worktree base the same
+way: `tasks launch --worktree` and `restore` refuse any other folder, a launch takes no
+`--prompt` (an agent's first message is its person's word: the rest goes on the thread),
+`tasks api`'s `record_launch` records no other folder and no conversation id, its `bind_agent`
+and `tasks beat` bind no agent id (the hook's beat binds the session's own), and `tasks
+callback` registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`), what a restore
+then resumes; `--as` names any handle, so an agent's own conversation may be given to another
+(`crates/tasks/src/launch/bounds.rs`, [TASKS](docs/TASKS.md#where-it-lives)). The binaries run by
 themselves, which no rule allows, write where they are told: the owner's way to such a place. A
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above

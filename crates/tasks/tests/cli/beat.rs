@@ -78,6 +78,59 @@ fn a_subagents_binding_writes_no_key() {
     let _ = fs::remove_dir_all(&folder);
 }
 
+/// `env` as `just tasks` runs a command: under the mark of a recipe an agent runs unasked.
+fn marked(env: &Env) -> Env {
+    let mut marked = env.clone();
+    marked
+        .vars
+        .insert(symphony_board::confine::MARKER.into(), "1".into());
+    marked
+}
+
+#[test]
+fn through_just_tasks_the_api_binds_no_agent_and_the_binary_by_itself_binds_any() {
+    let env = env();
+    let h = ok(&env, &["register", "--kind", "worker"]);
+    let bind = |env: &Env| {
+        let call = json!({"method": "bind_agent",
+                          "args": {"agent": "dead-beef", "handle": h, "session": true}});
+        let ran = run(env, &["api"], &call.to_string());
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""));
+        serde_json::from_str::<Value>(&ran.out).unwrap()
+    };
+    assert_eq!(
+        bind(&marked(&env)),
+        json!({"refused": "no bind_agent through a recipe an agent runs unasked: the agent id a \
+            handle is bound to is a conversation staffing may record for it, for a restore to \
+            resume; a session's own heartbeat binds it (the hook runs tasks beat as the binary \
+            itself), and the binary run by itself binds any"})
+    );
+    assert_eq!(bound_to(&env, "dead-beef"), Value::Null);
+    assert_eq!(bind(&env), json!({"ok": true}));
+    assert_eq!(bound_to(&env, "dead-beef"), json!(h));
+}
+
+#[test]
+fn through_just_tasks_a_beat_binds_nothing_and_the_hooks_binds_its_session() {
+    // An event `just tasks beat` reads is one an agent wrote, not its own tool call.
+    let folder = keys("marked");
+    let mut env = env();
+    env.vars
+        .insert("TASKS_KEYS".into(), folder.to_string_lossy().into_owned());
+    let h = ok(&env, &["register", "--kind", "worker"]);
+    let event = bash(&format!("just tasks inbox --as {h}"))
+        .session("dead-beef")
+        .0;
+    beat(&marked(&env), &event);
+    assert_eq!(bound_to(&env, "dead-beef"), Value::Null);
+    assert!(!folder.join("dead-beef").exists());
+    // The hook runs the binary itself, unmarked: the same call binds the session it came from.
+    beat(&env, &event);
+    assert_eq!(bound_to(&env, "dead-beef"), json!(h));
+    assert!(folder.join("dead-beef").is_file());
+    let _ = fs::remove_dir_all(&folder);
+}
+
 /// A hook event, as Claude Code sends it on stdin.
 pub struct Event(pub Value);
 

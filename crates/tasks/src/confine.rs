@@ -40,19 +40,27 @@ impl Places {
     /// its letters, as git reads it under `core.ignorecase`: on a volume that ignores case a new
     /// `.GIT` is the checkout's `.git` to git, though no existing folder resolved it so.
     pub fn admit(&self, path: &Path) -> bool {
-        let below = |folder: &Path| {
-            path.strip_prefix(folder).is_ok_and(|rest| {
-                !rest
-                    .components()
-                    .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
-            })
-        };
-        (below(&self.checkout) || self.artifacts.as_deref().is_some_and(below))
-            && !self.git.iter().any(|git| path.starts_with(git))
+        self.admit_in(&self.checkout, path)
+            || self
+                .artifacts
+                .as_deref()
+                .is_some_and(|folder| self.admit_in(folder, path))
+    }
+
+    /// Whether `path`, resolved, is in `folder`, resolved, on the terms [`Places::admit`] takes
+    /// these on: no `.git` part below it in any case of its letters, and in none of these git
+    /// folders. What a command admits beside these (a launch, the project's worktree base) it
+    /// admits on them.
+    pub fn admit_in(&self, folder: &Path, path: &Path) -> bool {
+        path.strip_prefix(folder).is_ok_and(|rest| {
+            !rest
+                .components()
+                .any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))
+        }) && !self.git.iter().any(|git| path.starts_with(git))
     }
 
     /// What they admit, as a refusal says it.
-    fn said(&self) -> String {
+    pub fn said(&self) -> String {
         let artifacts = self
             .artifacts
             .as_ref()
@@ -529,6 +537,39 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn a_folder_admitted_beside_the_places_is_on_their_terms() {
+        let scratch = Scratch::new("beside");
+        let (main, tree) = repository(&scratch.0);
+        let base = scratch.0.join("shop-wt");
+        let places = places(&tree);
+        for (path, admitted) in [
+            (base.join("lamp"), true),
+            (base.join("lamp/docs/x.md"), true),
+            (base.clone(), true),
+            // Its git folders, and a `.git` part below it in any case, as for the places' own.
+            (base.join("lamp/.git"), false),
+            (base.join("lamp/.GIT/config"), false),
+            (base.join(".git"), false),
+            // Beside it, above it, or a sibling whose name only starts as its does.
+            (scratch.0.join("shop-wt-not/x"), false),
+            (scratch.0.clone(), false),
+        ] {
+            assert_eq!(
+                places.admit_in(&base, &path),
+                admitted,
+                "{}",
+                path.display()
+            );
+        }
+        // A folder admitted beside them never reaches their git folders, wherever it is.
+        let around = scratch.0.clone();
+        for git in [main.join(".git/hooks"), main.join(".git/worktrees/tree")] {
+            assert!(!places.admit_in(&around, &git), "{}", git.display());
+        }
+        assert!(places.admit_in(&around, &main.join("docs")));
     }
 
     #[test]
