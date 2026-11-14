@@ -107,6 +107,7 @@ fn every_symphony_variable_a_recipe_sets_is_one_symphony_reads() {
             symphony_board::confine::MARKER,
         ])
         .collect();
+    let scripts: Vec<String> = SCRIPTS.iter().map(|file| text_of(file)).collect();
     let unread: Vec<String> = RECIPES
         .iter()
         .flat_map(|file| {
@@ -114,15 +115,79 @@ fn every_symphony_variable_a_recipe_sets_is_one_symphony_reads() {
                 .into_iter()
                 .map(move |(line, name, _)| (file, line, name))
         })
-        .filter(|(_, _, name)| name.contains("SYMPHONY") && !read.contains(&name.as_str()))
+        .filter(|(_, _, name)| {
+            name.contains("SYMPHONY")
+                && !read.contains(&name.as_str())
+                && !scripts.iter().any(|script| reads(script, name))
+        })
         .map(|(file, line, name)| format!("{file}:{line}: {name}"))
         .collect();
     assert!(
         unread.is_empty(),
         "set for Symphony, read by nothing of it (symphony_env::ALL, the land's marker, the \
-         unasked recipes' marker):\n{}",
+         unasked recipes' marker, a script the verify recipe runs):\n{}",
         unread.join("\n")
     );
+}
+
+/// The scripts the verify recipe's script runs that read a variable it sets for them.
+const SCRIPTS: [&str; 1] = ["tools/test-lanes.sh"];
+
+/// Whether the shell script `text` reads the variable `name` outside its comments: `$NAME` or
+/// `${NAME` with no further letter, digit or underscore of a longer name after it.
+fn reads(text: &str, name: &str) -> bool {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .any(|line| {
+            [format!("${name}"), format!("${{{name}")]
+                .iter()
+                .any(|use_| {
+                    line.match_indices(use_.as_str()).any(|(at, _)| {
+                        !line[at + use_.len()..]
+                            .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                })
+        })
+}
+
+#[test]
+fn a_script_reads_a_variable_by_its_whole_name_outside_comments() {
+    let text = "\
+# reads $IN_A_COMMENT and ${ALSO_HERE}
+logs=\"${LANE_LOGS:-build/x}\"
+echo \"$PLAIN\" \"$LONGER_NAME\"
+SET_ONLY=1
+";
+    for name in ["LANE_LOGS", "PLAIN", "LONGER_NAME"] {
+        assert!(reads(text, name), "{name}");
+    }
+    for name in [
+        "IN_A_COMMENT",
+        "ALSO_HERE",
+        "LANE",
+        "LONGER",
+        "SET_ONLY",
+        "ABSENT",
+    ] {
+        assert!(!reads(text, name), "{name}");
+    }
+}
+
+#[test]
+fn the_lanes_script_reads_the_folder_the_verify_recipe_names_for_its_logs() {
+    let named: Vec<String> = set_in(VERIFY)
+        .into_iter()
+        .filter(|(_, _, value)| value == "\"$lanes\"")
+        .map(|(_, name, _)| name)
+        .collect();
+    assert!(!named.is_empty(), "{VERIFY} names the lanes' logs folder");
+    for name in named {
+        assert!(
+            reads(&text_of(SCRIPTS[0]), &name),
+            "{} reads {name}, which {VERIFY} sets for it",
+            SCRIPTS[0]
+        );
+    }
 }
 
 #[test]
