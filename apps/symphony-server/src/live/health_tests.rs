@@ -875,3 +875,39 @@ fn only_the_shared_servers_hub_keeps_its_hours_and_in_the_common_dir() {
         hub.stop();
     }
 }
+
+/// The shared server's hub stops by appending the hour so far, unless its project was removed under
+/// it: that line would make the removed checkout's folders anew, so it writes none.
+#[test]
+fn a_hub_whose_project_was_removed_appends_no_hour_as_it_stops() {
+    for removed in [false, true] {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        // Its records in the project's common dir, as the shared server keeps them.
+        let common = symphony_board::git::common_dir(&root).unwrap();
+        let folder = common.join(hours::FOLDER);
+        let clock = Clock::at(HOUR_START);
+        let hub = hub(&root, &common.join("symphony/tasks/health.json"), &clock);
+        hub.health.keep_hours(folder.clone(), |now| now, |_| {});
+        hub.gate_recorders(Arc::default());
+        // Two ticks half a minute apart, and the stop half a second after the second.
+        hub.health.dispatched(HOUR_START, Ok(()));
+        clock.pass(30.0);
+        hub.health.dispatched(clock.now(), Ok(()));
+        clock.pass(0.5);
+        if removed {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        hub.stop();
+        if removed {
+            assert!(!root.exists(), "its stop made its folder anew");
+        } else {
+            let lines = hours::read(&folder, &run_day(HOUR_START));
+            assert_eq!(lines.len(), 1, "the hour so far: {lines:?}");
+            assert_eq!(
+                (lines[0].to, lines[0].partial, lines[0].dispatch.ok),
+                (HOUR_START + 30.5, true, 2)
+            );
+        }
+    }
+}

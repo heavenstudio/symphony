@@ -101,6 +101,32 @@ pub fn find(cwd: &Path, machine: Option<&Path>) -> Result<Project, String> {
     Ok(Project { place, id })
 }
 
+/// How a refusal to reach the board of a project whose folder is gone ends ([`at`]), and the
+/// Symphony's word for one whose folder no longer holds its repository: what counts as a project
+/// with no board ([`crate::board_health::absent`]).
+pub const GONE: &str = "its board is never looked for in the folders above it";
+
+/// The project whose folder is `root`, as the Symphony reaches a project's board from that folder
+/// ([`crate::cli::board`]): [`find`] from it, refused when `root` is not there, or went while it
+/// was looked up. [`find`] from a folder that is gone walks up its path to whatever checkout holds
+/// it and names that repository's board, which a reach then starts: a server serving a project
+/// removed under it would start another repository's board.
+///
+/// # Errors
+///
+/// When `root` is not a folder that is there, saying [`GONE`]; and as [`find`].
+pub fn at(root: &Path, machine: Option<&Path>) -> Result<Project, String> {
+    let gone = || format!("the project's folder {} is gone: {GONE}", root.display());
+    if !root.is_dir() {
+        return Err(gone());
+    }
+    let found = find(root, machine);
+    if !root.is_dir() {
+        return Err(gone());
+    }
+    found
+}
+
 /// The `[project] id` the file at `path` names, if it names one.
 fn file_id(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
