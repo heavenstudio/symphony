@@ -760,10 +760,12 @@ optional list of task slugs whose subtrees may be staffed; an empty list allows 
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
-goes to an idle reviewer only when the board would take its verdict, by the rule the
-verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
-reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled, and the reviewer's role a reuse took for it let go. Through `just tasks` a pass
+is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
+its launch is recorded there, and the pass's line on the thread names the tip. It goes to an
+idle reviewer only when the board would take its verdict, by the rule the verdict holds
+(`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
+was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
+launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
 launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
 worktree, one continuing a branch checked out in the main checkout (its
 `.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
@@ -777,8 +779,8 @@ it never starts a fresh conversation on its own. A failed automatic attempt stay
 flagged for manual action. `reap --dry-run` starts no recovery.
 
 Only ready tasks with dependencies done and no executor or reservation qualify;
-review tasks with no reviewer get one breakage-only reviewer through an instruction
-child. A land-request task's opening `Review` line records the branch under review;
+review tasks with no reviewer get one, on the task itself. A land-request task's opening
+`Review` line records the branch under review;
 an explicit `Branch:` or `Worktree ..., branch ...` line does too. Otherwise reviews
 use the executor's recorded branch, falling back to the task slug.
 Dry runs resolve that branch and show its tip too. A task whose target or dispatch
@@ -790,8 +792,8 @@ line beginning `Owner-only:`, `Owner only:`, `Tier: owner` or `Review tier: owne
 Use these explicit markers for owner decisions.
 
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
-work in a suitable open terminal: an executor already on the task's own branch, or an
-instruction worker/reviewer in a detached checkout. A checkout with a live or stale
+work in a suitable open terminal: an executor already on the task's own branch, or a
+reviewer or an instruction's worker in a detached checkout. A checkout with a live or stale
 executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
 would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
 separate worktree: the task's own branch, or detached main for an instruction or review. Live
@@ -1393,8 +1395,7 @@ in-progress task whose build or test run is going sits there until it ends, then
 returns to its column. They are display stages, never statuses: no command moves a
 task there, and a task in any other status (a task in review whose reviewer runs
 its tests) keeps its column and shows the run as a chip. A run for a subtask (a
-slice, or the `/work` instruction its executor holds) moves the card of the task it
-is under. Runs come from the board's
+slice, or an instruction its agent holds) moves the card of the task it is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once, and the board's Status filter offers neither of them
@@ -1442,9 +1443,12 @@ role it holds since. Nor, but on a fast fix, does a session that requested the w
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
 and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
 the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
-then refuses. An instruction subtask (`--instruction`: a review, a question, an errand)
-puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
-`SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
+then refuses. A reviewer judges the task itself: it takes the reviewer's role on `SLUG`, its
+verdicts are `SLUG`'s review rounds ([Gates](#gates)), and a later round is the same reviewer's,
+resumed, with no subtask ([Subtasks](#subtasks)). An instruction subtask (`--instruction`: a
+question, an errand) puts nothing on the task's branch, so its executor is not counted: one
+that claimed an instruction under `SLUG` may still give `SLUG` its verdict, unless it executed
+`SLUG` or a work subtask of it too.
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
@@ -1562,7 +1566,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
   a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
   approve the land refuses for whose it is is one an older board took; the
-  executor of an instruction subtask, the review its reviewer claimed, is none. The one
+  executor of an instruction subtask is none. The one
   exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
   `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
   words, which the board keeps among its own fields where no session sets or clears it
@@ -1819,8 +1823,8 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
   task is already another's under a parent it holds; a subagent's claim of it leaves that role
   where it is. `--no-role --for HANDLE` files it for HANDLE, a live orchestrator, which takes the
   role instead; `--no-role` without `--for`, or with one naming no live orchestrator, is refused.
-  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, staffing's review
-  job, `tasks api`'s `create`) goes to the orchestrator of a task that session holds another role
+  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, `tasks api`'s
+  `create`) goes to the orchestrator of a task that session holds another role
   on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
   the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
   is that one's by the tree, and nothing is written. `create` names who took it.
@@ -2070,15 +2074,28 @@ its own work.
 
 ## Subtasks
 
-Every instruction an orchestrator gives an agent is a **subtask**: a task made
-with `--parent`, whose description is the instruction, word for word. The agent's
-whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), a reviewer's
-`/review-task SLUG HANDLE` (`.agents/skills/review-task/SKILL.md`), never a brief in a file.
-A parent's subtasks nest to any depth; a task is never its own ancestor (`just tasks parent
-SLUG PARENT` moves one, and refuses a cycle).
+A task's own executor and reviewer need no subtask: the task's brief and thread are their
+whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
+(`.agents/skills/work/SKILL.md`) and a reviewer's `/review-task SLUG HANDLE`
+(`.agents/skills/review-task/SKILL.md`), on the task itself, never a brief in a file;
+anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
+reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
+and each later round goes to the same reviewer, resumed with the new tip on the thread (a
+subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks restore SLUG
+HANDLE`), never to another reviewer or a review subtask. Resumed, it is still a fresh reviewer
+for the land: an earlier round of its own makes no session unfresh ([the default
+landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
+`restore` refuses it; a Codex thread that never arrived; a reviewer that left) does another
+reviewer take the role on the task.
+
+A **subtask** is a task made with `--parent`: a slice of its parent's work, or an instruction
+to an agent that is neither the parent's own work nor its review (a question, an errand), whose
+description is the instruction, word for word. Its agent's whole prompt is `/work SLUG HANDLE`
+on the subtask. A parent's subtasks nest to any depth; a task is never its own ancestor (`just
+tasks parent SLUG PARENT` moves one, and refuses a cycle).
 
 ```
-just tasks create perf/x/review "Review perf/x" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
+just tasks create perf/x/bisect "Find the commit that slowed perf/x's bench" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
 (the instruction, verbatim)
 EOF
 ```
@@ -2086,8 +2103,8 @@ EOF
 `--body-file -` reads the body from stdin, so a long instruction needs no file.
 A consuming project's optional brief guard refuses writing a brief to a file: to
 `artifacts/orchestrator/` (which must not exist), or to a brief in a session scratchpad (a file named
-`brief*` or `*-brief.*`, or under `briefs/` or `followups/`), and says to
-create a subtask instead.
+`brief*` or `*-brief.*`, or under `briefs/` or `followups/`): a brief is a task's
+description, and anything more for its agent goes on the task's thread.
 A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 
@@ -2097,7 +2114,7 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   that handle reads `lost` or `left` (ten minutes without a sign of life, holding
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
-- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's (a review) did not ([Tasks and roles](#tasks-and-roles)).
+- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's did not ([Tasks and roles](#tasks-and-roles)).
 - Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and is the release run's ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
