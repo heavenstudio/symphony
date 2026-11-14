@@ -1,4 +1,4 @@
-//! `symphony size-budget ROOT RELEASE`: each shipped binary, as `cargo install` builds
+//! `symphony-build size-budget ROOT RELEASE`: each shipped binary, as `cargo install` builds
 //! it into RELEASE, and the client distribution the server embeds, against its line in the budget
 //! file under ROOT ([`BUDGET`], docs/CHECKS.md "Size budgets"). Within every line it prints each
 //! size beside its budget, and where the rule ([`line_for`]) brings down a binary's line that
@@ -27,7 +27,7 @@ const CLIENT: &str = "apps/symphony-server/client/public";
 const EMBEDDER: &str = "symphony-server";
 /// Where the shipped set is stated, as a refusal names it.
 const SHIPPED: &str = "`BUILDS` in crates/symphony/src/init.rs";
-const USAGE: &str = "usage: symphony size-budget ROOT RELEASE";
+const USAGE: &str = "usage: symphony-build size-budget ROOT RELEASE";
 /// How far above a binary's size its line is set, in percent, and the bytes the line is rounded
 /// down to (docs/CHECKS.md, "Where a line stands").
 const MARGIN_PERCENT: u64 = 4;
@@ -76,7 +76,7 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     match measure(Path::new(root), Path::new(release)) {
         Ok(lines) => report(&lines, out, err),
         Err(why) => {
-            let _ = writeln!(err, "symphony size-budget: {why}");
+            let _ = writeln!(err, "symphony-build size-budget: {why}");
             2
         }
     }
@@ -302,7 +302,7 @@ fn refusal(line: &Measured) -> String {
         ),
         What::Client { files } => format!(
             "size-budget: the embedded client ({CLIENT}, {files} files) {over}. See what it \
-             holds: `ls -lS {CLIENT}/assets`; every generation `symphony publish-client` keeps \
+             holds: `ls -lS {CLIENT}/assets`; every generation `symphony-build publish-client` keeps \
              there is embedded in the server."
         ),
     }

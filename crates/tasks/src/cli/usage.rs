@@ -485,8 +485,9 @@ options:
 The limits a command here is held to and the model each role runs on, read
 from the main checkout's symphony.toml as it is now, each with where it came
 from: its table, key and line, or the default. [limits] holds
-orchestrator_slots (no cap unwritten; [board] orchestrator_slots is read where
-[limits] names none), low_volume (4) and machine_agents (no limit unwritten,
+orchestrator_slots (the tasks in progress an orchestrator holds, work in review
+and red work not counted; no cap unwritten; [board] orchestrator_slots is read
+where [limits] names none), low_volume (4) and machine_agents (no limit unwritten,
 then this machine's count of agents); [board] holds the pipeline alarm's
 thresholds; [agents.models] names the model of the orchestrator, executor and
 reviewer. A key of [limits] this build does not know is listed, left out. An

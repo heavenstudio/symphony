@@ -84,17 +84,12 @@ fn fact(what: &str, now: Option<i64>, before: Option<(&str, Option<i64>)>) -> St
 /// the first release), the checks it passed, what a release candidate's record says of it
 /// (`candidate`, its lines: [`super::candidate::Candidate::notes`]), and `changes`, the commits on
 /// main since `previous`, one `SHORT SUBJECT` line each, newest first.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each part of the message, in the order it says them"
-)]
 pub(crate) fn message(
     tag: &str,
     commit: &str,
     facts: Facts,
     previous: Option<&Previous>,
     checks: &[String],
-    left_out: &[String],
     candidate: &[String],
     changes: &[String],
 ) -> String {
@@ -108,12 +103,6 @@ pub(crate) fn message(
     );
     if !checks.is_empty() {
         text.push_str(&format!("\nGreen: {}.\n", checks.join(", ")));
-    }
-    if !left_out.is_empty() {
-        text.push_str("\nLeft out of conciliation:\n");
-        for line in left_out {
-            text.push_str(&format!("- {line}\n"));
-        }
     }
     if !candidate.is_empty() {
         text.push('\n');
@@ -241,7 +230,6 @@ mod tests {
             None,
             &["verify".into()],
             &[],
-            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -269,8 +257,7 @@ mod tests {
                 pin: Some(1),
             },
             Some(&previous),
-            &["verify".into(), "conciliate-lamp-shop".into()],
-            &["gone: its checkout /p is gone".into()],
+            &["verify".into(), "lint".into()],
             &[],
             &["bbb second".into(), "aaa first".into()],
         );
@@ -279,8 +266,7 @@ mod tests {
             "release-2026-11-12: Symphony main at 000000000000\n\n\
              Board schema 17, changed since release-2026-11-11 (16 then).\n\
              Pin 1, unchanged since release-2026-11-11.\n\n\
-             Green: verify, conciliate-lamp-shop.\n\n\
-             Left out of conciliation:\n- gone: its checkout /p is gone\n\n\
+             Green: verify, lint.\n\n\
              Changes on main since release-2026-11-11 (2):\nbbb second\naaa first\n"
         );
     }
@@ -293,7 +279,6 @@ mod tests {
             Facts::default(),
             None,
             &["verify".into()],
-            &[],
             &[
                 "Release candidate: first judged aaa.".into(),
                 "- tests/release-red-verify (verify): advanced it to bbb".into(),
@@ -322,7 +307,6 @@ mod tests {
             &"0".repeat(40),
             Facts::default(),
             Some(&previous),
-            &[],
             &[],
             &[],
             &changes,

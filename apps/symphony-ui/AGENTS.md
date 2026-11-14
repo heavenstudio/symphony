@@ -453,7 +453,7 @@ never the whole target, which the release run runs.
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made
   after the new page mounts instead of applying its late top reset.
   Compilation leaves `OUT/public` serving its last build;
-  packaging assembles beside it and `symphony publish-client` atomically exchanges the
+  packaging assembles beside it and `symphony-build publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
   intact; the next package removes abandoned staging folders. The stage holds its
   build alone, its files named in its `builds.json` by its shell; `publish-client`

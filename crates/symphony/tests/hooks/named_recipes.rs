@@ -314,9 +314,9 @@ fn every_just_command_the_symphony_names_is_an_installed_recipe_or_the_consumers
 fn the_allow_rules_and_the_codex_rules_allow_installed_recipes_but_the_servers() {
     let installed = installed();
     // An agent is asked before `just symphony`, which starts, replaces or stops the machine's
-    // shared server, and before `just symphony-cli`, which reaches `serve`, `init` and
-    // `publish-client`: they stay installed, and no rule allows them. `just land` is allowed: what
-    // it lands its approval check decides.
+    // shared server, and before `just symphony-cli`, which reaches `serve` and `init`: they stay
+    // installed, and no rule allows them. `just land` is allowed: what it lands its approval check
+    // decides.
     let asked: BTreeSet<String> = ["symphony", "symphony-cli"].map(String::from).into();
     assert!(asked.is_subset(&installed), "{installed:?}");
     let allowed_here: BTreeSet<String> = installed.difference(&asked).cloned().collect();

@@ -80,26 +80,35 @@ pub fn main_in(
     err: &mut dyn Write,
 ) -> i32 {
     let command = args.first().map(String::as_str);
-    if let Some(help) = command.and_then(|name| commands::plain_help(name, &args[1..])) {
+    let symphony = &commands::SYMPHONY;
+    if let Some(help) = command.and_then(|name| commands::plain_help(symphony, name, &args[1..])) {
         let _ = write!(out, "{help}");
         return 0;
     }
     match command {
-        Some("--help" | "-h" | "help") => commands::help(&args[1..], out, err),
+        Some("--help" | "-h" | "help") => commands::help(symphony, &args[1..], out, err),
         Some("status") => status_in(&args[1..], env, out, err),
         Some("reply") => reply_in(&args[1..], env, out, err),
         Some("serve") => serve_main(input, out),
         Some("docs-audit") => crate::docs_audit::main(&args[1..], out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
-        Some("publish-client") => publish::publish_client_main(&args[1..], err),
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], env, out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),
         Some("hook") => crate::hook::main(&args[1..], input, err),
         Some(other) => commands::plugin(other, &args[1..], out, err),
-        None => commands::usage(err),
+        None => commands::usage(symphony, err),
     }
+}
+
+/// `symphony-build COMMAND ARGS…` (`tools/rs-bin.sh symphony-build`): the commands only this
+/// repository's own build and release run use (publishing a built client, the client's release
+/// inputs, the size budgets, the splitter's repair and the release run), the whole command line
+/// without the program name. Its exit code. No project is given that binary, and [`main`] reaches
+/// none of them, so neither the shipped `symphony` nor a host that calls [`main`] links them.
+pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    commands::build(args, out, err)
 }
 
 pub use symphony_args::{Flag, Parsed, command_at, parse};

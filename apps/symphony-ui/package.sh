@@ -109,6 +109,6 @@ HTML
 if [ -n "${2:-}" ]; then
     "$2" publish-client "$stage" "$out/public"
 else
-    "$here/../../tools/rs-bin.sh" symphony publish-client "$stage" "$out/public"
+    "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
 echo "symphony-ui: five page-kind modules, a deferred panel, its overlay host and the task timeline, one SPA shell: $out/public" >&2

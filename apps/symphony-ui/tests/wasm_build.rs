@@ -147,7 +147,7 @@ fn stand_in_tools(common: &Path, said: &Path) {
             .map(PathBuf::from)
             .unwrap_or_else(|| root.join(".target"));
         let done = Command::new(root.join("tools/rs-bin.sh"))
-            .args(["--build", "symphony"])
+            .args(["--build", "symphony-build"])
             .env("CARGO_TARGET_DIR", &target)
             .output()
             .unwrap();
