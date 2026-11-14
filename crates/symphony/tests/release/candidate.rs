@@ -67,10 +67,11 @@ fn branch(fixture: &Fixture) -> Option<String> {
     (!at.is_empty()).then_some(at)
 }
 
-/// The sessions that staff a red on the board: its orchestrator and its executor.
+/// The sessions that staff a red on the board: its orchestrator, its executor and a fresh reviewer.
 struct Hands {
     orchestrator: String,
     executor: String,
+    reviewer: String,
 }
 
 fn hands(fixture: &Fixture) -> Hands {
@@ -79,11 +80,12 @@ fn hands(fixture: &Fixture) -> Hands {
     Hands {
         orchestrator: handle("orchestrator"),
         executor: handle("worker"),
+        reviewer: handle("reviewer"),
     }
 }
 
-/// The red task `slug` approved naming `commit`, as a fast fix is: claimed by its executor the
-/// `first` time, in review, and its orchestrator's approve.
+/// The red task `slug` approved naming `commit`, as a red filed unmarked is: claimed by its
+/// executor the `first` time, in review, and a fresh reviewer's approve.
 fn approve(fixture: &Fixture, hands: &Hands, slug: &str, commit: &str, first: bool) {
     let store = fixture.store();
     if first {
@@ -93,10 +95,11 @@ fn approve(fixture: &Fixture, hands: &Hands, slug: &str, commit: &str, first: bo
         store.claim(slug, &hands.executor).unwrap();
     }
     store.move_to(slug, "review", &hands.executor).unwrap();
+    (store.take_role(slug, &hands.reviewer, "reviewer")).unwrap();
     store
         .verdict(
             slug,
-            &hands.orchestrator,
+            &hands.reviewer,
             "approve",
             &format!("{commit}: the fix"),
         )
@@ -350,6 +353,42 @@ fn a_land_that_merged_main_after_its_approve_advances_to_the_commit_approved_bef
         approved,
         "the commit approved before main was merged, never the merged tip"
     );
+}
+
+/// A red whose assessment needs no review lands from review with no approve: the candidate takes
+/// the tip its landing's line says its needed stamps stood on, as it takes an approved commit.
+#[test]
+fn a_reds_land_by_its_needed_stamps_alone_advances_it_to_the_tip_they_stood_on() {
+    let fixture = holding("");
+    let red = held(&fixture);
+    let hands = hands(&fixture);
+    let fixed = fix(&fixture, RED, "red", None);
+    let store = fixture.store();
+    (store.take_role(RED, &hands.orchestrator, "orchestrator")).unwrap();
+    store.claim(RED, &hands.executor).unwrap();
+    store.move_to(RED, "review", &hands.executor).unwrap();
+    let merge = land(&fixture, RED, true);
+    let needed = symphony_board::land::needs::Needed {
+        stamps: vec!["tests".into()],
+        needs: None,
+    };
+    let line = format!(
+        "landed {RED} on main at {}{}",
+        &merge[..12],
+        needed.stood(&fixed)
+    );
+    (store.landed(RED, &hands.orchestrator, &line, false, &["review"])).unwrap();
+    let out = due(&fixture, NOW + 300.0, RED, &merge, 0);
+    assert!(
+        out.contains(&format!(
+            "release: advanced the release candidate from {} to {}, the newest approved commit of \
+             {RED}'s land",
+            &red[..12],
+            &fixed[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(fixture.tagged("release-2026-11-12"), fixed);
 }
 
 #[test]

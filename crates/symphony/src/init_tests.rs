@@ -1076,7 +1076,7 @@ fn removed_managed_support_files_retire_but_project_data_and_own_links_survive()
 fn all_builtin_skills_leave_a_projects_own_copies_in_use_byte_for_byte() {
     let tree = Tree::new();
     let shipped = Shipped::builtin();
-    assert_eq!(shipped.skills.len(), 8);
+    assert_eq!(shipped.skills.len(), 9);
     for skill in &shipped.skills {
         tree.write(
             &format!(".agents/skills/{}/SKILL.md", skill.name),

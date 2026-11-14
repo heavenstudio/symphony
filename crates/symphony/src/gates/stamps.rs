@@ -292,28 +292,16 @@ pub fn unreadable(why: &str) -> Gate {
     }
 }
 
-/// The task `slug` and every task under it, at any depth, whose runs are its own: read a level at a
-/// time, so a task with no subtask costs one small read. A level that cannot be read adds nothing.
-pub fn family(store: &Store, slug: &str) -> Vec<String> {
-    let mut found = vec![slug.to_string()];
-    let mut next = 0;
-    while let Some(at) = found.get(next).cloned() {
-        for child in store.children(&at).unwrap_or_default() {
-            if !found.contains(&child.slug) {
-                found.push(child.slug);
-            }
-        }
-        next += 1;
-    }
-    found
-}
+/// The task and every task under it, whose runs are its own: the board's reader, which the land
+/// reads the `tests` stamp by too.
+pub use symphony_board::stamps::family;
 
 /// The owner's approve the task page offers on `record`, its branch `branch` in the checkout
-/// `root`: while the task is open and top-level, has a tip, and needs its `owner` stamp there,
-/// which no approve of the owner's meets yet. Its payload is the whole tip, which
-/// [`OWNER_APPROVE`]'s action posts as the owner's line ([`approve_line`]).
+/// `root`: while the task is top-level, has a tip, needs its `owner` stamp there and waits on it
+/// ([`awaits_owner`]). Its payload is the whole tip, which [`OWNER_APPROVE`]'s action posts as the
+/// owner's line ([`approve_line`]).
 pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> Option<TaskOffer> {
-    if record.parent.is_some() || matches!(record.status.as_str(), "done" | "cancelled") {
+    if record.parent.is_some() || record.status == "cancelled" {
         return None;
     }
     let tip = super::tip(root, branch)?;
@@ -323,15 +311,25 @@ pub fn owner_offer(store: &Store, record: &Task, root: &Path, branch: &str) -> O
         return None;
     }
     let thread = store.thread(&record.slug).ok()?;
-    if read::owner(&thread, &tip).met {
-        return None;
-    }
-    Some(TaskOffer {
+    awaits_owner(&record.status, &thread, &tip).then(|| TaskOffer {
         action: OWNER_APPROVE.into(),
         label: format!("Approve {}", short(&tip)),
         branch: branch.into(),
         payload: Some(tip),
     })
+}
+
+/// Whether a task of `status`, its `thread` this, waits on the owner's approve of `tip`: no approve
+/// of the owner's names the tip, and the task is open, or done by an approve no landing has closed
+/// (`symphony_board::approved`), where the land leaves a task that lacks only the owner's stamp.
+/// A task cancelled, or done by a landing or a covered close, waits on nothing.
+pub fn awaits_owner(status: &str, thread: &[Message], tip: &str) -> bool {
+    let standing = match status {
+        "done" => symphony_board::approved(thread).is_some(),
+        "cancelled" => false,
+        _ => true,
+    };
+    standing && !read::owner(thread, tip).met
 }
 
 /// The owner's line [`OWNER_APPROVE`]'s action posts for `payload`, the commit the offer showed:

@@ -16,8 +16,8 @@
 //! The assessor that writes them is a role in name only: the write itself is refused to a session
 //! that executed the task or work under it, orchestrates or orchestrated it, or filed it, the rule a
 //! reviewer's verdict is held to ([`crate::Held::unfresh`]). Each stamp's reader, and which
-//! stamps a task needs at a tip, are [`read`]'s; the task page's gates draw them, and nothing reads
-//! the needs to land yet.
+//! stamps a task needs at a tip, are [`read`]'s; the task page's gates draw them, and the land reads
+//! the needs and lands by them ([`crate::land::needs`]).
 
 use crate::land::MANIFEST;
 use crate::sweep::git::{git, succeeds};
@@ -355,6 +355,23 @@ impl crate::Task {
     pub fn needs(&self) -> Option<Needs> {
         Needs::of(&self.fields)
     }
+}
+
+/// The task `slug` and every task under it, at any depth, whose runs are its own for the `tests`
+/// stamp ([`read::tests`]): read a level at a time, so a task with no subtask costs one small read.
+/// A level that cannot be read adds nothing.
+pub fn family(store: &crate::Store, slug: &str) -> Vec<String> {
+    let mut found = vec![slug.to_string()];
+    let mut next = 0;
+    while let Some(at) = found.get(next).cloned() {
+        for child in store.children(&at).unwrap_or_default() {
+            if !found.contains(&child.slug) {
+                found.push(child.slug);
+            }
+        }
+        next += 1;
+    }
+    found
 }
 
 #[cfg(test)]

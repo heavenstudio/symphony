@@ -4,8 +4,16 @@
 //!
 //! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
-//!    against running it by accident; the approval below is the gate.
-//! 1. **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
+//!    against running it by accident; the stamps below are the gate.
+//! 1. **What it needs** ([`needs`]): the stamps the task needs at the branch's tip, its
+//!    assessment's on the tip it read, else beside the catalogue's defaults (`review` alone in the
+//!    Symphony's, so a task nobody assessed lands as before stamps), each other than `review` read
+//!    there by the board's own reader. A missing one refuses, naming who gives it; one waiting on
+//!    the owner alone holds the task blocked ([`Landing::lacks`]). Where `review` is not needed the
+//!    task lands from review or blocked with no verdict, its landing line naming the tip its stamps
+//!    stood on ([`needs::Needed::stood`]); where it is, by its approve:
+//!
+//!    **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
 //!    reviewer: never a session that ever executed the task or one of its work subtasks (an
 //!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
 //!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
@@ -104,6 +112,8 @@ pub mod check_paths;
 mod moving;
 use moving::Move;
 pub use moving::Moving;
+pub mod needs;
+use needs::Needed;
 pub mod regenerate;
 
 /// What a main checkout with staged or tracked edits refuses with; the verdict publisher reads it.
@@ -535,7 +545,7 @@ pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scop
     };
     Err(format!(
         "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
-         only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+         only a fast fix (a task filed with the fast-fix mark)"
     ))
 }
 
@@ -603,10 +613,10 @@ pub fn named(text: &str) -> Vec<&str> {
 
 /// Why the checkout `main` has no branch `slug` to land, and the rename that gives it one: the land
 /// takes the branch named as the task, so work on another is renamed to it. The branch named is
-/// one whose tip is a commit `approval` names, when one is, never the `default` branch; else the
-/// rename is said with `BRANCH`.
-fn no_branch(main: &Path, slug: &str, default: &str, approval: &Approval) -> String {
-    let at: Vec<(String, String)> = named(&approval.text)
+/// one whose tip is a commit `approved` (the approve's text, empty with none) names, when one is,
+/// never the `default` branch; else the rename is said with `BRANCH`.
+fn no_branch(main: &Path, slug: &str, default: &str, approved: &str) -> String {
+    let at: Vec<(String, String)> = named(approved)
         .into_iter()
         .filter_map(|word| rev(main, &format!("{word}^{{commit}}")))
         .flat_map(|sha| {
@@ -667,6 +677,16 @@ pub enum Covered {
     Named,
     /// It names none of the branch's commits, and each of the branch's `n` commits is older.
     ByTime(usize),
+}
+
+/// How a land found its task ready ([`needs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Judged {
+    /// It needs `review`: a fresh reviewer's approve, covering the tip so, left it done.
+    Approved(Covered),
+    /// It needs no review: its stamps stand at the tip, and it is in review, blocked, or done by
+    /// an approve. What its landing's line adds ([`Needed::stood`]).
+    Stamped(String),
 }
 
 /// One commit as `git log` gives it.
@@ -1764,9 +1784,11 @@ impl Landing<'_> {
         self.recover().map_err(Stop::Refused)?;
         let task = self.store.get(slug)?;
         let thread = self.store.thread(slug)?;
-        let approval =
-            approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
-        let held = self.store.ever_held(slug)?;
+        let branch_tip = rev(&self.main, &format!("refs/heads/{slug}"));
+        // Which stamps: the assessment's on the tip it read, else beside the catalogue's defaults;
+        // with no assessment, the defaults, which are `review` alone in the Symphony's catalogue.
+        let needed = Needed::of(&task, &self.main, branch_tip.as_deref())
+            .map_err(|line| self.refuse(Refusal::here(line)))?;
         let staff = |line: String| {
             Refusal::reopening(
                 line,
@@ -1774,44 +1796,106 @@ impl Landing<'_> {
                 "Staff a fresh reviewer, which approves naming the tip it read".into(),
             )
         };
-        let scope =
-            independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
-        let tip = rev(&self.main, &format!("refs/heads/{slug}")).ok_or_else(|| {
-            let line = no_branch(&self.main, slug, &self.settings.default_branch, &approval);
+        // Ready: where `review` is needed, done by an approve the land goes by, the approval check
+        // as before stamps; where it is not, in review or blocked, or done by an approve.
+        let approved = if needed.review() {
+            let approval = approval(&task, &thread).map_err(|line| {
+                let stale = (branch_tip.as_deref()).and_then(|tip| needed.stale(tip));
+                self.refuse(match (&needed.needs, stale) {
+                    (None, _) => Refusal::thread(line),
+                    (Some(_), None) => Refusal::to(
+                        line,
+                        "@orchestrator",
+                        "Staff a fresh reviewer, which approves naming the tip it read".into(),
+                    ),
+                    (Some(_), Some(stale)) => Refusal::to(
+                        format!("{line}; {stale}"),
+                        "@orchestrator",
+                        "Start an assessor for the tip, or staff a fresh reviewer, which approves \
+                         naming it"
+                            .into(),
+                    ),
+                })
+            })?;
+            let held = self.store.ever_held(slug)?;
+            let scope =
+                independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
+            Some((approval, scope))
+        } else {
+            if let Some((line, to)) = needs::not_ready(slug, &task.status) {
+                return Err(self.refuse(match to {
+                    Some(to) => Refusal::to(
+                        line,
+                        to,
+                        "Move it to review once the work is ready, then land it".into(),
+                    ),
+                    None => Refusal::thread(line),
+                }));
+            }
+            if task.status == "done" {
+                approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
+            }
+            None
+        };
+        let tip = branch_tip.clone().ok_or_else(|| {
+            let named = approved.as_ref().map_or("", |(approval, _)| &approval.text);
+            let line = no_branch(&self.main, slug, &self.settings.default_branch, named);
             self.refuse(Refusal::thread(line))
         })?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
         let default = self.settings.default_branch.clone();
         if ancestor(&self.main, &tip, &base) {
-            return self.finish(&tip, &base, &approval);
+            let approval = approved.as_ref().map(|(approval, _)| approval);
+            return self.finish(&tip, &base, approval, &needed);
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
-        let covered = covered(&self.main, slug, &base, &tip, &approval).map_err(|line| {
-            self.refuse(Refusal::reopening(
-                line,
-                "@reviewer",
-                format!(
-                    "Read what the approve does not cover, then approve the tip naming it: \
-                     `just tasks verdict {slug} approve \"{tip}: …\"`"
-                ),
-            ))
-        })?;
-        if let Scope::ChecksUnchanged(why) = scope {
-            let touched = check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
-            unchanged_checks(&task, &approval, why, &tip, touched)
-                .map_err(|line| self.refuse(staff(line)))?;
-        }
-        self.say(&format!(
-            "land {slug}: approved by {} at {}, {}",
-            approval.by,
-            sys::local_minute(approval.at),
-            match covered {
-                Covered::Named => format!("naming its tip {}", short(&tip)),
-                Covered::ByTime(_) => format!("before every commit to its tip {}", short(&tip)),
+        let judged = match &approved {
+            Some((approval, scope)) => {
+                let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
+                    self.refuse(Refusal::reopening(
+                        line,
+                        "@reviewer",
+                        format!(
+                            "Read what the approve does not cover, then approve the tip naming \
+                             it: `just tasks verdict {slug} approve \"{tip}: …\"`"
+                        ),
+                    ))
+                })?;
+                if let Scope::ChecksUnchanged(why) = *scope {
+                    let touched =
+                        check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
+                    unchanged_checks(&task, approval, why, &tip, touched)
+                        .map_err(|line| self.refuse(staff(line)))?;
+                }
+                Judged::Approved(covered)
             }
-        ));
+            None => Judged::Stamped(needed.stood(&tip)),
+        };
+        // Standing on the tip: each stamp but `review` by its reader.
+        let evidence =
+            needs::Evidence::of(self.store, self.env, &self.main, slug, &thread, &needed);
+        let (met, missing) = needs::standing(&needed, &tip, &evidence);
+        if !missing.is_empty() {
+            return Err(self.lacks(&task, &tip, &missing));
+        }
+        if let (Some((approval, _)), Judged::Approved(covered)) = (&approved, &judged) {
+            self.say(&format!(
+                "land {slug}: approved by {} at {}, {}",
+                approval.by,
+                sys::local_minute(approval.at),
+                match covered {
+                    Covered::Named => format!("naming its tip {}", short(&tip)),
+                    Covered::ByTime(_) => {
+                        format!("before every commit to its tip {}", short(&tip))
+                    }
+                }
+            ));
+        }
+        if needed.told() {
+            self.say(&needed.line(slug, &tip, &met));
+        }
         let mut landed = None;
         for attempt in 0..TRIES {
             self.go_on(None).map_err(Stop::Refused)?;
@@ -1843,7 +1927,41 @@ impl Landing<'_> {
             return Err(self.refuse(Refusal::here(line)));
         };
         self.owner_lines_after(&base, &tip);
-        self.close(&merge, &top, &taken, &covered, false)
+        self.close(&merge, &top, &taken, &judged, false)
+    }
+
+    /// The refusal of a land whose task lacks the stamps `missing` at `tip` ([`needs::refusal`]),
+    /// said on the thread to its executor when a stamp of its is missing. One waiting on the owner
+    /// alone is said to its orchestrator, and waits: held blocked from review
+    /// ([`Store::hold_blocked`], which keeps its slot), blocked or done as it is (a task its approve
+    /// left done stays done, the approve standing), the owner giving the stamp on its page.
+    fn lacks(&self, task: &Task, tip: &str, missing: &[needs::Missing]) -> Stop {
+        let slug = self.slug;
+        let (line, to) = needs::refusal(slug, tip, missing);
+        let at = short(tip);
+        let then = if !needs::owner_alone(missing) {
+            format!(
+                "Give them at {at}, then land it again: a commit after it goes back to review, \
+                 where what it needs is read again"
+            )
+        } else {
+            let waits = format!(
+                "waiting on the owner's approve of {at}, which the owner gives on the task's page \
+                 (its Approve {at}); land it again once it is given"
+            );
+            match task.status.as_str() {
+                "review" => match self.store.hold_blocked(slug, self.actor) {
+                    Ok(_) => format!("{slug} is held blocked, {waits}"),
+                    Err(error) => format!(
+                        "It stays in review, as the land could not hold it blocked ({error}), \
+                         {waits}"
+                    ),
+                },
+                "done" => format!("{slug} stays done, its approve standing, {waits}"),
+                status => format!("{slug} stays {status}, {waits}"),
+            }
+        };
+        self.refuse(Refusal::to(line, to, then))
     }
 
     /// The land of a tip the default branch holds already: only one this command started and
@@ -1854,7 +1972,15 @@ impl Landing<'_> {
     /// push of the checked commit, never of a newer tip no check passed on, the landed line and the
     /// sweep. A tip merged by hand, or by a land that did not record it, is refused: nothing is
     /// pushed, closed or said on the thread.
-    fn finish(&mut self, tip: &str, base: &str, approval: &Approval) -> Result<String, Stop> {
+    /// A task that needs no review (`approval` none) is finished by its record alone, its landed
+    /// line saying the stamps it needs (`needed`) stood at the tip.
+    fn finish(
+        &mut self,
+        tip: &str,
+        base: &str,
+        approval: Option<&Approval>,
+        needed: &Needed,
+    ) -> Result<String, Stop> {
         let (slug, default) = (self.slug, self.settings.default_branch.clone());
         let record = Record::read(&self.folder, slug).filter(|record| {
             record.tip == tip
@@ -1877,17 +2003,22 @@ impl Landing<'_> {
         };
         let before =
             rev(&self.main, &format!("{}^1", record.merge)).unwrap_or_else(|| tip.to_string());
-        let covered = covered(&self.main, slug, &before, tip, approval).map_err(|line| {
-            self.refuse(Refusal::to(
-                format!(
-                    "{slug}'s tip {} is on {default} already, by {}, but {line}",
-                    short(tip),
-                    short(&record.merge)
-                ),
-                "@orchestrator",
-                "Nothing is pushed or closed: what landed is not what was approved".into(),
-            ))
-        })?;
+        let judged = match approval {
+            None => Judged::Stamped(needed.stood(tip)),
+            Some(approval) => Judged::Approved(
+                covered(&self.main, slug, &before, tip, approval).map_err(|line| {
+                    self.refuse(Refusal::to(
+                        format!(
+                            "{slug}'s tip {} is on {default} already, by {}, but {line}",
+                            short(tip),
+                            short(&record.merge)
+                        ),
+                        "@orchestrator",
+                        "Nothing is pushed or closed: what landed is not what was approved".into(),
+                    ))
+                })?,
+            ),
+        };
         self.say(&format!(
             "land {slug}: its tip {} is on {default} already, by this land's merge {}{}: \
              finishing the land (the push, the landed line, the sweep)",
@@ -1899,20 +2030,21 @@ impl Landing<'_> {
             &record.merge,
             &record.checked,
             &record.regenerated,
-            &covered,
+            &judged,
             true,
         )
     }
 
     /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
     /// landed line closing the task, the sweep and the regenerator's start; the line saying where
-    /// it landed. `taken` are the generated paths the merge took from the default branch.
+    /// it landed. `taken` are the generated paths the merge took from the default branch; `judged`
+    /// how the task was found ready, which says what statuses its landing closes.
     fn close(
         &mut self,
         merge: &str,
         top: &str,
         taken: &[String],
-        covered: &Covered,
+        judged: &Judged,
         finishing: bool,
     ) -> Result<String, Stop> {
         let (slug, default) = (self.slug, self.settings.default_branch.clone());
@@ -1920,6 +2052,9 @@ impl Landing<'_> {
             "landed {slug} on {default} at {}",
             &merge[..merge.len().min(12)]
         );
+        if let Judged::Stamped(stood) = judged {
+            landed.push_str(stood);
+        }
         if finishing {
             landed.push_str(", finishing a land interrupted after its merge");
         }
@@ -1938,18 +2073,24 @@ impl Landing<'_> {
         let line = format!("{landed}{pushed}");
         // The thread also says how the approval was judged, before the push, whose retry command
         // ends the line.
-        let said = match *covered {
-            Covered::ByTime(n) => format!(
+        let said = match judged {
+            Judged::Approved(Covered::ByTime(n)) => format!(
                 "{landed}; judged by time, the approval naming no commit of the branch: its {} {} \
                  older than the approval{pushed}",
-                commits(n),
-                if n == 1 { "is" } else { "are" }
+                commits(*n),
+                if *n == 1 { "is" } else { "are" }
             ),
-            Covered::Named => line.clone(),
+            _ => line.clone(),
         };
         // The approval on the board is the gate here, not who runs the land: any session may. A
         // task sent back to review since it was read stays there: what it has now did not land.
-        if let Err(error) = self.store.landed(slug, self.actor, &said, true, &["done"]) {
+        // One that needs no review closes from review or blocked, its executor's move to review
+        // having said the work is ready, or done by an approve.
+        let from: &[&str] = match judged {
+            Judged::Approved(_) => &["done"],
+            Judged::Stamped(_) => &["review", "blocked", "done"],
+        };
+        if let Err(error) = self.store.landed(slug, self.actor, &said, true, from) {
             return Err(Stop::Refused(format!(
                 "{line}, but the board did not close {slug}: {error}"
             )));

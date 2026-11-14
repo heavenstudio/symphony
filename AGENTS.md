@@ -219,11 +219,14 @@ release run's `just verify`. It keeps main's side of the client distribution a b
 the regenerator it starts detached rebuilds that from main's newest tip and lands it after
 ([TASKS](docs/TASKS.md#the-regenerator)); one interrupted is run again, which finishes its push
 and close. It lands
-only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast fix (`just tasks
-create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
-([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator lands an approved
-task without asking the owner, and `just land` runs with no permission prompt: the fresh
-reviewer's approve is what decides it, never a question to the owner. A decision the owner must
+a task once every stamp it needs stands on its tip: the stamps its assessor wrote from the
+catalogue (`just tasks stamps`), on the tip it read, a fresh reviewer's approve naming the tip
+alone where none did (or the orchestrator's, on a task an older board filed with the fast-fix
+mark); a missing stamp, a conflict or a red goes back on the thread, naming who gives it
+([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator starts the assessor
+when it files a task and each time it moves to review, before any reviewer, lands a task
+without asking the owner, and `just land` runs with no permission prompt: the stamps standing
+on the tip are what decide it, never a question to the owner. A decision the owner must
 make goes through the decision docs, a card in [DECISIONS](docs/DECISIONS.md), not a question in
 chat. The one thing that pushes a tag is the release run (`just release`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--commit` by hand and installing its schedule are the owner's call, and an
@@ -277,7 +280,7 @@ this folder (`../symphony-wt/release`), which tags a green tip as a release
 
 ## Agent integration
 
-`symphony init --root ROOT` installs the eight generic skills, their Claude links,
+`symphony init --root ROOT` installs the nine generic skills, their Claude links,
 Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
 the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
 `symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`, and the
@@ -306,8 +309,8 @@ allow rules, like the Codex rules, allow the board and reply recipes (`tasks`, `
 `symphony-status`, `symphony-reply`, `symphony-ask`) and `land`, and not the two server
 recipes: `just symphony` starts, replaces or stops the machine's shared server and
 `just symphony-cli` reaches `serve` and `init`, so an agent is asked first.
-`just land` needs no prompt: what the default land lands is decided by its approval check, a
-fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
+`just land` needs no prompt: what the default land lands is decided by its checks, every stamp
+the task needs standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
 a prompt would add only a wait on the owner, whose permission a land does not need. A project
 whose own `land` recipe replaces the default gets the same
 allow rule, and its own landing policy decides what lands. The `land` recipe sets

@@ -434,6 +434,23 @@ fn only_a_verdict_that_approves_is_an_approve() {
     );
 }
 
+/// A red that needed no review lands with no approve: its landing's line names the tip its needed
+/// stamps stood on, which the candidate moves to as to an approved commit.
+#[test]
+fn a_landing_by_its_needed_stamps_names_the_tip_they_stood_on() {
+    let tip = "4be91c2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let landed = format!(
+        "landed tests/release-red-verify on main at 0123456789ab; its needs (tests) stood at {tip}; \
+         pushed to origin"
+    );
+    let messages = vec![
+        serde_json::json!({"kind": "verdict", "text": landed}),
+        serde_json::json!({"kind": "verdict", "text": "landed tests/x on main at 0123456789ab"}),
+        serde_json::json!({"kind": "message", "text": format!("its needs (tests) stood at {tip}")}),
+    ];
+    assert_eq!(approving(&messages), vec![tip.to_string()]);
+}
+
 #[test]
 fn only_a_threads_last_verdict_closing_it_as_covered_names_the_covering_landing() {
     let line = symphony_board::covered_line("tests/x", &"c".repeat(40), "otter", "its fix");

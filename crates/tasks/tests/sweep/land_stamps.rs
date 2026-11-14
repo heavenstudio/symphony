@@ -1,0 +1,509 @@
+//! The land by the stamps a task needs (docs/analysis/needed-stamps.md, "The land's check"), in
+//! scratch repositories on a board of their own: each row of the design's worked examples lands
+//! once what it needs stands at its tip; a waiver on another tip is refused, the defaults back; a
+//! missing stamp's refusal names it and who gives it; a stray red run is cleared by the same
+//! command run again, green; a task waiting on the owner alone is held blocked until the owner
+//! approves its tip; and a task no assessment read lands as before stamps.
+
+use super::*;
+use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Step};
+use symphony_board::stamps::{Catalogue, Needs};
+
+/// A task's people, with the session that assesses it: none of the others, nor its filer.
+struct Staff {
+    orch: String,
+    exe: String,
+    assessor: String,
+}
+
+/// `slug` filed by the owner, orchestrated, claimed and moved to review by its executor, its
+/// branch writing `files`: the people and the tip.
+fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff, String) {
+    let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+    for (file, text) in files {
+        write(&wt, file, text);
+    }
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", &format!("work on {slug}")]);
+    let store = &r.board.store;
+    let staff = Staff {
+        orch: r.board.session("orchestrator"),
+        exe: r.board.session("worker"),
+        assessor: r.board.session("reviewer"),
+    };
+    r.task(slug);
+    store.take_role(slug, &staff.orch, "orchestrator").unwrap();
+    store.claim(slug, &staff.exe).unwrap();
+    store.move_to(slug, "review", &staff.exe).unwrap();
+    (staff, head(&wt, "HEAD"))
+}
+
+/// The assessment `by` writes of `slug`: `stamps` at `tip`.
+fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
+    let needs = Needs {
+        stamps: if stamps.is_empty() {
+            vec!["none".into()]
+        } else {
+            stamps.iter().map(|s| s.to_string()).collect()
+        },
+        tip: Some(tip.into()),
+        by: by.into(),
+        why: "as the guidelines say".into(),
+    };
+    (r.board.store)
+        .set_needs(slug, &Catalogue::symphony(), &needs)
+        .unwrap();
+}
+
+/// The work folder the land reads the recorder's runs from: the test's own.
+fn work(r: &Repo) -> PathBuf {
+    r.dir.join("work")
+}
+
+/// How many runs this repository's recorder kept: the next one's number.
+static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// A run of `label` for `slug` at `commit`, kept in the work folder as the recorder keeps one that
+/// finished with `exit`, after every run kept before it.
+fn ran(r: &Repo, slug: &str, commit: &str, label: &str, phase: Phase, exit: i32) {
+    let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let started = 1000.0 + f64::from(n);
+    let record = Record {
+        version: 1,
+        operation_id: format!("{n:032x}"),
+        parent_id: None,
+        phase,
+        label: label.into(),
+        state: Step::Finished,
+        handle: Some("amber".into()),
+        task: Some(slug.into()),
+        checkout: r.root.to_string_lossy().into_owned(),
+        branch: Some(slug.into()),
+        commit: Some(commit.into()),
+        machine_id: None,
+        host: "host".into(),
+        pid: 10,
+        child_pid: Some(11),
+        queued_at: started,
+        started_at: Some(started),
+        ended_at: Some(started + 0.5),
+        beat_at: started,
+        exit_code: Some(exit),
+        signal: None,
+        reason: String::new(),
+        run: None,
+        reading: None,
+    };
+    recorded::keep(&work(r), &record).unwrap();
+}
+
+/// The task's tests green at `tip`.
+fn green(r: &Repo, slug: &str, tip: &str) {
+    ran(r, slug, tip, "cargo test -p sim", Phase::Test, 0);
+}
+
+/// The land of `slug` as `actor` from the main checkout, the recorder's runs read from the test's
+/// work folder: what it printed, and the line it ended on or the refusal.
+fn landed_by(r: &Repo, slug: &str, actor: &str) -> (String, Result<String, String>) {
+    let mut env = r.env(&r.root);
+    env.vars
+        .insert(FOLDER_VAR.into(), work(r).to_string_lossy().into_owned());
+    let mut out = Vec::new();
+    let result = land(&r.board.store, &env, slug, actor, None, &mut out);
+    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+}
+
+/// `slug` landed at `tip`: main's merge brought it, the task is done, its thread ends on the line.
+fn assert_landed(r: &Repo, slug: &str, tip: &str, result: Result<String, String>) {
+    let line = result.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(r.board.store.get(slug).unwrap().status, "done");
+    assert_eq!(last(r, slug), line);
+}
+
+/// The thread's last post: its text and to whom.
+fn told(r: &Repo, slug: &str) -> (String, Option<String>) {
+    let post = r.board.store.thread(slug).unwrap().pop().unwrap();
+    (post.text, post.recipient)
+}
+
+/// The rows of the design's worked examples that need no reviewer: documents only and a hotfix
+/// need nothing, landed from review with no verdict; a release red whose fix leaves its test
+/// alone needs its tests green at the tip.
+#[test]
+fn a_task_needing_no_review_lands_from_review_once_its_stamps_stand_at_its_tip() {
+    let r = Repo::new();
+    manifest(&r, "");
+    for (slug, files, stamps) in [
+        (
+            "docs/design",
+            vec![("docs/design.md", "# A design\n")],
+            vec![],
+        ),
+        (
+            "sim/hotfix",
+            vec![("sim/world.gd", "extends RefCounted # fixed\n")],
+            vec![],
+        ),
+        (
+            "tests/release-red-lint",
+            vec![("sim/lint.gd", "extends Node\n")],
+            vec!["tests"],
+        ),
+    ] {
+        let (staff, tip) = in_review(&r, slug, &files);
+        assess(&r, slug, &staff.assessor, &stamps, &tip);
+        if !stamps.is_empty() {
+            green(&r, slug, &tip);
+        }
+        let (said, result) = landed_by(&r, slug, &staff.orch);
+        assert!(
+            said.starts_with(&format!(
+                "land {slug}: it needs {} at {} (its assessment by {})",
+                if stamps.is_empty() { "none" } else { "tests" },
+                &tip[..7],
+                staff.assessor
+            )),
+            "{said}"
+        );
+        assert!(!said.contains("approved by"), "{said}");
+        assert_landed(&r, slug, &tip, result);
+        // No review round: the landing closed it from review.
+        let verdicts: Vec<String> = (r.board.store.thread(slug).unwrap().into_iter())
+            .filter(|post| post.kind == "verdict")
+            .map(|post| post.text)
+            .collect();
+        assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+        assert!(verdicts[0].starts_with(&format!("landed {slug} on main at ")));
+        // The landing's line names the whole tip its stamps stood on, as an approve names one:
+        // the commit a release candidate moves to.
+        let stood = format!(
+            "; its needs ({}) stood at {tip}",
+            if stamps.is_empty() { "none" } else { "tests" }
+        );
+        assert!(verdicts[0].contains(&stood), "{}", verdicts[0]);
+        assert_eq!(
+            symphony_board::land::needs::stood_at(&verdicts[0]),
+            Some(tip.as_str())
+        );
+    }
+}
+
+/// The rows that need a reviewer: a red's fix changing its test, a board command reworded, a row
+/// added to a page. Each lands on a fresh reviewer's approve of its tip once its other stamps
+/// stand there, and is refused, named stamp by stamp, while one does not.
+#[test]
+fn a_task_needing_review_lands_on_its_approve_once_its_other_stamps_stand_at_its_tip() {
+    let r = Repo::new();
+    manifest(&r, "");
+    for (slug, file, stamps) in [
+        (
+            "tests/release-red-check",
+            "tests/jump.gd",
+            &["tests", "review"][..],
+        ),
+        ("tools/refusal", "sim/refusal.gd", &["tests", "review"]),
+        (
+            "ui/home-queue",
+            "ui/queue.gd",
+            &["tests", "review", "pictures"],
+        ),
+    ] {
+        let (staff, tip) = in_review(&r, slug, &[(file, "extends Node\n")]);
+        assess(&r, slug, &staff.assessor, stamps, &tip);
+        let rev = r.board.session("reviewer");
+        let store = &r.board.store;
+        store.take_role(slug, &rev, "reviewer").unwrap();
+        store
+            .verdict(slug, &rev, "approve", &format!("{tip}: read it"))
+            .unwrap();
+        // Approved, but nothing else stands at the tip: refused to the executor, who gives them.
+        let before = head(&r.root, "main");
+        let (_, result) = landed_by(&r, slug, &staff.orch);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with(&format!(
+                "{slug} lacks at its tip {} what it needs: tests (No build or test recorded for \
+                 it at {}",
+                &tip[..7],
+                &tip[..7]
+            )),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("which its executor gives at that tip"),
+            "{line}"
+        );
+        assert_eq!(
+            line.contains("pictures (No picture posted at"),
+            stamps.contains(&"pictures"),
+            "{line}"
+        );
+        assert_eq!(head(&r.root, "main"), before, "main stays where it was");
+        let (text, to) = told(&r, slug);
+        assert!(text.starts_with(&format!("land refused: {line}. Give them at ")));
+        assert_eq!(to.as_deref(), Some("@executor"));
+        assert_eq!(
+            store.get(slug).unwrap().status,
+            "done",
+            "its approve stands"
+        );
+        // Given at the tip, it lands on that approve.
+        green(&r, slug, &tip);
+        if stamps.contains(&"pictures") {
+            let shot = format!("{tip}: before and after, artifacts/{slug}/wide.png");
+            store.say(slug, &staff.exe, &shot, None).unwrap();
+        }
+        let (said, result) = landed_by(&r, slug, &staff.orch);
+        assert!(
+            said.starts_with(&format!("land {slug}: approved by {rev} at ")),
+            "{said}"
+        );
+        assert!(
+            said.contains(&format!(
+                "land {slug}: it needs {} at {} (its assessment by {}); tests: Green at",
+                stamps.join(", "),
+                &tip[..7],
+                staff.assessor
+            )),
+            "{said}"
+        );
+        assert_landed(&r, slug, &tip, result);
+    }
+}
+
+/// The last row: a page the owner asked to see before it lands needs the owner's approve of its
+/// tip. Approved by its reviewer it is done, which no move takes to blocked: the land refuses,
+/// saying it waits on the owner's approve and where it is given, and lands once it is.
+#[test]
+fn a_task_needing_the_owner_waits_on_the_owners_approve_of_its_tip() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "ui/new-page";
+    let (staff, tip) = in_review(&r, slug, &[("ui/page.gd", "extends Node\n")]);
+    assess(
+        &r,
+        slug,
+        &staff.assessor,
+        &["tests", "review", "pictures", "owner"],
+        &tip,
+    );
+    let store = &r.board.store;
+    let rev = r.board.session("reviewer");
+    store.take_role(slug, &rev, "reviewer").unwrap();
+    store
+        .verdict(slug, &rev, "approve", &format!("{tip}: read it"))
+        .unwrap();
+    green(&r, slug, &tip);
+    let shot = format!("{tip}: artifacts/{slug}/phone.png");
+    store.say(slug, &staff.exe, &shot, None).unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    let at = &tip[..7];
+    let line = format!(
+        "{slug} lacks at its tip {at} what it needs: owner (Waits on the owner's approve of {at}), \
+         which the owner gives on the task's page"
+    );
+    assert_eq!(result, Err(line.clone()));
+    assert_eq!(head(&r.root, "main"), before, "main stays where it was");
+    assert_eq!(
+        told(&r, slug),
+        (
+            format!(
+                "land refused: {line}. {slug} stays done, its approve standing, waiting on the \
+                 owner's approve of {at}, which the owner gives on the task's page (its Approve \
+                 {at}); land it again once it is given"
+            ),
+            Some("@orchestrator".into())
+        )
+    );
+    assert_eq!(store.get(slug).unwrap().status, "done");
+    // The owner approves another commit: not the tip, still refused.
+    let main = head(&r.root, "main");
+    store
+        .say(slug, "owner", &format!("approve {main}"), None)
+        .unwrap();
+    assert!(landed_by(&r, slug, &staff.orch).1.is_err());
+    // The owner's approve of the tip, as the page posts it, lands it.
+    store
+        .say(slug, "owner", &format!("approve {tip}"), None)
+        .unwrap();
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    assert!(said.contains("owner: Approved by the owner at "), "{said}");
+    assert_landed(&r, slug, &tip, result);
+}
+
+/// A task needing no review whose one missing stamp is the owner's is held blocked, keeping its
+/// slot, and lands from blocked once the owner approves its tip.
+#[test]
+fn a_task_waiting_on_the_owner_alone_is_held_blocked_and_lands_from_there() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "docs/look";
+    let (staff, tip) = in_review(&r, slug, &[("docs/look.md", "# A look\n")]);
+    assess(&r, slug, &staff.assessor, &["owner"], &tip);
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    assert!(result.is_err());
+    let at = &tip[..7];
+    let (text, to) = told(&r, slug);
+    assert!(
+        text.ends_with(&format!(
+            ". {slug} is held blocked, waiting on the owner's approve of {at}, which the owner \
+             gives on the task's page (its Approve {at}); land it again once it is given"
+        )),
+        "{text}"
+    );
+    assert_eq!(to.as_deref(), Some("@orchestrator"));
+    let store = &r.board.store;
+    assert_eq!(store.get(slug).unwrap().status, "blocked");
+    // Landed again before the owner gives it: still waiting, still blocked.
+    assert!(landed_by(&r, slug, &staff.orch).1.is_err());
+    let (text, _) = told(&r, slug);
+    assert!(
+        text.contains(&format!(". {slug} stays blocked, waiting on")),
+        "{text}"
+    );
+    store
+        .say(slug, "owner", &format!("approve {tip}"), None)
+        .unwrap();
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    assert_landed(&r, slug, &tip, result);
+}
+
+/// A waiver stands only on the tip its assessor read: a commit after it brings the catalogue's
+/// defaults back, and the land refuses to the orchestrator, naming the assessment and its tip.
+#[test]
+fn a_waiver_on_another_tip_is_refused_the_defaults_back() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let (staff, read) = in_review(&r, SLUG, &[("sim/jump.gd", "extends Node\n")]);
+    assess(&r, SLUG, &staff.assessor, &["tests"], &read);
+    let wt = r.dir.join(SLUG.replace('/', "-"));
+    write(&wt, "sim/jump.gd", "extends Node # and more\n");
+    git(&wt, &["commit", "-qam", "more after the assessment"]);
+    let tip = head(&wt, "HEAD");
+    green(&r, SLUG, &tip);
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    let line = format!(
+        "{}; its assessment by {} read {}, not the tip {}, so the catalogue's defaults stand \
+         beside the stamps it names: an assessment lowers what a task needs only on the tip it \
+         read",
+        unapproved(SLUG, "review"),
+        staff.assessor,
+        &read[..7],
+        &tip[..7]
+    );
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(
+        told(&r, SLUG),
+        (
+            format!(
+                "land refused: {line}. Start an assessor for the tip, or staff a fresh reviewer, \
+                 which approves naming it"
+            ),
+            Some("@orchestrator".into())
+        )
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "review");
+    // Assessed again at the new tip, it lands.
+    let again = r.board.session("reviewer");
+    assess(&r, SLUG, &again, &["tests"], &tip);
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    assert_landed(&r, SLUG, &tip, result);
+}
+
+/// A stray red run (a mistyped command, say) keeps the `tests` stamp from standing: the refusal,
+/// said to the executor, names each red command and what clears it, and the same command run
+/// again, green, at the tip does.
+#[test]
+fn a_stray_red_run_is_named_and_cleared_by_the_same_command_green_at_the_tip() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let (staff, tip) = in_review(&r, SLUG, &[("sim/jump.gd", "extends Node\n")]);
+    assess(&r, SLUG, &staff.assessor, &["tests"], &tip);
+    let stray = "cargo test -p sim --test jmup";
+    ran(&r, SLUG, &tip, stray, Phase::Test, 101);
+    green(&r, SLUG, &tip);
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    let at = &tip[..7];
+    let line = format!(
+        "{SLUG} lacks at its tip {at} what it needs: tests (red at {at}: `{stray}` (exit 101); \
+         the newest run of each command at the tip is what counts, so running that command again, \
+         green, at {at} clears it; one that cannot pass (a mistyped command) is cleared only by a \
+         new commit, where the stamps the task needs are given again), which its executor gives \
+         at that tip"
+    );
+    assert_refused(&r, &result, &line, &before);
+    let (text, to) = told(&r, SLUG);
+    assert!(text.starts_with(&format!("land refused: {line}. Give them at {at}")));
+    assert_eq!(to.as_deref(), Some("@executor"));
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "review");
+    // A run of it at another commit clears nothing; the same command green at the tip does.
+    ran(&r, SLUG, &before, stray, Phase::Test, 0);
+    assert!(landed_by(&r, SLUG, &staff.orch).1.is_err());
+    ran(&r, SLUG, &tip, stray, Phase::Test, 0);
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    assert_landed(&r, SLUG, &tip, result);
+}
+
+/// A task needing no review is ready only once its executor moves it to review: in progress it is
+/// refused to its executor, nothing merged.
+#[test]
+fn a_task_needing_no_review_is_refused_until_it_is_in_review() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let (staff, tip) = in_review(&r, SLUG, &[("docs/jump.md", "# Jump\n")]);
+    assess(&r, SLUG, &staff.assessor, &[], &tip);
+    let store = &r.board.store;
+    store.move_to(SLUG, "in_progress", &staff.exe).unwrap();
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    let line = format!(
+        "{SLUG} is in_progress: it needs no review, so it lands once its executor says the work \
+         is ready by moving it to review (`just tasks move {SLUG} review`)"
+    );
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(
+        told(&r, SLUG),
+        (
+            format!("land refused: {line}. Move it to review once the work is ready, then land it"),
+            Some("@executor".into())
+        )
+    );
+    assert!(runs(&r).is_empty(), "nothing is merged or checked");
+    store.move_to(SLUG, "review", &staff.exe).unwrap();
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    assert_landed(&r, SLUG, &tip, result);
+}
+
+/// A task no assessment has read needs the catalogue's defaults, `review` alone: refused in review
+/// as before stamps, with today's line to nobody, and landed on a fresh reviewer's approve, its
+/// tests unread.
+#[test]
+fn a_task_no_assessment_read_lands_as_before_stamps() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let (staff, tip) = in_review(&r, SLUG, &[("sim/jump.gd", "extends Node\n")]);
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    let line = unapproved(SLUG, "review");
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(told(&r, SLUG), (format!("land refused: {line}"), None));
+    // A red run at the tip is no stamp it needs.
+    ran(&r, SLUG, &tip, "cargo test -p sim", Phase::Test, 1);
+    let rev = r.board.session("reviewer");
+    let store = &r.board.store;
+    store.take_role(SLUG, &rev, "reviewer").unwrap();
+    store
+        .verdict(SLUG, &rev, "approve", &format!("{tip}: good"))
+        .unwrap();
+    let (said, result) = landed_by(&r, SLUG, &staff.orch);
+    assert!(
+        said.starts_with(&format!("land {SLUG}: approved by {rev} at ")),
+        "{said}"
+    );
+    assert!(!said.contains("it needs"), "nothing new is said: {said}");
+    assert_landed(&r, SLUG, &tip, result);
+}

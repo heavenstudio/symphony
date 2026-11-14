@@ -238,7 +238,6 @@ const COMMANDS: &[Command] = &[
             opt("--instruction", "instruction", Takes::Bool),
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
-            opt("--fast-fix", "fast_fix", STR),
             opt("--no-role", "no_role", Takes::Bool),
         ],
     },
@@ -1107,17 +1106,17 @@ mod tests {
             help_of(&["help", "claim"]).contains("\n\ntake a task as its executor.\n\npositional")
         );
         // A new project has none of this repository's own files: staff names the setting it reads
-        // in any checkout, and the fast fix no rule of RULES.md.
+        // in any checkout.
         assert!(help_of(&["help", "staff"]).contains(
             "\n\nstaff ready work once, if tools/task_staff.json enables it.\n\noptions:"
         ));
-        let fast_fix = [
-            "  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no",
-            "                        reviewer: its orchestrator approves it",
-            "  --no-role             file it for the orchestrator --for names, not for the",
-        ]
-        .join("\n");
-        assert!(help_of(&["help", "create"]).contains(&fast_fix));
+        // A task is no longer filed as a fast fix: what it needs is its assessor's.
+        assert!(!help_of(&["help", "create"]).contains("--fast-fix"));
+        assert!(
+            help_of(&["help", "create"]).contains(
+                "  --link LINK           a document it implements, docs/X.md#Heading\n                        (repeatable)\n  --no-role "
+            )
+        );
         for name in usage::COMMANDS.iter().map(|(n, _, _)| *n) {
             assert!(!help_of(&["help", name]).contains("RULES.md"), "{name}");
         }

@@ -898,14 +898,20 @@ settings (`[project] default_branch`, `[agents] worktrees`, `[verdicts] check`,
 and `check_paths` (`land/check_paths.rs`, its default `check_paths::DEFAULT`), any other `[land]` key refused)
 from the default branch as the main checkout has it committed. `land::admit` lets it
 run only under the `land` recipe's `SYMPHONY_LAND` and never where the project's
-justfile runs a `land` of its own (`just --show land`): a guard against accident, the
-approval check being the gate, so `symphony init` allows `just land` with no permission
-prompt. It goes by the last verdict's `approve`
+justfile runs a `land` of its own (`just --show land`): a guard against accident, its
+checks being the gate, so `symphony init` allows `just land` with no permission
+prompt. It goes by the stamps the task needs at its tip (`land/needs.rs`, [needed
+stamps](../../docs/TASKS.md#needed-stamps)): where they leave out `review` it lands from review
+or blocked (`Store::landed`'s `from`), its landing line naming the tip they stood on
+(`needs::stood_at`, which the release candidate reads beside approves), and one waiting on the
+owner alone is held blocked (`Store::hold_blocked`). Where `review` is needed it goes by the last
+verdict's `approve`
 (`store::approved`) only when a session that never executed the task or a work subtask
 of it at any depth gave it (an instruction subtask's executor, the reviewer that claimed
 `SLUG/review`, executed none: the `instruction` flag says so), nor one that orchestrates
 or ever orchestrated it (`Store::ever_held`, a `Held`), and not its filer; on a fast fix (`fast_fix.rs`, the `_board.fast_fix` mark
-`create` writes) the orchestrator's verdict counts unless it executed the task, when a
+an older `create` wrote, which the store and the API still take until none is open, and the
+command line no longer files) the orchestrator's verdict counts unless it executed the task, when a
 fresh reviewer's approve lands it. That is one rule, `Held::unfresh`, which `Store::verdict`
 holds first, and `Store::take_role` refuses the reviewer's role to a session that requested
 the work (`Held::requested`), so the approve the land refuses for whose it is is an older
@@ -1042,9 +1048,13 @@ a thread line each. The assessor is a role in name, with no row: the write is re
 (`src/cli/commands/stamps.rs`) read the catalogue and resolve the tip in the main checkout. Their
 tests: `tests/store/needs.rs`, `tests/cli/stamps.rs`. `stamps/read.rs` holds each stamp's reader
 at a tip (`tests` from the recorder's runs, `pictures` and `owner` from the thread), the rule that
-a line names the tip, and `read::needed`, the stamps a task needs there; they decide nothing, and
-the Symphony's task page draws them (`symphony::gates::stamps`). Nothing reads the needs to land
-yet.
+a line names the tip, `read::reds` (each command's newest red run at the tip) and `read::needed`,
+the stamps a task needs there. The Symphony's task page draws them (`symphony::gates::stamps`), and
+the land goes by them through `land/needs.rs`, never a copy: `Needed::of` (a fast fix's needs
+unread, `review` alone), `not_ready`, `standing` and `refusal`, its tests `land/needs/tests.rs`
+and, each worked example of the design a row, `tests/sweep/land_stamps.rs`. `stamps::family` (the
+task and the work under it) and `recorded::runs` (the recorder's runs, kept and live) are the
+board's, which the Symphony's gates re-export.
 `slots.rs` owns the cap on an orchestrator's open tasks; a store with no cap caps nothing.
 A rule that may start work reads, in its view's
 transaction (`Which::Starting`, `store/cap.rs`), the slot counters, the open
@@ -1060,8 +1070,8 @@ project beside each task) and the work under it, judged by the task whose work i
 a refusal names it apart, PULL lists a red nobody executes 10 minutes after filing
 first, as `red_unstaffed`, before any cancelled dependency of its, and `next`
 (`Store::next_for`) offers a red before other work of its priority (`tests/store/next.rs`).
-A red a tool files may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
-release run's do, but a stop the owner clears), and the land holds its orchestrator's (or filer's)
+A red an older tool filed may record `fast_fix::RED` as its fast-fix risk (`fast_fix.rs`; the
+release run and the regenerator now file theirs unmarked), and the land holds its orchestrator's (or filer's)
 approve to that bound, since the board cannot read the repository: `land::independent` gives it
 `Scope::ChecksUnchanged`, keyed on that recorded risk, which no session clears, by the opening
 every wording of it keeps (`fast_fix::RED_OPENING`, pinned by a test, `fast_fix::bounds`), as well

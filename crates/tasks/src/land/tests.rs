@@ -486,7 +486,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     let orchestrated = |by: &str| {
         format!(
             "tools/lamp's approve is {by}'s, which orchestrated it: a fresh reviewer approves it, \
-             and its orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+             and its orchestrator only a fast fix (a task filed with the fast-fix mark)"
         )
     };
     // Its orchestrator now, and one that orchestrated it before and reviews it now.
@@ -504,7 +504,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     assert_eq!(
         independent(&plain, &approval_by("owner"), &held).unwrap_err(),
         "tools/lamp's approve is owner's, which filed it: a fresh reviewer approves it, and its \
-         orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+         orchestrator only a fast fix (a task filed with the fast-fix mark)"
     );
     for by in ["ochre", "taupe"] {
         assert_eq!(

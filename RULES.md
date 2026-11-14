@@ -26,12 +26,16 @@ full verification is left to a later, scheduled run. Every task, parent or slice
 runs the tests closest to what it changed and `just lint-rs` (and the client built for a client
 change, its distribution never committed: the regenerator a land starts makes main's), and posts
 the exact commands and results with the evidence its kind of change asks for,
-such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
-the suite, judges whether the evidence is good enough for the change's risk, and its approve, a
-verdict on the task itself and never a review subtask, is the task's stamp. A slice's evidence is
-judged in its parent's review, and a fix whose recorded risk calls for no reviewer
-(`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
-Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
+such as before and after screenshots of a changed page. What it needs to land is its
+assessment's: an assessor, which neither filed, orchestrates nor executed it, reads its diff when
+it is filed and each time it moves to review, before any reviewer, and writes the stamps it needs
+from the project's catalogue (`just tasks stamps`: its tests green at the tip, a fresh reviewer's
+approve, pictures, the owner's approve; [TASKS](docs/TASKS.md#needed-stamps)), a reviewer's approve
+alone with none written. Where it needs review, its reviewer runs the same tests, never the suite,
+judges whether the evidence is good enough for the change's risk, and its approve, a verdict on
+the task itself and never a review subtask, is that stamp. The land lands the task once every
+stamp it needs stands on its tip, and refuses naming who gives a missing one. A slice's evidence is
+judged in its parent's review. Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
 whatever a brief asks: it is the release run's (`just release`, [RELEASES](docs/RELEASES.md)), on
 main's tip, and a red release run is filed as a task naming the commits since the last green one.
 A run starts once `[releases] every_landings` tasks have landed (the cadence, started by the land
@@ -42,8 +46,8 @@ worked examples: [CHECKS](docs/CHECKS.md).
 ### `workflow/fast-bugfixes`
 
 A bug fix is recovery, not a feature cycle: one agent, the smallest regression checks that cover
-the repair, no review or check subtasks, and a reviewer only when the fix's recorded risk calls
-for one. Restore what is broken before unrelated failures; record what still fails as one
+the repair, no review or check subtasks, and a reviewer only when its assessment needs one
+(`workflow/evidence-is-the-gate`). Restore what is broken before unrelated failures; record what still fails as one
 follow-up task, never claiming green or loosening a test. After recovery another agent makes a
 bounded postmortem (root cause, the class of recurrence, a shared API or refactor that would
 prevent it), reusing an existing analysis task; it blocks nothing.
@@ -81,15 +85,14 @@ the failing step rerun alone as its text names them. A red is fixed in the code,
 load is discarded instead (`tests/no-test-fails-on-load`). A test or check is never loosened to
 turn it green (an assertion widened, a timeout or a budget raised, a test ignored or moved out of
 the release run): a fix that must change one says on its thread why the code was not the thing to
-fix, and a fresh reviewer judges that. It is filed as a fast fix
-(`workflow/fast-bugfixes`) under a bound the land enforces: its orchestrator's approve lands a fix
-that changes none of the project's tests and checks (`[land] check_paths`,
-[TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
-a fix that changes a test, a check, a budget or a run step lands only on a fresh reviewer's
-approve. A red run holds its commit as the release candidate, so the release is that commit and
+fix, and a fresh reviewer judges that. Its assessor reads what its fix needs at review
+(`workflow/evidence-is-the-gate`): a fix that changes none of the project's tests and checks
+(`[land] check_paths`, [TASKS](docs/TASKS.md#the-default-landing)) needs its tests, the failing
+tests unchanged and green at its tip, and one that changes a test, a check, a budget or a run step
+needs a fresh reviewer's approve as well. A red run holds its commit as the release candidate, so the release is that commit and
 its reds' fixes alone however fast main moves ([RELEASES](docs/RELEASES.md#the-release-candidate)):
 its red's fix starts at the local branch `release-candidate`, never at main, merges that branch
-again before review and never merges main before its approve, and commits the client its own
+again before review and never merges main before its land, and commits the client its own
 sources make when it changes what the client is built from; its task's text says so. Its own land
 moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
 whose fix landed with another red's task is closed as covered by that landing, which answers it

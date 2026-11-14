@@ -227,21 +227,9 @@ fn past(rounds: &[Round], total: usize) -> Vec<GatePast> {
         .collect()
 }
 
-/// Every run the work folder `folder` holds, each once: the history's, and the operations still in
-/// the folder, which say more of one the history keeps too. A folder not there holds none.
-pub fn runs(folder: &Path) -> Vec<Record> {
-    let mut found: Vec<Record> = recorded::history(folder).unwrap_or_default();
-    for (live, _) in recorded::read(folder).records {
-        match found
-            .iter_mut()
-            .find(|run| run.operation_id == live.operation_id)
-        {
-            Some(kept) => *kept = live,
-            None => found.push(live),
-        }
-    }
-    found
-}
+/// Every run the work folder holds, each once: the board's reader, which the land reads the `tests`
+/// stamp by too.
+pub use recorded::runs;
 
 /// The check gate: the newest run of the command `label` at `tip`, green (met), red or still going
 /// (missing), or none there (unknown); the earlier finished runs of it on `branch` or at `tip`, its
