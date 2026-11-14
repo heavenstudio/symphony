@@ -670,6 +670,32 @@ fn the_two_settings_are_read_alone_and_any_file_they_cannot_be_read_from_turns_n
     assert!(std::ptr::addr_eq(unmeasured.list()[0], &EVERY));
 }
 
+#[test]
+fn a_plugins_process_is_named_by_any_entry_of_its_table_and_a_file_it_cannot_be_read_from_names_none()
+ {
+    let tree = Tree::new();
+    let named = |file: &str| {
+        tree.write(symphony::project::FILE, file);
+        symphony::project::PluginProcess::named_at(&tree.root)
+    };
+    assert!(
+        !symphony::project::PluginProcess::named_at(&tree.root),
+        "no file"
+    );
+    assert!(!named(""));
+    assert!(!named("[plugins]\ntiming = true\n"));
+    assert!(!named("[plugins.process]\n"), "an empty table");
+    // Whatever an entry holds: the project reads and checks it, not this.
+    assert!(named(
+        "[project]\nlost = 1\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n"
+    ));
+    assert!(named(
+        "[plugins.process]\nevery = 3\nother = { a = [1, \"b\"] }\n"
+    ));
+    assert!(!named("[plugins.process\nevery = [\"p\"]\n"), "no parse");
+    assert!(!named("[plugins]\nprocess = 3\n"), "not a table");
+}
+
 /// Each `pub trait` of `source` and the methods it declares.
 fn traits(source: &str) -> BTreeMap<String, BTreeSet<String>> {
     blocks(source, |line| {

@@ -468,12 +468,25 @@ impl Call {
 type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
 
 /// `raw`, the plugin's answer to the call `tag`: the answer, or why it does not read or that the
-/// plugin refused the call.
+/// plugin refused the call. The answer's wrapper is read by one body for every call
+/// ([`answer_in`]), so each call's own reading is only its answer's type.
 fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
-    serde_json::from_str::<Answered<T>>(raw.get())
-        .map_err(|why| format!("its answer to {tag} cannot be read: {why}"))?
+    serde_json::from_str(answer_in(tag, raw)?.get()).map_err(|why| cannot_read(tag, &why))
+}
+
+/// The answer `raw` holds as it came, or why it does not read or that the plugin refused the call.
+#[inline(never)]
+fn answer_in<'a>(tag: &str, raw: &'a RawValue) -> Result<&'a RawValue, String> {
+    serde_json::from_str::<Answered<&RawValue>>(raw.get())
+        .map_err(|why| cannot_read(tag, &why))?
         .shown()
         .map_err(|why| format!("it refused {tag}: {why}"))
+}
+
+/// Why an answer to the call `tag` does not read.
+#[inline(never)]
+fn cannot_read(tag: &str, why: &serde_json::Error) -> String {
+    format!("its answer to {tag} cannot be read: {why}")
 }
 
 /// Why a call has no answer of the plugin's.

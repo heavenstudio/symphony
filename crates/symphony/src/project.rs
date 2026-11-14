@@ -104,7 +104,8 @@ impl PluginProcess {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
         struct PluginSettings {
-            process: BTreeMap<String, toml::Value>,
+            // Each plugin's command is the project's to read: here only whether one is named.
+            process: BTreeMap<String, serde::de::IgnoredAny>,
         }
         std::fs::read_to_string(root.join(FILE))
             .ok()
