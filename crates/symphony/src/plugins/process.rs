@@ -5,8 +5,9 @@
 //! project's plugins where a linked plugin would. A linked worktree (a branch's checkout) starts
 //! none of its own: its main checkout's process answers for it ([`answering`]).
 //!
-//! **Its process.** Started at the first call made of it, in the project's checkout, without the
-//! session ([`crate::children::command`]), its stdin and stdout the protocol's and each line of its
+//! **Its process.** Started when what it declared or a call of it is first needed, in the
+//! project's checkout, without the session ([`crate::children::command`]), its stdin and stdout
+//! the protocol's and each line of its
 //! stderr appended to its log (`plugins/NAME.log` in the artifacts folder, rolled to `NAME.1.log`
 //! past [`LOG_MAX`]), with a line there for each start and end. The first request declares: the
 //! plugin's [`Declaration`], the minor the two agree ([`Version::agreed`]). A plugin of another
@@ -23,12 +24,14 @@
 //! starts in [`WINDOW`], then it stays down until the oldest leaves the window. Its stdin ends with
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
-//! **Its seams.** What the plugin declared stands for it here: its components and its card kinds,
-//! each forwarding its calls. A call newer than the agreed minor is not sent: the seam's own default
+//! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
+//! renderers, routes, home regions and doc checks ([`seams`]), each forwarding its calls, and its
+//! navigation and theme, which are declaration alone. A plugin declaring any other seam is refused,
+//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own default
 //! answers it. A call that gets no answer (the process down, no answer in time, a refusal, an answer
 //! that does not read) is shown where its answer would go: a component's in its place on the page
 //! ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing of the
-//! card. A page's components share their `once` values in the plugin as they do linked: every call
+//! card, and each other seam's as [`seams`] says. A page's components share their `once` values in the plugin as they do linked: every call
 //! of one [`Page`] names its render ([`PageData::render`]). A register read asks every card kind of
 //! every card in one request ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
@@ -51,11 +54,14 @@ use symphony_plugin::protocol::{
     Pictures, Raw, ReadCards, Recognises, Render, Request, Resolve, Slot, TriageCategory, Version,
     read_line,
 };
-use symphony_plugin::vocabulary::{Block, Picture};
-use symphony_plugin::{Card, CardKind, Component, Page, Plugin};
+use symphony_plugin::vocabulary::{Block, NavItem, Picture};
+use symphony_plugin::{
+    Card, CardKind, Component, DocCheck, HomeRegion, Page, Plugin, Renderer, Route, Theme,
+};
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
+use seams::{RemoteCheck, RemoteRegion, RemoteRenderer, RemoteRoute};
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -312,24 +318,19 @@ fn shown(bytes: &[u8]) -> String {
     }
 }
 
-/// The seams `declaration` holds that a plugin's process does not answer.
+/// The seams `declaration` holds that a plugin's process does not answer: each is answered once a
+/// plugin first declares it from a process, and refused by name until then, rather than lost.
 fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
-        ("renderers", d.renderers.is_empty()),
-        ("routes", d.routes.is_empty()),
-        ("navigation", d.nav.is_empty()),
-        ("home regions", d.home_regions.is_empty()),
         ("board actions", d.board_actions.is_empty()),
         ("board fields", d.board_fields.is_empty()),
         ("gates", d.gates.is_empty()),
         ("watches", d.watches.is_empty()),
-        ("doc checks", d.doc_checks.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
         ("commands", d.commands.is_empty()),
         ("transports", d.transports.is_empty()),
-        ("a theme", d.theme.is_none()),
     ]
     .into_iter()
     .filter(|(_, none)| !none)
@@ -1123,6 +1124,61 @@ impl Plugin for Remote {
             },
         )
     }
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        self.declared().map_or_else(
+            |_| Vec::new(),
+            |declared| {
+                declared
+                    .renderers
+                    .iter()
+                    .map(|renderer| -> &dyn Renderer { renderer })
+                    .collect()
+            },
+        )
+    }
+    fn routes(&self) -> Vec<&dyn Route> {
+        self.declared().map_or_else(
+            |_| Vec::new(),
+            |declared| {
+                declared
+                    .routes
+                    .iter()
+                    .map(|route| -> &dyn Route { route })
+                    .collect()
+            },
+        )
+    }
+    fn nav(&self) -> Vec<NavItem> {
+        self.declaration()
+            .map_or_else(|_| Vec::new(), |declared| declared.nav.clone())
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        self.declared().map_or_else(
+            |_| Vec::new(),
+            |declared| {
+                declared
+                    .home_regions
+                    .iter()
+                    .map(|region| -> &dyn HomeRegion { region })
+                    .collect()
+            },
+        )
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        self.declared().map_or_else(
+            |_| Vec::new(),
+            |declared| {
+                declared
+                    .doc_checks
+                    .iter()
+                    .map(|check| -> &dyn DocCheck { check })
+                    .collect()
+            },
+        )
+    }
+    fn theme(&self) -> Option<Theme> {
+        self.declaration().ok()?.theme.clone()
+    }
 }
 
 /// What a remote declared, and the objects standing for its seams'.
@@ -1130,6 +1186,16 @@ struct Declared {
     declaration: Declaration,
     components: Vec<RemoteComponent>,
     card_kinds: Vec<RemoteKind>,
+    renderers: Vec<RemoteRenderer>,
+    routes: Vec<RemoteRoute>,
+    home_regions: Vec<RemoteRegion>,
+    doc_checks: Vec<RemoteCheck>,
+}
+
+/// `text` kept for the process's life, as the declaration is: what a seam's object lends as a
+/// `&str` of its own (a card kind's markers, a renderer's extensions) is borrowed from it.
+fn kept(text: &str) -> &'static str {
+    Box::leak(text.to_string().into_boxed_str())
 }
 
 impl Declared {
@@ -1149,13 +1215,42 @@ impl Declared {
                 .map(|kind| RemoteKind {
                     remote,
                     name: kind.name.clone(),
-                    // Kept for the process's life, as the declaration is: a kind's markers are
-                    // borrowed from it.
-                    markers: kind
-                        .markers
-                        .iter()
-                        .map(|marker| &*Box::leak(marker.clone().into_boxed_str()))
-                        .collect(),
+                    markers: kind.markers.iter().map(|marker| kept(marker)).collect(),
+                })
+                .collect(),
+            renderers: declaration
+                .renderers
+                .iter()
+                .map(|renderer| RemoteRenderer {
+                    remote,
+                    name: renderer.name.clone(),
+                    extensions: renderer.extensions.iter().map(|e| kept(e)).collect(),
+                    content_type: renderer.content_type.clone(),
+                })
+                .collect(),
+            routes: declaration
+                .routes
+                .iter()
+                .map(|path| RemoteRoute {
+                    remote,
+                    path: path.clone(),
+                })
+                .collect(),
+            home_regions: declaration
+                .home_regions
+                .iter()
+                .map(|id| RemoteRegion {
+                    remote,
+                    id: id.clone(),
+                })
+                .collect(),
+            doc_checks: declaration
+                .doc_checks
+                .iter()
+                .map(|check| RemoteCheck {
+                    remote,
+                    name: check.name.clone(),
+                    inputs: check.inputs.clone(),
                 })
                 .collect(),
             declaration,
@@ -1579,3 +1674,6 @@ impl CardKind for ReadKind {
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
+
+#[path = "process_seams.rs"]
+mod seams;

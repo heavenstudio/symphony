@@ -80,16 +80,23 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-What answers from a process here is a plugin's components and its card kinds. Its other seams
-(renderers, routes, home regions, board actions and fields, gates, watches, doc checks, prose rules,
-generators, commands, transports, navigation and theme) are not asked of a process: a plugin that
-declares any of them is refused under `[plugins.process]`, naming them, rather than losing them
-without a word, and stays a linked plugin's to answer. So is a plugin that declares another name
-than the one `[plugins.process]` gives it.
+What answers from a process here is a plugin's components, card kinds, renderers, routes, home
+regions and doc checks, each call a request on the pipe, and its navigation and theme, which its
+declaration holds and which cost no call. A project that loads starts its plugins' processes for
+their declarations, as its navigation is among the routes an entrypoint's files must not meet. An
+entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
+type only a process could handle, and whose process cannot say its renderers, is refused, naming
+why. Its other seams (board actions and fields,
+gates, watches, prose rules, generators, commands and transports) are not asked of a process: a
+plugin that declares any of them is refused under `[plugins.process]`, naming them, rather than
+losing them without a word, and stays a linked plugin's to answer. Each is answered from a process
+once a plugin first declares it from one. So is a plugin refused that declares another name than
+the one `[plugins.process]` gives it.
 
 ## Its process
 
-The host starts a plugin's process at the first call made of it: in the project's checkout, without
+The host starts a plugin's process when it first needs what the plugin declared (a project's load
+reads its navigation) or a call of it: in the project's checkout, without
 the session that started the host, its stdin and stdout the protocol's, each line of its stderr
 appended to its log, `plugins/NAME.log` in the project's artifacts folder (`artifacts/` unless
 `[project] artifacts` names another); a stderr line longer than 4096 bytes goes in pieces. The host
@@ -127,8 +134,12 @@ its first start stands for it until the host ends: a declaration that changed is
 
 A call that has no answer (the process down or restarting, no answer in time, a refusal, an answer
 that does not read) is shown where its answer would go: a component's in its place on the page, as
-`⚠ plugin NAME: its process 4242 was killed by signal 9; it starts again in a moment`, and a card
-kind's as the kind's default, as if the plugin said nothing of the card.
+`⚠ plugin NAME: its process 4242 was killed by signal 9; it starts again in a moment`, a
+renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
+the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
+in the plugin's log. A doc check that did not run is a problem of the project file naming the plugin
+and the check, so `symphony status --lint` fails rather than passes, and names no component. A call
+that had no answer fails alone: the calls after it start the process again once its pause is over.
 
 A plugin's commands do not go on the pipe, and the host does not run them: `symphony NAME ARGS…`
 runs a linked plugin's command alone, so a plugin with commands is refused under

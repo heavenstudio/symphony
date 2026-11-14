@@ -17,7 +17,7 @@ use symphony::project::{PluginCalls, PluginProcess, Project};
 use symphony::render::Render;
 use symphony_plugin::protocol::{Envelope, PageData, Request};
 use symphony_plugin::vocabulary::{Block, Span};
-use symphony_plugin::{CardKind, Page};
+use symphony_plugin::{CardKind, Docs, File, Page, Renderer};
 
 use super::Tree;
 use super::calls::{lines, median, with_card};
@@ -239,6 +239,238 @@ fn a_register_read_of_the_plugins_process_is_one_request_and_answers_as_linked()
     assert_eq!(calls, ["card_kinds.read"]);
     assert_eq!(record[0]["name"], "every");
     assert!(record[0].get("failed").is_none(), "{}", record[0]);
+}
+
+/// The test plugin linked, and as the project at `tree` has it from its process, its calls
+/// recorded when `timing`.
+fn linked_and_piped(tree: &Tree, timing: bool) -> (Plugins, Plugins, Project) {
+    let project = project(tree, if timing { "timing = true\n" } else { "" });
+    let piped = Plugins::at(&project, &tree.root);
+    assert!(process::remote(piped.list()[0]).is_some());
+    (Plugins::new(vec![&PIPED]), piped, project)
+}
+
+/// A renderer as a page sees it, with no call: its name, extensions and content type.
+fn renderer_said(renderer: &dyn Renderer) -> (String, Vec<String>, String) {
+    let extensions = renderer
+        .extensions()
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    (
+        renderer.name().into(),
+        extensions,
+        renderer.content_type().into(),
+    )
+}
+
+#[test]
+fn a_plugins_process_draws_its_renderers_files_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, _) = linked_and_piped(&tree, false);
+    let (theirs, ours) = (linked.list()[0].renderers(), piped.list()[0].renderers());
+    let said = |renderers: &[&dyn Renderer]| -> Vec<_> {
+        renderers.iter().map(|r| renderer_said(*r)).collect()
+    };
+    assert_eq!(said(&ours), said(&theirs));
+    assert_eq!(ours.len(), 1);
+    let page = || Page::new(&tree.root, "docs/ünï code.md").in_artifacts("out/ä");
+    for (src, label) in [("/docs/a.every?v=2#top", ""), ("/docs/b.every", "a widget")] {
+        let file = File { src, label };
+        let drawn = |plugins: &Plugins| {
+            symphony::renderers::renderer_of(plugins, src)
+                .unwrap()
+                .draw(&page(), &file)
+        };
+        assert_eq!(drawn(&piped), drawn(&linked), "{src}");
+    }
+    // The file a page links is drawn by the process's renderer, and served as its type.
+    let found = symphony::renderers::renderer_of(&piped, "/docs/b.EVERY").unwrap();
+    assert!(std::ptr::addr_eq(found, ours[0]));
+    assert_eq!(
+        symphony::renderers::content_type(&piped, "docs/b.every"),
+        Some("model/every")
+    );
+}
+
+#[test]
+fn an_entrypoint_names_a_type_of_a_plugins_process() {
+    let tree = Tree::new();
+    let settings = |types: &str| {
+        format!(
+            "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [{PLUGIN:?}]\n\n\
+             [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [{types}]\n"
+        )
+    };
+    let log = tree.path("artifacts/plugins/every.log");
+    tree.write(
+        symphony::project::FILE,
+        &settings("\"markdown\", \"every\""),
+    );
+    let project = Project::load(&tree.root).unwrap();
+    let types: Vec<(&str, &[&str])> = project.entrypoints[0]
+        .renderers()
+        .map(|renderer| (renderer.name, renderer.extensions))
+        .collect();
+    assert_eq!(
+        types,
+        [("markdown", &["md"][..]), ("every", &["every"][..])]
+    );
+    assert!(log.exists());
+    // A type nothing handles is refused, naming the ones there are, its process's among them.
+    tree.write(symphony::project::FILE, &settings("\"none\""));
+    let refused = Project::load(&tree.root).unwrap_err();
+    assert!(
+        refused.ends_with("(the renderers are markdown, media, every)"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_plugins_process_that_cannot_say_its_renderers_is_named_by_the_entrypoint_that_needs_one() {
+    let tree = Tree::new();
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [\"./no-such-plugin\"]\n\n\
+         [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [\"every\"]\n",
+    );
+    let refused = Project::load(&tree.root).unwrap_err();
+    assert!(
+        refused.starts_with("symphony.toml: [plugins.process] every cannot say its renderers: "),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_plugins_process_serves_its_route_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, _) = linked_and_piped(&tree, false);
+    assert!(piped.route("none").is_none());
+    for rest in ["", "data.json", "models/a b.stl"] {
+        let served = |plugins: &Plugins| plugins.route("every").unwrap().serve(&tree.root, rest);
+        assert_eq!(served(&piped), served(&linked), "{rest}");
+    }
+    assert!(
+        piped
+            .route("every")
+            .unwrap()
+            .serve(&tree.root, "data.json")
+            .is_some()
+    );
+}
+
+#[test]
+fn a_plugins_process_shows_its_home_region_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, _) = linked_and_piped(&tree, false);
+    let ids = |plugins: &Plugins| -> Vec<String> {
+        plugins
+            .home_regions()
+            .iter()
+            .map(|r| r.id().to_string())
+            .collect()
+    };
+    assert_eq!(ids(&piped), ids(&linked));
+    let region = |plugins: &Plugins| plugins.home_regions()[0].region(&tree.root);
+    assert_eq!(region(&piped), region(&linked));
+    assert!(region(&piped).is_some());
+}
+
+#[test]
+fn a_plugins_process_checks_the_documents_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, _) = linked_and_piped(&tree, false);
+    tree.write("docs/A.md", "# A\n\nevery word\n");
+    tree.write("docs/B.md", "# B\n");
+    let docs = Docs::read(&tree.root);
+    let (ours, theirs) = (piped.doc_checks()[0], linked.doc_checks()[0]);
+    assert_eq!(ours.name(), theirs.name());
+    assert_eq!(ours.inputs(), theirs.inputs());
+    assert_eq!(ours.check(&docs), theirs.check(&docs));
+    assert_eq!(ours.components(&docs), theirs.components(&docs));
+    assert!(!ours.check(&docs).is_empty());
+    // `symphony status --lint` runs it, as the project's own.
+    let expected: Vec<String> = theirs
+        .check(&docs)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        symphony::lint::check_findings(&tree.root),
+        (expected, vec!["every".to_string()])
+    );
+}
+
+#[test]
+fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no_call() {
+    let tree = Tree::new();
+    tree.write(
+        symphony::project::FILE,
+        &format!(
+            "[plugins]\ncrates = [\"every\"]\ntiming = true\n\n[plugins.process]\nevery = \
+             [{PLUGIN:?}]\n\n[theme]\npackage = \"every\"\n"
+        ),
+    );
+    let project = Project::load(&tree.root).unwrap();
+    let (linked, piped) = (
+        Plugins::new(vec![&PIPED]),
+        Plugins::at(&project, &tree.root),
+    );
+    assert_eq!(piped.nav(), linked.nav());
+    assert_eq!(piped.nav().len(), 1);
+    assert_eq!(piped.theme("every"), linked.theme("every"));
+    assert!(piped.theme("other").is_none());
+    // The project's theme package is the process's.
+    assert_eq!(symphony::theme::Package::of(&project).name, "Every");
+    assert!(symphony::theme::problems(&project).is_empty());
+    assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
+}
+
+#[test]
+fn a_plugins_process_killed_mid_call_fails_that_call_alone() {
+    let tree = Tree::new();
+    let (linked, piped, project) = linked_and_piped(&tree, false);
+    let remote = process::remote(piped.list()[0]).unwrap();
+    assert!(remote.declaration().is_ok());
+    let pid = remote.pid().unwrap();
+    let page = Page::new(&tree.root, "docs/A.md");
+    let hanging = {
+        let piped = piped.clone();
+        let root = tree.root.clone();
+        std::thread::spawn(move || {
+            let page = Page::new(&root, "docs/A.md");
+            format!("{:?}", piped.render(&page, "slow", "hang", None))
+        })
+    };
+    // Killed while the call waits on it, however far it got.
+    std::thread::sleep(Duration::from_millis(100));
+    let killed = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let failed = hanging.join().unwrap();
+    assert!(
+        failed.contains(&format!("its process {pid} was killed by signal 9")),
+        "{failed}"
+    );
+    // The next calls, once its pause is over, answer as linked, from a process started again.
+    until("the plugin is down", || remote.down().is_some());
+    std::thread::sleep(PAUSE);
+    assert_eq!(
+        piped.render(&page, "every", "a", None),
+        linked.render(&page, "every", "a", None)
+    );
+    assert_ne!(remote.pid().unwrap(), pid);
+    assert_eq!(
+        piped.home_regions()[0].region(&tree.root),
+        linked.home_regions()[0].region(&tree.root)
+    );
+    let log = std::fs::read_to_string(&project.plugin_processes["every"].log).unwrap();
+    assert!(
+        log.contains(&format!("its process {pid} was killed by signal 9")),
+        "{log}"
+    );
 }
 
 #[test]

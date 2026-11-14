@@ -92,8 +92,9 @@ impl Plugin for Every {
     }
 }
 
-/// [`EVERY`] as a plugin's process serves it: its name, its components and its card kind, the
-/// seams a process answers, and a component that takes as long as it is told.
+/// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
+/// components, card kind, renderer, route, navigation, home region, doc check and theme), and a
+/// component that takes as long as it is told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -107,6 +108,24 @@ impl Plugin for Piped {
     }
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
         vec![&EVERY]
+    }
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        EVERY.renderers()
+    }
+    fn routes(&self) -> Vec<&dyn Route> {
+        EVERY.routes()
+    }
+    fn nav(&self) -> Vec<NavItem> {
+        EVERY.nav()
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        EVERY.home_regions()
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        EVERY.doc_checks()
+    }
+    fn theme(&self) -> Option<Theme> {
+        EVERY.theme()
     }
 }
 

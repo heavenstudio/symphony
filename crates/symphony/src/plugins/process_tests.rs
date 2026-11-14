@@ -700,20 +700,19 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
         "its process is refused: it declares the plugin \"old\", not \"tiny\", which the project \
          names; it is not started again until its program or the project's settings change"
     );
+    // A seam a process answers beside one it does not: refused, naming only the one.
     let wider = Declaration {
         routes: vec!["/x".into()],
-        commands: vec![DeclaredCommand {
-            name: "report".into(),
-            summary: "reports".into(),
-        }],
+        gates: vec!["landing".into()],
+        prose_rules: vec!["plain".into()],
         theme: Some(symphony_plugin::Theme::default()),
         ..tiny_declared()
     };
     assert_eq!(
         refused(wider),
-        "its process is refused: it declares routes, commands, a theme, which a plugin's process \
-         does not answer: link the plugin, or serve one without them; it is not started again \
-         until its program or the project's settings change"
+        "its process is refused: it declares gates, prose rules, which a plugin's process does \
+         not answer: link the plugin, or serve one without them; it is not started again until \
+         its program or the project's settings change"
     );
 }
 
@@ -755,21 +754,104 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
     assert_eq!(
         unanswered(&every),
         [
-            "renderers",
-            "routes",
-            "navigation",
-            "home regions",
             "board actions",
             "board fields",
             "gates",
             "watches",
-            "doc checks",
             "prose rules",
             "generators",
             "commands",
             "transports",
-            "a theme",
         ]
+    );
+}
+
+/// What [`TINY`] declares, and one object at each seam a process answers besides its components
+/// and card kinds, with its navigation and theme.
+fn wide_declared() -> Declaration {
+    use symphony_plugin::protocol::{DeclaredCheck, DeclaredRenderer};
+    Declaration {
+        renderers: vec![DeclaredRenderer {
+            name: "model".into(),
+            extensions: vec!["stl".into(), "obj".into()],
+            content_type: "model/stl".into(),
+        }],
+        routes: vec!["shelf".into()],
+        nav: vec![symphony_plugin::vocabulary::NavItem {
+            label: "shelf".into(),
+            title: "Shelf".into(),
+            href: "/x/shelf".into(),
+            document: "docs/SHELF.md".into(),
+        }],
+        home_regions: vec!["progress".into()],
+        doc_checks: vec![DeclaredCheck {
+            name: "links".into(),
+            inputs: vec!["data/links.json".into()],
+        }],
+        theme: Some(symphony_plugin::Theme {
+            package: "tiny".into(),
+            name: "Tiny".into(),
+            ..symphony_plugin::Theme::default()
+        }),
+        ..tiny_declared()
+    }
+}
+
+#[test]
+fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
+    use symphony_plugin::{Docs, File, Problem};
+    let tree = Tree::new();
+    // A pause longer than the test, so each call after the first finds it down.
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            wide_declared(),
+            Arc::new(|_, _| Said::End),
+            Seen::default(),
+            "was killed by signal 9",
+        ),
+        limits(PATIENT, Duration::from_secs(600)),
+    );
+    // What it declared answers with no call.
+    let renderer = remote.renderers()[0];
+    assert_eq!(renderer.name(), "model");
+    assert_eq!(renderer.extensions(), ["stl", "obj"]);
+    assert_eq!(renderer.content_type(), "model/stl");
+    assert_eq!(remote.routes()[0].path(), "shelf");
+    assert_eq!(remote.home_regions()[0].id(), "progress");
+    assert_eq!(remote.doc_checks()[0].inputs(), ["data/links.json"]);
+    assert_eq!(remote.nav(), wide_declared().nav);
+    assert_eq!(remote.theme(), wide_declared().theme);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let file = File {
+        src: "/docs/a.stl",
+        label: "",
+    };
+    // A drawing is the renderer's error in the file's place.
+    assert_eq!(
+        renderer.draw(&page, &file),
+        Err("plugin tiny: its process was killed by signal 9".into())
+    );
+    until("the remote is down", || remote.down().is_some());
+    let down = "its process was killed by signal 9; it starts again in a moment";
+    assert_eq!(
+        renderer.draw(&page, &file),
+        Err(format!("plugin tiny: {down}"))
+    );
+    // A route's answer is not found, a region none, a check's components none.
+    assert_eq!(remote.routes()[0].serve(&tree.root, "a.json"), None);
+    assert_eq!(remote.home_regions()[0].region(&tree.root), None);
+    let docs = Docs::read(&tree.root);
+    assert!(remote.doc_checks()[0].components(&docs).is_empty());
+    // A check that did not run is a problem, never a pass.
+    assert_eq!(
+        remote.doc_checks()[0].check(&docs),
+        [Problem::new(
+            "symphony.toml",
+            0,
+            format!("plugin tiny: its doc check links did not run: {down}")
+        )]
     );
 }
 

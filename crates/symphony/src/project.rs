@@ -467,15 +467,17 @@ impl Project {
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
             ));
         }
-        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates)?;
+        let artifacts = inside(
+            "[project] artifacts",
+            p.artifacts.unwrap_or_else(|| "artifacts".into()),
+        )?;
+        let plugin_processes =
+            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
+        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates, &plugin_processes)?;
         let register = inside(
             "[project] register",
             p.register
                 .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
-        )?;
-        let artifacts = inside(
-            "[project] artifacts",
-            p.artifacts.unwrap_or_else(|| "artifacts".into()),
         )?;
         let default_branch = p.default_branch.unwrap_or_else(|| "main".into());
         if default_branch.trim().is_empty() {
@@ -542,8 +544,6 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
-        let plugin_processes =
-            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let board = Board::from_file(file.board)?;
         let project = Project {
             name,
@@ -1119,12 +1119,20 @@ fn plugin_processes(
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
-/// `plugins` (refused when two of those share a name), or the convention when there are none.
+/// `plugins` (refused when two of those share a name), or the convention when there are none. A
+/// plugin answering from its process (`processes`) gives the renderers it declared; one that cannot
+/// say them refuses the file only when a table names a type none of the others handles.
 fn entrypoints(
     written: Option<Vec<FileEntrypoint>>,
     plugins: &[String],
+    processes: &BTreeMap<String, PluginProcess>,
 ) -> Result<Vec<Entrypoint>, String> {
-    let renderers = crate::renderers::of_project(plugins)?;
+    let wanted: Vec<String> = written
+        .iter()
+        .flatten()
+        .flat_map(|table| table.types.iter().flatten().cloned())
+        .collect();
+    let renderers = crate::renderers::of_project(plugins, processes, &wanted)?;
     let Some(written) = written else {
         return Ok(vec![Entrypoint::convention()]);
     };
