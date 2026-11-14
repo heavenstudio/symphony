@@ -22,6 +22,24 @@ npm run build          # dist/react and dist/preact
 (by default the committed one, `apps/symphony-server/client/public`). Each build is laid out as
 the server expects a client's: `index.html` and content-hashed `assets/`.
 
+## The probe
+
+Whether three libraries a whole client would likely use run on Preact as they run on React, and
+what each adds: Radix's primitives for the controls the Dioxus client takes from dioxus-primitives
+(`src/probe/primitives.jsx`), TanStack Query for the reads (`query.jsx`) and TanStack Virtual for a
+2,000-card column (`virtual.jsx`), with Radix's range slider as a control known not to work on
+Preact (`slider.jsx`). It is a page of its own, so the three pages' build stays as measured:
+
+```sh
+npm run build:probe    # dist/probe-react and dist/probe-preact
+```
+
+Served by any static server, `probe.html?primitives` (`query`, `virtual`, `slider`) draws one
+library's probe, its chunk loaded by hand so that its bytes are its own, and `probe.html` alone
+the runtime. Each probe writes what its controls did into the page, which a headless browser reads
+after driving them (`symphony shot … --click … --key … --eval …`); what was driven and what came
+of it is in the analysis's [ecosystem section](../../docs/analysis/client-framework-comparison.md#the-ecosystem-preact-against-react).
+
 ## Serve
 
 The Symphony server serves either build as it serves the Dioxus client, so both are measured
