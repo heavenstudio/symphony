@@ -4,7 +4,7 @@
 // callback, which the popup answers with the value chosen, or nothing once it closes. The shell
 // answers nothing for a field whose page it leaves.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMount } from "./mount";
 
 /** What the overlay module is asked: a select's popup, or to close the popup `owner` opened. */
@@ -45,9 +45,95 @@ export interface SelectFieldProps {
 }
 
 /**
+ * What a field's trigger does with its popup: open it, close it, and take its answer. The page's
+ * field gives it what it draws (`field`) each time it is drawn, and starts it once drawn.
+ */
+export class FieldControl {
+  /** Whether the popup is open. */
+  open = false;
+  /** What the field draws: its label, value and options, and what a choice calls. */
+  field: Omit<SelectFieldProps, "disabled">;
+  /** Whether the field is drawn (`start`), outside which an answer does nothing. */
+  private drawn = false;
+
+  constructor(
+    readonly id: string,
+    field: Omit<SelectFieldProps, "disabled">,
+    private readonly mount: AbortSignal,
+    private readonly shown: (open: boolean) => void,
+  ) {
+    this.field = field;
+  }
+
+  /** The popup's answer, the value chosen or nothing once it closes, taken after its own event and
+   * blur handlers have run: the choice reaches the page, the popup closes and the trigger has its
+   * focus back. An answer to a field no longer drawn, or of a page stopped, does nothing. */
+  readonly answer = (chosen: unknown): void => {
+    queueMicrotask(() => {
+      if (!this.drawn || this.mount.aborted) return;
+      if (typeof chosen === "string") this.field.onChange(chosen);
+      this.shown(false);
+      this.open = false;
+      overlay({ kind: "close", owner: this.id });
+      document.getElementById(this.id)?.focus();
+    });
+  };
+
+  /** A click on the trigger: it opens the popup, or closes the one open. */
+  readonly activate = (): void => {
+    if (this.open) {
+      this.answer(null);
+      return;
+    }
+    const { label, value, options } = this.field;
+    this.open = true;
+    this.shown(true);
+    overlay({
+      kind: "select",
+      owner: this.id,
+      id: this.id,
+      label,
+      value,
+      options,
+      callback: this.answer,
+    });
+  };
+
+  /** A key pressed on the page: on this field's trigger, enabled, it opens or closes the popup
+   * (`keyAction`). */
+  readonly key = (event: KeyboardEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.id !== this.id || target.hasAttribute("disabled")) {
+      return;
+    }
+    const action = keyAction(event.key, this.open);
+    if (action === null) return;
+    event.preventDefault();
+    if (action === "close") {
+      event.stopPropagation();
+      this.answer(null);
+    } else if (action === "open") {
+      this.activate();
+    }
+  };
+
+  /** The field drawn: it hears its keys and takes answers until the cleanup returned, which closes
+   * its popup. */
+  start(): () => void {
+    this.drawn = true;
+    addEventListener("keydown", this.key);
+    return () => {
+      removeEventListener("keydown", this.key);
+      this.drawn = false;
+      overlay({ kind: "close", owner: this.id });
+    };
+  }
+}
+
+/**
  * A select: its trigger shows the chosen option's text. A click, or the arrow keys on it, opens
  * its popup; another click or Escape closes it; a choice calls `onChange` and gives the trigger
- * its focus back.
+ * its focus back (`FieldControl`).
  */
 export function SelectField({
   label,
@@ -56,61 +142,20 @@ export function SelectField({
   onChange,
   disabled = false,
 }: SelectFieldProps) {
-  const [id] = useState(() => `symphony-web-field-${fields++}`);
   const [open, setOpen] = useState(false);
   const mount = useMount();
-  const latest = useRef({ open, label, value, options, onChange });
-  latest.current = { open, label, value, options, onChange };
-  // The popup's answers, taken after its own event and blur handlers have run, while the field
-  // is drawn; and how the trigger opens or closes it.
-  const drawn = useRef(false);
-  const [act] = useState(() => {
-    const answer = (chosen: unknown) => {
-      queueMicrotask(() => {
-        if (!drawn.current || mount.aborted) return;
-        if (typeof chosen === "string") latest.current.onChange(chosen);
-        setOpen(false);
-        latest.current.open = false;
-        overlay({ kind: "close", owner: id });
-        document.getElementById(id)?.focus();
-      });
-    };
-    const activate = () => {
-      if (latest.current.open) {
-        answer(null);
-        return;
-      }
-      const { label, value, options } = latest.current;
-      latest.current.open = true;
-      setOpen(true);
-      overlay({ kind: "select", owner: id, id, label, value, options, callback: answer });
-    };
-    return { answer, activate };
-  });
-  useEffect(() => {
-    drawn.current = true;
-    const keys = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element) || target.id !== id || target.hasAttribute("disabled")) {
-        return;
-      }
-      const action = keyAction(event.key, latest.current.open);
-      if (action === null) return;
-      event.preventDefault();
-      if (action === "close") {
-        event.stopPropagation();
-        act.answer(null);
-      } else if (action === "open") {
-        act.activate();
-      }
-    };
-    addEventListener("keydown", keys);
-    return () => {
-      removeEventListener("keydown", keys);
-      drawn.current = false;
-      overlay({ kind: "close", owner: id });
-    };
-  }, [id, act]);
+  const [control] = useState(
+    () =>
+      new FieldControl(
+        `symphony-web-field-${fields++}`,
+        { label, value, options, onChange },
+        mount,
+        setOpen,
+      ),
+  );
+  control.field = { label, value, options, onChange };
+  useEffect(() => control.start(), [control]);
+  const { id } = control;
   const text = options.find(([key]) => key === value)?.[1] ?? "";
   return (
     <div className="dx-select">
@@ -124,7 +169,7 @@ export function SelectField({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={`${id}-popup`}
-        onClick={act.activate}
+        onClick={control.activate}
       >
         <span>{text}</span>
         <svg
