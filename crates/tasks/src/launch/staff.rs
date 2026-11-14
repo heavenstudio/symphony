@@ -483,10 +483,8 @@ fn fresh(task: &Task, held: &Held, handle: &str) -> bool {
 
 /// Keep task-specific failures (target, checkout, launch and reuse) inside this job. A review is
 /// given on the task itself, never a subtask: its reviewer takes the reviewer's role there and its
-/// launch is recorded there, and the pass's line on the thread names the tip. A reused reviewer
-/// whose reuse stopped before its launch was recorded (the agent at work, its record failed) lets
-/// go of the reviewer's role it took, so the task waits on no reviewer that has no job; a launched
-/// one's own rollback lets go of everything it took.
+/// launch is recorded there, and the pass's line on the thread names the tip. A failed reuse lets
+/// go of what it took ([`reuse`]), as a launched agent's own rollback does.
 #[expect(
     clippy::too_many_arguments,
     reason = "one dispatch of the pass, named by what it reads"
@@ -506,54 +504,36 @@ fn dispatch(
     } else {
         "executor"
     };
-    // A reused agent's record on the task as it was before: one written since is this reuse's.
-    let record = |handle: &str| {
-        store
-            .task_sessions(&task.slug)
-            .map(|ran| ran.into_iter().find(|s| s.handle == handle))
-    };
-    let before = idle.map(|agent| record(&agent.handle));
-    let outcome = (|| {
-        if let Some(agent) = idle {
-            return reuse(store, hc, machine, agent, task, role);
-        }
-        let mut ask = Ask::new(&task.slug, actor, &launching.model);
-        ask.kind = Some(launching.agent.into());
-        ask.effort.clone_from(&launching.effort);
-        ask.role = role.into();
-        if role == "executor"
-            && !task.instruction
-            && let Some(path) = super::checked_out_in(&machine.root, &task.slug)?
-        {
-            ask.worktree = Some(PathBuf::from(path));
-        }
-        launch(store, hc, machine, &ask).map(|s| {
-            format!(
-                "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
-                s.row.handle,
-                launching.said(),
-                s.row.pane,
-                s.row.worktree,
-                prompt_text(&task.slug, &s.row.handle, "", launching.agent, role),
-            )
-        })
-    })();
-    if outcome.is_err()
-        && review.is_some()
-        && let (Some(agent), Some(Ok(before))) = (idle, before)
-        && record(&agent.handle).is_ok_and(|after| after == before)
-    {
-        // Picked holding no role on the task ([`idle_for`]): a reviewer's role it holds now is the
-        // one this reuse took before its record failed. A record written since may have reached
-        // it, and an unread one may have: it keeps the role then.
-        let _ = store.release(&task.slug, &agent.handle, Some("reviewer"));
+    if let Some(agent) = idle {
+        return reuse(store, hc, machine, agent, task, role);
     }
-    outcome
+    let mut ask = Ask::new(&task.slug, actor, &launching.model);
+    ask.kind = Some(launching.agent.into());
+    ask.effort.clone_from(&launching.effort);
+    ask.role = role.into();
+    if role == "executor"
+        && !task.instruction
+        && let Some(path) = super::checked_out_in(&machine.root, &task.slug)?
+    {
+        ask.worktree = Some(PathBuf::from(path));
+    }
+    launch(store, hc, machine, &ask).map(|s| {
+        format!(
+            "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
+            s.row.handle,
+            launching.said(),
+            s.row.pane,
+            s.row.worktree,
+            prompt_text(&task.slug, &s.row.handle, "", launching.agent, role),
+        )
+    })
 }
 
 /// Give an idle agent the job on `task` in its own terminal (`hc send`), recorded first: an
-/// executor's reservation of the task, or a reviewer's role on it. hc saying its turn started, or a
-/// look finding it at work, confirms it; else the line says it is unconfirmed.
+/// executor's reservation of the task, or a reviewer's role on it. A reviewer whose launch record
+/// fails lets go of the role it took, as nothing was sent, so the task waits on no reviewer with no
+/// job; once the record is written it keeps the role, as the prompt may reach it. hc saying its
+/// turn started, or a look finding it at work, confirms it; else the line says it is unconfirmed.
 fn reuse(
     store: &Store,
     hc: &dyn Hc,
@@ -574,8 +554,8 @@ fn reuse(
         return Err(refused(format!("checkout has live executor {other}")));
     }
     store.revive(handle)?;
-    // A reviewer judges the task, which its executor holds: it takes the role ([`Store::take_role`]
-    // refuses one the board would take no verdict from), never a reservation.
+    // A reviewer never reserves the task it judges: it takes the role ([`Store::take_role`] refuses
+    // one the board would take no verdict from).
     if role == "reviewer" {
         store.take_role(&task.slug, handle, "reviewer")?;
     } else {
@@ -584,7 +564,7 @@ fn reuse(
     let kind = agent.agent.as_deref().unwrap_or("codex");
     let prompt = prompt_text(&task.slug, handle, "", kind, role);
     // Record before prompting: once the prompt is sent, a timeout must never free this job for a duplicate.
-    store.record_launch(&NewLaunch {
+    let recorded = store.record_launch(&NewLaunch {
         slug: task.slug.clone(),
         handle: handle.clone(),
         role: role.into(),
@@ -598,7 +578,14 @@ fn reuse(
         branch: agent.branch.clone(),
         model: agent.model.clone(),
         ..NewLaunch::default()
-    })?;
+    });
+    if let Err(error) = recorded {
+        // Picked holding no role on the task ([`idle_for`]): the reviewer's role is the one just taken.
+        if role == "reviewer" {
+            let _ = store.release(&task.slug, handle, Some("reviewer"));
+        }
+        return Err(error);
+    }
     let started = hc.send(pane, &prompt)?;
     let confirmed = started
         || (0..super::SEND_LOOKS).any(|_| {

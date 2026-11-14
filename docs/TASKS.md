@@ -1395,8 +1395,7 @@ in-progress task whose build or test run is going sits there until it ends, then
 returns to its column. They are display stages, never statuses: no command moves a
 task there, and a task in any other status (a task in review whose reviewer runs
 its tests) keeps its column and shows the run as a chip. A run for a subtask (a
-slice, or the `/work` instruction its executor holds) moves the card of the task it
-is under. Runs come from the board's
+slice, or an instruction its agent holds) moves the card of the task it is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once, and the board's Status filter offers neither of them
@@ -2077,7 +2076,11 @@ anything more for either goes on the task's thread (`--to @executor`, `--to @rev
 reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
 and each later round goes to the same reviewer, resumed with the new tip on the thread (a
 subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks restore SLUG
-HANDLE`), never to a fresh reviewer or a review subtask.
+HANDLE`), never to another reviewer or a review subtask. Resumed, it is still a fresh reviewer
+for the land: an earlier round of its own makes no session unfresh ([the default
+landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
+`restore` refuses it; a Codex thread that never arrived; a reviewer that left) does another
+reviewer take the role on the task.
 
 A **subtask** is a task made with `--parent`: a slice of its parent's work, or an instruction
 to an agent that is neither the parent's own work nor its review (a question, an errand), whose
@@ -2094,8 +2097,8 @@ EOF
 `--body-file -` reads the body from stdin, so a long instruction needs no file.
 A consuming project's optional brief guard refuses writing a brief to a file: to
 `artifacts/orchestrator/` (which must not exist), or to a brief in a session scratchpad (a file named
-`brief*` or `*-brief.*`, or under `briefs/` or `followups/`), and says to
-create a subtask instead.
+`brief*` or `*-brief.*`, or under `briefs/` or `followups/`): a brief is a task's
+description, and anything more for its agent goes on the task's thread.
 A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 

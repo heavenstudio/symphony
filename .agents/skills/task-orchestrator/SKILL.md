@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 1d09331d63479a23 files=SKILL.md -->
+<!-- symphony-stamp: 2f95178e1e4cd3ab files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -71,7 +71,10 @@ full suite).
    no work or review subtask, and what more they need goes on the thread. The work
    skill owns claiming, milestones and finishing, the review-task skill the reviewer's
    role on the task and the verdict. A later review round resumes the same reviewer
-   with the new tip, never a fresh one. Use a separate checkout per executor.
+   with the new tip, never another reviewer; resumed, it is still a fresh reviewer
+   for the land (#8). Only one that cannot be resumed (no conversation recorded, a
+   Codex thread that never arrived, a reviewer that left) is replaced: then another
+   reviewer takes the role on the task. Use a separate checkout per executor.
 6. Choose a supported launch method under project policy: an in-process agent,
    a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
    just tasks limits names for its role, and its required effort. A terminal is for

@@ -70,7 +70,10 @@ full suite).
    no work or review subtask, and what more they need goes on the thread. The work
    skill owns claiming, milestones and finishing, the review-task skill the reviewer's
    role on the task and the verdict. A later review round resumes the same reviewer
-   with the new tip, never a fresh one. Use a separate checkout per executor.
+   with the new tip, never another reviewer; resumed, it is still a fresh reviewer
+   for the land (#8). Only one that cannot be resumed (no conversation recorded, a
+   Codex thread that never arrived, a reviewer that left) is replaced: then another
+   reviewer takes the role on the task. Use a separate checkout per executor.
 6. Choose a supported launch method under project policy: an in-process agent,
    a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
    just tasks limits names for its role, and its required effort. A terminal is for

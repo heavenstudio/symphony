@@ -286,7 +286,8 @@ fn a_reused_reviewer_the_board_refuses_is_handed_nothing_and_a_fresh_one_reviews
     assert!(jump.holders("reviewer").is_empty(), "{:?}", jump.roles);
 
     // The next goes to a fresh reviewer, on the task it reviews: its role and its launch are
-    // recorded there, it reserves nothing (the task's executor holds it), and no subtask is filed.
+    // recorded there, it reserves nothing (a reviewer never reserves the task it judges), and no
+    // subtask is filed.
     let line = staff(&idle_reviewer(FRESH)).unwrap();
     assert_eq!(
         line,
@@ -329,6 +330,52 @@ fn a_reused_reviewer_its_prompt_may_have_reached_keeps_its_role() {
     );
     let launch = recorded(&f, "sim/jump", FRESH).expect("recorded before the prompt");
     assert_eq!(launch.role, "reviewer");
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
+}
+
+#[test]
+fn a_reused_reviewer_whose_launch_is_not_recorded_lets_its_role_go() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    // Once the reused reviewer holds the role, before its launch is recorded, the board starts
+    // refusing a record of its terminal.
+    let (probe, client, refusing) = (f.other(), f.other_client(), AtomicBool::new(false));
+    let store = f.busy(move || {
+        let holds = probe
+            .get("sim/jump")
+            .is_ok_and(|t| t.holders("reviewer") == [FRESH]);
+        if holds && !refusing.swap(true, SeqCst) {
+            let refuse = "DEFINE FIELD OVERWRITE pane ON task_session TYPE string \
+                ASSERT $value != 't1';";
+            client.query(refuse, serde_json::json!({})).unwrap();
+        }
+    });
+    let hc = ReusedTerminal::answering("started");
+    let task = f.store.get("sim/jump").unwrap();
+    let error = dispatch(
+        &store,
+        &hc,
+        &reusing(),
+        &Defaults::default().resolve(None, None),
+        &task,
+        ORCHESTRATES,
+        Some(&jump_review()),
+        Some(&idle_reviewer(FRESH)),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("pane"), "{error}");
+    // Nothing was sent and nothing recorded, so the task waits on no reviewer with no job.
+    assert!(
+        !hc.sent.get(),
+        "no prompt went to a reviewer with no record"
+    );
+    assert_eq!(recorded(&f, "sim/jump", FRESH), None);
+    let jump = f.store.get("sim/jump").unwrap();
+    assert!(jump.holders("reviewer").is_empty(), "{:?}", jump.roles);
+    let said = f.said("sim/jump");
+    let let_go = format!("{FRESH} released reviewer (released)");
+    assert!(said.contains(&let_go), "{said:?}");
     assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
 }
 

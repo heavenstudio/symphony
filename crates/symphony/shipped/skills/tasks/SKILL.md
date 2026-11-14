@@ -229,7 +229,10 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    A later review round goes to the same reviewer: post the new tip on the
    thread `--to @reviewer` and resume it (`SendMessage` to a subagent,
    `claude -p --resume SESSION-ID`, `just tasks restore SLUG HANDLE` for a
-   closed terminal), never a fresh reviewer or a review subtask.
+   closed terminal), never another reviewer or a review subtask. Resumed, it is
+   still a fresh reviewer for the land. Only when it cannot be resumed (no
+   conversation recorded, a Codex thread that never arrived, a reviewer that left)
+   does another reviewer take the role on the task.
    Its prompt is `/work SLUG HANDLE` (a reviewer's `/review-task SLUG HANDLE`)
    and nothing else: the skill tells it
    to run every command as `just tasks … --as <its handle>`, claim

@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: rerun its focused tests, judge its evidence and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 22015127f722e9c0 files=SKILL.md -->
+<!-- symphony-stamp: 497f8f8b7b3e0440 files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -34,8 +34,9 @@ assumes no certificate or landing system.
    `just tasks verdict SLUG changes "what and where" --as HANDLE`. The board refuses the verdict
    of a session that ever executed SLUG or a slice of it (a subtask without `--instruction`).
    Never judge a task you executed.
-7. After a changes you stay its reviewer: the next round is yours. Resumed with a new tip, read
-   the thread since your verdict and judge that tip from step 3.
+7. After a changes, or a land that sent SLUG back to review because your approve does not name
+   its tip, you stay its reviewer: the next round is yours. Resumed with a new tip, read the
+   thread since your verdict and judge that tip from step 2.
 
 An in-process reviewer reads `just tasks inbox --as HANDLE` between steps; an owner's `MOVE`
 ending `it moves no further: stop work on it` means stop. Post the verdict, never an
