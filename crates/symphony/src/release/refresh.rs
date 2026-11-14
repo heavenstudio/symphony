@@ -1,7 +1,7 @@
-//! A green release's refresh (docs/RELEASES.md), on the owner's word of 2026-11-12 ("yes, a green
-//! release should refresh"): what a release does for the machine once it is tagged and pushed, or
-//! once `--refresh` names it again. Each project the machine serves that builds on the Symphony
-//! ([`consumers::consumers`]) is one step, `refresh-ID`, which moves what it can and nothing more:
+//! A green release's refresh (docs/RELEASES.md), which every green release makes: what a release
+//! does for the machine once it is tagged and pushed, or once `--refresh` names it again. Each
+//! project the machine serves that builds on the Symphony ([`consumers::consumers`]) is one step,
+//! `refresh-ID`, which moves what it can and nothing more:
 //!
 //! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, one the release
 //!   descends from, the move to the release ([`pin`]) is made in a worktree of the project's own

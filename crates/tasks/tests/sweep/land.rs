@@ -614,6 +614,8 @@ fn a_project_with_no_file_lands_on_main_with_no_check() {
     let (said, result) = landed(&r, SLUG, &people.orch);
     result.unwrap();
     assert!(!said.contains("checking"), "{said}");
+    let thread = r.board.said(SLUG);
+    assert!(!thread.iter().any(|l| l.contains("checked")), "{thread:?}");
     assert_eq!(head(&r.root, "main^2"), tip);
 }
 
@@ -1382,15 +1384,59 @@ fn a_project_that_turns_the_lands_check_off_lands_its_merge_unchecked() {
     );
     assert!(runs(&r).is_empty(), "no check ran");
     assert!(!said.contains("checking"), "{said}");
-    // The record names the merge as what was checked: nothing else was made.
+    // The thread names the merge it moves main to, and no check, since none ran.
+    let thread = r.board.said(SLUG);
     assert!(
-        r.board.said(SLUG).contains(&format!(
-            "land {SLUG}: merged {} as {merge}, checked at {merge}; moving main there",
+        thread.contains(&format!(
+            "land {SLUG}: merged {} as {merge}; moving main there",
             head(&r.root, "main^2")
         )),
-        "{:?}",
-        r.board.said(SLUG)
+        "{thread:?}"
     );
+    assert!(!thread.iter().any(|l| l.contains("checked")), "{thread:?}");
+}
+
+#[test]
+fn finishing_a_land_that_ran_no_check_says_none_was_checked() {
+    let r = Repo::new();
+    manifest(&r, "\n[land]\ncheck = false\n");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip}: good"));
+    // A land stopped after it moved main: its merge there, and its record of it.
+    let message = format!("Merge branch '{SLUG}'");
+    git(&r.root, &["merge", "-q", "--no-ff", "-m", &message, SLUG]);
+    let merge = head(&r.root, "main");
+    let folder = r.root.join(".git/symphony/tasks/land");
+    fs::create_dir_all(&folder).unwrap();
+    Record {
+        slug: SLUG.into(),
+        tip: tip.clone(),
+        merge: merge.clone(),
+        checked: merge.clone(),
+        regenerated: Vec::new(),
+    }
+    .write(&folder)
+    .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        result.unwrap(),
+        format!(
+            "landed {SLUG} on main at {}, finishing a land interrupted after its merge; not \
+             pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    assert!(
+        said.contains(&format!(
+            "land {SLUG}: its tip {} is on main already, by this land's merge {}: finishing the \
+             land (the push, the landed line, the sweep)",
+            &tip[..7],
+            &merge[..7]
+        )),
+        "{said}"
+    );
+    assert!(!said.contains("checked"), "{said}");
 }
 
 // -- the push ------------------------------------------------------------------------------------
@@ -1709,6 +1755,8 @@ mod approval;
 mod covered;
 #[path = "land_generated.rs"]
 mod generated;
+#[path = "land_hooks.rs"]
+mod hooks;
 #[path = "land_limits.rs"]
 mod limits;
 #[path = "land_regenerate.rs"]

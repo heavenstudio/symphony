@@ -11,7 +11,7 @@ esac
 name="${1:-}"
 board=no
 case "$name" in
-    symphony|symphony-build) package=symphony; member=crates/symphony ;;
+    symphony|symphony-build) package=symphony-app; member=crates/symphony ;;
     tasks|agent-send|tasks-copy|tasks-reclaim) package=symphony-board; member=crates/tasks; board=yes ;;
     fake-hc) package=symphony-board; member=crates/tasks ;;
     symphony-server|symphony-shelf|symphony-ui-dev) package=symphony-server; member=apps/symphony-server ;;

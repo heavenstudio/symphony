@@ -1,9 +1,9 @@
 //! The project's work-in-progress limits, `[limits]` in the main checkout's `symphony.toml`, and
 //! beside them the pipeline alarm's thresholds (`[board]`, [`crate::alarm`]): what a store holds
 //! its starts and its PULL digests to, and what `just tasks limits` prints, each with where it came
-//! from. The owner, 2026-11-12: "all WIP limits should be settings anyway, as well as preferred
-//! model to delegate to. Should be very easy and simple to change the file whenever conditions or
-//! deicions happen." (The models are `[agents.models]`, [`crate::launch::Defaults`].)
+//! from. Every work-in-progress limit is a setting, as is the model each role is delegated to, so a
+//! change of conditions or of decision is one simple edit to the file. (The models are
+//! `[agents.models]`, [`crate::launch::Defaults`].)
 //!
 //! - `orchestrator_slots`: the tasks in progress an orchestrator holds (work in review and red work
 //!   not counted) before the board refuses it new work ([`crate::slots`]); none caps nothing.
