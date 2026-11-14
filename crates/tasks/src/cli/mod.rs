@@ -185,6 +185,9 @@ fn run(
     }
     let env = scratch.as_ref().unwrap_or(env);
     let args = &args[lead..];
+    if symphony_args::version(args, "tasks", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
     if args.len() == 1 && args[0] == detached::COMMAND {
         return detached::run(env, err);
     }

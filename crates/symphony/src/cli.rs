@@ -79,6 +79,9 @@ pub fn main_in(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    if version(args, "symphony", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
     let command = args.first().map(String::as_str);
     let symphony = &commands::SYMPHONY;
     if let Some(help) = command.and_then(|name| commands::plain_help(symphony, name, &args[1..])) {
@@ -111,9 +114,9 @@ pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
     commands::build(args, out, err)
 }
 
-/// The command line's reading and a refusal of it, as argparse words one: the helper
-/// `symphony-args`, which a plugin's commands use too.
-pub use symphony_args::{Flag, Parsed, command_at, parse, refuse};
+/// The command line's reading, a refusal of it as argparse words one, and the answer to
+/// `--version`: the helper `symphony-args`, which a plugin's commands and the server use too.
+pub use symphony_args::{Flag, Parsed, command_at, parse, refuse, version};
 
 /// This process's environment, each variable whose name and value are text: what [`main`] reads.
 fn process_env() -> BTreeMap<String, String> {

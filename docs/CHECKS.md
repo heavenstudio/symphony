@@ -96,11 +96,26 @@ a measurement before and after.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
+- **The kit's or a helper's public items** (what a project links at the version it names,
+  [RELEASES](RELEASES.md#packages-on-cratesio)): the package's own tests, and the packages test
+  (`crates/symphony/tests/packages.rs`), which fails a kit package that builds with a member
+  outside the kit and a helper that builds with one outside the helpers. The reviewer reads what no
+  test holds: that no public item shows a type of a member outside the package's line (rustc's lint
+  for a private dependency's type is unstable), that a struct added to `symphony_plugin::protocol`
+  comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
+  `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
+  unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
+  removed or changed, or a field or variant added to a seam type or the vocabulary, is a new major
+  of the package's line.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. For a shipped skill,
+  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
+  shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
+  owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
+  shape. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
   the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
 

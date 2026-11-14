@@ -575,16 +575,16 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: &str = symphony_plugin::ARTIFACTS;
     let _ = |page: &Page<'_>, rel: &str| -> String { page.artifact(rel) };
     let _ = |page: Page<'static>| page.in_artifacts("out");
-    // Its tests ask its components and card kinds as a host does.
+    // Its tests ask its components and card kinds as a host does: a request made by its `new` from
+    // what the seam borrows, as no protocol struct is built by its fields (`#[non_exhaustive]`).
     let _ = |plugin: &'static dyn Plugin, page: &Page<'_>, card: &Card<'_>| {
+        use symphony_plugin::protocol::{CardData, Declaration, PageData, Recognises};
         let host = symphony_plugin::testing::Host::new(plugin);
-        let page = symphony_plugin::protocol::PageData::of(page);
-        let _: Vec<Block> = host.render(&page, "component", "argument", None);
-        let _: Result<symphony_plugin::protocol::Declaration, String> = host.declaration();
-        let _: Result<bool, String> = host.ask(symphony_plugin::protocol::Recognises {
-            kind: "kind".into(),
-            card: symphony_plugin::protocol::CardData::of(card),
-        });
+        let _: Vec<Block> = host.render(page, "component", "argument", None);
+        let _: Result<Declaration, String> = host.declaration();
+        let _: fn(&Page<'_>) -> PageData = PageData::of;
+        let _: fn(String, CardData) -> Recognises = Recognises::new;
+        let _: Result<bool, String> = host.ask(Recognises::new("kind".into(), CardData::of(card)));
     };
 
     // A consumer's plugin, below, is one the Symphony takes.

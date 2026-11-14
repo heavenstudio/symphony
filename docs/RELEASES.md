@@ -38,8 +38,8 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 ## Packages on crates.io
 
 The plugin kit, the helpers and the product are made to be published on crates.io, each by its
-version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
-crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-versioning)).
+version, under MIT: crates.io is the package manager their versions live in
+([its card](DECISIONS.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
   ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0.
@@ -53,8 +53,8 @@ crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-ver
 - **The rest,** the client's sources (`symphony-ui`, which the server embeds built) and the tests'
   time (`test-time`), keep the workspace's `publish = false`.
 
-Two names were another project's on crates.io, so those two packages alone are renamed, the owner's
-choice (2026-11-13, on the board task `tools/publish-to-crates-io`): the library's package is
+Two names were another project's on crates.io, so those two packages alone are renamed (the board
+task `tools/publish-to-crates-io`): the library's package is
 `symphony-app`, its library still named `symphony` (`[lib] name`), and the Chrome driver's is
 `symphony-chrome`, its library `symphony_chrome`. Their folders keep their names
 (`crates/symphony`, `crates/chrome-devtools`), and so do the binaries. A dependent names the library
@@ -650,8 +650,8 @@ A step moves what it can and nothing more:
   A package renamed here is a move the refresh does not make: it rewrites each line's tag and not
   the package the line names, so `cargo update` finds no package of the old name at the new tag,
   and the step is red for that project until its own manifest names the new one. The first
-  release that holds the library as `symphony-app` (the owner's names, 2026-11-13; [the
-  packages](#packages-on-cratesio)) is one: the consuming project's workspace manifest changes its
+  release that holds the library as `symphony-app` ([the packages](#packages-on-cratesio)) is
+  one: the consuming project's workspace manifest changes its
   one line for the library from
 
   ```toml

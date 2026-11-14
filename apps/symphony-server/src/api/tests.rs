@@ -145,6 +145,36 @@ fn document_feed_defers_bodies_and_reserves_only_current_anchors() {
     );
 }
 
+/// A card the page has not read the body of comes on the feed as the outline gives it: its plain
+/// words, cut at a word with an ellipsis; a card it reads comes whole.
+#[test]
+fn document_feed_gives_an_unread_card_the_outlines_line() {
+    let long = "A task's page now shows what the task went through, built from the **approved** \
+                pictures. It sits under the gates and subtasks and above the brief, a lane each.";
+    let event = json!({"version":4,"changes":[{"region":"document","data":{
+        "path":"docs/DECISIONS.md",
+        "cards":[{"key":"timeline","value":{"slug":"timeline","state":"approved","text":long,
+            "group":"resolved","open":false}}]
+    }}]})
+    .to_string();
+    let text = |keys: Vec<String>| -> String {
+        let filtered: serde_json::Value = serde_json::from_str(&filtered_document_event(
+            &event,
+            &("docs/DECISIONS.md".to_string(), keys),
+        ))
+        .unwrap();
+        filtered["changes"][0]["data"]["cards"][0]["value"]["text"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let line = text(Vec::new());
+    assert_eq!(line, symphony::docview::card_line(long));
+    assert!(line.ends_with("above the…"), "{line}");
+    assert!(!line.contains("**"), "{line}");
+    assert_eq!(text(vec!["card:timeline".into()]), long);
+}
+
 #[test]
 fn matches_etag_handles_whitespace_empty_values_and_invalid_headers() {
     let cases: &[(&str, &[&[u8]], bool)] = &[
