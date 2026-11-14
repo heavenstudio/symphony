@@ -323,17 +323,18 @@ never the whole target, which the release run runs.
   548,635 (from 548,627 and 549,220) and `/docs/` to 506,544 (from 507,082); the warmed chat and
   menus take 604,993 outside home's (from 603,664), the media sheet home no longer holds under
   the program's name among them. The documents moving to the web client
-  (`app/client-moves-to-react/documents-page`, against main's build at 0aed38c) take `/docs/` to
-  135,262 bytes (from 506,543) and a document to 136,879 (from 508,160): their entry (23,264 on
+  (`app/client-moves-to-react/documents-page`, against main's build at 98a254b) take `/docs/` to
+  135,757 bytes (from 506,529) and a document to 137,374 (from 508,146): their entry (23,707 on
   the wire), their sheet (5,393), the media layer's sheet, the chunk the four web kinds share
-  (76,321, 762 more than before, the documents' share of what it holds), the media layer's chunk
-  they now share with home (4,274), the board's feed and keep (3,399) and the cards' Later they
-  share with the queue (`postpone.tsx`, 953), with the same reads as the Dioxus page. Home takes 111,380 (from 108,351): its entry 4,125 (from
-  6,535), the media layer's chunk, and its task chip a chunk of 371 it shares with the queue
-  alone, so `/queue` takes 106,772 (from 104,992) and `/reports` 107,211 (from 106,456); the
-  Dioxus kinds, the documents' code gone from the shared sources, take `/tasks` to 280,803 (from
-  280,842) and `/agents` and a task page to 545,693 and 546,286 (from 548,027 and 548,620), and
-  the warmed chat and menus 602,730 outside home's (from 605,016). Each
+  (76,340, 767 more than main's, the documents' share of what it holds), the media layer's
+  chunk they now share with home (4,272), the board's feed and keep (3,397) and the cards' Later
+  they share with the queue (`postpone.tsx`, 983), with the same reads as the Dioxus page. Home
+  takes 111,400 (from 108,364): its entry 4,124 (from 6,536), the media layer's chunk, and its
+  task chip a chunk of 371 it shares with the queue alone, so `/queue` takes 106,825 (from
+  105,004) and `/reports` 107,236 (from 106,470); the Dioxus kinds, the documents' code gone from
+  the shared sources, take `/tasks` to 280,543 (from 280,812) and `/agents` and a task page to
+  545,491 and 546,084 (from 547,991 and 548,584), and the warmed chat and menus 602,819 outside
+  home's (from 604,967). Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
