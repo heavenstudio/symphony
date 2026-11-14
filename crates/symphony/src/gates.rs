@@ -868,9 +868,15 @@ fn start(
 
 /// The tip of `branch` in the repository at `root`, a full commit id; `None` without one.
 pub fn tip(root: &Path, branch: &str) -> Option<String> {
+    commit(root, &format!("refs/heads/{branch}"))
+}
+
+/// The commit the revision `spec` names in the repository at `root`, a full id; `None` when it
+/// names none there.
+fn commit(root: &Path, spec: &str) -> Option<String> {
     let repo = gix::discover(root).ok()?;
     let id = repo
-        .rev_parse_single(format!("refs/heads/{branch}^{{commit}}").as_str())
+        .rev_parse_single(format!("{spec}^{{commit}}").as_str())
         .ok()?;
     Some(id.to_string())
 }
@@ -938,7 +944,13 @@ pub fn answer_from(
     };
     let mut own = match stamps::stamped(record).then(|| Catalogue::at(root)) {
         Some(Ok(catalogue)) => {
-            let needed = read::needed(&catalogue, record.needs().as_ref(), tip.as_deref());
+            // A landed task's branch goes with the sweep: its stamps stand on what its land merged.
+            let at = tip.clone().or_else(|| {
+                (record.status == "done")
+                    .then(|| stamps::landed_tip(root, &record.slug, thread))
+                    .flatten()
+            });
+            let needed = read::needed(&catalogue, record.needs().as_ref(), at.as_deref());
             // The work under the task is read only when its runs are.
             let ours = if needed.iter().any(|need| need == stamps::TESTS) {
                 stamps::family(store, &record.slug)
@@ -952,7 +964,7 @@ pub fn answer_from(
                 ours: &ours,
                 folder: &folder,
                 branch: &branch,
-                tip: tip.as_deref(),
+                tip: at.as_deref(),
                 cards: &posted,
             };
             stamps::stamps(record, &catalogue, &evidence)

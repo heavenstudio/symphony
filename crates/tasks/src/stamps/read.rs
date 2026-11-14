@@ -211,38 +211,46 @@ pub fn folder(artifacts: &str, slug: &str) -> String {
 /// showing at least one picture under `folder` ([`folder`]) or uploaded ([`shows_picture`]); not
 /// met while the newest such post names another commit or none, or there is none.
 pub fn pictures(thread: &[Message], tip: &str, folder: &str) -> Reading {
-    let mut shown =
+    let shown =
         (thread.iter()).filter(|post| post.kind != "system" && shows_picture(&post.text, folder));
     let at_tip = short(tip);
-    let read = |post: &Message, met: bool, commit: Option<String>, detail: String| Reading {
-        met,
-        by: Some(post.sender.clone()),
-        at: Some(post.ts),
-        commit,
-        detail,
-        line: Some(post.id),
-    };
-    if let Some(post) = shown.clone().rfind(|post| names(&post.text, tip)) {
-        let detail = format!("Pictures at {at_tip}, posted by {}", post.sender);
-        return read(post, true, Some(tip.to_string()), detail);
-    }
-    match shown.next_back() {
-        Some(post) => match named(&post.text) {
-            Some(commit) => {
-                let detail = format!("Pictures posted at {}, none at {at_tip}", short(commit));
-                read(post, false, Some(commit.to_string()), detail)
-            }
-            None => {
-                let detail = format!("Pictures posted naming no commit, none at {at_tip}");
-                read(post, false, None, detail)
-            }
-        },
-        None => Reading {
+    let Some((post, reading)) = newest(shown, tip, |post| post.sender.clone()) else {
+        return Reading {
             commit: Some(tip.to_string()),
             detail: format!("No picture posted at {at_tip}"),
             ..Reading::default()
-        },
-    }
+        };
+    };
+    let detail = match (reading.met, reading.commit.as_deref()) {
+        (true, _) => format!("Pictures at {at_tip}, posted by {}", post.sender),
+        (false, Some(commit)) => format!("Pictures posted at {}, none at {at_tip}", short(commit)),
+        (false, None) => format!("Pictures posted naming no commit, none at {at_tip}"),
+    };
+    Reading { detail, ..reading }
+}
+
+/// A stamp's evidence among `posts`, a thread's oldest first, at `tip`: the newest post naming the
+/// tip, met; else the newest of them, not met, its commit the one it names (none when it names
+/// none); `None` with no post. `by` says who gave it; the caller words the detail.
+fn newest<'a>(
+    mut posts: impl DoubleEndedIterator<Item = &'a Message> + Clone,
+    tip: &str,
+    by: impl Fn(&Message) -> String,
+) -> Option<(&'a Message, Reading)> {
+    let (post, met) = match posts.clone().rfind(|post| names(&post.text, tip)) {
+        Some(post) => (post, true),
+        None => (posts.next_back()?, false),
+    };
+    let commit = if met { Some(tip) } else { named(&post.text) };
+    let reading = Reading {
+        met,
+        by: Some(by(post)),
+        at: Some(post.ts),
+        commit: commit.map(str::to_string),
+        detail: String::new(),
+        line: Some(post.id),
+    };
+    Some((post, reading))
 }
 
 /// Whether `post` is the owner's approve: a line of the owner's whose first word is `approve`.
@@ -258,37 +266,23 @@ pub fn owner_approves(post: &Message) -> bool {
 /// ([`owner_approves`]), which its page posts (`approve FULL_SHA`) or the owner writes; not met
 /// while the newest names another commit or none, or there is none.
 pub fn owner(thread: &[Message], tip: &str) -> Reading {
-    let mut approves = thread.iter().filter(|post| owner_approves(post));
+    let approves = thread.iter().filter(|post| owner_approves(post));
     let at_tip = short(tip);
-    let read = |post: &Message, met: bool, commit: Option<String>, detail: String| Reading {
-        met,
-        by: Some(OWNER.into()),
-        at: Some(post.ts),
-        commit,
-        detail,
-        line: Some(post.id),
-    };
-    if let Some(post) = approves.clone().rfind(|post| names(&post.text, tip)) {
-        let detail = format!("Approved by the owner at {at_tip}");
-        return read(post, true, Some(tip.to_string()), detail);
-    }
-    match approves.next_back() {
-        Some(post) => match named(&post.text) {
-            Some(commit) => {
-                let detail = format!("The owner approved {}, not the tip {at_tip}", short(commit));
-                read(post, false, Some(commit.to_string()), detail)
-            }
-            None => {
-                let detail = format!("The owner approved naming no commit, not the tip {at_tip}");
-                read(post, false, None, detail)
-            }
-        },
-        None => Reading {
+    let Some((_, reading)) = newest(approves, tip, |_| OWNER.into()) else {
+        return Reading {
             commit: Some(tip.to_string()),
             detail: format!("Waits on the owner's approve of {at_tip}"),
             ..Reading::default()
-        },
-    }
+        };
+    };
+    let detail = match (reading.met, reading.commit.as_deref()) {
+        (true, _) => format!("Approved by the owner at {at_tip}"),
+        (false, Some(commit)) => {
+            format!("The owner approved {}, not the tip {at_tip}", short(commit))
+        }
+        (false, None) => format!("The owner approved naming no commit, not the tip {at_tip}"),
+    };
+    Reading { detail, ..reading }
 }
 
 #[cfg(test)]

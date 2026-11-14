@@ -2070,8 +2070,11 @@ its why, its assessor the who and its line the link; with no assessment, a stamp
 catalogue does not need by default is waived, saying so. A stamp stands on the tip alone:
 evidence naming another commit, a merge of the default branch included, is stale, not met,
 and the gate names the commit it stood on. A commit is named by a word of 7 to 40 hex
-digits, one digit at least, that the tip's id starts with. With no such branch in the
-repository a needed stamp is not met, saying so. A catalogue the board cannot read leaves the
+digits, one digit at least, that the tip's id starts with. A done task whose branch the sweep
+removed is read at the tip its land merged: the second parent of the merge its landing's line
+names (`landed SLUG on main at MERGE`), else the commit the land's own line names (`land SLUG:
+merged TIP as MERGE`). With no tip, an open task's needed stamp is not met, and a closed task's
+is unknown, never missing, each saying so. A catalogue the board cannot read leaves the
 gates read as below, for a task with no stamps, and adds one gate, `stamps`, unknown, saying
 why.
 

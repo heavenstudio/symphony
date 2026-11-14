@@ -327,6 +327,30 @@ fn a_needed_stamp_with_nothing_given_is_missing_and_the_owners_is_held() {
             ("owner", GateState::Held, no_branch),
         ]
     );
+    // Closed, with no branch and no land naming what it merged, where it stood cannot be read:
+    // unknown, never missing, and nothing is held.
+    let every = assessed(&["tests", "review", "pictures", "owner"], Some(TIP));
+    for status in ["done", "cancelled"] {
+        let gates = read(&task(status, Some(every.clone())), &given(), &[], None);
+        let gone = "No branch tools/x in this repository, nor a land on its thread naming the \
+                    commit it merged";
+        assert_eq!(
+            states(&gates),
+            [
+                ("tests", GateState::Unknown, gone),
+                (
+                    "review",
+                    GateState::Unknown,
+                    "Approved in round 1 of 1, but no branch tools/x is in this repository, nor a \
+                     land on its thread naming the commit it merged"
+                ),
+                ("pictures", GateState::Unknown, gone),
+                ("owner", GateState::Unknown, gone),
+            ],
+            "{status}"
+        );
+        assert!(gates.iter().all(|gate| gate.why.is_none()), "{status}");
+    }
 }
 
 #[test]

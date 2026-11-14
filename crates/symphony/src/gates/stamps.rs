@@ -4,8 +4,10 @@
 //! the assessment its reason. `owner` is held too while a card the task posted waits ([`owner`]),
 //! and `review` reads the rounds ([`review`]), met only while the last approve names the tip
 //! ([`review_at`]). A task done or cancelled with no assessment keeps the gates it had before
-//! stamps ([`stamped`]): no history is judged again. The task's timeline draws no lane for a stamp
-//! left out ([`left_out`]).
+//! stamps ([`stamped`]): no history is judged again. A done task whose branch the sweep removed is
+//! read at the tip its land merged ([`landed_tip`]); a closed task with no tip to read at reads its
+//! needed stamps unknown, never missing. The task's timeline draws no lane for a stamp left out
+//! ([`left_out`]).
 //!
 //! Until the task page is ported, the owner gives the `owner` stamp through the page's approval
 //! offer: [`owner_offer`] makes the Symphony's own where no plugin offers one, and its action posts
@@ -49,7 +51,9 @@ pub struct Evidence<'a> {
     pub ours: &'a [String],
     /// The task's artifacts folder, where its pictures go (`read::folder`).
     pub folder: &'a str,
-    /// The branch its gates are answered for, and that branch's tip: `None` with no such branch.
+    /// The branch its gates are answered for, and the tip its stamps are read at: that branch's,
+    /// or, a done task's whose branch is gone, the one its land merged ([`landed_tip`]); `None`
+    /// with neither.
     pub branch: &'a str,
     pub tip: Option<&'a str>,
     /// The cards the task posted that wait on the owner ([`super::posted_cards`]).
@@ -63,11 +67,12 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
     let needed = read::needed(catalogue, needs.as_ref(), evidence.tip);
     let defaults = catalogue.defaults();
     let (slug, status) = (record.slug.as_str(), record.status.as_str());
+    let closed = matches!(status, "done" | "cancelled");
     let reviewers = record.holders("reviewer");
     let read_at = |name: &str, unmet: GateState, read: &dyn Fn(&str) -> Reading| match evidence.tip
     {
         Some(tip) => of_reading(name, slug, read(tip), unmet),
-        None => no_branch(name, unmet, evidence.branch),
+        None => no_tip(name, unmet, evidence.branch, closed),
     };
     let mut gates: Vec<Gate> = (catalogue.stamps.iter())
         .map(|stamp| {
@@ -82,7 +87,7 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
                 REVIEW if wanted => {
                     let rounds = review_rounds(evidence.thread);
                     let gate = review(slug, status, &reviewers, &rounds);
-                    review_at(gate, &rounds, evidence.branch, evidence.tip)
+                    review_at(gate, &rounds, evidence.branch, evidence.tip, closed)
                 }
                 OWNER => match owner(evidence.cards) {
                     Some(held) => held,
@@ -110,11 +115,17 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
     gates
 }
 
-/// The review stamp at `tip`, `branch`'s ([`review`]'s gate from its `rounds`, `None` with no such
-/// branch): met only while the last round's approve names the tip, else missing, naming the commit
-/// it approved; a task done with no round landed without review, which its assessment did not
-/// waive: missing.
-pub fn review_at(gate: Gate, rounds: &[Round], branch: &str, tip: Option<&str>) -> Gate {
+/// The review stamp at `tip` ([`review`]'s gate from its `rounds`; `None` with no tip, as the task
+/// is `closed` or not, [`without_tip`]): met only while the last round's approve names the tip,
+/// else missing, naming the commit it approved; a task done with no round landed without review,
+/// which its assessment did not waive: missing.
+pub fn review_at(
+    gate: Gate,
+    rounds: &[Round],
+    branch: &str,
+    tip: Option<&str>,
+    closed: bool,
+) -> Gate {
     match (gate.state, rounds.last()) {
         (GateState::Waived, None) => Gate {
             state: GateState::Missing,
@@ -124,10 +135,11 @@ pub fn review_at(gate: Gate, rounds: &[Round], branch: &str, tip: Option<&str>) 
         },
         (GateState::Met, Some(last)) => {
             let Some(tip) = tip else {
+                let (state, nor) = without_tip(GateState::Missing, closed);
                 return Gate {
-                    state: GateState::Missing,
+                    state,
                     detail: format!(
-                        "{}, but no branch {branch} is in this repository",
+                        "{}, but no branch {branch} is in this repository{nor}",
                         gate.detail
                     ),
                     ..gate
@@ -175,15 +187,49 @@ fn owner_waits() -> String {
     "the task needs the owner's approve of its tip, which its page offers".into()
 }
 
-/// The stamp `name`, `unmet`, with no tip to stand on: the repository has no branch `branch`.
-fn no_branch(name: &str, unmet: GateState, branch: &str) -> Gate {
+/// The stamp `name` with no tip to read it at: the repository has no branch `branch`, and a
+/// `closed` task's thread names no commit its land merged ([`without_tip`]).
+fn no_tip(name: &str, unmet: GateState, branch: &str, closed: bool) -> Gate {
+    let (state, nor) = without_tip(unmet, closed);
     Gate {
         name: name.into(),
-        state: unmet,
-        why: (unmet == GateState::Held).then(owner_waits),
-        detail: format!("No branch {branch} in this repository"),
+        state,
+        why: (state == GateState::Held).then(owner_waits),
+        detail: format!("No branch {branch} in this repository{nor}"),
         ..Gate::default()
     }
+}
+
+/// What a needed stamp with no tip to read it at is, and what its detail adds to the missing
+/// branch: an open task's stands on nothing yet, `unmet`; a closed task's stood on a branch that
+/// is gone, with no land on its thread naming the commit it merged, so where it stood cannot be
+/// read: unknown, never missing.
+fn without_tip(unmet: GateState, closed: bool) -> (GateState, &'static str) {
+    if closed {
+        (
+            GateState::Unknown,
+            ", nor a land on its thread naming the commit it merged",
+        )
+    } else {
+        (unmet, "")
+    }
+}
+
+/// The tip the land of the task `slug` merged, a whole commit id in the repository at `root`, read
+/// from its `thread` once the sweep has removed its branch: the second parent of the merge its
+/// landing's line names (`landed SLUG on DEFAULT at MERGE`, `symphony_board::landing`), else the
+/// commit the land's own line names (`land SLUG: merged TIP as MERGE`). `None` when the thread
+/// names neither or the repository holds neither commit.
+pub fn landed_tip(root: &Path, slug: &str, thread: &[Message]) -> Option<String> {
+    let merged = format!("land {slug}: merged ");
+    let from_merge = || super::commit(root, &format!("{}^2", symphony_board::landing(thread)?));
+    let from_land = || {
+        (thread.iter().rev())
+            .filter_map(|line| line.text.strip_prefix(merged.as_str()))
+            .find_map(|rest| read::named(rest.split_whitespace().next()?))
+            .and_then(|tip| super::commit(root, tip))
+    };
+    from_merge().or_else(from_land)
 }
 
 /// The stamp `name` of the task `slug` its assessment `needs` left out: waived, its reason the

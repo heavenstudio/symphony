@@ -18,13 +18,18 @@ use symphony_api::{GateState, TaskGates};
 use symphony_board::rows::MessageRow;
 
 /// `seed` with a verdict `text` by `by` on `slug`'s thread, the `id`th line, at `NOW + id`.
-fn verdict(mut seed: Seed, id: i64, slug: &str, by: &str, text: &str) -> Seed {
+fn verdict(seed: Seed, id: i64, slug: &str, by: &str, text: &str) -> Seed {
+    said(seed, (id, "verdict"), slug, by, text)
+}
+
+/// `seed` with a line of `kind`, `text` by `by`, on `slug`'s thread, the `id`th, at `NOW + id`.
+fn said(mut seed: Seed, (id, kind): (i64, &str), slug: &str, by: &str, text: &str) -> Seed {
     seed.dump.messages.push(MessageRow {
         id,
         slug: slug.into(),
         sender: by.into(),
         recipient: None,
-        kind: "verdict".into(),
+        kind: kind.into(),
         text: text.into(),
         ts: NOW + f64::from(i32::try_from(id).unwrap()),
     });
@@ -743,5 +748,137 @@ fn a_tasks_tests_stamp_reads_the_runs_of_the_work_under_it_and_no_other_tasks() 
     );
     assert_eq!(answer["gates"][3]["by"], "quiet-wren");
     assert_eq!(answer["gates"][3]["commit"], json!(tip));
+    shared.stop();
+}
+
+#[test]
+fn a_landed_tasks_stamps_stand_on_the_tip_its_land_merged_once_the_sweep_removed_its_branch() {
+    use symphony_board::stamps::{NEEDS, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    // Each branch merged on main as the land merges it, then removed as the sweep removes it.
+    let mut landed = Vec::new();
+    for slug in ["tools/landed", "tools/merged"] {
+        git(&root, &["branch", slug]);
+        let tip = commit_on(&root, slug);
+        git(&root, &["merge", "-q", "--no-ff", "-m", "land", slug]);
+        let merge = git_tip(&root, "main");
+        git(&root, &["branch", "-q", "-D", slug]);
+        landed.push((tip, merge));
+    }
+    let [(tip, merge), (other, other_merge)] = <[(String, String); 2]>::try_from(landed).unwrap();
+    let gone = "0123abcd0123abcd0123abcd0123abcd0123abcd";
+    let mut seed = Seed::default()
+        .task("tools/landed", "done")
+        .task("tools/merged", "done")
+        .task("tools/gone", "done");
+    for (slug, at) in [
+        ("tools/landed", &tip),
+        ("tools/merged", &other),
+        ("tools/gone", &gone.to_string()),
+    ] {
+        let needs = Needs {
+            stamps: vec!["tests".into(), "review".into()],
+            tip: Some(at.clone()),
+            by: "slate-owl".into(),
+            why: "a store query and its test".into(),
+        };
+        let task = (seed.dump.tasks.iter_mut())
+            .find(|task| task.slug == slug)
+            .unwrap();
+        task.fields.insert(
+            symphony_board::red::FIELDS.into(),
+            [(NEEDS.to_string(), serde_json::to_value(needs).unwrap())].into(),
+        );
+    }
+    // The landing's line names its merge, whose second parent is the tip; the land's own line,
+    // where no landing names a merge, names the tip it merged.
+    let seed = verdict(
+        seed,
+        1,
+        "tools/landed",
+        "lucid-heron",
+        &format!("approve: {tip}"),
+    );
+    let landing = format!(
+        "landed tools/landed on main at {}",
+        merge.get(..12).unwrap()
+    );
+    let seed = verdict(seed, 2, "tools/landed", "quiet-plover", &landing);
+    let seed = verdict(
+        seed,
+        3,
+        "tools/merged",
+        "lucid-heron",
+        &format!("approve: {other}"),
+    );
+    let land = format!("land tools/merged: merged {other} as {other_merge}; moving main there");
+    let seed = said(seed, (4, "msg"), "tools/merged", "quiet-plover", &land);
+    // A landing naming no commit the repository holds, and no land's line: nothing to read at.
+    let seed = verdict(
+        seed,
+        5,
+        "tools/gone",
+        "lucid-heron",
+        &format!("approve: {gone}"),
+    );
+    let seed = verdict(
+        seed,
+        6,
+        "tools/gone",
+        "quiet-plover",
+        "landed tools/gone on main at 0badc0ffee12",
+    );
+    keep_run(&root, 1, "tools/landed", "just test-rs", (&tip, 0));
+    keep_run(&root, 2, "tools/merged", "just test-rs", (&other, 0));
+    let f = Fixture::new(seed);
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+
+    for (slug, tip) in [("tools/landed", &tip), ("tools/merged", &other)] {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+        let short = tip.get(..7).unwrap();
+        let left_out = format!("Left out by the assessment at {short}");
+        assert_eq!(
+            gates(&answer),
+            [
+                ("pictures".into(), GateState::Waived, left_out.clone()),
+                ("owner".into(), GateState::Waived, left_out),
+                (
+                    "tests".into(),
+                    GateState::Met,
+                    format!("Green at {short}: `just test-rs`")
+                ),
+                (
+                    "review".into(),
+                    GateState::Met,
+                    "Approved in round 1 of 1".into()
+                ),
+            ],
+            "{slug}"
+        );
+        assert_eq!(answer["gates"][3]["commit"], json!(tip), "{slug}");
+    }
+    let (status, answer) = ask("/api/task-gates?slug=tools/gone");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        gates(&answer)[..2],
+        [
+            (
+                "tests".into(),
+                GateState::Unknown,
+                "No branch tools/gone in this repository, nor a land on its thread naming the \
+                 commit it merged"
+                    .into()
+            ),
+            (
+                "review".into(),
+                GateState::Unknown,
+                "Approved in round 1 of 1, but no branch tools/gone is in this repository, nor a \
+                 land on its thread naming the commit it merged"
+                    .into()
+            ),
+        ]
+    );
     shared.stop();
 }
