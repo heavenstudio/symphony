@@ -601,392 +601,452 @@ fn samples() -> Value {
 /// figure size, as a plugin or a document renders them; the client's unit tests read them all and
 /// draw each, and hold that no kind its types know is missing here.
 fn blocks() -> Vec<api::Block> {
-    use api::{Block, Span};
-    let text = |text: &str| Span::Text { text: text.into() };
-    let words = |words: &str| vec![text(words)];
-    let paragraph = |words: &str| Block::Paragraph {
-        spans: vec![text(words)],
+    let mut blocks = sample::prose();
+    blocks.extend(sample::cards());
+    blocks.extend(sample::media());
+    blocks.extend(sample::wrappers());
+    blocks
+}
+
+/// The parts of the blocks' sample, each holding some of the kinds.
+mod sample {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+    use symphony_api::{
+        self as api, Block, CalloutKind, CardGroup, CardState, ContainerKind, FigureSize, Image,
+        InlineKind, Span, ThreadAuthor, VectorKind,
     };
-    let presentation = |class: &str, attributes: &[(&str, &str)]| api::Presentation {
-        class: class.into(),
-        attributes: attributes
-            .iter()
-            .map(|(name, value)| ((*name).into(), (*value).into()))
-            .collect(),
-        ..api::Presentation::default()
-    };
-    let picture = |src: &str, alt: &str| api::Image {
-        src: src.into(),
-        alt: alt.into(),
-        presentation: presentation(
-            "",
-            &[
-                ("width", "640"),
-                ("height", "480"),
-                ("data-full", "/full.png"),
-            ],
-        ),
-    };
-    let shape = |kind: api::VectorKind, attributes: &[(&str, &str)]| api::VectorShape {
-        kind,
-        attributes: attributes
-            .iter()
-            .map(|(name, value)| ((*name).into(), (*value).into()))
-            .collect(),
-    };
-    let shapes = vec![
-        shape(api::VectorKind::Path, &[("d", "M4 12h16")]),
-        shape(
-            api::VectorKind::Circle,
-            &[("cx", "12"), ("cy", "12"), ("r", "4")],
-        ),
-        shape(
-            api::VectorKind::Ellipse,
-            &[("cx", "12"), ("cy", "12"), ("rx", "6"), ("ry", "3")],
-        ),
-        shape(
-            api::VectorKind::Rect,
-            &[("x", "2"), ("y", "2"), ("width", "8"), ("height", "8")],
-        ),
-        shape(
-            api::VectorKind::Line,
-            &[("x1", "0"), ("y1", "0"), ("x2", "24"), ("y2", "24")],
-        ),
-        shape(api::VectorKind::Polyline, &[("points", "0,0 12,6 24,0")]),
-        shape(
-            api::VectorKind::Polygon,
-            &[("points", "0,24 12,12 24,24"), ("onclick", "x()")],
-        ),
-    ];
-    let viewer = api::Viewer {
-        element: "orbit-view".into(),
-        script: "/static/orbit.js".into(),
-        attributes: vec![("controls".into(), String::new())],
-        views: vec![api::View {
-            label: "Above".into(),
-            title: Some("From above".into()),
-            set: vec![("angle".into(), "0deg 25deg".into())],
-            call: Some("settle".into()),
-        }],
-        download: Some(".item".into()),
-        open_label: Some("Look".into()),
-        close_label: None,
-    };
-    let target = |anchor: Option<&str>| api::LinkTarget {
-        path: "docs/lamps/north.md".into(),
-        anchor: anchor.map(Into::into),
-    };
-    let figure = |picture: Option<api::Image>,
-                  href: Option<&str>,
-                  badge: Option<&str>,
-                  size: api::FigureSize| Block::Figure {
-        picture,
-        caption: words("NOR-L01 Lumen"),
-        href: href.map(Into::into),
-        badge: badge.map(Into::into),
-        size,
-    };
-    let entry = |who: api::ThreadAuthor, verdict: Option<&str>, words: &str| api::ThreadEntry {
-        who,
-        timestamp: Some("2026-11-14 08:32".into()),
-        verdict: verdict.map(Into::into),
-        blocks: vec![paragraph(words)],
-    };
-    let inline = [
-        api::InlineKind::Span,
-        api::InlineKind::Small,
-        api::InlineKind::Sub,
-        api::InlineKind::Sup,
-        api::InlineKind::Time,
-        api::InlineKind::Mark,
-        api::InlineKind::Kbd,
-        api::InlineKind::Samp,
-        api::InlineKind::Delete,
-        api::InlineKind::Insert,
-        api::InlineKind::Underline,
-        api::InlineKind::Abbreviation,
-    ]
-    .map(|tag| {
-        let word = json!(tag).as_str().unwrap_or_default().to_string();
-        Span::Styled {
-            tag,
-            presentation: presentation(&word, &[]),
-            spans: words(&word),
+
+    fn text(text: &str) -> Span {
+        Span::Text { text: text.into() }
+    }
+
+    fn words(words: &str) -> Vec<Span> {
+        vec![text(words)]
+    }
+
+    fn paragraph(words: &str) -> Block {
+        Block::Paragraph {
+            spans: vec![text(words)],
         }
-    });
-    let containers = [
-        api::ContainerKind::Div,
-        api::ContainerKind::Section,
-        api::ContainerKind::Figure,
-        api::ContainerKind::Figcaption,
-        api::ContainerKind::Aside,
-        api::ContainerKind::Header,
-        api::ContainerKind::Footer,
-        api::ContainerKind::Address,
-        api::ContainerKind::Center,
-    ]
-    .map(|tag| Block::Container {
-        tag,
-        presentation: presentation("box", &[("data-kind", "lamp")]),
-        blocks: vec![paragraph("Inside")],
-    });
-    let link = Span::Link {
-        href: "/docs/lamps/north.md#nor-l01".into(),
-        target: Some(target(Some("nor-l01"))),
-        title: "North".into(),
-        spans: words("NOR-L01"),
-    };
-    let mut spans = vec![
-        text("Text "),
-        Span::Emphasis {
-            spans: words("emphasis"),
-        },
-        Span::Strong {
-            spans: words("strong"),
-        },
-        Span::Code {
-            text: "code".into(),
-        },
-        link.clone(),
-        Span::WikiLink {
-            href: "/docs/lamps/north.md".into(),
-            target: Some(target(None)),
-            spans: words("North"),
-        },
-        Span::LineBreak,
-        Span::Image {
-            image: picture("/k.png", "Lumen"),
-        },
-        Span::Media {
-            media: api::Media::Mockup {
-                src: "/docs/ui/hud.html".into(),
-                label: "HUD".into(),
+    }
+
+    fn pairs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).into(), (*value).into()))
+            .collect()
+    }
+
+    fn presentation(class: &str, attributes: &[(&str, &str)]) -> api::Presentation {
+        api::Presentation {
+            class: class.into(),
+            attributes: pairs(attributes),
+            ..api::Presentation::default()
+        }
+    }
+
+    fn picture(src: &str, alt: &str) -> Image {
+        let sizes = [
+            ("width", "640"),
+            ("height", "480"),
+            ("data-full", "/full.png"),
+        ];
+        Image {
+            src: src.into(),
+            alt: alt.into(),
+            presentation: presentation("", &sizes),
+        }
+    }
+
+    fn lumen() -> Image {
+        picture("/k.png", "Lumen")
+    }
+
+    fn figure(
+        picture: Option<Image>,
+        href: Option<&str>,
+        badge: Option<&str>,
+        size: FigureSize,
+    ) -> Block {
+        Block::Figure {
+            picture,
+            caption: words("NOR-L01 Lumen"),
+            href: href.map(Into::into),
+            badge: badge.map(Into::into),
+            size,
+        }
+    }
+
+    fn entry(who: ThreadAuthor, verdict: Option<&str>, words: &str) -> api::ThreadEntry {
+        api::ThreadEntry {
+            who,
+            timestamp: Some("2026-11-14 08:32".into()),
+            verdict: verdict.map(Into::into),
+            blocks: vec![paragraph(words)],
+        }
+    }
+
+    fn target(anchor: Option<&str>) -> api::LinkTarget {
+        api::LinkTarget {
+            path: "docs/lamps/north.md".into(),
+            anchor: anchor.map(Into::into),
+        }
+    }
+
+    /// One shape of each kind, the last with an attribute no shape may carry.
+    fn shapes() -> Vec<api::VectorShape> {
+        let shape = |kind, attributes: &[(&str, &str)]| api::VectorShape {
+            kind,
+            attributes: pairs(attributes),
+        };
+        vec![
+            shape(VectorKind::Path, &[("d", "M4 12h16")]),
+            shape(
+                VectorKind::Circle,
+                &[("cx", "12"), ("cy", "12"), ("r", "4")],
+            ),
+            shape(
+                VectorKind::Ellipse,
+                &[("cx", "12"), ("cy", "12"), ("rx", "6"), ("ry", "3")],
+            ),
+            shape(
+                VectorKind::Rect,
+                &[("x", "2"), ("y", "2"), ("width", "8"), ("height", "8")],
+            ),
+            shape(
+                VectorKind::Line,
+                &[("x1", "0"), ("y1", "0"), ("x2", "24"), ("y2", "24")],
+            ),
+            shape(VectorKind::Polyline, &[("points", "0,0 12,6 24,0")]),
+            shape(
+                VectorKind::Polygon,
+                &[("points", "0,24 12,12 24,24"), ("onclick", "x()")],
+            ),
+        ]
+    }
+
+    /// One span of each kind, and a styled span of each inline tag.
+    fn spans() -> Vec<Span> {
+        let link = Span::Link {
+            href: "/docs/lamps/north.md#nor-l01".into(),
+            target: Some(target(Some("nor-l01"))),
+            title: "North".into(),
+            spans: words("NOR-L01"),
+        };
+        let mut spans = vec![
+            text("Text "),
+            Span::Emphasis {
+                spans: words("emphasis"),
             },
-        },
-        Span::Component {
-            kind: "lamp".into(),
-            blocks: vec![paragraph("NOR-L01")],
-        },
-        Span::Icon {
-            shape: shapes.clone(),
-            label: "Lamp".into(),
-            named: true,
-            tip: "A lamp".into(),
-        },
-        Span::Styled {
-            tag: api::InlineKind::Span,
-            presentation: presentation("tasklink", &[("data-task", "app/lamps")]),
-            spans: vec![link],
-        },
-        Span::Graphic {
-            view_box: "0 0 24 24".into(),
-            presentation: presentation("chart", &[("role", "img")]),
-            shapes,
-        },
-        Span::Blocks {
-            blocks: vec![figure(
-                Some(picture("/k.png", "Lumen")),
-                None,
-                None,
-                api::FigureSize::Cell,
-            )],
-        },
-        Span::Unknown {
-            tag: "blink".into(),
-            text: "old".into(),
-        },
-    ];
-    spans.extend(inline);
-    let mut blocks = vec![
-        Block::Heading {
-            level: 2,
-            anchor: "lamps".into(),
-            spans: words("Lamps"),
-        },
-        Block::Paragraph { spans },
-        Block::List {
-            ordered: true,
-            start: 3,
-            items: vec![vec![paragraph("third")], vec![paragraph("fourth")]],
-        },
-        Block::List {
-            ordered: false,
-            start: 1,
-            items: vec![vec![paragraph("one")]],
-        },
-        Block::Table {
-            head: vec![api::Cell {
-                header: true,
-                spans: words("Lamp"),
-                presentation: presentation("", &[("scope", "col")]),
-            }],
-            rows: vec![vec![api::Cell {
-                header: false,
-                spans: words("NOR-L01"),
-                presentation: api::Presentation::default(),
-            }]],
-            presentation: presentation("lamps", &[]),
-        },
-        Block::Code {
-            language: "rust".into(),
-            text: "fn main() {}".into(),
-        },
-        Block::Quote {
-            blocks: vec![paragraph("Quoted")],
-        },
-        Block::Rule,
-        Block::Callout {
-            kind: api::CalloutKind::Question,
-            title: vec![
-                Span::Styled {
-                    tag: api::InlineKind::Span,
-                    presentation: presentation("callout-kind", &[]),
-                    spans: words("question"),
+            Span::Strong {
+                spans: words("strong"),
+            },
+            Span::Code {
+                text: "code".into(),
+            },
+            link.clone(),
+            Span::WikiLink {
+                href: "/docs/lamps/north.md".into(),
+                target: Some(target(None)),
+                spans: words("North"),
+            },
+            Span::LineBreak,
+            Span::Image {
+                image: picture("/k.png", "Lumen"),
+            },
+            Span::Media {
+                media: api::Media::Mockup {
+                    src: "/docs/ui/hud.html".into(),
+                    label: "HUD".into(),
                 },
-                text("Warm or cold?"),
-            ],
-            resolved: false,
-            blocks: vec![paragraph("Which one?")],
-        },
-        Block::Callout {
-            kind: api::CalloutKind::Resolved,
-            title: words("Settled"),
-            resolved: true,
-            blocks: vec![paragraph("Warm.")],
-        },
-        Block::Card {
-            slug: "lamp-colour".into(),
-            mark: api::CardState::Pending,
-            title: "Which colour do the lamps take?".into(),
-            body: vec![paragraph("Warm or cold.")],
-            verdict: api::Verdict {
-                group: api::CardGroup::Decide,
-                open: true,
-                posted: Some("2026-11-14 08:32".into()),
-                decided: None,
             },
-            thread: vec![
-                entry(api::ThreadAuthor::Agent, None, "Asked."),
-                entry(api::ThreadAuthor::Owner, Some("approved"), "Warm."),
-            ],
-            line: Some(12),
-            line_offset: None,
-            comparison: vec![Block::Comparison {
-                figures: vec![figure(
-                    Some(picture("/a.png", "A")),
-                    None,
-                    None,
-                    api::FigureSize::Slot,
-                )],
+            Span::Component {
+                kind: "lamp".into(),
+                blocks: vec![paragraph("NOR-L01")],
+            },
+            Span::Icon {
+                shape: shapes(),
+                label: "Lamp".into(),
+                named: true,
+                tip: "A lamp".into(),
+            },
+            Span::Styled {
+                tag: InlineKind::Span,
+                presentation: presentation("tasklink", &[("data-task", "app/lamps")]),
+                spans: vec![link],
+            },
+            Span::Graphic {
+                view_box: "0 0 24 24".into(),
+                presentation: presentation("chart", &[("role", "img")]),
+                shapes: shapes(),
+            },
+            Span::Blocks {
+                blocks: vec![figure(Some(lumen()), None, None, FigureSize::Cell)],
+            },
+            Span::Unknown {
+                tag: "blink".into(),
+                text: "old".into(),
+            },
+        ];
+        spans.extend(
+            [
+                InlineKind::Span,
+                InlineKind::Small,
+                InlineKind::Sub,
+                InlineKind::Sup,
+                InlineKind::Time,
+                InlineKind::Mark,
+                InlineKind::Kbd,
+                InlineKind::Samp,
+                InlineKind::Delete,
+                InlineKind::Insert,
+                InlineKind::Underline,
+                InlineKind::Abbreviation,
+            ]
+            .map(|tag| {
+                let word = json!(tag).as_str().unwrap_or_default().to_string();
+                Span::Styled {
+                    tag,
+                    presentation: presentation(&word, &[]),
+                    spans: words(&word),
+                }
+            }),
+        );
+        spans
+    }
+
+    /// A heading, a paragraph of every span, lists, a table, code, a quote and a rule.
+    pub(super) fn prose() -> Vec<Block> {
+        vec![
+            Block::Heading {
+                level: 2,
+                anchor: "lamps".into(),
+                spans: words("Lamps"),
+            },
+            Block::Paragraph { spans: spans() },
+            Block::List {
+                ordered: true,
+                start: 3,
+                items: vec![vec![paragraph("third")], vec![paragraph("fourth")]],
+            },
+            Block::List {
+                ordered: false,
+                start: 1,
+                items: vec![vec![paragraph("one")]],
+            },
+            Block::Table {
+                head: vec![api::Cell {
+                    header: true,
+                    spans: words("Lamp"),
+                    presentation: presentation("", &[("scope", "col")]),
+                }],
+                rows: vec![vec![api::Cell {
+                    header: false,
+                    spans: words("NOR-L01"),
+                    presentation: api::Presentation::default(),
+                }]],
+                presentation: presentation("lamps", &[]),
+            },
+            Block::Code {
+                language: "rust".into(),
+                text: "fn main() {}".into(),
+            },
+            Block::Quote {
+                blocks: vec![paragraph("Quoted")],
+            },
+            Block::Rule,
+        ]
+    }
+
+    /// Callouts open and resolved, and cards pending and decided.
+    pub(super) fn cards() -> Vec<Block> {
+        vec![
+            Block::Callout {
+                kind: CalloutKind::Question,
+                title: vec![
+                    Span::Styled {
+                        tag: InlineKind::Span,
+                        presentation: presentation("callout-kind", &[]),
+                        spans: words("question"),
+                    },
+                    text("Warm or cold?"),
+                ],
+                resolved: false,
+                blocks: vec![paragraph("Which one?")],
+            },
+            Block::Callout {
+                kind: CalloutKind::Resolved,
+                title: words("Settled"),
+                resolved: true,
+                blocks: vec![paragraph("Warm.")],
+            },
+            Block::Card {
+                slug: "lamp-colour".into(),
+                mark: CardState::Pending,
+                title: "Which colour do the lamps take?".into(),
+                body: vec![paragraph("Warm or cold.")],
+                verdict: api::Verdict {
+                    group: CardGroup::Decide,
+                    open: true,
+                    posted: Some("2026-11-14 08:32".into()),
+                    decided: None,
+                },
+                thread: vec![
+                    entry(ThreadAuthor::Agent, None, "Asked."),
+                    entry(ThreadAuthor::Owner, Some("approved"), "Warm."),
+                ],
+                line: Some(12),
+                line_offset: None,
+                comparison: vec![Block::Comparison {
+                    figures: vec![figure(
+                        Some(picture("/a.png", "A")),
+                        None,
+                        None,
+                        FigureSize::Slot,
+                    )],
+                }],
+            },
+            Block::Card {
+                slug: "lamp-size".into(),
+                mark: CardState::Approved,
+                title: "How large?".into(),
+                body: Vec::new(),
+                verdict: api::Verdict {
+                    group: CardGroup::Resolved,
+                    open: false,
+                    posted: None,
+                    decided: Some("2026-11-14".into()),
+                },
+                thread: Vec::new(),
+                line: None,
+                line_offset: Some(4),
+                comparison: Vec::new(),
+            },
+            Block::Component {
+                kind: "lamp".into(),
+                blocks: vec![paragraph("A lamp")],
+            },
+        ]
+    }
+
+    /// Each kind of media, a picture, and a figure of each size.
+    pub(super) fn media() -> Vec<Block> {
+        let viewer = api::Viewer {
+            element: "orbit-view".into(),
+            script: "/static/orbit.js".into(),
+            attributes: vec![("controls".into(), String::new())],
+            views: vec![api::View {
+                label: "Above".into(),
+                title: Some("From above".into()),
+                set: vec![("angle".into(), "0deg 25deg".into())],
+                call: Some("settle".into()),
             }],
-        },
-        Block::Card {
-            slug: "lamp-size".into(),
-            mark: api::CardState::Approved,
-            title: "How large?".into(),
-            body: Vec::new(),
-            verdict: api::Verdict {
-                group: api::CardGroup::Resolved,
-                open: false,
-                posted: None,
-                decided: Some("2026-11-14".into()),
-            },
-            thread: Vec::new(),
-            line: None,
-            line_offset: Some(4),
-            comparison: Vec::new(),
-        },
-        Block::Component {
-            kind: "lamp".into(),
-            blocks: vec![paragraph("A lamp")],
-        },
-        Block::Media {
-            media: api::Media::Mockup {
+            download: Some(".item".into()),
+            open_label: Some("Look".into()),
+            close_label: None,
+        };
+        let item = |name: &str, src: &str, poster: Option<&str>| api::GalleryItem {
+            name: name.into(),
+            src: src.into(),
+            poster: poster.map(Into::into),
+        };
+        let media = |media| Block::Media { media };
+        vec![
+            media(api::Media::Mockup {
                 src: "/docs/ui/hud.html?state=b#x".into(),
                 label: String::new(),
-            },
-        },
-        Block::Media {
-            media: api::Media::Viewer {
+            }),
+            media(api::Media::Viewer {
                 src: "/models/a.item".into(),
                 label: "Model".into(),
                 poster: Some("/models/a.png".into()),
                 viewer: viewer.clone(),
-            },
-        },
-        Block::Media {
-            media: api::Media::Gallery {
+            }),
+            media(api::Media::Gallery {
                 items: vec![
-                    api::GalleryItem {
-                        name: "FIRST".into(),
-                        src: "/first.item".into(),
-                        poster: Some("/first.png".into()),
-                    },
-                    api::GalleryItem {
-                        name: "SECOND".into(),
-                        src: "/second.item".into(),
-                        poster: None,
-                    },
+                    item("FIRST", "/first.item", Some("/first.png")),
+                    item("SECOND", "/second.item", None),
                 ],
                 viewer,
+            }),
+            Block::Image {
+                image: picture("/k.png", "Lumen"),
             },
-        },
-        Block::Image {
-            image: picture("/k.png", "Lumen"),
-        },
-        figure(
-            Some(picture("/k.png", "Lumen")),
-            Some("/docs/lamps/north.md#nor-l01"),
-            None,
-            api::FigureSize::Small,
-        ),
-        figure(None, None, Some("coming"), api::FigureSize::Row),
-        figure(None, None, None, api::FigureSize::Large),
-        figure(
-            Some(picture("/k.png", "Lumen")),
-            None,
-            None,
-            api::FigureSize::Tile,
-        ),
-        figure(
-            Some(picture("/k.png", "Lumen")),
-            Some("/docs/lamps/north.md"),
-            None,
-            api::FigureSize::Wide,
-        ),
-        figure(None, None, Some("coming"), api::FigureSize::Cell),
-        Block::Caption {
-            blocks: vec![paragraph("A caption")],
-        },
-        Block::Group {
-            blocks: vec![paragraph("Grouped")],
-        },
-        Block::Details {
-            summary: words("More"),
-            open: true,
-            blocks: vec![paragraph("Detail")],
-        },
-        Block::SettledCard {
-            summary: words("lamp-size · approved"),
-            open: false,
-            blocks: vec![paragraph("Settled")],
-        },
-        Block::Thread {
-            entries: vec![entry(api::ThreadAuthor::Unknown, None, "Who?")],
-        },
-        Block::Thread {
-            entries: vec![entry(api::ThreadAuthor::Owner, None, "Still waiting")],
-        },
-        Block::Comment {
-            text: "a note".into(),
-        },
-        Block::Unknown {
-            tag: "marquee".into(),
-            text: "Scrolling".into(),
-        },
-    ];
-    blocks.extend(containers);
-    blocks
+            figure(
+                Some(lumen()),
+                Some("/docs/lamps/north.md#nor-l01"),
+                None,
+                FigureSize::Small,
+            ),
+            figure(None, None, Some("coming"), FigureSize::Row),
+            figure(None, None, None, FigureSize::Large),
+            figure(Some(lumen()), None, None, FigureSize::Tile),
+            figure(
+                Some(lumen()),
+                Some("/docs/lamps/north.md"),
+                None,
+                FigureSize::Wide,
+            ),
+            figure(None, None, Some("coming"), FigureSize::Cell),
+        ]
+    }
+
+    /// Blocks that hold blocks (two threads beside each other among them), a comment, markup the
+    /// server does not know, and a container of each tag.
+    pub(super) fn wrappers() -> Vec<Block> {
+        let mut blocks = vec![
+            Block::Caption {
+                blocks: vec![paragraph("A caption")],
+            },
+            Block::Group {
+                blocks: vec![paragraph("Grouped")],
+            },
+            Block::Details {
+                summary: words("More"),
+                open: true,
+                blocks: vec![paragraph("Detail")],
+            },
+            Block::SettledCard {
+                summary: words("lamp-size · approved"),
+                open: false,
+                blocks: vec![paragraph("Settled")],
+            },
+            Block::Thread {
+                entries: vec![entry(ThreadAuthor::Unknown, None, "Who?")],
+            },
+            Block::Thread {
+                entries: vec![entry(ThreadAuthor::Owner, None, "Still waiting")],
+            },
+            Block::Comment {
+                text: "a note".into(),
+            },
+            Block::Unknown {
+                tag: "marquee".into(),
+                text: "Scrolling".into(),
+            },
+        ];
+        blocks.extend(
+            [
+                ContainerKind::Div,
+                ContainerKind::Section,
+                ContainerKind::Figure,
+                ContainerKind::Figcaption,
+                ContainerKind::Aside,
+                ContainerKind::Header,
+                ContainerKind::Footer,
+                ContainerKind::Address,
+                ContainerKind::Center,
+            ]
+            .map(|tag| Block::Container {
+                tag,
+                presentation: presentation("box", &[("data-kind", "lamp")]),
+                blocks: vec![paragraph("Inside")],
+            }),
+        );
+        blocks
+    }
 }
 
 #[cfg(test)]
