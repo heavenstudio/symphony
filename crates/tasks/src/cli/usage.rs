@@ -126,6 +126,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the limits and models in force here, and where each came from",
             ),
             (
+                "stamps",
+                "the stamps a land can require, and what a task needs of them",
+            ),
+            (
                 "asks",
                 "what the owner waits on an agent for, and who holds each",
             ),
@@ -168,6 +172,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             (
                 "verdict",
                 "as its reviewer: approve (done) or changes (back to work)",
+            ),
+            (
+                "needs",
+                "as its assessor: the stamps a task needs, at a tip, and why",
             ),
             (
                 "done",
@@ -491,8 +499,9 @@ orchestrator_slots (the tasks in progress an orchestrator holds, work in review
 and red work not counted; no cap unwritten; [board] orchestrator_slots is read
 where [limits] names none), low_volume (4) and machine_agents (no limit unwritten,
 then this machine's count of agents); [board] holds the pipeline alarm's
-thresholds; [agents.models] names the model of the orchestrator, executor and
-reviewer. A key of [limits] this build does not know is listed, left out. An
+thresholds; [agents.models] names the model of the orchestrator, executor,
+reviewer and assessor (the smallest its agent offers unwritten: Claude's
+haiku). A key of [limits] this build does not know is listed, left out. An
 edit to the file holds from the next command, and on a running server from
 its next read.
 
@@ -585,6 +594,52 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "stamps",
+        "usage: just tasks stamps [-h] [--as ACTOR] [slug]\n",
+        r#"usage: just tasks stamps [-h] [--as ACTOR] [slug]
+
+The stamps a land can require, from the main checkout's committed
+symphony.toml ([stamps], else the Symphony's own four), each with whether a
+task no assessment has read needs it, how the land knows it stands, where it
+applies and where it does not. With a slug, then the task's needs as they
+stand, its branch's tip and the paths [land] check_paths names that the branch
+changes: what an assessor reads first.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "needs",
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+                        slug stamps [stamps ...]
+"#,
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+                        slug stamps [stamps ...]
+
+As the task's assessor, write the stamps it needs, from the catalogue `just
+tasks stamps` lists, with the tip read and why: the board's own field, and a
+line on its thread saying them and what it needed before. Refused to a session
+that executed the task or work under it, orchestrates or orchestrated it, or
+filed it, and on an empty reason or a stamp the catalogue lacks.
+
+positional arguments:
+  slug
+  stamps      the stamps it needs, by name; none alone for none
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --tip TIP   the commit the assessment read, resolved to the whole commit;
+              left out, the assessment read the brief alone
+  --why WHY   one line for each stamp it left out or added
 "#,
     ),
     (

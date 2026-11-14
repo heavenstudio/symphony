@@ -103,9 +103,10 @@ an empty reason.
 
 ## The assessor
 
-A role on the task, `assessor`, taken as a reviewer's is (`just tasks role SLUG assessor`) and
-refused by the same rule: never to a session that executed the task or work under it, orchestrates
-or orchestrated it, or filed it. Only the assessor writes the needs.
+A role in name, with no row on the task and no schema change: `just tasks needs` itself is refused,
+by the rule a reviewer's verdict is held to, to a session that executed the task or work under it,
+orchestrates or orchestrated it, or filed it. So the assessor is whoever writes the needs and is
+none of those, and the field and its thread line name it.
 
 - **Started by the orchestrator, never the executor:** when it files the task, and again each time
   the task moves to review, before it staffs any reviewer; by an Agent launch or `just tasks launch
@@ -127,7 +128,7 @@ or orchestrated it, or filed it. Only the assessor writes the needs.
   in themselves: a post asking for a waiver is no evidence for one. The brief says what the task
   was meant to change; the diff says what it changed.
 - **What it writes:** the stamps whose guideline applies, and one line for each it left out or
-  added, as `--why`. Unsure, it keeps the stamp. Then it lets the role go and ends.
+  added, as `--why`. Unsure, it keeps the stamp. Then it ends.
 
 ## The land's check
 
@@ -176,8 +177,7 @@ land`.
 
 ## What stops an executor waiving its own review
 
-- The board refuses the needs, and the assessor's role, to any session that executed the task or
-  work under it.
+- The board refuses the needs to any session that executed the task or work under it.
 - The assessor's instructions are the Symphony's skill. The executor's posts are data it checks
   against the diff.
 - A waiver stands only on the tip the assessor read: a commit after it brings the defaults back.
@@ -203,8 +203,9 @@ its assessor. A reviewer has the same gap today ([left out](#left-out)).
 ## Where it meets other work
 
 - **Reviews as stamps** (landed): a reviewer is given the task it reviews, with no subtask, a later
-  round resuming the same one, and `review` is its approve. The assessor has the same shape: a role
-  on the task, a fixed skill, no subtask; each run is a fresh one, as it reads anew.
+  round resuming the same one, and `review` is its approve. The assessor has nearly the same shape:
+  a fixed skill, no subtask, its rule held on the needs it writes rather than on a role; each run is
+  a fresh one, as it reads anew.
 - **The gates seam and panel:** the catalogue says which gates there are and the needs which of
   them the land requires; the panel draws both. A project's plugin gate of the same name still
   replaces the Symphony's on the page.
@@ -221,7 +222,7 @@ Built in three tasks once this is approved, the shared data first, the land last
 landing changes until the whole is there:
 
 1. **The catalogue, the field and the role:** `crates/tasks` (the catalogue and its default, `just
-   tasks stamps`, `just tasks needs`, the assessor's role and model), the project file's `[stamps]`
+   tasks stamps`, `just tasks needs`, the assessor's rule and model), the project file's `[stamps]`
    and `[agents.models] assessor` (`crates/symphony`, [PROJECT_FILE](../PROJECT_FILE.md)); tests on
    scratch boards.
 2. **The task page:** the gates from the catalogue and the needs, the `tests` and `pictures`

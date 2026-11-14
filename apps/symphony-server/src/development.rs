@@ -309,6 +309,21 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
     })
 }
 
+/// Whether the request for `path` (its checkout's scope taken off) with the URL query `query`
+/// goes to the page server: the app's pages, an HTML document's route among them, and the client's
+/// files. The rest go to the API, an HTML document's file among them, asked for at its file's
+/// address (`symphony_api::file_address`), as the server's own router splits them; no header
+/// decides.
+fn to_page_server(nav: &symphony_api::ProjectView, path: &str, query: Option<&str>) -> bool {
+    let html_file = nav.is_html_route(path.trim_start_matches('/'))
+        && query.is_some_and(symphony_api::asks_for_file);
+    !html_file
+        && (crate::api::client_page(nav, path)
+            || path.starts_with("/assets/")
+            || path.starts_with("/wasm/")
+            || path.starts_with("/_dioxus"))
+}
+
 async fn forward(
     mut stream: TcpStream,
     api: u16,
@@ -346,11 +361,8 @@ async fn forward(
     let path = crate::api::decode_path(target.split('?').next().unwrap_or(target))
         .ok_or("bad request path")?;
     let (_, path) = crate::api::scope_path(&path);
-    let port = if crate::api::client_page(nav, path)
-        || path.starts_with("/assets/")
-        || path.starts_with("/wasm/")
-        || path.starts_with("/_dioxus")
-    {
+    let query = target.split_once('?').map(|(_, query)| query);
+    let port = if to_page_server(nav, path, query) {
         web
     } else {
         api
@@ -427,6 +439,36 @@ mod tests {
             assert!(
                 !crate::sys::group_runs(pid),
                 "owned child group {pid} leaked"
+            );
+        }
+    }
+
+    /// The page server takes the app's pages, an HTML document's route among them, and the
+    /// client's files; the API takes an HTML document's file, asked for at its file's address, and
+    /// everything else.
+    #[test]
+    fn an_html_documents_file_goes_to_the_api_and_its_page_to_the_page_server() {
+        let nav = symphony_api::ProjectView {
+            entrypoints: vec!["docs".into()],
+            ..Default::default()
+        };
+        for (path, query, page_server) in [
+            ("/docs/a/readout.html", None, true),
+            ("/docs/a/readout.html", Some("state=b"), true),
+            ("/docs/a/readout.html", Some("raw"), false),
+            ("/docs/a/readout.HTM", Some("state=b&raw=1"), false),
+            ("/docs/a/notes.md", Some("raw"), true),
+            ("/docs/a/", Some("raw"), true),
+            ("/tasks", None, true),
+            ("/assets/app.js", Some("v=1"), true),
+            ("/outside.html", None, false),
+            ("/outside.html", Some("raw"), false),
+            ("/api/board", None, false),
+        ] {
+            assert_eq!(
+                to_page_server(&nav, path, query),
+                page_server,
+                "{path} {query:?}"
             );
         }
     }

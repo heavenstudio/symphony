@@ -321,7 +321,7 @@ fn an_entrypoint_names_a_type_of_a_plugins_process() {
     tree.write(symphony::project::FILE, &settings("\"none\""));
     let refused = Project::load(&tree.root).unwrap_err();
     assert!(
-        refused.ends_with("(the renderers are markdown, media, every)"),
+        refused.ends_with("(the renderers are markdown, html, media, every)"),
         "{refused}"
     );
 }

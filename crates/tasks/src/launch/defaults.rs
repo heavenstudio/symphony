@@ -6,20 +6,27 @@
 //! naming the other agent gets the board's model and effort for that one, never a model the other
 //! agent does not run.
 //!
-//! The model each role runs on is `[agents.models]` (`orchestrator`, `executor`, `reviewer`, each
-//! a model of the project's agent): a launch of an executor or a reviewer takes its role's, else
-//! `[agents] launch`'s model, else the board's own; `just tasks limits` prints each role's and
-//! where it came from ([`Defaults::model_of`]), so an agent starting a subagent reads the setting.
-//! A board launch never starts an orchestrator: with no model written for it, whoever starts one
-//! chooses. Only those two tables are read; the rest of the file is the Symphony's, which refuses a
-//! role it does not know.
+//! The model each role runs on is `[agents.models]` (`orchestrator`, `executor`, `reviewer`,
+//! `assessor`, each a model of the project's agent): a launch of an executor or a reviewer takes
+//! its role's, else `[agents] launch`'s model, else the board's own; `just tasks limits` prints each
+//! role's and where it came from ([`Defaults::model_of`]), so an agent starting a subagent reads the
+//! setting. A board launch never starts an orchestrator: with no model written for it, whoever
+//! starts one chooses. The assessor ([`crate::stamps`]), whose decision is which of a few stamps
+//! apply, runs with none written on the smallest model its agent offers ([`smallest`]: Claude's
+//! [`CLAUDE_SMALLEST`]; for Codex the board names none, so `[agents] launch`'s model, else the
+//! board's own). Only those two tables are read; the rest of the file is the Symphony's, which
+//! refuses a role it does not know.
 
 use crate::on_review::MANIFEST;
 use serde::Deserialize;
 use std::path::Path;
 
 /// The roles a model is written for, in the order `tasks limits` prints them.
-pub const ROLES: [&str; 3] = ["orchestrator", "executor", "reviewer"];
+pub const ROLES: [&str; 4] = ["orchestrator", "executor", "reviewer", ASSESSOR];
+/// The role that writes a task's needs ([`crate::stamps`]), a role in name only.
+pub const ASSESSOR: &str = "assessor";
+/// Claude's smallest model, the assessor's with none written.
+pub const CLAUDE_SMALLEST: &str = "haiku";
 
 /// The agents a launch can start, the first the board's own.
 pub const AGENTS: [&str; 2] = ["codex", "claude"];
@@ -48,6 +55,7 @@ pub struct Models {
     pub orchestrator: Option<String>,
     pub executor: Option<String>,
     pub reviewer: Option<String>,
+    pub assessor: Option<String>,
 }
 
 impl Models {
@@ -57,9 +65,16 @@ impl Models {
             "orchestrator" => self.orchestrator.as_deref(),
             "executor" => self.executor.as_deref(),
             "reviewer" => self.reviewer.as_deref(),
+            ASSESSOR => self.assessor.as_deref(),
             _ => None,
         }
     }
+}
+
+/// The smallest model `agent` offers, as the board names it: the assessor's with none written.
+/// None for Codex, whose smallest the board does not name.
+pub fn smallest(agent: &str) -> Option<&'static str> {
+    (agent == "claude").then_some(CLAUDE_SMALLEST)
 }
 
 /// Where a role's model comes from ([`Defaults::model_of`]).
@@ -71,6 +86,8 @@ pub enum Chosen {
     Launch,
     /// The board's own model for the agent ([`CODEX_MODEL`], [`CLAUDE_MODEL`]).
     Board,
+    /// The smallest the agent offers ([`smallest`]): the assessor's with none written.
+    Smallest,
     /// None: whoever starts it chooses (an orchestrator, which no board launch starts).
     Starter,
 }
@@ -132,6 +149,7 @@ struct WrittenModels {
     orchestrator: Option<String>,
     executor: Option<String>,
     reviewer: Option<String>,
+    assessor: Option<String>,
 }
 
 /// A value written empty is none.
@@ -190,6 +208,7 @@ impl Defaults {
                 orchestrator: given(models.orchestrator),
                 executor: given(models.executor),
                 reviewer: given(models.reviewer),
+                assessor: given(models.assessor),
             },
         })
     }
@@ -207,7 +226,8 @@ impl Defaults {
 
     /// [`Defaults::resolve`] for a launch taking `role` on its task: the model `[agents.models]`
     /// writes for the role, when the launch starts the project's agent and its caller names none,
-    /// else `[agents] launch`'s, else the board's own.
+    /// else, for an assessor, the smallest its agent offers ([`smallest`]), else `[agents]
+    /// launch`'s, else the board's own.
     pub fn resolve_as(
         &self,
         role: Option<&str>,
@@ -228,6 +248,11 @@ impl Defaults {
             .filter(|m| !m.trim().is_empty())
             .map(str::to_string)
             .or_else(|| role_model.filter(|_| ours))
+            .or_else(|| {
+                (role == Some(ASSESSOR))
+                    .then(|| smallest(agent).map(str::to_string))
+                    .flatten()
+            })
             .or_else(|| self.model.clone().filter(|_| ours))
             .unwrap_or_else(|| board_model(agent).to_string());
         let effort = self
@@ -243,9 +268,10 @@ impl Defaults {
     }
 
     /// The project's agent, the model `role` (one of [`ROLES`]) runs on with it, and where that
-    /// comes from: `[agents.models] ROLE`; else, for an executor or a reviewer, which a board launch
-    /// starts, `[agents] launch`'s model, then the board's own; for an orchestrator, none, as whoever
-    /// starts one chooses. What `just tasks limits` prints, and an agent starting a subagent passes.
+    /// comes from: `[agents.models] ROLE`; else, for an assessor, the smallest the agent offers
+    /// ([`smallest`]); else, for an executor, a reviewer or an assessor, `[agents] launch`'s model,
+    /// then the board's own; for an orchestrator, none, as whoever starts one chooses. What `just
+    /// tasks limits` prints, and an agent starting a subagent passes.
     pub fn model_of(&self, role: &str) -> (&'static str, Option<String>, Chosen) {
         let agent = self.agent.unwrap_or(AGENTS[0]);
         if let Some(model) = self.models.of(role) {
@@ -253,6 +279,9 @@ impl Defaults {
         }
         if role == ROLES[0] {
             return (agent, None, Chosen::Starter);
+        }
+        if let Some(model) = smallest(agent).filter(|_| role == ASSESSOR) {
+            return (agent, Some(model.to_string()), Chosen::Smallest);
         }
         match &self.model {
             Some(model) => (agent, Some(model.clone()), Chosen::Launch),
@@ -498,7 +527,7 @@ mod tests {
     fn the_models_table_names_each_roles_model_and_an_empty_one_is_none() {
         assert_eq!(parsed("").models, Models::default());
         let models = parsed(
-            "[agents.models]\norchestrator = \"fable\"\nexecutor = \"opus\"\nreviewer = \" \"\nother = \"x\"\n",
+            "[agents.models]\norchestrator = \"fable\"\nexecutor = \"opus\"\nreviewer = \" \"\nassessor = \"haiku-x\"\nother = \"x\"\n",
         )
         .models;
         assert_eq!(
@@ -507,10 +536,12 @@ mod tests {
                 orchestrator: Some("fable".into()),
                 executor: Some("opus".into()),
                 reviewer: None,
+                assessor: Some("haiku-x".into()),
             }
         );
         assert_eq!(models.of("executor"), Some("opus"));
         assert_eq!(models.of("reviewer"), None);
+        assert_eq!(models.of("assessor"), Some("haiku-x"));
         assert_eq!(models.of("worker"), None, "no role of that name");
         let problem =
             Defaults::parse("/r/symphony.toml", "[agents.models]\nexecutor = 4\n").unwrap_err();
@@ -609,6 +640,56 @@ mod tests {
         assert_eq!(
             claude.model_of("orchestrator"),
             ("claude", Some("fable".into()), Chosen::Role)
+        );
+    }
+
+    #[test]
+    fn the_assessor_runs_on_the_smallest_model_its_agent_offers_unless_one_is_written() {
+        // Claude's smallest, over [agents] launch's model, which an executor or a reviewer takes.
+        let claude = parsed("[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n");
+        assert_eq!(
+            claude.model_of("assessor"),
+            ("claude", Some(CLAUDE_SMALLEST.into()), Chosen::Smallest)
+        );
+        assert_eq!(
+            claude.resolve_as(Some("assessor"), None, None),
+            resolved("claude", CLAUDE_SMALLEST, None)
+        );
+        assert_eq!(
+            claude.resolve_as(Some("reviewer"), None, None),
+            resolved("claude", "opus", None)
+        );
+        // Written for the role, it wins; a model the caller names wins over both.
+        let written = parsed(
+            "[agents]\nlaunch = { default = \"claude\" }\n[agents.models]\nassessor = \"sonnet\"\n",
+        );
+        assert_eq!(
+            written.model_of("assessor"),
+            ("claude", Some("sonnet".into()), Chosen::Role)
+        );
+        assert_eq!(
+            written.resolve_as(Some("assessor"), None, Some("opus")),
+            resolved("claude", "opus", None)
+        );
+        // Codex's smallest the board does not name: [agents] launch's model, else the board's own.
+        assert_eq!(smallest("codex"), None);
+        assert_eq!(
+            Defaults::default().model_of("assessor"),
+            ("codex", Some(CODEX_MODEL.into()), Chosen::Board)
+        );
+        let codex = parsed("[agents.launch]\nmodel = \"gpt-x\"\n");
+        assert_eq!(
+            codex.model_of("assessor"),
+            ("codex", Some("gpt-x".into()), Chosen::Launch)
+        );
+        assert_eq!(
+            codex.resolve_as(Some("assessor"), None, None),
+            resolved("codex", "gpt-x", Some(CODEX_EFFORT))
+        );
+        // A Codex project's assessor started on Claude runs on Claude's smallest.
+        assert_eq!(
+            codex.resolve_as(Some("assessor"), Some("claude"), None),
+            resolved("claude", CLAUDE_SMALLEST, None)
         );
     }
 }

@@ -36,6 +36,7 @@ fn a_file_naming_nothing_prints_every_default_and_the_boards_own_models() {
             "orchestrator             -           whoever starts one chooses",
             "executor                 gpt-6.1-sol the board's own for codex",
             "reviewer                 gpt-6.1-sol the board's own for codex",
+            "assessor                 gpt-6.1-sol the board's own for codex",
         ]
     );
 }
@@ -76,6 +77,7 @@ review_alarm_clear_hours = 2
             "orchestrator             fable   [agents.models] orchestrator, line 6",
             "executor                 opus    [agents] launch model, line 2",
             "reviewer                 sonnet  [agents.models] reviewer, line 5",
+            "assessor                 haiku   the smallest claude offers",
             "LEFT OUT [limits] wip (line 12): this build does not know it",
         ]
     );

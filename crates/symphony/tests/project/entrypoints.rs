@@ -263,7 +263,7 @@ fn the_project_root_at_the_root_with_a_type_no_renderer_handles_is_refused_by_na
         "[[entrypoints]]\nurl = \"/\"\nfolder = \".\"\ntypes = [\"markdown\", \"rust\"]\n",
     );
     let refusal = "symphony.toml: [[entrypoints]] / type \"rust\": no renderer handles it (the \
-                   renderers are markdown, media)";
+                   renderers are markdown, html, media)";
     assert_eq!(Project::load(&tree.root).unwrap_err(), refusal);
     assert_eq!(project_problems(&tree.root), [refusal]);
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -372,6 +372,88 @@ fn a_folder_linked_out_of_the_project_is_refused_and_a_linked_file_opens_where_i
             docview::folder(&render, refused, "", &[]).is_err(),
             "{refused}"
         );
+    }
+}
+
+/// An entrypoint that writes no `types` shows Markdown and HTML, as the convention does: an `.html`
+/// file is a document, listed and counted. One whose `types` names `media` and not `html` first
+/// keeps its `.html` files among its media, listed by name and counted as no document; one that
+/// names neither shows none. Whichever renderer shows it, the app's frame may load it as an HTML
+/// document ([`Project::html_page`]); never a file its entrypoint leaves out or its walk does not
+/// reach, a link out of the project, nor a file of another type.
+#[test]
+fn an_html_file_is_a_document_by_default_and_media_where_types_name_media_first() {
+    use symphony::page::EntryKind::{Doc, Media};
+    let outside = Tree::new();
+    outside.write("SECRET.html", "<title>Secret</title>");
+    for (types, kind, docs) in [
+        ("", Some(Doc), 2),
+        (
+            "types = [\"markdown\", \"html\", \"media\"]\n",
+            Some(Doc),
+            2,
+        ),
+        ("types = [\"markdown\", \"media\"]\n", Some(Media), 1),
+        (
+            "types = [\"markdown\", \"media\", \"html\"]\n",
+            Some(Media),
+            1,
+        ),
+        ("types = [\"markdown\"]\n", None, 1),
+    ] {
+        let tree = Tree::new();
+        tree.write(
+            "symphony.toml",
+            &format!(
+                "[[entrypoints]]\nurl = \"/design/\"\nfolder = \"design\"\n\
+                 exclude = [\"drafts/**\"]\n{types}"
+            ),
+        );
+        tree.write("design/A.md", "# A\n");
+        tree.write("design/page.html", "<title>Page</title>");
+        tree.write("design/drafts/wip.html", "<title>Draft</title>");
+        tree.write("design/.dot/hidden.html", "<title>Hidden</title>");
+        tree.write("outside.html", "<title>Outside</title>");
+        std::os::unix::fs::symlink(outside.path("SECRET.html"), tree.path("design/leak.html"))
+            .unwrap();
+        let folder = Render::new(&tree.root).folder("design").unwrap();
+        let listed = |path: &str| {
+            folder
+                .entries
+                .iter()
+                .find(|e| e.path == path)
+                .map(|e| e.kind)
+        };
+        assert_eq!(
+            (listed("design/page.html"), folder.docs),
+            (kind, docs),
+            "{types}"
+        );
+        assert_eq!(listed("design/leak.html"), None, "{types}");
+        let project = Project::load(&tree.root).unwrap();
+        let page = project
+            .html_page(&tree.root, "design/page.html")
+            .map(|(entry, file)| (entry.url.clone(), file));
+        let expected = kind.map(|_| {
+            let file = tree.path("design/page.html").canonicalize().unwrap();
+            ("design".to_string(), file)
+        });
+        assert_eq!(page, expected, "{types}");
+        for refused in [
+            "design/drafts/wip.html",
+            "design/.dot/hidden.html",
+            "design/leak.html",
+            "design/missing.html",
+            "design/../outside.html",
+            "outside.html",
+            "design/A.md",
+            "design",
+        ] {
+            assert!(
+                project.html_page(&tree.root, refused).is_none(),
+                "{refused} {types}"
+            );
+        }
     }
 }
 

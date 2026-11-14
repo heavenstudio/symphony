@@ -208,13 +208,14 @@ pub struct Launch {
 
 /// `[agents.models]`: the model of the project's agent each role runs on, which a board launch and
 /// `just tasks limits` read themselves (`symphony_board::launch::Defaults`); `None` leaves
-/// `[agents] launch`'s model, else the board's own, and for an orchestrator whoever starts it
-/// chooses.
+/// `[agents] launch`'s model, else the board's own, for an assessor the smallest its agent offers
+/// first, and for an orchestrator whoever starts it chooses.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Models {
     pub orchestrator: Option<String>,
     pub executor: Option<String>,
     pub reviewer: Option<String>,
+    pub assessor: Option<String>,
 }
 
 /// How the owner's edits are committed to the default branch: straight on it when no generator
@@ -373,9 +374,10 @@ impl Project {
     }
 
     /// `text` as the `symphony.toml` of the project at `root`, a table or key the Symphony does not
-    /// know refused by name and line, and a `[limits]` value the board cannot read refused as the
-    /// board says it, with its line. The files its entrypoints hold are [`Project::load`]'s to
-    /// look at.
+    /// know refused by name and line, a `[limits]` value the board cannot read refused as the
+    /// board says it, with its line, and a `[stamps]` catalogue the board would refuse (an empty
+    /// one, a key no stamp has) refused as it says it. The files its entrypoints hold are
+    /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
@@ -387,6 +389,9 @@ impl Project {
         if let Some(problem) = symphony_board::limits::parse(FILE, text).problems.first() {
             return Err(problem.clone());
         }
+        // The board reads `[stamps]` itself, from the main checkout's committed file, and refuses
+        // a catalogue it cannot read where a command needs it; the lint and a load refuse it here.
+        symphony_board::stamps::Catalogue::parse(text)?;
         Ok(project)
     }
 
@@ -627,6 +632,7 @@ impl Project {
                 orchestrator: a.models.orchestrator,
                 executor: a.models.executor,
                 reviewer: a.models.reviewer,
+                assessor: a.models.assessor,
             },
         };
         let mut v = file.verdicts;
@@ -1002,6 +1008,19 @@ impl Project {
         root.join(entry.file(inside)).canonicalize().ok()
     }
 
+    /// The HTML page at `route` in the checkout at `root`, links resolved, with the entrypoint
+    /// serving it: when that entrypoint shows it ([`Entrypoint::html_page`]) and its walk reaches
+    /// it, and is a file. None for any other route: what the app's frame of an HTML document may
+    /// load as that document, and nothing else.
+    pub fn html_page(&self, root: &Path, route: &str) -> Option<(&Entrypoint, PathBuf)> {
+        let (entry, inside) = self.serving(route)?;
+        if !entry.html_page(inside) {
+            return None;
+        }
+        let file = self.reachable(root, entry, inside)?;
+        file.is_file().then_some((entry, file))
+    }
+
     /// Whether the walk from `entry`'s folder reaches the path `inside` it, and as a folder: name by
     /// name, each one listed by [`Project::children`] in the folder before it. `read` gets every
     /// folder whose entries it looked at.
@@ -1264,9 +1283,12 @@ fn entrypoints(
             types: Vec::new(),
             history: Vec::new(),
         };
-        let types = table
-            .types
-            .unwrap_or_else(|| vec![crate::entrypoint::MARKDOWN.name.into()]);
+        let types = table.types.unwrap_or_else(|| {
+            crate::entrypoint::DEFAULT_TYPES
+                .iter()
+                .map(|renderer| renderer.name.into())
+                .collect()
+        });
         let label = entry.label();
         entry.folder = path_in(
             &format!("[[entrypoints]] {label} folder"),

@@ -114,7 +114,12 @@ pub fn App() -> Element {
         #[cfg(feature = "page-docs")]
         _ if current.document => {
             rsx! { main {
-                if !current.folder {
+                // A document's route named `.html` or `.htm` is an HTML page
+                // (`symphony_api::ProjectView::is_html_route`): decided here, in the documents'
+                // kind, so no other kind carries the check.
+                if !current.folder && symphony_api::is_html(&current.path) {
+                    crate::html_page::HtmlPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
+                } else if !current.folder {
                     crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
                 } else {
                     crate::docs_live::FolderPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }

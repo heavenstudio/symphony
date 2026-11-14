@@ -200,6 +200,56 @@ async fn gzip_is_taken_exactly_when_the_routers_compression_layer_takes_it() {
     }
 }
 
+/// An HTML document's route is the app's page whatever headers ask for it: a page's load, a
+/// frame's, a fetch, a browser's that sends no fetch metadata (any plain-http address but
+/// loopback's), and a query that is not the file's. Only the file's own address is the file
+/// (`symphony_api::file_address`; its answer is tested through the machine's routing). Nothing
+/// says the page varies by a header, since none decides it.
+#[tokio::test]
+async fn an_html_documents_route_is_the_app_whatever_headers_ask_for_it() {
+    let (_tree, app) = serving(&[(
+        "index.html",
+        b"<html><head></head><body>shell</body></html>",
+    )]);
+    let page_load = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+    for (path, headers) in [
+        ("/docs/analysis/readout.html", &[][..]),
+        ("/docs/analysis/readout.html", &[("Accept", page_load)]),
+        (
+            "/docs/analysis/readout.HTM",
+            &[("Sec-Fetch-Dest", "document")],
+        ),
+        (
+            "/docs/analysis/readout.html",
+            &[("Sec-Fetch-Dest", "iframe")],
+        ),
+        (
+            "/docs/analysis/readout.html",
+            &[("Sec-Fetch-Dest", "empty")],
+        ),
+        ("/docs/analysis/readout.html?rawness=1", &[]),
+        ("/docs/analysis/readout.md", &[]),
+    ] {
+        let got = send(&app, Method::GET, path, headers).await;
+        assert_eq!(got.status, StatusCode::OK, "{path} {headers:?}");
+        let page = String::from_utf8_lossy(&got.body);
+        assert!(
+            page.ends_with("shell</body></html>"),
+            "{path} {headers:?}: {page}"
+        );
+        let vary: Vec<String> = got
+            .headers
+            .get_all(header::VARY)
+            .iter()
+            .map(|value| value.to_str().unwrap().to_ascii_lowercase())
+            .collect();
+        assert!(
+            !vary.iter().any(|value| value.contains("sec-fetch")),
+            "{path}: {vary:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn hashed_files_are_cached_for_good_and_the_page_and_unhashed_files_revalidate() {
     let (_tree, app) = serving(&[

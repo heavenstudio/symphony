@@ -2,8 +2,8 @@
 //! that one of its renderers handles, and passes over its history folders when it reads documents.
 //! A document is named by its route: the entrypoint's URL and the document's path in the folder,
 //! with no leading slash (`docs/game/SPEC.md`; `index.md` at an entrypoint on `/`). With none
-//! written, one entrypoint keeps the convention: `/docs/` over `docs/`, Markdown, `docs/history`
-//! passed over.
+//! written, one entrypoint keeps the convention: `/docs/` over `docs/`, Markdown and HTML,
+//! `docs/history` passed over.
 
 use std::path::Path;
 
@@ -25,8 +25,16 @@ pub const MARKDOWN: Renderer = Renderer {
     extensions: &["md"],
 };
 
+/// HTML pages, each a document of its own: listed beside the Markdown ones and drawn whole in the
+/// app, in a sandboxed frame, with none of the Markdown view's features (docs/PROJECT_FILE.md).
+pub const HTML: Renderer = Renderer {
+    name: "html",
+    extensions: &["html", "htm"],
+};
+
 /// What the Symphony draws where a page shows it: pictures and `.html` mockups. Their files are
-/// served as they are and listed in the folder pages, as the files a plugin's renderer draws are.
+/// served as they are and listed in the folder pages by name, as the files a plugin's renderer
+/// draws are; a mockup opened from there is drawn in the app's frame as an [`HTML`] page is.
 pub const MEDIA: Renderer = Renderer {
     name: "media",
     extensions: &[
@@ -36,9 +44,12 @@ pub const MEDIA: Renderer = Renderer {
 
 /// Every renderer the Symphony has, by the name an entrypoint's `types` gives it. A project's
 /// plugins add theirs ([`crate::renderers`]).
-pub const RENDERERS: [Renderer; 2] = [MARKDOWN, MEDIA];
+pub const RENDERERS: [Renderer; 3] = [MARKDOWN, HTML, MEDIA];
 
-pub use symphony_api::SYMPHONY_ROUTES;
+/// The renderers of an entrypoint that names no `types`, the convention's among them.
+pub const DEFAULT_TYPES: [Renderer; 2] = [MARKDOWN, HTML];
+
+pub use symphony_api::{SYMPHONY_ROUTES, is_html};
 
 /// One entrypoint, as checked at load: every path spelled as the repository names its files.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,14 +69,14 @@ pub struct Entrypoint {
 }
 
 impl Entrypoint {
-    /// The convention: `/docs/` over `docs/`, Markdown, `history/` passed over.
+    /// The convention: `/docs/` over `docs/`, Markdown and HTML, `history/` passed over.
     pub fn convention() -> Self {
         Self {
             url: DOCS.into(),
             folder: DOCS.into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec![MARKDOWN],
+            types: DEFAULT_TYPES.to_vec(),
             history: vec![HISTORY.into()],
         }
     }
@@ -135,6 +146,12 @@ impl Entrypoint {
     /// Whether the file `inside` the folder is a document page: Markdown it shows.
     pub fn page(&self, inside: &str) -> bool {
         self.renderer(inside) == Some(MARKDOWN)
+    }
+
+    /// Whether the file `inside` the folder is an HTML page it shows, as a document (its renderer
+    /// [`HTML`]) or among its media: either way the app draws it in its sandboxed frame.
+    pub fn html_page(&self, inside: &str) -> bool {
+        is_html(inside) && self.shows(inside)
     }
 
     /// Whether the path `inside` the folder lies in one of its history folders.
@@ -328,6 +345,26 @@ mod tests {
         assert_eq!(convention.label(), "/docs/");
         assert!(convention.document("game/SPEC.md"));
         assert!(convention.page("history/OLD.md") && !convention.document("history/OLD.md"));
-        assert!(!convention.shows("media/a.png"), "Markdown only");
+        assert!(!convention.shows("media/a.png"), "Markdown and HTML only");
+        // An HTML page is the convention's document of its own, and a media entrypoint's mockup:
+        // the app draws either in its frame; neither is a Markdown page.
+        assert_eq!(convention.renderer("analysis/a.html"), Some(HTML));
+        assert_eq!(convention.renderer("analysis/b.HTM"), Some(HTML));
+        assert_eq!(entry.renderer("mock/a.html"), Some(MEDIA));
+        for (entrypoint, inside) in [(&convention, "analysis/a.html"), (&entry, "mock/b.htm")] {
+            assert!(entrypoint.html_page(inside), "{inside}");
+            assert!(
+                !entrypoint.page(inside) && !entrypoint.document(inside),
+                "{inside}"
+            );
+        }
+        for not_html in ["game/SPEC.md", "a.png", "a.html.md", "drafts/x.html"] {
+            assert!(!folder.html_page(not_html), "{not_html}");
+        }
+        let markdown_only = Entrypoint {
+            types: vec![MARKDOWN],
+            ..convention.clone()
+        };
+        assert!(!markdown_only.html_page("analysis/a.html") && !markdown_only.shows("a.html"));
     }
 }

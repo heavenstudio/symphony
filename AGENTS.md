@@ -412,7 +412,11 @@ use, on a profile and process of its own that die with the run) opens URL, waits
 the page has drawn, its frames' and dedicated workers' loads among it, dismissing each dialog
 as it opens (a confirm or a prompt as by its Cancel), runs the steps `--click CSS`,
 `--type CSS=TEXT`, `--key NAME`, `--hover CSS`, `--eval JS` (its JSON on stdout),
-`--pause MS` and `--shot FILE.png` in the order given, then saves the PNG. `--phone`, `--size WxH`,
+`--pause MS` and `--shot FILE.png` in the order given, then saves the PNG. A tab the page opens
+runs behind it, the page brought back in front as soon as Chrome tells of the new one, so Chrome
+closes that one's dialogs, which `--report` does not name; a window of its own (`window.open` with
+a size, or `popup`) keeps its dialog, and one of the page's own site holds the page until
+`--timeout`. `--phone`, `--size WxH`,
 `--full-page` and `--scheme dark` set the view, `--wait-for CSS` and `--timeout SECS`
 bound the waits, and `--report` prints the console errors (a frame's naming its address),
 failed requests, dialogs dismissed and horizontal overflow it saw; `--help` says the

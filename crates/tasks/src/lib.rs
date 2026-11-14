@@ -76,6 +76,7 @@ pub mod server;
 pub mod session_url;
 pub mod slots;
 pub mod stages;
+pub mod stamps;
 mod store;
 pub mod sweep;
 pub mod sys;
