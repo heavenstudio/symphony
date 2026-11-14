@@ -59,11 +59,15 @@
 //!   its place in the page.
 //!
 //! So every struct here is `#[non_exhaustive]`: a field a minor adds is no new major of this crate,
-//! as nothing outside it builds one by its fields. A request is made by its `new`, a page, a card, a
-//! task, a file and a problem by their `of` from what the seam borrows, a [`Declaration`] and what
-//! it lists by its `of` from a plugin (or from `Default`, its fields set after), a [`Version`] by
-//! its `new`, and a line by [`Envelope::asking`], [`Envelope::cancelling`] or
-//! [`Envelope::answering`].
+//! as nothing outside it builds one by its fields. A request is made by its `new` (which takes every
+//! field its call has: a field a later minor adds stays out of it, as `calls!` says), a page, a
+//! card, a task, a file and a problem by their `of` from what the seam borrows, a [`Declaration`]
+//! and what it lists by its `of` from a plugin (or from `Default`, its fields set after), a
+//! [`Version`] by its `new`, and a line by [`Envelope::asking`], [`Envelope::cancelling`] or
+//! [`Envelope::answering`]. [`Request`] is `#[non_exhaustive]` as well, as a minor adds a call. The
+//! other enums here stay exhaustive, so their readers match on every variant: a variant of
+//! [`Answered`] or [`Member`] is a line an older peer cannot read, a new major of the protocol, and
+//! [`Lined`] is how a line reads, never on the wire.
 //!
 //! ```compile_fail,E0639
 //! // Outside this crate a request is made by its `new`, never by its fields.
@@ -381,9 +385,13 @@ macro_rules! loopback_only {
 }
 
 /// Each call: the minor it came in, its request's fields and what answers it, then the one
-/// [`Request`] they all go on the wire as. A request is `#[non_exhaustive]`, made outside this crate
-/// by its `new`, so a field a later minor adds (with its default, as the protocol has it) is no
-/// new major of this crate: that field stays out of `new`'s arguments, set on the request after.
+/// [`Request`] they all go on the wire as. [`Request`] is `#[non_exhaustive]`, so a call a later
+/// minor adds is a new variant and no new major of this crate. A request is `#[non_exhaustive]` too,
+/// made outside this crate by its `new`, which takes every field in the call's braces: a field
+/// added there changes `new`'s arguments, a new major of this crate. No call has a field a later
+/// minor added yet. The first such field gives this macro a group of its own after the call's
+/// fields, each `#[serde(default)]` and left out of `new`, which fills it with its default, so the
+/// field is a minor of this crate as of the protocol, set on the request after `new`.
 macro_rules! calls {
     ($(
         $(#[$doc:meta])*
@@ -392,8 +400,10 @@ macro_rules! calls {
         }
     )*) => {
         /// Every call a plugin answers, as it goes on the wire: one member, named by its seam and
-        /// call, holding its fields.
+        /// call, holding its fields. A later minor adds a call, so a match on it outside this crate
+        /// ends with `_`.
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        #[non_exhaustive]
         pub enum Request {
             $(
                 #[serde(rename = $tag)]
@@ -420,7 +430,7 @@ macro_rules! calls {
             }
 
             impl $name {
-                /// The request of these fields, as its call has them since it came in.
+                /// The request of these fields, every field its call has.
                 pub fn new($($field: $type),*) -> $name {
                     $name { $($field),* }
                 }
@@ -450,6 +460,8 @@ macro_rules! calls {
     };
 }
 
+// A field added to a call's braces below changes its `new`, a new major of this crate: a field a
+// later minor adds goes in a group `new` leaves out, which `calls!`'s doc describes.
 calls! {
     /// What a plugin declares: asked once, before any other call, naming the host's protocol.
     Declare = "plugin.declare" since 1 => Declaration { protocol: Version }

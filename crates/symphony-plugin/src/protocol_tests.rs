@@ -384,15 +384,17 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
     ]
 }
 
-/// The structs `source` defines (a `pub struct` line each, the requests' one in `calls!`), each
-/// with whether `#[non_exhaustive]` stands among the attributes above it.
-fn structs(source: &str) -> Vec<(String, bool)> {
+/// The items of `kind` (`struct` or `enum`) `source` defines, a `pub KIND` line each (the requests'
+/// struct and `Request` in `calls!` among them), each with whether `#[non_exhaustive]` stands among
+/// the attributes above it.
+fn defined(source: &str, kind: &str) -> Vec<(String, bool)> {
+    let opening = format!("pub {kind} ");
     let lines: Vec<&str> = source.lines().collect();
     lines
         .iter()
         .enumerate()
         .filter_map(|(at, line)| {
-            let name = line.trim().strip_prefix("pub struct ")?;
+            let name = line.trim().strip_prefix(opening.as_str())?;
             let name = name.split([' ', '<', '{']).next().unwrap_or(name);
             let marked = lines[..at]
                 .iter()
@@ -407,7 +409,7 @@ fn structs(source: &str) -> Vec<(String, bool)> {
 
 #[test]
 fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks_no_build() {
-    let found = structs(include_str!("protocol.rs"));
+    let found = defined(include_str!("protocol.rs"), "struct");
     let unmarked: Vec<&str> = found
         .iter()
         .filter(|(_, marked)| !marked)
@@ -432,9 +434,10 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
     }
     // The reading sees a struct left unmarked.
     let left = "/// A thing.\n#[derive(Clone)]\npub struct Left {\n    pub a: u8,\n}\n";
-    assert_eq!(structs(left), [("Left".to_string(), false)]);
+    assert_eq!(defined(left, "struct"), [("Left".to_string(), false)]);
     let marked = "#[derive(Clone)]\n#[non_exhaustive]\npub struct Marked<T = u8> {}\n";
-    assert_eq!(structs(marked), [("Marked".to_string(), true)]);
+    assert_eq!(defined(marked, "struct"), [("Marked".to_string(), true)]);
+    assert!(defined(marked, "enum").is_empty());
     // A request made by its `new` is the request of those fields.
     assert_eq!(
         Changed::new(3, PathBuf::from("/r")),
@@ -444,6 +447,32 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
         }
     );
     assert_eq!(Version::new(0, 2), PROTOCOL);
+}
+
+#[test]
+fn the_request_enum_is_non_exhaustive_so_a_call_a_minor_adds_breaks_no_build() {
+    // The enums a match outside the crate covers whole, each for its reason (protocol.rs's doc): a
+    // variant of `Answered` or `Member` is a line an older peer cannot read, a new major of the
+    // protocol, and `Lined` is how a line reads, never on the wire.
+    const EXHAUSTIVE: [&str; 3] = ["Answered", "Member", "Lined"];
+    let found = defined(include_str!("protocol.rs"), "enum");
+    assert!(found.contains(&("Request".to_string(), true)), "{found:?}");
+    let unmarked: Vec<&str> = found
+        .iter()
+        .filter(|(_, marked)| !marked)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(
+        unmarked, EXHAUSTIVE,
+        "an enum a later minor adds a variant to is `#[non_exhaustive]`; one left exhaustive is named here with its reason"
+    );
+    // The reading sees an enum's mark, and its name before its generics.
+    let read = "/// A thing.\n#[derive(Debug)]\n#[non_exhaustive]\npub enum Marked<T> {\n    A(T),\n}\n\
+                pub enum Left {\n    B,\n}\n";
+    assert_eq!(
+        defined(read, "enum"),
+        [("Marked".to_string(), true), ("Left".to_string(), false)]
+    );
 }
 
 #[test]
