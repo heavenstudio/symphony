@@ -672,13 +672,38 @@ describe("a feed event on the live board", () => {
     expect(board.apply(event(["machine-work", building("w/a")]))).toBe(true);
     expect(d.cursors.size).toBe(0);
     const generation = d.generation;
+    const drawn = d.work;
     const beat = building("w/a");
-    beat.machines[0] = { ...(beat.machines[0] as MachineWork["machines"][0]), sequence: 2 };
+    beat.machines[0] = {
+      ...(beat.machines[0] as MachineWork["machines"][0]),
+      sequence: 2,
+      age_ms: 900,
+    };
     expect(board.apply(event(["machine-work", beat]))).toBe(false);
     expect(d.generation).toBe(generation);
-    expect(d.work).toEqual(beat);
+    // The heartbeat changes nothing the page draws: the board keeps the work it drew.
+    expect(d.work).toBe(drawn);
     expect(d.worked).toBe(2);
     expect(board.apply(event(["machine-work", building("w/a", "queued")]))).toBe(true);
+    expect(d.work).toEqual(building("w/a", "queued"));
+  });
+
+  it("draws nothing again for a heartbeat, and again for work the page shows changed", () => {
+    const { board, d, host } = live();
+    board.apply(event(["machine-work", building("w/a")]));
+    host.redraw.mockClear();
+    const beat = building("w/a");
+    beat.machines[0] = { ...(beat.machines[0] as MachineWork["machines"][0]), sequence: 7 };
+    board.apply(event(["machine-work", beat]));
+    expect(host.redraw).not.toHaveBeenCalled();
+    const stale = building("w/a");
+    stale.machines[0] = {
+      ...(stale.machines[0] as MachineWork["machines"][0]),
+      freshness: "stale",
+    };
+    board.apply(event(["machine-work", stale]));
+    expect(host.redraw).toHaveBeenCalledTimes(1);
+    expect(d.work).toEqual(stale);
   });
 
   it("drops a task finished before the window, but not while searching", () => {

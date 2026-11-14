@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { aMachine, anOperation, aWork, CASES } from "./testing";
 import type { MachineWork } from "./wire";
 import {
+  drawsAlike,
   freshnessWord,
   isFor,
   NO_WORK,
@@ -220,6 +221,34 @@ describe("a card's build and test phases", () => {
     ]);
     expect(shownPhases(work, "sim/a", false)[0]?.freshness).toBe("disconnected");
     expect(phaseLabels(work, "sim/b", true)).toEqual([]);
+  });
+});
+
+describe("two reports of the machines' work", () => {
+  const build = anOperation("alpha", "b", "build", "running");
+  const work = aWork([aMachine("alpha", [build])]);
+
+  it("draw alike for a heartbeat: another producer, sequence or age", () => {
+    expect(drawsAlike(work, work)).toBe(true);
+    const beat = aWork([
+      aMachine("alpha", [build], { producer_id: "p2", sequence: 9, age_ms: 900 }),
+    ]);
+    expect(drawsAlike(work, beat)).toBe(true);
+    expect(drawsAlike(NO_WORK, { ...NO_WORK })).toBe(true);
+  });
+
+  it("differ for anything the page draws", () => {
+    expect(drawsAlike(work, aWork([aMachine("alpha", [build], { freshness: "stale" })]))).toBe(
+      false,
+    );
+    expect(drawsAlike(work, aWork([aMachine("alpha", [{ ...build, state: "queued" }])]))).toBe(
+      false,
+    );
+    expect(drawsAlike(work, aWork([aMachine("alpha", [build], { label: "Alpha" })]))).toBe(false);
+    expect(drawsAlike(work, aWork([aMachine("alpha", [build])], { freshness: "stale" }))).toBe(
+      false,
+    );
+    expect(drawsAlike(work, aWork([]))).toBe(false);
   });
 });
 

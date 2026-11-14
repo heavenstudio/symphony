@@ -54,7 +54,7 @@ import {
 import { markTasksReady } from "./taskcard";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
-import { NO_WORK, placesAlike, readWork, taskStage } from "./work";
+import { drawsAlike, NO_WORK, placesAlike, readWork, taskStage } from "./work";
 
 /**
  * The feed's events since a read began, for each read still out: an answer read meanwhile is drawn
@@ -884,9 +884,13 @@ export class LiveBoard {
           // stage changes a count or a column. The machine sends its heartbeat every second,
           // which moves none.
           refresh ||= !placesAlike(d.work, change.work);
-          d.work = change.work;
+          // Nor does it change what the page draws: the board keeps the work it drew, and draws
+          // nothing again.
+          if (!drawsAlike(d.work, change.work)) {
+            d.work = change.work;
+            changed = true;
+          }
           d.worked += 1;
-          changed = true;
           // The feed's first word of the machines' work, when it beats the read.
           if (d.worked === 1) this.rememberShape();
           break;

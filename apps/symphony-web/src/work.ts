@@ -211,6 +211,20 @@ export function placesAlike(work: MachineWork, other: MachineWork): boolean {
   return placing(work) === placing(other);
 }
 
+/**
+ * Whether two reports of the machines' work draw alike: the same but for what the page never shows
+ * of a machine, its producer and its report's sequence and age, which its heartbeat changes each
+ * second.
+ */
+export function drawsAlike(work: MachineWork, other: MachineWork): boolean {
+  const shown = (one: MachineWork) =>
+    JSON.stringify({
+      ...one,
+      machines: one.machines.map(({ producer_id, sequence, age_ms, ...machine }) => machine),
+    });
+  return work === other || shown(work) === shown(other);
+}
+
 /** One build or test a card shows: its operation, the machine it is on, and how sure that is. */
 export interface Phase {
   operation: WorkOperation;
