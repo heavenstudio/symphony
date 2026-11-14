@@ -41,13 +41,17 @@ function styles(dist, kinds) {
   };
 }
 
+// `--mode probe-react` and `--mode probe-preact` build the probe instead (`probe.html`,
+// `src/probe/`): a page of its own with no Dioxus style sheets, so the three pages' build is the
+// one measured.
 export default defineConfig(({ mode, command }) => {
-  const candidate = mode === "preact" ? "preact" : "react";
+  const candidate = mode.endsWith("preact") ? "preact" : "react";
+  const probe = mode.startsWith("probe-");
   const dist = process.env.SYMPHONY_DIOXUS_DIST || path.join(repo, "apps/symphony-server/client/public");
-  const kinds = dioxusStyles(dist);
+  const kinds = probe ? {} : dioxusStyles(dist);
   const server = process.env.SYMPHONY_URL || "http://127.0.0.1:8000";
   return {
-    plugins: [react(), styles(dist, kinds)],
+    plugins: probe ? [react()] : [react(), styles(dist, kinds)],
     define: { __STYLES__: JSON.stringify(kinds), __CANDIDATE__: JSON.stringify(candidate) },
     resolve: {
       alias:
@@ -61,12 +65,13 @@ export default defineConfig(({ mode, command }) => {
           : {},
     },
     build: {
-      outDir: `dist/${candidate}`,
+      outDir: probe ? `dist/probe-${candidate}` : `dist/${candidate}`,
       emptyOutDir: true,
       assetsDir: "assets",
       // No preload polyfill: every browser measured supports modulepreload.
       modulePreload: { polyfill: false },
       rolldownOptions: {
+        ...(probe ? { input: path.join(here, "probe.html") } : {}),
         output: {
           hashCharacters: "hex",
           entryFileNames: "assets/[name]-[hash:16].js",

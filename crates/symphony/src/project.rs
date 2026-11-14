@@ -16,8 +16,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
-use std::time::SystemTime;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 mod board;
 mod file;
@@ -31,6 +31,33 @@ pub use theme::Theme;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
+
+/// How long after a load a plugin's process refused ([`Project::of`]) it is read again: the pause
+/// after which that process is started again, so each read again may start it.
+pub const AGAIN: Duration = crate::plugins::process::PAUSE;
+
+/// How long a read again keeps its claim at most ([`Project::of`]): past any wait of its load (a
+/// plugin's declaration waits [`crate::plugins::process::WAIT`]), so the read's own result sets the
+/// next; only a read that never ended (its thread panicked) is claimed again after it.
+const HELD: Duration = Duration::from_secs(60);
+
+/// A project as [`Project::of`] read it: each file its load looked at, as it was, the project, why
+/// it is the plain project when it is, and when its load is read again, for a plugin's process.
+struct Seen {
+    stamps: Vec<(PathBuf, Stamp)>,
+    project: Arc<Project>,
+    problem: Option<String>,
+    again: Option<Instant>,
+}
+
+/// Each project [`Project::of`] read, by its root.
+static SEEN: LazyLock<Mutex<BTreeMap<PathBuf, Seen>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// `mutex` held, whatever a thread that panicked holding it left.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
 /// session without a channel reads.
@@ -88,6 +115,34 @@ pub struct PluginProcess {
     pub root: PathBuf,
     /// Where its stderr goes, and its starts and ends: `plugins/NAME.log` in the artifacts folder.
     pub log: PathBuf,
+}
+
+impl PluginProcess {
+    /// The plugins the `symphony.toml` at `root` names a process for, its `[plugins.process]` read
+    /// alone and quietly as [`PluginCalls::read`] reads its settings: a file that does not parse,
+    /// or no file, names none. What a plugin command reads before it runs
+    /// ([`crate::plugins::command`]), so a command of a plugin this process holds loads no project,
+    /// and a linked copy of a plugin named here never answers for it, even while the project does
+    /// not load.
+    pub fn named_at(root: &Path) -> Vec<String> {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Settings {
+            plugins: PluginSettings,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PluginSettings {
+            // Each plugin's command is the project's to read: here only which are named.
+            process: BTreeMap<String, serde::de::IgnoredAny>,
+        }
+        std::fs::read_to_string(root.join(FILE))
+            .ok()
+            .and_then(|text| toml::from_str::<Settings>(&text).ok())
+            .map_or_else(Vec::new, |settings| {
+                settings.plugins.process.into_keys().collect()
+            })
+    }
 }
 
 /// How a project's plugin calls are measured, both off unless its file turns them on
@@ -354,18 +409,50 @@ impl Project {
     /// folder under that. A table or key this build does not know is left out and reported once
     /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
     /// settings; a project that does not load leaves the plain project in its place, reported the
-    /// same way. `symphony-status --lint` refuses both ([`crate::lint::project_problems`]).
+    /// same way, and says why while it does ([`Project::problem`]). A load refused while a plugin of
+    /// the project answering from its process has not declared (its program missing, or slow to
+    /// declare at a start) is no setting of the project's: it is read again [`AGAIN`] after, until
+    /// it loads, by one read at a time on a thread of its own, the claim held until that read ends
+    /// ([`HELD`] at most), so every reader keeps the plain project meanwhile and none waits on the
+    /// process: a server's live loop no more than a request. `symphony-status --lint` refuses each
+    /// ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
-        type Seen = BTreeMap<PathBuf, (Vec<(PathBuf, Stamp)>, Arc<Project>)>;
-        static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
-        if let Some((stamps, project)) = SEEN
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(root)
-            && stamps.iter().all(|(path, held)| *held == Stamp::of(path))
+        Self::seen(root).0
+    }
+
+    /// Why the project at `root` is the plain project in [`Project::of`]'s place, while its file
+    /// does not load: none once it does.
+    pub fn problem(root: &Path) -> Option<String> {
+        Self::seen(root).1
+    }
+
+    /// [`Project::of`], and why it is the plain project when it is.
+    fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
+        if let Some(held) = lock(&SEEN).get_mut(root)
+            && held
+                .stamps
+                .iter()
+                .all(|(path, held)| *held == Stamp::of(path))
         {
-            return project.clone();
+            if held.again.is_some_and(|at| Instant::now() >= at) {
+                // Read again on a thread of its own, which may wait on a process's declaration:
+                // every reader, this one too, keeps what was read meanwhile, none waits.
+                let (again, said) = (root.to_path_buf(), held.problem.clone());
+                let reading = std::thread::Builder::new()
+                    .name("project read again".into())
+                    .spawn(move || drop(Self::read_seen(&again, said.as_deref())));
+                // Claimed until that read ends, its own result setting the next; a read that
+                // cannot start is left to the next pause.
+                held.again = Some(Instant::now() + if reading.is_ok() { HELD } else { AGAIN });
+            }
+            return (held.project.clone(), held.problem.clone());
         }
+        Self::read_seen(root, None)
+    }
+
+    /// The project at `root` read and kept for [`Project::of`], and why it is the plain project when
+    /// it is; `said`, the problem a read before said, is not said again.
+    fn read_seen(root: &Path, said: Option<&str>) -> (Arc<Project>, Option<String>) {
         let stamped = |path: PathBuf| {
             let stamp = Stamp::of(&path);
             (path, stamp)
@@ -381,22 +468,35 @@ impl Project {
                 .map(|()| (project, unknown))
                 .map_err(|e| format!("{FILE}: {e}"))
         });
-        let project = Arc::new(match loaded {
+        let (project, problem, again) = match loaded {
             Ok((project, unknown)) => {
                 if let Some(refusal) = File::refusal(&unknown) {
                     eprintln!("{}: {refusal}; left out, the rest read", root.display());
                 }
-                project
+                (project, None, None)
             }
             Err(problem) => {
-                eprintln!("{}: {problem}; using the defaults", root.display());
-                Self::plain(root)
+                // A load read again for a plugin's process says its problem again only when it
+                // changed.
+                if said != Some(problem.as_str()) {
+                    eprintln!("{}: {problem}; using the defaults", root.display());
+                }
+                let again =
+                    crate::plugins::process::undeclared(root).then(|| Instant::now() + AGAIN);
+                (Self::plain(root), Some(problem), again)
             }
-        });
-        SEEN.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(root.to_path_buf(), (stamps, project.clone()));
-        project
+        };
+        let project = Arc::new(project);
+        lock(&SEEN).insert(
+            root.to_path_buf(),
+            Seen {
+                stamps,
+                project: project.clone(),
+                problem: problem.clone(),
+                again,
+            },
+        );
+        (project, problem)
     }
 
     /// The project as the client's header and home read it: its theme package's name, its register
@@ -479,15 +579,17 @@ impl Project {
                 "[project] id {id:?} is not a slug (lowercase letters, digits and dashes)"
             ));
         }
-        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates)?;
+        let artifacts = inside(
+            "[project] artifacts",
+            p.artifacts.unwrap_or_else(|| "artifacts".into()),
+        )?;
+        let plugin_processes =
+            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
+        let entrypoints = entrypoints(file.entrypoints, &file.plugins.crates, &plugin_processes)?;
         let register = inside(
             "[project] register",
             p.register
                 .unwrap_or_else(|| join(&entrypoints[0].folder, "DECISIONS.md")),
-        )?;
-        let artifacts = inside(
-            "[project] artifacts",
-            p.artifacts.unwrap_or_else(|| "artifacts".into()),
         )?;
         let default_branch = p.default_branch.unwrap_or_else(|| "main".into());
         if default_branch.trim().is_empty() {
@@ -554,8 +656,6 @@ impl Project {
                 .map(|path| inside("[verdicts] record", path))
                 .transpose()?,
         };
-        let plugin_processes =
-            plugin_processes(root, &artifacts, &file.plugins.crates, file.plugins.process)?;
         let board = Board::from_file(file.board)?;
         let project = Project {
             name,
@@ -1132,12 +1232,20 @@ fn plugin_processes(
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of
-/// `plugins` (refused when two of those share a name), or the convention when there are none.
+/// `plugins` (refused when two of those share a name), or the convention when there are none. A
+/// plugin answering from its process (`processes`) gives the renderers it declared; one that cannot
+/// say them refuses the file only when a table names a type none of the others handles.
 fn entrypoints(
     written: Option<Vec<FileEntrypoint>>,
     plugins: &[String],
+    processes: &BTreeMap<String, PluginProcess>,
 ) -> Result<Vec<Entrypoint>, String> {
-    let renderers = crate::renderers::of_project(plugins)?;
+    let wanted: Vec<String> = written
+        .iter()
+        .flatten()
+        .flat_map(|table| table.types.iter().flatten().cloned())
+        .collect();
+    let renderers = crate::renderers::of_project(plugins, processes, &wanted)?;
     let Some(written) = written else {
         return Ok(vec![Entrypoint::convention()]);
     };
@@ -1317,3 +1425,7 @@ impl Stamp {
         ])
     }
 }
+
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;

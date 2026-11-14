@@ -221,6 +221,20 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
             "card_kinds.chosen",
         ),
         (
+            ReadCards {
+                root: root.clone(),
+                cards: vec![
+                    card(),
+                    CardData {
+                        thread: Vec::new(),
+                        ..card()
+                    },
+                ],
+            }
+            .into(),
+            "card_kinds.read",
+        ),
+        (
             Draw {
                 renderer: "stl".into(),
                 page: page(),
@@ -446,7 +460,7 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
             root: "/r".into()
         }
     );
-    assert_eq!(Version::new(0, 2), PROTOCOL);
+    assert_eq!(Version::new(0, 3), PROTOCOL);
 }
 
 #[test]
@@ -664,7 +678,7 @@ fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_
     );
     assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
     assert_eq!(Version::default(), PROTOCOL);
-    assert_eq!(PROTOCOL.to_string(), "0.2");
+    assert_eq!(PROTOCOL.to_string(), "0.3");
 }
 
 #[test]
@@ -1286,6 +1300,27 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
     answers::<CardGates>(a, Some((3, "item".into())));
     answers::<ApprovalNeedsAgent>(a, true);
     answers::<Chosen>(a, Ok(Some("B".into())));
+    answers::<ReadCards>(
+        a,
+        vec![
+            vec![KindAnswers {
+                kind: "widget".into(),
+                recognises: true,
+                pictures: vec![Picture {
+                    src: None,
+                    caption: "B".into(),
+                    waiting: true,
+                }],
+                slot: Some("North · cover".into()),
+                triage_category: None,
+                auto_approvable: false,
+                gates: Some((2, "item".into())),
+                approval_needs_agent: true,
+                chosen: Err("no candidate".into()),
+            }],
+            Vec::new(),
+        ],
+    );
     answers::<Draw>(a, Ok(Drawing::Blocks(vec![paragraph()])));
     answers::<Draw>(a, Ok(Drawing::Viewer(Viewer::default())));
     answers::<Serve>(a, Some(Reply::Json("{\"a\":1.5}".into())));
@@ -1586,6 +1621,7 @@ fn each_call_names_the_minor_it_came_in_and_commands_run_is_the_loopbacks_alone(
     }
     assert_eq!(Slot::SINCE, 1);
     assert_eq!(Declare::SINCE, 1);
+    assert_eq!(ReadCards::SINCE, 3);
     assert_eq!(LOOPBACK_ONLY, ["commands.run"]);
     // Each call's own constant says the same: the loopback's alone is not piped.
     const {

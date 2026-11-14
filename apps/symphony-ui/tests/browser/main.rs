@@ -1016,6 +1016,37 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
     assert!(site.targets().iter().any(|url| url.contains("roots=1")));
 }
 
+/// A task the server sends with its plugins' board fields draws on the board as one without them
+/// does, whatever their values: the client draws no field, so it reads none (the feature
+/// `skip-board-fields` of `symphony_api`), not even a value the fields' own reader refuses (a
+/// boolean: `symphony_blocks::FieldValue` is a number or text). That is the client's to accept:
+/// a page one build behind a server whose plugins write a new kind of value still draws the
+/// board, where a reader of the fields would lose the whole listing to the one value.
+#[test]
+fn a_task_with_plugin_board_fields_draws_on_the_board() {
+    let site = site();
+    site.set_json(
+        "/api/task-board",
+        &json!({
+            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "ready",
+                "priority": 2, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false,
+                "fields": {"game": {"effort": 3.0, "risk": "high", "done": true}}}],
+            "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
+        }),
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-slug=\"game/jump\"]')?.textContent.includes('Jump') === true",
+            SHOWN
+        ),
+        "the task with board fields was not drawn: {:?}",
+        chrome.eval("document.body.innerText")
+    );
+}
+
 #[test]
 fn queued_visibility_callbacks_are_drained_when_a_page_unmounts() {
     let site = site();

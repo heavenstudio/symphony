@@ -79,6 +79,51 @@ fn the_round_trip_from_question_to_answer() {
 }
 
 #[test]
+fn a_thread_goes_on_the_wire_field_for_field_as_its_json_reads() {
+    let f = fixture();
+    let ask_id = f
+        .store
+        .ask(
+            "docs/A.md",
+            "why five bands?",
+            "stations",
+            "five size bands",
+        )
+        .unwrap();
+    f.clock.add(30.5);
+    f.store
+        .answer(ask_id, "Three would do.", "amber-heron")
+        .unwrap();
+    f.clock.add(1.25);
+    f.store.reply(ask_id, "and the carriers?").unwrap();
+    let thread = f.store.thread(ask_id).unwrap();
+    let read: symphony_api::Ask = serde_json::from_value(serde_json::json!(thread)).unwrap();
+    let ask = symphony_api::Ask::from(thread.clone());
+    assert_eq!(ask, read);
+    assert_eq!(
+        (ask.id, ask.status.as_str(), ask.updated, ask.answers.len()),
+        (ask_id, "open", thread.updated, 1)
+    );
+    let messages: Vec<(i64, &str, &str, f64)> = ask
+        .messages
+        .iter()
+        .map(|m| (m.seq, m.kind.as_str(), m.text.as_str(), m.at))
+        .collect();
+    let stored: Vec<(i64, &str, &str, f64)> = thread
+        .messages
+        .iter()
+        .map(|m| (m.seq, m.kind.as_str(), m.text.as_str(), m.at))
+        .collect();
+    assert_eq!(messages, stored);
+    assert!(
+        ask.messages
+            .iter()
+            .all(|m| m.blocks.is_empty() && m.html.is_empty() && m.media.is_empty()),
+        "drawn by the reader, not the store"
+    );
+}
+
+#[test]
 fn anchor_and_quote_are_optional() {
     let f = fixture();
     let thread = f
