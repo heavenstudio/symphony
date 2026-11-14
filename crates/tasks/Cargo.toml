@@ -3,23 +3,31 @@ name = "symphony-board"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Symphony's task board: the `tasks` and `agent-send` commands, its store on SurrealDB, the agents it staffs and the builds and tests it records."
+readme = "README.md"
+keywords = ["symphony", "tasks", "board", "agents", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+# What crates.io gets: the sources, the build script, the readme and the licence; never tests/,
+# fixtures or examples, nor `fake-hc`, the tests' stand-in for the terminals the board drives.
+include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 
-# SurrealDB is the owner's choice for the board (card tasks-store-engine, 2026-10-06 22:09: "B. we need a
-# server anyway (just symphony), server should start the db"). It is reached over its JSON-RPC on plain HTTP
+# SurrealDB is the board's database: a server runs anyway (`just symphony`), and the server starts
+# the database. It is reached over its JSON-RPC on plain HTTP
 # (src/rpc.rs) rather than through the `surrealdb` client crate: serde and serde_json are already in that
 # crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").
 [dependencies]
-process-cwd = { path = "../process-cwd" }
+process-cwd = { path = "../process-cwd", version = "1.0.0" }
 # Its variables, each by its one SYMPHONY_ name.
-symphony-env = { path = "../symphony-env" }
+symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.
-symphony-args = { path = "../symphony-args" }
+symphony-args = { path = "../symphony-args", version = "1.0.0" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
-symphony-api = { path = "../symphony-api" }
+symphony-api = { path = "../symphony-api", version = "=0.1.0" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a time in a dump reads as exactly the float Python wrote, not one ulp off. The other
 # three are the features the server's build unifies on serde_json (crates/symphony and
