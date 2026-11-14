@@ -155,8 +155,14 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
         out.contains("until then it is `lamp-shop`, after its folder"),
         "{out}"
     );
+    // The justfile init wrote, unchanged since, is current, not the project's own.
+    assert!(out.contains("justfile: current\n"), "{out}");
+    // Its board is not made yet: the step that makes it is left.
     assert!(
-        out.contains("justfile: kept (the project's own)\n"),
+        out.contains(
+            "\n- make the board: the first board command makes it (`just tasks list`); the \
+             Symphony only reads a board and never makes one\n"
+        ),
         "{out}"
     );
     assert!(!out.contains(".target/bin/symphony and"), "{out}");

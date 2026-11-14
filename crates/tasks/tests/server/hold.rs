@@ -5,13 +5,12 @@
 //! starts on it (`Home::replay`). Each case's store is a scratch folder of its own, and each server
 //! it signals is one it started there.
 
-use crate::common::{Scratch, gone, script, signal};
+use crate::common::{Scratch, Told, gone, script, signal};
 use crate::home_fixture::{Unresponsive, healthy_server};
 use serde_json::json;
 use std::convert::Infallible;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::port;
 use symphony_board::rpc::{Client, healthy};
@@ -482,21 +481,6 @@ fn a_log_written_under_a_larger_memtable_is_replayed_whole_and_survives_a_kill_a
         "rows were lost to the kill"
     );
     assert!(healthy(&third.addr));
-}
-
-/// Each line a [`Home`] tells, kept in order.
-#[derive(Clone, Default)]
-struct Told(Arc<Mutex<Vec<String>>>);
-
-impl Told {
-    fn sink(&self) -> impl Fn(&str) + Send + Sync + 'static {
-        let lines = Arc::clone(&self.0);
-        move |line| lines.lock().unwrap().push(line.to_string())
-    }
-
-    fn lines(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
-    }
 }
 
 /// How many rows the database `replay` of the server at `addr` holds.

@@ -12,6 +12,7 @@ use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use symphony_board::server::{Home, Running};
 use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
@@ -19,6 +20,22 @@ use symphony_board::sys::{Child, Command, Spawning as _, Stdio};
 pub struct Scratch {
     pub dir: PathBuf,
     surreal: GuardedSurreal,
+}
+
+/// Each line a [`Home`] tells, kept in order ([`Home::telling`]).
+#[derive(Clone, Default)]
+pub struct Told(Arc<Mutex<Vec<String>>>);
+
+impl Told {
+    /// What a [`Home::telling`] takes, to keep each line it tells here.
+    pub fn sink(&self) -> impl Fn(&str) + Send + Sync + 'static {
+        let lines = Arc::clone(&self.0);
+        move |line| lines.lock().unwrap().push(line.to_string())
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
 }
 
 /// How many folders of tests that failed in runs since ended are kept, the newest.
