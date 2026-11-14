@@ -145,7 +145,8 @@ pub(super) const SYMPHONY: Binary = Binary {
     name: "symphony",
     head: "usage: symphony COMMAND [ARGS]... (`just symphony-cli COMMAND`)\n\n\
            The Symphony's document CLI. `just symphony-cli help COMMAND`, or\n\
-           `just symphony-cli COMMAND --help`, shows a command's arguments and options.\n\n",
+           `just symphony-cli COMMAND --help`, shows a command's arguments and options;\n\
+           `symphony --version` says its version.\n\n",
     listed: "`just symphony-cli help`",
     own: &OWN,
     plain: &PLAIN,
@@ -368,6 +369,29 @@ mod tests {
         }
         assert!(listing(&SYMPHONY).contains("\n  project "));
         assert!(listing(&SYMPHONY_BUILD).contains("\n  split-repair "));
+    }
+
+    #[test]
+    fn version_alone_says_the_name_and_the_packages_version_and_the_listing_names_it() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = crate::cli::main(&["--version".into()], &mut &b""[..], &mut out, &mut err);
+        assert_eq!(
+            (code, String::from_utf8(out).unwrap(), err),
+            (
+                0,
+                format!("symphony {}\n", env!("CARGO_PKG_VERSION")),
+                Vec::new()
+            )
+        );
+        assert!(listing(&SYMPHONY).contains("`symphony --version`"));
+        // Beside a command it is that command's word, never the version.
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let args = ["status".into(), "--version".into()];
+        assert_eq!(
+            crate::cli::main(&args, &mut &b""[..], &mut out, &mut err),
+            2
+        );
+        assert!(out.is_empty());
     }
 
     #[test]
