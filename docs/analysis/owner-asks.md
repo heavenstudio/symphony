@@ -5,15 +5,14 @@ card in [DECISIONS](../DECISIONS.md), and what the proposal rests on. Each fact 
 the file and function it was read in, at main `7ad7376` and still so at `58309d8`. "On this
 board, 2026-11-11" marks this repository's own board that day.
 
-The owner, 2026-11-11, in four messages: "answering chat is a task, but kind of not really the same
-type of task. Feels like it should be called something else and not be considered when we look at
-task counts", "it also has no status like the other things would", and "it should also generally
-be prioritized to be answered, and be routed to a proper agent that has context if one is running".
+The ask: answering the owner's chat is work, but not the same kind as a task. It needs a name of
+its own and stays out of the task counts; it has no status as other things have; and it is
+generally answered first, routed to an agent that has the context, if one is running.
 
 ## The design
 
-Five choices, each taken at its default: the owner approved the card on 2026-11-11, before the
-[pictures](#pictures) were added. The [open questions](#open-questions) stay open.
+Five choices, each taken at its default: the card was approved before the [pictures](#pictures)
+were added. The [open questions](#open-questions) stay open.
 
 1. **The name: an ask.** Everything the owner says that waits on an agent's answer is an ask: a
    verdict with a note, a rejection, a message on a card, a comment in a document, a chat question,

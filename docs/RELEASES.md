@@ -28,8 +28,8 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 ## Packages on crates.io
 
 The plugin kit, the helpers and the app's wire types a project links are made to be published on
-crates.io, each by its version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
-crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-versioning)).
+crates.io, each by its version, under MIT: crates.io is the package manager their versions live in
+([its card](DECISIONS.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
   ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0.

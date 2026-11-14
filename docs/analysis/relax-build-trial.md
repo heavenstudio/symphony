@@ -5,10 +5,9 @@ and test loop, tried on this workspace and measured against cargo, as the relax-
 in [DECISIONS](../DECISIONS.md) records. "Measured 2026-11-11" marks this machine that day: an
 Apple M3 Max, 16 cores, 64 GB, macOS, shared with a dozen other agents' builds.
 
-The ask (the owner, 2026-11-11): "https://makepad.github.io/relax/#architecture evaluate if
-adopting relax could help us with how symphony build process works" and "(this should be empirical
-test, if better numbers should be adopted)", then "meaning, if there's proof this is better no need
-to ask me to decide".
+The ask: evaluate whether adopting Relax (https://makepad.github.io/relax/#architecture) could
+help Symphony's build process, by an empirical test, and adopt it if its numbers are better, with
+no need to ask the owner to decide once there is proof it is better.
 
 ## The result
 

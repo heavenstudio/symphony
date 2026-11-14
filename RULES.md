@@ -19,14 +19,12 @@ over a slice brief that asks for more.
 
 ### `workflow/evidence-is-the-gate`
 
-A task's gate is evidence that its change works, not the suite. The owner, 2026-11-11: "Do they
-need to run a full test suite? Why? If tests are so time consuming why are they being required to
-run every time, instead of running tests more closely associated with the tasks at hand, leaving
-a nighly run for a full verify?" and "So the executors need to 'prove that the work they did
-work'. That is the concept of the stamp based gating. As long as evidence is good enough, a full
-verification can be left to be done later". Every task, parent or slice, feature or fix, runs the
-tests closest to what it changed and `just lint-rs` (and the client built for a client change,
-its distribution never committed: the regenerator a land starts makes main's), and posts the
+A task's gate is evidence that its change works, not the suite. The suite takes too long to run
+for every task, and the tests most closely tied to a change are the ones that tell whether it
+works: its executor proves that the work it did works, and once that evidence is good enough the
+full verification is left to a later, scheduled run. Every task, parent or slice, feature or fix,
+runs the tests closest to what it changed and `just lint-rs` (and the client built for a client
+change, its distribution never committed: the regenerator a land starts makes main's), and posts the
 exact commands and results with the evidence its kind of change asks for,
 such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
 the suite, judges whether the evidence is good enough for the change's risk, and its approve is
@@ -72,9 +70,8 @@ is worth doing.
 
 ### `workflow/release-reds-first`
 
-A red the release run files blocks every release, so it is fixed first, the way a bug fix is. The
-owner, 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block
-releases. Meaning express path line followed up by another run". A candidate red
+A red the release run files blocks every release, so it is fixed first, the way a bug fix is: its
+fix takes the express path, and another run follows it. A candidate red
 (`tests/release-red-*`) is filed at p0 and marked red, so it takes no orchestrator slot,
 `just tasks next` offers it before other work of its priority, and the PULL digest lists it among
 ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
@@ -146,17 +143,15 @@ the code with a case it suspects the code gets wrong.
 
 ### `tests/rerun-the-failure-alone`
 
-A test that failed is run again by itself before anything is concluded from it or changed for it,
-never the whole suite again. The owner, 2026-11-11: "test that fail should be ran themselves to
-see if they pass. No need to run entire test suite each time." One that passes alone but failed in
-the run is reported as load- or order-dependent, with both results.
+A test that failed is run again by itself, to see whether it passes, before anything is concluded
+from it or changed for it; the whole suite is never run again for it. One that passes alone but
+failed in the run is reported as load- or order-dependent, with both results.
 
 ### `tests/a-red-on-main-has-one-owner`
 
 A test that fails on main, with the task's change taken out, is not the task's to fix or to wait
-for. The owner, 2026-11-11: "tests that are failing in main should be handled by an orchestrator
-as a separate task in order for individual tasks not to be blocked by it and have a single
-dedicated owner to solve it." The agent that finds it proves it on main (the test alone, at main's
+for: an orchestrator handles it as a task of its own, so that no other task is blocked by it and
+one dedicated owner solves it. The agent that finds it proves it on main (the test alone, at main's
 tip), tells its orchestrator on its thread with the command and output, and carries on: its own
 review and landing name the red and do not wait on it. The orchestrator checks the board for a
 task already holding that red, files one at p0 if there is none, and staffs it at once; a second
@@ -164,9 +159,9 @@ finder adds its evidence to that task and files nothing.
 
 ### `tests/no-test-fails-on-load`
 
-A test passes or fails on what the code did, never on how long a loaded machine took to let it.
-The owner, 2026-11-12: "A test that fail when machine is under load should be rewritten to account
-for cpu wall clock time usage - not total time spent or be removed from nightly". A bound on a cost
+A test passes or fails on what the code did, never on how long a loaded machine took to let it: a
+test that fails when the machine is loaded is rewritten to count the CPU time it used rather than
+the total time spent, or it leaves the release run, as below. A bound on a cost
 is a bound on the CPU the work took, or on a count of the work. A wait is a wait on its condition:
 its only time is a wall-clock backstop that only a stall reaches, and its failure says it was a
 stall and gives the load average. Elapsed time stays only where the product's promise is elapsed
@@ -179,12 +174,12 @@ docs/CHECKS.md lists each with its promise and the owner's word. No budget or to
 to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to use it:
 [CHECKS](docs/CHECKS.md#time-in-tests).
 
-A test that fails a release run or its rerun because of load is discarded. The owner, 2026-11-13:
-"A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
-It is load when the test passes alone, or when its failure is a wall-clock bound, a sleep-ordered
-step or a timeout under load. The red's own fix removes it from the tree, with one line on the
-red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
-what it proved. The owner's word is the approval: no card is put to them to discard such a test.
+A test that fails a release run or its rerun because of load is discarded, and the release moves
+on: a rerun neither fails nor passes on the machine's load. It is load when the test passes alone,
+or when its failure is a wall-clock bound, a sleep-ordered step or a timeout under load. The red's
+own fix removes it from the tree, with one line on the red's thread naming the test, the evidence
+it is load (its runs alone and the failing line) and what it proved. The owner has approved this
+for every such test already: no card is put to them to discard one.
 If what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
 time or an injected clock, but the release does not wait for that. No rerun is spent on it, no
 rewrite is waited for, and nobody lowers the machine's load to help a run pass. A test that fails
@@ -232,8 +227,8 @@ is not an answer.
 ### `review/auto-approve-what-is-decided`
 
 A card is not put to the owner, or is auto-approved if already posted, when its answer is not a
-real choice. The owner, 2026-11-11: "run some auto triage. Some decisions look like they should
-had been auto approved". An orchestrator marks it `[a]` with a dated
+real choice: an orchestrator triages the register for such cards, so the owner is not asked what
+is already decided. It marks one `[a]` with a dated
 `agent · auto-approved — <letter>: <basis>` line ([REVIEW](docs/REVIEW.md)) when the owner's own
 words, quoted in the basis, already decide it, or when the card's own evidence leaves one option
 standing (the others measured wrong, or against something the owner said). A card the owner
@@ -248,13 +243,9 @@ register for the owner to spot-check, and any verdict of theirs overrides it.
 ### `review/decided-is-not-asked`
 
 An approved card is never reopened by a question on it, and nothing an earlier verdict decides is
-put to the owner. The owner, 2026-11-12, approving cards a design had added after they approved
-its first: "A. this should had been auto approve/triaged, its basically what was decided in the
-other card." and "A. should also had been auto approved."; then of the first card, which an
-agent's question on it had put back in front of them: "this should had been a seaparate card no
-the same one. I also don't really get why those similar questions about things that were already
-been approved are being asked. They are consequences of the previous decision and should be
-auto-approved". A consequence of an approved choice is whatever follows from it while the option
+put to the owner: what an approved card decided, and what follows from it, is never asked again,
+a card already posted for it is auto-approved, and a new question is a card of its own, never one
+put back on the approved card. A consequence of an approved choice is whatever follows from it while the option
 chosen stays the one the card described, a cost or a trade the card did not state included: it is
 a plain agent line on that card, quoting the owner's words it rests on and answering any owner note
 still open there, and the card stays resolved, where the owner can reopen it with a comment. A
@@ -276,8 +267,8 @@ words decide; a question of theirs decides nothing
 
 A card holds what its judgement call needs and nothing more: short paragraphs, plain words, one
 question. It opens with what changes for the owner, in one or two plain sentences, before any
-option, written for someone who has not read the internals. The owner, 2026-11-12, on a card that
-did not: "I don't fully understand this issue. So pick whatever choice makes sense to you." Detail
+option, written for someone who has not read the internals: a card the owner cannot follow comes
+back undecided, its choice left to the agent. Detail
 the decision does not need goes in a linked file, and pictures go where the thing judged is visual
 ([REVIEW](docs/REVIEW.md#writing-a-card)).
 
@@ -312,10 +303,9 @@ One topic per document, linked to the others, never merged into one file.
 
 ### `commits/no-ai-authorship`
 
-No commit, merge, tag, pull request, file header or licence line names Claude, Claude Code, Codex
-or any other AI agent as author, co-author or generator: no `Co-Authored-By` trailer, no
-"Generated with" line. The owner, 2026-11-11: "no claude code or codex co authorship anywhere".
-The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
+No commit, merge, tag, pull request, file header, licence line or anything else names Claude,
+Claude Code, Codex or any other AI agent as author, co-author or generator: no `Co-Authored-By`
+trailer, no "Generated with" line. The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
 An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
@@ -323,8 +313,7 @@ An agent's handle belongs on the board thread, never in the commit.
 The repository tracks no Python file, and nothing it ships, builds, tests or checks runs Python:
 its simple operations are `just` recipes and shell pipelines (`curl` with `jq` for JSON), and
 anything more is Rust. An agent's throwaway code may be Python: a scratch script, a one-off edit or
-count, never committed and never a step of a recipe, a test or a check. The owner, 2026-11-13:
-"By the way, usage of python is acceptable for throw away code."
+count, never committed and never a step of a recipe, a test or a check.
 
 ### `memory-lives-in-the-repo`
 

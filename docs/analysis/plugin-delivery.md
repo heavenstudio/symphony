@@ -2,8 +2,8 @@
 
 How a project takes a Symphony release without compiling Symphony, with its own plugin code
 delivered apart from Symphony's, and how Symphony's crates, binaries and client split so that a
-change rebuilds and redistributes only what it touches. The owner chose the path on 2026-11-12, on
-three cards in [DECISIONS](../DECISIONS.md). This is a design: nothing here is built yet.
+change rebuilds and redistributes only what it touches. The path is chosen, on three cards in
+[DECISIONS](../DECISIONS.md). This is a design: nothing here is built yet.
 
 - **The path:** each project's plugin becomes a program of its own that the server starts and
   talks to in JSON lines (option B), and one Symphony release per machine, built here by the
@@ -19,16 +19,13 @@ three cards in [DECISIONS](../DECISIONS.md). This is a design: nothing here is b
 - **Not measured yet:** all of the first slice's numbers, how long each kind of change takes to
   rebuild, and one client build's size.
 
-The owner, 2026-11-12, after the consuming project's pin had to be moved and its host rebuilt to bring the
-app up to date: "seeing how problematic the current approach that requires building client's board
-often for them to even work is, there needs to be design a better approach for more automatic type
-of updates, by keeping client specific code separate from the board's one, in order full rebuilds to
-be avoided when binaries are updated?" and "I feel that this is more of a problem around "rust's
-crate and build archiectural design issue" around server and client architecture with custom plugin
-capabilities." Later the same morning: "It feels to me we should really have separate crates that
-have lower binary sizes, in order to be able to distribute things quickly and with smaller builds,
-so that only things that needs to be rebuilt are rebuilt and distributed. And that is rust's crate
-design architecture pains that we need to really solve well. 30MB is still really big for a binary".
+The ask, after the consuming project's pin had to be moved and its host rebuilt to bring the app up
+to date: today's approach makes a project build the board often just for it to work. Updates should
+be more automatic, with a project's own code kept apart from the board's, so that an update of the
+binaries needs no full rebuild. The problem is one of Rust's crates and build architecture, around a
+server and a client with plugins: the crates should be separate and the binaries smaller, so that
+things are distributed quickly and with smaller builds, and only what needs rebuilding is rebuilt
+and distributed. 30 MB is still very big for a binary.
 
 How facts are marked: a fact about the code names the file and function it was read in; a
 measurement says how it was taken; a fact from outside names its source by URL beside it, with the
@@ -686,8 +683,8 @@ tokenizer and the SQLite reader, which the target split above moves out of it an
 
 ### How a release gets there
 
-Built on the machine by the nightly, for now; downloaded from a hosted build later, when the owner
-says so (2026-11-12: "We will move to B in the future. Just not yet").
+Built on the machine by the nightly, for now; downloaded from a hosted build later, B, which the owner
+puts off for now and starts when they say so.
 
 - **Built on the machine, now.** The nightly already checks the release's commit out in a checkout
   of its own and verifies it there (`docs/RELEASES.md`). After it tags, it builds the release
@@ -719,7 +716,7 @@ restarting a board's database; point `current` at the release; restart the serve
 plugin is rebuilt by the project, when the project changes it or wants a newer SDK, never by the
 update.
 
-**What it replaces.** On 2026-11-11 the owner chose a per-project command that moves a project's
+**What it replaces.** A per-project command, the one chosen before this design, moves a project's
 pin to the newest release tag ([the update analysis](symphony-update.md)); its board task is
 ready and not started, and `tools/symphony-behind-signal` (the line that says a project is behind)
 depends on it. Under B it is still how the consuming project takes a release until the release's server
@@ -750,9 +747,8 @@ project's pin.
   only when every writer seen there in the last week is the release's own or built at the
   release's schema; otherwise it installs no release that raises the schema, and names each
   writer to rebuild. A release that keeps the schema installs at once. This improves on moving
-  every board at once, and holds while there is no dedicated build service (the owner,
-  2026-11-12); that such a service would rebuild a project's writers with each release is the
-  agent's reading of the owner's words, not theirs.
+  every board at once, and holds while there is no dedicated build service; that such a service
+  would rebuild a project's writers with each release is the agent's reading, not the owner's.
 - **Writers built before the record.** A build older than the record never writes it, so the
   record alone cannot see it, and the first schema move after the record lands would refuse it as
   moving every board would. The record therefore lands with a schema raise of its own, and that
@@ -789,8 +785,8 @@ project's pin.
 
 ## The chosen path: B, measured first
 
-The owner chose B on 2026-11-12: "Let's go with B first, measure results against the current
-approach for a post change comparison." B keeps every capability the consuming project's plugin has, needs no rewrite of it (its plugin crate
+B is chosen, measured first: its results are measured against the current approach, for a
+comparison after the change. B keeps every capability the consuming project's plugin has, needs no rewrite of it (its plugin crate
 becomes a process with a one-line `main`), takes Symphony out of every project's compile, isolates
 a failing plugin from the server every project shares, and lets two projects with plugins share
 one machine. Its costs are real: the pipe and its workers, a cold cache after every kill, a

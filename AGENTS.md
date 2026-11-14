@@ -188,9 +188,8 @@ way, in `[limits]`.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
 HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
-last step, without asking each time (the owner, 2026-11-11: "just land should do the push"; before
-it, "do push it yes"). The push fetches first, merges what `origin/main` gained, never forces,
-and pushes no other branch and no tag; one that fails leaves the landing done here and names the
+last step, without asking each time: the push is part of the land. The push fetches first,
+merges what `origin/main` gained, never forces, and pushes no other branch and no tag; one that fails leaves the landing done here and names the
 command to retry. A land here takes seconds: it runs no generator and, with `[land] check =
 false` in `symphony.toml`, no check, the docs audit being evidence at the tip and part of the
 release run's `just verify`. It keeps main's side of the client distribution a branch changed, and
@@ -201,15 +200,13 @@ only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast 
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
 ([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator lands an approved
 task without asking the owner, and `just land` runs with no permission prompt: the fresh
-reviewer's approve is what decides it (the owner, 2026-11-12: "asks to lands should be auto
-approved by orchestrators"). A decision the owner must make goes through the decision docs, a
-card in [DECISIONS](docs/DECISIONS.md), not a question in chat. The one thing that pushes a tag
+reviewer's approve is what decides it, never a question to the owner. A decision the owner must
+make goes through the decision docs, a card in [DECISIONS](docs/DECISIONS.md), not a question in chat. The one thing that pushes a tag
 is the release run (`just release`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--commit` by hand and installing its schedule are the owner's call, and an
-orchestrator does either only on the owner's word. The owner, 2026-11-12: "It would be nice to
-release a new version every given number of tasks done, say 20 and refresh server/clients", then
-"yes, a green release should refresh". So a land also starts a release run once 20 tasks have landed
-since the last release or the last run that checked something (`[releases] every_landings`, run by
+orchestrator does either only on the owner's word. A new version comes out every given number of
+tasks done, 20, and a green one refreshes the server and its clients: a land also starts a release
+run once 20 tasks have landed since the last release or the last run that checked something (`[releases] every_landings`, run by
 `[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link that any
 `just release` in the main checkout makes or renews, which counts with git and builds nothing
 short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
@@ -281,8 +278,8 @@ recipes: `just symphony` starts, replaces or stops the machine's shared server a
 `just symphony-cli` reaches `serve` and `init`, so an agent is asked first.
 `just land` needs no prompt: what the default land lands is decided by its approval check, a
 fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
-a prompt would add only a wait on the owner (the owner, 2026-11-12: "should not require
-permission from me"). A project whose own `land` recipe replaces the default gets the same
+a prompt would add only a wait on the owner, whose permission a land does not need. A project
+whose own `land` recipe replaces the default gets the same
 allow rule, and its own landing policy decides what lands. The `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself, an
 option such as `--as H` before `land` or not, never lands: a guard against accident, not the

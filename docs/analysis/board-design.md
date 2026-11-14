@@ -6,8 +6,7 @@ it waits and for how long; the three layouts proposed on the board-at-a-glance c
 board they were measured on. "Read 2026-11-11" marks the consuming project's board as the shared
 server answered it at 19:10 that day.
 
-The ask, the owner, 2026-11-11: "The design of the board isn't great." The board task
-`tools/board-design-review` names what operating the consuming project's board showed: blocked work with no
+The ask: the board's design is not good enough. The board task `tools/board-design-review` names what operating the consuming project's board showed: blocked work with no
 reason, owner or age on its card; dead sessions keeping their roles, so a task reads as staffed;
 review rounds as cards of their own; no age in stage; and a Projects page with counts but no health.
 
