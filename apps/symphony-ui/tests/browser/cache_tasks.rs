@@ -25,7 +25,7 @@ const KEPT: [&str; 2] = [
 ];
 /// Every read the task page makes as it opens, which the stand-in holds back to show what the
 /// page draws before any answer.
-const READS: [&str; 8] = [
+pub(super) const READS: [&str; 8] = [
     "/api/board",
     "/api/task-page",
     "/api/task-history",
@@ -83,7 +83,7 @@ fn with_message(id: i64, text: &str) -> Value {
 
 /// The task page shows `slug`'s brief, `brief`, and its thread has drawn `said`. Each message
 /// mounts as it nears the screen: the page is scrolled to the thread's end, its newest.
-fn draws(chrome: &mut Chrome, slug: &str, brief: &str, said: &str) {
+pub(super) fn draws(chrome: &mut Chrome, slug: &str, brief: &str, said: &str) {
     shows(
         chrome,
         &format!(
@@ -115,17 +115,17 @@ fn oldest(chrome: &mut Chrome) -> f64 {
 }
 
 /// How many answers the stand-in has sent to each of [`READS`].
-fn answered(site: &Site) -> Vec<usize> {
+pub(super) fn answered(site: &Site) -> Vec<usize> {
     READS.iter().map(|read| site.answers(read).len()).collect()
 }
 
 /// The answers to `read` since `before` ([`answered`]).
-fn since(site: &Site, before: &[usize], read: &str) -> Vec<Answered> {
+pub(super) fn since(site: &Site, before: &[usize], read: &str) -> Vec<Answered> {
     let at = READS.iter().position(|each| *each == read).unwrap();
     site.answers(read)[before[at]..].to_vec()
 }
 
-fn hold(site: &Site, reads: &[&str], held: bool) {
+pub(super) fn hold(site: &Site, reads: &[&str], held: bool) {
     for read in reads {
         site.hold_route(read, held);
     }
@@ -195,7 +195,7 @@ fn actions_wait(chrome: &mut Chrome) {
 
 /// Each read of `answers` named a tag, was answered `304`, and asked once.
 #[track_caller]
-fn unchanged_once(answers: &[Answered], what: &str) {
+pub(super) fn unchanged_once(answers: &[Answered], what: &str) {
     assert_eq!(answers.len(), 1, "{what}: {answers:#?}");
     let answer = &answers[0];
     assert!(

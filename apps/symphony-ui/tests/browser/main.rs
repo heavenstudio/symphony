@@ -24,6 +24,8 @@
 mod assets;
 mod binaries;
 mod board_status;
+mod cache_ahead;
+mod cache_documents;
 mod cache_pages;
 mod cache_store;
 mod cache_tasks;

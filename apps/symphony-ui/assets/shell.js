@@ -358,6 +358,51 @@ function warm() {
     }, { timeout: 5000 });
 }
 
+// Read ahead (docs/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
+// feed is open and the browser is idle, the first AHEAD task and document links it shows on the
+// screen are read into the client cache one after another, at the lowest priority and outside the
+// page's own reads (cache.js, `ahead`), so opening one draws at once: a task's page and its
+// thread's newest page, a document's first part (`view=first`, at most
+// symphony_api::AHEAD_BYTES). Not when the browser asks to save data or the link is 3g or slower;
+// never a link that acts (a download, `data-native`, another window), a search, a folder,
+// another checkout's page or the page itself. A page whose feed is not open within a minute
+// reads nothing ahead.
+const AHEAD = 8;
+function ahead(generation, tries = 60) {
+    const link = navigator.connection;
+    if (link?.saveData || /2g|3g/.test(link?.effectiveType) || !window.symphonyCache) return;
+    settled(() => {
+        if (generation !== requested) return;
+        const feed = document.querySelector("main[data-feed], main [data-feed]")?.dataset.feed;
+        if (feed !== "live") return feed && tries > 1 && setTimeout(() => ahead(generation, tries - 1), 1000);
+        const base = project().base || "", id = base.replace(/^\/+/, ""), items = new Map();
+        for (const anchor of document.querySelectorAll("main a[href]")) {
+            const box = anchor.getBoundingClientRect(), url = inPlace(anchor);
+            if (!url || url.search || url.pathname === location.pathname
+                || box.bottom <= 0 || box.top >= innerHeight || box.right <= 0 || box.left >= innerWidth || !box.width) continue;
+            const kind = route(url.pathname);
+            let path;
+            try { path = decodeURIComponent(url.pathname).slice(base.length).replace(/\/{2,}/g, "/").replace(/^\/(app\/)?/, ""); } catch { continue; }
+            if (path.startsWith("@")) continue;
+            path = path.replace(/^doc\//, "");
+            const api = name => `${base}/api/${name}`, encoded = encodeURIComponent;
+            if (kind === "tasks" && /^task\/./.test(path)) {
+                const slug = path.slice(5).replace(/\/$/, "");
+                items.set(`task:${slug}`, ["task", [["page", api(`task-page?slug=${encoded(slug)}`)], ["thread", api(`task-history?slug=${encoded(slug)}`)]]]);
+            } else if (kind === "docs" && path.endsWith(".md")) {
+                items.set(`document:${path}`, ["document", [["outline", api(`document?path=${encoded(path)}&view=first`)]]]);
+            }
+            if (items.size === AHEAD) break;
+        }
+        (async () => {
+            for (const [item, [kind, reads]] of items) {
+                if (generation !== requested) return;
+                await symphonyCache.ahead(read, id, item, kind, reads);
+            }
+        })();
+    });
+}
+
 // The routes the Symphony answers itself, symphony_api::SYMPHONY_ROUTES word for word (a test
 // keeps them equal): they win over every entrypoint.
 const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
@@ -470,6 +515,7 @@ async function show(generation, scroll) {
         scrollAnchor(moved || restored);
         document.documentElement.dataset.navigation = "ready";
         warm();
+        ahead(generation);
     }));
 }
 
@@ -491,12 +537,19 @@ function navigate() {
     });
 }
 
-document.addEventListener("click", event => {
-    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    const link = event.target instanceof Element && event.target.closest("a[href]");
+// The address a click on `link` takes in place, the shell's to follow, or nothing: a link that
+// acts (a download, `data-native`, another window) or leads off the project's pages is the
+// browser's.
+function inPlace(link) {
     if (!link || link.hasAttribute("download") || link.dataset.native === "true" || (link.target && link.target !== "_self")) return;
     const url = new URL(link.href, location.href);
-    if (url.origin !== location.origin || !ours(url.pathname) || !route(url.pathname)) return;
+    if (url.origin === location.origin && ours(url.pathname) && route(url.pathname)) return url;
+}
+
+document.addEventListener("click", event => {
+    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const url = inPlace(event.target instanceof Element && event.target.closest("a[href]"));
+    if (!url) return;
     event.preventDefault();
     if (document.querySelector("[data-posting=true]")) return;
     history.pushState(null, "", url);

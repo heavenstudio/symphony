@@ -24,25 +24,66 @@ pub(super) fn checksum(body: &[u8]) -> String {
 #[derive(Clone, Debug)]
 pub(super) struct Content(pub(super) String);
 
+/// A document read as it is sent: its validator, its body, and the feed's cursor it was read at.
+#[derive(Debug)]
+pub(super) struct Tagged {
+    pub(super) tag: String,
+    pub(super) body: Vec<u8>,
+    pub(super) cursor: Option<u64>,
+}
+
 /// The validator of a document read, leaving out its `version`: the feed's cursor at the read,
-/// which moves with every change on the board, an agent's health included. A page whose kept
-/// copy is still current takes the cursor from `/api/board` (docs/analysis/client-cache.md, "A
-/// return visit, step by step"), so a document answers `304` until its own content changes.
-/// `value` (a document, its outline, or sections' bodies) is left as it came.
-pub(super) fn without_cursor(value: &mut serde_json::Value) -> String {
+/// which moves with every change on the board, an agent's health included. So a document answers
+/// `304` until its own content changes, and the cursor goes in a header of its own
+/// ([`symphony_api::VERSION_HEADER`]), which a page drawing its kept copy on a `304` opens the
+/// feed from (docs/analysis/client-cache.md, "A return visit, step by step"). `value` (a document,
+/// its outline, sections' bodies, or a folder, whose intro is a document read at the cursor too) is
+/// sent as it came, serialized once: the validator is the checksum of those bytes with the cursor
+/// `null`, and the cursor is written into them after.
+pub(super) fn without_cursor(value: &mut serde_json::Value) -> Tagged {
     fn cursor(value: &mut serde_json::Value) -> Option<&mut serde_json::Value> {
         if value.get("document").is_some() {
             value.get_mut("document")?.get_mut("version")
+        } else if value.get("intro").is_some() {
+            value.get_mut("intro")?.get_mut("version")
         } else {
             value.get_mut("version")
         }
     }
     let read = cursor(value).map(std::mem::take);
-    let tag = checksum(&serde_json::to_vec(value).expect("a JSON value serializes"));
-    if let (Some(read), Some(slot)) = (read, cursor(value)) {
+    let mut body = serde_json::to_vec(value).expect("a JSON value serializes");
+    let tag = checksum(&body);
+    let Some(read) = read else {
+        return Tagged {
+            tag,
+            body,
+            cursor: None,
+        };
+    };
+    let number = read.as_u64();
+    let written = serde_json::to_vec(&read).expect("a JSON value serializes");
+    if let Some(slot) = cursor(value) {
         *slot = read;
     }
-    tag
+    // The cursor's slot is the one `"version":null` of the body, unless the content holds another
+    // (a card named `version` with no thread, say): then the body is written again, whole.
+    const SLOT: &[u8] = b"\"version\":null";
+    let mut found = body
+        .windows(SLOT.len())
+        .enumerate()
+        .filter(|(_, at)| *at == SLOT);
+    match (found.next(), found.next()) {
+        (Some((at, _)), None) => {
+            let null = at + SLOT.len() - b"null".len();
+            body.splice(null..null + b"null".len(), written);
+        }
+        _ => body = serde_json::to_vec(value).expect("a JSON value serializes"),
+    }
+    Tagged {
+        tag,
+        body,
+        cursor: number,
+    }
 }
 
 /// The validator of a task's timeline, leaving out its `now`: the server's clock at the read,

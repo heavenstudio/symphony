@@ -169,11 +169,44 @@ never the whole target, which the release run runs.
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
   every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
   draws nothing from the device.
+  A document keeps `Item::document(path, false)`: its outline (`outline`,
+  `/api/document?view=outline`) and the bodies of the sections it drew (`sections`, one map by
+  key, each with its card and thread and the validator it was taken under,
+  `cache::document::KeptBody`). A section's validator is its outline `hash` and, for a card, its
+  thread's hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a
+  section showing a difference from main is never kept. Opened, the page counts a visit and draws
+  the outline and every body current by it at once (`docs_live::from_device`), then reads the
+  outline naming its copy's tag (`request::get_document`). The server tags a document read
+  without the feed's cursor, so an unchanged document is a `304` however the board moved, and
+  names the cursor in a header (`symphony_api::VERSION_HEADER`), on the `304` too, from which the
+  feed opens. The bodies the server's outline names alike stay and are read no more
+  (`cache::document::Bodies`), on a reconnect as on a return; the others are read as the page
+  wants them, and no body is read before the outline answers. A body the feed changed is kept
+  again only once a later outline names it. An entrypoint's own page, the main checkout's, is kept
+  pinned (`Item::document("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
+  server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
+  so it outlives the documents visited once. No other folder page is kept. A document the server no
+  longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
   `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
   the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
-  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs` and
-  `cache_tasks.rs` hold the reads back on the stand-in (`Site::hold_route`, which answers `If-None-Match` as the server
-  does and logs each answer).
+  disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs`,
+  `cache_tasks.rs` and `cache_documents.rs` hold the reads back on the stand-in
+  (`Site::hold_route`, which answers `If-None-Match` as the server does and logs each answer;
+  `Site::set_document` serves a document's outline, its first part and its sections by their keys
+  as the server does).
+  Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
+  first 8 task and document links on the screen in its `main` (`ahead` in `assets/shell.js` and
+  `assets/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
+  unvisited. A task is its page and its thread's newest page; a document its first part
+  (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
+  within `symphony_api::AHEAD_BYTES`; the server does not follow it), whose contents and bodies a
+  visit draws at once, so nothing moves when its outline answers, and keeps as its own
+  (`cache::document::split`). Never on save-data or a 3g or slower link, never a link that acts, a
+  search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
+  API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
+  `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
+  raced by the reads ahead; `tests/browser/cache_ahead.rs` covers them.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   the owner's, never loosened by an agent; the first-visit cap is the owner's
@@ -202,22 +235,36 @@ never the whole target, which the release run runs.
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 13.3 KB of `/tasks` (295,869 bytes in all, 4,131 under the cap), 2.4 KB of `/`
-  (236,431 in all), 7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of
-  the documents. The same run reports `/agents` at 572,118, `/docs/` at 474,953, `/queue` at
-  253,966, `/reports` at 306,606, a task page at 572,711 (2,240 on a return that finds it
-  unchanged, its page and thread each a `304` of 82) and a document at 476,570. The task
-  pages, `/agents` and Reports are kinds of the program (Build, above): a first visit to one
-  takes the program's script (17,912 bytes on the wire) and main module (216,780) and its
-  kind's chunk (the task pages' 315,186, Reports' 48,986), and a move between them takes the
-  target's chunk alone. A task page's timeline, a chunk of the same program, comes once the
-  page has drawn and is idle: 54,354 bytes outside its first visit (its chunk 50,645, style
-  sheet 2,604 and first read 1,105), and `/agents` never loads it. Once a page has its data
-  and is idle, the shell warms the chat's and the menus' chunks, with the program's script
-  and main module where the page is not one of the program's: 609,165 bytes outside home's
-  first visit, 374,473 outside a task page's, and the chat's first open transfers nothing
-  more. Each module pays for its own compiled framework, the program once for all its
-  kinds; later visits reuse cached imports. The home budget test
+  about 13.3 KB of `/tasks`, 2.4 KB of `/`, 7.8 KB of `/queue`, 13.0 KB of a task page and
+  `/agents` and 6.8 KB of the documents. Documents
+  drawn from the device, an entrypoint's page kept and the reads ahead
+  (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
+  about 0.9 KB of the shell and the documents' kind about 30.4 KB (`wasm_size` on the named
+  copies: `docs_live`'s draw from the device, reads and keeping 9.0 KB, the cache's bindings
+  3.5 KB, and the maps it adds with their trees and sorts about 9.8 KB of `alloc` and
+  `core::slice`, a stable sort compiled for each `collect` into a map): `/tasks` takes 296,924 bytes
+  (3,076 under the cap, from 295,902), `/` 237,202 (from 236,322) and `/docs/` 505,402 (from
+  474,965); a document's return takes 1,633 (from 2,371), the budget's stand-in naming no cursor
+  on its document reads, so its outline's `304` is read again whole. The reads ahead start only
+  once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
+  budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
+  the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. The task
+  pages, `/agents` and Reports are kinds of the program (Build, above;
+  `perf/client-shared-runtime/task-pages-program`, against main's build at 5352c2d), which costs
+  every page the shell's 38 bytes that name its chunks (`/tasks` 295,939 from 295,902, `/`
+  236,351 from 236,322): a first visit to one takes the program's script (17,907 bytes on the
+  wire) and main module (216,782) and its kind's chunk (the task pages' 315,343, Reports'
+  48,996), so `/agents` and a task page take 572,269 and 572,862 (from 559,770 and 560,363,
+  2,241 on a return that finds a task unchanged, its page and thread each a `304` of 82) and
+  `/reports` 306,609 (from 558,271), and a move between them takes the target's chunk alone. A
+  task page's timeline, a chunk of the same program, comes once the page has drawn and is
+  idle: 54,357 bytes outside its first visit (from 202,226; its chunk 50,648, style sheet 2,604
+  and first read 1,105), and `/agents` never loads it. Once a page has its data and is idle,
+  the shell warms the chat's and the menus' chunks, with the program's script and main module
+  where the page is not one of the program's: 609,120 bytes outside home's first visit (from
+  748,701), about 374,600 outside a task page's, and the chat's first open transfers nothing
+  more. Each module pays for its own compiled framework, the program once for all its kinds;
+  later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
