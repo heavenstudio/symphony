@@ -87,6 +87,8 @@ fn types() -> String {
         declared::<api::ActivityItem>(&cfg),
         declared::<api::Pending>(&cfg),
         declared::<api::PendingItem>(&cfg),
+        declared::<api::Grain>(&cfg),
+        declared::<api::report_page::ReportMark>(&cfg),
         // The blocks a plugin renders to, and what they hold.
         declared::<api::Block>(&cfg),
         declared::<api::Span>(&cfg),
@@ -135,6 +137,7 @@ fn types() -> String {
         ("SERVER_EVENT", text(api::SERVER_EVENT)),
         ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
+        ("REPORTS_PATH", text(api::REPORTS_PATH)),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -226,6 +229,19 @@ fn cases() -> Result<Value, String> {
     .iter()
     .map(|name| json!([name, api::is_html(name)]))
     .collect();
+    // Each word with the grain it names, if any, and that grain's default and longest windows.
+    let grains: Vec<Value> = ["hour", "day", "week", "month", "", "Hour", "days"]
+        .iter()
+        .map(|word| {
+            let grain = api::Grain::parse(word);
+            json!([
+                word,
+                grain,
+                grain.map(api::Grain::default_days),
+                grain.map(api::Grain::max_days)
+            ])
+        })
+        .collect();
     let addresses: Vec<Value> = [
         "/docs/a.html",
         "/docs/a.html#top",
@@ -243,6 +259,7 @@ fn cases() -> Result<Value, String> {
     cases["views"] = routes();
     cases["queueCategory"] = categories.into();
     cases["isHtml"] = html.into();
+    cases["grains"] = grains.into();
     cases["fileAddress"] = addresses.into();
     cases["elementHtml"] = elements();
     cases["encoded"] = encodings();
@@ -364,11 +381,18 @@ const CARRIED: &[(&str, &str, &str)] = &[
     (BLOCKS_MEDIA, "is_name", "isName, src/media.tsx"),
     (BLOCKS_MEDIA, "is_element", "isElement, src/media.tsx"),
     (BLOCKS_MEDIA, "escape", "escapeText, src/media.tsx"),
+    (API_REPORT_PAGE, "parse", "parseGrain, src/reports.tsx"),
+    (
+        API_REPORT_PAGE,
+        "default_days",
+        "defaultDays, src/reports.tsx",
+    ),
 ];
 
 /// The files [`CARRIED`] names, by their path in the repository.
 const API_PROJECT: &str = "crates/symphony-api/src/project.rs";
 const API_LIB: &str = "crates/symphony-api/src/lib.rs";
+const API_REPORT_PAGE: &str = "crates/symphony-api/src/report_page.rs";
 const BLOCKS_MEDIA: &str = "crates/symphony-blocks/src/media.rs";
 
 /// Each of [`CARRIED`]: its name, the TypeScript that carries it, and its source, line by line.
@@ -378,6 +402,7 @@ fn carried() -> Result<Value, String> {
         .map(|(file, name, ts)| {
             let text = match *file {
                 API_PROJECT => include_str!("../src/project.rs"),
+                API_REPORT_PAGE => include_str!("../src/report_page.rs"),
                 BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
                 _ => include_str!("../src/lib.rs"),
             };
@@ -593,8 +618,125 @@ fn samples() -> Value {
         "queue": queue,
         "emptyQueue": api::Queue::default(),
         "board": board,
+        "reports": reports(),
+        "emptyReports": api::ReportsPage::default(),
         "blocks": blocks(),
     })
+}
+
+/// A window of one period every source recorded whole, with every status, wait, role and gauge it
+/// can have and none at zero, a settings change and a file not read: each member the Reports page
+/// reads a period by is written in it.
+fn reports() -> api::ReportsPage {
+    const MONDAY: f64 = 1_794_182_400.0;
+    api::ReportsPage {
+        grain: api::Grain::Day,
+        days: 1,
+        from: MONDAY,
+        to: MONDAY + 86_400.0,
+        buckets: vec![report_bucket(MONDAY)],
+        first: Some(MONDAY),
+        marks: vec![api::report_page::ReportMark {
+            at: MONDAY + 3_600.0,
+            commit: "4f1c0a9b2d3e".into(),
+            subject: "settings: land without the check".into(),
+        }],
+        unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
+    }
+}
+
+/// The one day of [`reports`], from `start`, every source recorded whole.
+fn report_bucket(start: f64) -> api::ReportBucket {
+    use api::agent_activity::{Gauge, Level, RoleLevel};
+    use api::report_page::{BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits};
+    use api::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
+    fn all<T: Copy>(n: T) -> ByStatus<T> {
+        ByStatus {
+            backlog: n,
+            blocked: n,
+            cancelled: n,
+            concept: n,
+            design: n,
+            done: n,
+            in_progress: n,
+            ready: n,
+            review: n,
+        }
+    }
+    let spread = Some(Spread {
+        n: 2,
+        median: 60.0,
+        p90: 90.0,
+    });
+    let role = |role: &str| RoleLevel {
+        role: role.into(),
+        peak: 2,
+        mean: 1.5,
+    };
+    api::ReportBucket {
+        start,
+        end: start + 86_400.0,
+        rolled: 24,
+        flow: Some(BucketFlow {
+            held: all(1),
+            entered: all(2),
+            done: Some(3),
+            task_hours: all(1.5),
+            unclaimed_hours: 0.5,
+            bounces: 1,
+            landed: 2,
+            reds_filed: 1,
+            reds_closed: 1,
+        }),
+        decisions: Some(DecisionCounts {
+            open: 4,
+            answered: 3,
+            auto_approved: 2,
+            withdrawn: 1,
+        }),
+        git: Some(GitCounts {
+            commits: 12,
+            merges: 3,
+            added: 1200,
+            removed: 300,
+            reverts: 1,
+        }),
+        waits: Some(BucketWaits {
+            review_to_reviewer: spread,
+            changes_to_resumed: spread,
+            changes_to_review: spread,
+            approved_to_landed: spread,
+        }),
+        lead: spread,
+        verdicts: Some(BucketVerdicts {
+            changes: 1,
+            approved: 2,
+        }),
+        red_fix: spread,
+        agents: Some(BucketAgents {
+            observed_s: 86_400.0,
+            samples: 1440,
+            running: vec![role("orchestrator"), role("executor"), role("reviewer")],
+            running_agents: Level { peak: 3, mean: 2.5 },
+            started: 4,
+            went_stale: 1,
+            went_lost: 1,
+            load_1m: Some(Gauge {
+                peak: 6.5,
+                mean: 3.25,
+            }),
+            ..BucketAgents::default()
+        }),
+        health: Some(BucketHealth {
+            covered_s: 86_400.0,
+            dispatch: api::HourPasses { ok: 10, failed: 1 },
+            sweep: api::HourPasses { ok: 10, failed: 2 },
+            requests: 100,
+            slow: 3,
+            unanswered: 1,
+            ..BucketHealth::default()
+        }),
+    }
 }
 
 /// Blocks holding every kind of block, span, media, container, inline tag, vector shape and
