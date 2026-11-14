@@ -42,6 +42,7 @@ mod search;
 mod slots;
 mod stats;
 mod sweep;
+mod test_lanes;
 mod write_load;
 
 use std::collections::BTreeMap;

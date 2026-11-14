@@ -929,6 +929,92 @@ fn through_just_tasks_a_launch_starts_its_agent_only_in_the_project_and_with_no_
 }
 
 #[test]
+fn through_just_tasks_a_worktree_whose_git_file_names_another_repository_has_no_worktree_base() {
+    let mut p = Terminals::new("unasked-renamed");
+    let orch = p.orchestrator();
+    p.board()
+        .create(&NewTask::new("sim/dock", "Dock", &orch))
+        .unwrap();
+    // The base beside the main checkout, `lamp-works-wt`: no `SYMPHONY_WT_DIR` names one.
+    p.env.vars.remove("SYMPHONY_WT_DIR");
+    let (tree, other) = (p.dir.join("tree"), p.dir.join("other"));
+    git(
+        &p.env.cwd,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "tree",
+            &tree.display().to_string(),
+        ],
+    );
+    fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "x"]);
+    let (theirs, ours) = (
+        p.dir.join("other-wt/given"),
+        p.dir.join("lamp-works-wt/given"),
+    );
+    for folder in [&theirs, &ours] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    p.env.cwd = tree.clone();
+    p.set(symphony_board::confine::MARKER, "1");
+    let listed = fs::read_to_string(tree.join(".git")).unwrap();
+    // The worktree's `.git` file, untracked, rewritten to name the other repository, which does
+    // not list this worktree: no base beside either main checkout, and no worktree made in it.
+    fs::write(
+        tree.join(".git"),
+        format!("gitdir: {}\n", other.join(".git").display()),
+    )
+    .unwrap();
+    let refused = |place: String| {
+        format!(
+            "✖ {place} is not a folder a recipe an agent runs unasked starts an agent in: only the \
+             checkout at {}, none of its git folders, and no worktree base, which is taken only \
+             beside a main checkout that lists this checkout as its own; the binary run by itself \
+             starts one anywhere\n",
+            tree.display()
+        )
+    };
+    for folder in [&theirs, &ours] {
+        let given = folder.display().to_string();
+        let ran = p.as_(&orch, &["launch", "sim/jump", "--worktree", &given]);
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err),
+            (1, "", refused(format!("--worktree {given}")))
+        );
+    }
+    let ran = p.as_(&orch, &["launch", "sim/jump"]);
+    let made = p.dir.join("other-wt/sim-jump");
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (1, "", refused(format!("its worktree {}", made.display())))
+    );
+    assert!(!made.exists());
+    assert_eq!(p.calls_of("run"), Vec::<Vec<String>>::new());
+    assert_eq!(p.board().task_sessions("sim/jump").unwrap(), vec![]);
+    // A base `SYMPHONY_WT_DIR` names is the setting's, taken as it is.
+    let mut named = p.env.clone();
+    named.vars.insert(
+        "SYMPHONY_WT_DIR".into(),
+        p.dir.join("other-wt").display().to_string(),
+    );
+    named.vars.insert("TASKS_SESSION".into(), orch.clone());
+    let given = theirs.display().to_string();
+    let ran = run(&named, &["launch", "sim/jump", "--worktree", &given], "");
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    // Listed by its repository again, the base beside its main checkout is the worktree's.
+    fs::write(tree.join(".git"), listed).unwrap();
+    let given = ours.display().to_string();
+    let ran = p.as_(&orch, &["launch", "sim/dock", "--worktree", &given]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/dock").unwrap()).unwrap();
+    assert_eq!(s.worktree, given);
+}
+
+#[test]
 fn through_just_tasks_the_api_records_no_launch_outside_the_project_nor_a_conversation() {
     let mut p = Terminals::new("unasked-record");
     p.orchestrator();
