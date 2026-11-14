@@ -318,10 +318,35 @@ repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
 linked worktree its repository lists, the main checkout's artifacts folder, never
 into a git folder, with the path's links and `..` resolved, and replaces only an
 earlier snapshot; it refuses any other place, or a file of the project's own,
-with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
-reply recipes keep their writes to the same places (AGENTS.md, "Agent
-integration"). The binary run by itself, which no rule allows, writes wherever it
-is told. The mark is the one command's: no child the board starts keeps it
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
+agent the board starts under the mark stays in the project the same way
+(`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
+launch makes and the one a restore makes again and starts in, an older record's
+too, lead only into those places or under the project's worktree base (`<repo>-wt/`,
+or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
+line naming the folder and starts nothing. A launch takes no `--prompt` there: an
+agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
+alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
+rest goes on the task's thread, which the skill reads. A restore
+resumes the conversation its record names. Under the mark `tasks api`'s
+`record_launch` records neither a worktree outside those places nor a conversation
+id; no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, and
+`just tasks beat` binds nothing: a heartbeat binding is the hook's, which runs
+`tasks beat` itself on the session's own tool calls); and `just tasks callback`
+registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`, which it
+detects with no address), which the board writes into the handle's open Codex
+record. So a record's conversation is one the board's launcher recorded (the id it
+chose at a launch, or one it read from the agent's terminal, the hook's binding or
+a callback) or the Codex thread an agent registered from its own process. Three
+limits stay: `--as` names any handle, so an agent may give another handle its own
+conversation (the hook binds the session to the handle its board command names,
+and a callback registers its thread for it), whose restore then resumes that
+agent's conversation; a record an older build wrote is not told apart; and a
+folder is checked before the agent starts in it, so a folder on its path replaced
+by a link in between still leads out. The
+reply recipes keep their writes to the same places
+(AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
+writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
 (`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
 where the project says.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
@@ -508,7 +533,8 @@ no allow rule passes a command with an env prefix, so
 `TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
 with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
-`codex:THREAD-UUID` works too. A session with no channel is listed as such and
+`codex:THREAD-UUID` works too; through `just tasks` a `codex:` one only as the
+session's own thread ([Where it lives](#where-it-lives)). A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
 
 `just agent-send HANDLE "text"` addresses an agent without a task. The sender
@@ -703,7 +729,8 @@ its foreground: a job it runs in front, or one it became by `exec`, is work. Whe
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
-worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
+worktree, in a new terminal; through `just tasks`, only a worktree in the project
+([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
@@ -729,7 +756,11 @@ the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 goes to an idle reviewer only when the board would take its verdict, by the rule the
 verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
 reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled, and the reviewer's role a reuse took for it let go.
+cancelled, and the reviewer's role a reuse took for it let go. Through `just tasks` a pass
+launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
+worktree, one continuing a branch checked out in the main checkout (its
+`.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
+is refused.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -966,7 +997,8 @@ for sessions with no native channel. Tool calls are still the heartbeat.
 
 A **subagent** has no monitor; its own tool calls are its heartbeat. The
 project's `PreToolUse` (Bash) and `PostToolUse` hooks
-(`.target/bin/symphony hook tasks-beat`, `just tasks beat`) see the Claude Code agent id
+(`.target/bin/symphony hook tasks-beat`, which runs the board binary's `tasks beat`
+directly, not through `just`, so unmarked) see the Claude Code agent id
 on each of its tool calls. A `just tasks …` command the subagent runs binds it
 to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
@@ -2055,7 +2087,7 @@ checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src
 
 ```toml
 [limits]
-orchestrator_slots = 8  # the open tasks an orchestrator holds (Slots, below)
+orchestrator_slots = 8  # the tasks in progress an orchestrator holds (Slots, below)
 low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
 machine_agents = 12     # the agents this machine runs
 
@@ -2124,8 +2156,16 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
   the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
-  or leaves the open statuses another way.
+  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
+  `done` or `cancelled`, or leaves the open statuses another way.
+- **Work in review takes no slot.** The cap counts the tasks being built, not
+  the review of them: a task's slot frees when it moves to `review`, and a move
+  into `review` is never refused. The work under a task in review goes with it,
+  judged by the task whose work it is and the tasks above it, as red work is: a
+  reviewer's review mirror or instruction subtask in progress takes no slot
+  either, and starts at any count. The task's return to `in_progress`, on a
+  changes verdict or a move, goes between open statuses and starts nothing: it
+  is never refused, and counts again from then, as it was being worked already.
 - **Each open task, one slot.** A subtask holds a slot of its own, so
   gathering open work under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
@@ -2142,32 +2182,34 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   The one give a cap decides is a move's, which keeps the moved work with the orchestrator it had
   (below), decided by that move's own cap read.
 - **Where it bites.** A claim into `in_progress`; a move into `in_progress`
-  or `review` from a status that holds no slot, blocked work going back to
-  review included; a dependency change that sends blocked work back to
-  `in_progress` or `review`; taking the `orchestrator` role on a task with
-  open work at or below it, or being handed it (`handover`, refused as the
-  receiver's take would be); and a change of parent that brings open work at
+  from a status that holds no slot; a dependency change that sends blocked
+  work back to `in_progress`; taking the `orchestrator` role on a task with
+  work in progress at or below it, or being handed it (`handover`, refused as the
+  receiver's take would be); and a change of parent that brings work in progress at
   or below the task under an orchestrator's tree, or takes it out from under one, which keeps it
   that orchestrator's in a slot of its own. Each is refused when it would raise an
-  orchestrator's open tasks past the cap, naming them and their status, a
-  shared slot's tasks joined by `with`:
+  orchestrator's counted tasks past the cap, naming them and their status, a
+  shared slot's tasks joined by `with`, and then its work in review apart:
   `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
-  orchestrator holds: sim/a (review) with review/sim/a (review), …; a slot
-  frees when one of them is done or cancelled`. The count is the number of
-  entries listed. `tasks api` holds the same cap. A start inside a slot
-  already open (a mirror of a task in review, an instruction for open work)
-  is never refused.
+  orchestrator holds: sim/a (in_progress) with sim/a/build (in_progress), …; a
+  slot frees when one of them goes to review or is done or cancelled; not
+  counted, as work in review takes no slot: sim/b (review)`. The count is the
+  number of entries listed before the work named apart. `tasks api` holds the
+  same cap. A start inside a slot already open (a mirror or an instruction of a
+  task in review, an instruction for work in progress) is never refused.
 - **A landing's hold.** A landing that holds a task in review blocked while
   every stamp its branch lacks is one nobody is producing does it with a hold
   (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
   stays blocked, as any blocked task does to everyone on it, and keeps its
-  slot, shown as `(blocked, held)`, so its move
-  back to review starts nothing and is never refused. The hold is the record
+  slot, shown as `(blocked, held)` and counted as work in progress is, so its
+  move back to `in_progress` starts nothing and is never refused, as its move
+  back to `review`, which takes no slot, never is. The hold is the record
   `counter:['hold', SLUG]`, stamped with the task's `updated` as the hold left
   it, and ends with the task's next move (a landing's close and the owner's
   moves included: every status write deletes it), change of parent or of
   dependencies.
-  Work blocked by any other move holds no slot, and takes one to come back.
+  Work blocked by any other move holds no slot, and takes one to come back to
+  `in_progress`.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
 - **Red work takes no slot.** A task filed for a red that stops every
@@ -2202,10 +2244,12 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
   the mark of an open red that stays open as ordinary work (main's green
   reached it once work on it started): it and the work under it count from
-  then, decided and held as a close is, never refused; a task unmarked or
+  then as any work does, none while it is in review, decided and held as a
+  close is, never refused; a task unmarked or
   closed is left as it is. A refusal names the owner's open red work after its
-  counted slots: `…; a slot frees when one of them is done or cancelled; not
-  counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
+  counted slots: `…; a slot frees when one of them goes to review or is done or
+  cancelled; not counted, as red work takes no slot: tests/main-red-abc
+  (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the
   agents API count no red work. As with review, nothing authenticates a
   session: a filer is honour-based, guarding against a mistake, not malice.
@@ -2223,7 +2267,8 @@ record ids and their tasks by id, the tasks above them and the tasks they
 review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
-`slots` ([The agents API](#the-agents-api)).
+`slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
+work in review and no red work.
 
 ## The pipeline alarm
 

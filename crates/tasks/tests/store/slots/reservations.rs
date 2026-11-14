@@ -26,9 +26,7 @@ fn a_reservation_can_be_acquired_and_renewed_at_the_cap_until_a_slot_frees() {
     let role = renewed.roles.iter().find(|r| r.role == "reserved").unwrap();
     assert_eq!((role.handle.as_str(), role.expires), (K, Some(NOW + 90.0)));
     assert_eq!(refused(store.claim("work/next", K)), full);
-    store
-        .landed("work/b", O, "landed", false, &["review"])
-        .unwrap();
+    store.move_to("work/b", "review", O).unwrap();
     let claimed = store.claim("work/next", K).unwrap();
     assert_eq!(claimed.status, "in_progress");
     assert_eq!(claimed.holders("executor"), [K]);

@@ -40,7 +40,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use symphony_board::cli::Env;
 use symphony_board::launch::hc::{Binary, ENDING_VAR, Hc};
-use symphony_board::launch::{Ask, LaunchError, Machine, Started};
+use symphony_board::launch::{Ask, Bounds, LaunchError, Machine, Started};
 use symphony_board::sys::Command;
 use symphony_board::{Error, NewTask, Store};
 
@@ -264,7 +264,39 @@ impl World {
             }),
             mode: "auto".into(),
             board_env: Vec::new(),
+            bounds: None,
         }
+    }
+
+    /// The launcher's machine for a command run in the repository through a recipe an agent runs
+    /// unasked (`just tasks`, which sets `SYMPHONY_UNASKED`): the agents it starts stay in the
+    /// project ([`Bounds`]).
+    pub fn unasked(&self) -> Machine {
+        self.unasked_in(&self.repo)
+    }
+
+    /// [`World::unasked`] for a command run in `cwd`.
+    pub fn unasked_in(&self, cwd: &Path) -> Machine {
+        let mut env = self.env.clone();
+        env.cwd = cwd.to_path_buf();
+        env.vars
+            .insert(symphony_board::confine::MARKER.into(), "1".into());
+        Machine {
+            bounds: Bounds::of(&env, &self.repo, &self.wt),
+            ..self.machine()
+        }
+    }
+
+    /// What a launch or a restore run unasked in the repository says of a folder it will not start
+    /// an agent in: `place` names it (`--worktree X is`, `… leads to Y, which is`).
+    pub fn outside(&self, place: &str) -> String {
+        format!(
+            "{place} not a folder a recipe an agent runs unasked starts an agent in: only the \
+             checkout at {}, none of its git folders, or a folder under the project's worktree \
+             base {}; the binary run by itself starts one anywhere",
+            self.repo.display(),
+            self.wt.display()
+        )
     }
 
     pub fn ask(&self, slug: &str) -> Ask {

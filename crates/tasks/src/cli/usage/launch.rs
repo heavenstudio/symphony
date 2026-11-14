@@ -42,10 +42,13 @@ options:
   --detached            a worktree on no branch, for read-only work (a
                         reviewer's and an instruction's are)
   --worktree WORKTREE   use this worktree instead of making one under
-                        <repo>-wt/
+                        <repo>-wt/ (or SYMPHONY_WT_DIR); through just tasks,
+                        one in the checkout or under that folder
   --tab TAB             the Herdr app tab (stream) for its terminal; default
                         code for an executor, review for a reviewer
-  --prompt PROMPT       text sent after /work SLUG HANDLE (or /review-task)
+  --prompt PROMPT       text sent after /work SLUG HANDLE (or /review-task);
+                        refused through just tasks: say it on the task's
+                        thread
 "#;
 
 /// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the

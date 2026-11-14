@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 use symphony_api::{Board, Change, Delta, Front};
+#[path = "wire/board_fields.rs"]
+mod board_fields;
 #[path = "wire/cache_format.rs"]
 mod cache_format;
 #[path = "wire/fixture.rs"]

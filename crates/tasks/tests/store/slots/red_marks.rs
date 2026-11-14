@@ -1,7 +1,7 @@
 //! A red's mark against writes that read the board before it changed: an owner's cancel that read
 //! no task, never closing a red filed after it; and a red's mark lifted by its filer, a red left
-//! open as ordinary work, which counts it and the work under it from then, never refused, a start
-//! that read it marked decided again.
+//! open as ordinary work, which counts it and the work under it from then as such work counts (in
+//! review, none), never refused, a start that read it marked decided again.
 
 use super::moves::{RED, UNDER, WAIT, beside_a_red};
 use super::{EIGHT, F, K, O, W, capped, red, reserve_hint, sessions, with};
@@ -72,9 +72,12 @@ fn an_owners_cancel_that_read_no_task_is_refused_there_never_closing_a_red_filed
 
 #[test]
 fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_and_once() {
-    // O at the cap of eight beside the red in review, with work in progress under it.
+    // O at the cap of eight beside the red, back in progress on its reviewer's changes, with work in
+    // progress under it.
     let f = beside_a_red(8, true);
     let store = capped(&f, 8);
+    let back = store.verdict(RED, "lark", "changes", "not yet").unwrap();
+    assert!(back.red() && back.status == "in_progress", "{back:?}");
     assert_eq!(
         refused(store.unmark_red(RED, O)),
         format!(
@@ -85,12 +88,14 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
     assert!(kept.red(), "{kept:?}");
     // Its filer lifts the mark past the cap, never refused: the red and the work under it count.
     let lifted = store.unmark_red(RED, F).unwrap();
-    assert!(!lifted.red() && lifted.status == "review", "{lifted:?}");
+    assert!(
+        !lifted.red() && lifted.status == "in_progress",
+        "{lifted:?}"
+    );
     let said = refused(store.claim("work/next", K));
     assert!(
         said.starts_with("work/next cannot start: olive-orch holds 9 open tasks")
-            && said.contains("fix/under (in_progress)")
-            && said.contains("tests/main-red-race (review)")
+            && said.contains("tests/main-red-race (in_progress) with fix/under (in_progress)")
             && !said.contains("not counted"),
         "{said}"
     );
@@ -110,8 +115,10 @@ fn a_red_whose_mark_its_filer_lifts_counts_with_the_work_under_it_never_refused_
 
 #[test]
 fn a_start_that_read_a_red_marked_before_its_mark_was_lifted_is_decided_again_counted() {
-    // O holds seven beside the red in review, which takes no slot: a claim reads seven, then waits.
+    // O holds seven beside the red, back in progress on its reviewer's changes, which takes no slot:
+    // a claim reads seven, then waits.
     let f = beside_a_red(7, false);
+    f.store.verdict(RED, "lark", "changes", "not yet").unwrap();
     let (read, claim_read) = mpsc::channel();
     let (go, claim_go) = mpsc::channel();
     let claim_go = Mutex::new(claim_go);
@@ -129,7 +136,7 @@ fn a_start_that_read_a_red_marked_before_its_mark_was_lifted_is_decided_again_co
     let said = refused(claim.join().unwrap());
     assert!(
         said.starts_with("work/next cannot start: olive-orch holds 8 open tasks")
-            && said.contains("tests/main-red-race (review)"),
+            && said.contains("tests/main-red-race (in_progress)"),
         "{said}"
     );
     assert_eq!(f.store.get("work/next").unwrap().status, "ready");
