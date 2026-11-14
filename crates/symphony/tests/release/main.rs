@@ -16,6 +16,7 @@ mod cadence;
 mod candidate;
 mod consumers;
 mod places;
+mod publish;
 mod recorder;
 mod reds;
 mod refresh;
