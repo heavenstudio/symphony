@@ -335,7 +335,15 @@ never the whole target, which the release run runs.
   105,004) and `/reports` 107,236 (from 106,470); the Dioxus kinds, the documents' code gone from
   the shared sources, take `/tasks` to 280,543 (from 280,812) and `/agents` and a task page to
   545,491 and 546,084 (from 547,991 and 548,584), and the warmed chat and menus 602,819 outside
-  home's (from 604,967). Each
+  home's (from 604,967). The task board's move to the React client
+  (`app/client-moves-to-react/task-board`, against main's build at a220cce) takes `/tasks` to
+  116,215 bytes (from 280,541) and its cap to 150,000: its entry (12,779 on the wire), the chunk
+  the five web kinds share (76,342), the board's feed and keep it shares with home, the queue and
+  the documents (3,532, 135 more than main's) and the select field it shares with the documents
+  (`select.tsx`, 1,249), where the board's WASM and glue were. Home takes 111,528 (from 111,400),
+  `/queue` 106,971 (from 106,825) and `/reports` 107,258 (from 107,235); `/docs/` and a document
+  take 136,580 and 138,197 (from 135,756 and 137,373), their entry 558 less with the select field
+  a chunk of its own; every other page stays within 150 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
