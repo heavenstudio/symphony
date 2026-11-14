@@ -8,6 +8,9 @@ const USAGE: &str = "usage: just agent-send [--database NAME] HANDLE TEXT [--as 
 
 /// Send to a native channel, naming the sender and providing the same command back.
 pub fn main(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if symphony_args::version(args, "agent-send", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
     let mut env = env.clone();
     let mut positional = Vec::new();
     let mut actor = None;

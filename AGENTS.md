@@ -82,12 +82,28 @@ planner, test selection, certificate or shared slot pool. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
 slot wrapper and gates, which compile and test its own consumers.
 
-`tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
-relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
-that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
-is never recorded. A board
+`tools/rs-bin.sh NAME` runs a declared workspace binary as `rs-bin/NAME` in the target
+folder, a hard link to Cargo's copy renewed only when Cargo relinked, so a no-op build
+costs no new executable's first run. A run asks Cargo to build first unless nothing
+Cargo would read changed since the last build the launcher asked it for began, as a
+stamp beside the link says (`rs-bin/.NAME.fresh`, holding the second that build began
+and the identity of the build it vouches for, so one linked in its place since asks too):
+each file Cargo's own `debug/NAME.d` names, everything under a folder it names (one a
+build script watches) and the manifest above each; the workspace's manifest and lock,
+the launcher and `tools/cargo.sh`; every Cargo configuration and toolchain pin from the
+root up and in Cargo's and rustup's homes; and the variables Cargo, rustc and rustup
+read, those the target's build scripts declared and those its sources read as rustc
+recorded them (`# env-dep:` in each unit's dep-info). A file counts as changed when its
+status changed (its ctime, which a write, a move, a copy keeping times or a touch sets
+to now) in that second or after, so the stamp's own file times count for nothing; an
+account it cannot read or a stamp from the future asks Cargo. It does not see a
+variable whose name bash cannot read (a target triple's hyphens; the underscore twin a
+build script declares with it is seen) or a toolchain a channel pin names updated in
+place (this workspace pins a version), and a clock set back past the stamp's second
+fools it as it fools Cargo.
+`--build NAME` builds and prints that path, `--where NAME` names Cargo's own copy
+without building or attesting freshness, and `--link NAME` builds and points
+`.target/bin/NAME` at it; no build of the launcher's is recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
 moves its live schema forward only for a build of the schema source the main checkout
@@ -327,7 +343,8 @@ project's own `tasks` or `symphony-*` recipe, which the allow rule still passes,
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
-left (`Next:`): the project file, its document folders, the justfile's import, the links
+left (`Next:`): the project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by
+its address in this repository, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
 beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
 rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
