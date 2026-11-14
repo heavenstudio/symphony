@@ -7,6 +7,9 @@ const KINDS = ["queue"];
 export default defineConfig({
   // No dev server and no public folder: the server serves the files package.sh publishes.
   publicDir: false,
+  // No `.env` file is read, so none can change the bytes (its NODE_ENV would make React's
+  // development build). The build's own NODE_ENV is production, set by its script (package.json).
+  envDir: false,
   build: {
     // The browsers the Dioxus kinds already ask for (wasm, ES modules, top-level await).
     target: "es2023",

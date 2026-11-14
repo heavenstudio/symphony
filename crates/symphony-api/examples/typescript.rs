@@ -10,7 +10,8 @@
 //!
 //! `just client-wire` writes both files from it (apps/symphony-web/wire.sh), and `just client-lint`
 //! fails when a committed file is not what it prints. Every type a declared type names is declared
-//! too, or this refuses.
+//! too, or this refuses. The cases hold the source of each function the client carries
+//! ([`CARRIED`]), so a change to one fails that check even where no case's input shows it.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -41,7 +42,13 @@ fn declared<T: TS + 'static>(cfg: &Config) -> Declared {
 fn main() {
     let printed = match std::env::args().nth(1).as_deref() {
         None => write!(std::io::stdout().lock(), "{}", types()),
-        Some("cases") => writeln!(std::io::stdout().lock(), "{}", cases()),
+        Some("cases") => match cases() {
+            Ok(cases) => writeln!(std::io::stdout().lock(), "{cases}"),
+            Err(why) => {
+                let _ = writeln!(std::io::stderr(), "typescript: {why}");
+                std::process::exit(1);
+            }
+        },
         Some(other) => {
             let _ = writeln!(
                 std::io::stderr(),
@@ -163,8 +170,9 @@ fn views() -> Vec<api::ProjectView> {
     ]
 }
 
-/// apps/symphony-web/src/wire.cases.json, before Biome formats it.
-fn cases() -> Value {
+/// apps/symphony-web/src/wire.cases.json, before Biome formats it; why not, when a function
+/// [`CARRIED`] names is not found whole.
+fn cases() -> Result<Value, String> {
     let categories: Vec<Value> = [
         "docs/ROOT.md",
         "docs/lamps/a.md",
@@ -178,11 +186,129 @@ fn cases() -> Value {
     .iter()
     .map(|path| json!([path, api::queue_category(path)]))
     .collect();
+    let html: Vec<Value> = [
+        "a.html",
+        "A.HTML",
+        "a.Htm",
+        "docs/a.htm",
+        "a.md",
+        "html",
+        ".html",
+        "docs/.htm",
+        "a.html/",
+        "a.html.md",
+        "a.xhtml",
+        "a.html5",
+    ]
+    .iter()
+    .map(|name| json!([name, api::is_html(name)]))
+    .collect();
     let mut cases = bases();
     cases["views"] = routes();
     cases["queueCategory"] = categories.into();
+    cases["isHtml"] = html.into();
     cases["samples"] = samples();
-    cases
+    cases["carried"] = carried()?;
+    Ok(cases)
+}
+
+/// The Rust the web client carries in TypeScript, each function by its file, its name and the
+/// TypeScript that carries it. Their source goes into the cases whole ([`carried`]), so a change to
+/// one, which the cases' inputs may not show, fails `just client-lint` until the cases are written
+/// again: the change is then ported, with cases that show it.
+const CARRIED: &[(&str, &str, &str)] = &[
+    ("project.rs", "here", "here, src/project.ts"),
+    ("project.rs", "strip", "strip, src/project.ts"),
+    ("project.rs", "entrypoints", "entrypoints, src/project.ts"),
+    (
+        "project.rs",
+        "is_document_route",
+        "isDocumentRoute, src/project.ts",
+    ),
+    (
+        "project.rs",
+        "is_folder_route",
+        "isFolderRoute, src/project.ts",
+    ),
+    (
+        "project.rs",
+        "documents_href",
+        "documentsHref, src/project.ts",
+    ),
+    ("project.rs", "readme_route", "readmeRoute, src/project.ts"),
+    ("project.rs", "own_pages", "ownPages, src/project.ts"),
+    ("project.rs", "is_page", "isPage, src/project.ts"),
+    ("project.rs", "is_html", "isHtml, src/project.ts"),
+    ("project.rs", "extension", "extension, src/project.ts"),
+    (
+        "project.rs",
+        "html_extension",
+        "htmlExtension, src/project.ts",
+    ),
+    ("project.rs", "within", "within, src/project.ts"),
+    ("lib.rs", "queue_category", "queueCategory, src/queue.tsx"),
+];
+
+/// Each of [`CARRIED`]: its name, the TypeScript that carries it, and its source, line by line.
+fn carried() -> Result<Value, String> {
+    CARRIED
+        .iter()
+        .map(|(file, name, ts)| {
+            let text = match *file {
+                "project.rs" => include_str!("../src/project.rs"),
+                _ => include_str!("../src/lib.rs"),
+            };
+            Ok(json!({
+                "rust": format!("crates/symphony-api/src/{file} {name}"),
+                "typescript": ts,
+                "source": source(text, name)?.lines().collect::<Vec<_>>(),
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(Value::from)
+}
+
+/// The function `name` in `text`, from its line to its closing brace. The braces are counted
+/// outside string literals; a function named twice, or found nowhere, stops the example.
+fn source<'a>(text: &'a str, name: &str) -> Result<&'a str, String> {
+    let found: Vec<usize> = ["(", "<"]
+        .iter()
+        .flat_map(|after| {
+            let signature = format!("fn {name}{after}");
+            text.match_indices(&signature)
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let [start] = found[..] else {
+        return Err(format!(
+            "crates/symphony-api holds `fn {name}` {} times: CARRIED names one",
+            found.len()
+        ));
+    };
+    let before = text.get(..start).unwrap_or_default();
+    let line = before.rfind('\n').map_or(0, |at| at + 1);
+    let (mut depth, mut quoted, mut escaped) = (0_usize, false, false);
+    for (at, ch) in text.get(start..).unwrap_or_default().char_indices() {
+        match ch {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '{' if !quoted => depth += 1,
+            '}' if !quoted => {
+                depth -= 1;
+                if depth == 0 {
+                    return text
+                        .get(line..=start + at)
+                        .ok_or_else(|| format!("`fn {name}` is not whole text"));
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(format!(
+        "`fn {name}` has no closing brace this reader finds"
+    ))
 }
 
 /// `here` and `strip` under no base and one, each for a set of paths.
@@ -241,6 +367,17 @@ fn routes() -> Value {
         "docs/a/",
         "docs/a",
         "docs/x.png",
+        "docs/page.html",
+        "docs/A.HTM",
+        "docs/a/b.Htm",
+        "docs/.html",
+        "docs/page.html/",
+        "docs/a.html.md",
+        "docs/a.xhtml",
+        "docs/html",
+        "design/c.html",
+        "readout.html",
+        "tasks/a.html",
         "docs/guide.md/",
         "design/",
         "design/B.md",

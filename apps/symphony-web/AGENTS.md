@@ -15,16 +15,20 @@ a fix on a Dioxus page for a bug that loses data or blocks use, which is made wh
 ## The tools
 
 Each is pinned, and each is the smallest set that does its job; a dependency added is argued on
-its task's thread first.
+its task's thread first. The pins are the latest stable releases (no beta, rc, canary or nightly)
+of Node, npm and every package, moved together, the lockfile written again, in a task of their own.
 
 - **Node and npm.** `.node-version` pins Node, which `tools/node.sh` runs as rustup runs the
   pinned Rust: the `node` on PATH when it is that version, else fnm's copy (installed once), else
-  it refuses, naming the version. npm is the one that Node ships, held to its version by
-  `package.json`'s `engines` under `.npmrc`'s `engine-strict`. `npm.sh ARGS` runs npm here on
-  that Node after `npm ci` from the committed `package-lock.json` whenever `node_modules` was not
-  installed from those very bytes, offline after the first fetch (`--prefer-offline`), two runs in
-  one checkout taking turns (`tools/check_lock.sh`). `.npmrc` saves exact versions and asks no
-  outside service anything but the registry.
+  it refuses, naming the version. npm is the version `package.json`'s `engines` pins, which
+  `.npmrc`'s `engine-strict` holds every run to: the one that Node ships when it is that one, else
+  that version fetched once by Node's own (`npm pack`, checked against the registry's integrity)
+  into `.npm/VERSION`, and run from there. `npm.sh ARGS` runs npm here on that Node after `npm ci`
+  from the committed `package-lock.json` whenever `node_modules` was not installed from those very
+  bytes, offline after the first fetch (`--prefer-offline`), two runs in one checkout taking turns
+  (`tools/check_lock.sh`). `.npmrc` saves exact versions and asks no outside service anything but
+  the registry. An install runs no package's install script: npm runs none it is not told to
+  allow, and none is (`fsevents`, Vite's watcher on macOS, ships its binary built).
 - **React 19** (`react`, `react-dom`), the only run-time dependencies.
 - **TypeScript**, strict (`tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit`. It emits
@@ -52,8 +56,16 @@ that crate's `typescript` example prints them through ts-rs (the derives sit beh
 edited by hand: `just client-wire` writes it, and `just client-lint` fails when the committed file
 is not what the Rust types print. `src/wire.cases.json` comes from the same example: what the
 crate's functions the client carries in TypeScript answer for a set of inputs (`here`, `strip`,
-the routes of a project's view, a card's topic), with a sample of each read the client checks
-at run time, so the unit tests hold the TypeScript to the Rust.
+the routes of a project's view, an HTML page's name, a card's topic), with a sample of each read
+the client checks at run time, so the unit tests hold the TypeScript to the Rust. The cases only
+check the inputs they list, so the file holds the source of each function the client carries as
+well (`carried`, from the example's `CARRIED`, each naming the TypeScript that carries it): a
+change to one fails `just client-lint` even where no case's input shows it. The change is then
+ported to that TypeScript, with cases that show it, before `just client-wire` writes the file
+again; a function the client comes to carry is added to `CARRIED` with its cases. What this cannot
+see is a port left undone by a `just client-wire` run alone (the review reads the file's diff), a
+change outside the functions named (a helper they call that is not listed), and an input no case
+lists on which the two disagree.
 
 A read is checked where it arrives (`readQueue`, `readPageBoard`): a guard checks the fields
 the page draws, each of its type, and nothing else, so a field a newer server adds, or one it
@@ -83,16 +95,27 @@ build's own folder), beside the Dioxus kinds, and `package.sh` puts both in one 
 copies Vite's assets into the stage, so one `builds.json` names every file of the build, and adds
 each kind to the shell's manifest from Vite's (`.vite/manifest.json`): its script and its styles,
 the shared sheet first and then the CSS its entry imports, and no wasm. It refuses a kind both
-clients build, and a build with no web kinds. Files are named `NAME-HASH16.EXT` with a hex hash, as
-the server caches such a name for good. No path or clock enters the bytes: the build is the same
-from any checkout, so it builds from the checkout, not from the release snapshot the Dioxus build
-uses, and `tools/client-key.sh` adds this package's hash (every file git lists here but its
-guides) to the snapshot's name, so the regenerator rebuilds the distribution when either changes.
-The server embeds the files as it embeds the rest, and needs no Node to run.
+clients build, and a build whose web kind left no Vite manifest. Files are named `NAME-HASH16.EXT`
+with a hex hash, as the server caches such a name for good. No path, clock or environment enters
+the bytes: the build script sets `NODE_ENV=production` (a shell's `development` would build
+React's development code) and Vite reads no `.env` file (`envDir: false`), which
+`tests/wasm_build.rs` holds, so the build is the same from any checkout and shell. It builds from
+the checkout, not from the release snapshot the Dioxus build uses, and `tools/client-key.sh` adds
+this package's hash (every file git lists here but its guides) to the snapshot's name, so the
+regenerator rebuilds the distribution when either changes. The server embeds the files as it
+embeds the rest, and needs no Node to run.
 
 The shell imports a kind of this client with `import()` in place of the Dioxus glue's init: its
 entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it before it settles,
-and `stop`, which unmounts it, its feed and reads with it. A move between a kind of this client
+and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it.
+
+**Work that outlives its start.** Async work a page starts checks, after each wait and before it
+touches the page, the window, the storage or the address, a signal that ends with what started
+it: an effect's own (its cleanup aborts it), or, for a handler or a read with no cleanup of its own
+(a click's post, the frame's activity read), the kind's mount (`useMount()`, `src/mount.ts`, which
+`stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
+moves no one, and a late read writes nothing over the next kind's. A Dioxus page had this from
+its framework, a spawned task dying with its component; here each such wait says it. A move between a kind of this client
 and a Dioxus kind stops one and runs the other as between two Dioxus kinds; a move within a kind
 is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
 and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay

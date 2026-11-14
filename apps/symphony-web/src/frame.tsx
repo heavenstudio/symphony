@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
+import { useMount } from "./mount";
 import { crumbs, headerLinks, href, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
@@ -108,11 +109,57 @@ const FRAME_EVENTS = [
   "review:appearance",
 ] as const;
 
+/**
+ * Reads the activity and the pending, and leaves them on the window for the panel, saying
+ * `review:frame`, unless `current` says, once they answer, that a newer read or the page's end
+ * replaced this one: then nothing is written. Whether to read again (`MetadataReads`).
+ */
+export async function readMetadata(reads: MetadataReads, current: () => boolean): Promise<boolean> {
+  const started = reads.start();
+  const [activity, pending] = await Promise.allSettled([
+    getJson("/api/activity"),
+    getJson("/api/pending"),
+  ]);
+  if (!current()) return false;
+  const retry = reads.finished(
+    started,
+    activity.status === "fulfilled" && pending.status === "fulfilled",
+  );
+  if (activity.status === "fulfilled" && pending.status === "fulfilled") {
+    const previous = snapshot("reviewKnownIds");
+    const ids = list(field(activity.value, "items")).map((item) => field(item, "id"));
+    const added = Array.isArray(previous) && ids.some((id) => !previous.includes(id));
+    if (!Array.isArray(seenIds())) save("docs-review-seen", JSON.stringify(ids));
+    const listed = (value: unknown) => (Array.isArray(value) ? value : null);
+    if (
+      !keepsPanelBaseline(
+        listed(snapshot("reviewPreviousIds")),
+        listed(previous),
+        snapshot("reviewPanelReady") === true,
+      )
+    ) {
+      remember("reviewPreviousIds", previous);
+    }
+    remember("reviewKnownIds", ids);
+    remember("reviewActivitySnapshot", activity.value);
+    remember("reviewPendingSnapshot", pending.value);
+    remember("reviewFrameError", null);
+    publish("review:frame");
+    if (added) publish("review:activity-arrived");
+  } else {
+    const failure = activity.status === "rejected" ? activity : pending;
+    remember("reviewFrameError", said((failure as PromiseRejectedResult).reason));
+    publish("review:frame");
+  }
+  return retry;
+}
+
 /** The activity and pending reads, and what they leave on the window for the panel. */
 function useMetadata(): FrameRefresh {
   const [asked, setAsked] = useState(0);
   const reads = useRef(new MetadataReads());
   const generation = useRef(0);
+  const mount = useMount();
   const [frame] = useState<FrameRefresh>(() => {
     const refresh = () => setAsked((count) => count + 1);
     return {
@@ -139,42 +186,11 @@ function useMetadata(): FrameRefresh {
     void asked;
     generation.current += 1;
     const ticket = generation.current;
-    const started = reads.current.start();
-    void Promise.allSettled([getJson("/api/activity"), getJson("/api/pending")]).then(
-      ([activity, pending]) => {
-        if (ticket !== generation.current) return;
-        const ok = activity.status === "fulfilled" && pending.status === "fulfilled";
-        const retry = reads.current.finished(started, ok);
-        if (activity.status === "fulfilled" && pending.status === "fulfilled") {
-          const previous = snapshot("reviewKnownIds");
-          const ids = list(field(activity.value, "items")).map((item) => field(item, "id"));
-          const added = Array.isArray(previous) && ids.some((id) => !previous.includes(id));
-          if (!Array.isArray(seenIds())) save("docs-review-seen", JSON.stringify(ids));
-          const listed = (value: unknown) => (Array.isArray(value) ? value : null);
-          if (
-            !keepsPanelBaseline(
-              listed(snapshot("reviewPreviousIds")),
-              listed(previous),
-              snapshot("reviewPanelReady") === true,
-            )
-          ) {
-            remember("reviewPreviousIds", previous);
-          }
-          remember("reviewKnownIds", ids);
-          remember("reviewActivitySnapshot", activity.value);
-          remember("reviewPendingSnapshot", pending.value);
-          remember("reviewFrameError", null);
-          publish("review:frame");
-          if (added) publish("review:activity-arrived");
-        } else {
-          const failure = activity.status === "rejected" ? activity : pending;
-          remember("reviewFrameError", said((failure as PromiseRejectedResult).reason));
-          publish("review:frame");
-        }
-        if (retry) frame.refresh();
-      },
-    );
-  }, [asked, frame]);
+    const current = () => ticket === generation.current && !mount.aborted;
+    void readMetadata(reads.current, current).then((retry) => {
+      if (retry) frame.refresh();
+    });
+  }, [asked, frame, mount]);
   return frame;
 }
 

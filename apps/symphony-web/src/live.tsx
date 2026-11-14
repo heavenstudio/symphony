@@ -82,6 +82,16 @@ export function reloadIfRedeployed(served: string): void {
   if (reloadFor(own, served, loadForTab(key)) && saveForTab(key, served)) location.reload();
 }
 
+/** A feed event's `client` changes, each naming the build the server serves now: load it. */
+export function followClient(delta: unknown): void {
+  for (const change of list(field(delta, "changes"))) {
+    const build = field(field(change, "data"), "build");
+    if (field(change, "region") === "client" && typeof build === "string") {
+      reloadIfRedeployed(build);
+    }
+  }
+}
+
 /** A reload the reader's work held back, once they are done with it. */
 export function flushReload(): void {
   if (!engaged() && deferredBuild !== null) {
@@ -162,12 +172,7 @@ async function follow(
       views.frame.heard(said.value);
       views.heard(said.value);
       if (shown) shown.version = version;
-      for (const change of list(field(said.value, "changes"))) {
-        const build = field(field(change, "data"), "build");
-        if (field(change, "region") === "client" && typeof build === "string") {
-          reloadIfRedeployed(build);
-        }
-      }
+      followClient(said.value);
     }
   } finally {
     close();

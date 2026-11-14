@@ -4,7 +4,8 @@
 //
 // What crates/symphony-api's `ProjectView` answers (`here`, `strip`, the document routes, its own
 // pages) is carried here in TypeScript, and held to the Rust by the cases it writes
-// (wire.cases.json, project.test.ts).
+// (wire.cases.json, project.test.ts). That file holds the Rust it carries too, so a change there
+// fails `just client-lint` until it is ported here, with its cases.
 
 import {
   type NavItem,
@@ -46,17 +47,37 @@ function within(route: string, path: string): boolean {
   return route === "" || path === route || path.startsWith(`${route}/`);
 }
 
-/** Whether `path`'s last part names a Markdown file, as Rust's `Path::extension` reads it. */
-function isMarkdown(path: string): boolean {
-  const name = path.split("/").pop() ?? "";
-  const dot = name.lastIndexOf(".");
-  return name !== ".." && dot > 0 && name.slice(dot + 1) === "md";
+/**
+ * What follows the last dot of the last part of `name`, a route or a file name: none when that part
+ * holds no dot, or only the one it starts with (`.html` names no page).
+ */
+function extension(name: string): string | null {
+  const last = name.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  return dot > 0 ? last.slice(dot + 1) : null;
+}
+
+/** `html` or `htm`, in any case of its ASCII letters. */
+function htmlExtension(extension: string): boolean {
+  return /^html?$/i.test(extension);
+}
+
+/** Whether `name`, a route or a file name, names a document: Markdown (`.md`, its case kept) or HTML. */
+function isPage(name: string): boolean {
+  const found = extension(name);
+  return found !== null && (found === "md" || htmlExtension(found));
+}
+
+/** Whether `name`, a route or a file name, names an HTML page: `.html` or `.htm`, in any case. */
+export function isHtml(name: string): boolean {
+  const found = extension(name);
+  return found !== null && htmlExtension(found);
 }
 
 /**
  * Whether `path` (a route, no leading slash) is a document or folder page of an entrypoint: under
  * one, on no route the Symphony or a plugin's page answers, and a folder (a trailing slash, an
- * entrypoint's own route) or a name with no dot or a Markdown one.
+ * entrypoint's own route) or a name with no dot, a Markdown one or an HTML one.
  */
 export function isDocumentRoute(view: ProjectView, path: string): boolean {
   const page = path.replace(/\/+$/, "");
@@ -66,16 +87,19 @@ export function isDocumentRoute(view: ProjectView, path: string): boolean {
   return (
     ![...SYMPHONY_ROUTES, ...pages].some((route) => within(route, page)) &&
     urls.some((url) => within(url, page)) &&
-    (path.endsWith("/") || urls.includes(page) || !name.includes(".") || isMarkdown(name))
+    (path.endsWith("/") || urls.includes(page) || !name.includes(".") || isPage(name))
   );
 }
 
-/** Whether `path` is a document route naming a folder page rather than a document. */
+/**
+ * Whether `path` is a document route naming a folder page rather than a document: a trailing
+ * slash, an entrypoint's own route, or a name that is neither Markdown nor HTML.
+ */
 export function isFolderRoute(view: ProjectView, path: string): boolean {
   const page = path.replace(/\/+$/, "");
   return (
     isDocumentRoute(view, path) &&
-    (path.endsWith("/") || entrypoints(view).includes(page) || !isMarkdown(page))
+    (path.endsWith("/") || entrypoints(view).includes(page) || !isPage(page))
   );
 }
 

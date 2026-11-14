@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # [--check]: the web client's wire types (src/wire.ts) and the cases its unit tests hold its
-# TypeScript to (src/wire.cases.json), as crates/symphony-api's `typescript` example prints them and
-# Biome formats them: written over the committed files (`just client-wire`), or, with --check,
-# compared with them, failing on the first that differs (`just client-lint`).
+# TypeScript to (src/wire.cases.json, with the source of each Rust function it carries), as
+# crates/symphony-api's `typescript` example prints them and Biome formats them: written over the
+# committed files (`just client-wire`), or, with --check, compared with them, failing on the first
+# that differs (`just client-lint`).
 set -euo pipefail
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 root="$(cd -P "$here/../.." && pwd -P)"
@@ -28,6 +29,9 @@ for pair in "wire.ts:" "wire.cases.json:cases"; do
         cp "$fresh/$file" "$here/src/$file"
     elif ! cmp -s "$fresh/$file" "$here/src/$file"; then
         printf 'client-lint: apps/symphony-web/src/%s is not what crates/symphony-api writes: run just client-wire\n' "$file" >&2
+        if [ "$file" = wire.cases.json ]; then
+            printf 'client-lint: where `carried` differs, a Rust function the TypeScript carries changed: port it (its `typescript` says where) and add cases that show the change to crates/symphony-api/examples/typescript.rs first\n' >&2
+        fi
         diff -u "$here/src/$file" "$fresh/$file" | head -40 >&2 || true
         exit 1
     fi

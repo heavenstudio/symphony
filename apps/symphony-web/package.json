@@ -6,10 +6,10 @@
   "description": "The Symphony's web client: React and TypeScript, built by Vite into the distribution the server embeds.",
   "engines": {
     "node": "26.13.1",
-    "npm": "11.20.0"
+    "npm": "12.2.2"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "NODE_ENV=production vite build",
     "lint": "biome ci --error-on-warnings . && tsc --noEmit",
     "test": "vitest run --coverage"
   },

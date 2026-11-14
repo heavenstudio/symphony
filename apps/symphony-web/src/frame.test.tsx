@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Frame, openActivity } from "./frame";
+import { Frame, openActivity, readMetadata } from "./frame";
+import { MetadataReads } from "./state";
 import { memoryStorage } from "./testing";
 
 /** The window the frame shares with the shell and the panel: its values, events and storage. */
@@ -86,6 +87,56 @@ describe("the frame", () => {
     expect(markup).not.toContain("Unread activity");
     expect(markup).not.toContain("pending-nav");
     expect(window.reviewPanelReady).toBe(true);
+  });
+});
+
+describe("the frame's reads", () => {
+  /** The server, holding each read until the test answers it by its path. */
+  const server = () => {
+    const held = new Map<string, (response: Response) => void>();
+    vi.stubGlobal("document", { getElementById: () => null });
+    vi.stubGlobal(
+      "fetch",
+      (url: string) => new Promise<Response>((answer) => held.set(url, answer)),
+    );
+    const answer = async (activity: unknown, pending: unknown) => {
+      for (let turn = 0; turn < 50 && held.size < 2; turn += 1) {
+        await new Promise((done) => setTimeout(done, 0));
+      }
+      held.get("/api/activity")?.(new Response(JSON.stringify(activity)));
+      held.get("/api/pending")?.(new Response(JSON.stringify(pending)));
+    };
+    return answer;
+  };
+
+  it("leave the activity and the pending on the window for the panel, saying so", async () => {
+    const window = page();
+    const answer = server();
+    const said: string[] = [];
+    window.addEventListener("review:frame", () => said.push("review:frame"));
+    const read = readMetadata(new MetadataReads(), () => true);
+    await answer({ items: [{ id: "a" }] }, { items: [] });
+    expect(await read).toBe(false);
+    expect(window.reviewActivitySnapshot).toEqual({ items: [{ id: "a" }] });
+    expect(window.reviewPendingSnapshot).toEqual({ items: [] });
+    expect(window.reviewKnownIds).toEqual(["a"]);
+    expect(said).toEqual(["review:frame"]);
+  });
+
+  it("answering after the page is gone write nothing over the next page's", async () => {
+    const window = page({ reviewActivitySnapshot: "the next page's" });
+    const answer = server();
+    const said: string[] = [];
+    window.addEventListener("review:frame", () => said.push("review:frame"));
+    const mount = new AbortController();
+    const read = readMetadata(new MetadataReads(), () => !mount.signal.aborted);
+    // The shell stops the kind before the reads answer.
+    mount.abort();
+    await answer({ items: [{ id: "late" }] }, { items: [{}] });
+    expect(await read).toBe(false);
+    expect(window.reviewActivitySnapshot).toBe("the next page's");
+    expect(window.reviewPendingSnapshot).toBeUndefined();
+    expect(said).toEqual([]);
   });
 });
 

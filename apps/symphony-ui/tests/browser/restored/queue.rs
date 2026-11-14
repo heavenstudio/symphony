@@ -137,6 +137,73 @@ fn moves_between_home_and_the_queue_draw_each_page_and_keep_the_feed_both_ways()
     );
 }
 
+/// The feed's `client` event naming another build than the page's loads the queue again, once per
+/// build: the page loaded again (still the old build here, as this stand-in serves the same files)
+/// hears the same event again and stays, following the feed.
+#[test]
+fn the_feeds_client_event_naming_another_build_loads_the_queue_again_once() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let mut queue = queue_fixture();
+    site.set_json("/api/queue", &queue);
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/queue"));
+    let drawn = "document.querySelector('[data-ready=queue] #you h2') !== null";
+    assert!(browser.wait_for(drawn, SHOWN), "the queue never drew");
+    follows_alone(&site, 0).expect("the queue never followed the feed");
+    browser.eval("window.firstPage = true");
+    let loads = |site: &Site| {
+        site.requests()
+            .iter()
+            .filter(|path| *path == "/queue")
+            .count()
+    };
+    assert_eq!(loads(&site), 1);
+    let client = |version: u64| {
+        json!({"version":version,"changes":[{"region":"client","data":{"build":"/assets/symphony-shell-0000000000000000.js"}}]})
+            .to_string()
+    };
+    let before = site.feed_requests();
+    site.push(4183, &client(4183));
+    if let Err(stall) = test_time::until_true(
+        "the queue loaded again for the build the feed named",
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || loads(&site) >= 2,
+    ) {
+        panic!("{stall}: {:?}", site.requests());
+    }
+    assert!(
+        browser.wait_for(drawn, SHOWN),
+        "the queue loaded again never drew"
+    );
+    follows_alone(&site, before).expect("the queue loaded again never followed the feed");
+    assert_eq!(
+        browser.eval("window.firstPage === undefined"),
+        json!(true),
+        "the page shown is a new one"
+    );
+    // The same build named again loads nothing: the page then hears the queue's next change.
+    browser.eval("window.secondPage = true");
+    site.push(4184, &client(4184));
+    queue["waiting"] = json!([]);
+    site.set_json("/api/queue", &queue);
+    site.push(
+        4185,
+        &json!({"version":4185,"changes":[{"region":"queue-item","data":{"key":"fixture","removed":true}}]}).to_string(),
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#you h2')?.textContent === 'Waiting on you (0)'",
+            SHOWN
+        ),
+        "the page loaded again stopped following the feed"
+    );
+    assert_eq!(
+        (loads(&site), browser.eval("window.secondPage === true")),
+        (2, json!(true)),
+        "the queue loaded again for a build it had loaded for already"
+    );
+}
+
 #[test]
 fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position() {
     let site = Site::start(dist(), &common::fixture("board.json"));

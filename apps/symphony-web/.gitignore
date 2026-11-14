@@ -1,4 +1,6 @@
 /node_modules/
+# The npm the package pins, when it is not the one its Node ships (tools/node.sh).
+/.npm/
 # The install's lock (npm.sh), and what a build and a coverage run write here.
 /.install/
 /dist/

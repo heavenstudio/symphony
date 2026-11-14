@@ -18,7 +18,10 @@ export const CASES = cases as unknown as {
   strip: [string, string, string][];
   views: ViewCase[];
   queueCategory: [string, string][];
+  isHtml: [string, boolean][];
   samples: { queue: unknown; emptyQueue: unknown; board: unknown };
+  /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
+  carried: { rust: string; typescript: string; source: string[] }[];
 };
 
 /** A `Storage` held in memory; `refuse` makes each of its calls throw, as a private window's may. */

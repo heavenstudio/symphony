@@ -98,7 +98,7 @@
   margin: 0 12px 8px;
   font-size: var(--fs-sm);
 }
-/* The queue's ghost (queue::GhostQueue): each group's card, its heading and its rows. */
+/* The queue's ghost (GhostQueue in queue.tsx): each group's card, its heading and its rows. */
 .queue-page .ghost-group {
   padding: 6px 8px 8px;
 }

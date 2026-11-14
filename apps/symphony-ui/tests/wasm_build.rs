@@ -6,6 +6,7 @@
 //! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
 //! and wasm-bindgen. Real seven-module compilation and browser acceptance are separate checks.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -974,4 +975,68 @@ fn a_lint_in_a_trees_own_build_folder_leaves_the_trees_status_as_it_was() {
     succeeded(&done, "cargo symphony-ui clippy");
     assert_eq!(status(), before, "the lint changed the tree it ran in");
     assert!(record_in(&tree.join(".target")).is_file());
+}
+
+/// Every file under `dir`, by its path there, with its bytes.
+fn files_in(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = BTreeMap::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                found.insert(path.strip_prefix(dir).unwrap().to_path_buf(), bytes);
+            }
+        }
+    }
+    found
+}
+
+/// The web client's build (apps/symphony-web, the real Vite build bundle.sh runs) is the same bytes
+/// whatever NODE_ENV the shell that starts it exports: a shell's `development` would otherwise
+/// build React's development code, twice the size, and a release run's check from a clean shell
+/// would find the published client is not what it builds.
+#[test]
+fn the_web_clients_build_is_the_same_bytes_whatever_node_env_says() {
+    let scratch = Scratch::new("web-node-env");
+    let build = |name: &str, node_env: Option<&str>| {
+        let out = scratch.0.join(name);
+        let mut npm = Command::new("bash");
+        npm.arg(crate_dir().join("../symphony-web/npm.sh"))
+            .args(["run", "--silent", "build", "--", "--outDir"])
+            .arg(&out)
+            .arg("--emptyOutDir")
+            .env_remove("NODE_ENV");
+        if let Some(value) = node_env {
+            npm.env("NODE_ENV", value);
+        }
+        succeeded(&npm.output().expect("run npm.sh"), name);
+        files_in(&out)
+    };
+    let plain = build("plain", None);
+    assert!(
+        plain
+            .keys()
+            .any(|path| path.extension().is_some_and(|e| e == "js")),
+        "{:?}",
+        plain.keys()
+    );
+    for node_env in ["development", "test"] {
+        let built = build(node_env, Some(node_env));
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            plain.keys().collect::<Vec<_>>(),
+            "NODE_ENV={node_env}"
+        );
+        for (path, bytes) in &plain {
+            assert!(
+                built[path] == *bytes,
+                "NODE_ENV={node_env}: {}",
+                path.display()
+            );
+        }
+    }
 }

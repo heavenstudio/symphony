@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "./button";
 import { answered, boardItem, drawn, failed, keepLater, QUEUE, readKept } from "./cache";
 import { sleep } from "./feed";
-import { useFrame } from "./frame";
+import { type FrameRefresh, useFrame } from "./frame";
 import { useFreshen } from "./live";
+import { useMount } from "./mount";
 import { here, href, project, scoped } from "./project";
 import { getIf, post, said } from "./request";
 import { scrollAnchor } from "./route";
@@ -156,19 +157,46 @@ export function TaskTag({ task }: { task?: string | null | undefined }) {
   ) : null;
 }
 
-/** The Later and Undo controls of a card waiting on the owner. */
-export function PostponeControls({
-  path,
-  slug,
-  postponed,
-}: {
+/** A card waiting on the owner, as Later and its Undo name it. */
+export interface Postponed {
   path: string;
   slug: string;
   postponed: boolean;
-}) {
+}
+
+/**
+ * Later, or its Undo, on `card`: once the server takes it, the frame reads again and, after Later,
+ * the reader goes (`go`) to the card the server names next. Nothing of that once `mount` is
+ * aborted, the page gone while the server answered. What failed, said; none when it went well.
+ */
+export async function postpone(
+  card: Postponed,
+  mount: AbortSignal,
+  frame: FrameRefresh,
+  go: (address: string) => void,
+): Promise<string | null> {
+  try {
+    const reply = await post("/api/postpone", {
+      path: card.path,
+      slug: card.slug,
+      action: card.postponed ? "undo" : "later",
+    });
+    if (mount.aborted) return null;
+    frame.refresh();
+    const next = field(reply, "next");
+    if (!card.postponed && typeof next === "string") go(here(project(), next));
+    return null;
+  } catch (failure) {
+    return said(failure);
+  }
+}
+
+/** The Later and Undo controls of a card waiting on the owner. */
+export function PostponeControls({ path, slug, postponed }: Postponed) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const frame = useFrame();
+  const mount = useMount();
   // While the page may show what is out of date, the card may have moved since: wait for it.
   const checking = useStore(STALE);
   const label = pending ? "Saving…" : checking ? CHECKING : postponed ? "Undo Later" : "Later";
@@ -176,18 +204,11 @@ export function PostponeControls({
     if (pending || STALE.get()) return;
     setPending(true);
     setError(null);
-    try {
-      const reply = await post("/api/postpone", {
-        path,
-        slug,
-        action: postponed ? "undo" : "later",
-      });
-      frame.refresh();
-      const next = field(reply, "next");
-      if (!postponed && typeof next === "string") location.href = here(project(), next);
-    } catch (failure) {
-      setError(said(failure));
-    }
+    const failure = await postpone({ path, slug, postponed }, mount, frame, (address) => {
+      location.href = address;
+    });
+    if (mount.aborted) return;
+    setError(failure);
     setPending(false);
   };
   return (
@@ -392,6 +413,47 @@ function QueueGroup({
   );
 }
 
+/** What a check of the queue tells the page. */
+export interface QueueCheck {
+  /** The queue answered, with its tag and the value as read; none for a `304` of the copy shown. */
+  answered(read: Queue | null, etag: string, value: unknown): void;
+  /** A read failed, or answered what is not a queue: said, and asked again after a wait. */
+  failed(said: string): void;
+}
+
+/**
+ * Reads the queue at `url`, naming the tag of the copy shown (`etag`), until it answers or `signal`
+ * ends it: a read that fails, or whose answer the guard refuses, is asked again, waiting longer
+ * each time (`Backoff`, through `wait`).
+ */
+export async function checkQueue(
+  url: string,
+  etag: () => string,
+  signal: AbortSignal,
+  check: QueueCheck,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
+): Promise<void> {
+  const backoff = new Backoff();
+  while (!signal.aborted) {
+    try {
+      const answer = await getIf(url, etag());
+      if (signal.aborted) return;
+      if (answer.same) {
+        check.answered(null, "", null);
+      } else {
+        const read = readQueue(answer.value);
+        if (read === null) throw new Error("The queue's answer is not a queue");
+        check.answered(read, answer.etag, answer.value);
+      }
+      return;
+    } catch (failure) {
+      if (signal.aborted) return;
+      check.failed(said(failure));
+    }
+    await wait(backoff.after(0), signal);
+  }
+}
+
 /**
  * The queue: the copy this device kept is drawn at once, and checked once the board's read has
  * started the feed (`refreshed` counts the board's reads; the feed's queue events add to it).
@@ -421,37 +483,26 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
   useEffect(() => {
     if (refreshed === 0) return;
     const controller = new AbortController();
-    const signal = controller.signal;
     const item = boardItem(scope);
-    // A read that fails is asked again, waiting longer each time, until it answers or a newer
-    // read replaces it: the copy drawn from this device, and its held Later buttons, wait for it.
-    void (async () => {
-      const backoff = new Backoff();
-      while (!signal.aborted) {
-        try {
-          const answer = await getIf(scoped(scope, "/api/queue"), etag.current);
-          if (signal.aborted) return;
-          if (!answer.same) {
-            const read = readQueue(answer.value);
-            if (read === null) throw new Error("The queue's answer is not a queue");
-            etag.current = answer.etag;
-            keepLater(item, QUEUE, answer.etag, answer.value);
-            if (JSON.stringify(shownQueue.current) !== JSON.stringify(read)) {
-              shownQueue.current = read;
-              setQueue(read);
-            }
+    // The copy drawn from this device, and its held Later buttons, wait for the check.
+    void checkQueue(scoped(scope, "/api/queue"), () => etag.current, controller.signal, {
+      answered(read, tag, value) {
+        if (read !== null) {
+          etag.current = tag;
+          keepLater(item, QUEUE, tag, value);
+          if (JSON.stringify(shownQueue.current) !== JSON.stringify(read)) {
+            shownQueue.current = read;
+            setQueue(read);
           }
-          setError(null);
-          freshen((f) => answered(f, QUEUE));
-          return;
-        } catch (failure) {
-          if (signal.aborted) return;
-          freshen((f) => failed(f, QUEUE));
-          setError(said(failure));
         }
-        await sleep(backoff.after(0), signal);
-      }
-    })();
+        setError(null);
+        freshen((f) => answered(f, QUEUE));
+      },
+      failed(why) {
+        freshen((f) => failed(f, QUEUE));
+        setError(why);
+      },
+    });
     return () => controller.abort();
   }, [refreshed, scope, freshen]);
   // The heights are measured while the page stays, whatever it draws again meanwhile.

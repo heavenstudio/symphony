@@ -43,6 +43,17 @@
         ["docs/a/", true, true],
         ["docs/a", true, true],
         ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
         ["docs/guide.md/", true, true],
         ["design/", false, false],
         ["design/B.md", false, false],
@@ -79,6 +90,17 @@
         ["docs/a/", true, true],
         ["docs/a", true, true],
         ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
         ["docs/guide.md/", true, true],
         ["design/", false, false],
         ["design/B.md", false, false],
@@ -115,6 +137,17 @@
         ["docs/a/", true, true],
         ["docs/a", true, true],
         ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", true, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
         ["docs/guide.md/", true, true],
         ["design/", true, true],
         ["design/B.md", true, false],
@@ -151,6 +184,17 @@
         ["docs/a/", true, true],
         ["docs/a", true, true],
         ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", true, false],
+        ["readout.html", true, false],
+        ["tasks/a.html", false, false],
         ["docs/guide.md/", true, true],
         ["design/", true, true],
         ["design/B.md", true, false],
@@ -195,6 +239,17 @@
         ["docs/a/", true, true],
         ["docs/a", true, true],
         ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
         ["docs/guide.md/", true, true],
         ["design/", false, false],
         ["design/B.md", false, false],
@@ -228,6 +283,20 @@
     ["other/a.md", "docs"],
     ["docs/", "docs"],
     ["", "docs"]
+  ],
+  "isHtml": [
+    ["a.html", true],
+    ["A.HTML", true],
+    ["a.Htm", true],
+    ["docs/a.htm", true],
+    ["a.md", false],
+    ["html", false],
+    [".html", false],
+    ["docs/.htm", false],
+    ["a.html/", false],
+    ["a.html.md", false],
+    ["a.xhtml", false],
+    ["a.html5", false]
   ],
   "samples": {
     "queue": {
@@ -310,5 +379,190 @@
       },
       "progress": { "regions": [], "docs": 0, "decisions_waiting": 0 }
     }
-  }
+  },
+  "carried": [
+    {
+      "rust": "crates/symphony-api/src/project.rs here",
+      "typescript": "here, src/project.ts",
+      "source": [
+        "    pub fn here(&self, path: &str) -> String {",
+        "        if self.base.is_empty() || !path.starts_with('/') || path.starts_with(\"//\") {",
+        "            path.to_string()",
+        "        } else {",
+        "            format!(\"{}{path}\", self.base)",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs strip",
+      "typescript": "strip, src/project.ts",
+      "source": [
+        "    pub fn strip<'a>(&self, path: &'a str) -> &'a str {",
+        "        if self.base.is_empty() {",
+        "            return path;",
+        "        }",
+        "        match path.strip_prefix(self.base.as_str()) {",
+        "            Some(\"\") => \"/\",",
+        "            Some(rest) if rest.starts_with('/') => rest,",
+        "            _ => path,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs entrypoints",
+      "typescript": "entrypoints, src/project.ts",
+      "source": [
+        "    pub fn entrypoints(&self) -> Vec<&str> {",
+        "        if self.entrypoints.is_empty() {",
+        "            vec![\"docs\"]",
+        "        } else {",
+        "            self.entrypoints.iter().map(String::as_str).collect()",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_document_route",
+      "typescript": "isDocumentRoute, src/project.ts",
+      "source": [
+        "    pub fn is_document_route(&self, path: &str) -> bool {",
+        "        let page = path.trim_end_matches('/');",
+        "        let pages = self.nav.iter().map(|item| item.href.trim_matches('/'));",
+        "        let entrypoints = self.entrypoints();",
+        "        let name = page.rsplit('/').next().unwrap_or(page);",
+        "        !SYMPHONY_ROUTES",
+        "            .iter()",
+        "            .copied()",
+        "            .chain(pages)",
+        "            .any(|route| within(route, page))",
+        "            && entrypoints.iter().any(|url| within(url, page))",
+        "            && (path.ends_with('/')",
+        "                || entrypoints.contains(&page)",
+        "                || !name.contains('.')",
+        "                || is_page(name))",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_folder_route",
+      "typescript": "isFolderRoute, src/project.ts",
+      "source": [
+        "    pub fn is_folder_route(&self, path: &str) -> bool {",
+        "        let page = path.trim_end_matches('/');",
+        "        self.is_document_route(path)",
+        "            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_page(page))",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs documents_href",
+      "typescript": "documentsHref, src/project.ts",
+      "source": [
+        "    pub fn documents_href(&self) -> String {",
+        "        match self.entrypoints().first() {",
+        "            Some(url) if !url.is_empty() => format!(\"/{url}/\"),",
+        "            _ => \"/\".into(),",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs readme_route",
+      "typescript": "readmeRoute, src/project.ts",
+      "source": [
+        "    pub fn readme_route(&self) -> String {",
+        "        match self.entrypoints().first() {",
+        "            Some(url) if !url.is_empty() => format!(\"{url}/README.md\"),",
+        "            _ => \"README.md\".into(),",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs own_pages",
+      "typescript": "ownPages, src/project.ts",
+      "source": [
+        "    pub fn own_pages(&self) -> [(String, &'static str); 6] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS};",
+        "        [",
+        "            (\"/\".into(), HOME),",
+        "            (\"/queue\".into(), QUEUE),",
+        "            (self.documents_href(), DOCS),",
+        "            (\"/tasks\".into(), BOARD),",
+        "            (\"/reports\".into(), REPORTS),",
+        "            (\"/agents\".into(), AGENTS),",
+        "        ]",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_page",
+      "typescript": "isPage, src/project.ts",
+      "source": [
+        "fn is_page(name: &str) -> bool {",
+        "    extension(name).is_some_and(|extension| extension == \"md\" || html_extension(extension))",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_html",
+      "typescript": "isHtml, src/project.ts",
+      "source": [
+        "pub fn is_html(name: &str) -> bool {",
+        "    extension(name).is_some_and(html_extension)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs extension",
+      "typescript": "extension, src/project.ts",
+      "source": [
+        "fn extension(name: &str) -> Option<&str> {",
+        "    let last = name.rsplit('/').next()?;",
+        "    let (stem, extension) = last.rsplit_once('.')?;",
+        "    (!stem.is_empty()).then_some(extension)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs html_extension",
+      "typescript": "htmlExtension, src/project.ts",
+      "source": [
+        "fn html_extension(extension: &str) -> bool {",
+        "    extension.eq_ignore_ascii_case(\"html\") || extension.eq_ignore_ascii_case(\"htm\")",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs within",
+      "typescript": "within, src/project.ts",
+      "source": [
+        "fn within(route: &str, path: &str) -> bool {",
+        "    route.is_empty()",
+        "        || path == route",
+        "        || path",
+        "            .strip_prefix(route)",
+        "            .is_some_and(|rest| rest.starts_with('/'))",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/lib.rs queue_category",
+      "typescript": "queueCategory, src/queue.tsx",
+      "source": [
+        "pub fn queue_category(path: &str) -> &str {",
+        "    let path = if path.starts_with('@') {",
+        "        path.split_once('/').map_or(path, |(_, path)| path)",
+        "    } else {",
+        "        path",
+        "    };",
+        "    path.strip_prefix(\"docs/\")",
+        "        .and_then(|path| path.split_once('/'))",
+        "        .map_or(\"docs\", |(folder, _)| folder)",
+        "}"
+      ]
+    }
+  ]
 }

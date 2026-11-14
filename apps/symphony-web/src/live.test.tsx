@@ -4,6 +4,7 @@ import {
   BoardPage,
   FEED_NOTICE,
   flushReload,
+  followClient,
   noticeGeometry,
   PageNotices,
   readPageBoard,
@@ -106,6 +107,21 @@ describe("a page loaded again for the build the server serves", () => {
     expect(reload).not.toHaveBeenCalled();
     reloadIfRedeployed("/assets/symphony-shell-b.js");
     reloadIfRedeployed("/assets/symphony-shell-b.js");
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads for a feed event's client change naming another build, once", () => {
+    const reload = page(false);
+    const client = (build: unknown) => ({ changes: [{ region: "client", data: { build } }] });
+    followClient(client("/assets/symphony-shell-a.js"));
+    followClient({
+      changes: [{ region: "queue", data: { build: "/assets/symphony-shell-d.js" } }],
+    });
+    followClient(client(7));
+    followClient({ changes: "none" });
+    expect(reload).not.toHaveBeenCalled();
+    followClient({ changes: [{ region: "card" }, client("/assets/symphony-shell-d.js")] });
+    followClient(client("/assets/symphony-shell-d.js"));
     expect(reload).toHaveBeenCalledTimes(1);
   });
 

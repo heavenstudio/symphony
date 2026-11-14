@@ -4,11 +4,13 @@ import {
   active,
   CategoryChips,
   changed,
+  checkQueue,
   chooseTopic,
   chosenTopic,
   counts,
   keepRows,
   PostponeControls,
+  postpone,
   QueuePage,
   queueCategory,
   readQueue,
@@ -261,6 +263,165 @@ describe("a card's Later", () => {
   it("waits, saying so, while the page may show what is out of date", () => {
     STALE.set(true);
     expect(controls(false)).toMatch(/disabled="".*>Checking…<\/button>/);
+  });
+});
+
+/** The server, its answers held until a test gives them: each fetch's address, body and reply. */
+function server() {
+  const asked: { url: string; body: unknown; answer: (response: Response) => void }[] = [];
+  vi.stubGlobal("document", { getElementById: () => null });
+  vi.stubGlobal(
+    "fetch",
+    (url: string, init: RequestInit) =>
+      new Promise<Response>((answer) => {
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+        asked.push({ url, body, answer });
+      }),
+  );
+  return asked;
+}
+
+/** A JSON reply of `status`, tagged `etag` when one is given. */
+const reply = (status: number, body: unknown, etag?: string) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: etag === undefined ? {} : { ETag: etag },
+  });
+
+/** Lets the replies given so far reach the code that awaits them, until `asked` holds `count`. */
+async function asking(asked: unknown[], count: number): Promise<void> {
+  for (let turn = 0; turn < 50 && asked.length < count; turn += 1) {
+    await new Promise((done) => setTimeout(done, 0));
+  }
+  expect(asked).toHaveLength(count);
+}
+
+describe("Later and its Undo", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const frame = () => ({ refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() });
+
+  it("post the card, read the frame again, and after Later go to the card named next", async () => {
+    const asked = server();
+    const refreshed = frame();
+    const go = vi.fn();
+    const card = { path: "docs/A.md", slug: "s", postponed: false };
+    const done = postpone(card, new AbortController().signal, refreshed, go);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/postpone");
+    expect(asked[0]?.body).toEqual({ path: "docs/A.md", slug: "s", action: "later" });
+    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
+    expect(await done).toBeNull();
+    expect(refreshed.refresh).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith("/docs/B.md#t");
+  });
+
+  it("stay on the page after Undo, and say what failed", async () => {
+    const asked = server();
+    const go = vi.fn();
+    const undo = postpone(
+      { path: "docs/A.md", slug: "s", postponed: true },
+      new AbortController().signal,
+      frame(),
+      go,
+    );
+    await asking(asked, 1);
+    expect(asked[0]?.body).toMatchObject({ action: "undo" });
+    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
+    expect(await undo).toBeNull();
+    const refused = postpone(
+      { path: "docs/A.md", slug: "s", postponed: false },
+      new AbortController().signal,
+      frame(),
+      go,
+    );
+    await asking(asked, 2);
+    asked[1]?.answer(reply(409, { error: "The card moved." }));
+    expect(await refused).toBe("The card moved.");
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("do nothing more once the page is gone before the server answers", async () => {
+    const asked = server();
+    const refreshed = frame();
+    const go = vi.fn();
+    const mount = new AbortController();
+    const done = postpone(
+      { path: "docs/A.md", slug: "s", postponed: false },
+      mount.signal,
+      refreshed,
+      go,
+    );
+    await asking(asked, 1);
+    // The reader leaves the queue: the shell stops its kind, which aborts its mount.
+    mount.abort();
+    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
+    expect(await done).toBeNull();
+    expect(go).not.toHaveBeenCalled();
+    expect(refreshed.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("the queue's check", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A check of the queue whose waits are only recorded, never waited, and what it was told. */
+  const check = (asked: ReturnType<typeof server>, signal = new AbortController().signal) => {
+    const told: unknown[] = [];
+    const waits: number[] = [];
+    const done = checkQueue(
+      "/api/queue",
+      () => "kept",
+      signal,
+      {
+        answered: (read, etag) => told.push(["answered", read, etag]),
+        failed: (why) => told.push(["failed", why]),
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    return { told, waits, done, asked };
+  };
+
+  it("names the kept copy's tag, and a 304 is the copy shown", async () => {
+    const asked = server();
+    const { told, waits, done } = check(asked);
+    await asking(asked, 1);
+    asked[0]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([["answered", null, ""]]);
+    expect(waits).toEqual([]);
+  });
+
+  it("asks again, waiting longer each time, after a refused answer and a failed read", async () => {
+    const asked = server();
+    const { told, waits, done } = check(asked);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { waiting: "not a list" }, "x"));
+    await asking(asked, 2);
+    asked[1]?.answer(reply(503, {}));
+    await asking(asked, 3);
+    asked[2]?.answer(reply(200, CASES.samples.queue, "q1"));
+    await done;
+    expect(told).toEqual([
+      ["failed", "The queue's answer is not a queue"],
+      ["failed", "The server answered 503"],
+      ["answered", CASES.samples.queue, "q1"],
+    ]);
+    expect(waits).toEqual([1_000, 2_000]);
+    expect(asked).toHaveLength(3);
+  });
+
+  it("stops, telling nothing, once the page that asked is gone", async () => {
+    const asked = server();
+    const page = new AbortController();
+    const { told, waits, done } = check(asked, page.signal);
+    await asking(asked, 1);
+    page.abort();
+    asked[0]?.answer(reply(200, CASES.samples.queue, "q1"));
+    await done;
+    expect(told).toEqual([]);
+    expect(waits).toEqual([]);
   });
 });
 

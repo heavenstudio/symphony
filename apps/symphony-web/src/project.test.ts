@@ -7,6 +7,7 @@ import {
   here,
   isDocumentRoute,
   isFolderRoute,
+  isHtml,
   navForDocument,
   navPage,
   ownPages,
@@ -42,6 +43,10 @@ describe("what crates/symphony-api's ProjectView answers", () => {
       expect(isFolderRoute(view as ProjectView, path as string)).toBe(folder);
     },
   );
+
+  it.each(CASES.isHtml)("reads %j as an HTML page: %j", (name, html) => {
+    expect(isHtml(name)).toBe(html);
+  });
 
   it.each(CASES.views)(
     "names $view's own pages and its README",

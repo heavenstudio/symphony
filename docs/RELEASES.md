@@ -207,7 +207,10 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    checkout for 7 days), and marked in its git admin folder (`symphony-release`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
-   is cleared. It resets nothing else. A link in that place, a path that is, holds or lies inside
+   is cleared. It resets nothing else. The React client's `node_modules` and pinned npm go with
+   the ignored files, so each run installs them again from npm's cache on the machine (a network
+   fetch only for what that cache lacks), and the run needs the client's pinned Node, on PATH or
+   by fnm ([its guide](../apps/symphony-web/AGENTS.md#the-tools)), as it needs Chrome. A link in that place, a path that is, holds or lies inside
    the main checkout or another worktree (compared by real path), a worktree it did not lock and
    mark, or any other folder is refused and left as it is, and the run stops, naming it. An
    `index.lock` or `HEAD.lock` that an interrupted git left in the checkout's admin folder is
