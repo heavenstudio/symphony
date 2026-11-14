@@ -3,7 +3,9 @@
 //! the card between stacked parts), lines as one SVG over them whose strokes keep their width
 //! however the plot stretches. A period no file recorded is hatched, never drawn as a zero, and a
 //! line breaks across it. A tap or a key on a period shows every series' value in the chart's
-//! readout, on every chart at once; the table under it says them all.
+//! readout, on every chart at once; the table under it says them all. Each entry of a legend is a
+//! button that hides its series or shows it again: a hidden series leaves the plot, the readout and
+//! the table, and the axis scales to the series shown.
 
 use dioxus::prelude::*;
 
@@ -82,13 +84,19 @@ pub(crate) fn float(n: usize) -> f64 {
     f64::from(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
-/// One series: its name, how it is drawn and its value in each period, none where its source has
-/// no record of the period.
+/// One series: its name, how it is drawn, its value in each period, none where its source has no
+/// record of the period, and whether this browser hid it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SeriesData {
     pub name: &'static str,
     pub mark: Mark,
     pub values: Vec<Option<f64>>,
+    pub hidden: bool,
+}
+
+/// The key a hidden series is kept by: its chart's id and its name, `open:Ready`.
+pub fn series_key(chart: &str, series: &str) -> String {
+    format!("{chart}:{series}")
 }
 
 /// One chart, ready to draw.
@@ -113,7 +121,8 @@ impl ChartData {
         self.series.get(series)?.values.get(at).copied().flatten()
     }
 
-    /// Whether no series has a value in period `at`: a gap.
+    /// Whether no series has a value in period `at`, hidden or not: a gap. Hiding a series hides
+    /// its values, never its record.
     pub fn gap(&self, at: usize) -> bool {
         (0..self.series.len()).all(|series| self.value(series, at).is_none())
     }
@@ -144,7 +153,8 @@ pub struct Scale {
 }
 
 impl Scale {
-    /// The scale that holds every period's stacked bars and every line of `chart`.
+    /// The scale that holds every period's stacked bars and every line of `chart` it shows: a
+    /// hidden series takes no room, so hiding a large one makes the rest larger.
     pub fn of(chart: &ChartData) -> Scale {
         let periods = chart.series.first().map_or(0, |series| series.values.len());
         let (mut up, mut down) = (0.0_f64, 0.0_f64);
@@ -152,6 +162,9 @@ impl Scale {
             let mut bars = 0.0;
             let mut below = 0.0;
             for (series, data) in chart.series.iter().enumerate() {
+                if data.hidden {
+                    continue;
+                }
                 let value = chart.value(series, at).unwrap_or(0.0).max(0.0);
                 match data.mark {
                     Mark::Bar => bars += value,
@@ -241,7 +254,7 @@ pub struct Segment {
     pub after: bool,
 }
 
-/// The bar parts of period `at` of `chart` on `scale`.
+/// The bar parts of period `at` of `chart` on `scale`, its hidden series left out of the stack.
 pub fn segments(chart: &ChartData, at: usize, scale: &Scale) -> Vec<Segment> {
     let mut parts = Vec::new();
     for up in [true, false] {
@@ -250,7 +263,7 @@ pub fn segments(chart: &ChartData, at: usize, scale: &Scale) -> Vec<Segment> {
         let first = parts.len();
         for (series, data) in chart.series.iter().enumerate() {
             let value = chart.value(series, at).unwrap_or(0.0);
-            if data.mark != mark || value <= 0.0 {
+            if data.hidden || data.mark != mark || value <= 0.0 {
                 continue;
             }
             let (from, to) = if up {
@@ -326,16 +339,20 @@ pub fn coverage(part: f64, whole: f64) -> Option<String> {
     })
 }
 
+/// One chart. `ontoggle` takes the key ([`series_key`]) of the series a legend's button hides or
+/// shows again.
 #[component]
 pub fn ChartCard(
     chart: ChartData,
     axis: Axis,
     selected: Option<usize>,
     onselect: EventHandler<usize>,
+    #[props(default)] ontoggle: EventHandler<String>,
 ) -> Element {
     let mut table = use_signal(|| false);
     let periods = axis.periods.len();
-    let title_id = format!("chart-{}-title", chart.id);
+    let id = chart.id;
+    let title_id = format!("chart-{id}-title");
     let legend = chart.series.len() > 1;
     if let Some(instead) = chart.instead {
         return rsx! {
@@ -363,11 +380,14 @@ pub fn ChartCard(
                 p { class: "chart-note", "{chart.note}" }
             }
             if legend {
-                ul { class: "chart-legend",
-                    for (series, data) in chart.series.iter().enumerate() {
-                        li { key: "{data.name}",
-                            span { class: if data.mark == Mark::Line { "swatch line" } else { "swatch" }, style: "--c:var(--chart-{series + 1})", "aria-hidden": "true" }
-                            "{data.name}"
+                ul { class: "chart-legend", "aria-label": "{chart.title}: series shown",
+                    for (series, name, mark, hidden) in chart.series.iter().enumerate().map(|(n, s)| (n, s.name, s.mark, s.hidden)) {
+                        li { key: "{name}",
+                            button { class: "chart-key", r#type: "button", "aria-pressed": !hidden,
+                                ..crate::entry_events::click(move || ontoggle.call(series_key(id, name))),
+                                span { class: if mark == Mark::Line { "swatch line" } else { "swatch" }, style: "--c:var(--chart-{series + 1})", "aria-hidden": "true" }
+                                "{name}"
+                            }
                         }
                     }
                 }
@@ -413,7 +433,7 @@ pub fn ChartCard(
                         }
                     }
                     svg { class: "chart-lines", view_box: "0 0 {periods} 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
-                        for (series, data) in chart.series.iter().enumerate().filter(|(_, data)| data.mark == Mark::Line) {
+                        for (series, data) in chart.series.iter().enumerate().filter(|(_, data)| data.mark == Mark::Line && !data.hidden) {
                             {line_series(series, &data.values, &scale, shown)}
                         }
                     }
@@ -470,7 +490,7 @@ fn line_series(
     }
 }
 
-/// The values of the period `at` shows, one line per series, in the text's own ink.
+/// The values of the period `at` shows, one line per series shown, in the text's own ink.
 fn readout(chart: &ChartData, axis: &Axis, at: Option<usize>) -> Element {
     let Some(at) = at else {
         return rsx! { div { class: "chart-readout", "aria-live": "polite", p { class: "chart-when", "No period recorded yet" } } };
@@ -491,7 +511,7 @@ fn readout(chart: &ChartData, axis: &Axis, at: Option<usize>) -> Element {
             }
             if !gap {
                 ul {
-                    for (series, data) in chart.series.iter().enumerate() {
+                    for (series, data) in chart.series.iter().enumerate().filter(|(_, data)| !data.hidden) {
                         li { key: "{data.name}",
                             span { class: if data.mark == Mark::Line { "swatch line" } else { "swatch" }, style: "--c:var(--chart-{series + 1})", "aria-hidden": "true" }
                             "{data.name} "
@@ -507,7 +527,8 @@ fn readout(chart: &ChartData, axis: &Axis, at: Option<usize>) -> Element {
     }
 }
 
-/// Every period's values, oldest first: what the chart draws, for a reader who reads it as text.
+/// Every period's values of the series shown, oldest first: what the chart draws, for a reader who
+/// reads it as text.
 pub(crate) fn table(chart: &ChartData, axis: &Axis) -> Element {
     rsx! {
         div { class: "chart-table",
@@ -515,13 +536,13 @@ pub(crate) fn table(chart: &ChartData, axis: &Axis) -> Element {
                 caption { "{chart.title}, by period" }
                 thead { tr {
                     th { scope: "col", "Period" }
-                    for data in chart.series.iter() { th { key: "{data.name}", scope: "col", "{data.name}" } }
+                    for data in chart.series.iter().filter(|data| !data.hidden) { th { key: "{data.name}", scope: "col", "{data.name}" } }
                 } }
                 tbody {
                     for (at, period) in axis.periods.iter().enumerate() {
                         tr { key: "{at}",
                             th { scope: "row", "{period}" }
-                            for (series, data) in chart.series.iter().enumerate() {
+                            for (series, data) in chart.series.iter().enumerate().filter(|(_, data)| !data.hidden) {
                                 td { key: "{data.name}", {chart.value(series, at).map_or_else(|| "–".to_string(), |value| chart.unit.format(value))} }
                             }
                         }

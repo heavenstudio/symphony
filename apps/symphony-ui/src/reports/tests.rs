@@ -19,6 +19,15 @@ fn series(name: &'static str, mark: Mark, values: &[Option<f64>]) -> SeriesData 
         name,
         mark,
         values: values.to_vec(),
+        hidden: false,
+    }
+}
+
+/// `series` hidden.
+fn hide(series: SeriesData) -> SeriesData {
+    SeriesData {
+        hidden: true,
+        ..series
     }
 }
 
@@ -424,7 +433,7 @@ fn the_figures_sum_the_window_and_say_what_is_missing() {
 
 #[test]
 fn the_charts_take_each_series_from_its_source_and_none_where_it_has_no_record() {
-    let charts = charts(&page());
+    let charts = charts(&page(), &[]);
     assert_eq!(
         charts
             .iter()
@@ -478,7 +487,7 @@ fn the_charts_take_each_series_from_its_source_and_none_where_it_has_no_record()
 }
 
 fn charts_of(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
-    charts(page)
+    charts(page, &[])
 }
 
 /// Tasks done reads the tasks done, each once ([`BucketFlow::done`]), never the entries into done;
@@ -486,7 +495,7 @@ fn charts_of(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
 /// that did, missing when none did.
 #[test]
 fn tasks_done_are_the_tasks_counted_once_and_a_period_that_did_not_count_them_is_a_gap() {
-    let charts = charts(&page());
+    let charts = charts(&page(), &[]);
     let done = find(&charts, "done");
     assert_eq!(
         done.series[0].values,
@@ -581,7 +590,7 @@ fn an_answer_without_the_tasks_done_member_draws_gaps_not_zeros() {
 #[test]
 fn a_tapped_period_shows_every_value_and_a_gap_says_it_has_none() {
     let page = page();
-    let charts = charts(&page);
+    let charts = charts(&page, &[]);
     let open = find(&charts, "open").clone();
     let axis = axis(&page);
     let draw = |selected: Option<usize>| card(open.clone(), axis.clone(), selected);
@@ -639,7 +648,7 @@ fn a_tapped_period_shows_every_value_and_a_gap_says_it_has_none() {
 #[test]
 fn a_chart_s_table_says_every_period_and_a_gap_as_a_dash() {
     let page = page();
-    let charts = charts(&page);
+    let charts = charts(&page, &[]);
     let chart = find(&charts, "done").clone();
     let axis = axis(&page);
     let html = dioxus_ssr::render_element(table(&chart, &axis));
@@ -904,7 +913,7 @@ fn a_gap_after_the_roll_up_began_stays_on_the_axis_however_early_in_the_window()
     let kept = from_first_record(read(&wide));
     assert_eq!(weekdays(&kept), ["Sat", "Sun", "Mon", "Tue", "Wed"]);
     assert!(
-        find(&charts(&kept), "done").gap(0),
+        find(&charts(&kept, &[]), "done").gap(0),
         "Saturday hatched, never dropped"
     );
     let html = view(Some(read(&wide)));
@@ -931,15 +940,32 @@ fn the_window_chosen_is_this_browser_s_when_it_is_one_the_page_offers() {
             _ => None,
         }
     };
-    assert_eq!(chosen(|_| None), (Grain::Day, 14));
+    assert_eq!(
+        chosen(|_| None),
+        (Grain::Hour, 1),
+        "nothing chosen: the last 24 hours"
+    );
+    assert_eq!(FIRST_WINDOW, (Grain::Hour, 1));
+    assert!(ranges(FIRST_WINDOW.0).contains(&FIRST_WINDOW.1));
     assert_eq!(chosen(saved("hour", "7")), (Grain::Hour, 7));
+    assert_eq!(chosen(saved("day", "14")), (Grain::Day, 14));
     assert_eq!(chosen(saved("week", "84")), (Grain::Week, 84));
     assert_eq!(
         chosen(saved("hour", "90")),
         (Grain::Hour, 2),
         "no 90 days by the hour"
     );
-    assert_eq!(chosen(saved("month", "x")), (Grain::Day, 14));
+    assert_eq!(
+        chosen(saved("day", "x")),
+        (Grain::Day, 14),
+        "a grain chosen keeps its own default window"
+    );
+    assert_eq!(chosen(saved("month", "x")), (Grain::Hour, 1));
+    assert_eq!(
+        chosen(saved("month", "14")),
+        (Grain::Hour, 1),
+        "days alone are no window"
+    );
     for grain in [Grain::Hour, Grain::Day, Grain::Week] {
         assert!(ranges(grain).contains(&grain.default_days()), "{grain:?}");
         assert!(ranges(grain).iter().all(|days| *days <= grain.max_days()));
@@ -947,6 +973,223 @@ fn the_window_chosen_is_this_browser_s_when_it_is_one_the_page_offers() {
     assert_eq!(range_name(Grain::Hour, 1), "24 hours");
     assert_eq!(range_name(Grain::Week, 84), "12 weeks");
     assert_eq!(range_name(Grain::Day, 30), "30 days");
+}
+
+#[test]
+fn the_series_hidden_are_kept_a_key_a_line_and_a_toggle_hides_or_shows_one_again() {
+    assert_eq!(series_key("open", "Ready"), "open:Ready");
+    assert!(hidden_series(|_| None).is_empty(), "none kept: none hidden");
+    let kept = |value: &'static str| move |key: &str| (key == HIDDEN).then(|| value.to_string());
+    assert_eq!(
+        hidden_series(kept("open:Ready\n\ntask-hours:Blocked\n")),
+        ["open:Ready", "task-hours:Blocked"],
+        "a key a line, an empty line none"
+    );
+    assert!(hidden_series(kept("")).is_empty());
+    let hidden = toggle(Vec::new(), series_key("open", "Ready"));
+    assert_eq!(hidden, ["open:Ready"]);
+    let hidden = toggle(hidden, series_key("agents", "Sessions, each once"));
+    assert_eq!(hidden, ["open:Ready", "agents:Sessions, each once"]);
+    let again = |hidden: &[String]| hidden_series(|_| Some(hidden.join("\n")));
+    assert_eq!(again(&hidden), hidden, "kept as it is read back");
+    let hidden = toggle(hidden, series_key("open", "Ready"));
+    assert_eq!(
+        hidden,
+        ["agents:Sessions, each once"],
+        "shown again: the others stay hidden"
+    );
+    assert!(toggle(hidden, "agents:Sessions, each once".into()).is_empty());
+}
+
+/// Open work as the live board drew it on 14 Nov: Ready far over the other stages.
+fn open_work() -> Vec<SeriesData> {
+    vec![
+        series("Ready", Mark::Bar, &[Some(107.0), Some(39.0)]),
+        series("In progress", Mark::Bar, &[Some(7.0), Some(10.0)]),
+        series("Review", Mark::Bar, &[Some(2.0), Some(1.0)]),
+        series("Blocked", Mark::Bar, &[Some(1.0), None]),
+    ]
+}
+
+#[test]
+fn a_hidden_series_takes_no_room_on_the_axis_and_draws_no_part() {
+    let all = chart(Unit::Count, open_work());
+    assert_eq!(Scale::of(&all).high, 150.0, "the stack of 117");
+    let mut stages = open_work();
+    stages[0].hidden = true;
+    let rest = chart(Unit::Count, stages);
+    let scale = Scale::of(&rest);
+    assert_eq!(
+        scale.ticks,
+        [0.0, 5.0, 10.0, 15.0],
+        "Ready hidden: the stack of 11 fills the plot"
+    );
+    let parts: Vec<_> = segments(&rest, 1, &scale)
+        .into_iter()
+        .map(|s| (s.series, s.bottom.round(), s.end, s.after))
+        .collect();
+    assert_eq!(
+        parts,
+        [(1, 0.0, false, false), (2, 67.0, true, true)],
+        "In progress from zero, Review on it: no part of Ready"
+    );
+    assert!(!rest.gap(1), "a hidden series' record is still a record");
+    // A hidden line or part below the axis takes no room either.
+    let lines = chart(
+        Unit::Count,
+        vec![
+            series("added", Mark::Bar, &[Some(2.0)]),
+            hide(series("removed", Mark::Below, &[Some(45.0)])),
+            hide(series("open", Mark::Line, &[Some(50.0)])),
+        ],
+    );
+    let scale = Scale::of(&lines);
+    assert_eq!((scale.low, scale.high), (0.0, 2.0), "{scale:?}");
+    assert!(scale.low.is_sign_positive());
+    assert!(
+        segments(&lines, 0, &scale).iter().all(|s| s.up),
+        "no part below"
+    );
+    // Every series hidden: the least axis, and a period recorded only by a hidden series is no gap.
+    let none = chart(
+        Unit::Count,
+        vec![
+            hide(series("a", Mark::Bar, &[Some(5.0), None])),
+            hide(series("b", Mark::Bar, &[None, None])),
+        ],
+    );
+    assert_eq!(Scale::of(&none).ticks, [0.0, 1.0]);
+    assert!(segments(&none, 0, &Scale::of(&none)).is_empty());
+    assert!(!none.gap(0) && none.gap(1));
+}
+
+#[test]
+fn a_series_is_hidden_on_its_own_chart_alone() {
+    let page = page();
+    let charts = charts(&page, &[series_key("open", "Ready"), "gone:Ready".into()]);
+    let hidden = |id: &str| -> Vec<&str> {
+        find(&charts, id)
+            .series
+            .iter()
+            .filter(|s| s.hidden)
+            .map(|s| s.name)
+            .collect()
+    };
+    assert_eq!(hidden("open"), ["Ready"]);
+    assert!(
+        hidden("task-hours").is_empty(),
+        "Task-hours' Ready is its own"
+    );
+    assert!(
+        charts
+            .iter()
+            .flat_map(|(_, charts)| charts)
+            .filter(|chart| chart.id != "open")
+            .all(|chart| chart.series.iter().all(|s| !s.hidden)),
+        "a key of no chart hides nothing"
+    );
+    // Hidden or not, the series keeps its values: showing it again needs no read.
+    let shown = charts_of(&page);
+    assert_eq!(
+        find(&charts, "open").series[0].values,
+        find(&shown, "open").series[0].values
+    );
+}
+
+#[test]
+fn a_legend_s_buttons_say_which_series_are_shown_and_a_hidden_one_leaves_the_plot_readout_and_table()
+ {
+    let page = page();
+    let axis = axis(&page);
+    let shown = find(&charts_of(&page), "open").clone();
+    let html = card(shown.clone(), axis.clone(), Some(0));
+    assert!(
+        html.contains("<ul class=\"chart-legend\" aria-label=\"Open work: series shown\">"),
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("<button class=\"chart-key\" type=\"button\" aria-pressed=true>")
+            .count(),
+        4,
+        "a button a series, each pressed while shown: {html}"
+    );
+    assert!(html.contains("Ready <strong>2</strong>"), "{html}");
+    let hidden = find(&charts(&page, &[series_key("open", "Ready")]), "open").clone();
+    let html = card(hidden.clone(), axis.clone(), Some(0));
+    assert_eq!(
+        html.matches("aria-pressed=true").count(),
+        3,
+        "the others still shown: {html}"
+    );
+    assert!(
+        html.contains("aria-pressed=false><span class=\"swatch\" style=\"--c:var(--chart-1)\" aria-hidden=\"true\"></span>Ready</button>"),
+        "Ready's button, not pressed, keeps its colour: {html}"
+    );
+    assert!(
+        !html.contains("Ready <strong>"),
+        "Ready leaves the readout: {html}"
+    );
+    assert!(html.contains("In progress <strong>0</strong>"), "{html}");
+    assert!(
+        !html.contains("%;--c:var(--chart-1)"),
+        "no part of Ready drawn: {html}"
+    );
+    assert!(
+        html.contains("%;--c:var(--chart-3)"),
+        "Review keeps its colour: {html}"
+    );
+    let table = dioxus_ssr::render_element(table(&hidden, &axis));
+    assert!(!table.contains(">Ready</th>"), "{table}");
+    assert!(
+        table.contains("<th scope=\"col\">In progress</th>"),
+        "{table}"
+    );
+    assert!(
+        table.contains("<th scope=\"row\">Mon 9 Nov</th><td>0</td><td>1</td><td>0</td>"),
+        "a row's cells the series shown: {table}"
+    );
+    // A hidden line draws no stroke or dot.
+    let lead = |hidden: &[String]| {
+        let html = card(
+            find(&charts(&page, hidden), "lead").clone(),
+            axis.clone(),
+            None,
+        );
+        html.matches("class=\"dot\"").count()
+    };
+    let both = lead(&[]);
+    assert!(both > 0);
+    assert_eq!(
+        lead(&[series_key("lead", "p90")]) * 2,
+        both,
+        "Median's alone"
+    );
+    // A chart of one series has nothing to hide.
+    let done = find(&charts_of(&page), "done").clone();
+    assert!(!card(done, axis, None).contains("chart-key"));
+}
+
+#[test]
+fn the_page_hides_the_series_it_is_handed_on_every_chart_it_draws() {
+    let mut dom = VirtualDom::new_with_props(
+        |props: ViewProps| rsx! { ReportsView { grain: props.grain, days: props.days, page: props.page, error: props.error, hidden: vec![series_key("open", "Ready"), series_key("commits", "Merges")], onask: |_| {} } },
+        ViewProps {
+            grain: Grain::Day,
+            days: 3,
+            page: Some(page()),
+            error: None,
+        },
+    );
+    dom.rebuild_in_place();
+    let html = dioxus_ssr::render(&dom);
+    assert_eq!(
+        html.matches("class=\"chart-key\" type=\"button\" aria-pressed=false")
+            .count(),
+        2,
+        "{html}"
+    );
+    assert!(html.contains("aria-pressed=false><span class=\"swatch\" style=\"--c:var(--chart-1)\" aria-hidden=\"true\"></span>Ready</button>"));
+    assert!(html.contains("aria-pressed=false><span class=\"swatch\" style=\"--c:var(--chart-2)\" aria-hidden=\"true\"></span>Merges</button>"));
 }
 
 #[test]
@@ -1090,7 +1333,7 @@ fn the_page_reads_the_wire_s_fixture() {
         "../../../../crates/symphony-api/fixtures/reports-page.json"
     ))
     .unwrap();
-    let charts = charts(&page);
+    let charts = charts(&page, &[]);
     assert_eq!(find(&charts, "done").series[0].values[0], Some(5.0));
     assert_eq!(
         find(&charts, "task-hours").series[3].values[0],
