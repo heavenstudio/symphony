@@ -1796,24 +1796,55 @@ impl PartialEq for Shown<'_> {
     }
 }
 
-/// Whether `a` and `b` are the same task, or differ only in their holders' health.
+/// Whether `a` and `b` are the same task, or differ only in their holders' health. Every field is
+/// named, so a new one is compared or the build fails.
+#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
 fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
-    a == b
-        || (roles_alike(&a.roles, &b.roles) && {
-            let mut b = b.clone();
-            b.roles.clone_from(&a.roles);
-            *a == b
-        })
+    let symphony_api::Task {
+        slug,
+        title,
+        body,
+        status,
+        priority,
+        parent,
+        created_by,
+        created,
+        updated,
+        links,
+        depends,
+        roles,
+        instruction,
+        fields,
+    } = a;
+    *slug == b.slug
+        && *title == b.title
+        && *body == b.body
+        && *status == b.status
+        && *priority == b.priority
+        && *parent == b.parent
+        && *created_by == b.created_by
+        && *created == b.created
+        && *updated == b.updated
+        && *links == b.links
+        && *depends == b.depends
+        && *instruction == b.instruction
+        && *fields == b.fields
+        && roles_alike(roles, &b.roles)
 }
 
 /// Whether `a` and `b` are the same roles, their holders' health aside.
+#[expect(clippy::float_cmp, reason = "the role's own derived equality")]
 fn roles_alike(a: &[symphony_api::Role], b: &[symphony_api::Role]) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(a, b)| {
-            *a == symphony_api::Role {
-                health: a.health.clone(),
-                ..b.clone()
-            }
+            let symphony_api::Role {
+                handle,
+                role,
+                since,
+                expires,
+                health: _,
+            } = a;
+            *handle == b.handle && *role == b.role && *since == b.since && *expires == b.expires
         })
 }
 

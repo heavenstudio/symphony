@@ -184,7 +184,7 @@ move one key after another (`OrderChange`). They are `queue-item`,
 changed is sent once, as `task-fields`, its changed mutable fields alone,
 never its unchanged brief or record again: a view that does not hold the task
 (a column page, a task page's subtasks, `/agents`) reads it again when the
-change brings it in. A role's holder's health is no task's change: it is sent
+change brings it in, `/agents` merging that read into the agents it drew. A role's holder's health is no task's change: it is sent
 once, as that holder's `session` change, and the client sets each role of that
 handle from it (`lost` when the session is gone, as the board reads a role of
 no session). A `session` or `agent` change is sent only when something a page

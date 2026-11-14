@@ -285,3 +285,44 @@ fn an_agents_tool_call_sends_nothing_and_a_change_it_shows_sends_its_record() {
         "the record sent is the agent's as it is now"
     );
 }
+
+/// Two tasks are alike, as the feed compares them, when they differ in their holders' health
+/// alone: a change of any other field, a role's among them, is the task's own.
+#[test]
+fn a_task_is_alike_another_only_in_its_holders_health() {
+    let task: symphony_api::Task = serde_json::from_value(json!({
+        "slug": OPEN, "title": "Open", "body": "The brief", "status": "in_progress", "priority": 2,
+        "parent": null, "created_by": "owner", "created": 1.0, "updated": 2.0, "links": [],
+        "depends": [], "instruction": false,
+        "roles": [{"handle": LIVE, "role": "executor", "since": 1.0, "expires": null, "health": "live"}],
+    }))
+    .unwrap();
+    let mut stale = task.clone();
+    stale.roles[0].health = "stale".into();
+    assert!(super::shown_alike(&task, &stale));
+    assert!(super::tasks_alike(
+        std::slice::from_ref(&task),
+        std::slice::from_ref(&stale)
+    ));
+    type Change = fn(&mut symphony_api::Task);
+    let changes: [(&str, Change); 9] = [
+        ("body", |t| t.body.push('.')),
+        ("status", |t| t.status = "review".into()),
+        ("updated", |t| t.updated += 1.0),
+        ("depends", |t| t.depends.push("work/other".into())),
+        ("role", |t| t.roles[0].role = "reviewer".into()),
+        ("since", |t| t.roles[0].since += 1.0),
+        ("expires", |t| t.roles[0].expires = Some(9.0)),
+        ("roles", |t| t.roles.clear()),
+        ("fields", |t| {
+            let mut value = serde_json::to_value(&*t).unwrap();
+            value["fields"] = json!({"plugin": {"lane": "fast"}});
+            *t = serde_json::from_value(value).unwrap();
+        }),
+    ];
+    for (field, change) in changes {
+        let mut other = stale.clone();
+        change(&mut other);
+        assert!(!super::shown_alike(&task, &other), "{field}");
+    }
+}

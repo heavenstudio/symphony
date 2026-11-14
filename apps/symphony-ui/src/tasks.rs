@@ -111,6 +111,21 @@ pub fn holder_health<'a>(
     }
 }
 
+/// Whether the agents page, which lists no record of a task, shows it once `fields` changed it, by
+/// the server's own rule (`agent_page::tasks`): an agent it shows (`shown`) came to hold it in a
+/// role other than orchestrator, or it finished, for the Finished line of each agent that held it.
+pub fn agents_page_takes(fields: &TaskFields, shown: impl Fn(&str) -> bool) -> bool {
+    fields
+        .status
+        .as_deref()
+        .is_some_and(|status| status == "done" || status == "cancelled")
+        || fields
+            .roles
+            .iter()
+            .flatten()
+            .any(|role| role.role != "orchestrator" && shown(&role.handle))
+}
+
 #[component]
 pub fn TaskBoard(
     tasks: Vec<Task>,
@@ -1763,5 +1778,45 @@ mod tests {
         let mut tasks = vec![held("work/a", &[("amber", "executor", "stale")])];
         super::holder_health(tasks.iter_mut(), "amber", None);
         assert_eq!(healths(&tasks), [vec![("amber", "lost")]]);
+    }
+
+    /// The agents page takes a task it lists no record of as the server lists one: held by an agent
+    /// it shows in a role other than orchestrator, or finished; never for an orchestrator's role
+    /// alone, an agent it does not show or a change of nothing it reads.
+    #[test]
+    fn the_agents_page_takes_a_task_a_shown_agent_works_on_or_that_finished() {
+        let fields = |value| change("work/x", value).fields;
+        let shown = |handle: &str| ["amber", "birch"].contains(&handle);
+        let roles = |held: &[(&str, &str)]| {
+            json!(
+                held.iter()
+                    .map(|(handle, role)| json!({"handle": handle, "role": role, "since": 1.0, "expires": null, "health": "live"}))
+                    .collect::<Vec<_>>()
+            )
+        };
+        let takes = |value| super::agents_page_takes(&fields(value), shown);
+        assert!(takes(
+            json!({"roles": roles(&[("amber", "orchestrator"), ("birch", "executor")])})
+        ));
+        assert!(takes(json!({"roles": roles(&[("amber", "reviewer")])})));
+        assert!(
+            !takes(json!({"roles": roles(&[("amber", "orchestrator")])})),
+            "an orchestrator's open task is in its Following list, read when opened"
+        );
+        assert!(
+            !takes(json!({"roles": roles(&[("cedar", "executor")])})),
+            "an agent the page does not show"
+        );
+        assert!(!takes(json!({"roles": []})));
+        for status in ["done", "cancelled"] {
+            assert!(
+                takes(json!({"status": status})),
+                "{status} reaches its holders' Finished lines"
+            );
+        }
+        for status in ["in_progress", "review", "ready"] {
+            assert!(!takes(json!({"status": status})), "{status}");
+        }
+        assert!(!takes(json!({"title": "Renamed", "priority": 1})));
     }
 }
