@@ -574,6 +574,61 @@ fn a_call_newer_than_the_minor_agreed_is_not_sent_and_the_seams_own_default_answ
 }
 
 #[test]
+fn a_plugin_of_the_previous_minor_is_served_and_reads_a_page_of_this_one_as_its_own() {
+    /// A render as a plugin of 0.1 reads it: its page as 0.1 wrote one, with no artifacts folder.
+    #[derive(serde::Deserialize)]
+    struct RenderOf01 {
+        component: String,
+        page: PageOf01,
+        argument: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct PageOf01 {
+        doc_path: String,
+        #[serde(default)]
+        render: u64,
+    }
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let respond: Respond = Arc::new(|id, request| {
+        let mut asked: BTreeMap<String, RenderOf01> = serde_json::from_str(request).unwrap();
+        let asked = asked.remove("components.render").unwrap();
+        let said = format!(
+            "{} {} on {}, render {}",
+            asked.component,
+            asked.argument,
+            asked.page.doc_path,
+            u8::from(asked.page.render > 0)
+        );
+        Said::Lines(vec![answering(id, &rendered(&said))])
+    });
+    let previous = Version {
+        major: PROTOCOL.major,
+        minor: PROTOCOL.minor - 1,
+    };
+    let remote = Remote::leaked(
+        "old",
+        process_in(&tree, "old"),
+        hand_made(old_declared(previous), respond, seen.clone(), "exited"),
+        patient(),
+    );
+    let (component, _) = seams(remote);
+    let page = Page::new(&tree.root, "docs/A.md").in_artifacts("out");
+    assert_eq!(
+        text(component.render(&page, "a", None)),
+        "old a on docs/A.md, render 1"
+    );
+    // The page went with its project's folder, which that plugin's reader left unread.
+    let heard = seen.heard();
+    assert!(
+        heard
+            .iter()
+            .any(|line| line.contains("\"artifacts\":\"out\"")),
+        "{heard:?}"
+    );
+}
+
+#[test]
 fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_program_changes() {
     let tree = Tree::new();
     let program = tree.write("bin/old", "a build\n");
@@ -598,7 +653,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.1: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.2: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );

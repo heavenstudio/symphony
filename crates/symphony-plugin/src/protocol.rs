@@ -83,8 +83,8 @@ use serde_json::value::RawValue;
 
 use crate::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use crate::{
-    Card, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission, Submitted, TaskRef,
-    Theme, ThreadLine,
+    ARTIFACTS, Card, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission, Submitted,
+    TaskRef, Theme, ThreadLine,
 };
 
 /// The protocol's version: a new major breaks what the one before wrote, a new minor only adds.
@@ -94,9 +94,9 @@ pub struct Version {
     pub minor: u32,
 }
 
-/// The protocol this build speaks: major 0 while no process speaks it, the version a host and its
-/// plugins' processes will first agree on.
-pub const PROTOCOL: Version = Version { major: 0, minor: 1 };
+/// The protocol this build speaks: major 0 while no process speaks it. Minor 2 hands a page its
+/// project's artifacts folder ([`PageData::artifacts`]); its calls are 1's.
+pub const PROTOCOL: Version = Version { major: 0, minor: 2 };
 
 /// This build's protocol.
 impl Default for Version {
@@ -563,8 +563,8 @@ calls! {
     Alive = "transports.alive" since 1 => bool { transport: String, address: String }
 }
 
-/// A page as a request names it: the project's root, the document rendered, and the render it is
-/// part of.
+/// A page as a request names it: the project's root, the document rendered, the render it is part
+/// of, and the project's artifacts folder.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageData {
     pub root: PathBuf,
@@ -574,6 +574,15 @@ pub struct PageData {
     /// linked. 0, or none written, is a page of its own.
     #[serde(default)]
     pub render: u64,
+    /// The project's artifacts folder, relative to its root ([`Page::artifacts`]): since 0.2, and
+    /// [`ARTIFACTS`] when none is written, as a host of 0.1 writes none.
+    #[serde(default = "artifacts")]
+    pub artifacts: String,
+}
+
+/// [`PageData::artifacts`] when none is written.
+fn artifacts() -> String {
+    ARTIFACTS.into()
 }
 
 impl PageData {
@@ -582,12 +591,13 @@ impl PageData {
             root: page.root.to_path_buf(),
             doc_path: page.doc_path.to_string(),
             render: page.render,
+            artifacts: page.artifacts.to_string(),
         }
     }
 
-    /// Whether this names `page`: its root and its document.
+    /// Whether this names `page`: its root, its document and its project's artifacts folder.
     pub fn names(&self, page: &Page<'_>) -> bool {
-        self.root == page.root && self.doc_path == page.doc_path
+        self.root == page.root && self.doc_path == page.doc_path && self.artifacts == page.artifacts
     }
 }
 

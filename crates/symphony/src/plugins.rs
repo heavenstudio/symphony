@@ -382,22 +382,9 @@ pub fn unlanded(project: &Project, plugins: &Plugins) -> Vec<String> {
         .collect()
 }
 
-/// A component's problem, shown where it would be.
-pub fn error(problem: &str) -> Block {
-    Block::Paragraph {
-        spans: vec![Span::Styled {
-            tag: symphony_plugin::vocabulary::InlineKind::Span,
-            presentation: Presentation {
-                class: "component-error".into(),
-                title: "component error".into(),
-                ..Presentation::default()
-            },
-            spans: vec![Span::Text {
-                text: format!("⚠ {problem}"),
-            }],
-        }],
-    }
-}
+/// A component's problem, shown where it would be: the plugin kit's, which a plugin's own tests
+/// compare with.
+pub use symphony_plugin::error;
 
 /// `[[task:sim/jump|label]]`: a link to a task on the board. It reads only its argument.
 struct Task;

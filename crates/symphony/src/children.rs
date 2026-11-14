@@ -4,7 +4,8 @@
 //! would start a terminal under that one, which ends with it (`hc --skill`).
 //!
 //! The names, [`sessionless`] and [`command`] are the board's ([`symphony_board::sys`]), which
-//! starts its own children the same way: this crate depends on the board, so the one list is there.
+//! starts its own children the same way: this crate depends on the board, so the one list is there,
+//! from the leaf a plugin's process starts its children with (`process_cwd::session`).
 
 use std::io;
 use std::process::Output;
