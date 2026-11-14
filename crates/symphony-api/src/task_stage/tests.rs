@@ -332,6 +332,9 @@ fn a_heartbeat_places_alike_and_so_does_what_places_no_task() {
 /// columns again.
 #[test]
 fn a_work_that_could_move_a_task_does_not_place_alike() {
+    fn first(work: &mut MachineWork) -> &mut WorkOperation {
+        &mut work.machines[0].operations[0]
+    }
     let current = work(&[operation("build", "queued", "b")]);
     let differs = |change: &dyn Fn(&mut MachineWork)| {
         let mut next = current.clone();
@@ -341,9 +344,6 @@ fn a_work_that_could_move_a_task_does_not_place_alike() {
             "{next:?}"
         );
     };
-    fn first(work: &mut MachineWork) -> &mut WorkOperation {
-        &mut work.machines[0].operations[0]
-    }
     differs(&|work| first(work).state = WorkState::Running);
     differs(&|work| first(work).kind = WorkKind::Test);
     differs(&|work| first(work).task = Some("other".into()));
