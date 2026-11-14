@@ -1392,7 +1392,7 @@ mod tests {
             release: "release-2026-11-12".into(),
             skipped: vec!["alpha 1.0.0".into()],
             left: vec!["bravo 1.0.0".into()],
-            why: Some("the upload of bravo 1.0.0 failed (error: refused; log /l)".into()),
+            why: Some("cargo publish failed (error: refused; log /l)".into()),
             failed: true,
             ..Publication::default()
         });
@@ -1403,8 +1403,7 @@ mod tests {
             format!(
                 "last publish: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
                  on crates.io already: alpha 1.0.0\n  \
-                 not published: the upload of bravo 1.0.0 failed (error: refused; log /l): bravo \
-                 1.0.0\n  \
+                 not published: cargo publish failed (error: refused; log /l): bravo 1.0.0\n  \
                  the release stays tagged; `just release --refresh`, or the next release, \
                  publishes what is left\n",
                 local(NOW - 3600.0)

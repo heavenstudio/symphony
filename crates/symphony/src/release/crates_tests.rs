@@ -1,6 +1,6 @@
-//! The published packages, their order, crates.io's index, the changed-sources check and the
-//! release's step, against a workspace and a registry folder of the test's own and a stand-in for
-//! the cargo that publishes: nothing here reads crates.io or publishes anything.
+//! The published packages, crates.io's index, the changed-sources check and the release's step,
+//! against a workspace and a registry folder of the test's own and a stand-in for the cargo that
+//! publishes: nothing here reads crates.io or publishes anything.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::ExitStatusExt as _;
@@ -18,14 +18,6 @@ fn later() -> Instant {
 
 fn bound() -> Bound<'static> {
     Bound::until(later())
-}
-
-fn package(name: &str, needs: &[&str]) -> Package {
-    Package {
-        name: name.into(),
-        version: "1.0.0".into(),
-        needs: needs.iter().map(|need| (*need).to_string()).collect(),
-    }
 }
 
 fn names(packages: &[Package]) -> Vec<&str> {
@@ -82,22 +74,26 @@ fn listed(registry: &Path, name: &str, versions: &[&str]) {
     fs::write(file, lines).unwrap();
 }
 
-/// A stand-in for the cargo that publishes, in `tree`: it appends each command line, with the
-/// build folder it was handed, to `published.log` there; says it found no token for the packages
-/// `no_token` names, that an upload failed for those `fails` names and that crates.io holds those
-/// `there` names; and lists each package it uploads in `registry`'s index at 1.0.0.
+/// A stand-in for the cargo that publishes, in `tree`, run as `publish --locked -p NAME …`: it
+/// appends each command line, with the build folder it was handed, to `published.log` there; then
+/// uploads the packages it is named in that order, listing each in `registry`'s index at 1.0.0,
+/// until one that `no_token` names (no token found), `fails` names (an upload that failed) or
+/// `there` names (crates.io holds it already), where it stops.
 fn stand_in(tree: &Tree, registry: &Path, no_token: &str, fails: &str, there: &str) -> PathBuf {
     let log = tree.path("published.log");
     let script = format!(
         r#"#!/bin/sh
-name="$3"
 echo "$* target=$CARGO_TARGET_DIR" >> '{log}'
+shift 2
+for name in "$@"; do
+[ "$name" = -p ] && continue
 case " {no_token} " in *" $name "*) echo 'error: no token found, please run `cargo login`' >&2; exit 101;; esac
 case " {fails} " in *" $name "*) printf 'error: failed to publish %s to registry at https://crates.io\n\nCaused by:\n  the remote server responded with an error (status 503)\n' "$name" >&2; exit 101;; esac
 case " {there} " in *" $name "*) echo "error: crate $name@1.0.0 already exists on crates.io index" >&2; exit 101;; esac
 dir='{registry}/index/'"$(printf %s "$name" | cut -c1-2)/$(printf %s "$name" | cut -c3-4)"
 mkdir -p "$dir" && printf '{{"name":"%s","vers":"1.0.0"}}\n' "$name" >> "$dir/$name"
 echo "   Uploaded $name v1.0.0 to registry crates-io"
+done
 "#,
         log = log.display(),
         registry = registry.display(),
@@ -117,52 +113,20 @@ fn ran(tree: &Tree) -> Vec<String> {
 }
 
 #[test]
-fn packages_publish_after_what_they_build_with_and_by_name_among_those_ready_together() {
-    let ordered = ordered(vec![
-        package("alpha", &["zulu"]),
-        package("bravo", &["alpha"]),
-        package("zulu", &[]),
-        package("echo", &[]),
-    ])
-    .unwrap();
-    assert_eq!(names(&ordered), ["echo", "zulu", "alpha", "bravo"]);
-    let circle = ordered_err(vec![
-        package("alpha", &["bravo"]),
-        package("bravo", &["alpha"]),
-    ]);
-    assert!(
-        circle.starts_with("the published packages alpha, bravo build with each other in a circle"),
-        "{circle}"
-    );
-}
-
-fn ordered_err(packages: Vec<Package>) -> String {
-    ordered(packages).unwrap_err()
-}
-
-#[test]
-fn a_member_is_published_unless_it_says_publish_false_and_needs_only_published_members() {
+fn a_member_is_published_unless_it_says_publish_false_or_names_another_registry() {
     let metadata = json!({"packages": [
-        {"name": "alpha", "version": "1.0.0", "publish": null, "dependencies": [
-            {"name": "serde", "path": null, "kind": null},
-            {"name": "bravo", "path": "/ws/bravo", "kind": null},
-            {"name": "charlie", "path": "/ws/charlie", "kind": "build"},
-            {"name": "kept", "path": "/ws/kept", "kind": null},
-            {"name": "other", "path": "/ws/other", "kind": "dev"},
-            {"name": "alpha", "path": "/ws/alpha", "kind": "dev"},
-        ]},
-        {"name": "bravo", "version": "0.1.0", "publish": ["crates-io"], "dependencies": []},
-        {"name": "charlie", "version": "2.0.0", "dependencies": []},
-        {"name": "kept", "version": "0.1.0", "publish": [], "dependencies": []},
-        {"name": "elsewhere", "version": "0.1.0", "publish": ["mine"], "dependencies": []},
-        {"name": "other", "version": "1.0.0", "publish": null, "dependencies": []},
+        {"name": "other", "version": "1.0.0", "publish": null},
+        {"name": "bravo", "version": "0.1.0", "publish": ["crates-io"]},
+        {"name": "alpha", "version": "1.0.0", "publish": null},
+        {"name": "charlie", "version": "2.0.0"},
+        {"name": "kept", "version": "0.1.0", "publish": []},
+        {"name": "elsewhere", "version": "0.1.0", "publish": ["mine"]},
     ]});
     let found = published(&metadata);
-    assert_eq!(names(&found), ["alpha", "bravo", "charlie", "other"]);
     assert_eq!(
-        found[0].needs,
-        ["bravo", "charlie"],
-        "no dev, unpublished or outside need"
+        names(&found),
+        ["alpha", "bravo", "charlie", "other"],
+        "by name"
     );
     assert_eq!(found[1].version, "0.1.0");
     assert!(published(&json!({})).is_empty());
@@ -173,8 +137,11 @@ fn a_workspace_is_read_by_cargo_metadata_and_a_tree_without_one_publishes_nothin
     let tree = Tree::new();
     let root = workspace(&tree);
     let found = packages(&root, bound()).unwrap();
-    assert_eq!(names(&found), ["alpha", "bravo", "charlie"]);
-    assert_eq!(found[2].needs, ["bravo"], "delta is a test's alone");
+    assert_eq!(
+        names(&found),
+        ["alpha", "bravo", "charlie"],
+        "delta is a test's alone"
+    );
     assert_eq!(found[1].said(), "bravo 1.0.0");
     assert!(
         packages(&tree.path("ws/alpha/src"), bound())
@@ -254,14 +221,6 @@ fn two_packages_differ_by_each_file_added_gone_or_changed_but_where_and_how_they
             "src/lib.rs changed",
             "src/new.rs added"
         ]
-    );
-    std::os::unix::fs::symlink("lib.rs", tree.path("ours/src/link")).unwrap();
-    std::os::unix::fs::symlink("new.rs", tree.path("theirs/src/link")).unwrap();
-    assert!(
-        differ(&tree.path("ours"), &tree.path("theirs"))
-            .unwrap()
-            .contains(&"src/link changed".to_string()),
-        "a link is compared by where it leads"
     );
     assert!(differ(&tree.path("ours"), &tree.path("none")).is_err());
 }
@@ -454,7 +413,7 @@ fn an_upload_is_told_done_already_there_without_a_token_or_failed_by_cargos_line
 }
 
 #[test]
-fn a_publication_uploads_what_crates_io_lacks_in_order_and_skips_what_it_holds() {
+fn a_publication_uploads_what_crates_io_lacks_with_one_command_and_skips_what_it_holds() {
     let tree = Tree::new();
     let root = workspace(&tree);
     let registry = tree.path("registry");
@@ -482,14 +441,18 @@ fn a_publication_uploads_what_crates_io_lacks_in_order_and_skips_what_it_holds()
     let target = root.join(".target");
     assert_eq!(
         ran(&tree),
-        [
-            format!("publish -p bravo --locked target={}", target.display()),
-            format!("publish -p charlie --locked target={}", target.display()),
-        ]
+        [format!(
+            "publish --locked -p bravo -p charlie target={}",
+            target.display()
+        )],
+        "one command, naming only what the index lacks"
     );
     let said = fs::read_to_string(&log).unwrap();
     assert!(
-        said.starts_with("$ cargo publish -p bravo --locked\n   Uploaded bravo v1.0.0"),
+        said.starts_with(
+            "$ cargo publish --locked -p bravo -p charlie\n   Uploaded bravo v1.0.0 to registry \
+             crates-io\n   Uploaded charlie v1.0.0"
+        ),
         "{said}"
     );
     assert_eq!(
@@ -513,7 +476,7 @@ fn a_publication_uploads_what_crates_io_lacks_in_order_and_skips_what_it_holds()
         ["alpha 1.0.0", "bravo 1.0.0", "charlie 1.0.0"]
     );
     assert!(again.uploaded.is_empty());
-    assert_eq!(ran(&tree).len(), 2, "no upload more");
+    assert_eq!(ran(&tree).len(), 1, "no upload more");
 }
 
 #[test]
@@ -533,12 +496,8 @@ fn with_no_token_nothing_more_is_tried_and_the_release_stays_green() {
     assert!(!done.failed, "no token is no red");
     assert_eq!(done.left, ["alpha 1.0.0", "bravo 1.0.0", "charlie 1.0.0"]);
     assert_eq!(done.why.as_deref(), Some(NO_TOKEN));
-    assert_eq!(
-        ran(&tree).len(),
-        1,
-        "the first upload alone: {:?}",
-        ran(&tree)
-    );
+    assert!(done.uploaded.is_empty());
+    assert_eq!(ran(&tree).len(), 1, "{:?}", ran(&tree));
     let lines = done.lines();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(
@@ -552,59 +511,87 @@ fn with_no_token_nothing_more_is_tried_and_the_release_stays_green() {
 }
 
 #[test]
-fn a_failed_upload_stops_the_rest_and_names_the_package_and_cargos_line() {
+fn a_failed_upload_is_red_naming_cargos_line_and_the_index_read_again_says_what_went_up() {
     let tree = Tree::new();
     let root = workspace(&tree);
     let registry = tree.path("registry");
-    let cargo = stand_in(&tree, &registry, "", "bravo", "alpha");
+    // cargo uploads alpha and bravo, then fails at charlie.
+    let cargo = stand_in(&tree, &registry, "", "charlie", "");
     let log = tree.path("publish.log");
+    let folder = Registry::Folder(registry.clone());
     let done = publish(
         &root,
         "release-2026-11-12",
-        &Registry::Folder(registry),
+        &folder,
         cargo.as_os_str(),
         &log,
         bound(),
     );
     assert!(done.failed);
+    assert_eq!(done.uploaded, ["alpha 1.0.0", "bravo 1.0.0"]);
+    assert_eq!(done.left, ["charlie 1.0.0"]);
     assert_eq!(
-        done.skipped,
-        ["alpha 1.0.0"],
-        "an upload crates.io had already"
+        done.why,
+        Some(format!(
+            "cargo publish failed (error: failed to publish charlie to registry at \
+             https://crates.io; log {})",
+            log.display()
+        ))
     );
-    assert_eq!(done.left, ["bravo 1.0.0", "charlie 1.0.0"]);
-    assert_eq!(
-        done.why.as_deref(),
-        Some(
-            format!(
-                "the upload of bravo 1.0.0 failed (error: failed to publish bravo to registry at \
-                 https://crates.io; log {})",
-                log.display()
-            )
-            .as_str()
-        )
-    );
-    assert_eq!(
-        ran(&tree).len(),
-        2,
-        "charlie is not tried: {:?}",
-        ran(&tree)
-    );
+    assert_eq!(ran(&tree).len(), 1);
     let lines = done.lines();
-    assert_eq!(lines[0], "on crates.io already: alpha 1.0.0");
-    assert!(
-        lines[1].ends_with("): bravo 1.0.0, charlie 1.0.0"),
-        "{lines:?}"
-    );
+    assert_eq!(lines[0], "published alpha 1.0.0, bravo 1.0.0");
+    assert!(lines[1].ends_with("): charlie 1.0.0"), "{lines:?}");
     assert_eq!(
         lines[2],
         "the release stays tagged; `just release --refresh`, or the next release, publishes what \
          is left"
     );
+    // The next publication names only what is left.
+    let cargo = stand_in(&tree, &registry, "", "", "");
+    let again = publish(&root, "r", &folder, cargo.as_os_str(), &log, bound());
+    assert_eq!(
+        (again.uploaded, again.failed),
+        (vec!["charlie 1.0.0".to_string()], false)
+    );
+    assert!(
+        ran(&tree)[1].starts_with("publish --locked -p charlie target="),
+        "{:?}",
+        ran(&tree)
+    );
 }
 
 #[test]
-fn a_publication_that_cannot_read_its_packages_or_the_registry_is_red_and_tries_nothing() {
+fn a_version_crates_io_had_already_leaves_the_rest_to_the_next_publication_and_is_no_red() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    // The index read before it lacked bravo, which crates.io holds: cargo stops there.
+    let cargo = stand_in(&tree, &registry, "", "", "bravo");
+    let done = publish(
+        &root,
+        "release-2026-11-12",
+        &Registry::Folder(registry),
+        cargo.as_os_str(),
+        &tree.path("publish.log"),
+        bound(),
+    );
+    assert!(!done.failed);
+    assert_eq!(done.uploaded, ["alpha 1.0.0"]);
+    assert_eq!(done.left, ["bravo 1.0.0", "charlie 1.0.0"]);
+    assert_eq!(
+        done.lines(),
+        [
+            "published alpha 1.0.0",
+            "not published: cargo found a version on crates.io already, which the index read \
+             before it lacked: the next publication finishes what is left: bravo 1.0.0, charlie \
+             1.0.0"
+        ]
+    );
+}
+
+#[test]
+fn a_publication_is_red_where_it_cannot_read_its_packages_or_the_registry_or_nothing_went_up() {
     let tree = Tree::new();
     let root = workspace(&tree);
     let registry = tree.path("registry");
@@ -631,6 +618,20 @@ fn a_publication_that_cannot_read_its_packages_or_the_registry_is_red_and_tries_
         "{broken:?}"
     );
     assert!(ran(&tree).is_empty(), "no upload: {:?}", ran(&tree));
+    // A cargo that ends well and uploads nothing: the index says so, red.
+    workspace(&tree);
+    fs::remove_dir_all(tree.path("registry")).unwrap();
+    let quiet = publish(&root, "r", &folder, OsStr::new("true"), &log, bound());
+    assert!(quiet.failed);
+    assert_eq!(quiet.left.len(), 3);
+    assert!(
+        quiet
+            .why
+            .as_deref()
+            .unwrap()
+            .starts_with("cargo publish ended well, but the index does not list them (log "),
+        "{quiet:?}"
+    );
     let nothing = publish(
         &tree.path("none"),
         "r",

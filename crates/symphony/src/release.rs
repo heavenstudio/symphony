@@ -1329,8 +1329,9 @@ impl Refreshing<'_> {
         published
     }
 
-    /// [`Refreshing::publish`]'s work: nothing while `[releases] publish` is off, and on the
-    /// tests' clock nothing but to the tests' registry through their stand-in for cargo; else from
+    /// [`Refreshing::publish`]'s work: nothing while `[releases] publish` is off or under
+    /// `--no-push`, and on the tests' clock nothing but to the tests' registry through their
+    /// stand-in for cargo; else from
     /// the run's own checkout, brought to `commit` first (a later run may have left it elsewhere),
     /// within [`PUBLISH`] from now, which the lock's word is made to cover.
     fn publishing(
@@ -1343,6 +1344,10 @@ impl Refreshing<'_> {
         let not = |why: String| crates::Publication::not(tag, &why, true);
         if !self.repo.project.releases.publish {
             return crates::Publication::not(tag, crates::OFF, false);
+        }
+        // As a run with --no-push pushes nothing, a refresh with it publishes nothing.
+        if !self.options.push {
+            return crates::Publication::not(tag, "--no-push publishes nothing", false);
         }
         if std::env::var_os(CLOCK).is_some()
             && [crates::REGISTRY, crates::PUBLISHER]

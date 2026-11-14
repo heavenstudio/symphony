@@ -1,5 +1,5 @@
 //! The packages this workspace publishes on crates.io (docs/RELEASES.md, "Packages on crates.io"):
-//! which they are, in the order they publish ([`packages`]); what crates.io holds of each
+//! which they are ([`packages`]); what crates.io holds of each
 //! ([`Registry`]); the check that a package whose version crates.io holds still carries the sources
 //! that version was published with ([`check`], `symphony-build crates-check`); and the release
 //! run's step that publishes each version crates.io lacks once a green release is tagged and pushed
@@ -29,7 +29,7 @@ const DOWNLOADS: &str = "https://static.crates.io/crates";
 /// The tests' registry: a folder laid out as crates.io serves it, `index/` as the sparse index and
 /// `crates/NAME/NAME-VERSION.crate`, read in place of crates.io. No flag sets it.
 pub(crate) const REGISTRY: &str = "SYMPHONY_CRATES_IO";
-/// The tests' stand-in for the `cargo` that publishes, run as `cargo publish -p NAME --locked`
+/// The tests' stand-in for the `cargo` that publishes, run as `cargo publish --locked -p NAME …`
 /// would be. No flag sets it.
 pub(crate) const PUBLISHER: &str = "SYMPHONY_RELEASE_CARGO";
 /// How long one read of crates.io may take, unless its bound ends sooner.
@@ -42,13 +42,11 @@ const CHECKED: &str = "crates-check";
 /// The changed files a check names of one package at most; the rest are counted.
 const NAMED: usize = 10;
 
-/// A member the workspace publishes: its name, its version, and the published members it builds
-/// with (its normal and build dependencies by path), which publish before it.
+/// A member the workspace publishes: its name and its version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Package {
     pub(crate) name: String,
     pub(crate) version: String,
-    needs: Vec<String>,
 }
 
 impl Package {
@@ -87,8 +85,8 @@ fn failure(stderr: &[u8]) -> String {
         .map_or_else(String::new, |line| (*line).to_string())
 }
 
-/// The members of the workspace at `root` that are published, in the order they publish
-/// ([`ordered`]); none when `root` holds no `Cargo.toml`. Read by `cargo metadata`, which resolves
+/// The members of the workspace at `root` that are published, by name; none when `root` holds no
+/// `Cargo.toml`. Read by `cargo metadata`, which resolves
 /// what a member inherits from the workspace as `cargo publish` does, offline and without the
 /// members' dependencies.
 pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, String> {
@@ -117,13 +115,12 @@ pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, St
     }
     let metadata: Value = serde_json::from_slice(&done.stdout)
         .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", root.display()))?;
-    ordered(published(&metadata))
+    Ok(published(&metadata))
 }
 
-/// The published members `cargo metadata` names, each with the published members it builds with:
-/// a member with no `publish` list publishes anywhere, one with `publish = false` (an empty list)
-/// nowhere, and one with a list where it names crates.io. A development dependency is left out, as
-/// publishing drops one named by path alone.
+/// The published members `cargo metadata` names, by name: a member with no `publish` list
+/// publishes anywhere, one with `publish = false` (an empty list) nowhere, and one with a list
+/// where it names crates.io.
 fn published(metadata: &Value) -> Vec<Package> {
     let members = metadata["packages"]
         .as_array()
@@ -134,49 +131,36 @@ fn published(metadata: &Value) -> Vec<Package> {
         _ => false,
     };
     let text = |value: &Value| value.as_str().unwrap_or_default().to_string();
-    let names: BTreeSet<String> = (members.iter().filter(|member| publishes(member)))
-        .map(|member| text(&member["name"]))
-        .collect();
-    (members.iter().filter(|member| publishes(member)))
-        .map(|member| {
-            let name = text(&member["name"]);
-            let needs: BTreeSet<String> = (member["dependencies"].as_array().into_iter())
-                .flatten()
-                .filter(|dependency| !dependency["path"].is_null())
-                .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
-                .map(|dependency| text(&dependency["name"]))
-                .filter(|need| names.contains(need) && *need != name)
-                .collect();
-            Package {
-                version: text(&member["version"]),
-                needs: needs.into_iter().collect(),
-                name,
-            }
+    let mut found: Vec<Package> = (members.iter().filter(|member| publishes(member)))
+        .map(|member| Package {
+            name: text(&member["name"]),
+            version: text(&member["version"]),
         })
-        .collect()
+        .collect();
+    found.sort_by(|one, other| one.name.cmp(&other.name));
+    found
 }
 
-/// `packages` in the order they publish: each after every one it builds with, and of those ready
-/// together the first by name. A circle of them is refused, as none of it could publish first.
-fn ordered(packages: Vec<Package>) -> Result<Vec<Package>, String> {
-    let mut left = packages;
-    left.sort_by(|one, other| one.name.cmp(&other.name));
-    let mut done: Vec<Package> = Vec::new();
-    while !left.is_empty() {
-        let ready = left.iter().position(|package| {
-            (package.needs.iter()).all(|need| done.iter().any(|before| before.name == *need))
-        });
-        let Some(at) = ready else {
-            let names: Vec<&str> = left.iter().map(|package| package.name.as_str()).collect();
-            return Err(format!(
-                "the published packages {} build with each other in a circle, so none of them \
-                 publishes first",
-                names.join(", ")
-            ));
-        };
-        done.push(left.remove(at));
+/// `packages` split by what `registry` holds: those whose version it lists, then those it lacks.
+fn split(
+    registry: &Registry,
+    packages: &[Package],
+    bound: Bound<'_>,
+) -> Result<(Vec<Package>, Vec<Package>), String> {
+    let (mut held, mut lacked) = (Vec::new(), Vec::new());
+    for package in packages {
+        if registry.has(&package.name, &package.version, bound)? {
+            held.push(package.clone());
+        } else {
+            lacked.push(package.clone());
+        }
     }
-    Ok(done)
+    Ok((held, lacked))
+}
+
+/// Each of `packages` said, `NAME VERSION`.
+fn said(packages: &[Package]) -> Vec<String> {
+    packages.iter().map(Package::said).collect()
 }
 
 /// Where a registry holds what crates.io holds.
@@ -323,18 +307,14 @@ pub(crate) fn check(
 ) -> Result<Checked, String> {
     let bound = Bound::until(until);
     let mut checked = Checked::default();
-    let mut held = Vec::new();
-    for package in packages(root, bound)? {
-        if registry.has(&package.name, &package.version, bound)? {
-            held.push(package);
-        } else {
-            checked.lines.push(format!(
-                "{}: not on {} yet: nothing to compare, and a release publishes it while [releases] \
-                 publish is on",
-                package.said(),
-                registry.said()
-            ));
-        }
+    let (held, lacked) = split(registry, &packages(root, bound)?, bound)?;
+    for package in &lacked {
+        checked.lines.push(format!(
+            "{}: not on {} yet: nothing to compare, and a release publishes it while [releases] \
+             publish is on",
+            package.said(),
+            registry.said()
+        ));
     }
     if held.is_empty() {
         return Ok(checked);
@@ -414,8 +394,7 @@ fn unpacked(file: &Path, into: &Path, bound: Bound<'_>) -> Result<(), String> {
 
 /// How the package unpacked at `ours` differs from the one at `theirs`: each file under either, by
 /// its path from there, that is only in ours (`added`), only in theirs (`gone`) or holds other
-/// bytes (`changed`), in the order of their paths, [`NOT_SOURCES`] at the top left out. A link is
-/// compared by where it leads, never followed.
+/// bytes (`changed`), in the order of their paths, [`NOT_SOURCES`] at the top left out.
 fn differ(ours: &Path, theirs: &Path) -> Result<Vec<String>, String> {
     let (mine, published) = (files(ours)?, files(theirs)?);
     let mut said = Vec::new();
@@ -459,14 +438,8 @@ fn files(root: &Path) -> Result<BTreeSet<String>, String> {
     Ok(found)
 }
 
-/// The bytes of the file at `path`, or where it leads when it is a link.
+/// The bytes of the file at `path`: a `.crate` holds no link, as cargo packs a link's target.
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let meta = fs::symlink_metadata(path).map_err(|e| crate::text::os_error(&e, path))?;
-    if meta.file_type().is_symlink() {
-        return fs::read_link(path)
-            .map(|to| to.to_string_lossy().as_bytes().to_vec())
-            .map_err(|e| crate::text::os_error(&e, path));
-    }
     fs::read(path).map_err(|e| crate::text::os_error(&e, path))
 }
 
@@ -493,7 +466,7 @@ pub(crate) fn changed_line(changed: &Changed) -> String {
 pub(crate) struct Publication {
     /// The release it published from.
     pub(crate) release: String,
-    /// Each package it uploaded (`NAME VERSION`), in the order it did.
+    /// Each package it uploaded (`NAME VERSION`), as the index read after the upload lists it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) uploaded: Vec<String>,
     /// Each package whose version crates.io held already.
@@ -583,12 +556,13 @@ fn upload(done: &Output) -> Upload {
     }
 }
 
-/// The release `release` published from the checkout `at` within `bound`: each package
-/// [`packages`] names, in that order, whose version `registry` lacks, by `cargo publish -p NAME
-/// --locked` run as `cargo` (cargo itself, or the tests' stand-in), its output appended to `log`.
-/// cargo ends each upload only once crates.io's index lists it, so a package's dependents publish
-/// after it is there. It stops at the first that cargo finds no token for, or that fails: what is
-/// left waits for the next publish.
+/// The release `release` published from the checkout `at` within `bound`: the packages
+/// [`packages`] names whose version `registry` lacks, by one `cargo publish --locked -p NAME …` run
+/// as `cargo` (cargo itself, or the tests' stand-in), its output in `log`. cargo orders them,
+/// packages and builds each against the others as packaged before it uploads the first, so one
+/// that does not build uploads none, and waits for the index between uploads. The index is read
+/// again after it: what it lists went up, and the rest is left for the next publication, why by
+/// what cargo said ([`upload`]).
 pub(crate) fn publish(
     at: &Path,
     release: &str,
@@ -607,72 +581,78 @@ pub(crate) fn publish(
             );
         }
     };
+    let unread = |problem: String, left: &[Package]| Publication {
+        left: said(left),
+        ..Publication::not(
+            release,
+            &format!("{} cannot be read: {problem}", registry.said()),
+            true,
+        )
+    };
+    let (held, lacked) = match split(registry, &packages, bound) {
+        Ok(split) => split,
+        Err(problem) => return unread(problem, &packages),
+    };
     let mut done = Publication {
         release: release.into(),
+        skipped: said(&held),
         ..Publication::default()
     };
-    let mut rest = packages.iter();
-    while let Some(package) = rest.next() {
-        let said = package.said();
-        let stop = |done: &mut Publication, why: String, failed: bool, from: Option<&Package>| {
-            done.left = from
-                .into_iter()
-                .chain(rest.clone())
-                .map(Package::said)
-                .collect();
-            done.why = Some(why);
-            done.failed = failed;
-        };
-        match registry.has(&package.name, &package.version, bound) {
-            Ok(true) => {
-                done.skipped.push(said);
-                continue;
-            }
-            Ok(false) => {}
-            Err(problem) => {
-                let why = format!("{} cannot be read: {problem}", registry.said());
-                stop(&mut done, why, true, Some(package));
-                break;
-            }
-        }
-        let mut publish = command(cargo);
-        publish
-            .args(["publish", "-p", &package.name, "--locked"])
-            .env("CARGO_TARGET_DIR", at.join(".target"))
-            .current_dir(at);
-        let ended = run(
-            &mut publish,
-            &format!("cargo publish -p {}", package.name),
-            bound,
-        );
-        logged(log, &package.name, &ended);
-        let upload = match ended {
-            Ok(ended) => upload(&ended),
-            Err(problem) => Upload::Failed(problem),
-        };
-        match upload {
-            Upload::Done => done.uploaded.push(said),
-            Upload::There => done.skipped.push(said),
-            Upload::NoToken => {
-                stop(&mut done, NO_TOKEN.into(), false, Some(package));
-                break;
-            }
-            Upload::Failed(line) => {
-                let why = format!(
-                    "the upload of {said} failed ({line}; log {})",
-                    log.display()
-                );
-                stop(&mut done, why, true, Some(package));
-                break;
-            }
-        }
+    if lacked.is_empty() {
+        return done;
     }
+    let named: Vec<String> = (lacked.iter())
+        .map(|package| format!("-p {}", package.name))
+        .collect();
+    let line = format!("cargo publish --locked {}", named.join(" "));
+    let mut publish = command(cargo);
+    publish.args(["publish", "--locked"]);
+    for package in &lacked {
+        publish.args(["-p", &package.name]);
+    }
+    publish
+        .env("CARGO_TARGET_DIR", at.join(".target"))
+        .current_dir(at);
+    let ended = run(&mut publish, &line, bound);
+    logged(log, &line, &ended);
+    let (up, left) = match split(registry, &lacked, bound) {
+        Ok(split) => split,
+        Err(problem) => return unread(problem, &lacked),
+    };
+    done.uploaded = said(&up);
+    done.left = said(&left);
+    if left.is_empty() {
+        return done;
+    }
+    let (why, failed) = match ended.as_ref().map(upload) {
+        Ok(Upload::NoToken) => (NO_TOKEN.to_string(), false),
+        Ok(Upload::There) => (
+            "cargo found a version on crates.io already, which the index read before it lacked: \
+             the next publication finishes what is left"
+                .to_string(),
+            false,
+        ),
+        Ok(Upload::Failed(line)) => (
+            format!("cargo publish failed ({line}; log {})", log.display()),
+            true,
+        ),
+        Ok(Upload::Done) => (
+            format!(
+                "cargo publish ended well, but the index does not list them (log {})",
+                log.display()
+            ),
+            true,
+        ),
+        Err(problem) => (format!("{problem} (log {})", log.display()), true),
+    };
+    done.why = Some(why);
+    done.failed = failed;
     done
 }
 
-/// What one `cargo publish -p NAME` printed, or why it did not end, appended to `log`.
-fn logged(log: &Path, name: &str, ended: &Result<Output, String>) {
-    let mut text = format!("$ cargo publish -p {name} --locked\n");
+/// What the publishing command `line` printed, or why it did not end, appended to `log`.
+fn logged(log: &Path, line: &str, ended: &Result<Output, String>) {
+    let mut text = format!("$ {line}\n");
     match ended {
         Ok(done) => {
             text.push_str(&String::from_utf8_lossy(&done.stdout));
@@ -697,20 +677,16 @@ pub(crate) fn notes(at: &Path, registry: &Registry, bound: Bound<'_>) -> Vec<Str
         Ok(packages) => packages,
         Err(problem) => return vec![format!("Its packages could not be read: {problem}.")],
     };
-    let mut lacked = Vec::new();
-    for package in &packages {
-        match registry.has(&package.name, &package.version, bound) {
-            Ok(true) => {}
-            Ok(false) => lacked.push(package.said()),
-            Err(problem) => {
-                return vec![format!(
-                    "{} could not be read when it was tagged ({problem}): the step after its push \
-                     publishes what it lacks.",
-                    registry.said()
-                )];
-            }
+    let lacked = match split(registry, &packages, bound) {
+        Ok((_, lacked)) => said(&lacked),
+        Err(problem) => {
+            return vec![format!(
+                "{} could not be read when it was tagged ({problem}): the step after its push \
+                 publishes what it lacks.",
+                registry.said()
+            )];
         }
-    }
+    };
     if lacked.is_empty() {
         vec![format!(
             "Publishes nothing: {} holds each package's version.",

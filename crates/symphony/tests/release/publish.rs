@@ -1,8 +1,9 @@
 //! A green release publishes on crates.io only while `[releases] publish` says so, after its tag
-//! is pushed: each package whose version the registry lacks, in the order they build, through a
-//! stand-in for cargo and a registry folder of the test's own. With the step off, or on the tests'
-//! clock without the stand-ins, no `cargo publish` runs, through the variable or through `cargo` on
-//! the PATH; a failed upload leaves the release tagged, and `--refresh` finishes what it left.
+//! is pushed: the packages whose version the registry lacks, named in one `cargo publish`, through
+//! a stand-in for cargo and a registry folder of the test's own. With the step off, under
+//! `--no-push`, or on the tests' clock without the stand-ins, no `cargo publish` runs, through the
+//! variable or through `cargo` on the PATH; a failed upload leaves the release tagged, and
+//! `--refresh` finishes what it left.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -40,8 +41,9 @@ fn workspace(fixture: &Fixture) {
 }
 
 /// What a publication runs, in a folder of the fixture's own: a registry folder (`registry`); a
-/// stand-in for the cargo that publishes (`publisher`), which fails an upload while the file
-/// `fail-bravo` is beside it and lists each package it uploads in the registry at 1.0.0; and a
+/// stand-in for the cargo that publishes (`publisher`), run as `publish --locked -p NAME …`, which
+/// lists each package it uploads in the registry at 1.0.0 and, while the file `fail-bravo` is
+/// beside it, fails at bravo, as cargo uploads nothing when one package does not build; and a
 /// folder (`path`) whose `cargo` runs the real one but for `publish`, which it refuses. Each
 /// stand-in writes the command lines it ran to a log of its own.
 struct Stand {
@@ -67,14 +69,17 @@ impl Stand {
             &publisher,
             &format!(
                 r#"#!/bin/sh
-name="$3"
 echo "$*" >> '{folder}/published.log'
-if [ "$name" = bravo ] && [ -e '{folder}/fail-bravo' ]; then
-    echo 'error: failed to publish bravo to registry at https://crates.io' >&2
+case " $* " in *" bravo "*) if [ -e '{folder}/fail-bravo' ]; then
+    echo 'error: failed to verify package bravo' >&2
     exit 101
-fi
+fi;; esac
+shift 2
+for name in "$@"; do
+[ "$name" = -p ] && continue
 dir='{registry}/index/'"$(printf %s "$name" | cut -c1-2)/$(printf %s "$name" | cut -c3-4)"
 mkdir -p "$dir" && printf '{{"name":"%s","vers":"1.0.0"}}\n' "$name" >> "$dir/$name"
+done
 "#,
                 folder = folder.display(),
                 registry = registry.display(),
@@ -140,7 +145,7 @@ fn run(fixture: &Fixture, now: f64, args: &[&str], extra: &[(&str, &str)], code:
 }
 
 #[test]
-fn a_release_publishes_nothing_while_publish_is_off_nor_on_the_tests_clock_without_its_stand_ins() {
+fn a_release_publishes_nothing_while_off_under_no_push_or_on_the_tests_clock_without_stand_ins() {
     let fixture = Fixture::new();
     workspace(&fixture);
     fixture.commit("a workspace that publishes");
@@ -194,10 +199,25 @@ fn a_release_publishes_nothing_while_publish_is_off_nor_on_the_tests_clock_witho
     );
     assert!(stand.ran("published.log").is_empty());
     assert!(stand.ran("path.log").is_empty());
+    // On, with both stand-ins, a refresh under --no-push publishes nothing, as a run under it
+    // pushes nothing.
+    let out = run(
+        &fixture,
+        NOW + DAY + 60.0,
+        &["--refresh", "--no-push"],
+        &stand.both(),
+        0,
+    );
+    assert!(
+        out.contains("release: crates.io: not published: --no-push publishes nothing\n"),
+        "{out}"
+    );
+    assert!(stand.ran("published.log").is_empty());
+    assert!(stand.ran("path.log").is_empty());
 }
 
 #[test]
-fn a_release_publishes_what_the_registry_lacks_in_order_and_a_refresh_finishes_a_failed_upload() {
+fn a_release_publishes_what_the_registry_lacks_with_one_command_and_a_refresh_finishes_it() {
     let fixture = Fixture::new();
     fixture.write("symphony.toml", &Fixture::project_file("publish = true\n"));
     workspace(&fixture);
@@ -215,8 +235,8 @@ fn a_release_publishes_what_the_registry_lacks_in_order_and_a_refresh_finishes_a
         "release: green; tagged release-2026-11-12, pushed to origin\n".to_string(),
         "release: crates.io: on crates.io already: alpha 1.0.0\n".into(),
         format!(
-            "release: crates.io: not published: the upload of bravo 1.0.0 failed (error: failed to \
-             publish bravo to registry at https://crates.io; log {}): bravo 1.0.0, charlie 1.0.0\n",
+            "release: crates.io: not published: cargo publish failed (error: failed to verify \
+             package bravo; log {}): bravo 1.0.0, charlie 1.0.0\n",
             log.display()
         ),
         "release: crates.io: the release stays tagged; `just release --refresh`, or the next \
@@ -246,7 +266,11 @@ fn a_release_publishes_what_the_registry_lacks_in_order_and_a_refresh_finishes_a
         run_record["published"]["skipped"],
         serde_json::json!(["alpha 1.0.0"])
     );
-    assert_eq!(stand.ran("published.log"), ["publish -p bravo --locked"]);
+    assert_eq!(
+        stand.ran("published.log"),
+        ["publish --locked -p bravo -p charlie"],
+        "one command, naming what the registry lacks: bravo failing, nothing went up"
+    );
     let status = run(&fixture, NOW, &["--status"], &[], 0);
     assert!(
         status.contains("last publish: red, of release-2026-11-12 by the run "),
@@ -266,9 +290,8 @@ fn a_release_publishes_what_the_registry_lacks_in_order_and_a_refresh_finishes_a
     assert_eq!(
         stand.ran("published.log"),
         [
-            "publish -p bravo --locked",
-            "publish -p bravo --locked",
-            "publish -p charlie --locked"
+            "publish --locked -p bravo -p charlie",
+            "publish --locked -p bravo -p charlie"
         ]
     );
     assert!(

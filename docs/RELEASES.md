@@ -103,30 +103,41 @@ published with no `repository` line. Up to then, the packages are proven by `car
 --dry-run` naming the thirteen together, which packages them in dependency order and builds each
 against the others as packaged, before any is on crates.io.
 
+One more thing that answer touches: `symphony init`'s `Next:` names the project file's reference,
+docs/PROJECT_FILE.md, by its github.com URL in this repository (`init::PROJECT_FILE_REFERENCE`),
+true while a clone is the only way to the binaries. Once the packages are on crates.io with the
+repository still private, that link answers 404 to whoever installed them, so the reference then
+travels in `symphony-app`'s package or the binary prints it.
+
 **A release publishes them** only on the project's word: `[releases] publish = true` in
 `symphony.toml`, off when unsaid. This repository's `symphony.toml` leaves it off, so turning it on
 is the owner's word for the first publication. While it is off, a green release says
 `release: crates.io: not published: [releases] publish is off`, its record and `--status` say the
 same, and no `cargo publish` runs (`crates/symphony/src/release/crates.rs`). While it is on, a
 green release, once its tag is pushed and before [the refresh](#the-refresh), publishes from its
-own checkout brought to the release's commit, within an hour: each package of the workspace that
-publishes (`publish` unset, or naming `crates-io`), a package before each that builds with it, ties
-by name. A version crates.io's index lists already is skipped (`on crates.io already: …`), so a run
-again publishes only what is left. Each other is one `cargo publish -p NAME --locked`, which waits
-until the index lists what it uploaded, so a dependent after it is packaged against it; what each
-said goes to `logs/ID/publish.log`. The tests publish to a registry folder of their own through a
-stand-in for cargo, never to crates.io.
+own checkout brought to the release's commit, within an hour, the packages of the workspace that
+publish (`publish` unset, or naming `crates-io`) whose version crates.io's index lacks. A version
+the index lists already is skipped (`on crates.io already: …`), so a run again publishes only what
+is left. The rest go up by one `cargo publish --locked -p A -p B …` naming only them: cargo orders
+them, packages and builds each against the others as packaged before it uploads the first, so a
+package that does not build uploads none, and waits for the index between uploads. The index is
+read again after it: what it lists went up (`published …`), and the rest are left, with why. What
+cargo said goes to `logs/ID/publish.log`. The tests publish to a registry folder of their own
+through a stand-in for cargo, never to crates.io.
 
 - **The token** is cargo's own: `CARGO_REGISTRY_TOKEN` in the run's environment, cargo's
   credentials or a credential provider, read by cargo and never by the run. With none, cargo
-  refuses the first upload, the step says `not published: no token: …` with the packages left, and
-  nothing more is tried; the release stays green and the run's exit is unchanged.
-- **A failed upload** stops the step there: it says
-  `not published: the upload of NAME VERSION failed (…)`, with cargo's line and the log, then what
-  is left and that the release stays tagged. The release stands, its tag pushed; the run exits 1
-  and nothing is filed: the record and `--status` keep it (`last publish: red, …`).
-  `just release --refresh`, an orchestrator's retry once the cause is put right, publishes what is
-  left before it refreshes, and so does the next release's run.
+  refuses the first upload, the step says `not published: no token: …` with the packages left; the
+  release stays green and the run's exit is unchanged.
+- **A failed command** says `not published: cargo publish failed (…)`, with cargo's line and the
+  log, then what the index read again lacks and that the release stays tagged. The release stands,
+  its tag pushed; the run exits 1 and nothing is filed: the record and `--status` keep it
+  (`last publish: red, …`). `just release --refresh`, an orchestrator's retry once the cause is put
+  right, publishes what is left before it refreshes, and so does the next release's run.
+- **A version crates.io had already**, which cargo refuses as existing though the first read of the
+  index lacked it, is no red: the step says what is left, and the next publication finishes it.
+- **`--no-push`** publishes nothing: a run under it pushes no tag and so publishes none, and a
+  refresh under it says `not published: --no-push publishes nothing`.
 - **Its notes**, written before its tag, say after the checks it passed what it publishes: each
   package and version crates.io lacked then (`Publishes to crates.io: NAME VERSION, ….`), or that
   crates.io holds each (`Publishes nothing: …`).
