@@ -2,10 +2,13 @@
 //! renderers of the plugins it uses, never another project's. An entrypoint's `types` names them; a
 //! type none of them handles, or two of them sharing a name, is refused when the project loads.
 
-use symphony_plugin::Renderer as PluginRenderer;
+use std::collections::BTreeMap;
+
+use symphony_plugin::{Plugin, Renderer as PluginRenderer};
 
 use crate::entrypoint::{MARKDOWN, MEDIA, RENDERERS, Renderer};
-use crate::plugins::{Plugins, compiled};
+use crate::plugins::{Plugins, compiled, process};
+use crate::project::PluginProcess;
 
 /// One renderer a project has, with the plugin that gives it (none for the Symphony's own).
 struct Owned {
@@ -14,24 +17,69 @@ struct Owned {
 }
 
 /// The renderers a project using `plugins` has: the Symphony's, then each plugin's in the
-/// project's order; refused when two of them share a name, naming both owners.
-pub fn of_project(plugins: &[String]) -> Result<Vec<Renderer>, String> {
+/// project's order; refused when two of them share a name, naming both owners. A plugin answering
+/// from its process (`processes`, its `[plugins.process]`) gives the renderers it declared; one
+/// whose process cannot say them gives none, and refuses the project, naming why, only when
+/// `wanted` names a type none of the others handles.
+pub fn of_project(
+    plugins: &[String],
+    processes: &BTreeMap<String, PluginProcess>,
+    wanted: &[String],
+) -> Result<Vec<Renderer>, String> {
+    let mut silent = None;
+    let mut found_plugins = Vec::new();
+    for name in plugins {
+        match plugin(name, processes) {
+            Ok(found) => found_plugins.extend(found),
+            Err(why) => silent = silent.or(Some(why)),
+        }
+    }
+    let has = given(found_plugins)?;
+    match silent {
+        Some(why) if !wanted.iter().all(|name| has.iter().any(|r| r.name == name)) => Err(why),
+        _ => Ok(has),
+    }
+}
+
+/// The plugin `name` as it answers: from its process when `processes` names one for it
+/// ([`process::answering`]), else the compiled plugin of that name; or why its process cannot say
+/// what it declared, naming its log.
+fn plugin(
+    name: &str,
+    processes: &BTreeMap<String, PluginProcess>,
+) -> Result<Option<&'static dyn Plugin>, String> {
+    let compiled = || compiled().iter().copied().find(|p| p.name() == name);
+    let Some(started) = processes
+        .get(name)
+        .and_then(|own| process::answering(name, own))
+    else {
+        return Ok(compiled());
+    };
+    let remote = process::made(name, &started);
+    remote.declaration().map_err(|why| {
+        format!(
+            "[plugins.process] {name} cannot say its renderers: {why} (its log: {})",
+            started.log.display()
+        )
+    })?;
+    Ok(Some(remote))
+}
+
+/// The renderers of the Symphony and of `plugins`, refused when two share a name.
+fn given(plugins: Vec<&'static dyn Plugin>) -> Result<Vec<Renderer>, String> {
     let own = RENDERERS.iter().map(|renderer| Owned {
         plugin: None,
         renderer: *renderer,
     });
-    let given = plugins
-        .iter()
-        .filter_map(|name| compiled().iter().copied().find(|p| p.name() == name))
-        .flat_map(|plugin| {
-            plugin.renderers().into_iter().map(|renderer| Owned {
-                plugin: Some(plugin.name()),
-                renderer: Renderer {
-                    name: renderer.name(),
-                    extensions: renderer.extensions(),
-                },
-            })
-        });
+    let given = plugins.into_iter().flat_map(|plugin| {
+        plugin.renderers().into_iter().map(|renderer| Owned {
+            plugin: Some(plugin.name()),
+            renderer: Renderer {
+                name: renderer.name(),
+                extensions: renderer.extensions(),
+            },
+        })
+    });
     let mut found: Vec<Owned> = Vec::new();
     for owned in own.chain(given) {
         if let Some(first) = found

@@ -5,8 +5,9 @@
 //! project's plugins where a linked plugin would. A linked worktree (a branch's checkout) starts
 //! none of its own: its main checkout's process answers for it ([`answering`]).
 //!
-//! **Its process.** Started at the first call made of it, in the project's checkout, without the
-//! session ([`crate::children::command`]), its stdin and stdout the protocol's and each line of its
+//! **Its process.** Started when what it declared or a call of it is first needed, in the
+//! project's checkout, without the session ([`crate::children::command`]), its stdin and stdout
+//! the protocol's and each line of its
 //! stderr appended to its log (`plugins/NAME.log` in the artifacts folder, rolled to `NAME.1.log`
 //! past [`LOG_MAX`]), with a line there for each start and end. The first request declares: the
 //! plugin's [`Declaration`], the minor the two agree ([`Version::agreed`]). A plugin of another
@@ -23,20 +24,25 @@
 //! starts in [`WINDOW`], then it stays down until the oldest leaves the window. Its stdin ends with
 //! this process, which ends it (the SDK's `serve` at most its `ENDING` after).
 //!
-//! **Its seams.** What the plugin declared stands for it here: its components and its card kinds,
-//! each forwarding its calls. A call newer than the agreed minor is not sent: the seam's own default
-//! answers it. A call that gets no answer (the process down, no answer in time, a refusal, an answer
-//! that does not read) is shown where its answer would go: a component's in its place on the page
-//! ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing of the
-//! card. A page's components share their `once` values in the plugin as they do linked: every call
-//! of one [`Page`] names its render ([`PageData::render`]).
+//! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
+//! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
+//! forwarding its calls; its navigation and theme, which are declaration alone; and its commands,
+//! each run as its program ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused,
+//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
+//! default answers it. A call that gets no answer (the process down, no answer in time, a refusal,
+//! an answer that does not read) is shown where its answer would go: a component's in its place on
+//! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
+//! of the card, and each other seam's as [`seams`] says. A page's components share their `once`
+//! values in the plugin as they do linked: every call of one [`Page`] names its render
+//! ([`PageData::render`]). A register read asks every card kind of every card in one request
+//! ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
 //! **Measured.** Under `[plugins] timing` or `loopback` each call writes its line to the project's
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
 //! whole wait for the answer, and the bytes of the two lines.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{self, BufReader, Read, Write};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -46,14 +52,22 @@ use std::time::{Duration, Instant};
 use serde_json::value::RawValue;
 use symphony_plugin::protocol::{
     Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData, CardGates, Chosen,
-    Declaration, Declare, Envelope, LINE_MAX, Lined, Member, PROTOCOL, PageData, Pictures, Raw,
-    Recognises, Render, Request, Resolve, Slot, TriageCategory, Version, read_line,
+    Declaration, Declare, Envelope, KindAnswers, LINE_MAX, Lined, Member, PROTOCOL, PageData,
+    Pictures, Raw, ReadCards, Recognises, Render, Request, Resolve, Slot, TriageCategory, Version,
+    read_line,
 };
-use symphony_plugin::vocabulary::{Block, Picture};
-use symphony_plugin::{Card, CardKind, Component, Page, Plugin};
+use symphony_plugin::vocabulary::{Block, NavItem, Picture};
+use symphony_plugin::{
+    BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin, Renderer,
+    Route, Theme, Watch,
+};
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
+use seams::{
+    RemoteAction, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer, RemoteRoute,
+    RemoteWatch,
+};
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -148,6 +162,15 @@ pub fn answering(name: &str, own: &PluginProcess) -> Option<PluginProcess> {
     }
 }
 
+/// Whether a plugin of the checkout at `root` answering from a process (its main checkout's, from a
+/// linked worktree: [`answering`]) has not declared: what a load it refused waits for.
+pub fn undeclared(root: &Path) -> bool {
+    let answers = crate::builds::main_checkout(root).unwrap_or_else(|| root.to_path_buf());
+    lock(&REMOTES)
+        .iter()
+        .any(|remote| remote.process.root == answers && remote.declared.get().is_none())
+}
+
 /// The remote `plugin` is, when it is one: a plugin of a project answering from its own process.
 pub fn remote(plugin: &dyn Plugin) -> Option<&'static Remote> {
     lock(&REMOTES)
@@ -169,9 +192,9 @@ pub struct Spawned {
     /// Its stdin: where the host's lines go.
     pub input: Box<dyn Write + Send>,
     /// Its stdout: where its answers come from.
-    pub output: Box<dyn Read + Send>,
+    pub output: Box<dyn io::Read + Send>,
     /// Its stderr, each line of which goes to its log, when the host reads it.
-    pub errors: Option<Box<dyn Read + Send>>,
+    pub errors: Option<Box<dyn io::Read + Send>>,
     pub pid: Option<u32>,
     pub process: Box<dyn Handle>,
 }
@@ -253,7 +276,7 @@ fn spawn(process: &PluginProcess) -> io::Result<Spawned> {
     Ok(Spawned {
         input: Box::new(input),
         output: Box::new(output),
-        errors: errors.map(|errors| -> Box<dyn Read + Send> { Box::new(errors) }),
+        errors: errors.map(|errors| -> Box<dyn io::Read + Send> { Box::new(errors) }),
         pid: Some(started.child.id()),
         process: Box::new(started),
     })
@@ -310,24 +333,16 @@ fn shown(bytes: &[u8]) -> String {
     }
 }
 
-/// The seams `declaration` holds that a plugin's process does not answer.
+/// The seams `declaration` holds that a plugin's process does not answer: each is answered once a
+/// plugin first declares it from a process, and refused by name until then, rather than lost.
 fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
     let d = declaration;
     [
-        ("renderers", d.renderers.is_empty()),
-        ("routes", d.routes.is_empty()),
-        ("navigation", d.nav.is_empty()),
-        ("home regions", d.home_regions.is_empty()),
-        ("board actions", d.board_actions.is_empty()),
         ("board fields", d.board_fields.is_empty()),
         ("gates", d.gates.is_empty()),
-        ("watches", d.watches.is_empty()),
-        ("doc checks", d.doc_checks.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
-        ("commands", d.commands.is_empty()),
         ("transports", d.transports.is_empty()),
-        ("a theme", d.theme.is_none()),
     ]
     .into_iter()
     .filter(|(_, none)| !none)
@@ -435,6 +450,52 @@ struct Reply {
     answered: Box<RawValue>,
     us: Option<f64>,
     bytes: usize,
+}
+
+/// What [`Remote::asked`] needs of a call's [`Ask`], held as values so that one body serves every
+/// call: its tag, the minor it came in, whether it goes on a pipe, and its seam and call.
+#[derive(Clone, Copy)]
+struct Call {
+    tag: &'static str,
+    since: u32,
+    piped: bool,
+    names: (&'static str, &'static str),
+}
+
+impl Call {
+    fn of<A: Ask>() -> Call {
+        Call {
+            tag: A::TAG,
+            since: A::SINCE,
+            piped: A::PIPED,
+            names: A::names(),
+        }
+    }
+}
+
+/// What reads a call's answer as it came, keeping it: why it does not read, if it does not.
+type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
+
+/// `raw`, the plugin's answer to the call `tag`: the answer, or why it does not read or that the
+/// plugin refused the call. The answer's wrapper is read by one body for every call
+/// ([`answer_in`]), so each call's own reading is only its answer's type.
+fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
+    serde_json::from_str(answer_in(tag, raw)?.get()).map_err(|why| cannot_read(tag, &why))
+}
+
+/// The answer `raw` holds as it came, or why it does not read or that the plugin refused the call.
+#[inline(never)]
+fn answer_in<'a>(tag: &str, raw: &'a RawValue) -> Result<&'a RawValue, String> {
+    serde_json::from_str::<Answered<&RawValue>>(raw.get())
+        .map_err(|why| cannot_read(tag, &why))?
+        .shown()
+        .map_err(|why| format!("it refused {tag}: {why}"))
+}
+
+/// Why an answer to the call `tag` does not read.
+#[inline(never)]
+fn cannot_read(tag: &str, why: &serde_json::Error) -> String {
+    format!("its answer to {tag} cannot be read: {why}")
 }
 
 /// Why a call has no answer of the plugin's.
@@ -668,9 +729,8 @@ impl Remote {
             );
             return Err(Unstarted::Failed(connection.closed()));
         }
-        let declare = Declare::new(PROTOCOL);
-        let declaration = match self.sent_within(&connection, declare, self.limits.declare) {
-            Ok((declaration, _, _)) => declaration,
+        let declaration = match self.declaration_on(&connection) {
+            Ok(declaration) => declaration,
             Err(why) => {
                 self.end(&connection, Some(format!("it did not declare: {why}")));
                 return Err(Unstarted::Failed(format!(
@@ -731,8 +791,8 @@ impl Remote {
         &self,
         connection: &Arc<Connection>,
         (input, lines): (Box<dyn Write + Send>, mpsc::Receiver<Vec<u8>>),
-        output: Box<dyn Read + Send>,
-        errors: Option<(Box<dyn Read + Send>, mpsc::Sender<()>)>,
+        output: Box<dyn io::Read + Send>,
+        errors: Option<(Box<dyn io::Read + Send>, mpsc::Sender<()>)>,
     ) -> io::Result<()> {
         let this = self.this();
         let named =
@@ -777,7 +837,7 @@ impl Remote {
 
     /// The answers of `connection`'s process read from its stdout, `output`, until it ends, each
     /// handed to its call; then the connection ended. A read that fails or a line too long ends it.
-    fn read(&self, connection: &Connection, output: Box<dyn Read + Send>) {
+    fn read(&self, connection: &Connection, output: Box<dyn io::Read + Send>) {
         let mut output = BufReader::new(output);
         let failed = loop {
             match read_line(&mut output, self.limits.line) {
@@ -846,7 +906,7 @@ impl Remote {
     }
 
     /// Each line of `errors`, a process's stderr, appended to its log as it said it, until it ends.
-    fn errors(&self, errors: Box<dyn Read + Send>) {
+    fn errors(&self, errors: Box<dyn io::Read + Send>) {
         let mut errors = BufReader::new(errors);
         loop {
             let mut said = match read_line(&mut errors, ERROR_LINE) {
@@ -900,36 +960,57 @@ impl Remote {
     }
 
     /// The call `request` asked of the plugin, recorded under the project's settings: its answer,
-    /// or why there is none.
+    /// or why there is none. Only the reading of its answer is the call's own; the rest is one
+    /// body for every call ([`Self::asked`]), so each seam a process answers adds little to the
+    /// binary.
     pub fn ask<A: Ask>(&self, name: &str, request: A) -> Result<A::Answer, Failure> {
-        if !A::PIPED {
+        let mut answer = None;
+        self.asked(name, Call::of::<A>(), request.into(), &mut |raw| {
+            answer = Some(answer_of(A::TAG, raw)?);
+            Ok(())
+        })?;
+        answer.ok_or_else(|| Failure::Down(format!("its answer to {} was not read", A::TAG)))
+    }
+
+    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, and its answer handed to
+    /// `read`; nothing once `read` took it, or why there is no answer.
+    #[inline(never)]
+    fn asked(
+        &self,
+        name: &str,
+        call: Call,
+        request: Request,
+        read: ReadAnswer<'_>,
+    ) -> Result<(), Failure> {
+        if !call.piped {
             return Err(Failure::Down(format!(
                 "{} is not asked of a plugin's process",
-                A::TAG
+                call.tag
             )));
         }
         let started = Instant::now();
         let asked = match self.connection() {
             Ok(connection) => {
                 let agreed = connection.agreed.get().copied().unwrap_or(PROTOCOL);
-                if A::SINCE > agreed.minor {
+                if call.since > agreed.minor {
                     return Err(Failure::Newer(agreed));
                 }
                 // How the process ended is in its log already, once.
-                self.sent::<A>(&connection, request).inspect_err(|why| {
-                    if !why.starts_with("its process") {
-                        self.log(&format!("{} of {name}: {why}", A::TAG));
-                    }
-                })
+                self.sent_within(&connection, request, self.limits.wait, read)
+                    .inspect_err(|why| {
+                        if !why.starts_with("its process") {
+                            self.log(&format!("{} of {name}: {why}", call.tag));
+                        }
+                    })
             }
             Err(why) => Err(why),
         };
         let round_trip = started.elapsed();
         let record = *lock(&self.record);
         if let Some(record) = record {
-            let (seam, call) = A::names();
+            let (seam, call) = call.names;
             let (us, request_bytes, answer_bytes, failed) = match &asked {
-                Ok((_, sent, reply)) => (reply.us, Some(*sent), Some(reply.bytes), None),
+                Ok((sent, reply)) => (reply.us, Some(*sent), Some(reply.bytes), None),
                 Err(why) => (None, None, None, Some(why.clone())),
             };
             record.write(&Line {
@@ -948,28 +1029,30 @@ impl Remote {
                 failed,
             });
         }
-        asked.map(|(answer, _, _)| answer).map_err(Failure::Down)
+        asked.map(|_| ()).map_err(Failure::Down)
     }
 
-    /// `request` sent on `connection` and its answer read within [`Limits::wait`]: the answer, the
-    /// request line's bytes and the reply; or why there is none.
-    fn sent<A: Ask>(
-        &self,
-        connection: &Arc<Connection>,
-        request: A,
-    ) -> Result<(A::Answer, usize, Reply), String> {
-        self.sent_within(connection, request, self.limits.wait)
+    /// The plugin's declaration on `connection`, waited for [`Limits::declare`].
+    fn declaration_on(&self, connection: &Arc<Connection>) -> Result<Declaration, String> {
+        let mut declared = None;
+        let asked = Declare::new(PROTOCOL).into();
+        self.sent_within(connection, asked, self.limits.declare, &mut |raw| {
+            declared = Some(answer_of(Declare::TAG, raw)?);
+            Ok(())
+        })?;
+        declared.ok_or_else(|| format!("its answer to {} was not read", Declare::TAG))
     }
 
-    /// [`Self::sent`], the answer waited for `wait`.
-    fn sent_within<A: Ask>(
+    /// `request` sent on `connection` and its answer handed to `read` within `wait`: the request
+    /// line's bytes and the reply; or why there is none.
+    fn sent_within(
         &self,
         connection: &Arc<Connection>,
-        request: A,
+        request: Request,
         wait: Duration,
-    ) -> Result<(A::Answer, usize, Reply), String> {
+        read: ReadAnswer<'_>,
+    ) -> Result<(usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
-        let request: Request = request.into();
         let mut line = serde_json::to_vec(&Envelope::<&Request, ()>::asking(id, &request))
             .map_err(|why| format!("the request cannot be written: {why}"))?;
         if line.len() > self.limits.line {
@@ -1007,11 +1090,8 @@ impl Remote {
                 return Err("its answers stopped".into());
             }
         };
-        let answer = serde_json::from_str::<Answered<A::Answer>>(reply.answered.get())
-            .map_err(|why| format!("its answer to {} cannot be read: {why}", A::TAG))?
-            .shown()
-            .map_err(|why| format!("it refused {}: {why}", A::TAG))?;
-        Ok((answer, bytes, reply))
+        read(&reply.answered)?;
+        Ok((bytes, reply))
     }
 
     /// `line` queued for `connection`'s stdin: its number among the lines queued, or why it is not.
@@ -1093,33 +1173,76 @@ impl Remote {
     }
 }
 
+impl Remote {
+    /// The objects `pick` takes of what it declared, as its seams answer: none when it never
+    /// declared.
+    fn each<'a, T: ?Sized>(&'a self, pick: impl FnOnce(&'a Declared) -> Vec<&'a T>) -> Vec<&'a T> {
+        self.declared().map_or_else(|_| Vec::new(), pick)
+    }
+}
+
 impl Plugin for Remote {
     fn name(&self) -> &str {
         &self.name
     }
     fn components(&self) -> Vec<&dyn Component> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .components
-                    .iter()
-                    .map(|component| -> &dyn Component { component })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.components
+                .iter()
+                .map(|c| -> &dyn Component { c })
+                .collect()
+        })
     }
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
-        self.declared().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                declared
-                    .card_kinds
-                    .iter()
-                    .map(|kind| -> &dyn CardKind { kind })
-                    .collect()
-            },
-        )
+        self.each(|d| {
+            d.card_kinds
+                .iter()
+                .map(|k| -> &dyn CardKind { k })
+                .collect()
+        })
+    }
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        self.each(|d| d.renderers.iter().map(|r| -> &dyn Renderer { r }).collect())
+    }
+    fn routes(&self) -> Vec<&dyn Route> {
+        self.each(|d| d.routes.iter().map(|r| -> &dyn Route { r }).collect())
+    }
+    fn nav(&self) -> Vec<NavItem> {
+        self.declaration()
+            .map_or_else(|_| Vec::new(), |declared| declared.nav.clone())
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        self.each(|d| {
+            d.home_regions
+                .iter()
+                .map(|r| -> &dyn HomeRegion { r })
+                .collect()
+        })
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        self.each(|d| {
+            d.board_actions
+                .iter()
+                .map(|a| -> &dyn BoardAction { a })
+                .collect()
+        })
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        self.each(|d| d.watches.iter().map(|w| -> &dyn Watch { w }).collect())
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        self.each(|d| {
+            d.doc_checks
+                .iter()
+                .map(|c| -> &dyn DocCheck { c })
+                .collect()
+        })
+    }
+    fn commands(&self) -> Vec<&dyn Command> {
+        self.each(|d| d.commands.iter().map(|c| -> &dyn Command { c }).collect())
+    }
+    fn theme(&self) -> Option<Theme> {
+        self.declaration().ok()?.theme.clone()
     }
 }
 
@@ -1128,6 +1251,19 @@ struct Declared {
     declaration: Declaration,
     components: Vec<RemoteComponent>,
     card_kinds: Vec<RemoteKind>,
+    renderers: Vec<RemoteRenderer>,
+    routes: Vec<RemoteRoute>,
+    home_regions: Vec<RemoteRegion>,
+    board_actions: Vec<RemoteAction>,
+    watches: Vec<RemoteWatch>,
+    doc_checks: Vec<RemoteCheck>,
+    commands: Vec<RemoteCommand>,
+}
+
+/// `text` kept for the process's life, as the declaration is: what a seam's object lends as a
+/// `&str` of its own (a card kind's markers, a renderer's extensions) is borrowed from it.
+fn kept(text: &str) -> &'static str {
+    Box::leak(text.to_string().into_boxed_str())
 }
 
 impl Declared {
@@ -1147,13 +1283,69 @@ impl Declared {
                 .map(|kind| RemoteKind {
                     remote,
                     name: kind.name.clone(),
-                    // Kept for the process's life, as the declaration is: a kind's markers are
-                    // borrowed from it.
-                    markers: kind
-                        .markers
-                        .iter()
-                        .map(|marker| &*Box::leak(marker.clone().into_boxed_str()))
-                        .collect(),
+                    markers: kind.markers.iter().map(|marker| kept(marker)).collect(),
+                })
+                .collect(),
+            renderers: declaration
+                .renderers
+                .iter()
+                .map(|renderer| RemoteRenderer {
+                    remote,
+                    name: renderer.name.clone(),
+                    extensions: renderer.extensions.iter().map(|e| kept(e)).collect(),
+                    content_type: renderer.content_type.clone(),
+                })
+                .collect(),
+            routes: declaration
+                .routes
+                .iter()
+                .map(|path| RemoteRoute {
+                    remote,
+                    path: path.clone(),
+                })
+                .collect(),
+            home_regions: declaration
+                .home_regions
+                .iter()
+                .map(|id| RemoteRegion {
+                    remote,
+                    id: id.clone(),
+                })
+                .collect(),
+            board_actions: declaration
+                .board_actions
+                .iter()
+                .map(|name| RemoteAction {
+                    remote,
+                    name: name.clone(),
+                })
+                .collect(),
+            watches: declaration
+                .watches
+                .iter()
+                .enumerate()
+                .map(|(index, paths)| RemoteWatch {
+                    remote,
+                    index,
+                    paths: paths.clone(),
+                })
+                .collect(),
+            doc_checks: declaration
+                .doc_checks
+                .iter()
+                .map(|check| RemoteCheck {
+                    remote,
+                    name: check.name.clone(),
+                    inputs: check.inputs.clone(),
+                })
+                .collect(),
+            commands: declaration
+                .commands
+                .iter()
+                .map(|command| RemoteCommand {
+                    remote,
+                    name: command.name.clone(),
+                    summary: command.summary.clone(),
                 })
                 .collect(),
             declaration,
@@ -1341,6 +1533,204 @@ impl CardKind for RemoteKind {
     }
 }
 
+impl Remote {
+    /// Every card kind's answers of each of `cards`, one register read's, its pictures read in
+    /// the checkout at `root`: asked in as few requests as keep each line within the bound
+    /// ([`ReadCards`]), and kept for that read alone. None from a plugin that speaks a minor
+    /// before the batch, declares no card kind or answered none of them: its kinds are asked card
+    /// by card. The cards of a request that had no answer, and a card too long for a line alone,
+    /// are asked card by card too.
+    pub fn read_cards(&self, root: &Path, cards: &[CardData]) -> Option<Read> {
+        let this = self.this();
+        let declared = this.declared().ok()?;
+        if declared.card_kinds.is_empty() || cards.is_empty() {
+            return None;
+        }
+        let name = declared
+            .card_kinds
+            .iter()
+            .map(|kind| kind.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut answered = HashMap::new();
+        for chunk in self.chunks(root, cards) {
+            let asked = ReadCards::new(root.to_path_buf(), chunk.to_vec());
+            match self.ask(&name, asked) {
+                Ok(read) if read.len() == chunk.len() => {
+                    answered.extend(chunk.iter().cloned().zip(read));
+                }
+                Ok(read) => self.log(&format!(
+                    "{} of {name}: {} answers to {} cards; they are asked card by card",
+                    ReadCards::TAG,
+                    read.len(),
+                    chunk.len()
+                )),
+                Err(Failure::Newer(_)) => return None,
+                // Why is in its log: these cards are asked one by one.
+                Err(Failure::Down(_)) => {}
+            }
+        }
+        if answered.is_empty() {
+            return None;
+        }
+        let answers = Arc::new(Answers {
+            root: root.to_path_buf(),
+            cards: answered,
+        });
+        Some(Read {
+            remote: this,
+            kinds: declared
+                .card_kinds
+                .iter()
+                .map(|kind| ReadKind {
+                    kind: kind.name.as_str(),
+                    remote: kind,
+                    answers: answers.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// `cards` in runs, in their order, each as many as one [`ReadCards`] line holds within the
+    /// bound, its id the longest an id is; a card too long for a line alone is in none.
+    fn chunks<'c>(&self, root: &Path, cards: &'c [CardData]) -> Vec<&'c [CardData]> {
+        let empty = ReadCards::new(root.to_path_buf(), Vec::new());
+        let Ok(base) = serde_json::to_vec(&Envelope::<Request, ()>::asking(u64::MAX, empty.into()))
+        else {
+            return Vec::new();
+        };
+        let (base, line) = (base.len(), self.limits.line);
+        let mut chunks = Vec::new();
+        // The run being made: where it starts and the length of its line so far.
+        let mut run: Option<(usize, usize)> = None;
+        for (at, card) in cards.iter().enumerate() {
+            let size = serde_json::to_vec(card).map_or(usize::MAX, |card| card.len());
+            if base.saturating_add(size) > line {
+                if let Some((start, _)) = run.take() {
+                    chunks.push(&cards[start..at]);
+                }
+                continue;
+            }
+            run = match run {
+                // A comma before each card but the first.
+                Some((start, length)) if length + 1 + size <= line => {
+                    Some((start, length + 1 + size))
+                }
+                Some((start, _)) => {
+                    chunks.push(&cards[start..at]);
+                    Some((at, base + size))
+                }
+                None => Some((at, base + size)),
+            };
+        }
+        if let Some((start, _)) = run {
+            chunks.push(&cards[start..]);
+        }
+        chunks
+    }
+}
+
+/// What one register read had of a plugin's process for every card it holds, in one go
+/// ([`Remote::read`]): kinds standing for the remote's, each answering a card the read holds from
+/// what the process said of it, and any other card, or the pictures of another checkout, as the
+/// remote does, card by card. Kept for the read alone, so nothing it says outlives the files and
+/// threads it was made of.
+pub struct Read {
+    remote: &'static Remote,
+    kinds: Vec<ReadKind>,
+}
+
+impl Read {
+    /// Whether it holds the answers of `plugin`.
+    pub fn of(&self, plugin: &dyn Plugin) -> bool {
+        std::ptr::addr_eq(self.remote, plugin)
+    }
+
+    /// The remote's card kinds, answering the read's cards from it.
+    pub fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        self.kinds
+            .iter()
+            .map(|kind| -> &dyn CardKind { kind })
+            .collect()
+    }
+}
+
+/// What a process said of a read's cards: each card's kinds' answers, its pictures read at `root`.
+struct Answers {
+    root: PathBuf,
+    cards: HashMap<CardData, Vec<KindAnswers>>,
+}
+
+/// A card kind of a remote, answering a read's cards from what its process said of them.
+struct ReadKind {
+    kind: &'static str,
+    remote: &'static RemoteKind,
+    answers: Arc<Answers>,
+}
+
+impl ReadKind {
+    /// What the process said of `card` for this kind, when the read holds it.
+    fn answered(&self, card: &Card<'_>) -> Option<&KindAnswers> {
+        self.answers
+            .cards
+            .get(&CardData::of(card))?
+            .iter()
+            .find(|answers| answers.kind == self.kind)
+    }
+}
+
+impl CardKind for ReadKind {
+    fn name(&self) -> &str {
+        self.kind
+    }
+    fn recognises(&self, card: &Card<'_>) -> bool {
+        self.answered(card)
+            .map_or_else(|| self.remote.recognises(card), |said| said.recognises)
+    }
+    fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
+        match self.answered(card) {
+            Some(said) if root == self.answers.root => said.pictures.clone(),
+            Some(_) | None => self.remote.pictures(root, card),
+        }
+    }
+    fn slot(&self, card: &Card<'_>) -> Option<String> {
+        self.answered(card)
+            .map_or_else(|| self.remote.slot(card), |said| said.slot.clone())
+    }
+    fn markers(&self) -> &[&str] {
+        self.remote.markers()
+    }
+    fn triage_category(&self, card: &Card<'_>) -> Option<String> {
+        self.answered(card).map_or_else(
+            || self.remote.triage_category(card),
+            |said| said.triage_category.clone(),
+        )
+    }
+    fn auto_approvable(&self, card: &Card<'_>) -> bool {
+        self.answered(card).map_or_else(
+            || self.remote.auto_approvable(card),
+            |said| said.auto_approvable,
+        )
+    }
+    fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
+        self.answered(card)
+            .map_or_else(|| self.remote.gates(card), |said| said.gates.clone())
+    }
+    fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
+        self.answered(card).map_or_else(
+            || self.remote.approval_needs_agent(card),
+            |said| said.approval_needs_agent,
+        )
+    }
+    fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
+        self.answered(card)
+            .map_or_else(|| self.remote.chosen(card), |said| said.chosen.clone())
+    }
+}
+
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
+
+#[path = "process_seams.rs"]
+mod seams;
