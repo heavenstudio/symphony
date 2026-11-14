@@ -104,8 +104,10 @@ anywhere but where the aim tested, or where be unknown, or, for a click, anythin
 label again), the step fails naming where the pointer landed or what the press would reach, and
 nothing is pressed. Typing focuses its element by script and types with no pointer, so what covers
 the element takes none of it. A click, typing, a key or a hover then waits for the page to settle
-again, as a capture does, bringing the page back in front if the step left it hidden (an Escape the
-page does not take).
+again, as a capture does, first bringing the page back in front, should the step have left it
+behind another tab (an Escape the page does not take, a page it opened), before asking the page
+anything: a page it opened, of its own site, shares its process, and a dialog it shows in front
+holds the page until another tab is in front.
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -1929,8 +1931,14 @@ fn quiet_since<'a>(events: impl Iterator<Item = (Instant, &'a Value)>, start: In
 /// by when the browser's events were read, so a slow look at a busy machine's page does not count
 /// against it; then for its fonts and two frames. A page left behind another tab (an Escape the
 /// page does not take goes to the browser; a link may open a new tab) draws no frames, so it is
-/// brought back in front. Fails when the wait runs out, every call within it included, naming what
-/// it still waited for; or at once when the Symphony's shell says the page could not load.
+/// brought back in front: first of all, before the page is asked anything, and again whenever it
+/// says it is hidden. A page it opened in front of it, of its own site, runs in its process, and a
+/// dialog that page shows while in front holds that process, and with it every answer of the
+/// page's, until another tab is in front: Chrome then lets the dialog go (an alert as by its OK, a
+/// confirm or a prompt as by its Cancel), as it lets a tab behind another alert without holding
+/// it. The browser brings the page in front without asking it. Fails when the wait runs out,
+/// every call within it included, naming what it still waited for; or at once when the
+/// Symphony's shell says the page could not load.
 fn settle(chrome: &mut Chrome, wait: Wait, after: &str) -> Result<(), String> {
     settled(chrome, wait, after, &|still, failed| {
         not_drawn(after, wait, still, failed)
@@ -1946,8 +1954,12 @@ fn settled(
     late: &dyn Fn(&[String], &[Value]) -> String,
 ) -> Result<(), String> {
     let start = Instant::now();
-    let mut still = vec!["the page to answer".to_string()];
+    let mut still = vec!["the browser to bring the page in front".to_string()];
     let mut failed = Vec::new();
+    said(chrome.call("Page.bringToFront", json!({})), after, || {
+        late(&still, &failed)
+    })?;
+    still = vec!["the page to answer".to_string()];
     loop {
         let state = said(chrome.eval(STATE), after, || late(&still, &failed))?;
         if state["navigation"] == "failed" {
