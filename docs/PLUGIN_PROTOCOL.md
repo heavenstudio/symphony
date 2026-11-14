@@ -23,16 +23,18 @@ types cross.
   markup rules the Symphony reads files by (`text`: Python's whitespace, lines and `strip`, a file
   read with universal newlines and written whole; `markup`: HTML escaping and URL quoting).
 
-The kit's crates depend on no other workspace crate but each other. The app's own wire types, which
-move with the server and the client, are `symphony-api`'s, which re-exports the vocabulary under the
-same names; the library re-exports the text, markup and `error` under its old names.
+The kit's crates depend on no other workspace crate but each other. They carry one version, 1.0.0
+now, and are made to be published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)). The
+app's own wire types, which move with the server and the client, are `symphony-api`'s, which
+re-exports the vocabulary under the same names; the library re-exports the text, markup and `error`
+under its old names.
 
-Beside the kit, a plugin takes what it wants of the helpers, each on its own version line:
+Beside the kit, a plugin takes what it wants of the helpers, each on a version line of its own:
 `process-cwd` (children started without a fork, and without the session or the marks of the
 process that starts them, `process_cwd::session`), `symphony-schema` (JSON Schema checks, and
 `repr` and `os_error`, a value and an OS error printed as Python prints them), `symphony-args` (a
-command line's flags, and `refuse`, its usage and error) and `repository-read`. A plugin built on
-these alone links no Symphony library.
+command line's flags, and `refuse`, its usage and error), `symphony-env` and `repository-read`. A
+plugin built on these alone links no Symphony library.
 
 A plugin's tests ask its components and card kinds as a host does, through the protocol's requests
 and answers, with no host linked: `symphony_plugin::testing::Host` hands each request to the plugin

@@ -1,15 +1,22 @@
 [package]
 name = "repository-read"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Repository reads that report every attempt, a missing path and a directory listing included, for a reader and the verifier that audits it."
+readme = "README.md"
+keywords = ["symphony", "audit", "filesystem"]
+categories = ["filesystem", "development-tools"]
+# What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
+include = ["src/**", "README.md", "LICENSE"]
 
 [dependencies]
 # The audit's root and report variables by their own names, the old ones still read.
-symphony-env = { path = "../symphony-env" }
+symphony-env = { path = "../symphony-env", version = "1.0.0" }
 
 [lints]
 workspace = true

@@ -84,6 +84,11 @@ a measurement before and after.
   (`just test-rs -p symphony-board --test perf`), the launcher's and hooks' own targets
   (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
   and the command run in a scratch worktree, never against the live board.
+- **A package's publication** (a member's `publish`, version, crates.io metadata, `include` list
+  or a published package's dependency on a sibling): `just test-rs -p symphony --test packages`
+  and `cargo publish --dry-run` naming every published package together, from the committed tip
+  (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
+  never a publication.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).

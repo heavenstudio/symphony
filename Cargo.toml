@@ -3,12 +3,16 @@
 resolver = "3"
 members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
+# What every member inherits. `publish = false` keeps a member off crates.io unless its own
+# manifest says `publish = true` with the metadata crates.io shows (docs/RELEASES.md, "Packages on
+# crates.io"; crates/symphony/tests/packages.rs holds which members those are).
 [workspace.package]
 edition = "2024"
 rust-version = "1.99"
 publish = false
 license = "MIT"
 authors = ["Stefano Benatti"]
+repository = "https://github.com/heavenstudio/symphony"
 
 # Tests and clippy use line tables for panic backtraces without full debug info or incremental
 # caches in each tree's build folder. The board launcher builds release binaries separately.
