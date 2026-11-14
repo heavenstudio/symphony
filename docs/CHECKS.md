@@ -402,7 +402,7 @@ the server and 330 KB of `symphony` and of `tasks`. Every crate builds in one co
 crate compiles a generic or helper into each unit that reaches it, with its unwind tables, inlines
 across none of them, and copies a large constant table (comrak's, regex-syntax's Unicode tables)
 into each unit that reads it. One unit saves about 2.7 MB of the server, 1.8 MB of `symphony`,
-2.5 MB of `tasks` and 0.5 MB of `agent-send`. It costs each crate's release compile, a cold
+2.4 MB of `tasks` and 0.5 MB of `agent-send`. It costs each crate's release compile, a cold
 release build about 30 % longer, and a change's size no longer moves with code shifting between
 units.
 
