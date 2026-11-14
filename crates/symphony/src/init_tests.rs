@@ -842,6 +842,84 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
     }
 }
 
+/// Where a page link in a shipped skill's file leads, as `(skill, file, anchor)`: a file beside it,
+/// `../SKILL/FILE` in another skill, or `#anchor` in itself; none for a link of no such shape.
+fn link_target<'a>(
+    skill: &'a str,
+    file: &'a str,
+    target: &'a str,
+) -> Option<(&'a str, &'a str, Option<&'a str>)> {
+    let (place, anchor) = match target.split_once('#') {
+        Some((place, anchor)) => (place, Some(anchor)),
+        None => (target, None),
+    };
+    let (skill, file) = match place.strip_prefix("../") {
+        Some(other) => other.split_once('/')?,
+        None if place.is_empty() => (skill, file),
+        None => (skill, place),
+    };
+    Some((skill, file, anchor))
+}
+
+/// An agent reads a skill's other files only through its pages: each link in a shipped file leads
+/// to a file a shipped skill carries, and to a heading there when it names one, and each file a
+/// skill carries beside its `SKILL.md` is named by another of its files.
+#[test]
+fn every_page_a_shipped_skill_links_is_shipped_and_every_page_it_ships_is_named() {
+    let shipped = Shipped::builtin();
+    let text = |skill: &str, file: &str| {
+        let skill = shipped.skills.iter().find(|one| one.name == skill)?;
+        let (_, body) = skill.files.iter().find(|(name, _)| name == file)?;
+        Some(body.clone())
+    };
+    let link = regex::Regex::new(r"\]\(([^)\s]+)\)").unwrap();
+    let mut links = 0;
+    for skill in &shipped.skills {
+        for (file, body) in &skill.files {
+            for found in link.captures_iter(body) {
+                let target = &found[1];
+                if target.contains("://") {
+                    continue;
+                }
+                let at = format!("{}/{file} links {target}", skill.name);
+                let (owner, page, anchor) =
+                    link_target(&skill.name, file, target).unwrap_or_else(|| panic!("{at}"));
+                let page = text(owner, page)
+                    .unwrap_or_else(|| panic!("{at}, which no shipped skill carries"));
+                if let Some(anchor) = anchor {
+                    let headings = page.lines().filter_map(|line| {
+                        let words = line.trim_start_matches('#');
+                        (words.len() < line.len() && words.starts_with(' ')).then_some(words)
+                    });
+                    let anchors: Vec<String> = headings.map(crate::edit::heading_anchor).collect();
+                    assert!(
+                        anchors.iter().any(|one| one == anchor),
+                        "{at}, a heading it lacks: {anchors:?}"
+                    );
+                }
+                links += 1;
+            }
+        }
+        for (file, _) in skill.files.iter().skip(1) {
+            let named = skill
+                .files
+                .iter()
+                .any(|(other, body)| other != file && body.contains(file.as_str()));
+            assert!(
+                named,
+                "{}/{file} is shipped and no page names it",
+                skill.name
+            );
+        }
+    }
+    // The walk reads links: the work skill's own router leads to each of its stage pages.
+    assert!(links >= 3, "{links} links read");
+    let router = text("work", "SKILL.md").unwrap();
+    for stage in ["start.md", "build.md", "finish.md"] {
+        assert!(router.contains(&format!("]({stage})")), "{stage}");
+    }
+}
+
 #[test]
 fn removed_managed_support_files_retire_but_project_data_and_own_links_survive() {
     let tree = Tree::new();
@@ -866,7 +944,7 @@ fn removed_managed_support_files_retire_but_project_data_and_own_links_survive()
 fn all_builtin_skills_leave_a_projects_own_copies_in_use_byte_for_byte() {
     let tree = Tree::new();
     let shipped = Shipped::builtin();
-    assert_eq!(shipped.skills.len(), 7);
+    assert_eq!(shipped.skills.len(), 8);
     for skill in &shipped.skills {
         tree.write(
             &format!(".agents/skills/{}/SKILL.md", skill.name),

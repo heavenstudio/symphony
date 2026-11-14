@@ -18,7 +18,8 @@ pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MO
                          slug
 
 Start an agent on a task in an hc terminal of its own, its first message
-/work SLUG HANDLE. --kind says which agent runs, --role what it does there.
+/work SLUG HANDLE (a reviewer's /review-task SLUG HANDLE). --kind says which
+agent runs, --role what it does there.
 Refused while this machine runs as many agents as the project's [limits]
 machine_agents allows (`just tasks limits` prints it).
 
@@ -44,7 +45,7 @@ options:
                         <repo>-wt/
   --tab TAB             the Herdr app tab (stream) for its terminal; default
                         code for an executor, review for a reviewer
-  --prompt PROMPT       text sent after /work SLUG HANDLE
+  --prompt PROMPT       text sent after /work SLUG HANDLE (or /review-task)
 "#;
 
 /// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the

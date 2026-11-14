@@ -89,6 +89,13 @@ holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
+`symphony-build` (`crates/symphony/src/bin/symphony-build.rs`, `symphony::cli::build_main`) holds
+the commands only this repository's own build and release run use: `publish-client`,
+`release-inputs`, `size-budget`, `split-repair` and `release`. The recipes and scripts run it by
+`tools/rs-bin.sh symphony-build`; it is never shipped or installed (`init::BUILDS` does not name
+it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
+links them ([CHECKS](docs/CHECKS.md#size-budgets)).
+
 `just client-update` builds all eight real client modules and publishes their bundle
 under `apps/symphony-server/client/public/`. A branch commits no distribution, whatever
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
@@ -101,7 +108,7 @@ commits the distribution its own sources make, and the land keeps main's side of
 under /private/tmp, copy the locked component source without changing its version or features, and
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
-A snapshot holds only what the client's build reads (`release-inputs`,
+A snapshot holds only what the client's build reads (`symphony-build release-inputs`,
 `crates/symphony/src/cli/commands/release_inputs.rs`): the client's package and the local
 packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
 pin and the server's notice styles, and the other members' manifests over empty
@@ -118,7 +125,7 @@ retired implicit bundles cannot replace it. A foreground preview override remain
 
 `just client-check` rebuilds into a separate directory and compares every freshly
 built path and byte with that committed distribution. The distribution keeps the build
-`publish-client` publishes and the two published before it, newest first in its
+`symphony-build publish-client` publishes and the two published before it, newest first in its
 `builds.json`, for pages opened on them (`KEEP` in `crates/symphony/src/cli/publish.rs`: two
 previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
 build is gone loads again onto the current one. The check allows those older builds and refuses
@@ -151,17 +158,10 @@ standing rules in [RULES.md](RULES.md).
 **Its own names.** Symphony names only its own variables (`SYMPHONY_`), state folders
 (`symphony/` in the git common dir), formats and settings, never a consuming project's
 tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
-outside the fences it lists, each with its reason (the move command `tools/move-state.sh`
-and its tests, `crates/tasks/src/unmoved.rs`, the launcher's read of an older build's board
-record, and the client's tools script, which runs an older build's copies where they stand),
-and on the first consuming project's name, in any spelling or identifier built from it, in a
-tracked file's text or path: say "the consuming project". The state folders are named once, in
-`crates/tasks/src/folders.rs`. Until the move, a build of this code starts no board, server
-or recorder on a repository whose old folders still hold its state, and makes no verdict
-journal there, refusing with the line naming `tools/move-state.sh` (`unmoved.rs`). It
-installs no client tools beside an older build's either, and no build removes those: another
-worktree's build may be running them. Only the move takes them away, on a quiet machine,
-refusing while a process has a file open under them.
+outside the fences it lists, each with its reason (a past incident's record in
+`docs/history/`), and on the first consuming project's name, in any spelling or identifier
+built from it, in a tracked file's text or path: say "the consuming project". The state
+folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
@@ -204,10 +204,9 @@ orchestrator does either only on the owner's word. The owner, 2026-11-12: "It wo
 release a new version every given number of tasks done, say 20 and refresh server/clients", then
 "yes, a green release should refresh". So a land also starts a release run once 20 tasks have landed
 since the last release or the last run that checked something (`[releases] every_landings`, run by
-`[board] on_land` as the linked `.target/bin/symphony nightly --due`, the command's name before
-the rename, which a build older than it knows and a newer one runs as `release --due`
-([the rename](docs/RELEASES.md#the-rename)), and which counts with git and builds nothing short
-of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
+`[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link that any
+`just release` in the main checkout makes or renews, which counts with git and builds nothing
+short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
 run at once. A green release then refreshes the machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
@@ -247,7 +246,7 @@ this folder (`../symphony-wt/release`), which tags a green tip as a release
 
 ## Agent integration
 
-`symphony init --root ROOT` installs the seven generic skills, their Claude links,
+`symphony init --root ROOT` installs the eight generic skills, their Claude links,
 Claude allow rules, heartbeat and memory-guard commands, Codex rules and the recipes
 the skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`,
 `symphony`, `symphony-cli`, `symphony-status`, `symphony-reply`, `symphony-ask`, and the
@@ -273,7 +272,7 @@ with an ask list they leave empty; any other it finds is the project's own and s
 allow rules, like the Codex rules, allow the board and reply recipes (`tasks`, `agent-send`,
 `symphony-status`, `symphony-reply`, `symphony-ask`) and `land`, and not the two server
 recipes: `just symphony` starts, replaces or stops the machine's shared server and
-`just symphony-cli` reaches `serve`, `init` and `publish-client`, so an agent is asked first.
+`just symphony-cli` reaches `serve` and `init`, so an agent is asked first.
 `just land` needs no prompt: what the default land lands is decided by its approval check, a
 fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
 a prompt would add only a wait on the owner (the owner, 2026-11-12: "should not require
@@ -390,11 +389,12 @@ through ordinary Cargo; `land` it takes as installed, through its own `tasks`. T
 standalone workspace requires no project gate or landing executable.
 
 `just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
-verified in full in a clean checkout outside this folder and conciliated with the projects the
-machine serves, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed, then the machine refreshed to it. A red tip is held as the release
-candidate, the local branch `release-candidate` that is never pushed, until its reds' own tasks,
-started there, land; then it is rerun and released, and main's tip is not run meanwhile.
+verified in full in a clean checkout outside this folder, judged by the checks this repository
+owns and never by a consuming project's suite, each red check filed on this board, a green tip
+tagged `release-YYYY-MM-DD` and that tag alone pushed, then the machine refreshed to it. A red
+tip is held as the release candidate, the local branch `release-candidate` that is never pushed,
+until its reds' own tasks, started there, land; then it is rerun and released, and main's tip is
+not run meanwhile.
 `--commit COMMIT` releases a commit of main out of cycle, `--due` starts a run only once
 `[releases] every_landings` tasks have landed or the release candidate's rerun or drop is due
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest

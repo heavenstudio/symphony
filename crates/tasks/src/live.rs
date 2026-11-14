@@ -1,12 +1,11 @@
 //! A project's live board, and which builds may move it forward.
 //!
 //! A project's live board is the `tasks` database on its repository's board server, the one on the
-//! data in its common dir (`symphony/tasks/data`, or the board's old folder's while an older
-//! build's board is still there: [`crate::unmoved`]), however a run reaches it: through its
-//! project, or by an address, a `TASKS_SERVER` or a client made for it, which is known by the server
+//! data in its common dir (`symphony/tasks/data`), however a run reaches it: through its project,
+//! or by an address, a `TASKS_SERVER` or a client made for it, which is known by the server
 //! listening there and the data it serves, wherever the run is ([`served`], [`find`]). Only where
 //! this machine cannot say who listens there is it known by the record of the run's repository, or
-//! of a registered project, that names its port ([`crate::unmoved::board_record`]). Any other board
+//! of a registered project, that names its port ([`recorded`]). Any other board
 //! is a scratch one, which every writer moves forward as the schema rule says
 //! ([`crate::schema::decide`]).
 //!
@@ -93,7 +92,9 @@ pub enum Recorded {
 
 /// The port `common`'s board server record names ([`Recorded`]).
 pub fn recorded(common: &Path) -> Recorded {
-    let record = crate::unmoved::board_record(common);
+    let record = common
+        .join(crate::server::FOLDER)
+        .join(crate::server::ADDRESS);
     let Ok(text) = std::fs::read_to_string(record) else {
         return Recorded::None;
     };

@@ -232,7 +232,7 @@ fn a_stage_or_a_build_that_cannot_be_kept_whole_refuses_and_leaves_the_published
         let (code, err) = publish(&tree);
         assert_eq!(code, 1, "{case}: {err}");
         let prefix = format!(
-            "symphony publish-client: {} -> {}: ",
+            "symphony-build publish-client: {} -> {}: ",
             tree.path("stage").display(),
             tree.path("public").display()
         );
@@ -266,5 +266,5 @@ fn a_link_among_the_stage_assets_refuses() {
 fn a_command_line_without_both_folders_prints_the_usage() {
     let mut err = Vec::new();
     assert_eq!(publish_client_main(&["only-one".into()], &mut err), 2);
-    assert_eq!(err, b"usage: symphony publish-client STAGE PUBLIC\n");
+    assert_eq!(err, b"usage: symphony-build publish-client STAGE PUBLIC\n");
 }

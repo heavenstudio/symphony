@@ -1,8 +1,7 @@
 //! The folders this build keeps a repository's state in, in its git common dir, each named here
 //! once and every one in the one folder of Symphony's there, `symphony/` (DECISIONS:
-//! symphony-own-names). An older build kept the same state in the folders [`crate::unmoved::OLD`]
-//! pairs with these, which `tools/move-state.sh` moves to them; the scripts that cannot read this
-//! file (`tools/surreal.sh`, `tools/rs-bin.sh`, `apps/symphony-ui/tools.sh`) spell theirs alike.
+//! symphony-own-names). The scripts that cannot read this file (`tools/surreal.sh`,
+//! `tools/rs-bin.sh`, `apps/symphony-ui/tools.sh`) spell theirs alike.
 
 /// The board: its server's data, record, lock and log, the heartbeat's keys, the land's state and
 /// the sweeps', the dispatcher's and the staffing's records.

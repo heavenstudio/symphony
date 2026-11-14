@@ -3,7 +3,7 @@
 use super::hc::{self, Hc, text_of};
 use super::{
     GONE, LaunchError, Machine, Start, Started, branch_exists, claude_args, cleanup, codex_args,
-    git, gone, live_executor_in, start_confirmed, stream,
+    git, gone, live_executor_in, skill, start_confirmed, stream,
 };
 use crate::rows::TaskSessionRow;
 use crate::{Error, Store};
@@ -110,8 +110,10 @@ fn restore_one(
         }
     }
     let text = format!(
-        "You were restored after your pane was closed. First run `just tasks callback --as {}`, then `just tasks inbox --as {}` and continue /work {slug}.",
-        session.handle, session.handle
+        "You were restored after your pane was closed. First run `just tasks callback --as {}`, then `just tasks inbox --as {}` and continue /{} {slug}.",
+        session.handle,
+        session.handle,
+        skill(&session.role)
     );
     let (agent, args) = if let Some(id) = session.claude_session.strip_prefix("codex:") {
         let mut args = codex_args(&session.model, None, &session.handle, machine);

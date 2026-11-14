@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony_board::sys::Stdio;
 
@@ -277,15 +277,13 @@ fn a_night_run_by_hand_holds_the_lock_so_a_due_count_starts_no_second() {
         .spawn()
         .unwrap();
     // Its check runs: the run says so beside the lock it holds.
-    let began = Instant::now();
     let running = fixture.records().join("running.json");
-    while !fs::read_to_string(&running).is_ok_and(|text| text.contains("\"verify\"")) {
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "the run never ran its check"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    test_time::until_true(
+        "the run said it runs its check",
+        test_time::backstop(Duration::from_secs(60)),
+        || fs::read_to_string(&running).is_ok_and(|text| text.contains("\"verify\"")),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
     let out = due(&fixture, NOW + 60.0, &landed, 0);
     assert!(
         out.contains("next run: in progress: the run ") && !out.contains("release: due"),
@@ -380,7 +378,7 @@ fn a_count_short_of_due_builds_nothing_and_a_due_one_builds_in_the_release_runs_
     assert_eq!(
         fs::read_to_string(&built).unwrap(),
         format!(
-            "--build symphony in {} into its own .target\n",
+            "--build symphony-build in {} into its own .target\n",
             fixture.worktree().display()
         )
     );

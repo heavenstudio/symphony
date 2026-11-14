@@ -5213,11 +5213,20 @@ dependencies = [
  "repository-read",
  "serde",
  "serde_json",
+ "symphony-blocks",
 ]
 
 [[package]]
 name = "symphony-args"
 version = "0.1.0"
+
+[[package]]
+name = "symphony-blocks"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "symphony-board"
@@ -5252,7 +5261,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "symphony-api",
+ "symphony-blocks",
  "symphony-docs",
 ]
 

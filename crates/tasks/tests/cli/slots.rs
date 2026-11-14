@@ -47,7 +47,7 @@ pub(crate) const RESERVE_HINT: &str = "; if the task is reserved for you, start 
 /// What the orchestrator holding `work/0` and `work/1` in progress, at a cap of two, is said as.
 pub(crate) fn holds_two(orch: &str) -> String {
     format!(
-        "{orch} holds 2 open tasks, the cap of 2 an orchestrator holds: work/0 (in_progress), work/1 (in_progress); a slot frees when one of them is done or cancelled"
+        "{orch} holds 2 open tasks, the cap of 2 an orchestrator holds: work/0 (in_progress), work/1 (in_progress); a slot frees when one of them goes to review or is done or cancelled"
     )
 }
 

@@ -498,43 +498,6 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
-### The folder move
-
-An older build keeps a repository's state in folders of the git common dir under the old names,
-and a build of this code refuses to start a board, a server or a recorder there until
-`tools/move-state.sh` has moved them into `symphony/` (its header lists each move). It is run once
-per repository, from any of its checkouts, `--dry-run` first, with the board held and the shared
-server stopped. Every move is a rename, and nothing moves while anything of the repository runs:
-a process whose command line names the old folders, one with a file of the board's, the server's
-or the old client tools open or working there, by whatever path (lsof finds the ones named
-relatively), a server either record names, a land, a fetch of SurrealDB, or a program of the
-board or the server in a checkout. Each refusal names the pid and says what to end.
-
-A SurrealDB server whose data folder and working folder both lie outside the repository is passed
-instead, and named on stdout with both: a test's private board an older build left running on the
-pinned program from the old folder, which it keeps running once that moves. Its data is the last
-word of its command line (`memory`, or a path after `surrealkv://` or another engine's scheme),
-made absolute against its working folder. A folder lies in the repository when the common dir
-holds it or git, asked there, finds this repository, or, where git finds none, when a checkout
-holds it; a repository nested in a checkout's ignored files is another, and a working folder since
-removed lies in none. One that also has a file of the board's or the server's open is refused. The
-move signals no process, passed or refused.
-
-The board's records of processes move with its folder, byte for byte, and the new build reads
-them as its own: the hold the move was made under, a private replay's record and each ask to end
-a server. The hold still holds the board after the move, so the script's closing line then says
-to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
-otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
-
-The board's, SurrealDB's, the server's and the model's old folders, once moved, each leave a
-one-line file of their name saying where they went, so a build from before the move fails there
-instead of starting an empty board or fetching SurrealDB beside the moved state. Such
-a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
-setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
-20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,
-a sweep or `tasks-reclaim`. Both mean the state moved: merge main and rebuild. `just tasks
-database release` run by such a build does nothing to it, as the file is no hold.
-
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a
@@ -1048,6 +1011,27 @@ Orchestrators can share the board, each holding its own slug prefixes. A decisio
 one side makes that the other must act on becomes a short board task for that side,
 and a side that approves documents commits them regularly, because worktree agents
 see only what is committed.
+
+## The tasks API
+
+`tasks api` is the board's methods as JSON, for a program rather than a person: one call
+`{"method": NAME, "args": {…}}`, or a list of them, on stdin, each answered `{"ok": RESULT}`,
+`{"refused": WHY}` (the board's refusal, which wrote nothing) or `{"error": WHY}`; `tasks api
+--lines` answers a call per line over one connection (`crates/tasks/src/cli/api.rs`). It is how a
+project's own program reaches its board without linking the board's library.
+
+It is a contract, versioned `MAJOR.MINOR`. `{"method": "version"}` answers
+`{"api": {"major": M, "minor": N}, "schema": S}`, S the board schema the build writes, without
+reaching the board: a program that must know what a build serves, such as a project's launcher
+choosing between builds, asks it, never reading Symphony's source. Within a major a method, an
+argument or a field of an answer is added, never removed, renamed or changed in meaning, and an
+argument added has a default, its absence read as before; each addition raises the minor, and the
+api version this guide gives a method (`hold`, api version 4) is its minor of major 1. A new major
+is a task of its own. The calls a registered project's programs make today are held by
+`crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
+reads with their JSON types, so a change that would break one fails its own task's gate. What the
+api promises is its calls, not the board's rules behind them, such as who may move or judge a
+task.
 
 ## The agents API
 
@@ -2024,9 +2008,10 @@ its own work.
 
 Every instruction an orchestrator gives an agent is a **subtask**: a task made
 with `--parent`, whose description is the instruction, word for word. The agent's
-whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), never a brief
-in a file. A parent's subtasks nest to any depth; a task is never its own
-ancestor (`just tasks parent SLUG PARENT` moves one, and refuses a cycle).
+whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), a reviewer's
+`/review-task SLUG HANDLE` (`.agents/skills/review-task/SKILL.md`), never a brief in a file.
+A parent's subtasks nest to any depth; a task is never its own ancestor (`just tasks parent
+SLUG PARENT` moves one, and refuses a cycle).
 
 ```
 just tasks create perf/x/review "Review perf/x" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
@@ -2070,7 +2055,7 @@ checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src
 
 ```toml
 [limits]
-orchestrator_slots = 8  # the open tasks an orchestrator holds (Slots, below)
+orchestrator_slots = 8  # the tasks in progress an orchestrator holds (Slots, below)
 low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
 machine_agents = 12     # the agents this machine runs
 
@@ -2139,8 +2124,16 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
   the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
-  or leaves the open statuses another way.
+  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
+  `done` or `cancelled`, or leaves the open statuses another way.
+- **Work in review takes no slot.** The cap counts the tasks being built, not
+  the review of them: a task's slot frees when it moves to `review`, and a move
+  into `review` is never refused. The work under a task in review goes with it,
+  judged by the task whose work it is and the tasks above it, as red work is: a
+  reviewer's review mirror or instruction subtask in progress takes no slot
+  either, and starts at any count. The task's return to `in_progress`, on a
+  changes verdict or a move, goes between open statuses and starts nothing: it
+  is never refused, and counts again from then, as it was being worked already.
 - **Each open task, one slot.** A subtask holds a slot of its own, so
   gathering open work under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
@@ -2157,32 +2150,34 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   The one give a cap decides is a move's, which keeps the moved work with the orchestrator it had
   (below), decided by that move's own cap read.
 - **Where it bites.** A claim into `in_progress`; a move into `in_progress`
-  or `review` from a status that holds no slot, blocked work going back to
-  review included; a dependency change that sends blocked work back to
-  `in_progress` or `review`; taking the `orchestrator` role on a task with
-  open work at or below it, or being handed it (`handover`, refused as the
-  receiver's take would be); and a change of parent that brings open work at
+  from a status that holds no slot; a dependency change that sends blocked
+  work back to `in_progress`; taking the `orchestrator` role on a task with
+  work in progress at or below it, or being handed it (`handover`, refused as the
+  receiver's take would be); and a change of parent that brings work in progress at
   or below the task under an orchestrator's tree, or takes it out from under one, which keeps it
   that orchestrator's in a slot of its own. Each is refused when it would raise an
-  orchestrator's open tasks past the cap, naming them and their status, a
-  shared slot's tasks joined by `with`:
+  orchestrator's counted tasks past the cap, naming them and their status, a
+  shared slot's tasks joined by `with`, and then its work in review apart:
   `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
-  orchestrator holds: sim/a (review) with review/sim/a (review), …; a slot
-  frees when one of them is done or cancelled`. The count is the number of
-  entries listed. `tasks api` holds the same cap. A start inside a slot
-  already open (a mirror of a task in review, an instruction for open work)
-  is never refused.
+  orchestrator holds: sim/a (in_progress) with sim/a/build (in_progress), …; a
+  slot frees when one of them goes to review or is done or cancelled; not
+  counted, as work in review takes no slot: sim/b (review)`. The count is the
+  number of entries listed before the work named apart. `tasks api` holds the
+  same cap. A start inside a slot already open (a mirror or an instruction of a
+  task in review, an instruction for work in progress) is never refused.
 - **A landing's hold.** A landing that holds a task in review blocked while
   every stamp its branch lacks is one nobody is producing does it with a hold
   (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
   stays blocked, as any blocked task does to everyone on it, and keeps its
-  slot, shown as `(blocked, held)`, so its move
-  back to review starts nothing and is never refused. The hold is the record
+  slot, shown as `(blocked, held)` and counted as work in progress is, so its
+  move back to `in_progress` starts nothing and is never refused, as its move
+  back to `review`, which takes no slot, never is. The hold is the record
   `counter:['hold', SLUG]`, stamped with the task's `updated` as the hold left
   it, and ends with the task's next move (a landing's close and the owner's
   moves included: every status write deletes it), change of parent or of
   dependencies.
-  Work blocked by any other move holds no slot, and takes one to come back.
+  Work blocked by any other move holds no slot, and takes one to come back to
+  `in_progress`.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
 - **Red work takes no slot.** A task filed for a red that stops every
@@ -2217,10 +2212,12 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
   the mark of an open red that stays open as ordinary work (main's green
   reached it once work on it started): it and the work under it count from
-  then, decided and held as a close is, never refused; a task unmarked or
+  then as any work does, none while it is in review, decided and held as a
+  close is, never refused; a task unmarked or
   closed is left as it is. A refusal names the owner's open red work after its
-  counted slots: `…; a slot frees when one of them is done or cancelled; not
-  counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
+  counted slots: `…; a slot frees when one of them goes to review or is done or
+  cancelled; not counted, as red work takes no slot: tests/main-red-abc
+  (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the
   agents API count no red work. As with review, nothing authenticates a
   session: a filer is honour-based, guarding against a mistake, not malice.
@@ -2238,7 +2235,8 @@ record ids and their tasks by id, the tasks above them and the tasks they
 review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
-`slots` ([The agents API](#the-agents-api)).
+`slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
+work in review and no red work.
 
 ## The pipeline alarm
 

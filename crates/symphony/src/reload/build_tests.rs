@@ -228,9 +228,9 @@ fn a_build_that_cannot_start_names_its_product_and_the_cause() {
 fn a_stop_ends_a_running_build_and_answers_the_cancel() {
     let tree = Tree::new();
     let started = tree.path("started");
-    // Not stopped, it would end on its own a minute on and fail.
+    // Not stopped, it would end on its own long after any stall, and fail.
     let stopped = run_build(
-        shell("printf started > started; sleep 60; exit 5"),
+        shell("printf started > started; sleep 1000; exit 5"),
         &tree.root,
         "fixture",
         || started.exists(),

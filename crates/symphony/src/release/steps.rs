@@ -182,9 +182,8 @@ pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release::group::Bound;
+    use crate::release::waits::far;
     use crate::test_tree::Tree;
-    use std::time::{Duration, Instant};
 
     /// The check `name`, run for `command` with an exit status of `code`, listing `steps`.
     fn check(name: &str, code: i32, steps: Vec<Ran>) -> Ran {
@@ -386,7 +385,7 @@ mod tests {
         let root = tree.root.canonicalize().unwrap();
         let logs = root.join("logs");
         fs::create_dir_all(&logs).unwrap();
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
+        let within = Within::bound(far());
         // What the check sees of the variable, and a list it writes with a relative log.
         let step = Step::shell(
             "Verify",
@@ -456,17 +455,5 @@ mod tests {
                 .starts_with("release: `verify` is told as one check: "),
         );
         assert!(fs::read_to_string(&ran.log).unwrap().contains("\nnone\n"));
-    }
-
-    #[test]
-    fn a_check_sees_no_steps_folder_but_its_own() {
-        let tree = Tree::new();
-        let root = tree.root.canonicalize().unwrap();
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
-        let mut step = Step::shell("verify", "echo \"${SYMPHONY_CHECK_STEPS-none}\"");
-        step.set.push((VAR.into(), "/elsewhere".into()));
-        step.unset.push(VAR.into());
-        let ran = checks::run(&step, &root, &tree.path("verify.log"), within);
-        assert!(fs::read_to_string(&ran.log).unwrap().ends_with("\nnone\n"));
     }
 }

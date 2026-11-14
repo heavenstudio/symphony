@@ -10,8 +10,9 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
     git(dir, args).unwrap_or_else(|e| panic!("{e}"))
 }
 
+/// A bound only a stall reaches: the backstop of a two-minute allowance.
 fn soon() -> Bound<'static> {
-    Bound::until(Instant::now() + std::time::Duration::from_secs(120))
+    Bound::until(Instant::now() + test_time::backstop(std::time::Duration::from_secs(120)))
 }
 
 /// A repository at `main` in `tree` with one commit: its main checkout, common dir and commit.
@@ -138,10 +139,6 @@ fn the_release_run_makes_its_checkout_marks_it_and_takes_it_back_later() {
     let asked = main.join("../wt/release");
     let mut first = place(&main, &main, &common, &asked).unwrap();
     assert_eq!(first.checkout, main.parent().unwrap().join("wt/release"));
-    assert_eq!(
-        first.copies,
-        main.parent().unwrap().join("wt/release-conciliate")
-    );
     assert!(first.admin.is_none(), "not made yet");
     let noted = first.checkout(&main, &common, &head, soon(), NOW).unwrap();
     assert!(noted.is_empty(), "{noted:?}");
@@ -310,24 +307,6 @@ fn nothing_but_the_release_runs_own_checkout_is_taken_and_what_is_refused_stays(
         refuse(&main.parent().unwrap().join("wt-link/agent"))
             .contains("(a worktree the release run did not lock)")
     );
-    // The copies' folder taken by another worktree.
-    git_ok(
-        &main,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            &wt.join("taken-conciliate").to_string_lossy(),
-        ],
-    );
-    assert!(refuse(&wt.join("taken")).contains("taken-conciliate is the worktree"));
-
-    // A link in the copies' place.
-    let other = wt.join("other");
-    symlink(&agent, wt.join("other-conciliate")).unwrap();
-    assert!(refuse(&other).contains("other-conciliate is a link"));
-
     // A folder that is no worktree, and a worktree locked by someone else, or by the
     // release run's reason but never marked.
     fs::create_dir_all(wt.join("plain")).unwrap();
@@ -394,34 +373,24 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
     let tree = Tree::new();
     let (main, _, head) = repo(&tree);
     let none = Vec::<String>::new();
-    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
+    assert_eq!(changed(&main, &head, soon()).unwrap(), none);
     // The build folder, untracked where nothing ignores it, is the checkout's own.
     fs::create_dir_all(main.join(".target/debug")).unwrap();
     fs::write(main.join(".target/debug/x"), "built").unwrap();
-    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
+    assert_eq!(changed(&main, &head, soon()).unwrap(), none);
     // What git ignores is never named, whoever wrote it: the look cannot see it.
     fs::write(main.join(".git/info/exclude"), "build/\n").unwrap();
     fs::create_dir_all(main.join("build")).unwrap();
     fs::write(main.join("build/out"), "rewritten").unwrap();
-    assert_eq!(changed(&main, &head, &[], soon()).unwrap(), none);
+    assert_eq!(changed(&main, &head, soon()).unwrap(), none);
     fs::write(main.join("a.txt"), "rewritten\n").unwrap();
     fs::write(main.join("new.txt"), "left\n").unwrap();
     assert_eq!(
-        changed(&main, &head, &[], soon()).unwrap(),
+        changed(&main, &head, soon()).unwrap(),
         ["M a.txt", "?? new.txt"]
     );
-    // A file named beside is passed over at that path alone.
-    fs::create_dir_all(main.join("host")).unwrap();
-    fs::write(main.join("Cargo.lock"), "locked\n").unwrap();
-    fs::write(main.join("host/Cargo.lock"), "locked\n").unwrap();
-    assert_eq!(
-        changed(&main, &head, &["Cargo.lock"], soon()).unwrap(),
-        ["M a.txt", "?? host/", "?? new.txt"]
-    );
     git_ok(&main, &["checkout", "-q", "--", "a.txt"]);
-    for file in ["new.txt", "Cargo.lock", "host/Cargo.lock"] {
-        fs::remove_file(main.join(file)).unwrap();
-    }
+    fs::remove_file(main.join("new.txt")).unwrap();
     git_ok(
         &main,
         &[
@@ -438,10 +407,10 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
     );
     let moved = git_ok(&main, &["rev-parse", "HEAD"]);
     assert_eq!(
-        changed(&main, &head, &[], soon()).unwrap(),
+        changed(&main, &head, soon()).unwrap(),
         [format!("HEAD is {}", short(&moved))]
     );
-    assert!(changed(&tree.path("nowhere"), &head, &[], soon()).is_err());
+    assert!(changed(&tree.path("nowhere"), &head, soon()).is_err());
 }
 
 /// What a build older than the rename left beside `asked` moved, as a run moves it once nothing
@@ -476,61 +445,27 @@ fn old_checkout(main: &Path, common: &Path, path: &Path, reason: &str, mark: boo
     fs::write(path.join(".target/debug/kept"), "build\n").unwrap();
 }
 
-/// A copy a build older than the rename made at `path` of the project at `project`, marked as
-/// that build marked it when `mark`, with its build stamp and a build folder.
-fn old_copy(path: &Path, project: &Path, mark: bool) {
-    fs::create_dir_all(path.join(".git")).unwrap();
-    fs::create_dir_all(path.join(".target")).unwrap();
-    fs::write(path.join(".target/kept"), "build\n").unwrap();
-    if mark {
-        fs::write(
-            path.join(".git").join(LEGACY_COPY_MARK),
-            format!("{}\n", project.display()),
-        )
-        .unwrap();
-        fs::write(path.join(".git").join(LEGACY_BUILT), format!("{NOW}\n")).unwrap();
-    }
-}
-
 #[test]
-fn the_checkout_and_copies_an_older_build_made_move_to_the_new_names_with_their_builds() {
+fn the_checkout_an_older_build_made_moves_to_the_new_name_with_its_build() {
     let tree = Tree::new();
     let (main, common, head) = repo(&tree);
     let wt = main.parent().unwrap().join("wt");
     let (old, asked) = (wt.join("nightly"), wt.join("release"));
     old_checkout(&main, &common, &old, LEGACY_LOCK_REASON, true, &head);
-    let project = tree.path("alpha");
-    fs::create_dir_all(&project).unwrap();
-    let project = project.canonicalize().unwrap();
-    old_copy(&wt.join("nightly-conciliate/alpha"), &project, true);
-    // A folder that build did not mark, and a copy with something where it would go, stay.
-    old_copy(&wt.join("nightly-conciliate/stranger"), &project, false);
-    old_copy(&wt.join("nightly-conciliate/beta"), &project, true);
-    fs::create_dir_all(wt.join("release-conciliate/beta")).unwrap();
 
     // What it moves, which the run looks in first, and nothing moved by looking.
     let found = legacy(&main, &common, &asked).unwrap();
-    assert_eq!(
-        found.trees(),
-        [old.as_path(), wt.join("nightly-conciliate/alpha").as_path()]
-    );
+    assert_eq!(found.trees(), [old.as_path()]);
     assert!(old.exists() && !asked.exists());
     let noted = moved(&main, &common, &asked, soon()).unwrap();
     assert_eq!(
         noted,
-        [
-            format!(
-                "moved the release run's checkout from {} to {}, where a build older than the \
-                 rename to `just release` made it",
-                old.display(),
-                asked.display()
-            ),
-            format!(
-                "moved the release run's copy {} to {}",
-                wt.join("nightly-conciliate/alpha").display(),
-                wt.join("release-conciliate/alpha").display()
-            ),
-        ]
+        [format!(
+            "moved the release run's checkout from {} to {}, where a build older than the rename \
+             to `just release` made it",
+            old.display(),
+            asked.display()
+        )]
     );
     // The checkout: moved by git with its build, locked with the new reason and marked again.
     assert!(!old.exists());
@@ -561,17 +496,6 @@ fn the_checkout_and_copies_an_older_build_made_move_to_the_new_names_with_their_
     assert_eq!(place.admin.as_ref(), Some(&admin));
     place.checkout(&main, &common, &head, soon(), NOW).unwrap();
     assert!(asked.join(".target/debug/kept").exists());
-    // The copy: moved with its build, its marks renamed, the release run's own.
-    let copy = wt.join("release-conciliate/alpha");
-    assert_eq!(copy_at(&copy, &project), Ok(Copy::Ours));
-    assert!(copy.join(".target/kept").exists());
-    assert_eq!(
-        fs::read_to_string(copy.join(".git").join(BUILT)).unwrap(),
-        format!("{NOW}\n")
-    );
-    assert!(!copy.join(".git").join(LEGACY_COPY_MARK).exists());
-    assert_eq!(tree.names("wt/nightly-conciliate"), ["beta", "stranger"]);
-    assert!(tree.names("wt/release-conciliate/beta").is_empty());
 
     // Once moved, nothing is left to move, or to look in.
     assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));

@@ -1,11 +1,13 @@
-//! `symphony release` (`just release`): Symphony's releases (docs/RELEASES.md). A run takes main's
-//! tip as fetched from the remote, the commit a project can fetch, into a clean checkout of its own
-//! outside the repository's folder ([`place`]), runs the full verification there and conciliates
-//! the projects the machine serves against it ([`conciliate`]). Every red check, and a run that
-//! stopped short of deciding, is a task on the board ([`board`]); when every check is green it tags
-//! the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds ([`notes`])
-//! and pushes that one tag. `--commit COMMIT` does the same out of cycle for a commit already on
-//! the remote's main and past the newest release. A run of main's tip red in a check holds that
+//! `symphony-build release` (`just release`): Symphony's releases (docs/RELEASES.md), a command of
+//! this repository's own build binary, which no project is given. A run takes main's tip as
+//! fetched from the remote, the commit a project can fetch, into a clean checkout of its own
+//! outside the repository's folder ([`place`]) and runs the full verification there: a release is
+//! judged by checks this repository owns, never by a consuming project's suite. Every red check,
+//! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
+//! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
+//! holds ([`notes`]) and pushes that one tag, then refreshes the projects the machine serves to it
+//! ([`refresh`], [`consumers`]). `--commit COMMIT` does the same out of cycle for a commit already
+//! on the remote's main and past the newest release. A run of main's tip red in a check holds that
 //! commit as the release candidate ([`candidate`]) while its reds are fixed: until each is answered
 //! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
 //! released or held again. Each run is recorded in the git common dir ([`record`]), which
@@ -14,24 +16,23 @@
 //!
 //! It never tags a commit that is not on the remote's main, that is behind the newest release or
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
-//! each check and each project's conciliation it looks at its checkout (and at that project's
-//! scratch copy), and before it tags at what git names there once more: another HEAD, a path `git
-//! status` names outside `.target/`, or a process `lsof` sees working there or holding a file there
-//! open stops the run, and nothing is tagged. A look sees a moment, and only what git does not
-//! ignore: a file git ignores (`build/`, `artifacts/`, `.target/`, which checks read) or a change
-//! undone between two looks goes unseen. What keeps those off is that the checkout is the run's
-//! own, made and locked by it, that each check's process group is ended with it, and the same
-//! `lsof` look before anything is checked; that one sees a process only while it works in those
-//! folders or holds a file there open. One run at a time per repository, none while a check of an
-//! earlier run killed while it ran still runs ([`checks`]), and a run that ended without recording
-//! itself is recorded by the next ([`record::recover`]); everything it runs is bounded by the run's
-//! time and stops when the run is told to (HUP, INT or TERM, [`group`]).
+//! each check it looks at its checkout, and before it tags at what git names there once more:
+//! another HEAD, a path `git status` names outside `.target/`, or a process `lsof` sees working
+//! there or holding a file there open stops the run, and nothing is tagged. A look sees a moment,
+//! and only what git does not ignore: a file git ignores (`build/`, `artifacts/`, `.target/`,
+//! which checks read) or a change undone between two looks goes unseen. What keeps those off is
+//! that the checkout is the run's own, made and locked by it, that each check's process group is
+//! ended with it, and the same `lsof` look before anything is checked; that one sees a process only
+//! while it works in the checkout or holds a file there open. One run at a time per repository,
+//! none while a check of an earlier run killed while it ran still runs ([`checks`]), and a run that
+//! ended without recording itself is recorded by the next ([`record::recover`]); everything it runs
+//! is bounded by the run's time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
 mod board;
 mod cadence;
 mod candidate;
 mod checks;
-mod conciliate;
+mod consumers;
 mod failures;
 mod git;
 mod gone;
@@ -45,6 +46,8 @@ mod rerun;
 mod schedule;
 mod steps;
 mod tags;
+#[cfg(test)]
+mod waits;
 
 use std::fs::{self, TryLockError};
 use std::io::Write;
@@ -60,22 +63,30 @@ use record::{Checking, Run, Running, local};
 use symphony_board::sys::{Interrupts, pid_alive};
 use tags::Release;
 
-use crate::cli::{Flag, parse, refuse};
+use crate::cli::{Flag, parse};
 use crate::project::Project;
 
-const USAGE: &str = "usage: symphony release [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
-[--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] [--timeout SECONDS] \
-[--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] [--rerun] [--drop]";
+/// A refusal of the command line, as `symphony::cli::refuse` words one but under the binary that
+/// runs it: the usage, then the error. Exit 2.
+fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
+    let _ = writeln!(err, "{usage}\nsymphony-build {command}: error: {problem}");
+    2
+}
+
+const USAGE: &str = "usage: symphony-build release [-h] [--root ROOT] [--remote NAME] \
+[--branch NAME] [--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] \
+[--timeout SECONDS] [--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] \
+[--rerun] [--drop]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
-checkout outside the repository's folder and conciliated with the projects this machine serves; \
-each red check filed on the board as tests/release-red-NAME, and a green commit tagged \
-release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
-branch through its own commit gate, its main fast-forwarded to it in its main checkout when that \
-is on its main and clean, and its board moved to the schema of the pin its main locks. A run red \
-in a check holds its commit as the release candidate, the local branch release-candidate, until \
-its reds' own lands answer them; then it is rerun, and main's tip is run only once none is held \
-(docs/RELEASES.md).
+checkout outside the repository's folder, building and testing nothing of the projects this \
+machine serves; each red check filed on the board as tests/release-red-NAME, and a green commit \
+tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved \
+on a branch through its own commit gate, its main fast-forwarded to it in its main checkout \
+when that is on its main and clean, and its board moved to the schema of the pin its main locks. \
+A run red in a check holds its commit as the release candidate, the local branch \
+release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
+only once none is held (docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -107,8 +118,8 @@ options:
   --refresh             refresh the machine to the newest release here again, checking nothing:
                         an orchestrator's retry of a red or interrupted refresh
   --rerun               rerun the release candidate now, once every red of it is answered: each
-                        check or step that was red, did not run or whose inputs changed, and the
-                        conciliation; refused while none is held or a red waits
+                        check or step that was red, did not run or whose inputs changed; refused
+                        while none is held or a red waits
   --drop                drop the release candidate, so the next run checks main's tip: an
                         orchestrator's act";
 
@@ -125,7 +136,7 @@ const LATE_SECONDS: f64 = 15.0 * 60.0;
 /// What a run whose checks all ended green within its time keeps past it to tag and push: well
 /// within [`LATE_SECONDS`], so no later run takes it for stuck.
 const FINISH: Duration = Duration::from_secs(5 * 60);
-/// Why a check, or a project's conciliation, is red without having run.
+/// Why a check is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
 /// The time a release's refresh has, past its run's checks: a project's commit gate and its board's
 /// move each run within it.
@@ -194,8 +205,8 @@ fn clock() -> Result<f64, String> {
     }
 }
 
-/// `symphony release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or a
-/// run that could not finish, 2 a command line refused.
+/// `symphony-build release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or
+/// a run that could not finish, 2 a command line refused.
 pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flag = |name, value| Flag { name, value };
     let flags = [
@@ -290,7 +301,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
         Ok(repo) => repo,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -357,7 +368,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 Err(problem) => {
                     let _ = writeln!(
                         err,
-                        "symphony release: the landings cannot be counted: {problem}"
+                        "symphony-build release: the landings cannot be counted: {problem}"
                     );
                     return 1;
                 }
@@ -409,15 +420,9 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
 /// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
-/// What a build older than the rename tells the build it hands a due count's run to, which may be
-/// this one ([`legacy`]): the same as [`DRIVER`].
-const LEGACY_DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
 /// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
-/// The command's name before the rename to `symphony release`, which a build older than it runs
-/// ([`legacy`]).
-pub const LEGACY: &str = "nightly";
 /// `--commit` as it was named before the rename, which older briefs and reds say.
 const LEGACY_COMMIT: &str = "--release";
 
@@ -435,24 +440,9 @@ fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
         })
 }
 
-/// `symphony nightly ARGS`, the command's name before the rename: its exit code. A landing's
-/// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
-/// handing a due count's run to a build of the tip (which may be this one), run it as `release
-/// --due` would; anything else is refused, saying the new name, exit 2.
-pub fn legacy(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    if args.iter().any(|arg| arg == "--due") {
-        return main(args, out, err);
-    }
-    let _ = writeln!(err, "`symphony {LEGACY}` is now `symphony release`");
-    2
-}
-
-/// Whether this process is the build a due count handed its run to, by this build or by one older
-/// than the rename.
+/// Whether this process is the build a due count handed its run to.
 fn driven() -> bool {
-    [DRIVER, LEGACY_DRIVER]
-        .into_iter()
-        .any(|name| std::env::var_os(name).is_some())
+    std::env::var_os(DRIVER).is_some()
 }
 
 /// Say each line of `noted` on `out`, as a run says what it did on the way.
@@ -463,13 +453,13 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 }
 
 /// A due count's run, handed to a build of the tip it verifies. The count ran on the build the
-/// main checkout links, building nothing; now, the lock held, the release run's own checkout is brought
-/// to the line's tip, `tools/rs-bin.sh --build symphony` builds there, in that checkout's own build
-/// folder and never the main checkout's (where a landing's `just tasks` would wait on its lock), and
-/// this process becomes that build, with `args` as given. None when the run goes on here: this is
-/// that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or the build failed,
-/// which is said and which the run then meets as it would. An exit code when a run holds the lock:
-/// the count waits for it and nothing more runs.
+/// main checkout links, building nothing; now, the lock held, the release run's own checkout is
+/// brought to the line's tip, `tools/rs-bin.sh --build symphony-build` builds there, in that
+/// checkout's own build folder and never the main checkout's (where a landing's `just tasks` would
+/// wait on its lock), and this process becomes that build, with `args` as given. None when the run
+/// goes on here: this is that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or
+/// the build failed, which is said and which the run then meets as it would. An exit code when a
+/// run holds the lock: the count waits for it and nothing more runs.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     use std::os::unix::process::CommandExt as _;
     if driven() {
@@ -530,9 +520,10 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
     None
 }
 
-/// The build of `symphony` a due count's run starts from: the release run's checkout brought to
-/// the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
-/// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
+/// The build of `symphony-build` a due count's run starts from: the release run's checkout brought
+/// to the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the
+/// build printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it
+/// fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
     // A process in what a build older than the rename left keeps it where it is: the run goes on
@@ -556,11 +547,10 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
     let tree = place.checkout.display();
     let mut build = crate::children::command(&launcher);
     build
-        .args(["--build", "symphony"])
+        .args(["--build", "symphony-build"])
         .current_dir(&place.checkout)
         .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER)
-        .env_remove(LEGACY_DRIVER);
+        .env_remove(DRIVER);
     let done = group::output_until(&mut build, until).map_err(|failed| match failed {
         group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
         group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
@@ -605,7 +595,7 @@ fn far_push(root: &Path, remote: &str) -> Option<String> {
 }
 
 /// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does. A name keyed as
-/// one of the release run's own reds ([`board::RUN`], conciliation's) is not a check's.
+/// one of the release run's own reds ([`board::RUN`], a refresh's) is not a check's.
 fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, String> {
     let mut checks: Vec<Step> = Vec::new();
     for check in given {
@@ -616,11 +606,7 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
             return Err(format!("--check {check:?} names no check or no command"));
         }
         let key = board::key(name);
-        if key == board::RUN
-            || key == board::CONCILIATE
-            || key.starts_with(&format!("{}-", board::CONCILIATE))
-            || board::is_refresh(name)
-        {
+        if key == board::RUN || board::is_refresh(name) {
             return Err(format!(
                 "--check {name:?} takes a name the release run keeps for its own reds"
             ));
@@ -688,7 +674,7 @@ fn status(
     let ordered = match ordered_releases(&repo.root) {
         Ok(ordered) => ordered,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -839,7 +825,7 @@ fn settled(
 /// main's tip: its exit code. Refused while a run holds the lock or none is held.
 fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let refused = |err: &mut dyn Write, why: &str| {
-        let _ = writeln!(err, "symphony release: {why}");
+        let _ = writeln!(err, "symphony-build release: {why}");
         1
     };
     let lock = match record::lock(&repo.common) {
@@ -915,7 +901,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     let lock = match record::lock(&repo.common) {
         Ok(lock) => lock,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -946,7 +932,6 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         error: None,
         previous: None,
         checks: Vec::new(),
-        skipped: Vec::new(),
         tag: None,
         pushed: false,
         board: record::Board::default(),
@@ -966,7 +951,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         Err(TryLockError::Error(e)) => {
             let _ = writeln!(
                 err,
-                "symphony release: {}",
+                "symphony-build release: {}",
                 crate::text::os_error(e, &lock_path)
             );
             return 1;
@@ -1112,31 +1097,29 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         .filter(|next| decided_red && next.open())
         .map(|next| next.commit.clone());
     let mut for_owner = false;
-    let cleared = match ran {
+    match ran {
         Err(Stop::Refused(why)) => {
-            let _ = writeln!(err, "symphony release: {why}");
+            let _ = writeln!(err, "symphony-build release: {why}");
             record::release(&folder, &record.id);
             return 1;
         }
         Err(Stop::Error(why)) => {
             record.result = "error".into();
             record.error = Some(why);
-            Vec::new()
         }
         Err(Stop::InUse(why)) => {
             record.result = "error".into();
             record.error = Some(why);
             for_owner = true;
-            Vec::new()
         }
-        Ok(cleared) => cleared,
-    };
+        Ok(()) => {}
+    }
     let mut code = 0;
     if record.result != "green" && record.result != "unchanged" {
         code = 1;
     }
     if let Some(error) = &record.error {
-        let _ = writeln!(err, "symphony release: {error}");
+        let _ = writeln!(err, "symphony-build release: {error}");
         code = 1;
     }
     if record
@@ -1151,13 +1134,15 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         options,
         &folder,
         &record,
-        &cleared,
         for_owner,
         holding.as_deref(),
     );
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
-        let _ = writeln!(err, "symphony release: cannot record the run: {problem}");
+        let _ = writeln!(
+            err,
+            "symphony-build release: cannot record the run: {problem}"
+        );
         code = 1;
     }
     if let Some(next) = next.as_mut() {
@@ -1167,7 +1152,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         if let Err(problem) = candidate::write(&folder, next) {
             let _ = writeln!(
                 err,
-                "symphony release: cannot record the release candidate: {problem}"
+                "symphony-build release: cannot record the release candidate: {problem}"
             );
             code = 1;
         }
@@ -1177,7 +1162,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     {
         let _ = writeln!(
             err,
-            "symphony release: cannot record the release candidate: {problem}"
+            "symphony-build release: cannot record the release candidate: {problem}"
         );
         code = 1;
     }
@@ -1331,7 +1316,7 @@ fn refresh_only(
     refreshing: &Refreshing<'_>,
     record: &mut Run,
     out: &mut dyn Write,
-) -> Result<Vec<&'static str>, Stop> {
+) -> Result<(), Stop> {
     let ordered = ordered_releases(&refreshing.repo.root).map_err(Stop::Error)?;
     let Some((release, commit)) = ordered.first() else {
         return Err(Stop::Refused(
@@ -1345,7 +1330,7 @@ fn refresh_only(
     let refreshed = refreshing.to(&record.id, &tag, commit, out);
     record.result = if refreshed.green() { "green" } else { "red" }.into();
     record.refreshed = Some(refreshed);
-    Ok(Vec::new())
+    Ok(())
 }
 
 /// What the run did on the board, said: 1 when the board refused something, else 0.
@@ -1361,7 +1346,7 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
     }
     match &board.error {
         Some(error) => {
-            let _ = writeln!(err, "symphony release: the board: {error}");
+            let _ = writeln!(err, "symphony-build release: the board: {error}");
             1
         }
         None => 0,
@@ -1394,7 +1379,7 @@ fn held(
         && let Some(check) = &earlier.check
         && group::lives(check.group, check.start.as_ref())
     {
-        let _ = writeln!(err, "symphony release: {}", runs_on(&earlier, check));
+        let _ = writeln!(err, "symphony-build release: {}", runs_on(&earlier, check));
         return 1;
     }
     let lock = folder.join("run.lock");
@@ -1402,7 +1387,7 @@ fn held(
         Some(holder) if options.now <= holder.until + LATE_SECONDS => {
             let _ = writeln!(
                 err,
-                "symphony release: another release run of this repository is running \
+                "symphony-build release: another release run of this repository is running \
                  (run {}, process {}, since {})",
                 holder.id,
                 holder.pid,
@@ -1427,9 +1412,9 @@ fn held(
             held_by(&lock),
         ),
     };
-    let _ = writeln!(err, "symphony release: {why}");
+    let _ = writeln!(err, "symphony-build release: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[], false, None);
+    record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -1482,7 +1467,7 @@ fn outlived(
     err: &mut dyn Write,
 ) -> i32 {
     if options.now <= earlier.until + LATE_SECONDS {
-        let _ = writeln!(err, "symphony release: {}", runs_on(earlier, check));
+        let _ = writeln!(err, "symphony-build release: {}", runs_on(earlier, check));
         return 1;
     }
     let why = format!(
@@ -1495,9 +1480,9 @@ fn outlived(
         local(earlier.until),
         check.group
     );
-    let _ = writeln!(err, "symphony release: {why}");
+    let _ = writeln!(err, "symphony-build release: {why}");
     record.error = Some(why);
-    record.board = tell(repo, options, folder, &record, &[], false, None);
+    record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
     let _ = record::write(folder, &record);
     1
@@ -1529,15 +1514,14 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
 }
 
 /// Tell the board of `record`: its reds filed or updated, the reds it found green closed, and the
-/// red [`board::RUN`] when it stopped short, with the keys it `cleared` beyond its checks; that red
-/// is the owner's to clear when it is `for_owner` (a process in the run's folders). Its reds are a
-/// release candidate's when it holds one, at the tip `holding` ([`candidate`]).
+/// red [`board::RUN`] when it stopped short; that red is the owner's to clear when it is
+/// `for_owner` (a process in the run's folders). Its reds are a release candidate's when it holds
+/// one, at the tip `holding` ([`candidate`]).
 fn tell(
     repo: &Repo,
     options: &Options,
     folder: &Path,
     record: &Run,
-    cleared: &[&str],
     for_owner: bool,
     holding: Option<&str>,
 ) -> record::Board {
@@ -1564,7 +1548,6 @@ fn tell(
         since: &since,
         stopped: record.error.as_deref(),
         for_owner,
-        cleared,
         closes: &closing,
         whole: !options.refresh,
         candidate: holding,
@@ -1611,10 +1594,9 @@ fn releases(repo: &Repo, remote: &str, until: Bound<'_>) -> Result<Vec<Known>, S
     Ok(all)
 }
 
-/// The run itself, into `record`, `within` the run's bound: the keys it cleared beyond its
-/// checks. With `held`, a rerun of that release candidate: its tip is checked, with no wait for
-/// the regenerator (a fix commits the client its own sources make), each check as the candidate
-/// plans it ([`candidate::Candidate::plan`]), and the conciliation.
+/// The run itself, into `record`, `within` the run's bound. With `held`, a rerun of that release
+/// candidate: its tip is checked, with no wait for the regenerator (a fix commits the client its
+/// own sources make), each check as the candidate plans it ([`candidate::Candidate::plan`]).
 #[expect(
     clippy::too_many_lines,
     reason = "one run, step by step, reads best in one place"
@@ -1627,7 +1609,7 @@ fn night(
     held: Option<&candidate::Candidate>,
     out: &mut dyn Write,
     within: Within<'_>,
-) -> Result<Vec<&'static str>, Stop> {
+) -> Result<(), Stop> {
     let until = within.bound;
     let placed = |why: String| {
         if options.named {
@@ -1730,7 +1712,7 @@ fn night(
                 record::push_line(remote, &released.name)
             ));
         }
-        return Ok(Vec::new());
+        return Ok(());
     }
     if let Some(newest) = newest
         && !is_ancestor(&repo.root, &newest.commit, &candidate).map_err(Stop::Error)?
@@ -1822,17 +1804,8 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
-        let looked = look(
-            &[Watched::checkout(&place, &candidate)],
-            until,
-            &after(&ran),
-            true,
-        );
+        let looked = look(&place, &candidate, until, &after(&ran), true);
         keep(record, &logs, ran, looked)?;
-    }
-    let cleared = conciliation(repo, options, &place, &logs, record, out, within)?;
-    for skipped in &record.skipped {
-        let _ = writeln!(out, "release: left out: {skipped}");
     }
     if let Some(held) = held {
         record.rerun = Some(record::Rerun {
@@ -1851,7 +1824,7 @@ fn night(
             .map(|ran| ran.name.as_str())
             .collect();
         let _ = writeln!(out, "release: red: {}; no release", red.join(", "));
-        return Ok(cleared);
+        return Ok(());
     }
     let name = tags::next(&when_day(options.now), names());
     if let Some(newest) = newest_first.first()
@@ -1862,7 +1835,7 @@ fn night(
              release {}: no tag",
             newest.name()
         ));
-        return Ok(cleared);
+        return Ok(());
     }
     let changes = match &previous {
         Some(previous) => {
@@ -1874,24 +1847,13 @@ fn night(
     let until = until.later(FINISH);
     // What git names alone: the processes were listed after the last check, and nothing has run
     // in the checkout since.
-    look(
-        &[Watched::checkout(&place, &candidate)],
-        until,
-        "before it tagged",
-        false,
-    )?;
-    // A check carried whole is green as much as one run, in the order the checks are named, the
-    // conciliation after them: the notes say which were carried.
+    look(&place, &candidate, until, "before it tagged", false)?;
+    // A check carried whole is green as much as one run, in the order the checks are named: the
+    // notes say which were carried.
     let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
-    let named = |name: &str| options.checks.iter().any(|step| step.name == name);
     let checked: Vec<String> = (options.checks.iter())
         .map(|step| step.name.clone())
         .filter(|name| ran(name) || carried.iter().any(|kept| kept.name == *name))
-        .chain(
-            (record.checks.iter())
-                .filter(|ran| !named(&ran.name))
-                .map(|ran| ran.name.clone()),
-        )
         .collect();
     let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
     let message = notes::message(
@@ -1900,7 +1862,6 @@ fn night(
         notes::facts(&repo.root, &candidate),
         previous.as_ref(),
         &checked,
-        &record.skipped,
         &held_notes,
         &changes,
     );
@@ -1910,7 +1871,7 @@ fn night(
         until,
     ) {
         record.error = Some(format!("cannot tag {name}: {problem}"));
-        return Ok(cleared);
+        return Ok(());
     }
     record.tag = Some(name.clone());
     unpushed.insert(0, name.clone());
@@ -1950,7 +1911,7 @@ fn night(
         ", not pushed".into()
     };
     let _ = writeln!(out, "release: green; tagged {name}{pushed}");
-    Ok(cleared)
+    Ok(())
 }
 
 /// The environment of this process, run from the main checkout: where the regenerator's standing
@@ -2188,11 +2149,10 @@ fn package_at(tree: &Path, folder: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-/// Stop the run before it checks anything when a process, anyone's, works in its checkout or in its
-/// conciliation copies' folder or holds a file inside one open, within `until`: those folders
-/// would change under its checks.
+/// Stop the run before it checks anything when a process, anyone's, works in its checkout or holds
+/// a file inside it open, within `until`: the checkout would change under its checks.
 fn unused(place: &Place, until: Bound<'_>) -> Result<(), Stop> {
-    unused_in(&[place.checkout.as_path(), place.copies.as_path()], until)
+    unused_in(&[place.checkout.as_path()], until)
 }
 
 /// [`unused`] of the folders `trees`, those of them that are there.
@@ -2255,82 +2215,58 @@ fn after(ran: &Ran) -> String {
     format!("after `{}` ended {verdict} ({})", ran.name, ran.ended())
 }
 
-/// A folder a look looks at: a checkout (real path) that must hold the commit `holds`, but for the
-/// files `beside` names, which what ran there rewrites by design.
-struct Watched<'a> {
-    path: &'a Path,
-    holds: &'a str,
-    beside: &'a [&'a str],
-}
-
-impl<'a> Watched<'a> {
-    /// The run's checkout, which must hold `candidate`.
-    fn checkout(place: &'a Place, candidate: &'a str) -> Watched<'a> {
-        Watched {
-            path: &place.checkout,
-            holds: candidate,
-            beside: &[],
-        }
-    }
-}
-
-/// Stop the run when what it looks at changed `at` that point: a checkout that no longer holds its
-/// commit (HEAD moved, or `git status` names a path outside `.target/`), or, when it lists
-/// `processes`, a process that works in one or holds a file inside one open. What was checked is
-/// then not what would be tagged, so nothing that check found green counts, and its reds are filed
-/// beside the stop ([`keep`]). The look has a minute past `until`, and sees that moment alone and
-/// nothing git ignores.
-fn look(watched: &[Watched<'_>], until: Bound<'_>, at: &str, processes: bool) -> Result<(), Stop> {
+/// Stop the run when its checkout (in `place`) changed `at` that point: it no longer holds the
+/// commit `holds` (HEAD moved, or `git status` names a path outside `.target/`), or, when it lists
+/// `processes`, a process works in it or holds a file inside it open. What was checked is then not
+/// what would be tagged, so nothing that check found green counts, and its reds are filed beside
+/// the stop ([`keep`]). The look has a minute past `until`, and sees that moment alone and nothing
+/// git ignores.
+fn look(
+    place: &Place,
+    holds: &str,
+    until: Bound<'_>,
+    at: &str,
+    processes: bool,
+) -> Result<(), Stop> {
     let until = until.later(LOOK);
-    let mut changes = Vec::new();
-    for tree in watched {
-        let path = tree.path.display();
-        let holds = short(tree.holds);
-        let changed = place::changed(tree.path, tree.holds, tree.beside, until).map_err(|e| {
-            Stop::Error(format!(
-                "{at}, cannot tell whether {path} still holds {holds}: {e}"
-            ))
-        })?;
-        if !changed.is_empty() {
-            changes.push(format!(
-                "{path} no longer holds {holds}: {}",
-                changed.join(", ")
-            ));
-        }
-    }
-    let trees: Vec<&Path> = watched.iter().map(|tree| tree.path).collect();
+    let path = place.checkout.display();
+    let short_holds = short(holds);
+    let changed = place::changed(&place.checkout, holds, until).map_err(|e| {
+        Stop::Error(format!(
+            "{at}, cannot tell whether {path} still holds {short_holds}: {e}"
+        ))
+    })?;
+    let changes = if changed.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "{path} no longer holds {short_holds}: {}",
+            changed.join(", ")
+        ))
+    };
+    let trees = [place.checkout.as_path()];
     let found = if processes {
         group::inside(&trees, until).map_err(|problem| {
-            let named: Vec<String> = trees
-                .iter()
-                .map(|tree| tree.display().to_string())
-                .collect();
             Stop::Error(format!(
-                "{at}, cannot tell whether a process is in {}: {problem}",
-                named.join(" or ")
+                "{at}, cannot tell whether a process is in {path}: {problem}"
             ))
         })?
     } else {
         Vec::new()
     };
     if let Some((said, way_out)) = in_use(&trees, &found) {
-        let changed = if changes.is_empty() {
-            String::new()
-        } else {
-            format!("; and {}", changes.join("; "))
-        };
+        let changed = changes.map(|c| format!("; and {c}")).unwrap_or_default();
         return Err(Stop::InUse(format!(
             "{at}, {said}{changed}: what was checked may have changed, so nothing checked is \
              released; {way_out}"
         )));
     }
-    if changes.is_empty() {
-        return Ok(());
+    match changes {
+        None => Ok(()),
+        Some(changes) => Err(Stop::Error(format!(
+            "{at}, {changes}; a process may be writing there, so nothing checked is released"
+        ))),
     }
-    Err(Stop::Error(format!(
-        "{at}, {}; a process may be writing there, so nothing checked is released",
-        changes.join("; ")
-    )))
 }
 
 /// A check's end, said, then each step it listed, indented.
@@ -2356,118 +2292,6 @@ fn tell_check(ran: &Ran, out: &mut dyn Write) {
     for step in &ran.steps {
         said(step, "  ", out);
     }
-}
-
-/// Conciliate the projects the machine's registry names into `record`, each in its copy in
-/// `place`, with a machine folder of the run's own under `logs`: the keys it cleared. A registry
-/// that does not read is the red check [`board::CONCILIATE`], never a silent skip. A run told to
-/// stop stops here.
-fn conciliation(
-    repo: &Repo,
-    options: &Options,
-    place: &Place,
-    logs: &Path,
-    record: &mut Run,
-    out: &mut dyn Write,
-    within: Within<'_>,
-) -> Result<Vec<&'static str>, Stop> {
-    let unread = |record: &mut Run, out: &mut dyn Write, problem: String| {
-        let step = Step::shell(board::CONCILIATE, "(read the machine's registry)");
-        let log = logs.join(format!("{}.log", board::CONCILIATE));
-        let ran = Ran::never(&step, &log, problem);
-        tell_check(&ran, out);
-        record.checks.push(ran);
-        Ok(Vec::new())
-    };
-    let registry = crate::machine::dir().and_then(|dir| crate::machine::Registry::read(&dir));
-    let registry = match registry {
-        Ok(registry) => registry,
-        Err(problem) => {
-            let problem = format!(
-                "the machine's registry cannot be read, so nothing was conciliated: {problem}"
-            );
-            return unread(record, out, problem);
-        }
-    };
-    let machine = logs.join("machine");
-    if let Err(problem) = registry.write(&machine) {
-        let problem = format!("cannot copy the machine's registry for conciliation: {problem}");
-        return unread(record, out, problem);
-    }
-    let ids: Vec<String> = registry.projects.iter().map(|p| p.id.clone()).collect();
-    for removed in place::prune_copies(&place.copies, &ids) {
-        let _ = writeln!(out, "release: {removed}");
-    }
-    let (consumers, skipped) = conciliate::consumers(&registry, &repo.common);
-    record.skipped.extend(skipped);
-    for consumer in consumers {
-        let name = format!("conciliate-{}", consumer.id);
-        let plain = !consumer.id.is_empty()
-            && consumer.id != "."
-            && consumer.id != ".."
-            && !consumer.id.contains('/');
-        if !plain {
-            record.skipped.push(format!(
-                "{}: its id names no folder of its own",
-                consumer.id
-            ));
-            continue;
-        }
-        told_to_stop(within.bound, &format!("before `{name}` started"))?;
-        let step_log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
-        if Instant::now() >= within.bound.until {
-            let step = Step::shell(&name, "(the scratch copy and its plan)");
-            let ran = Ran::never(&step, &step_log(&step), NOT_STARTED.into());
-            tell_check(&ran, out);
-            record.checks.push(ran);
-            continue;
-        }
-        let scratch = place.copies.join(&consumer.id);
-        let against = conciliate::Against {
-            scratch: &scratch,
-            checkout: &place.checkout,
-            machine: &machine,
-            until: within.bound,
-            now: options.now,
-        };
-        // The copy is looked at with the checkout once it holds the project's commit; one that
-        // could not be made ready may not be the release run's, and is left as it is.
-        let (ran, copy_at) = match conciliate::step(&consumer, &against) {
-            Ok(prepared) => {
-                for noted in prepared.noted {
-                    let _ = writeln!(out, "release: {noted}");
-                }
-                match prepared.step {
-                    Ok(step) => (
-                        checks::run(&step, &place.checkout, &step_log(&step), within),
-                        Some(prepared.at),
-                    ),
-                    Err(none) => {
-                        record.skipped.push(none);
-                        continue;
-                    }
-                }
-            }
-            Err(problem) => {
-                let step = Step::shell(&name, "(the scratch copy and its plan)");
-                (Ran::never(&step, &step_log(&step), problem), None)
-            }
-        };
-        tell_check(&ran, out);
-        stopped_in(&ran)?;
-        told_to_stop(within.bound, &format!("while `{name}` was prepared"))?;
-        let mut watched = vec![Watched::checkout(place, &record.commit)];
-        if let Some(at) = &copy_at {
-            watched.push(Watched {
-                path: &scratch,
-                holds: at,
-                beside: &conciliate::REWRITTEN,
-            });
-        }
-        let looked = look(&watched, within.bound, &after(&ran), true);
-        keep(record, logs, ran, looked)?;
-    }
-    Ok(vec![board::CONCILIATE])
 }
 
 /// Why the run stops, when it was told to (HUP, INT or TERM), `at` that point.
@@ -2518,14 +2342,6 @@ mod tests {
             (&["a= "][..], "names no check or no command"),
             (&["a=true", "A=false"][..], "is named twice"),
             (&["Run=true"][..], "the release run keeps for its own reds"),
-            (
-                &["conciliate=true"][..],
-                "the release run keeps for its own reds",
-            ),
-            (
-                &["conciliate star=true"][..],
-                "the release run keeps for its own reds",
-            ),
         ] {
             let said = checks_of(bad.iter().copied()).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
@@ -2625,10 +2441,7 @@ mod tests {
             command: command.into(),
             what: what.into(),
         };
-        let trees = [
-            Path::new("/wt/release"),
-            Path::new("/wt/release-conciliate"),
-        ];
+        let trees = [Path::new("/wt/release"), Path::new("/wt/release-other")];
         assert_eq!(in_use(&trees, &[vec![], vec![]]), None);
         let counts = " (a shell, a terminal tab, an editor or a Finder window there counts), and the \
                       next run goes";
@@ -2667,7 +2480,7 @@ mod tests {
             ),
             Some((
                 "/wt/release is in use by process 10 (zsh), working there; \
-                 /wt/release-conciliate is in use by process 12 (cargo), working in consumer"
+                 /wt/release-other is in use by process 12 (cargo), working in consumer"
                     .into(),
                 format!("end them, or move them out of those folders{counts}")
             ))
@@ -2791,7 +2604,6 @@ mod tests {
             error: None,
             previous: None,
             checks: Vec::new(),
-            skipped: Vec::new(),
             tag: None,
             pushed: false,
             board: record::Board::default(),

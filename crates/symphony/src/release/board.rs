@@ -38,8 +38,6 @@ pub(crate) const SERIES: &str = "tests/release-red-";
 pub(crate) const LEGACY_SERIES: &str = "tests/nightly-red-";
 /// The key of a run that stopped short of deciding, which no check takes.
 pub(crate) const RUN: &str = "run";
-/// The key of a conciliation that could not read the machine's registry, which no check takes.
-pub(crate) const CONCILIATE: &str = "conciliate";
 /// What a release run red's mark says is red.
 const MARK: &str = "release";
 /// The document a red task implements.
@@ -166,8 +164,6 @@ pub(crate) struct Night<'a> {
     /// Whether what stopped it is the owner's to clear: a process in the run's folders, which may
     /// be anyone's, and which no executor ends.
     pub(crate) for_owner: bool,
-    /// The keys this run found green beyond its checks: [`CONCILIATE`] once the registry read.
-    pub(crate) cleared: &'a [&'a str],
     /// Whether a green this run closes the open red of a key: the candidate holds what it was
     /// red on.
     pub(crate) closes: &'a dyn Fn(&str) -> bool,
@@ -327,12 +323,6 @@ fn load(ran: &Ran) -> String {
     }
 }
 
-/// Whether the check `ran` conciliated a project, run in that project's scratch copy rather than
-/// in the candidate's checkout.
-fn conciliates(ran: &Ran) -> bool {
-    key(&ran.name).starts_with(&format!("{CONCILIATE}-"))
-}
-
 /// Whether `command` runs a whole test run: `cargo test` (through `tools/cargo.sh` too) or
 /// `just test-rs`, whose rerun alone is a target of it, never all of it again.
 fn runs_tests(command: &str) -> bool {
@@ -362,11 +352,7 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
     let listed = !ran.steps.is_empty();
     let log = log_of(ran);
     let each = super::rerun::arguments(&log.targets);
-    let place = if conciliates(ran) {
-        "in its scratch copy".to_string()
-    } else {
-        format!("in a checkout of {}", short(night.commit))
-    };
+    let place = format!("in a checkout of {}", short(night.commit));
     if each.is_empty() && log.targets.iter().any(|failed| !failed.gone.is_empty()) {
         let went = match &log.went {
             Some(super::rerun::Went::While(header, selected)) => format!(
@@ -422,14 +408,6 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
                  {EACH_TARGET}."
             );
         }
-        // A conciliation is a `cargo test` run too, but in a project's copy, which has no
-        // `just test-rs` of this repository's.
-        if conciliates(ran) {
-            return format!(
-                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): its log names no failed \
-                 test, so nothing narrower than the check itself, the command above, {place}."
-            );
-        }
         if named.is_some() || runs_tests(&ran.command) {
             return format!(
                 "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}: its log names no \
@@ -442,26 +420,13 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
             ran.command
         );
     }
-    let (head, prefix) = if conciliates(ran) {
-        (
-            "the command above, in its scratch copy, with each of these in place of its `-p` \
-             packages"
-                .to_string(),
-            "",
-        )
-    } else {
-        (
-            format!("in a checkout of {}", short(night.commit)),
-            "just test-rs ",
-        )
-    };
     let mut text = format!(
-        "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {head}, as its log names each \
+        "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), {place}, as its log names each \
          failure ({}):\n",
         each.len()
     );
     for args in each.iter().take(RERUNS_LISTED) {
-        text.push_str(&format!("- `{prefix}{args}`\n"));
+        text.push_str(&format!("- `just test-rs {args}`\n"));
     }
     if each.len() > RERUNS_LISTED {
         text.push_str(&format!(
@@ -515,8 +480,7 @@ fn held(tip: &str) -> String {
          dropped. A fix made outside this repository answers this red by the task cancelled, \
          saying where. Once every red of the \
          candidate is answered, its tip is rerun (the next landing starts it, or `just release \
-         --rerun`): each step that was red, did not run or whose inputs a fix changed, and the \
-         conciliation.\n\n",
+         --rerun`): each step that was red, did not run or whose inputs a fix changed.\n\n",
         tip = short(tip)
     )
 }
@@ -674,10 +638,10 @@ fn on(night: &Night<'_>) -> String {
 /// Who clears a stop for a process in the run's folders: the process is named in why the run
 /// stopped, with the way out.
 const OWNERS: &str = "Who fixes: the owner, or an orchestrator on the owner's word; not an \
-executor. A process stopped the run by being in the release run's checkout or its copies' folder, and \
-it may be anyone's: a shell, a terminal tab, an editor or a Finder window there counts. An \
-executor ends only a process it started (RULES `delete-by-name`). End it, or move it out of that \
-folder, and the next run goes.";
+executor. A process stopped the run by being in the release run's checkout, and it may be \
+anyone's: a shell, a terminal tab, an editor or a Finder window there counts. An executor ends \
+only a process it started (RULES `delete-by-name`). End it, or move it out of that folder, and the \
+next run goes.";
 /// Who fixes any other stop.
 const EXECUTORS: &str = "Who fixes: any free executor takes this from the board.";
 
@@ -922,8 +886,8 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
 }
 
 /// File or update the red task of each red check of `checks` and of the run when it stopped, and
-/// close the open one of each green check, of the run when it got through and of each key the
-/// run cleared: what it did on the board, with every refusal it met. Each step a check listed is
+/// close the open one of each green check and of the run when it got through: what it did on the
+/// board, with every refusal it met. Each step a check listed is
 /// a check here; a check red in its steps alone files nothing of its own, and its open red, if it
 /// has one, hears which ([`super::steps::beyond`]). The red run names the reds filed or heard beside
 /// it ([`reds_beside`]), so a stop never hides one. A run with nothing to write registers no
@@ -956,10 +920,6 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             }
         });
         found.push(act(board, night, RUN, stopped, "the run got through"));
-    }
-    for cleared in night.cleared {
-        let passed = format!("`{cleared}` passed");
-        found.push(act(board, night, cleared, None, &passed));
     }
     let mut errors = Vec::new();
     let mut acts = Vec::new();
@@ -1164,7 +1124,6 @@ mod tests {
             since,
             stopped: None,
             for_owner: false,
-            cleared: &[],
             closes: &|_| true,
             whole: true,
             candidate: None,
@@ -1285,22 +1244,6 @@ mod tests {
         assert_eq!(done.closed, ["tests/release-red-lint"]);
         assert_eq!(board.status_of("tests/release-red-verify"), "ready");
         assert!(board.thread("tests/release-red-verify").is_empty());
-    }
-
-    #[test]
-    fn a_key_the_night_cleared_closes_its_open_red() {
-        let board = Fake::with(&[("tests/release-red-conciliate", "ready")]);
-        let read = Night {
-            cleared: &[CONCILIATE],
-            ..night(&[])
-        };
-        let done = report(&board, &read, &[]);
-        assert_eq!(done.closed, ["tests/release-red-conciliate"]);
-        assert!(
-            board.thread("tests/release-red-conciliate")[0].contains("`conciliate` passed"),
-            "{:?}",
-            board.thread("tests/release-red-conciliate")
-        );
     }
 
     /// The load each step of [`verify`] ended under, as its list says it.
@@ -1635,7 +1578,7 @@ mod tests {
     #[test]
     fn a_checks_key_is_its_name_in_lower_case_words() {
         assert_eq!(key("verify"), "verify");
-        assert_eq!(key("Conciliate lamp_shop!"), "conciliate-lamp-shop");
+        assert_eq!(key("Lint lamp_shop!"), "lint-lamp-shop");
         assert_eq!(key("--a--b--"), "a-b");
         assert_eq!(
             key("tests/perf"),
@@ -2209,47 +2152,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_conciliations_failures_are_rerun_in_its_scratch_copy_with_its_own_command() {
-        let tree = crate::test_tree::Tree::new();
-        let conciliation = Ran {
-            command:
-                "cargo test --no-fail-fast --target-dir /copies/sf/.git/symphony-release-target \
-                      -p game (in /copies/sf at 1a2b, its Cargo.lock moved to the candidate by \
-                      cargo update -p 'https://h/o/symphony#symphony' --precise c0ffee)"
-                    .into(),
-            log: cargo_log(&tree, 1),
-            ..ran("conciliate-consumer", 101)
-        };
-        let said = alone(&conciliation, &night(&[]));
-        assert!(
-            said.starts_with(
-                "Rerun alone (RULES.md `tests/rerun-the-failure-alone`), the command above, in its \
-                 scratch copy, with each of these in place of its `-p` packages, as its log names \
-                 each failure (2):\n- `-p symphony-board --lib -- store::case_0 --exact`\n"
-            ),
-            "{said}"
-        );
-        assert!(!said.contains("just test-rs"), "{said}");
-        let quiet = Ran {
-            log: tree.write("quiet.log", "error: no matching package\n"),
-            ..conciliation
-        };
-        // Its command is a `cargo test` run, and still no `just test-rs` is named for the copy.
-        assert!(runs_tests(&quiet.command), "{}", quiet.command);
-        assert!(
-            alone(&quiet, &night(&[])).ends_with("the command above, in its scratch copy."),
-            "{}",
-            alone(&quiet, &night(&[]))
-        );
-        assert!(
-            !conciliates(&ran(CONCILIATE, 1)),
-            "the registry's read is no project's"
-        );
-    }
-
-    /// A conciliation's log, cut, whose project's own test (`dependency_boundary`) emptied its
-    /// build folder `target` while it ran: the targets after it found their executable gone, or a
+    /// A test run's log, cut, whose own test (`dependency_boundary`) emptied its build folder
+    /// `target` while it ran: the targets after it found their executable gone, or a
     /// build script's output. When `failed`, one before it failed in a test of its own; else that
     /// one ran after it and found its executable gone too.
     fn emptied_log(
@@ -2281,7 +2185,7 @@ mod tests {
             (String::new(), unexecuted("golden_card"))
         };
         tree.write(
-            "conciliate-consumer.log",
+            "tests.log",
             &format!(
                 "{before}{boundary}{after}{failure_capture}   Doc-tests content_index\n\
                  error: couldn't find file `{target}/debug/build/content-index-c3/out/index.rs`\n\
@@ -2292,22 +2196,18 @@ mod tests {
     }
 
     #[test]
-    fn a_conciliation_whose_build_lost_files_is_filed_as_the_environment_failure_it_is() {
+    fn a_test_run_whose_build_lost_files_is_filed_as_the_environment_failure_it_is() {
         let tree = crate::test_tree::Tree::new();
-        let target = tree.path("copies/consumer/.target");
-        tree.write("copies/consumer/.target/tree", "the tree that emptied it");
-        let conciliation = Ran {
-            command: "cargo test --no-fail-fast --target-dir /copies/consumer/.git/t -p app (in \
-                      /copies/consumer at 1a2b)"
-                .into(),
+        let target = tree.path("checkout/.target");
+        tree.write("checkout/.target/tree", "the tree that emptied it");
+        let tests = Ran {
+            command: "tools/cargo.sh test --workspace --locked --no-fail-fast".into(),
             log: emptied_log(&tree, &target, true),
-            ..ran("conciliate-consumer", 101)
+            ..ran("tests", 101)
         };
         let board = Fake::default();
-        report(&board, &night(&[]), std::slice::from_ref(&conciliation));
-        let filed = board
-            .thread("tests/release-red-conciliate-consumer")
-            .join("\n");
+        report(&board, &night(&[]), std::slice::from_ref(&tests));
+        let filed = board.thread("tests/release-red-tests").join("\n");
         let paragraph = format!(
             "\n\nAn environment failure, not a failed test: 2 of its failed targets found files \
              its own build had made gone, and never ran or never compiled for that (`-p app --test \
@@ -2323,10 +2223,9 @@ mod tests {
         assert!(filed.contains(&paragraph), "{paragraph:?} in:\n{filed}");
         assert!(
             filed.contains(
-                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`), the \
-                 command above, in its scratch copy, with each of these in place of its `-p` \
-                 packages, as its log names each failure (1):\n- `-p app --test golden_card -- \
-                 shared_app_discovers_branch_card --exact`\n\n"
+                "and no `debug/`.\n\nRerun alone (RULES.md `tests/rerun-the-failure-alone`), in \
+                 a checkout of cafe01234567, as its log names each failure (1):\n- `just test-rs \
+                 -p app --test golden_card -- shared_app_discovers_branch_card --exact`\n\n"
             ),
             "the targets that found files gone are no failures to rerun:\n{filed}"
         );
@@ -2336,10 +2235,10 @@ mod tests {
         // log says no package for it, so its line names it.
         let gone = Ran {
             log: emptied_log(&tree, &target, false),
-            ..conciliation
+            ..tests
         };
         report(&board, &night(&[]), std::slice::from_ref(&gone));
-        let again = &board.thread("tests/release-red-conciliate-consumer")[1];
+        let again = &board.thread("tests/release-red-tests")[1];
         assert!(
             again.contains(
                 "\n\nAn environment failure, not a failed test: 3 of its failed targets found"
@@ -2352,8 +2251,8 @@ mod tests {
                  of its failures is a test's to rerun, as each failed target found files of its \
                  build gone (above). What removes them shows in a run of the target they went \
                  while, which `Running tests/dependency_boundary.rs \
-                 (.target/debug/deps/dependency_boundary-c5)` names, in its scratch copy, with a \
-                 look at its build folder after it.\n\n"
+                 (.target/debug/deps/dependency_boundary-c5)` names, in a checkout of \
+                 cafe01234567, with a look at its build folder after it.\n\n"
             ),
             "{again}"
         );

@@ -20,13 +20,17 @@ use symphony_board::server::{Home, Running};
 use symphony_board::sys::{Command, output};
 
 use super::common::older_board;
-use super::conciliation::{checkout, consumer, register, symphony_crate};
+use super::consumers::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
 /// The release a run of the fixture's clock tags.
 const RELEASE: &str = "release-2026-11-12";
 /// The branch a project's pin moves on.
 const BRANCH: &str = "symphony/release-2026-11-12";
+/// How long a refresh waits for the shared server's reload, in seconds, in a test whose server has
+/// reloaded by the time it looks: what a stall alone reaches, the backstop of a minute
+/// ([`test_time::backstop`]).
+const RELOADED: &str = "360";
 
 /// The fixture with the refresh on and its Symphony a workspace of two packages pinning the
 /// board's SurrealDB, pushed: the commit.
@@ -80,7 +84,7 @@ fn run_in(fixture: &Fixture, dir: &Path, program: &str, args: &[&str]) {
     );
 }
 
-/// The conciliation's consumer taking both packages, its lock committed at the fixture's main as
+/// The registered [`consumer`] taking both packages, its lock committed at the fixture's main as
 /// pushed now, and a commit gate of its own (`hooks/pre-commit`, red while the fixture holds
 /// `gate-red`, and staging a file of its own into the commit while it holds `gate-stages`)
 /// logging each commit it gates to `gate.log`: its checkout.
@@ -259,7 +263,7 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", RELOADED),
     ];
 
     let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
@@ -294,6 +298,15 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
         );
     }
     assert!(out.contains("release: refresh-consumer green ("), "{out}");
+    // The release was judged by its own check alone: the project was neither copied nor built,
+    // and none of its tests ran.
+    assert_eq!(
+        super::consumers::checked(&fixture.runs().pop().unwrap()),
+        ["verify"]
+    );
+    assert!(!out.contains("conciliat"), "{out}");
+    assert!(!fixture.root.join("wt/release-conciliate").exists());
+    assert!(!super::consumers::tested(&fixture).exists());
 
     // The branch is one commit on its old main: the manifest naming the release's tag in place of
     // main, and the lock binding it, both packages at the release.
@@ -458,7 +471,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
 fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_through() {
     let (fixture, _) = refreshing();
     let consumer = locked_consumer(&fixture);
-    // Released with no project registered (nothing conciliated), then registered.
+    // Released with no project registered (nothing to refresh), then registered.
     register(&fixture, &[]);
     fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
     let out = fixture.night(NOW, 0);
@@ -759,7 +772,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     let home = cargo_home(&fixture);
     let extra = [
         ("CARGO_HOME", home.as_str()),
-        ("SYMPHONY_RELEASE_RELOAD_SECONDS", "60"),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", RELOADED),
     ];
     let shown = consumer.display();
     let status = || {
@@ -1204,42 +1217,6 @@ fn a_project_pinned_past_the_release_takes_it_already_and_nothing_is_made() {
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     assert_eq!(pinned(&consumer, "main", "fixture-core"), ahead);
     assert_eq!(checkout(&consumer), before);
-}
-
-#[test]
-fn a_project_whose_state_an_older_build_keeps_takes_no_pin_until_it_is_moved() {
-    let (fixture, _) = refreshing();
-    let consumer = locked_consumer(&fixture);
-    register(&fixture, &[]);
-    fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
-    fixture.night(NOW, 0);
-    register(&fixture, &[("consumer", &consumer)]);
-    // Its board as an older build keeps it, in the old folder the move renames.
-    let common = consumer.join(".git");
-    let (new, old) = symphony_board::unmoved::OLD[0];
-    fs::create_dir_all(common.join(old).join("data")).unwrap();
-    let head = git(&consumer, &["rev-parse", "HEAD"]);
-    let before = checkout(&consumer);
-    let gates = gated(&fixture).len();
-    let home = cargo_home(&fixture);
-
-    let (code, out, err) =
-        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
-    assert_eq!(code, 1, "{out}{err}");
-    let refusal = symphony_board::unmoved::refusal(&common, new).unwrap();
-    assert!(
-        out.contains("release: refresh-consumer red (")
-            && out.contains(&format!("{refusal}: nothing of consumer was moved")),
-        "{out}"
-    );
-    // Nothing of it moved: no branch, no commit through its gate, its main, its files and its old
-    // folder as they were, and nothing made in the new one.
-    assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
-    assert_eq!(gated(&fixture).len(), gates);
-    assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
-    assert_eq!(checkout(&consumer), before);
-    assert!(common.join(old).join("data").is_dir());
-    assert!(!common.join(new).exists());
 }
 
 #[test]

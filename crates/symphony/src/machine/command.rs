@@ -181,9 +181,19 @@ fn older_record_folder(dir: &Path) -> Option<PathBuf> {
         .map(|common| common.join(INSTALL))
 }
 
-/// What the server the machine folder `machine` records says it is, when it answers; with no
-/// record there, the server `older` records, one started before the machine folder.
+/// What the server the machine folder `machine` records says it is, when it answers within
+/// [`LOOK`]; with no record there, the server `older` records, one started before the machine
+/// folder.
 pub fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Front> {
+    running_within(machine, older, LOOK)
+}
+
+/// [`running`], the server given `look` to connect and to answer.
+fn running_within(
+    machine: &Path,
+    older: Option<&Path>,
+    look: Duration,
+) -> Option<symphony_api::Front> {
     #[derive(serde::Deserialize)]
     struct Record {
         port: u16,
@@ -197,8 +207,8 @@ pub fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Fro
     };
     let record: Record = serde_json::from_str(&text).ok()?;
     let address = SocketAddr::from(([127, 0, 0, 1], record.port));
-    let mut stream = TcpStream::connect_timeout(&address, LOOK).ok()?;
-    stream.set_read_timeout(Some(LOOK)).ok()?;
+    let mut stream = TcpStream::connect_timeout(&address, look).ok()?;
+    stream.set_read_timeout(Some(look)).ok()?;
     write!(
         stream,
         "GET {} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
