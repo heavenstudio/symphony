@@ -45,7 +45,7 @@ never the whole target, which the release run runs.
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
-  `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
+  `dx bundle --wasm-split` of the task pages with `/agents`, the chat, the menus and
   the task timeline: one script and main module, and a chunk for each and one for the media
   layer (no kind: a page of the program loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
@@ -362,7 +362,7 @@ never the whole target, which the release run runs.
   the task or its runs change, a newer read aborting the one before. Until then
   it is its own outline, the shape the server or this browser last saw (`Room`);
   a task nothing gates shows none, and a failed read says so in its place. In the
-  program alone (the task pages, Reports, the chat, the menus and the timeline, which
+  program alone (the task pages, the chat, the menus and the timeline, which
   share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
   `page-tasks`, which `page-program` turns on), so the board's, home's and the documents'
   transport is unchanged; a post never does. As attach.rs does, it puts its own style
@@ -516,25 +516,9 @@ never the whole target, which the release run runs.
 - **Queue.** `/queue` is the React client's, the first page kind it took over
   ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Home's preview of the
   queue stays here, in `view.rs` and `live.rs`, until home moves.
-- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, the program's `reports`
-  kind: a chunk of its own over the runtime, frame and components the program's main module
-  holds for the task pages too, so a move between them fetches the other's chunk alone. Its
-  style is `assets/reports.css`, which only its kind loads. It reads
-  the window this device last chose (`reports-grain`, `reports-days` through `Platform`), else
-  the last 24 hours by the hour (`reports::FIRST_WINDOW`), at
-  once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
-  phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
-  boxes over a column a period, lines as one SVG whose strokes keep their width, both on one
-  axis with its unit; a period no file recorded is hatched and its line broken, never a zero.
-  Each entry of a chart's legend is a toggle button (`aria-pressed`) that hides its series on
-  that chart alone, kept in every window by its chart's id and name (`reports-hidden`, a key a
-  line, through `Platform`): a hidden series leaves the plot, the readout and the table, and the
-  axis scales to the series shown (`Scale::of`), so hiding a large one makes the rest larger; a
-  period stays hatched only when no series, hidden or not, recorded it.
-  A tap or the arrow keys pick a period, the same on every chart, and its readout says every
-  value as text; each chart's table holds every period. The series take `--chart-1` to
-  `--chart-5`, set at no specificity so a theme's own win, with their own steps in the dark.
-  Charts below the screen mount through `NearViewport`. Hours are labelled in UTC.
+- **Reports.** `/reports` is the React client's, the second page kind it took over
+  ([its guide](../symphony-web/AGENTS.md#reports)): this client builds none of it, and the
+  program has no chunk of it.
 - **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
   source positions and anchors, with short card summaries. `viewport::NearViewport`
   uses the shared visibility latch to mount each block once near the screen; a collapsed
@@ -697,8 +681,8 @@ never the whole target, which the release run runs.
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),
   and the program's from a chunk of its own (`split::MediaPart`, `media` in the program's map of
-  chunks and in no manifest), so the program's main module holds none of it: the task pages, the
-  chat on the board and Reports fetch it only when media first shows. A chunk that does not load
+  chunks and in no manifest), so the program's main module holds none of it: the task pages and the
+  chat on the board fetch it only when media first shows. A chunk that does not load
   leaves the page as it is and is asked for again by the next media shown: the shell loads the
   page again when its build is gone, and otherwise puts up `#media-error` with a retry that
   shows the media again, taken down once the chunk is in or the page moves on

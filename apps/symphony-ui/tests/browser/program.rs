@@ -1,5 +1,5 @@
-//! The program (src/split.rs): the task pages with `/agents`, Reports, the chat, the menus and the
-//! task timeline share one script and main module, each kind with a chunk of its own. A move
+//! The program (src/split.rs): the task pages with `/agents`, the chat, the menus and the task
+//! timeline share one script and main module, each kind with a chunk of its own. A move
 //! between its pages fetches the page's chunk alone, never the script or the main module again. The
 //! media layer is a chunk of its own, which a page fetches only once it shows media. The page shown
 //! before stays until the chunk is in; a chunk that does not load ends in the shell's
@@ -77,13 +77,15 @@ fn asks(site: &Site, files: &[&String]) -> Vec<usize> {
 fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_program_again() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
-    let (tasks, reports) = (module(dist(), "tasks"), module(dist(), "reports"));
+    // Each chunk is fetched by what shows it: no idle prefetch has the chat's in already.
+    chrome.save_data();
+    let (tasks, chat) = (module(dist(), "tasks"), module(dist(), "panel"));
     assert_eq!(
-        (&reports.script, &reports.wasm),
+        (&chat.script, &chat.wasm),
         (&tasks.script, &tasks.wasm),
-        "the task pages and Reports are one program"
+        "the task pages and the chat are one program"
     );
-    let files = [&tasks.script, &tasks.wasm, tasks.chunk(), reports.chunk()];
+    let files = [&tasks.script, &tasks.wasm, tasks.chunk(), chat.chunk()];
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, "[data-slug='tools/example']");
     assert_eq!(
@@ -98,17 +100,23 @@ fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_pro
         [1, 1, 1, 0],
         "a task page: the program's script and main module, and the task pages' chunk"
     );
-    follow(&mut chrome, "/reports");
-    shows(&mut chrome, "[data-ready=reports]");
+    chrome.eval("document.querySelector('#quick-open').click()");
+    assert!(
+        chrome.wait_for("window.reviewPanelReady === true", SHOWN),
+        "the chat never loaded"
+    );
     assert_eq!(
         asks(&site, &files),
         [1, 1, 1, 1],
-        "Reports: its chunk alone"
+        "the chat: its chunk alone"
     );
-    follow(&mut chrome, "/agents");
-    shows(&mut chrome, ".agents");
+    // Away to a page of another module (Reports, the web client's) and back.
     follow(&mut chrome, "/reports");
     shows(&mut chrome, "[data-ready=reports]");
+    follow(&mut chrome, "/agents");
+    shows(&mut chrome, ".agents");
+    follow(&mut chrome, "/task/visual/in-progress");
+    shows(&mut chrome, "article.task");
     assert_eq!(
         asks(&site, &files),
         [1, 1, 1, 1],
@@ -339,19 +347,19 @@ fn shell(chrome: &mut Chrome) -> String {
 fn a_page_whose_chunk_does_not_load_ends_in_the_gone_state_never_left_waiting() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
-    chrome.open(&site.url("/task/visual/in-progress"));
-    shows(&mut chrome, "article.task");
+    chrome.open(&site.url("/reports"));
+    shows(&mut chrome, "[data-ready=reports]");
     chrome.eval("window.__kept = true");
     let shell = shell(&mut chrome);
     let loads = |site: &Site| {
         site.requests()
             .iter()
-            .filter(|path| *path == "/reports")
+            .filter(|path| *path == "/task/visual/in-progress")
             .count()
     };
     // Its build still served, a chunk that does not load is said, and the page stays.
-    site.retire(module(dist(), "reports").chunk());
-    follow(&mut chrome, "/reports");
+    site.retire(module(dist(), "tasks").chunk());
+    follow(&mut chrome, "/task/visual/in-progress");
     assert!(
         chrome.wait_for(
             "document.documentElement.dataset.navigation === 'failed'",
@@ -366,13 +374,13 @@ fn a_page_whose_chunk_does_not_load_ends_in_the_gone_state_never_left_waiting() 
     );
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
     assert_eq!(loads(&site), 0, "{:?}", site.requests());
-    // What it leaves on screen: the task page and its header, under the notice.
+    // What it leaves on screen: the reports and their header, under the notice.
     assert!(
-        drawn(&mut chrome, "article.task"),
-        "the task page is hidden under the notice"
+        drawn(&mut chrome, "[data-ready=reports]"),
+        "the reports are hidden under the notice"
     );
     assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
-    assert!(!drawn(&mut chrome, "[data-ready=reports]"));
+    assert!(!drawn(&mut chrome, "article.task"));
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");

@@ -21,7 +21,15 @@ export const CASES = cases as unknown as {
   views: ViewCase[];
   queueCategory: [string, string][];
   isHtml: [string, boolean][];
-  samples: { queue: unknown; emptyQueue: unknown; board: unknown };
+  /** A word, the grain it names, and that grain's default and longest windows in days. */
+  grains: [string, string | null, number | null, number | null][];
+  samples: {
+    queue: unknown;
+    emptyQueue: unknown;
+    board: unknown;
+    reports: unknown;
+    emptyReports: unknown;
+  };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];
 };

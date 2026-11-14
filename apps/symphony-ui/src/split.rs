@@ -1,5 +1,5 @@
-//! The program (`page-program`): the task pages with `/agents`, Reports, the chat, the menus and the
-//! task timeline as one program, which `dx bundle --wasm-split` cuts into a main module and a chunk
+//! The program (`page-program`): the task pages with `/agents`, the chat, the menus and the task
+//! timeline as one program, which `dx bundle --wasm-split` cuts into a main module and a chunk
 //! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
 //! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
 //! part. The kinds share the one runtime, so a move between them loads a chunk, never another copy
@@ -30,7 +30,6 @@ use wasm_bindgen_futures::JsFuture;
 pub(crate) enum Chunk {
     /// The task pages and `/agents`.
     Tasks,
-    Reports,
     /// The chat, the activity list and the Appearance panel.
     Panel,
     /// A select's popup and the picture viewer, for every module.
@@ -69,19 +68,13 @@ async fn fetch(name: &str, bit: u8) -> Result<(), JsValue> {
 }
 
 impl Chunk {
-    pub(crate) const ALL: [Chunk; 5] = [
-        Chunk::Tasks,
-        Chunk::Reports,
-        Chunk::Panel,
-        Chunk::Overlay,
-        Chunk::Timeline,
-    ];
+    pub(crate) const ALL: [Chunk; 4] =
+        [Chunk::Tasks, Chunk::Panel, Chunk::Overlay, Chunk::Timeline];
 
     /// Its page kind, as the shell's manifest and `reviewChunk` name it.
     pub(crate) fn kind(self) -> &'static str {
         match self {
             Chunk::Tasks => "tasks",
-            Chunk::Reports => "reports",
             Chunk::Panel => "panel",
             Chunk::Overlay => "overlay",
             Chunk::Timeline => "timeline",
@@ -95,7 +88,7 @@ impl Chunk {
             Chunk::Panel => "quick-root".into(),
             Chunk::Overlay => "overlay-root".into(),
             Chunk::Timeline => "timeline-root".into(),
-            Chunk::Tasks | Chunk::Reports => format!("review-root-{}", self.kind()),
+            Chunk::Tasks => format!("review-root-{}", self.kind()),
         }
     }
 
@@ -171,8 +164,6 @@ unsafe extern "C" {
         route: Memo<String>,
     ) -> Element;
     #[allow(improper_ctypes)]
-    fn __wasm_split_00___reports___00_import_5b5e7a5c000000000000000000000002_reports() -> Element;
-    #[allow(improper_ctypes)]
     fn __wasm_split_00___panel___00_import_5b5e7a5c000000000000000000000003_panel() -> Element;
     #[allow(improper_ctypes)]
     fn __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() -> Element;
@@ -189,13 +180,6 @@ pub extern "C" fn __wasm_split_00___tasks___00_export_5b5e7a5c000000000000000000
     route: Memo<String>,
 ) -> Element {
     rsx! { crate::live::BoardPage { route, scope } }
-}
-
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "C" fn __wasm_split_00___reports___00_export_5b5e7a5c000000000000000000000002_reports()
--> Element {
-    rsx! { crate::reports::ReportsRoute {} }
 }
 
 #[unsafe(no_mangle)]
@@ -236,16 +220,6 @@ pub(crate) fn TasksPart(scope: String, route: Memo<String>) -> Element {
     unsafe {
         __wasm_split_00___tasks___00_import_5b5e7a5c000000000000000000000001_tasks(scope, route)
     }
-}
-
-/// `/reports`, from its chunk.
-#[component]
-pub(crate) fn ReportsPart() -> Element {
-    if !use_chunk(Chunk::Reports) {
-        return rsx! {};
-    }
-    // SAFETY: as in `TasksPart`.
-    unsafe { __wasm_split_00___reports___00_import_5b5e7a5c000000000000000000000002_reports() }
 }
 
 /// The chat's panel, from its chunk.

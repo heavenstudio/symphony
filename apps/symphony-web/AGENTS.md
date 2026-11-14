@@ -3,8 +3,8 @@
 The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves; every other page is still the Dioxus
-client's. Like that client it reads the server's JSON API and never runs server code or inserts
+review queue (`/queue`) is the first kind it serves and Reports (`/reports`) the second; every
+other page is still the Dioxus client's. Like that client it reads the server's JSON API and never runs server code or inserts
 server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -72,7 +72,7 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`): a guard checks the fields
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`): a guard checks the fields
 the page draws, each of its type, and nothing else, so a field a newer server adds, or one it
 drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
@@ -134,6 +134,29 @@ server, the shared sheet of the Dioxus build (the frame, the components, the boa
 class names this client's markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`). A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
+
+## Reports
+
+`src/reports.tsx` draws `/api/reports` at `/reports`, the kind `reports`, in the frame, with no
+feed of its own: it reads the window this device last chose (`reports-grain`, `reports-days`
+through `storage.ts`), else the last 24 hours by the hour (`FIRST_WINDOW`), at once, on each
+choice and every five minutes with the last answer's tag (`followReports`, under its effect's
+own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
+record of a period is none there, a count by status that leaves out its zeros a zero. Four
+figures sit over five sections of charts, one column on a phone and two from 960 px.
+`src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
+a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
+period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
+legend is a toggle button (`aria-pressed`) that hides its series on that chart alone, kept in
+every window by its chart's id and name (`reports-hidden`, a key a line): a hidden series leaves
+the plot, the readout and the table, and the axis scales to the series shown (`scaleOf`), so
+hiding a large one makes the rest larger; a period stays hatched only when no series, hidden or
+not, recorded it. A tap or the arrow keys pick a period, the same on every chart, and its readout
+says every value as text; each chart's table holds every period. Figures are written as the
+Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`). The
+series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
+own win, with their own steps in the dark. Charts below the screen mount through
+`NearViewport`. Hours are labelled in UTC.
 
 ## Moving a page kind
 

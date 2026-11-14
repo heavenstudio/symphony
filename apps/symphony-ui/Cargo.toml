@@ -53,11 +53,6 @@ dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "9
 symphony-api = { path = "../../crates/symphony-api" }
 serde = { version = "1", features = ["derive"] }
 
-# The host's side: what the browser's parsed JSON is on the host, for the Reports page's periods it
-# reads by path (src/reports.rs) and their tests.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-serde_json = "1"
-
 # The browser's side of the app (src/live.rs, src/platform.rs). serde-wasm-bindgen reads the JSON the
 # browser has parsed into the wire types, in place of serde_json's parser: 11 KB less on a first visit.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -141,9 +136,9 @@ page-panel = ["overlays"]
 page-overlay = ["overlays"]
 # A task's timeline, loaded into the task page's box once the page is idle (task_timeline.rs).
 page-timeline = []
-# The program: the task pages with /agents, Reports, the chat, the menus and the timeline as one
-# program that `dx bundle --wasm-split` cuts into a main module and a chunk for each (src/split.rs,
-# bundle.sh). Its kinds share one runtime.
+# The program: the task pages with /agents, the chat, the menus and the timeline as one program that
+# `dx bundle --wasm-split` cuts into a main module and a chunk for each (src/split.rs, bundle.sh).
+# Its kinds share one runtime.
 page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
