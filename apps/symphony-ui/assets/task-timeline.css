@@ -9,21 +9,16 @@
 .tl-machine.tl-narrow { display:block; }
 .tl-wide { display:none; }
 
-/* The steps: the box's height clips them, the latest in view on a phone; "Show all" lets them
-   grow. The box's foot holds what the bars mean. */
+/* The steps: on a phone the box's height clips them, the latest in view, and "Show all" lets them
+   grow; wide the box holds them all. The box's foot holds what the bars mean. */
 .tl-body { position:relative; flex:1; min-height:0; overflow:hidden; }
 .tl-all .tl-body { overflow:visible; }
-/* Where the box cuts the steps, they fade out: at the foot of the lanes, at the top of a phone's
-   list. */
-.tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }
 /* The foot takes as little of the box as it can, so the steps keep the rest: "Show all" on the
    legend's line, the legend wrapping beside it, and the lanes' detail in the legend's place while
-   a part of the lanes has the focus, so the foot never grows and cuts through a lane. */
+   a part of the lanes has the focus, so the foot never grows and moves what is under it. */
 .tl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px var(--sp-4); padding-top:var(--sp-2); }
 .tl-foot .tl-legend { flex:1 1 0; }
 .tl-more { margin-left:auto; }
-/* "Show all" names what it shows: the list's steps on a phone, the lanes wide. */
-.tl-more-lanes { display:none; }
 
 /* The phone's list: the time, a mark on the rail, the label and its length, the bar under them. */
 .tl-list { --at:2.5rem; --rail:calc(var(--at) + 10px); position:relative; list-style:none; margin:0; padding:0; font-size:var(--fs-sm); }
@@ -47,12 +42,12 @@
 
 /* The page's + button floats over a phone's bottom right: what the timeline says keeps clear of
    its column. A list the box clips keeps its latest steps in view, its earliest cut at the top,
-   however the box's foot or a late font changes the room it has. */
+   where they fade out, however the box's foot or a late font changes the room it has. */
 @media (max-width: 899.98px) {
   .tl-drawn { padding-right:40px; }
   .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }
   .tl-clipped .tl-list { flex:none; }
-  .tl-clipped .tl-body::after { top:0; bottom:auto; background:linear-gradient(var(--card), transparent); }
+  .tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; top:0; height:28px; background:linear-gradient(var(--card), transparent); pointer-events:none; }
 }
 
 /* The wide lanes: a name column, then a track per lane over the same hours, the hours' lines and
@@ -116,9 +111,6 @@
 .tl-detail { flex:1 1 0; margin:0; color:var(--muted-foreground); font-size:var(--fs-xs); }
 
 @media (min-width: 900px) {
-  /* Lanes cut under the last whole one (task_timeline.rs `settle`) need no fade: "Show all N lanes"
-     says the rest. Only wide: a page narrowed to a phone's list after a cut keeps that list's fade. */
-  .tl-body[data-cut]::after { display:none; }
   /* The list stays for assistive technology, the lanes drawn in its place. */
   .tl-list { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   .tl-lanes { display:block; }
@@ -127,8 +119,9 @@
   .tl-legend .tl-wide { display:inline-flex; }
   .tl-detail.tl-wide { display:block; }
   .tl-foot:has(.tl-detail) .tl-legend { display:none; }
-  .tl-more-steps { display:none; }
-  .tl-more-lanes { display:inline; }
+  /* The box holds every lane (timeline-slot.css): nothing to show all of, even where a draw at a
+     phone's width offered it. More specific than the button's own display. */
+  .tl-foot .tl-more { display:none; }
 }
 
 /* A word in the lanes shows only at the track widths that hold it (task_timeline.rs WIDTHS): a

@@ -3,20 +3,26 @@
 //! timeline's own module ([`crate::task_timeline`], the page kind `timeline`) moves its root. The
 //! box asks the shell for the module once it nears the screen (`reviewTimeline`); the shell loads
 //! it once the page has its data and is idle. The page compiles none of the timeline's code, and
-//! nothing outside the box moves when the timeline arrives or a read adds a step to it.
+//! nothing outside the box moves when the timeline arrives as tall as it was drawn last. On a
+//! phone the box keeps that height when a read adds a step to it; wide it grows to hold the whole
+//! timeline.
 
 use dioxus::prelude::*;
 
 /// The id of the box the timeline module's root moves into.
 pub const SLOT: &str = "timeline-slot";
 
-/// The box's height on a phone (the list) and wide (the lanes) for a task this browser has drawn
-/// no timeline of, in pixels: the most a timeline shows before its "Show all", the owner's 240 at
-/// any width (docs/DECISIONS.md), so the brief and the thread start near the page's top. What
-/// does not fit is left out: on a phone the earliest steps, fading, and wide the lanes under the
-/// last that fits whole, the box then kept as tall as those for the next visit.
+/// The box's height on a phone (the list) for a task this browser has drawn no timeline of, in
+/// pixels: the most a phone's timeline shows before its "Show all", the owner's 240
+/// (docs/DECISIONS.md), so the brief and the thread start near the page's top, the earliest steps
+/// that do not fit fading out.
 pub const NARROW: u32 = 240;
-pub const WIDE: u32 = 240;
+/// The box's height wide (the lanes, from 900 px) for a task this browser has drawn no timeline
+/// of, in pixels: no most, as wide the box grows to hold the whole timeline (the owner's word on
+/// inbox/timeline-should-not-be-collapsed-by-defa), but a typical whole timeline, so a first visit
+/// moves the brief little when it lands: 367 to 480 px on the board's ten newest done tasks on
+/// 2026-11-14, 408 the median.
+pub const WIDE: u32 = 408;
 /// The least a box is reserved, whatever was kept.
 pub const LEAST: u32 = 120;
 
@@ -31,16 +37,16 @@ pub fn key(slug: &str) -> String {
     format!("timeline-height:{slug}")
 }
 
-/// The heights kept as "NARROW,WIDE" read back, each within [`LEAST`] and its default: an
-/// unreadable or missing one is the default.
+/// The heights kept as "NARROW,WIDE" read back, each at least [`LEAST`], the phone's at most
+/// [`NARROW`]: an unreadable or missing one is the default.
 pub fn heights(kept: Option<&str>) -> (u32, u32) {
     let mut said = kept.unwrap_or_default().split(',').map(str::trim);
-    let mut read = |default: u32| {
+    let mut read = |default: u32, most: u32| {
         said.next()
             .and_then(|height| height.parse::<u32>().ok())
-            .map_or(default, |height| height.clamp(LEAST, default))
+            .map_or(default, |height| height.clamp(LEAST, most))
     };
-    (read(NARROW), read(WIDE))
+    (read(NARROW, NARROW), read(WIDE, u32::MAX))
 }
 
 /// The heights to keep once a draw took `natural` pixels at one width (`wide` or not), the other
@@ -49,7 +55,7 @@ pub fn kept(before: Option<&str>, wide: bool, natural: f64) -> String {
     let (narrow, wide_height) = heights(before);
     let natural = natural.ceil().clamp(0.0, f64::from(u32::MAX)) as u32;
     if wide {
-        format!("{narrow},{}", natural.clamp(LEAST, WIDE))
+        format!("{narrow},{}", natural.max(LEAST))
     } else {
         format!("{},{wide_height}", natural.clamp(LEAST, NARROW))
     }
@@ -231,22 +237,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_box_is_at_most_240_px_tall_on_a_phone_and_wide() {
-        assert_eq!((NARROW, WIDE), (240, 240));
-        // Nothing kept, nor a height kept by a build whose box was taller, reserves more.
-        assert_eq!(heights(Some("460,480")), (240, 240));
-        assert_eq!(kept(Some("460,480"), true, 2000.0), "240,240");
-        assert_eq!(kept(Some("460,480"), false, 2000.0), "240,240");
+    fn the_box_is_at_most_240_px_tall_on_a_phone_and_as_tall_as_its_whole_timeline_wide() {
+        assert_eq!(NARROW, 240);
+        // On a phone nothing kept, nor a height kept by a build whose box was taller, reserves
+        // more; wide the whole timeline's height is kept and reserved, however tall.
+        assert_eq!(heights(Some("460,480")), (240, 480));
+        assert_eq!(kept(Some("460,480"), true, 2000.0), "240,2000");
+        assert_eq!(kept(Some("460,480"), false, 2000.0), "240,480");
+        assert_eq!(heights(Some("240,2000")), (240, 2000));
+        // A task never drawn wide reserves a typical whole timeline, taller than a phone's box.
+        const { assert!(WIDE > NARROW) };
     }
 
     #[test]
-    fn a_kept_height_is_read_back_within_the_least_and_its_default() {
+    fn a_kept_height_is_read_back_at_least_the_least_and_on_a_phone_at_most_its_default() {
         assert_eq!(heights(None), (NARROW, WIDE));
         assert_eq!(heights(Some("")), (NARROW, WIDE));
         assert_eq!(heights(Some("200,150")), (200, 150));
         assert_eq!(heights(Some(" 200 , 150 ")), (200, 150));
         assert_eq!(heights(Some("9999,10")), (NARROW, LEAST));
+        assert_eq!(heights(Some("10,9999")), (LEAST, 9999));
         assert_eq!(heights(Some("tall,150")), (NARROW, 150));
+        assert_eq!(heights(Some("200,-5")), (200, WIDE));
         assert_eq!(heights(Some("200")), (200, WIDE));
         assert_eq!(heights(Some(&format!("{NARROW},{WIDE}"))), (NARROW, WIDE));
     }
@@ -254,8 +266,14 @@ mod tests {
     #[test]
     fn a_draw_keeps_its_own_widths_height_and_the_other_as_it_was() {
         assert_eq!(kept(None, false, 212.4), format!("213,{WIDE}"));
+        assert_eq!(kept(None, true, 212.4), format!("{NARROW},213"));
         assert_eq!(kept(Some("213,150"), true, 180.0), "213,180");
-        assert_eq!(kept(Some("213,150"), true, 2000.0), format!("213,{WIDE}"));
+        assert_eq!(kept(Some("213,150"), true, 612.0), "213,612");
+        assert_eq!(kept(Some("213,150"), true, 12.0), format!("213,{LEAST}"));
+        assert_eq!(
+            kept(Some("213,150"), false, 2000.0),
+            format!("{NARROW},150")
+        );
         assert_eq!(kept(Some("213,150"), false, 12.0), format!("{LEAST},150"));
         assert_eq!(kept(Some("213,150"), false, -5.0), format!("{LEAST},150"));
         assert_eq!(key("tools/a"), "timeline-height:tools/a");
@@ -266,6 +284,7 @@ mod tests {
         assert_eq!(placeholders(0), 1);
         assert_eq!(placeholders(LEAST), 1);
         assert_eq!(placeholders(NARROW), 3);
+        assert_eq!(placeholders(WIDE), 6);
         assert_eq!(placeholders(5000), 9);
     }
 
@@ -293,7 +312,7 @@ mod tests {
         );
         assert_eq!(
             html.matches("class=\"tl-sk-row\"").count(),
-            placeholders(NARROW) as usize,
+            placeholders(WIDE) as usize,
             "{html}"
         );
         // It says it reads, to assistive technology, inside the box's own height: no one-line
@@ -308,8 +327,9 @@ mod tests {
             STYLE.contains(".tl-box { height:var(--tl-narrow);"),
             "{STYLE}"
         );
+        // Wide, the box holds its height until the timeline is drawn, then grows or shrinks to it.
         assert!(
-            STYLE.contains("@media (min-width: 900px) { .tl-box { height:var(--tl-wide); } }"),
+            STYLE.contains("@media (min-width: 900px) {\n  .tl-box { height:var(--tl-wide); }\n  .tl-box:has(.tl-drawn) { height:auto; }\n"),
             "{STYLE}"
         );
         assert!(
@@ -322,9 +342,11 @@ mod tests {
         );
         // A failed read never cuts off its Try again: the box grows past its height, never under.
         assert!(
-            STYLE.contains(
-                ".tl-box:has(.tl-failed) { height:auto; min-height:var(--tl-narrow); }\n@media (min-width: 900px) { .tl-box:has(.tl-failed) { min-height:var(--tl-wide); } }"
-            ),
+            STYLE.contains(".tl-box:has(.tl-failed) { height:auto; min-height:var(--tl-narrow); }"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains("  .tl-box:has(.tl-failed) { min-height:var(--tl-wide); }\n}"),
             "{STYLE}"
         );
         for written in ["#", "rgb(", "rgba(", "hsl("] {

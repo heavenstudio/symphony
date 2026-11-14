@@ -206,7 +206,7 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     // Thirteen steps overflow the phone's box: the latest in view, the rest behind "Show all".
     assert_eq!(chrome.eval(MORE), json!("Show all 13 steps"));
     assert_eq!(
-        chrome.eval("(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); const last = [...document.querySelectorAll('.tl-list .tl-row')].pop().getBoundingClientRect(); return last.bottom <= body.bottom + 1 && last.top >= body.top; })()"),
+        chrome.eval(LATEST_IN_VIEW),
         json!(true),
         "the latest step is in view"
     );
@@ -218,6 +218,9 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
 
     view(&mut chrome, 1280, false);
     assert!(drawn(&mut chrome, ".tl-lanes"));
+    // Wide, the box holds every lane, with no "Show all" even though the phone's draw offered it.
+    assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true));
+    assert_eq!(shown(&mut chrome, ".tl-more"), Vec::<String>::new());
     assert_eq!(
         super::texts(&mut chrome, ".tl-lane[data-lane] .tl-name b"),
         ["Stage", "Executor", "Reviewer", "Builds & tests"]
@@ -248,6 +251,44 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
+}
+
+/// Whether the phone's list shows its latest step whole inside the part that holds it.
+const LATEST_IN_VIEW: &str = "(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); const last = [...document.querySelectorAll('.tl-list .tl-row')].pop().getBoundingClientRect(); return last.bottom <= body.bottom + 1 && last.top >= body.top; })()";
+
+/// A page drawn wide, where the box holds every lane, and narrowed to a phone (a tablet turned, a
+/// window halved) collapses its list as a phone draws it: the latest steps in view, the rest
+/// behind "Show all"; widened again, it holds every lane, with no "Show all".
+#[test]
+fn a_timeline_drawn_wide_and_narrowed_to_a_phone_collapses_as_a_phone_draws_it() {
+    let site = served(&fixture());
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 13);
+    assert_eq!(chrome.eval(MORE), Value::Null, "Show all offered wide");
+    view(&mut chrome, 390, true);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.tl-drawn.tl-clipped .tl-more') !== null",
+            SHOWN
+        ),
+        "narrowed, the list was not measured again: {}",
+        chrome.eval("document.querySelector('.tl-drawn').className")
+    );
+    frames(&mut chrome);
+    assert_eq!(chrome.eval(MORE), json!("Show all 13 steps"));
+    assert_eq!(chrome.eval(BOX_HEIGHT), json!(240));
+    assert_eq!(
+        chrome.eval(LATEST_IN_VIEW),
+        json!(true),
+        "the latest step is in view"
+    );
+    view(&mut chrome, 1280, false);
+    assert!(
+        chrome.wait_for("document.querySelector('.tl-clipped') === null", SHOWN),
+        "widened, the lanes were not measured again"
+    );
+    assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true));
+    assert_eq!(chrome.eval(MORE), Value::Null, "Show all offered wide");
 }
 
 #[test]
@@ -359,167 +400,128 @@ fn the_lanes_say_each_part_to_assistive_technology_and_the_keyboard_walks_them()
     );
 }
 
-#[test]
-fn nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
-    for width in [390, 1280] {
-        let site = served(&timed(fixture()));
-        let Some(mut chrome) = chrome() else { return };
-        chrome.call(
-            "Page.addScriptToEvaluateOnNewDocument",
-            json!({"source": MINUTES}),
-        );
-        view(&mut chrome, width, width < 900);
-        // Its read held: the box is drawn with its placeholder rows, as tall as it will be.
-        site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
-        chrome.open(&site.url(TASK));
-        assert!(
-            chrome.wait_for(
-                "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && window.reviewTimelineReady === true",
-                SHOWN
-            ),
-            "{width}: the box's placeholder was not drawn: {:?}",
-            chrome.eval("document.querySelector('article.task')?.innerText")
-        );
-        frames(&mut chrome);
-        let before = places(&mut chrome);
-        assert_eq!(
-            chrome.eval("[...document.querySelectorAll('#timeline-slot .tl-sk-row')].every(row => row.getClientRects().length > 0)"),
-            json!(true),
-            "{width}: the placeholder is the box's own rows, no one-line note"
-        );
-        site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
-        assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 13 && window.minute !== null", SHOWN));
-        frames(&mut chrome);
-        assert_eq!(
-            places(&mut chrome),
-            before,
-            "{width}: the timeline moved the page"
-        );
-        // A minute's read that brings a step more adds it inside the box.
-        let mut more = timed(fixture());
-        more["runs"].as_array_mut().unwrap().push(json!({"phase":"build","label":"just lint-rs","by":"quiet-wren","commit":"5d6e7f8","host":"studio","queued":1794402600.0,"started":1794402660.0,"ended":1794402900.0,"result":"green"}));
-        site.set_json(symphony_api::TASK_TIMELINE_PATH, &more);
-        chrome.eval("window.minute()");
-        assert!(chrome.wait_for(
-            "document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 14",
+/// Open the task's page with its timeline's read held, and leave it held: once the box's
+/// placeholder is drawn, where the page's parts stand ([`places`]).
+fn placeholder_drawn(chrome: &mut super::chrome::Chrome, site: &Site) -> Value {
+    site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
+    chrome.open(&site.url(TASK));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && window.reviewTimelineReady === true",
             SHOWN
-        ));
-        frames(&mut chrome);
-        assert_eq!(
-            places(&mut chrome),
-            before,
-            "{width}: a step more moved the page"
-        );
-        // "Show all" lets the box grow, as the reader asked, and the brief goes below it: at most
-        // 240 px tall, the box holds neither the phone's list nor these lanes whole.
-        tap(&mut chrome, ".tl-more");
-        assert_eq!(
-            chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
-            json!("true"),
-            "{width}"
-        );
-        assert_eq!(
-            chrome.eval(LEFT_ALONE),
-            json!(["false", true]),
-            "{width}: Show all reached the page"
-        );
-        assert_eq!(
-            chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
-            json!(true),
-            "{width}: every step shown"
-        );
-    }
+        ),
+        "the box's placeholder was not drawn: {:?}",
+        chrome.eval("document.querySelector('article.task')?.innerText")
+    );
+    frames(chrome);
+    places(chrome)
+}
+
+#[test]
+fn on_a_phone_nothing_on_the_page_moves_when_the_timeline_arrives_or_a_read_adds_a_step() {
+    let site = served(&timed(fixture()));
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": MINUTES}),
+    );
+    view(&mut chrome, 390, true);
+    // Its read held: the box is drawn with its placeholder rows, as tall as it will be.
+    let before = placeholder_drawn(&mut chrome, &site);
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('#timeline-slot .tl-sk-row')].every(row => row.getClientRects().length > 0)"),
+        json!(true),
+        "the placeholder is the box's own rows, no one-line note"
+    );
+    site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
+    assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 13 && window.minute !== null", SHOWN));
+    frames(&mut chrome);
+    assert_eq!(places(&mut chrome), before, "the timeline moved the page");
+    // A minute's read that brings a step more adds it inside the box.
+    let mut more = timed(fixture());
+    more["runs"].as_array_mut().unwrap().push(json!({"phase":"build","label":"just lint-rs","by":"quiet-wren","commit":"5d6e7f8","host":"studio","queued":1794402600.0,"started":1794402660.0,"ended":1794402900.0,"result":"green"}));
+    site.set_json(symphony_api::TASK_TIMELINE_PATH, &more);
+    chrome.eval("window.minute()");
+    assert!(chrome.wait_for(
+        "document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 14",
+        SHOWN
+    ));
+    frames(&mut chrome);
+    assert_eq!(places(&mut chrome), before, "a step more moved the page");
+    // "Show all" lets the box grow, as the reader asked, and the brief goes below it: at most
+    // 240 px tall, the box does not hold the phone's list whole.
+    tap(&mut chrome, ".tl-more");
+    assert_eq!(
+        chrome.eval("document.querySelector('.tl-more').getAttribute('aria-expanded')"),
+        json!("true")
+    );
+    assert_eq!(
+        chrome.eval(LEFT_ALONE),
+        json!(["false", true]),
+        "Show all reached the page"
+    );
+    assert_eq!(
+        chrome.eval(EVERY_STEP_SHOWN),
+        json!(true),
+        "every step shown"
+    );
 }
 
 /// The box's height on the page, in whole pixels.
 const BOX_HEIGHT: &str =
     "Math.round(document.getElementById('timeline-slot').getBoundingClientRect().height)";
 
-/// What "Show all" says as drawn (the words the style sheet shows at this width).
+/// What "Show all" says as drawn.
 const MORE: &str = "document.querySelector('.tl-more')?.innerText.trim()";
 
-/// The wide timeline's lanes: its own, and one for the gates under their heading.
-const LANES: &str =
-    "document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis):not(.tl-gate)').length";
-
-/// Whether each lane is shown whole or not at all: the part that holds them ends at a lane's edge.
-const WHOLE_LANES: &str = "(() => { const end = document.getElementById('tl-body').getBoundingClientRect().bottom; return [...document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis)')].every(lane => { const r = lane.getBoundingClientRect(); return r.bottom <= end + 1 || r.top >= end - 1; }); })()";
-
-/// Where the box cuts the lanes and where each lane is, from the top of the part that holds them,
-/// with the foot's height: what a lane cut through is told by.
-const LANE_EDGES: &str = "(() => { const body = document.getElementById('tl-body'), r = body.getBoundingClientRect(); return {held: r.height, cut: body.getAttribute('style'), foot: document.querySelector('.tl-foot').getBoundingClientRect().height, lanes: [...document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis)')].map(lane => { const l = lane.getBoundingClientRect(); return [lane.className, Math.round(l.top - r.top), Math.round(l.bottom - r.top)]; })}; })()";
+/// Whether the part that holds the steps shows all of them, none cut off by the box.
+const EVERY_STEP_SHOWN: &str = "(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()";
 
 #[test]
-fn the_box_is_at_most_240_px_on_a_phone_and_wide_and_show_all_opens_the_rest_in_place() {
+fn the_box_is_at_most_240_px_on_a_phone_and_show_all_opens_the_rest_in_place() {
     for (timeline, rows) in [(fixture(), 13), (week(), 50)] {
-        for width in [390, 1280] {
-            let site = served(&timeline);
-            let Some(mut chrome) = chrome() else { return };
-            open(&mut chrome, &site, width, rows);
-            assert_eq!(
-                chrome.eval(BOX_HEIGHT),
-                json!(240),
-                "{rows} steps at {width} px"
-            );
-            // The brief starts right under the box, not a screen further down.
-            let gap = chrome.eval("document.querySelector('.task-body').getBoundingClientRect().top - document.getElementById('timeline-slot').getBoundingClientRect().bottom");
-            assert!(
-                (0.0..48.0).contains(&gap.as_f64().unwrap()),
-                "{rows} steps at {width} px: the brief starts {gap} px under the box"
-            );
-            // The button names what it shows: the list's steps on a phone, the lanes wide. Wide,
-            // the box ends under the last lane it holds whole, never through one.
-            let more = if width < 900 {
-                format!("Show all {rows} steps")
-            } else {
-                let lanes = chrome.eval(LANES).as_u64().unwrap();
-                assert!(lanes > 1, "{rows} steps at {width} px: {lanes} lanes");
-                assert_eq!(
-                    chrome.eval(WHOLE_LANES),
-                    json!(true),
-                    "{rows} steps at {width} px: a lane cut through: {}",
-                    chrome.eval(LANE_EDGES)
-                );
-                // The foot leaves the lanes room for more than the Stage lane alone.
-                let whole = chrome.eval(WHOLE_SHOWN).as_u64().unwrap();
-                assert!(
-                    whole >= 2,
-                    "{rows} steps at {width} px: {whole} lane shown whole: {}",
-                    chrome.eval(LANE_EDGES)
-                );
-                format!("Show all {lanes} lanes")
-            };
-            assert_eq!(chrome.eval(MORE), json!(more), "{rows} steps at {width} px");
-            // A person's click opens the rest in place, and only that: the "+" chat sheet stays
-            // closed and the focus stays on the button, for "Show the latest" too.
-            tap(&mut chrome, ".tl-more");
-            assert!(
-                chrome.eval(BOX_HEIGHT).as_f64().unwrap() > 240.0,
-                "{rows} steps at {width} px: Show all left the box {}",
-                chrome.eval(BOX_HEIGHT)
-            );
-            assert_eq!(
-                chrome.eval("(() => { const body = document.getElementById('tl-body'); return body.scrollHeight <= body.clientHeight + 1; })()"),
-                json!(true),
-                "{rows} steps at {width} px: every step shown"
-            );
-            assert_eq!(
-                chrome.eval(LEFT_ALONE),
-                json!(["false", true]),
-                "{rows} steps at {width} px: Show all reached the page"
-            );
-            tap(&mut chrome, ".tl-more");
-            assert_eq!(
-                (chrome.eval(BOX_HEIGHT), chrome.eval(MORE)),
-                (json!(240), json!(more)),
-                "{rows} steps at {width} px: Show the latest"
-            );
-            assert_eq!(
-                chrome.eval(LEFT_ALONE),
-                json!(["false", true]),
-                "{rows} steps at {width} px: Show the latest reached the page"
-            );
-        }
+        let site = served(&timeline);
+        let Some(mut chrome) = chrome() else { return };
+        open(&mut chrome, &site, 390, rows);
+        assert_eq!(chrome.eval(BOX_HEIGHT), json!(240), "{rows} steps");
+        // The brief starts right under the box, not a screen further down.
+        let gap = chrome.eval("document.querySelector('.task-body').getBoundingClientRect().top - document.getElementById('timeline-slot').getBoundingClientRect().bottom");
+        assert!(
+            (0.0..48.0).contains(&gap.as_f64().unwrap()),
+            "{rows} steps: the brief starts {gap} px under the box"
+        );
+        // The button names what it shows: the list's steps.
+        let more = format!("Show all {rows} steps");
+        assert_eq!(chrome.eval(MORE), json!(more), "{rows} steps");
+        // A person's click opens the rest in place, and only that: the "+" chat sheet stays
+        // closed and the focus stays on the button, for "Show the latest" too.
+        tap(&mut chrome, ".tl-more");
+        assert!(
+            chrome.eval(BOX_HEIGHT).as_f64().unwrap() > 240.0,
+            "{rows} steps: Show all left the box {}",
+            chrome.eval(BOX_HEIGHT)
+        );
+        assert_eq!(
+            chrome.eval(EVERY_STEP_SHOWN),
+            json!(true),
+            "{rows} steps: every step shown"
+        );
+        assert_eq!(
+            chrome.eval(LEFT_ALONE),
+            json!(["false", true]),
+            "{rows} steps: Show all reached the page"
+        );
+        tap(&mut chrome, ".tl-more");
+        assert_eq!(
+            (chrome.eval(BOX_HEIGHT), chrome.eval(MORE)),
+            (json!(240), json!(more)),
+            "{rows} steps: Show the latest"
+        );
+        assert_eq!(
+            chrome.eval(LEFT_ALONE),
+            json!(["false", true]),
+            "{rows} steps: Show the latest reached the page"
+        );
     }
 }
 
@@ -598,166 +600,96 @@ fn a_box_is_reserved_as_tall_as_this_browser_last_drew_the_tasks_timeline() {
     );
 }
 
-/// Wide, lanes that do not fit end under the last whole one, and the next visit reserves the box
-/// that tall: smaller than the 240 px default, the same lanes whole, its foot at the box's foot.
+/// Wide, the box holds every lane with no "Show all", taller than a phone's most, the brief right
+/// under it, and the next visit reserves it as tall: nothing on the page moves when the timeline
+/// arrives. A click on a part of the last lane focuses it, as the keyboard does: its detail shows
+/// in the legend's place, and nothing on the page moves.
 #[test]
-fn a_wide_box_that_cuts_its_lanes_is_reserved_as_tall_as_its_whole_lanes_on_the_next_visit() {
-    let site = served(&fixture());
-    let Some(mut chrome) = chrome() else { return };
-    open(&mut chrome, &site, 1280, 13);
-    assert_eq!(chrome.eval(BOX_HEIGHT), json!(240));
-    assert_eq!(
-        chrome.eval(WHOLE_LANES),
-        json!(true),
-        "a lane cut through: {}",
-        chrome.eval(LANE_EDGES)
-    );
-    let whole = chrome.eval(WHOLE_SHOWN);
-    assert!(
-        whole.as_u64().unwrap() >= 2,
-        "{whole} lane shown whole: {}",
-        chrome.eval(LANE_EDGES)
-    );
-    site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
-    chrome.open(&site.url(TASK));
-    assert!(chrome.wait_for(
-        "document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0",
-        SHOWN
-    ));
-    let reserved = chrome.eval(BOX_HEIGHT).as_f64().unwrap();
-    assert!(reserved < 240.0, "the next visit reserves {reserved} px");
-    site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
-    assert!(chrome.wait_for(
-        "document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === 13",
-        SHOWN
-    ));
-    frames(&mut chrome);
-    assert_eq!(
-        chrome.eval(BOX_HEIGHT).as_f64(),
-        Some(reserved),
-        "the box kept its height"
-    );
-    assert_eq!(
-        chrome.eval(WHOLE_LANES),
-        json!(true),
-        "a lane cut through: {}",
-        chrome.eval(LANE_EDGES)
-    );
-    assert_eq!(chrome.eval(WHOLE_SHOWN), whole, "the same lanes shown");
-    // The lanes' part fills the box: no room is left under its foot.
-    let room = chrome.eval("(() => { const box = document.getElementById('timeline-slot'); const foot = box.querySelector('.tl-foot').getBoundingClientRect().bottom; return box.getBoundingClientRect().bottom - parseFloat(getComputedStyle(box).paddingBottom) - parseFloat(getComputedStyle(box).borderBottomWidth) - foot; })()");
-    assert!(
-        room.as_f64().unwrap().abs() <= 2.0,
-        "{room} px left under the box's foot"
-    );
-    // A click on a part of the last whole lane focuses it, as the keyboard does: its detail shows
-    // in the legend's place, and in this box with no room to spare neither the foot nor the lanes
-    // move, the lane it is in still whole.
-    chrome.eval("document.getElementById('timeline').scrollIntoView()");
-    frames(&mut chrome);
-    let at_rest = chrome.eval(FOOT_AND_LANES);
-    let part = chrome.eval(LAST_WHOLE_PART);
-    assert_eq!(part["hit"], json!(true), "the part is covered: {part}");
-    for kind in ["mousePressed", "mouseReleased"] {
-        chrome.call(
-            "Input.dispatchMouseEvent",
-            json!({"type": kind, "x": part["x"], "y": part["y"], "button": "left", "clickCount": 1}),
+fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_as_tall() {
+    for (timeline, rows) in [(fixture(), 13), (week(), 50)] {
+        let site = served(&timeline);
+        let Some(mut chrome) = chrome() else { return };
+        open(&mut chrome, &site, 1280, rows);
+        let drawn = chrome.eval(BOX_HEIGHT);
+        assert!(
+            drawn.as_f64().unwrap() > 240.0,
+            "{rows} steps: the box is {drawn} px"
+        );
+        assert_eq!(
+            chrome.eval(EVERY_STEP_SHOWN),
+            json!(true),
+            "{rows} steps: a lane cut off"
+        );
+        assert_eq!(
+            chrome.eval("document.querySelector('.tl-more')"),
+            Value::Null,
+            "{rows} steps: Show all offered"
+        );
+        let gap = chrome.eval("document.querySelector('.task-body').getBoundingClientRect().top - document.getElementById('timeline-slot').getBoundingClientRect().bottom");
+        assert!(
+            (0.0..48.0).contains(&gap.as_f64().unwrap()),
+            "{rows} steps: the brief starts {gap} px under the box"
+        );
+        let before = placeholder_drawn(&mut chrome, &site);
+        assert_eq!(before["box"][1], drawn, "{rows} steps: the next visit");
+        site.hold_route(symphony_api::TASK_TIMELINE_PATH, false);
+        let arrived =
+            format!("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === {rows}");
+        assert!(chrome.wait_for(&arrived, SHOWN), "{rows} steps: not drawn");
+        frames(&mut chrome);
+        // The height is kept in whole pixels, the timeline's own a fraction under it: what is under
+        // the box may move by less than one.
+        let after = places(&mut chrome);
+        assert!(
+            ["brief", "thread"].iter().all(|part| {
+                (after[part].as_f64().unwrap() - before[part].as_f64().unwrap()).abs() < 1.0
+            }) && after["box"] == before["box"],
+            "{rows} steps: the timeline moved the page: {before} then {after}"
+        );
+        chrome.eval("document.getElementById('timeline').scrollIntoView()");
+        frames(&mut chrome);
+        let at_rest = (places(&mut chrome), chrome.eval(FOOT));
+        let part = chrome.eval(LAST_PART);
+        assert_eq!(
+            part["hit"],
+            json!(true),
+            "{rows} steps: the part is covered: {part}"
+        );
+        for kind in ["mousePressed", "mouseReleased"] {
+            chrome.call(
+                "Input.dispatchMouseEvent",
+                json!({"type": kind, "x": part["x"], "y": part["y"], "button": "left", "clickCount": 1}),
+            );
+        }
+        frames(&mut chrome);
+        assert_eq!(
+            chrome.eval("document.activeElement?.closest('.tl-lane')?.dataset.lane ?? null"),
+            part["lane"],
+            "{rows} steps: the click focused the part"
+        );
+        assert_eq!(
+            shown(&mut chrome, ".tl-detail").len(),
+            1,
+            "its detail shows"
+        );
+        assert!(
+            shown(&mut chrome, ".tl-legend li").is_empty(),
+            "{rows} steps: the detail takes the legend's place"
+        );
+        assert_eq!(
+            (places(&mut chrome), chrome.eval(FOOT)),
+            at_rest,
+            "{rows} steps: the focus moved the page or the foot"
         );
     }
-    frames(&mut chrome);
-    assert_eq!(
-        chrome.eval("document.activeElement?.closest('.tl-lane')?.dataset.lane ?? null"),
-        part["lane"],
-        "the click focused the part"
-    );
-    assert_eq!(
-        shown(&mut chrome, ".tl-detail").len(),
-        1,
-        "its detail shows"
-    );
-    assert!(
-        shown(&mut chrome, ".tl-legend li").is_empty(),
-        "the detail takes the legend's place"
-    );
-    assert_eq!(
-        chrome.eval(FOOT_AND_LANES),
-        at_rest,
-        "the focus moved the foot or the lanes: {}",
-        chrome.eval(LANE_EDGES)
-    );
-    assert_eq!(
-        chrome.eval(WHOLE_LANES),
-        json!(true),
-        "a lane cut through: {}",
-        chrome.eval(LANE_EDGES)
-    );
 }
 
-/// The foot's height, the lanes' part's height and how many lanes it shows whole, in pixels.
-const FOOT_AND_LANES: &str = "(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); return [Math.round(document.querySelector('.tl-foot').getBoundingClientRect().height), Math.round(body.height), [...document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis)')].filter(lane => lane.getBoundingClientRect().bottom <= body.bottom + 1).length]; })()";
+/// The height of the box's foot, in whole pixels.
+const FOOT: &str = "Math.round(document.querySelector('.tl-foot').getBoundingClientRect().height)";
 
-/// The widest part of the last lane the box shows whole: its lane, the point a click takes, and
-/// whether the part is on top there.
-const LAST_WHOLE_PART: &str = "(() => { const end = document.getElementById('tl-body').getBoundingClientRect().bottom; const lane = [...document.querySelectorAll('.tl-lanes > .tl-lane[data-lane]')].filter(lane => lane.getBoundingClientRect().bottom <= end + 1 && lane.querySelector('[role=img]')).pop(); const part = [...lane.querySelectorAll('[role=img]')].sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]; const b = part.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {x, y, lane: lane.dataset.lane, hit: document.elementFromPoint(x, y)?.closest('[role=img]') === part}; })()";
-
-/// Open the task's page and wait for its wide timeline's `lanes` lanes; the box's height then.
-fn visit(chrome: &mut super::chrome::Chrome, site: &Site, lanes: usize) -> f64 {
-    chrome.open(&site.url(TASK));
-    let drawn = format!("document.querySelector('.tl-drawn') !== null && {LANES} === {lanes}");
-    assert!(
-        chrome.wait_for(&drawn, SHOWN),
-        "the timeline's {lanes} lanes were not drawn: {}",
-        chrome.eval(LANES)
-    );
-    frames(chrome);
-    chrome.eval(BOX_HEIGHT).as_f64().unwrap()
-}
-
-/// A wide box kept short for a task of two lanes grows back once the task has more: the next
-/// visit keeps what the 240 px box would hold whole, not what this shorter box holds.
-#[test]
-fn a_wide_box_kept_short_grows_back_when_its_timeline_gains_lanes() {
-    let mut two = fixture();
-    for empty in ["rounds", "runs", "gates"] {
-        two[empty] = json!([]);
-    }
-    let site = served(&two);
-    let Some(mut chrome) = chrome() else { return };
-    view(&mut chrome, 1280, false);
-    assert_eq!(visit(&mut chrome, &site, 2), 240.0, "the first visit");
-    let short = visit(&mut chrome, &site, 2);
-    assert!(short < 240.0, "two lanes kept {short} px");
-    // The task gains its reviewer, its builds and tests and its gates: this visit's box is as short
-    // as before, and cuts them under a whole lane.
-    site.set_json(symphony_api::TASK_TIMELINE_PATH, &fixture());
-    assert_eq!(
-        visit(&mut chrome, &site, 5),
-        short,
-        "the box kept its height"
-    );
-    assert_eq!(
-        chrome.eval(WHOLE_LANES),
-        json!(true),
-        "a lane cut through: {}",
-        chrome.eval(LANE_EDGES)
-    );
-    let before = chrome.eval(WHOLE_SHOWN).as_u64().unwrap();
-    // The next visit's box is taller, and shows more lanes whole, at least two.
-    let grown = visit(&mut chrome, &site, 5);
-    assert!(
-        grown > short && grown <= 240.0,
-        "kept {short} px, then {grown} px"
-    );
-    let whole = chrome.eval(WHOLE_SHOWN).as_u64().unwrap();
-    assert!(
-        whole > before && whole >= 2,
-        "{before} lanes whole, then {whole}: {}",
-        chrome.eval(LANE_EDGES)
-    );
-}
-
-/// How many lanes the box shows whole.
-const WHOLE_SHOWN: &str = "(() => { const end = document.getElementById('tl-body').getBoundingClientRect().bottom; return [...document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis)')].filter(lane => lane.getBoundingClientRect().bottom <= end + 1).length; })()";
+/// The widest part of the last lane that has parts: its lane, the point a click takes, and whether
+/// the part is on top there.
+const LAST_PART: &str = "(() => { const lane = [...document.querySelectorAll('.tl-lanes > .tl-lane[data-lane]')].filter(lane => lane.querySelector('[role=img]')).pop(); const part = [...lane.querySelectorAll('[role=img]')].sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]; const b = part.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {x, y, lane: lane.dataset.lane, hit: document.elementFromPoint(x, y)?.closest('[role=img]') === part}; })()";
 
 #[test]
 fn the_plus_button_covers_nothing_the_timeline_says_at_a_phones_width() {
