@@ -224,7 +224,8 @@ never the whole target, which the release run runs.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   both the owner's, the first-visit cap raised by the owner to 300 KB, and
-  never loosened by an agent). A visit counts each response the page loaded at what Chrome's
+  never loosened by an agent). Home's first visit, the web client's since it moved, is held
+  to 125,000 bytes (`HOME_FIRST_VISIT_BYTES`), lowered by that move, never raised. A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
@@ -309,7 +310,15 @@ never the whole target, which the release run runs.
   a move between the two fetches the other's entry alone; the program, Reports' chunk gone, takes
   `/agents` and a task page to 548,597 and 549,190 (from 549,285 and 549,878) and the warmed chat
   and menus to 603,539 outside home's (from 604,282); every other page stays within 12 bytes of
-  main's. Each
+  main's. Home moving to the web client (`app/client-moves-to-react/home`, against main's build
+  at 2949ff8) takes `/` to 108,297 bytes (from 237,723) and its cap to 125,000: its entry, its
+  sheet (the media sheet's copy), the chunk the three web kinds share and one it shares with the
+  queue (the board's feed and keep, 3,118 on the wire), so `/queue` takes 104,946 (from 103,265)
+  and `/reports` 106,451 (from 105,591); the Dioxus kinds, home's code gone from the shared
+  sources, take `/tasks` to 280,854 (from 281,185), `/agents` and a task page to 548,026 and
+  548,619 (from 548,587 and 549,180) and `/docs/` to 506,563 (from 507,064); the warmed chat and
+  menus take 604,993 outside home's (from 603,552), the media sheet home no longer holds under
+  the program's name among them. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -646,7 +655,7 @@ never the whole target, which the release run runs.
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.
 - **Tests.** Views render on the host with dioxus-ssr
-  (`dioxus_ssr::render_element(rsx! { BoardView { board, now } })`), pure state
+  (`dioxus_ssr::render_element(rsx! { BlocksView { blocks } })`), pure state
   in plain Rust, and `tests/browser/` drives headless Chrome over its DevTools
   protocol against the release build, served as the server serves it.
 - **Development.** `just symphony-ui-dev [PORT]` starts an owned loopback API and

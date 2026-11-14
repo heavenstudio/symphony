@@ -73,6 +73,9 @@ use serde_json::json;
 use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 300_000.0;
+/// Home's first visit, the web client's since it moved (108,297 bytes on the fixture then), with
+/// modest room: lowered from [`FIRST_VISIT_BYTES`] by that move, never raised.
+const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -291,9 +294,14 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         with_panel - before
     );
     for (path, first, again) in entries {
+        let cap = if path == "/" {
+            HOME_FIRST_VISIT_BYTES
+        } else {
+            FIRST_VISIT_BYTES
+        };
         assert!(
-            first <= FIRST_VISIT_BYTES,
-            "{path} first visit loads {first} bytes, over {FIRST_VISIT_BYTES}"
+            first <= cap,
+            "{path} first visit loads {first} bytes, over {cap}"
         );
         assert!(
             again <= RETURN_VISIT_BYTES,
@@ -362,8 +370,8 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
         ping_bytes(&again)
     );
     assert!(
-        first_bytes <= FIRST_VISIT_BYTES,
-        "a first visit loads {first_bytes} bytes, over {FIRST_VISIT_BYTES}: {first:#?}"
+        first_bytes <= HOME_FIRST_VISIT_BYTES,
+        "a first visit loads {first_bytes} bytes, over {HOME_FIRST_VISIT_BYTES}: {first:#?}"
     );
     assert!(
         again_bytes <= RETURN_VISIT_BYTES,
@@ -1018,6 +1026,8 @@ fn home_opens_its_pictures_in_the_viewer_and_scales_its_mockup() {
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
+    // The pictures come in as they near the screen, and the test's window leaves them under it.
+    chrome.eval("document.querySelector('.hero .pics').scrollIntoView({block:'center'})");
     assert!(
         chrome.wait_for(
             "document.querySelectorAll('.hero img[data-zoom-ready][role=button][tabindex=\"0\"]').length === 2 \
@@ -1040,9 +1050,10 @@ fn home_opens_its_pictures_in_the_viewer_and_scales_its_mockup() {
         "the viewer never opened: {}",
         chrome.eval("document.querySelector('#overlay-root')?.outerHTML ?? 'no overlay root'")
     );
+    // The next card's two pictures, its mockup no picture of the set: the second of two.
     assert_eq!(
         chrome.eval("document.querySelector('#media-lightbox .lightbox-caption').textContent"),
-        json!("Second")
+        json!("Second · 2 / 2")
     );
     chrome.eval(
         "document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))",
