@@ -117,12 +117,13 @@ run_stable() {
 depinfo="$target/debug/$name.d"
 fresh_file="$target/rs-bin/.$name.fresh"
 fresh_format='symphony rs-bin fresh 2'
-# A file's identity as the relink compares it (time and size), and its status change time, which
-# moves whenever anything at all is written to the file, renamed onto its path or done to its times,
-# and which nothing sets back but the clock: each of the files named, links followed, in seconds.
+# A file's identity as the relink compares it (time and size); and, for each of the files named,
+# links followed, its status change time in seconds before that identity: it moves whenever anything
+# at all is written to the file, renamed onto its path or done to its times, and nothing but the
+# clock sets it back.
 case "$OSTYPE" in
-    darwin*) identity=(/usr/bin/stat -f '%Fm %z'); changed=(/usr/bin/stat -L -f %c) ;;
-    *) identity=(stat -c '%y %s'); changed=(stat -L -c %Z) ;;
+    darwin*) identity=(/usr/bin/stat -f '%Fm %z'); changed=(/usr/bin/stat -L -f '%c %Fm %z') ;;
+    *) identity=(stat -c '%y %s'); changed=(stat -L -c '%Z %y %s') ;;
 esac
 
 # The program `$1` as Cargo's wrapper finds it from the checkout's root, in `found`: as written when
@@ -166,13 +167,14 @@ build_key() {
 }
 
 # Whether `$stable` is what Cargo would build now, as the stamp says: one this launcher wrote, under
-# this environment, at a second not after now (a clock set back since counts as a change), each path
-# it names as it was: `- PATH` still absent, and `+ PATH` there with its status last changed in a
-# second before the stamp's, so a change in the stamp's own second counts. What the stamp's own file
-# times say counts for nothing, so a stamp copied, restored or touched vouches for no change made
-# after its second. Anything else asks Cargo.
+# this environment, at a second not after now (a clock set back since counts as a change), for the
+# build `$stable` is (its identity, so a build another run linked since counts too), each path it
+# names as it was: `- PATH` still absent, and `+ PATH` there with its status last changed in a second
+# before the stamp's, so a change in the stamp's own second counts. What the stamp's own file times
+# say counts for nothing, so a stamp copied, restored or touched vouches for no change made after its
+# second. Anything else asks Cargo.
 fresh() {
-    local line count=0 at="" names="" now time
+    local line count=0 at="" names="" built="" now
     local -a paths=()
     [ -x "$stable" ] && [ -f "$fresh_file" ] && [ -r "$fresh_file" ] || return 1
     # Line by line: bash reads a regular file in blocks only up to newlines.
@@ -186,27 +188,31 @@ fresh() {
                 build_key "$names"
                 [ "$line" = "key $key" ] || return 1
                 ;;
-            [1-4]:*) return 1 ;;
+            "5:built "*) built="${line#built }" ;;
+            [1-5]:*) return 1 ;;
             *:'+ /'*) paths+=("${line#+ }") ;;
             *:'- /'*) [[ ! -e ${line#- } && ! -L ${line#- } ]] || return 1 ;;
             *) return 1 ;;
         esac
     done 2>/dev/null < "$fresh_file"
     # A last line with no newline is no line the launcher wrote.
-    [ "$count" -gt 4 ] && [ -z "$line" ] && [ "${#paths[@]}" -gt 0 ] || return 1
+    [ "$count" -gt 5 ] && [ -z "$line" ] && [ "${#paths[@]}" -gt 0 ] || return 1
     case "$at" in '' | *[!0-9]*) return 1 ;; esac
     now="$(date +%s)" || return 1
     [ "$now" -ge "$at" ] 2>/dev/null || return 1
-    # One stat for every path; one gone or unreadable fails it.
-    time="$("${changed[@]}" "${paths[@]}" 2>/dev/null)" || return 1
+    # One stat for the build and every path, a line each; one gone or unreadable fails it.
+    line="$("${changed[@]}" "$stable" "${paths[@]}" 2>/dev/null)" || return 1
+    local IFS=$'\n'
     set -f
-    # shellcheck disable=SC2086 # one time a word
-    set -- $time
+    # shellcheck disable=SC2086 # one line a word
+    set -- $line
     set +f
-    [ "$#" -eq "${#paths[@]}" ] || return 1
-    for time; do
-        case "$time" in '' | *[!0-9]*) return 1 ;; esac
-        [ "$time" -lt "$at" ] || return 1
+    [ "$#" -eq $((${#paths[@]} + 1)) ] && [ "${1#* }" = "$built" ] || return 1
+    shift
+    for line; do
+        line="${line%% *}"
+        case "$line" in '' | *[!0-9]*) return 1 ;; esac
+        [ "$line" -lt "$at" ] || return 1
     done
 }
 
@@ -223,14 +229,16 @@ fresh_mark() {
 # each Cargo configuration and toolchain pin Cargo or rustup would read, from the root up and in
 # CARGO_HOME, and rustup's settings, there or not; and the environment, with each variable a build
 # script in the target declared and each one a source read as rustc recorded it (`# env-dep:` in the
-# dep-info of each unit in the target). None when that account is not plain absolute paths of files
-# there.
+# dep-info of each unit in the target); and the identity of `$stable`, the build it vouches for. None
+# when that account is not plain absolute paths of files there.
 write_fresh() {
-    local content path dir last="" seen=$'\n' lines="" names walked
+    local content path dir last="" seen=$'\n' lines="" names walked header="" stamped="" was=""
+    local recorded built
     local -a folders=() tops=()
     [ -f "$depinfo" ] && [ -r "$depinfo" ] || return 1
-    IFS= read -r -d '' content 2>/dev/null < "$depinfo" || true
-    while [ "${content%$'\n'}" != "$content" ]; do content="${content%$'\n'}"; done
+    # Its trailing newlines dropped by the substitution: bash 3.2 matches a pattern against each end
+    # of a long string in time that grows with its square.
+    content="$(< "$depinfo")" || return 1
     case "${content%%: *}" in */"$name") ;; *) return 1 ;; esac
     content="${content#*: }"
     case "$content" in '' | *\\* | *$'\n'* | *$'\t'*) return 1 ;; esac
@@ -285,14 +293,30 @@ write_fresh() {
     fresh_mark "${CARGO_HOME:-${HOME-}/.cargo}/config.toml"
     fresh_mark "${CARGO_HOME:-${HOME-}/.cargo}/config"
     fresh_mark "${RUSTUP_HOME:-${HOME-}/.rustup}/settings.toml"
+    # The variables rustc recorded: those of the stamp there when it was written for this same build
+    # (no unit of it has compiled since, and a relink removes the stamp first), else what each unit's
+    # dep-info in the target says.
+    built="$("${identity[@]}" "$stable" 2>/dev/null)" || return 1
+    if [ -f "$fresh_file" ]; then
+        {
+            IFS= read -r header && IFS= read -r stamped && IFS= read -r stamped &&
+                IFS= read -r was && IFS= read -r was
+        } < "$fresh_file" 2>/dev/null || header=""
+    fi
+    if [ "$header" = "$fresh_format" ] && [ "$was" = "built $built" ] && [[ "$stamped" == "env "* ]] &&
+        [[ "${stamped#env }" != *[!A-Za-z0-9_\ ]* ]]; then
+        recorded="${stamped#env }"
+    else
+        recorded="$(grep -h -s '^# env-dep:' "$target"/debug/deps/*.d "$target"/debug/build/*/*.d |
+            sed -n 's/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p; s/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p')" || true
+    fi
     names="$({
         cat "$target"/debug/build/*/output 2>/dev/null |
             sed -n 's/^cargo::\{0,1\}rerun-if-env-changed=\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p'
-        grep -h -s '^# env-dep:' "$target"/debug/deps/*.d "$target"/debug/build/*/*.d |
-            sed -n 's/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p; s/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p'
-    } | sort -u | tr '\n' ' ')" || true
+        printf '%s\n' "$recorded"
+    } | tr ' ' '\n' | sort -u | tr '\n' ' ')" || true
     build_key "$names"
-    printf '%s\nat %s\nenv %s\nkey %s\n%s' "$fresh_format" "$at" "$names" "$key" "$lines" > "$fresh_file.$$" &&
+    printf '%s\nat %s\nenv %s\nkey %s\nbuilt %s\n%s' "$fresh_format" "$at" "$names" "$key" "$built" "$lines" > "$fresh_file.$$" &&
         mv -f "$fresh_file.$$" "$fresh_file"
 }
 
@@ -320,6 +344,8 @@ if [ -x "$stable" ]; then
 fi
 if [ "$same" = no ]; then
     mkdir -p "$target/rs-bin"
+    # No stamp outlives the build it vouched for, even when this run ends before it writes one.
+    rm -f "$fresh_file"
     staged="$target/rs-bin/.$name.$$"
     rm -f "$staged"
     ln "$binary" "$staged" 2>/dev/null || cp -p "$binary" "$staged"

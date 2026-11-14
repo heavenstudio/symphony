@@ -482,6 +482,27 @@ fn the_environment_cargo_reads_changed_brings_cargo_back() {
 }
 
 #[test]
+fn a_variable_a_source_newly_reads_counts_from_the_build_that_reads_it() {
+    let t = Tree::new("reads");
+    t.built(&[], "a first run that left no stamp");
+    let later = [("STANDIN_LATER", "x")];
+    t.skipped(&later, "for a variable no source reads yet");
+    let edit = || t.write("crates/tasks/src/bin/tasks.rs", "reads STANDIN_LATER");
+    let says = t.says("reads STANDIN_LATER", " dep extra dep lib");
+    assert_eq!(t.changed("a source that reads STANDIN_LATER", edit), says);
+    t.built(&later, "STANDIN_LATER was set");
+    t.skipped(&later, "with STANDIN_LATER set as before");
+    // Builds that relink nothing keep the names rustc recorded for the build they run.
+    for mode in ["--build", "--link"] {
+        t.run(&[], &[mode, "tasks"]).ok();
+        t.built(
+            &later,
+            &format!("{mode} without STANDIN_LATER, then a run with it"),
+        );
+    }
+}
+
+#[test]
 fn any_doubt_asks_cargo() {
     let t = Tree::new("doubt");
     let built = t.built(&[], "a first run that left no stamp");
@@ -546,10 +567,17 @@ fn any_doubt_asks_cargo() {
     );
     assert_eq!(t.calls(), before + 1, "the worktree did not ask Cargo");
     assert_eq!(t.built(&[], "another checkout's stamp"), built);
-    // The build it runs gone.
-    fs::remove_file(t.main().join(".target/rs-bin/tasks")).unwrap();
+    // The build it runs gone, or another linked in its place since, as a run beside this one does.
+    let stable = t.main().join(".target/rs-bin/tasks");
+    fs::remove_file(&stable).unwrap();
     assert_eq!(t.built(&[], "the build it runs was removed"), built);
     t.skipped(&[], "after the build was linked again");
+    let other = t.f.base.join("other-build");
+    fs::write(&other, "#!/bin/sh\necho another build\n").unwrap();
+    fs::set_permissions(&other, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::rename(&other, &stable).unwrap();
+    assert_eq!(t.built(&[], "another build was linked in its place"), built);
+    t.skipped(&[], "after its own build was linked again");
 }
 
 #[test]

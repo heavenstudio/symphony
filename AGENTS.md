@@ -86,7 +86,8 @@ slot wrapper and gates, which compile and test its own consumers.
 folder, a hard link to Cargo's copy renewed only when Cargo relinked, so a no-op build
 costs no new executable's first run. A run asks Cargo to build first unless nothing
 Cargo would read changed since the last build the launcher asked it for began, as a
-stamp beside the link says (`rs-bin/.NAME.fresh`, holding the second that build began):
+stamp beside the link says (`rs-bin/.NAME.fresh`, holding the second that build began
+and the identity of the build it vouches for, so one linked in its place since asks too):
 each file Cargo's own `debug/NAME.d` names, everything under a folder it names (one a
 build script watches) and the manifest above each; the workspace's manifest and lock,
 the launcher and `tools/cargo.sh`; every Cargo configuration and toolchain pin from the

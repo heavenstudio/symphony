@@ -40,10 +40,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// watch when there is that; none with `STANDIN_DEPINFO=none`, a path spelled with an escape with
 /// `escaped`), leaves a build script's output declaring the variables it reads, and rustc's account
 /// of the variables the sources read (`# env-dep:` in the binary's own and the build script's
-/// dep-info). Each run first appends its binary's name to `STANDIN_CALLS`, when that names a file,
-/// and whether the target folder was new to it. Building its own build (`STANDIN_UPLIFT=copy`), it
-/// writes `STANDIN_EDIT`, when that names a file, once it has read the sources, and finishes only in
-/// a later second of the clock.
+/// dep-info; a binary whose source is `reads NAME` reads NAME too). Each run first appends its
+/// binary's name to `STANDIN_CALLS`, when that names a file, and whether the target folder was new
+/// to it. Building its own build (`STANDIN_UPLIFT=copy`), it writes `STANDIN_EDIT`, when that names
+/// a file, once it has read the sources, and finishes only in a later second of the clock.
 const CARGO: &str = r##"#!/usr/bin/env bash
 set -euo pipefail
 name=""; while [ $# -gt 0 ]; do if [ "$1" = --bin ]; then name="$2"; fi; shift; done
@@ -73,9 +73,11 @@ printf 'cargo:rerun-if-env-changed=STANDIN_CC\ncargo:rerun-if-env-changed=CC_sta
     > "$CARGO_TARGET_DIR/debug/build/standin-0/output"
 probe="# env-dep:STANDIN_PROBE"
 if [ -n "${STANDIN_PROBE+set}" ]; then probe="$probe=$STANDIN_PROBE"; fi
-printf '%s: %s\n\n# env-dep:CARGO_PKG_NAME=standin\n# env-dep:CARGO_BIN_EXE_fake-hc=%s\n%s\n' \
+reads="$(cat "$source")"
+case "$reads" in "reads "*) reads="# env-dep:${reads#reads }" ;; *) reads="" ;; esac
+printf '%s: %s\n\n# env-dep:CARGO_PKG_NAME=standin\n# env-dep:CARGO_BIN_EXE_fake-hc=%s\n%s\n%s\n' \
     "$CARGO_TARGET_DIR/debug/deps/$name-0" "${inputs[*]}" "$CARGO_TARGET_DIR/debug/fake-hc" "$probe" \
-    > "$CARGO_TARGET_DIR/debug/deps/$name-0.d"
+    "$reads" > "$CARGO_TARGET_DIR/debug/deps/$name-0.d"
 printf '# env-dep:STANDIN_BUILD_PROBE\n' > "$CARGO_TARGET_DIR/debug/build/standin-0/build_script_build-0.d"
 uplifted="$CARGO_TARGET_DIR/debug/.$name.uplift"
 if [ "${STANDIN_UPLIFT:-link}" = link ]; then
