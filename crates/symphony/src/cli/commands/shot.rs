@@ -12,8 +12,6 @@ use chrome_devtools::{Chrome, Leash, Request};
 use serde_json::{Value, json};
 use symphony_args::{Flag, parse};
 
-mod clip;
-
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
 [--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--click CSS] [--type CSS=TEXT] \
 [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
@@ -82,28 +80,27 @@ the page, clear of a header shorter than half the view) and the page settled aga
 that never holds still, or stays covered (by its own ancestor too, painted over it), fails the
 step (naming what covers it), and nothing is pressed. So does one that stays clipped, the browser
 finding it nowhere under its middle (naming the box whose overflow or clip cuts it away there, or
-whose clip-path leaves its middle out: an inset, its corners rounded or not, a circle, an
-ellipse, a polygon or a box alone, on any of its reference boxes, where nothing around it turns,
-mirrors or scales it, as a translation does not), stays hidden (its visibility), or takes no
-pointer at its middle, its own ancestor on top there (pointer-events: none, its own clip or
-clip-path leaving its middle out, or a cause it does not name, as an SVG ring's unpainted
-middle): a press would reach the ancestor, which may not be what was meant, so the failure names
-it. For pointer-events: none, which lets a press through to the ancestor, it adds a selector that
-finds the ancestor alone to target instead (or says none does), unless the ancestor is the page's
-body or a press there clicks another control through a label. Once aimed, the pointer moves to
-that middle, and the browser's own report of the move, its pointermove or mousemove, says where
-it landed and on what. Over a frame (an iframe, frame, embed or object, in a closed shadow root
-too, which the browser's own hit finds there) its own document takes the move and none reaches
-the page, so the pointer's place inside the frame is not confirmed: the step goes on as aimed.
-Where none reaches the page over anything else (the page stopping it), the element found there
-must be hovered, or where the pointer landed is unknown. Should it land anywhere but where the aim
-tested, or where be unknown, or, for a click, anything but the element (or its label) be on top
-there by then (a menu its hover opened; the browser's own hit confirms a label again), the step
-fails naming where the pointer landed or what the press would reach, and nothing is pressed.
-Typing focuses its element by script and types with no pointer, so what covers the element takes
-none of it. A click, typing, a key or a hover then waits for the page to settle again, as a
-capture does, bringing the page back in front if the step left it hidden (an Escape the page does
-not take).
+whose clip-path, an inset, circle, ellipse or polygon on its border box, in pixels, percentages
+or a calc() of the two, on a box nothing moves but across the page, leaves its middle out), stays
+hidden (its visibility), or takes no pointer at its middle, its own ancestor on top there
+(pointer-events: none, its own clip or clip-path leaving its middle out, or a cause it does not
+name, as an SVG ring's unpainted middle): a press would reach the ancestor, which may not be what
+was meant, so the failure names it. For pointer-events: none, which lets a press through to the
+ancestor, it adds a selector that finds the ancestor alone to target instead (or says none does),
+unless the ancestor is the page's body or a press there clicks another control through a label.
+Once aimed, the pointer moves to that middle, and the browser's own report of the move, its
+pointermove or mousemove, says where it landed and on what. Over a frame (an iframe, frame, embed
+or object, in a closed shadow root too, which the browser's own hit finds there) its own document
+takes the move and none reaches the page, so the pointer's place inside the frame is not confirmed:
+the step goes on as aimed. Where none reaches the page over anything else (the page stopping it),
+the element found there must be hovered, or where the pointer landed is unknown. Should it land
+anywhere but where the aim tested, or where be unknown, or, for a click, anything but the element
+(or its label) be on top there by then (a menu its hover opened; the browser's own hit confirms a
+label again), the step fails naming where the pointer landed or what the press would reach, and
+nothing is pressed. Typing focuses its element by script and types with no pointer, so what covers
+the element takes none of it. A click, typing, a key or a hover then waits for the page to settle
+again, as a capture does, bringing the page back in front if the step left it hidden (an Escape the
+page does not take).
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
 line it cannot run.";
@@ -763,19 +760,23 @@ enum Look {
 /// - a cover's name for what is there and does not hold the element, or holds it but is painted
 ///   over it, the element listed under it (the element in a shadow root there named in its host's,
 ///   `inside`: `button#inner in x-pressable#host's shadow root`);
-/// - `{holder, why, target, page, labels, shapes}` for its own ancestor there, which a press there
-///   reaches instead: `why` is `clip` for the element's own `clip`, `none` for its
-///   `pointer-events: none`, else `unnamed`, no cause established (an SVG ring's unpainted middle
-///   among them); `target` is a selector that finds the ancestor alone (offered only for `none`,
-///   where a press on the ancestor is what the element lets through), `page` whether the ancestor
-///   is the page's body or root, no target, and `labels` the control a press there clicks through
-///   a label, where the page sees the whole way to it. `shapes` are the boxes from the element up
-///   to that ancestor with a `clip-path` (none when the element has `pointer-events: none`): each
-///   an HTML element's box, not inline, drawn at its layout's size, with its name, whether it is
-///   the element, its computed `clip-path`, its border box, borders, paddings and margins, whether
-///   it may scroll, and how it and each box around it up the flat tree move. The first whose shape
-///   leaves the point out ([`clip`]) is the cause: the element's own makes the holder's `why` its
-///   own clip, another box's clips the element away there ([`Hit::read`]).
+/// - `{clipped}` for the element between it and its ancestor on top there whose `clip-path` leaves
+///   the point out (`excludes`: an inset, circle, ellipse or polygon, its border box the reference,
+///   its lengths in pixels, percentages or the `calc()` of the two Chrome computes them to, read
+///   by `size` from the arguments `parts` splits outside parentheses, on a box that neither it nor
+///   anything around it up the flat tree moves but across the page (`level`: no `transform` but a
+///   translation in the page's plane, which the box's place already carries, `translate` with no
+///   depth, and no `scale`, `rotate`, `offset-path` or `zoom`, so the point is tested in the box's
+///   own coordinates, never a mirrored or turned ancestor's); any other shape, a rounded inset's
+///   corners and an SVG element's clip-path are never claimed), none when the element has
+///   `pointer-events: none`;
+/// - `{holder, why, target, page, labels}` for its own ancestor there, which a press there reaches
+///   instead: `why` is `clip` for the element's own `clip`, or its own `clip-path` leaving the
+///   point out, `none` for its `pointer-events: none`, else `unnamed`, no cause established (an SVG
+///   ring's unpainted middle among them); `target` is a selector that finds the ancestor alone
+///   (offered only for `none`, where a press on the ancestor is what the element lets through),
+///   `page` whether the ancestor is the page's body or root, no target, and `labels` the control a
+///   press there clicks through a label, where the page sees the whole way to it.
 ///
 /// `null` is nothing there (a point outside the page).
 ///
@@ -825,6 +826,40 @@ const clips = [];
   }
 }
 const away = (c, x, y) => (c.x && (x < c.edges[0] || x >= c.edges[2])) || (c.y && (y < c.edges[1] || y >= c.edges[3]));
+const size = (v, basis) => { const c = /^calc\((-?\d*\.?\d+)% ([+-]) (\d*\.?\d+)px\)$/.exec(v); return c ? parseFloat(c[1]) / 100 * basis + parseFloat(c[2] + c[3]) : /^-?\d*\.?\d+px$/.test(v) ? parseFloat(v) : /^-?\d*\.?\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN; };
+const parts = v => v.match(/(?:[^\s(]+|\([^()]*\))+/g) ?? [];
+const moved = t => !/^(none|matrix\(1, 0, 0, 1, [^,]+, [^,]+\))$/.test(t.transform) || (t.translate || 'none').split(' ').length > 2 || ['scale', 'rotate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';
+const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };
+const excludes = (e, x, y) => {
+  const t = e instanceof HTMLElement ? getComputedStyle(e) : null;
+  const m = t && t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\((.*)\)( border-box)?$/.exec(t.clipPath) : null;
+  const b = e.getBoundingClientRect();
+  if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;
+  const [w, h, px, py] = [b.width, b.height, x - b.x, y - b.y];
+  if (m[1] === 'polygon') {
+    const pairs = m[2].split(', ');
+    const rule = /^(evenodd|nonzero)$/.test(pairs[0]) ? pairs.shift() : 'nonzero';
+    const points = pairs.map(parts).map(([a, c, more]) => more === undefined ? [size(a, w), size(c, h)] : [NaN, NaN]);
+    if (points.length < 3 || !points.flat().every(Number.isFinite)) return false;
+    let crossings = 0, winding = 0;
+    points.forEach(([x1, y1], i) => { const [x2, y2] = points[(i + 1) % points.length]; if ((y1 <= py) !== (y2 <= py) && x1 + (py - y1) / (y2 - y1) * (x2 - x1) > px) { crossings++; winding += y2 > y1 ? 1 : -1; } });
+    return rule === 'evenodd' ? crossings % 2 === 0 : winding === 0;
+  }
+  if (m[1] === 'inset') {
+    const sides = parts(m[2].split(' round ')[0]);
+    if (sides.length > 4) return false;
+    const [top, right = top, bottom = top, left = right] = sides;
+    const [l, r, t0, b0] = [size(left, w), w - size(right, w), size(top, h), h - size(bottom, h)];
+    return r <= l || b0 <= t0 || px < l || px >= r || py < t0 || py >= b0;
+  }
+  const [form, at] = m[2].split(/(?:^| )at /);
+  const words = form ? parts(form) : [];
+  const [cx, cy] = at ? parts(at).map((v, i) => size(v, i ? h : w)) : [w / 2, h / 2];
+  const radius = (v, basis, sides) => v === undefined || v === 'closest-side' ? Math.min(...sides) : v === 'farthest-side' ? Math.max(...sides) : size(v, basis);
+  if (m[1] === 'circle' && words.length <= 1) return Math.hypot(px - cx, py - cy) > radius(words[0], Math.hypot(w, h) / Math.SQRT2, [cx, w - cx, cy, h - cy]);
+  if (m[1] === 'ellipse' && words.length !== 1 && words.length <= 2) return ((px - cx) / radius(words[0], w, [cx, w - cx])) ** 2 + ((py - cy) / radius(words[1], h, [cy, h - cy])) ** 2 > 1;
+  return false;
+};
 const whole = (from, size, scroll) => { const start = from + scroll, end = start + size, near = Math.round(start + size / 2); return (near >= start && near < end ? near : Math.ceil(start) < end ? Math.ceil(start) : near) - scroll; };
 const middle = r => [whole(r.x, r.width, scrollX), whole(r.y, r.height, scrollY)];
 const vv = window.visualViewport ?? {offsetLeft: 0, offsetTop: 0, width: innerWidth, height: innerHeight};
@@ -838,20 +873,16 @@ const listed = document.elementsFromPoint(x, y).some(e => element.contains(e));
 const clipper = listed ? null : clips.find(c => c.by && away(c, x, y));
 let held = false;
 for (let e = element; e && !held; e = flat(e)) held = e === p.deep;
-const sides = (t, kind, end) => ['Top', 'Right', 'Bottom', 'Left'].map(side => parseFloat(t[kind + side + end]) || 0);
-const motion = e => { const moves = []; for (let a = e; a; a = flat(a)) { const t = getComputedStyle(a); moves.push([t.transform, t.translate, t.scale, t.rotate, t.offsetPath, t.zoom]); } return moves; };
-const shapes = [];
-for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep; e = flat(e)) {
-  const t = e instanceof HTMLElement ? getComputedStyle(e) : null, b = e.getBoundingClientRect();
-  if (t && t.clipPath !== 'none' && t.display !== 'inline' && Math.abs(b.width - e.offsetWidth) <= 1 && Math.abs(b.height - e.offsetHeight) <= 1) shapes.push({name: inside(e), own: e === element, clip: t.clipPath, box: [b.x, b.y, b.width, b.height], border: sides(t, 'border', 'Width'), padding: sides(t, 'padding', ''), margin: sides(t, 'margin', ''), scrolls: /auto|scroll/.test(t.overflowX + t.overflowY), moves: motion(e)});
-}
+let shaped = null;
+for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep && !shaped; e = flat(e)) if (excludes(e, x, y)) shaped = e;
 const page = p.at === document.body || p.at === document.documentElement;
 const hit = !p.at ? null
   : takes(p) ? element.contains(p.at) || {label: true}
   : style.visibility !== 'visible' ? {hidden: style.visibility}
   : clipper ? {clipped: named(clipper.by)}
   : !held || listed ? inside(p.deep)
-  : {holder: named(p.at), why: clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via)), shapes};
+  : shaped && shaped !== element ? {clipped: inside(shaped)}
+  : {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via))};
 "#;
 
 /// How a [`probe`] and [`confirm`] name an element: as a selector names it, its tag, id and first
@@ -1100,10 +1131,8 @@ enum Why {
 }
 
 impl Hit {
-    /// A [`probe`]'s `hit` at `point`, the box's middle it tested, in the page's coordinates. Its
-    /// own ancestor on top there, the first of its `shapes` whose `clip-path` leaves the point out
-    /// ([`clip`]) is why: the element's own is its own clip, another box's clips it away there.
-    fn read(hit: &Value, point: (f64, f64)) -> Hit {
+    /// A [`probe`]'s `hit`.
+    fn read(hit: &Value) -> Hit {
         let text = |key: &str| hit[key].as_str().map(str::to_string);
         let miss = match hit {
             Value::Bool(true) => return Hit::Target,
@@ -1111,7 +1140,7 @@ impl Hit {
             _ if hit["label"] == true => return Hit::Label,
             _ => {
                 if let Some(name) = text("holder") {
-                    let holder = Holder {
+                    Miss::Holder(Holder {
                         name,
                         why: match hit["why"].as_str() {
                             Some("none") => Why::PointerEventsNone,
@@ -1124,21 +1153,7 @@ impl Hit {
                             None => Instead::Unfound,
                         },
                         labels: text("labels"),
-                    };
-                    let shaped = hit["shapes"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(clip::Shaped::read)
-                        .find(|shaped| shaped.excludes(point));
-                    match shaped {
-                        Some(shaped) if !shaped.own => Miss::Clipped(shaped.name),
-                        Some(_) => Miss::Holder(Holder {
-                            why: Why::OwnClip,
-                            ..holder
-                        }),
-                        None => Miss::Holder(holder),
-                    }
+                    })
                 } else if let Some(visibility) = text("hidden") {
                     Miss::Hidden(visibility)
                 } else if let Some(by) = text("clipped") {
@@ -1162,17 +1177,16 @@ impl Hit {
     }
 }
 
-/// How many nodes, at most, [`confirm`] asks the browser to name the slot of, on one press's way.
-const ASKS: usize = 16;
-
 /// The browser's own hit at `(x, y)`, in the document's coordinates as the protocol's hit test
 /// takes them ([`Place::in_document`]), for a press the page took through a label ([`Hit::Label`],
 /// [`Reached::Label`]): the node the browser finds there, inside a closed shadow root too, which
 /// the page cannot see into, walked up the flat tree as [`CONFIRM`] walks it, as the press travels.
 /// Where a node may be slotted into a closed root the page cannot see (`CONFIRM` answers the node
 /// itself), the browser names its slot, `DOM.describeNode`'s `assignedSlot`, and the walk goes on
-/// from that slot, or from the node, the browser naming none. Three calls, and three for each such
-/// node, paid only for a press through a label; past [`ASKS`] such nodes, the press is not taken.
+/// from that slot, or from the node, the browser naming none. Three calls, and two or three for
+/// each such node, once for each, paid only for a press through a label. Each moves the walk up
+/// the flat tree, so it ends by the document's root, however deep the node, or, on a page that
+/// keeps moving its nodes, at the step's wait, as every call of the step does.
 fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtools::Result<Hit> {
     let found = chrome.call(
         "DOM.getNodeForLocation",
@@ -1183,7 +1197,7 @@ fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtool
         json!({"backendNodeId": found["backendNodeId"]}),
     )?);
     let (mut from, mut known) = (hit.clone(), Value::Null);
-    for _ in 0..ASKS {
+    loop {
         let known_said = if known.is_null() {
             json!({"value": null})
         } else {
@@ -1212,7 +1226,6 @@ fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtool
             None => (node.clone(), node),
         };
     }
-    Ok(Hit::confirmed(&Value::Null))
 }
 
 /// The remote object `DOM.resolveNode` answered, by its id.
@@ -1348,7 +1361,7 @@ impl Place {
                     height: found["view"][3].as_f64()?,
                 },
                 scroll: (found["scroll"][0].as_f64()?, found["scroll"][1].as_f64()?),
-                hit: Hit::read(&found["hit"], point),
+                hit: Hit::read(&found["hit"]),
             })
         };
         Ok(place())

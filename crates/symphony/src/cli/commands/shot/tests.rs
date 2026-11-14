@@ -278,10 +278,10 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
          covers it)",
         // A clip named only where the browser or the shape backs it, and no cause made up.
         "stays clipped, the browser finding it nowhere under its middle (naming the box whose \
-         overflow or clip cuts it away there, or whose clip-path leaves its middle out: an inset, \
-         its corners rounded or not, a circle, an ellipse, a polygon or a box alone, on any of its \
-         reference boxes, where nothing around it turns, mirrors or scales it, as a translation \
-         does not), stays hidden (its visibility)",
+         overflow or clip cuts it away there, or whose clip-path, an inset, circle, ellipse or \
+         polygon on its border box, in pixels, percentages or a calc() of the two, on a box \
+         nothing moves but across the page, leaves its middle out), stays hidden (its \
+         visibility)",
         "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, its \
          own clip or clip-path leaving its middle out, or a cause it does not name, as an SVG \
          ring's unpainted middle)",
@@ -294,13 +294,16 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
         assert!(words.contains(said), "{said:?} not in the help: {words}");
     }
     // Nor does it say what the aim no longer does: a custom element taken as the label's unseen,
-    // a slot in a closed root unseen, a clip-path claimed only on a box nothing transforms.
+    // a slot in a closed root unseen, a clip-path claimed only on a box nothing transforms; nor
+    // what it never did, a rounded corner or another reference box read.
     for gone in [
         "a wrapped inline's first line)",
         "or on a custom element without an open shadow root",
         "goes unseen",
         "on a box nothing transforms",
         "(in a component's open shadow root too",
+        "its corners rounded or not",
+        "reference boxes",
     ] {
         assert!(!words.contains(gone), "{gone:?} still in the help: {words}");
     }
@@ -727,9 +730,9 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
             ": clipper ? {clipped: named(clipper.by)}",
             // A cover in a shadow root is named in its host's; an ancestor painted over it covers it.
             ": !held || listed ? inside(p.deep)",
-            // Its own ancestor there, with the clip-paths between them for the clip maths to read;
-            // a label's control named only where the page saw the whole way to it.
-            ": {holder: named(p.at), why: clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via)), shapes};",
+            ": shaped && shaped !== element ? {clipped: inside(shaped)}",
+            // A label's control named only where the page saw the whole way to it.
+            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via))};",
         ],
     );
     // What is named in a shadow root is named in its outermost host's.
@@ -747,12 +750,11 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
         ),
         "{probe}"
     );
-    // The clip-paths between the element and what holds it are read only where the browser lists
-    // the element nowhere there, and never for an element that takes no pointer, which says why
-    // already.
+    // A clip-path is named only where its shape leaves the point out, and never for an element
+    // that takes no pointer, which says why already.
     assert!(
         probe.contains(
-            "for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep; e = flat(e)) {"
+            "for (let e = element; held && !listed && style.pointerEvents !== 'none' && e && e !== p.deep && !shaped; e = flat(e)) if (excludes(e, x, y)) shaped = e;"
         ),
         "{probe}"
     );
@@ -775,29 +777,49 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
 }
 
 #[test]
-fn a_probe_hands_each_clip_path_between_the_element_and_its_holder_to_the_clip_maths() {
+fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_a_box_nothing_around_it_turns() {
     let probe = probe("#a", Look::Now);
     for part in [
-        // An HTML element's box, not inline, its layout size its drawn size too, with a clip-path:
-        // its name, whether it is the element's own, the clip as computed, its border box in the
-        // page, its border, padding and margin widths (top, right, bottom, left), whether it
-        // scrolls, and how it and every box around it up the flat tree move, for the clip maths
-        // ([`clip`]) to read; the probe itself decides nothing of it.
-        "const t = e instanceof HTMLElement ? getComputedStyle(e) : null, b = e.getBoundingClientRect();",
-        "if (t && t.clipPath !== 'none' && t.display !== 'inline' && Math.abs(b.width - e.offsetWidth) <= 1 && Math.abs(b.height - e.offsetHeight) <= 1) shapes.push({name: inside(e), own: e === element, clip: t.clipPath, box: [b.x, b.y, b.width, b.height], border: sides(t, 'border', 'Width'), padding: sides(t, 'padding', ''), margin: sides(t, 'margin', ''), scrolls: /auto|scroll/.test(t.overflowX + t.overflowY), moves: motion(e)});",
-        "const sides = (t, kind, end) => ['Top', 'Right', 'Bottom', 'Left'].map(side => parseFloat(t[kind + side + end]) || 0);",
-        // A transform, each individual transform, a motion path and a zoom, as computed.
-        "const motion = e => { const moves = []; for (let a = e; a; a = flat(a)) { const t = getComputedStyle(a); moves.push([t.transform, t.translate, t.scale, t.rotate, t.offsetPath, t.zoom]); } return moves; };",
+        // An HTML element's box, not inline, that neither it nor any box around it up the flat tree
+        // moves otherwise than across the page: a transform but a translation in the page's plane
+        // (Chrome computes translateZ(0) and translate() to `matrix(1, 0, 0, 1, e, f)`), which the
+        // box's place already carries, a translate with a depth, any other individual transform, a
+        // motion path or a zoom, so a box mirrored or turned with its ancestor, its size kept, is
+        // never tested at the mirrored point.
+        "const moved = t => !/^(none|matrix\\(1, 0, 0, 1, [^,]+, [^,]+\\))$/.test(t.transform) || (t.translate || 'none').split(' ').length > 2 || ['scale', 'rotate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';",
+        "const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };",
+        // Its layout size its drawn size too, and an inset, circle, ellipse or polygon on its
+        // border box; anything else is never claimed.
+        "const t = e instanceof HTMLElement ? getComputedStyle(e) : null;",
+        "t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\\((.*)\\)( border-box)?$/.exec(t.clipPath) : null;",
+        "if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;",
+        // Lengths in pixels, percentages, or the calc() of the two Chrome computes every calc() of
+        // lengths and percentages to; a min(), a max() or a keyword claims nothing.
+        "const size = (v, basis) => { const c = /^calc\\((-?\\d*\\.?\\d+)% ([+-]) (\\d*\\.?\\d+)px\\)$/.exec(v); return c ? parseFloat(c[1]) / 100 * basis + parseFloat(c[2] + c[3]) : /^-?\\d*\\.?\\d+px$/.test(v) ? parseFloat(v) : /^-?\\d*\\.?\\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN; };",
+        // Arguments split on the spaces outside parentheses, so a calc() is one.
+        "const parts = v => v.match(/(?:[^\\s(]+|\\([^()]*\\))+/g) ?? [];",
+        "const points = pairs.map(parts).map(",
+        "const sides = parts(m[2].split(' round ')[0]);",
+        "const words = form ? parts(form) : [];",
+        "const [cx, cy] = at ? parts(at).map((v, i) => size(v, i ? h : w)) : [w / 2, h / 2];",
+        // An inset's rectangle, its rounded corners left out (they only cut more), empty when its
+        // sides cross.
+        "return r <= l || b0 <= t0 || px < l || px >= r || py < t0 || py >= b0;",
+        // A circle's radius as a percentage of the box's diagonal over the square root of two.
+        "return Math.hypot(px - cx, py - cy) > radius(words[0], Math.hypot(w, h) / Math.SQRT2, [cx, w - cx, cy, h - cy]);",
+        "((px - cx) / radius(words[0], w, [cx, w - cx])) ** 2 + ((py - cy) / radius(words[1], h, [cy, h - cy])) ** 2 > 1;",
+        // A polygon by its fill rule.
+        "return rule === 'evenodd' ? crossings % 2 === 0 : winding === 0;",
     ] {
         assert!(probe.contains(part), "no {part:?} in {probe}");
     }
-    // The maths the page did is gone: no shape is read, nor any box's moves judged, in the page.
+    // Not the box's own transform alone, which a mirrored or turned ancestor slips past, nor any
+    // transform but a translation, nor a split that cuts a calc() in three.
     for gone in [
-        "const moved = ",
-        "const level = ",
-        "const size = ",
-        "const excludes = ",
-        "crossings",
+        "t.transform === 'none' && (t.scale",
+        "const moved = t => t.transform !== 'none'",
+        ".split(' round ')[0].split(' ')",
+        "pair.split(' ')",
     ] {
         assert!(!probe.contains(gone), "{gone:?} in {probe}");
     }
@@ -958,8 +980,6 @@ fn a_walk_through_a_label_answers_or_asks_the_browser_for_a_nodes_slot() {
         json!("9.2.1")
     );
     assert_eq!(object(&json!({})), Value::Null);
-    // Bounded: a walk asks about a few nodes on a press's way, never without end.
-    assert_eq!(ASKS, 16);
 }
 
 #[test]
@@ -1616,68 +1636,6 @@ fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
             }))
         );
     }
-    // A holder's shapes, the clip-paths between it and the element: the first that leaves the point
-    // aimed at out says why, another box's clipping it away there, the element's own its own clip;
-    // one that keeps the point, moves otherwise than across the page or cannot be read says
-    // nothing, and the holder's own reason stands.
-    let shape = |name: &str, own: bool, clip: &str, transform: &str| json!({"name": name, "own": own, "clip": clip, "box": [10.5, 20.0, 100.0, 22.0], "border": [0, 0, 0, 0], "padding": [0, 0, 0, 0], "margin": [0, 0, 0, 0], "scrolls": false, "moves": [[transform, "none", "none", "none", "none", "1"]]});
-    let held = |shapes: Value| {
-        hit(
-            json!({"holder": "div#card", "why": "unnamed", "target": "div#card", "page": false, "labels": null, "shapes": shapes}),
-        )
-    };
-    let unnamed = Miss::Holder(holder("div#card", Why::Unnamed));
-    let own_clip = Miss::Holder(holder("div#card", Why::OwnClip));
-    let away = "inset(0px 0px 0px 60px)";
-    let kept = "inset(0px 0px 0px 20px)";
-    let translated = "matrix(1, 0, 0, 1, 0, 0)";
-    for (shapes, read) in [
-        (
-            json!([shape("div#cut", false, away, "none")]),
-            Miss::Clipped("div#cut".into()),
-        ),
-        (json!([shape("input#a", true, away, translated)]), own_clip),
-        // The first that leaves it out, past one that keeps it.
-        (
-            json!([
-                shape("input#a", true, kept, "none"),
-                shape("div#cut", false, away, "none")
-            ]),
-            Miss::Clipped("div#cut".into()),
-        ),
-        (
-            json!([shape("div#cut", false, kept, "none")]),
-            unnamed.clone(),
-        ),
-        // Mirrored: never claimed.
-        (
-            json!([shape("div#cut", false, away, "matrix(-1, 0, 0, 1, 0, 0)")]),
-            unnamed.clone(),
-        ),
-        (
-            json!([shape("div#cut", false, "path(\"M 0 0 L 10 10\")", "none")]),
-            unnamed.clone(),
-        ),
-        (json!([{"name": "div#cut", "clip": away}]), unnamed.clone()),
-        (json!("div#cut"), unnamed.clone()),
-        (json!(null), unnamed.clone()),
-    ] {
-        assert_eq!(held(shapes.clone()), Hit::Missed(read), "{shapes}");
-    }
-    // Read at the point the probe aimed at: there, a shape cutting the box's left half away
-    // leaves it out; an aim on the right half is kept.
-    let mut right = found.clone();
-    right["point"] = json!([100, 31]);
-    right["hit"] = json!({"holder": "div#card", "why": "unnamed", "target": "div#card", "page": false, "labels": null, "shapes": [shape("div#cut", false, "inset(0px 0px 0px 50px)", "none")]});
-    assert_eq!(
-        Place::read("#a", &right).unwrap().unwrap().hit,
-        Hit::Missed(unnamed)
-    );
-    right["point"] = json!([30, 31]);
-    assert_eq!(
-        Place::read("#a", &right).unwrap().unwrap().hit,
-        Hit::Missed(Miss::Clipped("div#cut".into()))
-    );
     // Anything else is nothing at its middle, an ancestor without its name too.
     for nothing in [json!(null), json!(false), json!({"why": "none"}), json!(3)] {
         assert_eq!(hit(nothing), Hit::Missed(Miss::Nothing));

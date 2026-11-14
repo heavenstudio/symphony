@@ -912,7 +912,13 @@ const POINTED: &str = r#"<script>
 /// hidden in its label: one under a span slotted into a button in a closed shadow root on a plain
 /// span, and one under a span slotted into a button in a component's closed shadow root; one under
 /// a custom element never defined, and one under a defined custom element with no shadow root.
+/// Then one hidden in its label under a track twenty plain spans deep, no shadow root anywhere.
 fn labels() -> Vec<u8> {
+    let deep = format!(
+        r#"{}<span id="deep-track" class="track"></span>{}"#,
+        "<span>".repeat(20),
+        "</span>".repeat(20)
+    );
     format!(
         r##"<!doctype html>
 <meta charset="utf-8">
@@ -944,6 +950,7 @@ fn labels() -> Vec<u8> {
 <p><label class="toggle"><input type="checkbox" id="slot-closed" class="hidden"><x-closed-wrap id="closed-wrap"><span id="closed-slotted" class="track"></span></x-closed-wrap> a span slotted into a component's closed button, over it</label></p>
 <p><label class="toggle"><input type="checkbox" id="undefined" class="hidden"><x-undefined id="undefined-host" class="track"></x-undefined> a custom element never defined, over it</label></p>
 <p><label class="toggle"><input type="checkbox" id="light" class="hidden"><x-light id="light-host" class="track"></x-light> a custom element in the light, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="deep" class="hidden">{deep} a track deep in plain spans, over it</label></p>
 <script>
   const component = (name, mode, html) => customElements.define(name, class extends HTMLElement {{
     constructor() {{ super(); this.attachShadow({{mode}}).innerHTML = html; }}
@@ -1158,6 +1165,37 @@ fn a_click_on_a_checkbox_under_a_custom_element_no_control_takes_lands_on_the_la
         "{after}"
     );
     assert_eq!(after[1], json!([true, true, true, false, false]), "{after}");
+}
+
+#[test]
+fn a_click_on_a_checkbox_under_a_track_deep_in_plain_spans_lands_on_the_label_and_checks_it() {
+    // Each span may hold a closed shadow root the page cannot see, so the browser is asked about
+    // every one on the press's way, once, however many: none holds one, and the label clicks its
+    // control.
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "labels-deep",
+        &labels(),
+        &[
+            "--click",
+            "#deep",
+            "--eval",
+            "[landed, document.getElementById('deep').checked]",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(
+        printed(&output),
+        [json!([
+            [
+                ["pointerdown", "deep-track"],
+                ["click", "deep-track"],
+                ["click", "deep"]
+            ],
+            true
+        ])]
+    );
 }
 
 #[test]
@@ -1518,9 +1556,9 @@ fn a_clip_path_on_a_box_moved_only_across_the_page_is_read_and_one_turned_or_mir
     }
 }
 
-/// Buttons inside boxes whose `clip-path` leaves their middle out: an inset's rounded corner, an
-/// inset with a `calc()` side, a circle placed by four values (computed as `calc()`), and an inset
-/// on the box's content box, where its border box would keep the button.
+/// Buttons inside boxes whose `clip-path` leaves their middle out: an inset with a `calc()` side, a
+/// circle placed by four values (computed as `calc()`), an inset's rounded corner, and an inset on
+/// the box's content box, where its border box would keep the button.
 fn shaped() -> Vec<u8> {
     format!(
         r##"<!doctype html>
@@ -1541,16 +1579,34 @@ fn shaped() -> Vec<u8> {
 }
 
 #[test]
-fn a_clip_path_with_rounded_corners_calc_a_four_value_place_or_another_box_is_read() {
+fn a_clip_path_with_a_calc_or_a_four_value_place_is_read_and_a_rounded_corner_or_another_box_is_not()
+ {
+    // Chrome computes a calc() of a length and a percentage, and a place by four values, to
+    // calc(P% + Lpx): read, the box is named.
     for (name, css, by) in [
-        ("rounded", "#corner-button", "div#rounded"),
         ("calced", "#calc-button", "div#calced"),
         ("placed", "#placed-button", "div#placed"),
-        ("boxed", "#boxed-button", "div#boxed"),
     ] {
         let message = format!(
             "--click {css} stayed clipped: {by} clips it away at its middle after every scroll \
              within 5s"
+        );
+        if !refused(
+            &format!("shaped-{name}"),
+            &shaped(),
+            "--click",
+            css,
+            &message,
+        ) {
+            return;
+        }
+    }
+    // A rounded corner's arc and a reference box other than the border box are not read: what
+    // holds the button is named, no cause made up.
+    for (name, css) in [("rounded", "#corner-button"), ("boxed", "#boxed-button")] {
+        let message = format!(
+            "--click {css} takes no pointer at its middle: body > section, which holds it, was on \
+             top there after every scroll within 5s"
         );
         if !refused(
             &format!("shaped-{name}"),
