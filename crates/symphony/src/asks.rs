@@ -113,6 +113,46 @@ pub struct Thread {
     pub status: String,
 }
 
+/// The thread as the Symphony's API sends it, its messages not drawn yet: field for field, so a
+/// reader of the store deserializes no wire shape (and the server links none of the blocks').
+impl From<Thread> for symphony_api::Ask {
+    fn from(thread: Thread) -> Self {
+        symphony_api::Ask {
+            id: thread.id,
+            path: thread.path,
+            anchor: thread.anchor,
+            quote: thread.quote,
+            question: thread.question,
+            asked: thread.asked,
+            updated: thread.updated,
+            answers: thread
+                .answers
+                .into_iter()
+                .map(|answer| symphony_api::AskAnswer {
+                    text: answer.text,
+                    by: answer.by,
+                    at: answer.at,
+                })
+                .collect(),
+            messages: thread
+                .messages
+                .into_iter()
+                .map(|message| symphony_api::AskMessage {
+                    seq: message.seq,
+                    kind: message.kind,
+                    by: message.by,
+                    text: message.text,
+                    at: message.at,
+                    blocks: Vec::new(),
+                    html: String::new(),
+                    media: Vec::new(),
+                })
+                .collect(),
+            status: thread.status,
+        }
+    }
+}
+
 /// Who answered the owner on a card or a comment, as `symphony reply --as HANDLE` names itself: the
 /// register's lines say only `agent`, so the owner's ask is credited from here
 /// ([`crate::owner_asks`]). Kept a day, as threads are.
