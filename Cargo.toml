@@ -27,74 +27,16 @@ incremental = false
 # no unstripped copy is kept to read them against. A build to debug or profile sets
 # CARGO_PROFILE_RELEASE_STRIP=debuginfo, which keeps the names. Unwinding stays: the server
 # outlives a plugin's panic (symphony::gates) and a worker's.
+#
+# `codegen-units = 1` compiles each crate as one unit. In the default 16 a crate compiles a generic
+# or helper into each unit that reaches it, with its unwind tables, inlines across none of them, and
+# copies a large constant table (comrak's, regex-syntax's Unicode tables) into each unit that reads
+# it: one unit saves about 2.7 MB of symphony-server, 1.8 MB of symphony, 2.5 MB of tasks and
+# 0.5 MB of agent-send. It costs each crate's release compile (a cold release build about 30 %
+# longer); debug and test builds are unchanged, and the client's wasm-release sets the same.
 [profile.release]
 strip = true
-
-# One codegen unit for the two dependencies whose large constant tables each unit that reads one
-# would otherwise hold a copy of: comrak's and regex-syntax's (its Unicode tables), about 200 KB
-# of each of symphony-server and symphony. It costs only their own compile, once per build folder.
-[profile.release.package.comrak]
 codegen-units = 1
-
-[profile.release.package.regex-syntax]
-codegen-units = 1
-
-# One codegen unit for each member as well, but the client's packages (a test in symphony's
-# size_budget holds the list). In 16 units a crate compiles a generic or helper into each unit that
-# reaches it, with its unwind tables, and inlines across none of them; in one it compiles it once:
-# about 2 MB of symphony-server, 1.2 MB of symphony, 1.1 MB of tasks and 0.5 MB of agent-send. It
-# costs only those crates' release compile; debug and test builds are unchanged. Each repeats
-# `strip = true`: Cargo builds a package with an override of its own at the default strip,
-# `debuginfo`, whatever the profile says, which keeps the symbol table. The client's packages
-# (symphony-ui, symphony-api, symphony-blocks) have none, as wasm-release inherits these overrides
-# and they win over its own settings.
-[profile.release.package.chrome-devtools]
-codegen-units = 1
-strip = true
-
-[profile.release.package.process-cwd]
-codegen-units = 1
-strip = true
-
-[profile.release.package.repository-read]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-args]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-board]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-docs]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-env]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-plugin]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-schema]
-codegen-units = 1
-strip = true
-
-[profile.release.package.symphony-server]
-codegen-units = 1
-strip = true
-
-[profile.release.package.test-time]
-codegen-units = 1
-strip = true
 
 # Optimise the regular-expression dependencies in development and test builds too.
 [profile.dev.package.fancy-regex]
