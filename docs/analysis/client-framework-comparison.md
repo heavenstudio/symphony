@@ -1,0 +1,695 @@
+# Dioxus or JSX for the client
+
+Whether the Symphony's web client is better kept in Dioxus, as it is, or moved to a JSX front end,
+React 19 built by Vite first and Preact from the same source second, with only the front end in
+question: the server, its API, the feed, the board and the tools stay as they are. Three of the
+client's pages were written again in JSX ([below](#the-experiment)) and measured beside the Dioxus
+pages they copy, on the same machine, server and fixture; the card that asks the question is in
+[DECISIONS](../DECISIONS.md).
+
+## The choice
+
+**A: keep Dioxus.** The client stays one language with the server, its wire types checked by the
+compiler, and the work under way on it (one runtime shared between its modules) goes on.
+
+**B: move the client to JSX on Preact,** a page kind at a time, with the same source able to build
+on React through the compat alias should Preact ever fall short.
+
+**Recommended: B.** The reasons, each from the measurements below:
+
+- **A first visit is a seventh of the bytes or less.** Preact's pages send 6 % to 14 % of the
+  Dioxus pages' bytes on a first visit (React's 14 % to 34 %), Brotli or gzip alike, and a second
+  page costs 3 %: 23 kB where the Dioxus client fetches the next kind's module whole, about
+  750 kB. The Dioxus client also warms 750 kB of modules at idle after any first visit. The board's
+  300,000-byte cap, which the Dioxus board meets with a few kilobytes to spare, would stop being
+  a constraint: the Preact board is 44 kB on this fixture, itself larger than the one the cap is
+  measured on ([Size](#size)).
+- **A cold visit is usable sooner**, at 0.6 to 0.9 of the Dioxus time at full speed and 0.4 to
+  0.9 with the CPU slowed four times (0.4 for the board on a phone's screen), with half the script
+  time or less, every batch agreeing on the board and the task page at loads from about 50 to 250
+  ([Render](#render)). Slowed, the JSX pages' return visits are quicker too, a task's page opened
+  from the board comes in half the time, and a feed update reaches its card sooner.
+- **Responsiveness is level or better.** Typing is a tie; scrolling the long document at full
+  speed, the JSX pages have one or two frames over 50 ms where the Dioxus page has eight; Load
+  more is level; and after ten minutes of changes the Preact board holds 2.0 MB of script memory
+  against the Dioxus board's 4.9 MB ([Responsiveness](#responsiveness)).
+- **The build and the repository.** One Vite build of 2 to 4 s against a minute or more for the
+  eight Dioxus builds; no `dx`, `wasm-bindgen`, one-path wrapper or input snapshot; a build of
+  0.2 MB against 6.9 MB, which the repository takes again, as new wasm, at every regeneration
+  that changed the client ([Code and build](#code-and-build)).
+- **Less code for the same pages**, 3,759 lines against 8,935 in the files they port, though the
+  Dioxus files hold parts the JSX pages leave out, so the like-for-like gap is narrower.
+
+**The weakest point is the move itself.** About 19,000 lines of Rust and 7,800 of their tests are
+written again, while the client keeps changing, and the wire's types stop being checked by the
+compiler: a renamed field becomes an `undefined` at run time unless TypeScript types generated from
+`crates/symphony-api` are added and checked in the gate, which this experiment did not try.
+Where the Dioxus client is ahead, the JSX port would have to catch up: at full speed its return
+visit to a small board or a task's page is a third quicker, by its device cache, which a JSX
+client must port; and it draws a card's move a frame sooner, which the port's latch costs. And
+every time here was taken on a busy machine: the ratios held across batches at different loads,
+but no absolute figure is a quiet machine's.
+
+**Preact rather than React:** under half React's bytes on every first visit and a third of its
+code (the entry chunk with the runtime and the frame is 11 kB against 72 kB), its times as good or
+within the spread of React's except where its effects wait a frame ([Render](#render)), and the
+same source still builds on React.
+
+## The experiment
+
+`experiments/client-jsx/` holds a JSX client of three pages, with a manifest and lockfile of its
+own (React 19.3.1, Preact 11.2.0, Vite 8.3.8, `@vitejs/plugin-react` 6.3.0, plain JSX, no
+TypeScript); nothing the Symphony builds, tests or serves reads it, and its README names the
+commands. One source builds twice: `--mode react`, and `--mode preact`, where Vite aliases
+`react` and `react-dom` to `preact/compat`.
+
+- **The board** (`/tasks`): the counts, each column's first page once the column nears the
+  screen, Load more, the cards as the Dioxus page draws them, and the feed's task events applied
+  as they come, a change of the totals reading the counts again 750 ms on.
+- **A task's page** (`/task/SLUG`): the head, the brief and its further chunks, the thread's
+  newest page once it nears the screen and earlier pages on request, the message box posting a
+  message, and the feed's messages, field changes and re-reads.
+- **A document** (a Markdown file under an entrypoint): the outline, each section read when it
+  nears the screen (the requests within 50 ms read together), the table of contents, the
+  document feed, and a decision card's form, whose verdict posts and shows.
+
+Each page copies the Dioxus page's DOM, its elements, classes, ids, ARIA and data attributes, so
+that the Dioxus client's own style sheets, copied byte for byte from the baseline's build, draw
+it, and the pictures of both sides match ([Pictures](#pictures)). The pages read the same API in
+the same order, wait as the Dioxus pages wait (250 ms before a column's first page, 750 ms before
+counts, 3 s at most under a page's ghost, 1 s doubling to 30 s after a lost feed) and post the
+same JSON. The JSX client's shared parts are its own small versions of the Dioxus client's: the
+frame (header, navigation, notices), the near-the-screen latch over one IntersectionObserver, the
+feed's contract, the controls' markup, and a port of the wire's few functions the pages run (a
+task's stage, the slug order, merging a task's fields).
+
+**Served as the Dioxus client is.** The brief proposed a Vite dev or preview server proxying the
+API to a private Symphony server. The builds are instead laid out as the server expects a client's
+distribution, an `index.html` and content-hashed `assets/` (16 hex digits, the server's rule for
+a file it caches for good), and served by the Symphony server itself through
+`SYMPHONY_UI_DIST`. So both clients go through the same static handler, the same gzip at the best
+level, the same cache headers and ETags and the same page injection (the theme and the project's
+record), and a byte or a millisecond differs only by the client. Vite's own servers compress and
+cache differently from the Symphony's, which would have measured the server, not the client.
+
+**One fix the measurement asked for.** React holds a `Suspense` boundary's content back for up
+to 300 ms after its fallback showed. With the page kinds loaded through `lazy` and `Suspense`, a
+first visit waited that out: on React the board's first read started about 300 ms later than on
+Preact from the same source, as the browser's resource timings showed. The client imports a kind's
+chunk by hand instead (`src/main.jsx`), which any React client would.
+
+### What the JSX pages leave out
+
+Each page's first comment lists what it leaves out; the measurements are of what is there.
+
+- **All three pages:** the device cache (a return visit drawn from the device before its reads);
+  the ghosts' kept shapes (the ghosts use their default shapes); the chat, the menus and their
+  modules, which the Dioxus client warms at idle after a first visit; the panel's and the
+  frame's refresh on feed events; the server notice.
+- **The board:** search and the Status and Finished filters (drawn, inert); the task groups tree
+  (its button drawn, closed); the machine's build and test context and phase chips (the
+  fixture's machine reports none, so both clients draw the unreported rail).
+- **A task's page:** the gates; the timeline and its module; the landing offer; the owner's task
+  actions (the priority select and Cancel task drawn, inert); subtasks beyond their heading and
+  count; agents' Go to session; attachments; the recipient select's popup; `hold_place` on live
+  updates. So the JSX task page reads four requests where the Dioxus page reads seven, and loads
+  no timeline module.
+- **A document:** asks (their heading drawn, nothing read); attachments (the controls drawn);
+  versions, history and diffs; drafts and verdict taps kept on the device; the comment kind's
+  select popup; folders; a worktree's `@scope`; the picture viewer; a file viewer's script and a
+  mockup's sizing.
+
+Solid was not tried. It is not a drop-in for the same source: a component runs once and state is
+signals, not hooks, so it would be a third code base, and on these pages it would win only what
+fine-grained updates save: the one place the JSX pages trail, the device cache aside, is a card's
+move at full speed, by about 20 ms, which the code puts down to the port's latch rather than its
+rendering ([a feed update](#a-feed-update-reaching-a-card)).
+
+## Method
+
+**Where.** One Mac (Apple M3 Max, 16 cores, 64 GB, macOS 26.6.2), headless Chrome
+157.0.8103.79 driven by the workspace's own driver (`crates/chrome-devtools`) from a Rust program
+(`experiments/client-jsx/bench`), a fresh Chrome on a profile of its own for every run. Each
+client was served by a Symphony server of its own, the worktree's development build of
+`symphony-server` with `--port 0`, on a scratch project with a board of its own in a temporary
+machine folder; every file of each client was asked for once before any timing, so the server's
+one-time compression of a file is never timed.
+
+**A busy machine.** Every timing here was taken while other agents built and tested on the same
+machine: its one-minute load moved between about 40 and 280 on 16 cores, half the runs between
+90 and 150, and no quiet hour was coming. So no millisecond here is what a quiet machine or an
+owner's laptop would show, and none should be read as one. What the comparison needs is not an absolute time but how the two
+sides compare under the same conditions, and that the method controls for:
+
+- *Paired, interleaved rounds.* A round runs Dioxus, then React, then Preact, a fresh Chrome
+  each, one after the other, so the three clients of a round see the same load within seconds;
+  a scenario runs 15 rounds (fewer where a table says).
+- *Ratios.* Each table gives every client's median and, in brackets, its lowest and highest
+  round, then each JSX build's median over Dioxus's: the ratio, which a load that slows all three
+  alike leaves where it is.
+- *Batches.* The same ratio is given for each batch of five rounds, in the order they ran, with
+  the one-minute load each batch ran at. A ratio that holds across batches at different loads is
+  the evidence that the load did not decide it. A ratio whose batches fall on both sides of 1 is
+  marked *undecided*, and no side is named the winner of it.
+- *Counts load cannot move.* Beside the times, each table gives what the load does not change:
+  the bytes on the wire, the script decoded, the DOM's nodes and changes, the heap and the wasm
+  module's memory. The count of long tasks is given too but is not among them: a busy core makes
+  more of a task cross 50 ms.
+
+**The baseline.** Main at `a8490d80`, its client built by `just symphony-ui-dist` unchanged
+(Dioxus 0.7.10, Rust 1.99.0, `-Oz`). The JSX builds take that build's style sheets. Main moved on
+while this ran, sharing one program between the task pages and four other kinds; what that
+changes is read from main's build under [Size](#size).
+
+**The fixture.** Made by `experiments/client-jsx/fixture/make.mjs` from a seeded generator, so
+every run sees the same words. `bench`: 120 tasks (ready 29, done 30, backlog 20, in progress 13,
+review 8, concept 6, design 6, blocked 4, cancelled 4), with long briefs; the task
+`bench/task-page`, an 80-message thread and a brief of several blocks; `docs/GUIDE.md`, 60
+sections with lists, code and tables, 249 parts and about 34,000 px tall in a wide window; and
+`docs/DECISIONS.md`, 12 open cards and 12 resolved. `big500` and `big2000`: 500 and 2,000 tasks
+with short briefs (40 % ready, 20 % backlog, 10 % each done and in progress, 5 % each review,
+concept and design, the rest blocked and cancelled).
+
+**Speeds and screens.** "1x" is full speed in a 1440 by 900 window; "4x" is Chrome's CPU
+throttled four times in the same window; the board also ran at 4x on a phone's screen (390 by 844
+at 3x). The task page and the document stay in the wide window at 4x: on a phone the Dioxus task
+page's gates and timeline, which the JSX page leaves out, fill about a screen above the brief, so
+the thread nears the screen at a different moment on each side and the two would not do the same
+work.
+
+**What each figure is.**
+
+- *First contentful paint*: the browser's own.
+- *Usable*: the first frame in which the page's ready condition holds, timed in that frame's
+  callbacks, after the page's work and before paint. The board: a card is drawn
+  (`.taskcard`). A task's page: its first screen has settled with the thread's newest page and the
+  message box (`.settle[data-settled=true]:has(#task-thread[data-pending=false] .entry):has(#task-message)`).
+  A document: every section asked for is in (`.document-page[data-ready=document]`, set where
+  each client marks `document-ready`).
+- *Cold* is a fresh profile; *warm* is the same Chrome back on the page after `about:blank`,
+  its HTTP cache full (the JSX client has no device cache; the Dioxus client's is in play here).
+- *Bytes* are counted as the client's budget test counts them (`apps/symphony-ui/tests/browser`,
+  `needed_bytes`): every response's bytes on the wire, head and gzip body, but pictures, cache
+  hits, idle prefetches and the feed's keep-alive pings. The server sends gzip only, so the
+  Brotli figures are the same files compressed at quality 11 off the wire.
+- *A second page*: from the board, a click on the task's card to its page usable, and the bytes
+  that read beyond the board's.
+- *A feed update*: from the moment the feed's event arrives (a listener installed before the
+  page's own) to the first frame that shows the change: a card's priority changed (`p0` to `p1`
+  and back), and a card moved between two columns on the first screen and back. This is the
+  brief's card move: the board has no move of its own for a person to make, so a move reaches it
+  through the feed, as an agent's does.
+- *Load more*: on the 2,000-card board, the Ready column's Load more clicked until it has every
+  card, each click timed to the frame that draws the new rows, and from the read's answer to that
+  frame.
+- *Typing*: 44 keys at 60 ms intervals into the task's message box, each from the key event to
+  the end of the next frame.
+- *Scrolling*: a mouse-wheel gesture from the top of the guide to its end at 4,000 px a second:
+  the intervals between frames, the long tasks, when every section had drawn, and the sections
+  left waiting when a stalled frame carried the scroll past them whole.
+- *Long tasks*: the browser's, over 50 ms each.
+- *Memory*: the three boards open at once, in a Chrome each, while the board changed every
+  three seconds for ten minutes (a message, a priority, a move, in turn): after a forced
+  collection, the JavaScript heap, the wasm module's linear memory, the DOM's nodes and the
+  event listeners. One run: all three share it, so its load is the same for each.
+
+## Size
+
+Bytes do not move with the machine's load: every round gave the same figures, to a few bytes of
+a read's timestamps. Kilobytes are thousands of bytes.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---:|---:|
+| **the board**, first visit, on the wire as the budget counts | 307.3 | 103.8 | 43.5 | 0.34 | 0.14 |
+| its page and code, gzip as served | 293.4 | 89.9 | 29.6 | 0.31 | 0.10 |
+| the same, Brotli at quality 11 | 239.1 | 76.3 | 24.9 | 0.32 | 0.10 |
+| return visit | 4.8 | 14.1 | 14.1 | 2.96 | 2.96 |
+| a task's page after the board, by a card's click | 747.7 | 23.0 | 22.7 | 0.03 | 0.03 |
+| **a task's page**, first visit | 768.0 | 108.9 | 48.4 | 0.14 | 0.06 |
+| its page and code, gzip as served | 759.3 | 101.3 | 40.8 | 0.13 | 0.05 |
+| the same, Brotli | 596.4 | 85.7 | 34.2 | 0.14 | 0.06 |
+| return visit | 4.6 | 7.7 | 7.7 | 1.69 | 1.69 |
+| **the guide**, first visit | 491.7 | 120.1 | 59.6 | 0.24 | 0.12 |
+| its page and code, gzip as served | 474.9 | 106.9 | 46.5 | 0.23 | 0.10 |
+| the same, Brotli | 366.1 | 91.0 | 39.4 | 0.25 | 0.11 |
+| return visit | 17.0 | 13.3 | 13.3 | 0.78 | 0.78 |
+| **after any first visit**, warmed at idle (the chat's, menus' and panel's modules) | 750 | – | – | | |
+
+What the figures hold:
+
+- **The code is the difference.** The pages read the same data, 14 to 15 kB of it on the board,
+  so the gap is the code. The Dioxus board is one 263 kB wasm module on the wire, its glue and the
+  shell; the Preact board is 19 kB of JavaScript in four chunks, React's 79 kB, the difference
+  being the entry chunk that holds the runtime and the frame (72 kB on React, 11 kB on Preact). A
+  second page costs the JSX client its own two chunks (11 kB), two style sheets (4 kB) and its
+  reads; on the Dioxus client it is the next kind's module whole, 520 kB of wasm with its own copy
+  of the runtime, and the timeline's module after it.
+- **The task page's Dioxus figure includes its timeline,** a module of its own (186 kB of wasm,
+  its glue, sheet and read, 202 kB in all), which the JSX page leaves out. Without it the Dioxus
+  task page is about 566 kB, still 5 times React's and 12 times Preact's.
+- **The return visit is the device cache, not the framework.** The Dioxus client asks each read
+  with the checksum of what the device holds and gets an empty `304` back when nothing changed;
+  the JSX client, which leaves the device cache out, reads the data again, 3 to 9 kB more. Ported,
+  the cache would bring the JSX return visit to the Dioxus one's.
+- **The warmed modules are bytes a JSX client would not need.** After a first visit the Dioxus
+  client fetches, at idle, the modules of the chat, the menus and the panel, 750 kB, so that
+  opening them later is instant; the budget leaves them out. The JSX client leaves those parts out
+  entirely, so this is a cost of the Dioxus design with no JSX figure beside it.
+- **The budget.** The bench fixture's board is larger than the budget test's stand-in site, so
+  307 kB here is not the 300,000-byte cap's figure; the cap is met on its own fixture.
+- **Main since the baseline.** While this ran, main built the task pages, Reports, the chat, the
+  menus and the timeline as one program, a shared module and a chunk per kind, and the board kept
+  its own module, as decided. Read from the files of main's newest committed build (`fff4295f`),
+  each gzipped at the best level, not measured in a browser: the board's wasm is the baseline's,
+  264 kB; a task page's code is the program's script and wasm and the tasks chunk, 550 kB, with
+  the timeline's chunk 51 kB after it, where the baseline's was 535 kB and 202 kB; the
+  document's wasm grew from 434 kB to 465 kB with its device cache; the chunks warmed at idle
+  (the overlay's and the panel's) are 370 kB, and 600 kB with the program after a board visit,
+  where the baseline warmed 750 kB. A build is 5.9 MB, from 6.9 MB. So main trims a task page
+  with its timeline by about a fifth and the warmed bytes by a fifth to a half, and leaves the
+  board's and the document's first visits where they were or larger: the comparison stands for
+  main as it is.
+
+## Render
+
+Times in milliseconds: each client's median over 15 rounds with its lowest and highest in
+brackets, then the ratio of the JSX build's median to Dioxus's, overall and, in brackets, for
+each batch of five rounds in the order they ran. Under 1 the JSX build was faster.
+
+### Visits at full speed
+
+The batches' one-minute load: the board 64–78, 63–72 and 50–165; a task's page 128–167,
+100–137 and 75–134; the guide 79–96, 88–106 and 102–165.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| **the board**: first contentful paint, cold | 188 (88–1,160) | 96 (72–600) | 92 (48–140) | 0.51 (0.58, 0.55, 0.32) | 0.49 (0.45, 0.45, 0.24) |
+| usable, cold | 608 (480–1,868) | 453 (385–923) | 449 (395–516) | 0.74 (0.68, 0.73, 0.43) | 0.74 (0.70, 0.80, 0.41) |
+| usable, warm | 277 (220–355) | 371 (342–464) | 386 (370–511) | 1.34 (1.32, 1.32, 1.37) | 1.39 (1.40, 1.34, 1.49) |
+| script time, cold | 92 (58–244) | 43 (36–84) | 34 (30–40) | 0.47 (0.49, 0.47, 0.48) | 0.37 (0.38, 0.34, 0.40) |
+| a task's page after a card's click, usable | 262 (192–482) | 150 (135–1,819) | 260 (180–788) | 0.58 (0.45, 0.66, 0.60) | 1.00 (0.64, 1.26, 0.82), *undecided* |
+| **a task's page**: first contentful paint, cold | 208 (112–2,148) | 112 (64–540) | 92 (52–620) | 0.54 (0.64, 0.73, 0.21) | 0.44 (0.58, 0.51, 0.22) |
+| usable, cold | 523 (271–2,832) | 321 (221–921) | 407 (215–1,837) | 0.61 (0.69, 0.55, 0.30) | 0.78 (0.76, 0.64, 0.49) |
+| usable, warm | 180 (134–423) | 207 (152–372) | 241 (202–349) | 1.15 (1.35, 1.15, 1.05) | 1.34 (1.59, 1.33, 1.25) |
+| script time, cold | 99 (78–838) | 34 (31–229) | 25 (23–869) | 0.35 (0.38, 0.53, 0.09) | 0.26 (0.31, 0.26, 0.07) |
+| **the guide**: first contentful paint, cold | 128 (108–472) | 104 (72–796) | 92 (56–180) | 0.81 (0.81, 0.93, 0.90) | 0.72 (0.50, 0.89, 0.57) |
+| usable, cold | 628 (509–972) | 545 (442–1,154) | 544 (413–793) | 0.87 (0.91, 0.76, 1.30), *undecided* | 0.87 (0.81, 0.99, 0.85) |
+| usable, warm | 575 (477–771) | 438 (369–557) | 422 (365–651) | 0.76 (0.78, 0.69, 0.80) | 0.73 (0.85, 0.66, 0.77) |
+| script time, cold | 158 (152–188) | 70 (65–89) | 63 (56–102) | 0.45 (0.45, 0.44, 0.44) | 0.40 (0.37, 0.40, 0.41) |
+
+The counts beside them, which repeated in every round:
+
+| | Dioxus | React | Preact |
+|---|---:|---:|---:|
+| **the board**: DOM changes over the cold visit | 428 | 424 | 387 |
+| DOM nodes held after it, collected or not | 5,699 | 2,197 | 2,204 |
+| script decoded (kB): JavaScript, wasm | 58, 605 | 245, 0 | 43, 0 |
+| JavaScript heap (MB) | 1.7 | 3.5 | 3.2 |
+| **a task's page**: DOM changes | 149 | 146 | 146 |
+| DOM nodes held | 1,905 | 717 | 719 |
+| script decoded (kB): JavaScript, wasm | 117, 1,748 | 268, 0 | 63, 0 |
+| JavaScript heap (MB) | 2.4 | 2.4 | 1.8 |
+| **the guide**: DOM changes | 454 | 438 | 440 |
+| DOM nodes held | 4,881 | 3,784 | 3,834 |
+| script decoded (kB): JavaScript, wasm | 72, 1,134 | 277, 0 | 72, 0 |
+| JavaScript heap (MB) | 2.1 | 4.2 | 3.2 |
+
+What they say:
+
+- **Cold, the JSX pages are usable sooner,** at 0.6 to 0.8 of the Dioxus time on the board and
+  a task's page, every batch agreeing; on the guide Preact's ratio holds at 0.87 and React's is
+  undecided, one batch at 1.30. The first paint comes at about half the Dioxus time on the board
+  and the task page, three quarters on the guide. The cause is the work before the first frame:
+  the Dioxus page compiles and starts a wasm module of 0.6 to 1.7 MB before it draws, and its
+  script time is two to four times the JSX pages'.
+- **The batches where the load swung widest moved most.** The board's and the guide's third
+  batches ran while the load rose to 165: the board's ratios fell to about 0.4 there, and the
+  guide's React ratio rose to 1.30. The other batches agree with each other; these two are the
+  ones to read with care, and the guide's React figure is left undecided because of it.
+- **Warm, the Dioxus board and task page are sooner,** by a third, every batch agreeing. That is
+  the device cache, which draws a return visit from what the device holds before its reads come
+  back; the JSX pages leave it out and wait for their reads. On the guide, where the cache draws
+  less, the JSX pages are sooner warm too. A JSX client with the cache ported would be expected to
+  match the Dioxus return visit, but that is inferred, not measured. The advantage holds only at
+  full speed on a small board: slowed four times, or on 2,000 cards, the JSX return visits are the
+  quicker ([below](#visits-with-the-cpu-slowed-four-times)).
+- **The same work.** The DOM changes over a visit match to within 10 %, so both sides do the
+  same drawing. Just after the visit the Dioxus pages hold two to three times the nodes on the
+  board and the task page, but most are garbage not yet collected: after a forced collection the
+  boards hold 2,230 nodes on Dioxus and about 1,700 on the JSX side ([memory](#memory)), and one
+  board counted 1,942 nodes in the document on Dioxus and 1,595 on Preact. The JavaScript heap is
+  larger on the JSX side, as their state lives there; the Dioxus client's lives in its wasm
+  module's memory.
+- **Opening a task from the board** is quicker on React, every batch agreeing, and undecided on
+  Preact. Preact runs a component's effects after the next frame (`afterPaint` in its hooks),
+  where React runs them at once after a click, and the JSX page starts its import and its reads
+  from effects, so each step waits a frame on Preact; on a busy machine a frame is long. That is
+  read in the code, not measured apart, and starting the import in the click instead would
+  remove it.
+
+### Visits with the CPU slowed four times
+
+The same visits with Chrome's CPU throttled four times, for a phone-class device. The batches'
+load: the board 81–128, 75–210 and 219–253; a task's page 136–200, 72–142 and 69–97; the guide
+80–98, 83–113 and 94–113; the board on a phone's screen 102–195, 157–181 and 91–165. On the phone
+the task's card is in a column off the first screen, so the second page is not timed there.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| **the board**: first contentful paint, cold | 304 (264–496) | 176 (156–780) | 156 (136–348) | 0.58 (0.67, 0.44, 0.54) | 0.51 (0.44, 0.41, 0.54) |
+| usable, cold | 1,361 (1,147–1,634) | 708 (624–1,277) | 661 (573–914) | 0.52 (0.55, 0.52, 0.51) | 0.49 (0.47, 0.53, 0.45) |
+| usable, warm | 2,289 (1,665–2,530) | 636 (562–772) | 648 (536–773) | 0.28 (0.28, 0.28, 0.27) | 0.28 (0.28, 0.28, 0.29) |
+| script time, cold | 412 (369–529) | 173 (151–207) | 151 (136–183) | 0.42 (0.38, 0.40, 0.46) | 0.37 (0.36, 0.36, 0.36) |
+| long tasks, cold (total) | 555 (450–822) | 146 (56–262) | 163 (84–231) | 0.26 (0.27, 0.26, 0.21) | 0.29 (0.25, 0.34, 0.30) |
+| a task's page after a card's click, usable | 652 (595–1,091) | 280 (207–438) | 327 (294–777) | 0.43 (0.49, 0.39, 0.45) | 0.50 (0.56, 0.46, 0.52) |
+| **a task's page**: first contentful paint, cold | 300 (248–1,008) | 192 (148–364) | 184 (136–316) | 0.64 (0.71, 0.51, 0.67) | 0.61 (0.67, 0.53, 0.65) |
+| usable, cold | 846 (644–1,730) | 508 (473–1,126) | 592 (477–1,471) | 0.60 (0.59, 0.53, 0.63) | 0.70 (0.56, 0.62, 0.75) |
+| usable, warm | 615 (555–763) | 486 (422–613) | 454 (405–543) | 0.79 (0.81, 0.80, 0.69) | 0.74 (0.74, 0.73, 0.71) |
+| script time, cold | 390 (341–449) | 144 (131–370) | 117 (99–144) | 0.37 (0.37, 0.40, 0.35) | 0.30 (0.30, 0.28, 0.29) |
+| **the guide**: first contentful paint, cold | 296 (268–444) | 188 (172–244) | 192 (144–708) | 0.64 (0.64, 0.63, 0.68) | 0.65 (0.53, 0.71, 0.88) |
+| usable, cold | 1,869 (1,730–2,304) | 1,628 (1,458–2,239) | 1,517 (1,288–2,312) | 0.87 (0.85, 0.83, 0.83) | 0.81 (0.76, 0.88, 0.82) |
+| usable, warm | 1,886 (1,686–2,267) | 1,563 (1,387–1,724) | 1,413 (1,209–1,611) | 0.83 (0.79, 0.88, 0.78) | 0.75 (0.68, 0.79, 0.75) |
+| script time, cold | 698 (672–750) | 319 (285–393) | 273 (242–333) | 0.46 (0.49, 0.46, 0.45) | 0.39 (0.39, 0.37, 0.42) |
+| **the board on a phone's screen**: first contentful paint, cold | 776 (276–2,904) | 216 (176–1,308) | 204 (124–584) | 0.28 (0.24, 0.49, 0.26) | 0.26 (0.18, 0.41, 0.52) |
+| usable, cold | 1,766 (1,065–3,832) | 697 (651–1,829) | 706 (592–1,084) | 0.39 (0.36, 0.46, 0.42) | 0.40 (0.34, 0.45, 0.47) |
+| usable, warm | 2,315 (1,381–2,465) | 631 (553–688) | 611 (551–737) | 0.27 (0.30, 0.29, 0.26) | 0.26 (0.28, 0.27, 0.26) |
+| script time, cold | 369 (277–2,490) | 154 (133–235) | 113 (90–155) | 0.42 (0.15, 0.45, 0.42) | 0.31 (0.11, 0.35, 0.30) |
+| long tasks, cold (total) | 662 (423–2,753) | 66 (0–298) | 90 (67–223) | 0.10 (0.05, 0.11, 0.17) | 0.14 (0.11, 0.15, 0.13) |
+| first visit (kB) | 300.8 | 97.3 | 37.0 | 0.32 | 0.12 |
+
+**Slowed, the gap doubles and every ratio holds.** Cold, the JSX board is usable in half the
+Dioxus time, a task's page in 0.6 to 0.7 of it and the guide in 0.8 to 0.9, every batch agreeing,
+at loads from about 70 to 250; a task's page opened from the board comes in half the time. On a
+phone's screen the gap is wider still: the JSX board paints first in about a quarter of the Dioxus
+time and is usable in 0.4 of it, cold, and in about a quarter of it warm. The Dioxus pages spend
+two to three times the script time and one and a half to ten times the time in long tasks.
+**The warm visit turns over:** the Dioxus board's return, a third quicker than the JSX board's at
+full speed, is three and a half times slower here (2.3 s against 0.64 s), and slower than its own
+cold visit; its reads, all answered `304`, finish at about 1.8 s where at full speed they finish
+at 0.16 s, so the page is waiting on its own main thread, not the server. The device cache's draw
+is the likely cost; that is inferred, not traced. The same holds on a phone's screen (2.3 s
+against 0.6 s). A task's page and the guide are quicker warm on the JSX side too.
+
+### A large board
+
+The board of 500 and of 2,000 cards, at full speed, 15 rounds each. Both clients draw each
+column's first page and leave the rest to Load more, so a larger board is more data in each read
+and a fuller first screen, not 2,000 cards drawn. These ran at the busiest hour of the day: the
+batches' load was 215–240, 193–245 and 104–182 for 500 cards, and 67–87, 83–150 and 139–221 for
+2,000.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| **500 cards**: first visit (kB) | 312.3 | 108.8 | 48.5 | 0.35 | 0.16 |
+| usable, cold | 571 (503–1,841) | 421 (375–1,042) | 433 (386–980) | 0.74 (0.32, 0.74, 0.79) | 0.76 (0.34, 0.77, 0.77) |
+| usable, warm | 394 (362–465) | 366 (350–445) | 385 (371–426) | 0.93 (0.99, 0.87, 0.94) | 0.98 (1.09, 0.93, 0.96), *undecided* |
+| script time, cold | 115 (109–741) | 45 (41–49) | 42 (38–81) | 0.39 (0.30, 0.41, 0.40) | 0.37 (0.30, 0.36, 0.38) |
+| **2,000 cards**: first visit (kB) | 314.9 | 111.4 | 51.1 | 0.35 | 0.16 |
+| usable, cold | 599 (544–744) | 443 (402–1,374) | 474 (443–667) | 0.74 (0.78, 0.71, 0.72) | 0.79 (0.77, 0.81, 0.79) |
+| usable, warm | 477 (398–603) | 375 (368–423) | 419 (385–653) | 0.79 (0.81, 0.79, 0.79) | 0.88 (0.87, 0.89, 0.90) |
+| script time, cold | 122 (109–147) | 53 (45–62) | 47 (44–53) | 0.43 (0.46, 0.41, 0.46) | 0.38 (0.39, 0.38, 0.40) |
+| DOM changes over the cold visit | 638 | 629 | 589 | | |
+| JavaScript heap (MB) | 1.5 | 4.3 | 6.1 | | |
+
+**The ratios held from a load of 67 to one of 245.** Cold, the JSX boards are usable at three
+quarters of the Dioxus time on both sizes, as on the bench board, in every batch but one: the
+500-card board's first batch, at a load over 200, where Dioxus took three times as long (ratio
+about 0.33). **Warm, the order turns** on a larger board: the Dioxus board's return visit, a
+third quicker on 120 cards, is about level on 500 (React a little quicker, Preact undecided) and
+slower on 2,000, where the JSX boards are quicker
+warm too (0.79 and 0.88, every batch agreeing). That its device cache has more to draw before the
+reads on a larger board is the likely cause, inferred and not traced. The JSX boards' JavaScript heap grows with the board, to 4 to 6 MB at 2,000 cards; the
+Dioxus board's data is in its wasm memory ([memory](#memory)).
+
+### A feed update reaching a card
+
+The board open, then four changes made on the board through its command line, one every few
+seconds: a card's priority changed and changed back, and a card moved from Concept to Design and
+back, both columns on the first screen. Each is timed from the feed's event to the first frame
+that shows it; then the page is left to settle, which on both sides reads the counts and the
+columns in view again 750 ms on. 15 rounds at each speed, two changes of each kind a round; the
+batches' load 66–106, 42–68 and 48–101 at full speed, 80–129, 112–135 and 82–129 slowed.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| **full speed**: a priority change, event to drawn | 9 (3–28) | 10 (2–16) | 11 (2–17) | 1.14 (0.70, 1.35, 1.34), *undecided* | 1.28 (0.98, 1.37, 1.28), *undecided* |
+| a card moved, event to drawn | 23 (14–33) | 30 (16–37) | 43 (31–51) | 1.29 (0.98, 1.41, 1.38), *undecided* | 1.85 (1.71, 2.16, 1.82) |
+| **slowed four times**: a priority change | 21 (3–70) | 11 (7–45) | 12 (9–28) | 0.55 (0.58, 0.53, 0.57) | 0.60 (0.63, 0.60, 0.57) |
+| a card moved | 60 (44–106) | 52 (36–92) | 53 (38–72) | 0.87 (0.90, 0.75, 0.91) | 0.88 (0.78, 0.92, 0.79) |
+| DOM changes to draw a priority change | 4 (4–109) | 10 (7–13) | 5 | | |
+| the same with the re-read after it | 4 (4–109) | 19 to 34 | 22 | | |
+| DOM changes to draw a move | 8 | 10 | 7 | | |
+| the same with the re-read after it | 14 | 24 to 39 | 29 | | |
+
+**At full speed Dioxus draws a move sooner; slowed, the JSX boards draw both sooner.** At full
+speed a move reaches the screen in 23 ms on Dioxus and 43 ms on Preact, every batch agreeing, and
+the other three ratios are undecided. Slowed four times, every ratio is under 1 in every batch: a
+priority change in about 0.6 of the Dioxus time, a move in 0.9. The JSX move hardly slows with the
+CPU (43 ms to 53 ms on Preact) where the Dioxus one nearly triples (23 ms to 60 ms), so what the
+JSX board adds at full speed is a wait, not work. The code says which: the JSX board wraps each
+card in its column's near-the-screen latch, so a card that changes columns mounts afresh behind
+the latch and draws a frame or two later, when the latch's observer has reported it. That is read
+in the code, not traced; drawing a card that is already in view without the latch would remove
+it. The DOM changes to draw a change are the same on all three (4 to 10); after the re-read that
+follows a change, the JSX boards change two to eight times the nodes the Dioxus board does for the
+same reads, which costs no time the tables show; why was not traced.
+
+## Responsiveness
+
+### Load more on a large board
+
+The 2,000-card board's Ready column, 800 cards, paged to its end with Load more: 30 cards a page,
+26 clicks on each side. 6 rounds at full speed, each a run of 26 clicks; the two batches' load 51–178 and
+81–147.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| a click to its rows drawn, every page | 330 (291–44,659) | 343 (290–2,445) | 339 (302–12,088) | 1.04 (1.04, 1.04) | 1.03 (1.02, 1.04) |
+| the read's answer to its rows drawn, every page | 57 (21–44,390) | 62 (21–2,176) | 57 (34–11,801) | 1.08 (1.07, 1.12) | 1.00 (0.99, 1.06), *undecided* |
+| the same, the last page (780 rows already drawn) | 132 (110–150) | 154 (127–172) | 130 (120–155) | 1.17 (1.14, 1.43) | 0.99 (0.94, 1.41), *undecided* |
+| DOM changes per page of rows | 54 | 57 | 54 | | |
+
+**Level.** A click takes about a third of a second on every side, most of it the 250 ms both
+clients wait before a column's read and the read itself; drawing the new rows takes about 60 ms,
+and about 130 ms once 780 rows are drawn. React trails by a few milliseconds a page, every batch
+agreeing; Preact is undecided. The worst pages, of 2 to 44 seconds, are the machine's stalls,
+which fell on each side in turn.
+
+### Typing in the thread's box
+
+44 keys at 60 ms intervals into a task's message box, each timed from the key's event to the end
+of the next frame. 15 rounds at each speed; the batches' load 93–105, 102–151 and 85–123 at full
+speed, 138–203, 164–219 and 144–174 slowed.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| **full speed**: a round's median key | 12 (9–17) | 12 (9–15) | 12 (9–672) | 0.99 (0.93, 0.98, 1.24), *undecided* | 0.98 (0.98, 0.97, 1.02), *undecided* |
+| a round's 95th percentile | 21 (16–1,350) | 21 (18–427) | 20 (16–2,008) | 1.00 (0.91, 0.98, 1.04), *undecided* | 0.93 (0.90, 1.01, 0.97), *undecided* |
+| **slowed four times**: a round's median key | 18 (16–20) | 18 (16–21) | 17 (15–20) | 1.02 (1.03, 0.94, 1.13), *undecided* | 0.98 (0.98, 0.93, 1.06), *undecided* |
+| a round's 95th percentile | 31 (26–36) | 30 (26–41) | 27 (25–34) | 0.98 (1.05, 0.97, 0.89), *undecided* | 0.90 (0.94, 0.92, 0.86) |
+| DOM changes per key | 1.6 | 3.7 | 2.7 | | |
+
+**A tie.** A key reaches the screen within the next frame or two on all three, at the median and
+at the 95th percentile, at either speed; every ratio's batches straddle 1 but Preact's slowed 95th
+percentile, 0.90, a few milliseconds. The rare second-long keys came on each
+side in turn, in the rounds where the machine stalled, not on one client. The JSX box, a
+controlled text area, changes a node or two more per key, which costs nothing measurable here.
+
+### Scrolling the guide
+
+The guide, about 33,700 px tall in the wide window, scrolled from its top to its end by one
+mouse-wheel gesture at 4,000 px a second, 11.2 s of wheel events on every side. Both clients
+draw a section only as it nears the screen, so the scroll is also the page's drawing. 15 rounds
+at full speed, the batches' load 93–129, 123–276 and 112–276. The same scroll with the CPU slowed
+four times is left out: in its one complete round the gesture outran the drawing on every side
+(15, 18 and 88 sections left waiting, and 77 to 102 frames over 50 ms on each, no side ahead),
+and in the next, at a load of 250, Chrome gave no reply to the gesture within the minute the
+driver allows a command.
+
+| | Dioxus | React | Preact | React ÷ Dioxus | Preact ÷ Dioxus |
+|---|---:|---:|---:|---|---|
+| frames over the scroll | 620 (611–2,302) | 640 (636–2,351) | 642 (627–2,481) | 1.03 (1.03, 1.05, 1.03) | 1.04 (1.04, 1.04, 1.03) |
+| frame interval, 95th percentile (ms) | 33 (17–33) | 17 (17–17) | 17 (17–17) | 0.51 (0.50, 0.51, 0.51) | 0.51 (0.50, 0.51, 0.51) |
+| frames over 50 ms | 8 (1–9) | 2 (0–3) | 1 (0–4) | 0.25 (0.13, 0.25, 0.13) | 0.13 (0.13, 0.13, 0) |
+| long tasks, all rounds | 4 | 5 | 4 | | |
+| every section drawn, from the scroll's start (ms) | 11,206 | 11,222 | 11,206 | 1.00 | 1.00 |
+| rounds that left sections waiting (how many) | 2 (80, 129) | 4 (19 to 71) | 1 (36) | | |
+| DOM nodes at the end | 14,456 | 12,484 | 12,545 | 0.86 | 0.87 |
+
+**At full speed the JSX pages drop fewer frames.** All three keep up with the gesture: every
+section has drawn as the wheel stops, and a frame's median interval is 17 ms on each. But more
+than one Dioxus frame in twenty takes two intervals, and a scroll has about eight frames over
+50 ms where the JSX pages have one or two, every batch agreeing. Long tasks are rare on all
+three, and fall in the rounds where the machine stalled. In a few rounds on every side a stalled
+frame carried the scroll past whole sections, which then waited off the screen, drawn only when
+scrolled back to: both latches watch a margin of 600 px around the screen and draw what crosses
+it, and a jump past the margin crosses nothing. That is the latch's, not a framework's, and the
+same on both sides.
+
+### Memory
+
+The three boards open at once at full speed, each in a Chrome of its own, for ten minutes while
+the board changed every three seconds: 166 changes, a message, a priority and a move in turn,
+and 168 or 169 feed events on each. One run, at a load of 105 to 130, which all three shared.
+Megabytes after a forced collection:
+
+| | Dioxus | React | Preact |
+|---|---:|---:|---:|
+| JavaScript heap, at the start | 1.4 | 2.5 | 1.8 |
+| JavaScript heap, after ten minutes | 1.5 | 3.1 | 2.0 |
+| wasm linear memory, at the start | 3.1 | – | – |
+| wasm linear memory, after ten minutes | 3.4 | – | – |
+| **the page's script memory, after ten minutes** | **4.9** | **3.1** | **2.0** |
+| the browser's own memory for the page (embedder heap) | 6.9 | 5.0 | 5.0 |
+| DOM nodes, at the start and after ten minutes | 2,213, 2,230 | 1,681, 1,701 | 1,697, 1,717 |
+| event listeners | 48 | 162 | 16 |
+
+**The JSX boards use less.** Counting the wasm module's memory with the heap, the Dioxus board
+holds 4.9 MB after ten minutes of changes, React's 3.1 MB and Preact's 2.0 MB. None of the
+three leaks in a way ten minutes shows: each grew by 0.2 to 0.6 MB, and its DOM by 20 nodes or
+fewer. A wasm module's memory grows and never shrinks, so the Dioxus figure is a high
+water mark, where the JavaScript heaps are what is live. React registers one listener per event
+kind at the root, 162 in all, which is how it delegates events, not a leak.
+
+## Code and build
+
+**Lines.** Non-blank lines, comments included, tests aside. The Dioxus column is the files the
+JSX pages port, whole: they also hold what the JSX pages leave out (the device cache's draw and
+checks, the ghosts' kept shapes in `tasks/card_height.rs`, the attach controls' wiring), so the
+like-for-like gap is narrower than these totals say, by an amount not measured.
+
+| | Dioxus (files) | JSX (files) |
+|---|---|---|
+| the board | 1,900 (`tasks.rs`, `board_live.rs`, `tasks/card_height.rs`) | 467 (`pages/board.jsx`, `tasks.js`) |
+| a task's page | 1,880 (`task_detail.rs`, `task_live.rs`, `task_save.rs`) | 727 (`pages/task.jsx`, `pages/task-detail.jsx`) |
+| a document and the blocks | 2,610 (`docs.rs`, `docs_live.rs`, `doc_components.rs`, `block_view.rs`, `media.rs`) | 2,001 (`pages/document.jsx`, `blocks.jsx`) |
+| shared: frame, feed, latch, requests, project, controls, entry | 2,545 (`frame.rs`, `live.rs`, `live/feed.rs`, `viewport.rs`, `request.rs`, `project.rs`, and the button, input, textarea and select components) | 564 (`frame.jsx`, `feed.js`, `near.jsx`, `api.js`, `project.js`, `controls.jsx`, `main.jsx`) |
+| in all | 8,935 in 19 files | 3,759 in 13 files |
+
+**Build.** Timed on the same busy machine (one-minute load 73 to 90), the two sides in turn so
+that each pair shared the load; the times are a busy machine's, the ratio between the sides is
+the finding.
+
+| | Dioxus (`just symphony-ui-dist`, eight modules) | JSX (`npm run build`, React and Preact) |
+|---|---:|---:|
+| the worktree's first build | 643 s | 4.9 s (`npm ci`, npm's cache warm) and 4.1 s |
+| again, nothing changed | 82.2 s | 3.3 s |
+| one page's source touched (`tasks.rs`, `board.jsx`) | 59.5 s | 3.3 s; one of the two builds alone 2.2 s |
+
+The Dioxus build's floor is high because each of its eight modules is a `dx` build of its own,
+its wasm through `wasm-bindgen` and `wasm-opt`, whatever changed; a page's change costs the most
+of a minute on this machine either way. The JSX build is one Vite run of a second or two a
+target. The first Dioxus build ran with the machine's `dx` and `wasm-bindgen` already built (in
+the git common dir, once a machine), and the first JSX one with npm's download already cached;
+neither counts those.
+
+**Moving parts.** At the baseline the Dioxus client is eight builds, one per page kind, each
+carrying its own copy of the runtime, the wire types and the standard library (57 % of the
+client's code is a copy of code another module holds, [one runtime for the client's
+modules](client-shared-runtime.md)); main has since made five of those kinds one program split in
+chunks, with a step of its own that repairs the splitter's output;
+a shell (`assets/shell.js`, 528 lines) that loads a kind's module per route, warms the chat's and
+the menus' at idle, and routes each event to the module whose part of the page it came from,
+since each module's Dioxus numbers its elements on its own; `dx` and `wasm-bindgen` built once per
+machine at pinned versions; `dx` run from one path in every checkout, as the path ends up in the
+wasm's bytes (`dx-path.sh`); a snapshot of the client's inputs so that its asset names follow
+those bytes alone (`release_inputs.rs`, 596 lines); `wasm-opt -Oz`; a component state reset only
+through a keyed list of one, as Dioxus compares keys only in a list; and a module's own style
+sheet carried inside its wasm where a sheet in the manifest would cost every first visit. The JSX
+client is one Vite build whose chunks the pages share: one copy of the runtime, a chunk per page
+kind and one for the code two kinds use, named by content. It needed nothing special but the
+`Suspense` fix above and the plugin that copies the Dioxus style sheets in (`vite.config.js`, 77
+lines).
+
+**Types across the wire.** The Dioxus client links `crates/symphony-api` and reads the browser's
+parsed JSON into its types (serde-wasm-bindgen): a field the server renames or retypes fails the
+client's compile, and the functions both sides run (a task's stage, the machine context) are
+one code. The JSX client reads plain objects: the same rename is an `undefined` at run time, found
+by a test or a reader. The usual remedy is TypeScript with the types generated from the Rust ones
+at build time and checked in the gate; the shared functions are then written twice and held equal
+by tests on both sides (`tasks.js` ports three of them in 83 lines).
+
+**Testing.** The Dioxus client's views render on the host through `dioxus-ssr` in Rust tests,
+and its browser tests drive built pages over `crates/chrome-devtools` against a stand-in site. A
+JSX client would test its components with a JavaScript runner and a DOM (Vitest or `node:test`
+with a DOM library); the browser tests drive the DOM, not the code, so they can drive a JSX build
+as this experiment's measurements drive both. The experiment itself has no tests: it is a
+measurement, not a client.
+
+## What a switch would cost
+
+What depends on the client being Rust, with its size at the baseline, and what it would become.
+Main has added to the Rust side since (the program's split and its repair step), not taken away.
+
+| what | today | after a move |
+|---|---|---|
+| The pages and their logic | 19,049 lines of Rust in 77 files (`apps/symphony-ui/src`, tests aside), eight page kinds | written again in JSX. The three pages here took 3,759 lines with the left-outs above; the other kinds (home, the queue, Reports, `/agents`, the chat, the menus, the timeline) are about half the client |
+| The client's own tests | 7,825 lines of tests inside `src` (the device cache, card heights, the machine context, the task page, gates, the timeline, Reports) | written again for a JavaScript runner |
+| The browser tests | 24,468 lines in 45 files (`tests/browser`), Rust over `crates/chrome-devtools` | most stay, as they drive the DOM a port keeps; the budget and module tests change with the build. The tests of the wasm build itself go: `wasm_build`, `bundle_concurrent`, `client_release` and `tools`, about 2,100 lines |
+| The wire types | the client links `crates/symphony-api` (158 public types, 5,752 lines) and names 82 of its paths | types generated for TypeScript and checked, or none; the shared functions ported and held equal by tests |
+| The plugin blocks | `block_view.rs` (546 lines) draws the blocks and media every plugin renders to | a component per block (`blocks.jsx`, 815 lines here, media with it) |
+| The build | `dx` and `wasm-bindgen` built per machine, the wasm32 target, eight builds a release; `bundle.sh`, `package.sh`, `dx-path.sh`, `remap-rustc.sh`, `wasm-fresh.sh`, `tools.sh`, `assets-copy.sh`, `dev.sh` and `cargo-symphony-ui`, 544 lines | Node and npm where the client builds (52 packages in this lock, 40 MB installed), one Vite build |
+| The shell and release inputs | `shell.js` (528 lines), `cache.js` (216), `release_inputs.rs` (596), `publish.rs` (222) | Vite's chunks and preloads, the lockfile, `publish-client` kept |
+| The distribution | committed, three builds kept: 20.0 MB, 24 wasm files, a size line of 20,750,000 bytes; 106 commits regenerated it in the week to this run, each about 6.3 MB of new wasm | about 0.4 MB a build on React, 0.2 MB on Preact, the style sheets included; the regenerator, `client-check` and `publish-client` stay, needing Node where they run |
+| The guides | `apps/symphony-ui/AGENTS.md` (598 lines), the client's paragraphs in `AGENTS.md`, [CHECKS](../CHECKS.md) and [RELEASES](../RELEASES.md) | written again |
+
+What stays: the server, the API, the feed, the board, the style sheets (used here byte for byte),
+the server's embedding of whatever the distribution holds (an installed server needs no Node, as
+the distribution is committed), `symphony shot`, and the browser tests' driver. A move need not be
+one step: the shell already loads a module per page kind, so a kind could move at a time, with
+both builds in the distribution meanwhile.
+
+## Pictures
+
+Each page was pictured on each client with `symphony shot`, in a wide window and on a phone, from
+the bench fixture through each client's own server: the board, the task's page, the guide, the
+decision register, and a card of the register after its verdict posted. They are kept with the
+task's evidence, not in the repository.
+
+- **React and Preact** draw every page byte for byte alike: the same source gives the same DOM.
+- **The board, the guide and the register** draw as Dioxus draws them, to a few hundred pixels in
+  a picture of 1.3 million (0.005 % to 0.04 %): a letter's anti-aliasing where the two clients
+  split a line into text nodes differently, the scrollbar's thumb, and the header's crumb to the
+  document drawn a shade bolder on the JSX pages. The guide on a phone is identical.
+- **A task's page** differs by what the JSX page leaves out: the Dioxus page draws the gates and
+  the timeline between the head and the brief, about a screen on a phone, and the rest of the
+  page follows them. Above and below them the two match.
+- **A verdict** posts and shows on both: the card takes its stamp and colour, the thread its
+  verdict line, and the form says the verdict saved.
+
+## Verified and inferred
+
+**Measured here.** Every figure in the tables, from the runs named, on one busy machine; the
+bytes, decoded code, DOM counts, heaps and DOM changes, which repeated round after round; the
+time ratios and how they held across batches; the pictures' match; the line counts; the build
+times; the sizes in the cost of a switch, read from the tree at the baseline.
+
+**Read in code or in the requests, not measured apart.** That the return visit's difference in
+bytes is the device cache's empty `304`s; that the Dioxus client's JavaScript heap is small
+because its state lives in the wasm module's memory; that Preact's later effects cost it the
+click from the board to a task's page; that the JSX board's near-the-screen latch costs a card's
+move a frame at full speed. Each says so where it is used.
+
+**Inferred and not traced.** Why the Dioxus board's return visit is slower than its cold one
+with the CPU slowed, and slower than the JSX board's on 2,000 cards (its device cache's draw is
+the likely cost); why the JSX boards change more nodes after the re-read that follows a feed
+update.
+
+**Inferred, not tried.**
+
+- *What the left-out parts would cost a JSX client.* The device cache, the ghosts' kept shapes,
+  the gates, the timeline, search and the rest would add code and bytes to the JSX pages, and the
+  device cache would bring their warm visits to the Dioxus client's. How much is not measured; on
+  the Dioxus side the device cache is about 14 kB of the board's first visit and the ghosts'
+  shapes 13.3 kB ([the client guide](../../apps/symphony-ui/AGENTS.md)), so the JSX figures here
+  are a floor.
+- *The rest of the client.* That the pages not ported (home, the queue, Reports, `/agents`, the
+  chat, the menus, the timeline) would port at the same ratio of lines and bytes as these three.
+- *A quiet machine and a real phone.* The ratios held across loads from about 40 to 280; that
+  they hold on a quiet machine is inferred from that, not measured, and "4x" is this machine's
+  CPU slowed, not a phone's wasm compiler or JavaScript engine.
+- *Scrolling with the CPU slowed.* Its one complete round showed no side ahead and the rest did
+  not run ([Scrolling the guide](#scrolling-the-guide)); a slower gesture, with a longer
+  allowance than the driver gives one command, would be needed to measure it.
+- *A move a kind at a time,* with both builds in the distribution and the shell routing between
+  them, and *TypeScript types generated from `crates/symphony-api`*: neither was tried.

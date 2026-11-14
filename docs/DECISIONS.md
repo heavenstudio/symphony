@@ -20,6 +20,25 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
 
+### Client framework
+
+- [ ] **client-framework** — Should the web client stay in Dioxus or move to JSX? Three of its pages (the board, a task's page, a document with a card's verdict) were written again in JSX, built on React and on Preact from one source, drawn with the client's own style sheets and served by the same server, then measured beside the Dioxus pages on the same fixture. On a first visit the Preact pages send 6 % to 14 % of the Dioxus pages' bytes, are usable sooner cold, and build in about 3 s where the Dioxus client takes a minute or more; at full speed the Dioxus pages are quicker on a return visit to a small board or a task's page, from their device cache, which the JSX pages leave out. A: keep Dioxus. B: move the client to JSX on Preact, a page kind at a time. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/client-framework-comparison#The choice]]
+  [2026-11-14 03:46] agent — Posted for the board task `perf/client-framework-comparison`.
+
+    **A, keep Dioxus.** One language with the server, the wire's types checked by the compiler, and nothing written again. Cost: the first visits stay 7 to 16 times Preact's in bytes (3 to 7 times React's) (the board 307 kB against 44 kB on the bench fixture, a task's page 768 kB against 48 kB), each page kind carries its own copy of the runtime, a build takes a minute or more, and each build is 6.9 MB that the repository takes again whenever the client changes.
+
+    **B, move to Preact.** The client becomes one Vite build whose chunks the pages share: the runtime is 11 kB, a second page 23 kB where the Dioxus client fetches 748 kB, a build 2 to 4 s and 0.2 MB. React stays one config line away, from the same source, at about twice Preact's bytes. Cost: about 19,000 lines of Rust and 7,800 of their tests written again, the device cache and the parts left out here ported, Node where the client builds, and the wire's types checked only if TypeScript types are generated from `crates/symphony-api` and checked in the gate. The server, API, feed, board, style sheets and browser tests stay; the shell already loads a module per page kind, so a kind can move at a time.
+
+    **Why B.** Every first visit and every second page is several times lighter, a cold visit is usable sooner (0.6 to 0.9 of the Dioxus time at full speed, 0.4 for the board on a phone's screen with the CPU slowed four times, half the script time or less), and the build and the committed distribution shrink by an order of magnitude or more. With the CPU slowed four times, as on a phone, the JSX pages are quicker on a return visit too, a task's page opened from the board comes in half the time, and a feed update reaches its card sooner. Typing is a tie, scrolling a long document at full speed drops fewer frames, and the Preact board holds 2.0 MB of script memory after ten minutes of changes against the Dioxus board's 4.9 MB.
+
+    **The weakest point.** The rewrite: it is large, the client keeps changing meanwhile, and B loses the compiler's check of the wire unless generated types replace it. And at full speed the Dioxus client stays ahead in two places the port would have to catch up: a return visit to a small board or a task's page, by the device cache, and a card's move between columns, drawn a frame sooner.
+
+    **Timings on a busy machine.** Other agents built and tested throughout, the one-minute load between about 40 and 280 on 16 cores, half the runs between 90 and 150. The timings are paired rounds, Dioxus, React and Preact in turn, 15 of them a scenario, so the three sides shared the load; the analysis reports ratios, by batch of five rounds and the load each ran at, and calls undecided any ratio whose batches fall on both sides of 1. Bytes, decoded code and DOM counts do not move with load.
+
+    **Earlier verdicts checked.** The shared runtime between the Dioxus client's modules (approved, every page but home and the board) landed on main while this ran: the task pages and four other kinds are one program now, the board kept its own module. Read from main's build, it trims a task page with its timeline by about a fifth and the modules warmed at idle by a fifth to a half, and leaves the first visits where they were, so the figures above stand. Under B that work is replaced: Vite shares the runtime between chunks by itself. The desktop app's thin shell shows each server's own pages, so it takes whichever client the server serves; its own few screens are a native Dioxus app and need not change. The device cache (approved) would be ported under B. The first-visit cap stays as it is under either.
+
+    This card is the only change: nothing is migrated by it.
+
 ## Auto-approved: spot-check
 
 ### Releases
