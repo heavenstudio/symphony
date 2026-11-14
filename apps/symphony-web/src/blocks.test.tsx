@@ -585,7 +585,7 @@ describe("a thread", () => {
     blocks: [paragraph(words)],
   });
 
-  it("is one history of the threads beside each other, the owner's last one awaiting", () => {
+  it("is one history of the threads beside each other, said awaiting after it when the owner spoke last", () => {
     const blocks: Block[] = [
       { type: "thread", entries: [entry("agent", null, "Asked.")] },
       { type: "thread", entries: [entry("owner", null, "Warm?")] },
@@ -601,7 +601,7 @@ describe("a thread", () => {
       '<ul class="history"><li class="entry agent"><time>2026-11-14 08:32</time> ' +
         '<span class="entry-text"><p>Asked.</p></span></li><li class="entry owner">' +
         '<time>2026-11-14 08:32</time> <span class="entry-text"><p>Warm?</p></span></li>' +
-        '<p class="awaiting">Waiting for an answer…</p></ul><p>after</p>' +
+        '</ul><p class="awaiting">Waiting for an answer…</p><p>after</p>' +
         '<ul class="history"><li class="entry owner"><time>2026-11-14 08:32</time> ' +
         '<b class="entry-verdict">approved</b> <span class="entry-text"><p>Warm.</p></span>' +
         "</li></ul>",

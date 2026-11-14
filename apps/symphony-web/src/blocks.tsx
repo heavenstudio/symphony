@@ -755,35 +755,37 @@ function CellView({ cell }: { cell: Cell }) {
   );
 }
 
-/** A card's history: each entry's time, verdict and words, and whether the owner waits. */
+/** A card's history: each entry's time, verdict and words, then whether the owner waits. */
 function ThreadView({ entries }: { entries: ThreadEntry[] }) {
   const last = entries[entries.length - 1];
   const awaiting = last !== undefined && last.who === "owner" && last.verdict == null;
   return (
-    <ul className="history">
-      {entries.map((entry, at) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: an entry has no identity but its place
-        <li key={at} className={`entry ${entry.who}`}>
-          <NearViewport height={60}>
-            {entry.timestamp != null && (
-              <>
-                <time>{entry.timestamp}</time>{" "}
-              </>
-            )}
-            {entry.verdict != null && (
-              <>
-                <b className="entry-verdict">{entry.verdict}</b>{" "}
-              </>
-            )}
-            <span className="entry-text">
-              <BlocksView blocks={entry.blocks} />
-            </span>
-            {entry.who === "unknown" && <span role="alert">Unknown thread author</span>}
-          </NearViewport>
-        </li>
-      ))}
+    <>
+      <ul className="history">
+        {entries.map((entry, at) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: an entry has no identity but its place
+          <li key={at} className={`entry ${entry.who}`}>
+            <NearViewport height={60}>
+              {entry.timestamp != null && (
+                <>
+                  <time>{entry.timestamp}</time>{" "}
+                </>
+              )}
+              {entry.verdict != null && (
+                <>
+                  <b className="entry-verdict">{entry.verdict}</b>{" "}
+                </>
+              )}
+              <span className="entry-text">
+                <BlocksView blocks={entry.blocks} />
+              </span>
+              {entry.who === "unknown" && <span role="alert">Unknown thread author</span>}
+            </NearViewport>
+          </li>
+        ))}
+      </ul>
       {awaiting && <p className="awaiting">Waiting for an answer…</p>}
-    </ul>
+    </>
   );
 }
 
