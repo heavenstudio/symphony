@@ -297,17 +297,8 @@ fn a_plugins_process_ends_when_its_input_does_whatever_its_calls_are_doing() {
         .spawn()
         .unwrap();
     // A call that never returns in this test's time, then its input ends.
-    let hang = symphony_plugin::protocol::Render {
-        component: "slow".into(),
-        page: PageData {
-            root: "/r".into(),
-            doc_path: "docs/A.md".into(),
-            render: 0,
-            artifacts: "artifacts".into(),
-        },
-        argument: "hang".into(),
-        option: None,
-    };
+    let page = PageData::of(&Page::new(Path::new("/r"), "docs/A.md"));
+    let hang = symphony_plugin::protocol::Render::new("slow".into(), page, "hang".into(), None);
     let line = serde_json::to_string(&Envelope::<Request, ()>::asking(1, hang.into())).unwrap();
     let mut input = child.stdin.take().unwrap();
     // The call is read before the input's end, which the pipe gives after it.
