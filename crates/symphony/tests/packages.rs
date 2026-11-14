@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// The members crates.io gets, by package name: the plugin kit and the helpers.
 const PUBLISHED: [&str; 8] = [
@@ -30,8 +31,13 @@ fn workspace() -> PathBuf {
 }
 
 /// The workspace's members as `cargo metadata` reads them, without resolving their dependencies
-/// (`--no-deps`, so nothing is fetched).
-fn members() -> Vec<Value> {
+/// (`--no-deps`, so nothing is fetched): read once for every test here.
+fn members() -> &'static [Value] {
+    static MEMBERS: OnceLock<Vec<Value>> = OnceLock::new();
+    MEMBERS.get_or_init(read_members)
+}
+
+fn read_members() -> Vec<Value> {
     let out = Command::new(env!("CARGO"))
         .args([
             "metadata",
@@ -105,7 +111,17 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     if std::fs::read(here.join("LICENSE")).ok().as_deref() != Some(licence) {
         lacks.push("no LICENSE in the package holding the workspace's".to_owned());
     }
-    let keywords = package["keywords"].as_array().map_or(0, Vec::len);
+    let keywords: Vec<&str> = package["keywords"]
+        .as_array()
+        .map(|words| words.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    for keyword in keywords.iter().filter(|keyword| !keyword_shape(keyword)) {
+        lacks.push(format!(
+            "the keyword {keyword:?} is not one crates.io takes: at most 20 characters, ASCII \
+             letters, digits, `_`, `-` or `+`, a letter first"
+        ));
+    }
+    let keywords = keywords.len();
     if !(1..=5).contains(&keywords) {
         lacks.push(format!(
             "{keywords} `keywords`, where crates.io takes 1 to 5"
@@ -130,6 +146,19 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
         }
     }
     lacks
+}
+
+/// A keyword as crates.io takes one: at most 20 characters, ASCII letters, digits, `_`, `-` or `+`,
+/// and a letter first.
+fn keyword_shape(keyword: &str) -> bool {
+    keyword.len() <= 20
+        && keyword
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+        && keyword
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+'))
 }
 
 /// What a published package's dependencies would make crates.io refuse, each as a line: a git
@@ -233,4 +262,34 @@ fn the_kits_packages_carry_one_version() {
         1,
         "the kit's packages differ in version: {kit:?}"
     );
+}
+
+#[test]
+fn a_keyword_crates_io_refuses_is_told_by_its_shape() {
+    for taken in [
+        "symphony",
+        "json-schema",
+        "os_unix",
+        "c++",
+        "a",
+        "a2345678901234567890",
+    ] {
+        assert!(
+            keyword_shape(taken),
+            "{taken:?} is a keyword crates.io takes"
+        );
+    }
+    for refused in [
+        "",
+        "1password",
+        "-cli",
+        "über",
+        "two words",
+        "a23456789012345678901",
+    ] {
+        assert!(
+            !keyword_shape(refused),
+            "{refused:?} is a keyword crates.io refuses"
+        );
+    }
 }

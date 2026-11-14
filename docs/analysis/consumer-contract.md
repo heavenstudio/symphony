@@ -339,9 +339,10 @@ Under B, in the words RELEASES would then use:
 - **A release** is the machine's: one tag for the server, the board commands, the document
   command line and the client, installed on the machine by the update; its message names the
   protocol majors and minors it serves, the `tasks api` version and the board schema.
-- **A kit release** is a tag of its own (such as `kit-v1.4.0`), cut by the same run when the kit
-  changed, its number set by the semver check against the previous kit tag; each helper the same,
-  on its own line.
+- **A kit release** is a version of its own published on crates.io (such as `1.4.0` of the kit's
+  packages), by the same run when the kit changed, its number set by the semver check against the
+  previous published version; each helper the same, on its own line
+  ([where versions live](#open-choices)).
 - **The conciliation** is the contract checks above; no project's suite runs in the release.
 - **The refresh** installs the release on the machine; a project's pins are its own to move.
 - **A project still on a protocol major the release no longer serves** is named before the
@@ -356,7 +357,7 @@ Under B, in the words RELEASES would then use:
 | It can stay behind on | its plugin binary, while the machine speaks that protocol major; its `tasks api` and command clients, within their versions | A's, plus the kit's version, and each helper for as long as it likes | any package, within what the others' version ranges allow |
 | It cannot stay behind on | the server, the board commands, its board's schema, the client, the recipes | the same | the board's schema and the machine's server: a board writer of its own holds the schema, and the server is still one build |
 | Symphony keeps compatible | the protocol's minors and a kept major; `tasks api`; command names and outputs; settings keys | A's, plus the kit's and each helper's Rust names within a major | every package's public names within its major, the library's and the board's included |
-| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough | a registry, private or crates.io |
+| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough, though the owner chose crates.io ([below](#open-choices)) | a registry, private or crates.io |
 | The release judges | contract checks | contract checks and semver checks | semver checks of every package and their combinations; the project's suite or a matrix |
 | A break of a promised name shows | as a refused call or a default answer at run time | at the kit's or helper's semver check, at its task's gate | at each package's semver check |
 
