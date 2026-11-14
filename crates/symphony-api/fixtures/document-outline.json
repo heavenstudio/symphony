@@ -1,0 +1,20 @@
+{
+  "document": {
+    "version": 4182,
+    "path": "docs/DECISIONS.md",
+    "title": "Decisions",
+    "waiting": ["palette"],
+    "crumbs": [{"name": "docs", "href": "/docs/"}],
+    "headings": [{"level": 2, "anchor": "palette", "text": "Palette"}],
+    "sections": [
+      {"start": 1, "end": 3, "key": "intro", "hash": "0123456789abcdef", "part": 0, "blocks": []},
+      {"start": 5, "end": 12, "key": "card:palette", "hash": "fedcba9876543210", "part": 1, "blocks": []},
+      {"start": 14, "end": 15, "key": "lamps", "hash": "00112233aabbccdd", "part": 2, "blocks": [], "comparison": {"kind": "changed"}}
+    ],
+    "cards": [{"slug": "palette", "state": "pending", "text": "Choose the palette.", "group": "decide", "open": true}],
+    "threads": {},
+    "tasks": [{"slug": "design/palette", "title": "Pick the palette", "status": "ready"}]
+  },
+  "anchors": {"intro": [], "card:palette": ["palette"], "lamps": ["L14"]},
+  "thread_hashes": {"palette": "aabbccddeeff0011"}
+}

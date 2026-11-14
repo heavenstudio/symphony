@@ -261,24 +261,26 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
          there must be hovered, or where the pointer landed is unknown",
         "Should it land anywhere but where the aim tested, or where be unknown, or, for a click, \
          anything but the element (or its label) be on top there by then (a menu its hover \
-         opened), the step fails naming where the pointer landed or what the press would reach, \
-         and nothing is pressed",
+         opened; the browser's own hit confirms a label again), the step fails naming where the \
+         pointer landed or what the press would reach, and nothing is pressed",
         "the label of the control it is (a checkbox hidden in its label or under the label's styled track)",
-        "but on a link, an object or another control inside it (in a component's open shadow root \
-         too, and on what is slotted into one there)",
-        // What the page cannot see, it never takes as the label's; the browser's own hit confirms
-        // the rest, and what it misses it says.
-        "or on a custom element without an open shadow root, whose inside the page cannot see, as \
-         the label's activation clicks its control",
-        "The browser's own hit confirms a press through a label, so a control in a closed root on \
-         a built-in element, such as a span, makes it fail as covered (one around what is slotted \
-         into such a root goes unseen)",
+        // The point pressed is the one every hit test takes, the browser's own among them.
+        "aims at the middle of one of the element's line boxes, on the whole pixel of the page \
+         nearest it (where the browser's own hit test looks too)",
+        // Every shadow root, open or closed, and what is slotted into one: the browser's own hit
+        // confirms what the page cannot see.
+        "but on a link, an object or another control inside it (in a component's shadow root \
+         too, open or closed, and on what is slotted into one there), as the label's activation \
+         clicks its control",
+        "The browser's own hit, which sees into closed shadow roots and follows what is slotted \
+         into them, confirms a press through a label, so such a control makes it fail as covered",
         "stays covered (by its own ancestor too, painted over it), fails the step (naming what \
          covers it)",
         // A clip named only where the browser or the shape backs it, and no cause made up.
         "stays clipped, the browser finding it nowhere under its middle (naming the box whose \
          overflow or clip cuts it away there, or whose clip-path, an inset, circle, ellipse or \
-         polygon on a box nothing transforms, leaves its middle out), stays hidden (its \
+         polygon on its border box, in pixels, percentages or a calc() of the two, on a box \
+         nothing moves but across the page, leaves its middle out), stays hidden (its \
          visibility)",
         "takes no pointer at its middle, its own ancestor on top there (pointer-events: none, its \
          own clip or clip-path leaving its middle out, or a cause it does not name, as an SVG \
@@ -291,12 +293,20 @@ fn the_help_says_what_a_click_accepts_and_what_it_refuses() {
     ] {
         assert!(words.contains(said), "{said:?} not in the help: {words}");
     }
-    // Nor does it say what the aim no longer does, or promise every shadow root.
-    assert!(!words.contains("a wrapped inline's first line)"), "{words}");
-    assert!(
-        !words.contains("(in a component's shadow root too)"),
-        "{words}"
-    );
+    // Nor does it say what the aim no longer does: a custom element taken as the label's unseen,
+    // a slot in a closed root unseen, a clip-path claimed only on a box nothing transforms; nor
+    // what it never did, a rounded corner or another reference box read.
+    for gone in [
+        "a wrapped inline's first line)",
+        "or on a custom element without an open shadow root",
+        "goes unseen",
+        "on a box nothing transforms",
+        "(in a component's open shadow root too",
+        "its corners rounded or not",
+        "reference boxes",
+    ] {
+        assert!(!words.contains(gone), "{gone:?} still in the help: {words}");
+    }
 }
 
 #[test]
@@ -743,16 +753,19 @@ fn a_probe_reads_what_clips_the_element_through_its_containing_blocks() {
 fn a_probe_reaches_through_shadow_roots_and_takes_the_targets_own_label_as_its_activation_does() {
     let probe = probe("#a", Look::Now);
     // Through every open shadow root to the element really there, then up the flat tree, as the
-    // press travels, to the first interactive element, which, when a label, clicks its control; a
-    // custom element whose inside the page cannot see ends the walk with no label.
+    // press travels, to the first interactive element, which, when a label, clicks its control: a
+    // custom element whose inside the page cannot see is passed, and marked (`blind`), the
+    // browser's own hit confirming the press for it.
     in_order(
         &probe,
         &[
             "const inner = deep.shadowRoot.elementFromPoint(x, y);",
-            "while (first && !first.matches(INTERACTIVE) && !unseen(first)) first = flat(first);",
-            "via: first && first.localName === 'label' ? first.control : null",
+            "let first = deep, blind = false;",
+            "for (; first && !first.matches(INTERACTIVE); first = flat(first)) blind ||= unseen(first);",
+            "via: first && first.localName === 'label' ? first.control : null, blind};",
         ],
     );
+    assert!(!probe.contains("&& !unseen(first))"), "{probe}");
     for part in [
         "const up = e => e.parentElement || (e.parentNode instanceof ShadowRoot ? e.parentNode.host : null);",
         // A slotted node's slot comes before its parent, as in the flat tree.
@@ -796,7 +809,8 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
             // A cover in a shadow root is named in its host's; an ancestor painted over it covers it.
             ": !held || listed ? inside(p.deep)",
             ": shaped && shaped !== element ? {clipped: inside(shaped)}",
-            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && (alone(p.via) ?? inside(p.via))};",
+            // A label's control named only where the page saw the whole way to it.
+            ": {holder: named(p.at), why: shaped || clips.some(c => !c.by && away(c, x, y)) ? 'clip' : style.pointerEvents === 'none' ? 'none' : 'unnamed', target: page ? null : alone(p.at), page, labels: p.via && !p.blind && (alone(p.via) ?? inside(p.via))};",
         ],
     );
     // What is named in a shadow root is named in its outermost host's.
@@ -841,21 +855,31 @@ fn a_probe_says_why_the_element_misses_the_press_the_first_reason_that_holds() {
 }
 
 #[test]
-fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_a_box_nothing_around_it_transforms() {
+fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_a_box_nothing_around_it_turns() {
     let probe = probe("#a", Look::Now);
     for part in [
         // An HTML element's box, not inline, that neither it nor any box around it up the flat tree
-        // moves: a transform, any of the individual transforms, a motion path or a zoom, so a box
-        // mirrored or turned with its ancestor, its size kept, is never tested at the mirrored point.
-        "const moved = t => t.transform !== 'none' || ['scale', 'rotate', 'translate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';",
+        // moves otherwise than across the page: a transform but a translation in the page's plane
+        // (Chrome computes translateZ(0) and translate() to `matrix(1, 0, 0, 1, e, f)`), which the
+        // box's place already carries, a translate with a depth, any other individual transform, a
+        // motion path or a zoom, so a box mirrored or turned with its ancestor, its size kept, is
+        // never tested at the mirrored point.
+        "const moved = t => !/^(none|matrix\\(1, 0, 0, 1, [^,]+, [^,]+\\))$/.test(t.transform) || (t.translate || 'none').split(' ').length > 2 || ['scale', 'rotate', 'offsetPath'].some(p => (t[p] || 'none') !== 'none') || (t.zoom || '1') !== '1';",
         "const level = e => { for (let a = e; a; a = flat(a)) if (moved(getComputedStyle(a))) return false; return true; };",
         // Its layout size its drawn size too, and an inset, circle, ellipse or polygon on its
         // border box; anything else is never claimed.
         "const t = e instanceof HTMLElement ? getComputedStyle(e) : null;",
         "t.display !== 'inline' && level(e) ? /^(inset|circle|ellipse|polygon)\\((.*)\\)( border-box)?$/.exec(t.clipPath) : null;",
         "if (!m || Math.abs(b.width - e.offsetWidth) > 1 || Math.abs(b.height - e.offsetHeight) > 1) return false;",
-        // Lengths in pixels or percentages only: a calc() or a keyword claims nothing.
-        "const size = (v, basis) => /^-?\\d*\\.?\\d+px$/.test(v) ? parseFloat(v) : /^-?\\d*\\.?\\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN;",
+        // Lengths in pixels, percentages, or the calc() of the two Chrome computes every calc() of
+        // lengths and percentages to; a min(), a max() or a keyword claims nothing.
+        "const size = (v, basis) => { const c = /^calc\\((-?\\d*\\.?\\d+)% ([+-]) (\\d*\\.?\\d+)px\\)$/.exec(v); return c ? parseFloat(c[1]) / 100 * basis + parseFloat(c[2] + c[3]) : /^-?\\d*\\.?\\d+px$/.test(v) ? parseFloat(v) : /^-?\\d*\\.?\\d+%$/.test(v) ? parseFloat(v) / 100 * basis : NaN; };",
+        // Arguments split on the spaces outside parentheses, so a calc() is one.
+        "const parts = v => v.match(/(?:[^\\s(]+|\\([^()]*\\))+/g) ?? [];",
+        "const points = pairs.map(parts).map(",
+        "const sides = parts(m[2].split(' round ')[0]);",
+        "const words = form ? parts(form) : [];",
+        "const [cx, cy] = at ? parts(at).map((v, i) => size(v, i ? h : w)) : [w / 2, h / 2];",
         // An inset's rectangle, its rounded corners left out (they only cut more), empty when its
         // sides cross.
         "return r <= l || b0 <= t0 || px < l || px >= r || py < t0 || py >= b0;",
@@ -867,9 +891,33 @@ fn a_probe_claims_a_clip_path_only_for_a_basic_shape_on_a_box_nothing_around_it_
     ] {
         assert!(probe.contains(part), "no {part:?} in {probe}");
     }
-    // Not the box's own transform alone, which a mirrored or turned ancestor slips past.
+    // Not the box's own transform alone, which a mirrored or turned ancestor slips past, nor any
+    // transform but a translation, nor a split that cuts a calc() in three.
+    for gone in [
+        "t.transform === 'none' && (t.scale",
+        "const moved = t => t.transform !== 'none'",
+        ".split(' round ')[0].split(' ')",
+        "pair.split(' ')",
+    ] {
+        assert!(!probe.contains(gone), "{gone:?} in {probe}");
+    }
+}
+
+#[test]
+fn a_probe_aims_at_a_whole_pixel_of_the_page_inside_the_box_nearest_its_middle() {
+    let probe = probe("#a", Look::Now);
+    // On each axis, the whole pixel of the document nearest the middle, while inside the box; else
+    // the box's first whole pixel, while inside it; else the nearest, a box narrower than a pixel
+    // between two. Back in the viewport's coordinates by the page's scroll.
+    for part in [
+        "const whole = (from, size, scroll) => { const start = from + scroll, end = start + size, near = Math.round(start + size / 2); return (near >= start && near < end ? near : Math.ceil(start) < end ? Math.ceil(start) : near) - scroll; };",
+        "const middle = r => [whole(r.x, r.width, scrollX), whole(r.y, r.height, scrollY)];",
+        "point: [x, y], view: ",
+    ] {
+        assert!(probe.contains(part), "no {part:?} in {probe}");
+    }
     assert!(
-        !probe.contains("t.transform === 'none' && (t.scale"),
+        !probe.contains("const middle = r => [r.x + r.width / 2, r.y + r.height / 2];"),
         "{probe}"
     );
 }
@@ -885,11 +933,24 @@ fn a_press_through_a_label_is_confirmed_by_the_node_the_browser_finds_there() {
             "for (let e = this; e; e = flat(e)) {",
             "if (e === element) return true;",
             "if (e.nodeType === 1 && e.matches(interactive)) return e.localName === 'label' && e.control === element ? true : inside(found);",
+            // A node whose parent may hold a closed shadow root the page cannot see, and which no
+            // slot the page sees holds: itself, for the browser to name its slot; never twice.
+            "const p = e.parentElement;",
+            "if (e !== known && !e.assignedSlot && p instanceof HTMLElement && !p.shadowRoot && hosts.test(p.localName)) return e;",
+            "return found ? inside(found) : null;",
         ],
     );
-    // A text node there is named by the element it lies in.
+    // A text node there, the browser's hit, is named by the element it lies in.
     assert!(
-        CONFIRM.contains("const found = this.nodeType === 1 ? this : flat(this);"),
+        CONFIRM.contains("const found = hit.nodeType === 1 ? hit : flat(hit);"),
+        "{CONFIRM}"
+    );
+    // The elements a closed shadow root can be attached to: a custom element's name, or one of the
+    // built-in elements the DOM lets hold one.
+    assert!(
+        CONFIRM.contains(
+            "const hosts = /^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$|-/;"
+        ),
         "{CONFIRM}"
     );
     // The names and the walk are the probe's own.
@@ -911,11 +972,20 @@ fn a_press_through_a_label_is_confirmed_by_the_node_the_browser_finds_there() {
             Hit::Missed(Miss::Covered("what the browser found there".into()))
         );
     }
-    // The protocol takes a point by the whole CSS pixel it lies in, in the document's coordinates:
-    // the viewport's middle moved by the page's scroll, read in the same frame.
+    // The protocol takes a point by the whole CSS pixel nearest it, in the document's coordinates:
+    // the point aimed at, a whole pixel of the document already less what floating point adds,
+    // moved by the page's scroll, read in the same frame.
     assert_eq!(
-        [pixel(12.5), pixel(8.0), pixel(0.99), pixel(-0.5)],
-        [12, 8, 0, -1]
+        [
+            pixel(12.0),
+            pixel(12.499),
+            pixel(30.999_999_999),
+            pixel(8.0),
+            pixel(0.4),
+            pixel(-0.4),
+            pixel(-0.6)
+        ],
+        [12, 12, 31, 8, 0, 0, -1]
     );
     let scrolled = Place {
         scroll: (30.0, 1200.0),
@@ -924,6 +994,70 @@ fn a_press_through_a_label_is_confirmed_by_the_node_the_browser_finds_there() {
     assert_eq!(scrolled.middle(), (60.0, 40.0));
     assert_eq!(scrolled.in_document(), (90.0, 1240.0));
     assert_eq!(place(10.0, 20.0, 100.0, 40.0).in_document(), (60.0, 40.0));
+    // The point pressed, tested and confirmed is the one the probe aimed at, not the box's middle.
+    let aimed = Place {
+        point: (61.0, 40.0),
+        scroll: (0.25, 0.0),
+        ..place(10.25, 20.0, 100.0, 40.0)
+    };
+    assert_eq!(aimed.middle(), (61.0, 40.0));
+    assert_eq!(aimed.in_document(), (61.25, 40.0));
+    assert_eq!(aimed.on_screen(), (61.0, 40.0));
+}
+
+#[test]
+fn a_walk_through_a_label_answers_or_asks_the_browser_for_a_nodes_slot() {
+    // A node, by its object's id, is one to ask about; any other value is the answer, a string, a
+    // boolean, null (a remote null is an object of subtype null) or something not understood.
+    assert_eq!(
+        Walk::read(
+            &json!({"type": "object", "subtype": "node", "className": "HTMLSpanElement", "objectId": "7.1.4"})
+        ),
+        Walk::Ask(json!("7.1.4"))
+    );
+    for (result, answer) in [
+        (json!({"type": "boolean", "value": true}), json!(true)),
+        (
+            json!({"type": "string", "value": "button in span#host's shadow root"}),
+            json!("button in span#host's shadow root"),
+        ),
+        (
+            json!({"type": "object", "subtype": "null", "value": null}),
+            json!(null),
+        ),
+        // An object that is no node, or a node without its id, answers nothing understood.
+        (
+            json!({"type": "object", "className": "Object", "objectId": "7.1.5"}),
+            json!(null),
+        ),
+        (json!({"type": "object", "subtype": "node"}), json!(null)),
+        (json!({"type": "undefined"}), json!(null)),
+        (json!(null), json!(null)),
+    ] {
+        assert_eq!(Walk::read(&result), Walk::Answer(answer), "{result}");
+    }
+    // The slot a node is assigned to, in a closed root too, by its backend id; none without one.
+    assert_eq!(
+        assigned(
+            &json!({"node": {"nodeName": "SPAN", "assignedSlot": {"backendNodeId": 41, "nodeType": 1, "nodeName": "SLOT"}}})
+        ),
+        Some(json!(41))
+    );
+    for described in [
+        json!({"node": {"nodeName": "SPAN"}}),
+        json!({"node": {"assignedSlot": null}}),
+        json!({"node": {"assignedSlot": {"backendNodeId": "41"}}}),
+        json!({"node": {"assignedSlot": {"backendNodeId": -1}}}),
+        json!(null),
+    ] {
+        assert_eq!(assigned(&described), None, "{described}");
+    }
+    // A remote object by its id, as `DOM.resolveNode` answers it.
+    assert_eq!(
+        object(&json!({"object": {"type": "object", "subtype": "node", "objectId": "9.2.1"}})),
+        json!("9.2.1")
+    );
+    assert_eq!(object(&json!({})), Value::Null);
 }
 
 #[test]
@@ -1006,7 +1140,8 @@ fn the_pointer_is_found_by_the_moves_own_report_and_set_beside_the_hit_where_the
     );
     for part in [
         // Taken, else what is there by its name, else nothing; the element gone takes nothing.
-        "const said = p => !p.at ? null : element && takes(p) ? true : inside(p.deep);",
+        // Through its label, as the probe says it, for the browser's own hit to confirm.
+        "const said = p => !p.at ? null : element && takes(p) ? element.contains(p.at) || {label: true} : inside(p.deep);",
         "return {gone: !element || !element.isConnected,",
         "pointer: record ? {x: record.x, y: record.y, on: record.at ? said(reached(outer(record.at), \
          record.at)) : null} : null,",
@@ -1042,7 +1177,7 @@ fn arrived(pointer: Option<Pointer>, hit: Reached, hovered: bool) -> Arrival {
 
 #[test]
 fn an_arrival_reads_the_moves_report_the_hit_and_its_hover() {
-    use Reached::{Nothing, Other, Target};
+    use Reached::{Label, Nothing, Other, Target};
     assert_eq!(
         Arrival::read(&json!({
             "gone": false,
@@ -1059,12 +1194,20 @@ fn an_arrival_reads_the_moves_report_the_hit_and_its_hover() {
     for (on, read) in [
         (json!("html"), Other("html".into())),
         (json!(null), Nothing),
+        // Through its label, for the browser's own hit to confirm; anything else under `label` is
+        // not.
+        (json!({"label": true}), Label),
+        (json!({"label": 1}), Nothing),
     ] {
         assert_eq!(
             Arrival::read(&json!({"pointer": {"x": 1, "y": 2, "on": on}})).pointer,
             landed(1.0, 2.0, read)
         );
     }
+    assert_eq!(
+        Arrival::read(&json!({"hit": {"label": true}, "hovered": true})).hit,
+        Label
+    );
     assert_eq!(
         Arrival::read(&json!({"gone": true, "pointer": null, "hit": null, "hovered": false})),
         Arrival {
@@ -1238,6 +1381,34 @@ fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
             "{menu:?}"
         );
     }
+    // A press through its label the browser's own hit has not confirmed: a hover goes on, a click
+    // does not, and says so; the label is named as the element itself is, where the pointer is
+    // unknown or strayed.
+    let unconfirmed = arrived(
+        landed(aimed.0, aimed.1, Reached::Label),
+        Reached::Label,
+        true,
+    );
+    assert_eq!(unconfirmed.refused(aimed, false), None);
+    assert_eq!(
+        unconfirmed.refused(aimed, true).as_deref(),
+        Some(
+            ": the browser's own hit did not confirm the press through its label at its middle \
+             once the pointer reached it; nothing was pressed"
+        )
+    );
+    assert!(
+        arrived(None, Reached::Label, false)
+            .refused(aimed, true)
+            .is_some_and(|why| why.contains("and it, found there, is not hovered"))
+    );
+    assert!(
+        arrived(landed(10.0, 10.0, Reached::Label), Target, true)
+            .refused(aimed, true)
+            .is_some_and(
+                |why| why.starts_with(": the pointer landed at (10, 10) in the page, on it,")
+            )
+    );
     // No element there at all any more: said so, never where the press would land.
     let empty = arrived(landed(aimed.0, aimed.1, Nothing), Nothing, false);
     assert_eq!(empty.refused(aimed, false), None);
@@ -1272,6 +1443,45 @@ fn a_click_or_a_hover_goes_on_only_with_the_pointer_where_the_aim_tested() {
             .refused(aimed, true)
             .is_some_and(|why| why.starts_with(": the pointer landed at (10, 10) in the page"))
     );
+}
+
+#[test]
+fn a_press_through_a_label_on_arrival_is_what_the_browsers_own_hit_confirmed() {
+    // Confirmed: the element; covered: what the browser found there; anything else stays
+    // unconfirmed, and a click on it fails.
+    assert_eq!(Reached::confirmed(Hit::Target), Reached::Target);
+    assert_eq!(
+        Reached::confirmed(Hit::Missed(Miss::Covered(
+            "button#closed-button in x-closed#host's shadow root".into()
+        ))),
+        Reached::Other("button#closed-button in x-closed#host's shadow root".into())
+    );
+    for unconfirmed in [
+        Hit::Label,
+        Hit::Missed(Miss::Nothing),
+        Hit::Missed(Miss::Hidden("hidden".into())),
+    ] {
+        assert_eq!(Reached::confirmed(unconfirmed), Reached::Label);
+    }
+    // As CONFIRM answers it, through the walk's answer.
+    for (answer, reached) in [
+        (json!(true), Reached::Target),
+        (
+            json!("button in span#host's shadow root"),
+            Reached::Other("button in span#host's shadow root".into()),
+        ),
+        (
+            json!(null),
+            Reached::Other("what the browser found there".into()),
+        ),
+    ] {
+        assert_eq!(
+            Reached::confirmed(Hit::confirmed(&answer)),
+            reached,
+            "{answer}"
+        );
+    }
+    assert_eq!(Reached::Label.said(), "it");
 }
 
 #[test]
@@ -1354,13 +1564,15 @@ fn a_probe_names_an_element_by_a_selector_that_finds_it_alone() {
     );
 }
 
-/// A box at `x`, `y`, `width` by `height` in a 1440x900 viewport, on top at its middle.
+/// A box at `x`, `y`, `width` by `height` in a 1440x900 viewport, on top at its middle, aimed at
+/// there.
 fn place(x: f64, y: f64, width: f64, height: f64) -> Place {
     Place {
         x,
         y,
         width,
         height,
+        point: (x + width / 2.0, y + height / 2.0),
         view: view(0.0, 0.0, 1440.0, 900.0),
         scroll: (0.0, 0.0),
         hit: Hit::Target,
@@ -1410,20 +1622,30 @@ fn holder(name: &str, why: Why) -> Holder {
 
 #[test]
 fn a_probe_answers_a_place_nothing_yet_or_no_selector() {
-    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "view": [0, 2193.5, 390, 844], "scroll": [0, 640.5], "hit": true});
+    let found = json!({"x": 10.5, "y": 20.0, "width": 100.0, "height": 22.0, "point": [60, 31], "view": [0, 2193.5, 390, 844], "scroll": [0, 640.5], "hit": true});
+    // The point it aims at is the one the probe tested, not the box's middle worked out again.
     assert_eq!(
         Place::read("#a", &found),
         Ok(Some(Place {
+            point: (60.0, 31.0),
             view: view(0.0, 2193.5, 390.0, 844.0),
             scroll: (0.0, 640.5),
             ..place(10.5, 20.0, 100.0, 22.0)
         }))
     );
-    // A view short of its four edges is no place: the old two-number view among them.
-    for short in [json!([390, 844]), json!([0, 0, 390]), json!(null)] {
+    // A view short of its four edges is no place: the old two-number view among them; nor is a
+    // point short of its two numbers.
+    for (key, short) in [
+        ("view", json!([390, 844])),
+        ("view", json!([0, 0, 390])),
+        ("view", json!(null)),
+        ("point", json!([60])),
+        ("point", json!(["60", 31])),
+        ("point", json!(null)),
+    ] {
         let mut read = found.clone();
-        read["view"] = short;
-        assert_eq!(Place::read("#a", &read), Ok(None));
+        read[key] = short;
+        assert_eq!(Place::read("#a", &read), Ok(None), "{read}");
     }
     let hit = |said: Value| {
         let mut read = found.clone();

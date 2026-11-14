@@ -2,7 +2,8 @@
 //! format and project, another format clears it, and the approved caps, the age rule and the
 //! order decide what goes: the tasks opened last, the documents visited most
 //! (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board task
-//! perf/client-cache/build). The page loads the store alone,
+//! perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a prefetch and
+//! naming its tag, keeping what it is sent unvisited. The page loads the store alone,
 //! so no release build is needed. The page's clock is set by each step (`t.at`), and V8's precise
 //! coverage of the store is reported once every case has run.
 
@@ -176,6 +177,7 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
         chrome.wait_for("window.symphonyCache && window.t", crate::SHOWN),
         "the store never loaded"
     );
+    nothing_is_read_ahead_before_the_page_names_its_format(&mut chrome);
     reads_come_back_under_their_format_and_project(&mut chrome);
     sizes_add_up_and_forgetting_drops_the_item_whole(&mut chrome);
     counts_are_capped_by_kind_and_project(&mut chrome);
@@ -184,6 +186,7 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
     often_visited_pages_outlast_lately_visited_ones(&mut chrome);
     entrypoints_stay_while_the_project_has_room(&mut chrome);
     pages_read_ahead_go_before_visited_ones(&mut chrome);
+    reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(&mut chrome);
     a_page_ranks_the_same_whether_kept_or_visited_first(&mut chrome);
     the_origin_drops_the_item_used_longest_ago(&mut chrome);
     an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(&mut chrome);
@@ -602,19 +605,119 @@ fn pages_read_ahead_go_before_visited_ones(chrome: &mut Chrome) {
         ),
         json!(false)
     );
-    // Opened, a page read ahead counts as visited; reading a visited page ahead keeps it visited.
+    // Opened, a page read ahead counts as visited, and a read ahead keeps nothing more of it: what
+    // the visit keeps stands.
     fresh(chrome, 0);
     let said = run(
         chrome,
         r#"
         await C.keep(1, "alpha", "task:a", "task", "page", "", {}, 10, true);
         await C.visit(1, "alpha", "task:a", "task", false);
-        await C.keep(1, "alpha", "task:a", "task", "history", "", {}, 10, true);
+        const kept = await C.keep(1, "alpha", "task:a", "task", "history", "", {}, 10, true);
         const record = (await t.items())["alpha task:a"];
-        return { visited: record.visited, score: record.score, size: record.size };
+        return { kept, visited: record.visited, score: record.score, size: record.size, parts: await t.parts() };
         "#,
     );
-    assert_eq!(said, json!({"visited": true, "score": 1, "size": 20}));
+    assert_eq!(
+        said,
+        json!({"kept": true, "visited": true, "score": 1, "size": 10, "parts": ["alpha task:a page"]})
+    );
+}
+
+/// The page's `fetch` for [`reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited`]:
+/// each read it is asked, `[url, priority, cache, headers]`, in `asked`, answered by `answers`.
+const AHEAD_FETCH: &str = r#"
+    const asked = [];
+    const json = (value, tag) => new Response(JSON.stringify(value), { status: 200, headers: { ETag: tag } });
+    const answers = {
+        "/page": () => json({ title: "A" }, 'W/"p1"'),
+        "/thread": () => new Response(null, { status: 304 }),
+        "/broken": () => { throw new TypeError("offline"); },
+        "/text": () => new Response("not JSON", { status: 200 }),
+        "/gone": () => new Response("{}", { status: 404 }),
+        // The page is opened while its read ahead is on the way.
+        "/race": async () => { await C.visit(1, "alpha", "task:d", "task", false); return json({ late: true }, 'W/"d"'); },
+    };
+    const fetch = (url, options) => {
+        asked.push([url, options.priority, options.cache, options.headers]);
+        return Promise.resolve().then(() => answers[url]());
+    };
+"#;
+
+/// Before the page's own code has named its format, a read ahead reads nothing.
+fn nothing_is_read_ahead_before_the_page_names_its_format(chrome: &mut Chrome) {
+    let said = run(
+        chrome,
+        &format!(
+            r#"{AHEAD_FETCH}
+            await C.ahead(fetch, "alpha", "task:a", "task", [["page", "/page"]]);
+            return asked;
+            "#
+        ),
+    );
+    assert_eq!(said, json!([]));
+}
+
+/// A read ahead (`ahead`) asks each read with the page's `fetch` at the lowest priority, past the
+/// HTTP cache, marked as a prefetch and naming the tag kept for its part; a `200` is kept
+/// unvisited, and a `304`, a failure, a refusal or an answer that is no JSON keeps nothing new and
+/// stops none of the reads after it. An item a visit kept is not read, and one visited while its
+/// read was on the way keeps nothing of it.
+fn reads_ahead_ask_low_marked_and_conditional_and_keep_unvisited(chrome: &mut Chrome) {
+    fresh(chrome, 1_000);
+    let said = run(
+        chrome,
+        &format!(
+            r#"{AHEAD_FETCH}
+            await C.keep(1, "alpha", "task:a", "task", "thread", 'W/"t0"', {{ old: true }}, undefined, true);
+            await C.ahead(fetch, "alpha", "task:a", "task", [["page", "/page"], ["thread", "/thread"]]);
+            const items = await t.items();
+            return {{
+                asked,
+                page: await C.read(1, "alpha", "task:a", "page"),
+                thread: (await C.read(1, "alpha", "task:a", "thread"))?.value,
+                visited: items["alpha task:a"].visited,
+            }};
+            "#
+        ),
+    );
+    assert_eq!(
+        said,
+        json!({
+            "asked": [
+                ["/page", "low", "no-store", {"Purpose": "prefetch"}],
+                ["/thread", "low", "no-store", {"Purpose": "prefetch", "If-None-Match": "W/\"t0\""}],
+            ],
+            "page": {"value": {"title": "A"}, "etag": "W/\"p1\"", "saved": 1000},
+            "thread": {"old": true},
+            "visited": false,
+        })
+    );
+    let said = run(
+        chrome,
+        &format!(
+            r#"{AHEAD_FETCH}
+            await C.ahead(fetch, "alpha", "task:b", "task", [["page", "/broken"], ["thread", "/text"], ["offer", "/gone"]]);
+            await C.visit(1, "alpha", "task:c", "task", false);
+            await C.ahead(fetch, "alpha", "task:c", "task", [["page", "/page"]]);
+            await C.ahead(fetch, "alpha", "task:d", "task", [["page", "/race"]]);
+            const items = await t.items();
+            return {{
+                asked: asked.map(([url]) => url),
+                kept: await t.kept(),
+                race: [items["alpha task:d"].visited, await C.read(1, "alpha", "task:d", "page")],
+            }};
+            "#
+        ),
+    );
+    assert_eq!(
+        said,
+        json!({
+            "asked": ["/broken", "/text", "/gone", "/race"],
+            "kept": ["alpha task:a", "alpha task:c", "alpha task:d"],
+            "race": [true, null],
+        })
+    );
 }
 
 /// Open the new page `KIND:new` at `at`: its visit and its first keep, in the order `steps` names.
@@ -984,7 +1087,8 @@ fn report(ran: &[bool]) {
     );
     for name in [
         "read:",
-        "keep:",
+        "function keep(",
+        "ahead:",
         "visit:",
         "forget:",
         "function plan(",

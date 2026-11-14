@@ -181,6 +181,7 @@ pub(super) fn json_reads(f: &Fixture) {
     let reads = [
         DOCUMENT.to_string(),
         format!("{DOCUMENT}&view=outline"),
+        format!("{DOCUMENT}&view=first"),
         format!("{SCOPE}{DOCUMENT}"),
         "/api/folder?path=docs/".into(),
         format!("/api/section?path=docs/TOPIC.md&format=blocks&keys={keys}"),
@@ -269,6 +270,7 @@ pub(super) fn json_reads(f: &Fixture) {
     let documents: Vec<(String, Response)> = [
         DOCUMENT.to_string(),
         format!("{DOCUMENT}&view=outline"),
+        format!("{DOCUMENT}&view=first"),
         format!("/api/section?path=docs/TOPIC.md&format=blocks&keys={keys}"),
     ]
     .into_iter()
@@ -329,10 +331,33 @@ fn cursor_is_not_content(f: &Fixture, documents: &[(String, Response)], board: &
         let json = read.json();
         json.get("document").unwrap_or(&json)["version"].clone()
     };
+    // The cursor a read was taken at, as its header names it: on a `304`, which has no body, the
+    // one place it is.
+    let named = |read: &Response| {
+        read.header(symphony_api::VERSION_HEADER)
+            .parse::<u64>()
+            .unwrap_or_else(|why| panic!("{why}: {read:?}"))
+    };
     for (route, before) in documents {
+        assert_eq!(serde_json::json!(named(before)), cursor(before), "{route}");
         let now = get(f, route, &[]);
         assert_ne!(cursor(&now), cursor(before), "{route}: the cursor moved");
+        assert_eq!(serde_json::json!(named(&now)), cursor(&now), "{route}");
         assert_eq!(now.header("etag"), before.header("etag"), "{route}");
         unchanged(f, "GET", route, before.header("etag"));
+        let cached = f
+            .request(
+                "GET",
+                route,
+                &[("If-None-Match", before.header("etag"))],
+                &[],
+            )
+            .status(304);
+        assert!(
+            named(&cached) >= cursor(&now).as_u64().unwrap(),
+            "{route}: a 304 names the cursor it was read at: {cached:?}"
+        );
     }
+    // Only a document's reads name a cursor apart.
+    assert!(!board.headers.contains_key(symphony_api::VERSION_HEADER));
 }

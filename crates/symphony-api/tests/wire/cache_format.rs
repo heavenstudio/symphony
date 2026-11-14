@@ -3,10 +3,10 @@
 //! with a new `CACHE_FORMAT`, so no client reads a kept value of a shape it no longer writes.
 
 use serde_json::{Value, json};
-use symphony_api::{Board, CACHE_FORMAT};
+use symphony_api::{Board, CACHE_FORMAT, DocumentOutline, DocumentSections, Folder};
 
 /// The format number, and the fingerprint of the kept shapes it was given for.
-const FORMATS: (u32, &str) = (1, "286a3809aef6e5b5");
+const FORMATS: (u32, &str) = (2, "defc018899698268");
 
 /// A value's shape: its keys and the kinds of its values, not the values themselves, so a
 /// fixture's text can change without moving the format. Its keys go in order whatever order the
@@ -53,6 +53,14 @@ fn kept() -> Value {
             shape(&super::round_trip::<Board>("board.json").0),
             shape(&super::round_trip::<Board>("board-empty.json").0),
         ],
+        // A document's outline, and its sections' bodies with their cards and threads, which the
+        // client keeps in a body of its own (`cache::document::KeptBody`, whose own keys its tests
+        // pin); an entrypoint's folder page.
+        "document": [
+            shape(&super::round_trip::<DocumentOutline>("document-outline.json").0),
+            shape(&super::round_trip::<DocumentSections>("document-sections.json").0),
+            shape(&super::round_trip::<Folder>("folder.json").0),
+        ],
     })
 }
 
@@ -65,6 +73,24 @@ fn the_cache_format_moves_with_the_shapes_the_client_keeps() {
         "a kept shape changed: give symphony_api::CACHE_FORMAT the next number and FORMATS \
          this fingerprint, {now}"
     );
+}
+
+/// What a document keeps is what its types write: each fixture reads and writes back as itself.
+#[test]
+fn a_documents_kept_reads_write_back_as_they_were_read() {
+    for (name, (written, read)) in [
+        (
+            "document-outline.json",
+            super::round_trip::<DocumentOutline>("document-outline.json"),
+        ),
+        (
+            "document-sections.json",
+            super::round_trip::<DocumentSections>("document-sections.json"),
+        ),
+        ("folder.json", super::round_trip::<Folder>("folder.json")),
+    ] {
+        assert_eq!(written, read, "{name}");
+    }
 }
 
 #[test]

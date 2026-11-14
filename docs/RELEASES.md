@@ -25,6 +25,47 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
   commit.
 
+## Packages on crates.io
+
+The plugin kit, the helpers and the app's wire types a project links are made to be published on
+crates.io, each by its version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
+crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-versioning)).
+
+- **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
+  ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0.
+- **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
+  `repository-read`, each on a version line of its own from 1.0.0.
+- **The app's wire types,** `symphony-api`, at 0.1.0: they move with the server and the client, so
+  their version promises no name.
+- **The rest** (`symphony`, `symphony-board`, `symphony-server`, `chrome-devtools`, `symphony-ui`
+  and `test-time`) keep the workspace's `publish = false`.
+
+A published package's manifest says `publish = true` with a description, the repository, a readme of
+its own, keywords, categories and an `include` list (its sources, readme and LICENSE: no `tests/`
+folder or fixtures). Its LICENSE is a copy of the root's, never a link, which the client's release
+inputs refuse (`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with
+no link into this repository, which is private. It names a published sibling by `path` and
+`version`, and an unpublished one only as a development dependency, by `path` alone, which
+publishing drops. `crates/symphony/tests/packages.rs` holds which members are published and that
+each carries all of this.
+
+A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
+publishes yet. The first publication is the owner's act, or runs on the owner's word, with the
+owner's crates.io token in the owner's environment; no agent logs in or reads a token. It waits on
+one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each manifest
+names this repository as its `repository`, which answers 404 to anyone but the owner while the
+repository is private, so either the repository is made public first or the packages are published
+with no `repository` line. Up to then, the packages are proven by `cargo publish --dry-run` naming
+the nine together, which packages them in dependency order and builds each against the others as
+packaged, before any is on crates.io.
+
+Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
+consuming project names each package with `branch = "main"` and its `Cargo.lock` binds a commit of
+main, which [the refresh](#the-refresh) moves to a release tag once there is one. Even once the kit
+and the helpers are published, it keeps that pin until the library, the board and the server are
+published too: a kit from crates.io beside a library from Git would be two copies of the kit, whose
+types do not match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
+
 ## The release run
 
 `just release` (`symphony-build release`, `crates/symphony/src/release.rs`) cuts the releases, and

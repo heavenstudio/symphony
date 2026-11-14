@@ -908,8 +908,17 @@ const POINTED: &str = r#"<script>
 /// root's button, and one under a closed shadow root of decoration only; and an icon with
 /// `pointer-events: none` slotted into a component's shadow label, whose control is a checkbox in
 /// that shadow root. Then, each hidden in its label: one under a button in a closed shadow root on
-/// a plain span, and one under a closed shadow root of decoration only on a plain span.
+/// a plain span, and one under a closed shadow root of decoration only on a plain span. Then, each
+/// hidden in its label: one under a span slotted into a button in a closed shadow root on a plain
+/// span, and one under a span slotted into a button in a component's closed shadow root; one under
+/// a custom element never defined, and one under a defined custom element with no shadow root.
+/// Then one hidden in its label under a track twenty plain spans deep, no shadow root anywhere.
 fn labels() -> Vec<u8> {
+    let deep = format!(
+        r#"{}<span id="deep-track" class="track"></span>{}"#,
+        "<span>".repeat(20),
+        "</span>".repeat(20)
+    );
     format!(
         r##"<!doctype html>
 <meta charset="utf-8">
@@ -937,6 +946,11 @@ fn labels() -> Vec<u8> {
 <p><x-check id="check-host"><svg id="checkmark" width="24" height="24" style="pointer-events: none"><rect width="24" height="24" fill="#a0a"/></svg></x-check> a mark in a component's label</p>
 <p><label class="toggle"><input type="checkbox" id="spanned" class="hidden"><span id="span-host"></span> a closed root's button on a span, over it</label></p>
 <p><label class="toggle"><input type="checkbox" id="plain" class="hidden"><span id="plain-host"></span> a closed root's decoration on a span, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="slot-spanned" class="hidden"><span id="slot-span-host"><span id="slot-span-track" class="track"></span></span> a span slotted into a closed root's button on a span, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="slot-closed" class="hidden"><x-closed-wrap id="closed-wrap"><span id="closed-slotted" class="track"></span></x-closed-wrap> a span slotted into a component's closed button, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="undefined" class="hidden"><x-undefined id="undefined-host" class="track"></x-undefined> a custom element never defined, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="light" class="hidden"><x-light id="light-host" class="track"></x-light> a custom element in the light, over it</label></p>
+<p><label class="toggle"><input type="checkbox" id="deep" class="hidden">{deep} a track deep in plain spans, over it</label></p>
 <script>
   const component = (name, mode, html) => customElements.define(name, class extends HTMLElement {{
     constructor() {{ super(); this.attachShadow({{mode}}).innerHTML = html; }}
@@ -949,6 +963,10 @@ fn labels() -> Vec<u8> {
   component('x-check', 'open', '<label id="shadow-label"><input type="checkbox" id="shadow-check"><slot></slot></label>');
   document.getElementById('span-host').attachShadow({{mode: 'closed'}}).innerHTML = `<button type="button" style="${{track}}"></button>`;
   document.getElementById('plain-host').attachShadow({{mode: 'closed'}}).innerHTML = `<span style="${{track}}; background: #bbb"></span>`;
+  const slotted = '<button type="button" style="padding: 0; border: 0"><slot></slot></button>';
+  document.getElementById('slot-span-host').attachShadow({{mode: 'closed'}}).innerHTML = slotted;
+  component('x-closed-wrap', 'closed', slotted);
+  customElements.define('x-light', class extends HTMLElement {{}});
 </script>
 {POINTED}"##
     )
@@ -1052,14 +1070,15 @@ fn a_click_on_a_checkbox_under_a_shadow_roots_button_or_an_object_in_its_label_s
 fn a_click_on_a_checkbox_under_what_is_slotted_into_a_shadow_button_or_a_closed_root_stays_covered()
 {
     // A press on the span reaches the shadow button the span is slotted into, as the press travels
-    // the flat tree, so the label never activates. Inside a custom element's closed shadow root the
-    // page cannot see whether a control takes the press, so it is never taken as the label's: a
-    // button there, or only decoration. On a plain span the browser's own hit finds the button in
-    // its closed root, named in its host's.
+    // the flat tree, so the label never activates. The browser's own hit finds a button in a closed
+    // shadow root, a component's or a plain span's, named in its host's.
     for (name, css, cover) in [
         ("label-slotted", "#slotted", "span#slotted-span.track"),
-        ("label-closed", "#closed", "x-closed#closed-host"),
-        ("label-closed-deco", "#adorned", "x-closed-deco#deco-host"),
+        (
+            "label-closed",
+            "#closed",
+            "button#closed-button in x-closed#closed-host's shadow root",
+        ),
         (
             "label-closed-span",
             "#spanned",
@@ -1074,6 +1093,109 @@ fn a_click_on_a_checkbox_under_what_is_slotted_into_a_shadow_button_or_a_closed_
             return;
         }
     }
+}
+
+#[test]
+fn a_click_on_a_checkbox_under_a_span_slotted_into_a_closed_roots_button_stays_covered() {
+    // The page cannot see the slot a closed shadow root assigns the span to, so it takes the press
+    // as the label's; the browser names the slot, and the walk up from it finds the button the
+    // press reaches, which never activates the label. On a plain span, or on a component.
+    for (name, css, cover) in [
+        (
+            "label-slot-span",
+            "#slot-spanned",
+            "span#slot-span-track.track",
+        ),
+        (
+            "label-slot-closed",
+            "#slot-closed",
+            "span#closed-slotted.track",
+        ),
+    ] {
+        let message = format!(
+            "--click {css} stayed covered: {cover} was on top at its middle after every scroll \
+             within 5s"
+        );
+        if !refused(name, &labels(), "--click", css, &message) {
+            return;
+        }
+    }
+}
+
+#[test]
+fn a_click_on_a_checkbox_under_a_custom_element_no_control_takes_lands_on_the_label_and_checks_it()
+{
+    // A custom element never defined, one with no shadow root, and one whose closed root holds only
+    // decoration: the page cannot see inside the last, the browser's own hit confirms nothing there
+    // takes the press, and the label clicks its control.
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "labels-custom",
+        &labels(),
+        &[
+            "--click",
+            "#undefined",
+            "--click",
+            "#light",
+            "--click",
+            "#adorned",
+            "--eval",
+            "[landed, ['undefined', 'light', 'adorned', 'closed', 'slot-closed'].map(id => document.getElementById(id).checked)]",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    let [after] = lines.as_slice() else {
+        panic!("one evaluation: {}", said(&output));
+    };
+    assert_eq!(
+        after[0],
+        json!([
+            ["pointerdown", "undefined-host"],
+            ["click", "undefined-host"],
+            ["click", "undefined"],
+            ["pointerdown", "light-host"],
+            ["click", "light-host"],
+            ["click", "light"],
+            ["pointerdown", "deco-host"],
+            ["click", "deco-host"],
+            ["click", "adorned"]
+        ]),
+        "{after}"
+    );
+    assert_eq!(after[1], json!([true, true, true, false, false]), "{after}");
+}
+
+#[test]
+fn a_click_on_a_checkbox_under_a_track_deep_in_plain_spans_lands_on_the_label_and_checks_it() {
+    // Each span may hold a closed shadow root the page cannot see, so the browser is asked about
+    // every one on the press's way, once, however many: none holds one, and the label clicks its
+    // control.
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "labels-deep",
+        &labels(),
+        &[
+            "--click",
+            "#deep",
+            "--eval",
+            "[landed, document.getElementById('deep').checked]",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(
+        printed(&output),
+        [json!([
+            [
+                ["pointerdown", "deep-track"],
+                ["click", "deep-track"],
+                ["click", "deep"]
+            ],
+            true
+        ])]
+    );
 }
 
 #[test]
@@ -1358,6 +1480,216 @@ fn a_target_with_no_pointer_straight_in_the_body_is_offered_nothing_to_target() 
                    body, which holds it, was on top there after every scroll within 5s; html > \
                    body is the page itself, nothing to target instead";
     refused("loose", &ancestors(), "--click", "#loose", message);
+}
+
+/// All in a root lifted onto a layer of its own (`translateZ(0)`): a button its box's `clip-path`
+/// cuts away at its middle, that box in place, moved across the page by a `transform`, and by the
+/// `translate` property. Then, in a square box moved across the page, one turned a quarter, one
+/// mirrored by `scaleX(-1)` and one turned by `rotate(180deg)`, a box with `pointer-events: none`
+/// whose inset keeps its right half, holding a checkbox its own `clip` hides in that kept half, at
+/// its bottom right, which each move but the first carries out of the half the box's place keeps.
+fn moved() -> Vec<u8> {
+    let held = |id: &str, transform: &str| {
+        format!(
+            r#"<section><div id="{id}" class="square" style="transform: {transform}"><div class="kept"><input type="checkbox" id="{id}-check" class="own-clip"></div></div></section>"#
+        )
+    };
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
+  section {{ margin: 0 0 40px; }}
+  .cut {{ clip-path: inset(0 0 60% 0); height: 80px; background: #eef; }}
+  .cut > button {{ margin-top: 50px; }}
+  .square {{ width: 100px; height: 100px; background: #fee; }}
+  .kept {{ pointer-events: none; clip-path: inset(0 0 0 50%); width: 100px; height: 100px; position: relative; }}
+  .own-clip {{ pointer-events: auto; position: absolute; left: 75px; top: 75px; width: 1px; height: 1px; margin: 0; clip: rect(0, 0, 0, 0); }}
+</style>
+<main id="app" style="transform: translateZ(0)">
+<section><div id="lifted" class="cut"><button id="lifted-button">its box's clip-path cuts it away</button></div></section>
+<section><div id="slid" class="cut" style="transform: translate(30px, 10px)"><button id="slid-button">its box, moved, cuts it away</button></div></section>
+<section><div id="nudged" class="cut" style="translate: 30px 10px"><button id="nudged-button">its box, moved, cuts it away</button></div></section>
+{shifted}
+{quartered}
+{mirrored}
+{turned}
+</main>
+{POINTED}"##,
+        shifted = held("shifted", "translate(40px, 0)"),
+        quartered = held("quartered", "rotate(90deg)"),
+        mirrored = held("mirrored", "scaleX(-1)"),
+        turned = held("turned", "rotate(180deg)"),
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_clip_path_on_a_box_moved_only_across_the_page_is_read_and_one_turned_or_mirrored_is_not() {
+    // A box lifted onto a layer, or moved across the page, by a transform or the translate
+    // property, still cuts the press away where its clip-path leaves the middle out.
+    for (name, css, by) in [
+        ("lifted", "#lifted-button", "div#lifted.cut"),
+        ("slid", "#slid-button", "div#slid.cut"),
+        ("nudged", "#nudged-button", "div#nudged.cut"),
+    ] {
+        let message = format!(
+            "--click {css} stayed clipped: {by} clips it away at its middle after every scroll \
+             within 5s"
+        );
+        if !refused(&format!("moved-{name}"), &moved(), "--click", css, &message) {
+            return;
+        }
+    }
+    // The checkbox's own clip is what hides it: the clip-path around it keeps its middle, moved
+    // across the page with its box or turned, mirrored or half-turned with it, where the box's
+    // place alone would cut it; never called clipped by that box.
+    for id in ["shifted", "quartered", "mirrored", "turned"] {
+        let message = format!(
+            "--click #{id}-check stayed clipped by its own clip: div#{id}.square, which holds it, \
+             was on top at its middle after every scroll within 5s"
+        );
+        let css = format!("#{id}-check");
+        if !refused(&format!("moved-{id}"), &moved(), "--click", &css, &message) {
+            return;
+        }
+    }
+}
+
+/// Buttons inside boxes whose `clip-path` leaves their middle out: an inset with a `calc()` side, a
+/// circle placed by four values (computed as `calc()`), an inset's rounded corner, and an inset on
+/// the box's content box, where its border box would keep the button.
+fn shaped() -> Vec<u8> {
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; padding: 20px; font: 16px/1.4 sans-serif; }}
+  section {{ margin: 0 0 40px; }}
+  section > div {{ position: relative; width: 300px; height: 60px; background: #eef; }}
+  section button {{ position: absolute; width: 20px; height: 20px; padding: 0; border: 0; background: #08f; }}
+</style>
+<section><div id="rounded" style="clip-path: inset(0 round 30px)"><button id="corner-button" style="left: 0; top: 0; width: 12px; height: 12px"></button></div></section>
+<section><div id="calced" style="clip-path: inset(0 calc(50% + 10px) 0 0)"><button id="calc-button" style="left: 200px; top: 20px"></button></div></section>
+<section><div id="placed" style="clip-path: circle(20px at right 10px top 20px)"><button id="placed-button" style="left: 20px; top: 20px"></button></div></section>
+<section><div id="boxed" style="clip-path: inset(0 0 0 50%) content-box; width: 200px; padding-left: 100px"><button id="boxed-button" style="left: 160px; top: 20px"></button></div></section>
+{POINTED}"##
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_clip_path_with_a_calc_or_a_four_value_place_is_read_and_a_rounded_corner_or_another_box_is_not()
+ {
+    // Chrome computes a calc() of a length and a percentage, and a place by four values, to
+    // calc(P% + Lpx): read, the box is named.
+    for (name, css, by) in [
+        ("calced", "#calc-button", "div#calced"),
+        ("placed", "#placed-button", "div#placed"),
+    ] {
+        let message = format!(
+            "--click {css} stayed clipped: {by} clips it away at its middle after every scroll \
+             within 5s"
+        );
+        if !refused(
+            &format!("shaped-{name}"),
+            &shaped(),
+            "--click",
+            css,
+            &message,
+        ) {
+            return;
+        }
+    }
+    // A rounded corner's arc and a reference box other than the border box are not read: what
+    // holds the button is named, no cause made up.
+    for (name, css) in [("rounded", "#corner-button"), ("boxed", "#boxed-button")] {
+        let message = format!(
+            "--click {css} takes no pointer at its middle: body > section, which holds it, was on \
+             top there after every scroll within 5s"
+        );
+        if !refused(
+            &format!("shaped-{name}"),
+            &shaped(),
+            "--click",
+            css,
+            &message,
+        ) {
+            return;
+        }
+    }
+}
+
+/// Two labels at whole pixels, each over a checkbox hidden in it whose 1px box starts a fifth of a
+/// pixel past a whole one (its middle seven tenths past): in the first, a plain span starting at
+/// the next whole pixel holds a button in a closed shadow root, which records its clicks; the
+/// second holds nothing else. A hit at the pixel the middle lies in finds the label, one at the
+/// middle itself, the button.
+fn fractional() -> Vec<u8> {
+    format!(
+        r##"<!doctype html>
+<meta charset="utf-8">
+<style>
+  body {{ margin: 0; font: 16px/1.4 sans-serif; }}
+  .row {{ position: relative; height: 24px; margin: 20px 0 40px 20px; }}
+  label {{ position: absolute; left: 0; top: 0; width: 120px; height: 24px; background: #eee; }}
+  .sr {{ position: absolute; left: 30.2px; top: 10.2px; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; overflow: hidden; clip: rect(0, 0, 0, 0); }}
+  #split-host {{ position: absolute; left: 31px; top: 0; width: 40px; height: 24px; }}
+</style>
+<div class="row"><label id="split-label"><input type="checkbox" id="split" class="sr"><span id="split-host"></span></label></div>
+<div class="row"><label id="whole-label"><input type="checkbox" id="whole" class="sr"></label></div>
+{POINTED}
+<script>
+  const root = document.getElementById('split-host').attachShadow({{mode: 'closed'}});
+  root.innerHTML = '<button type="button" style="display: block; width: 40px; height: 24px; padding: 0; border: 0; background: #08f"></button>';
+  root.querySelector('button').addEventListener('click', () => landed.push(['click', 'split-button']));
+</script>"##
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_click_aims_tests_and_presses_one_whole_pixel_of_the_page() {
+    // The box's middle lies past the span's edge, in a pixel before it: the aim tests, and the
+    // browser's own hit confirms, at the middle's nearest whole pixel, where the press would land,
+    // finds the button in the span's closed root, and presses nothing.
+    let message = "--click #split stayed covered: button in span#split-host's shadow root was on \
+                   top at its middle after every scroll within 5s";
+    if !refused(
+        "fractional-split",
+        &fractional(),
+        "--click",
+        "#split",
+        message,
+    ) {
+        return;
+    }
+    // With nothing past that edge, the press at the whole pixel lands on the label, which checks
+    // its control.
+    let Some((output, _out, _requests, _scratch)) = on_page(
+        "fractional-whole",
+        &fractional(),
+        &[
+            "--click",
+            "#whole",
+            "--eval",
+            "[landed, document.getElementById('whole').checked]",
+        ],
+    ) else {
+        return;
+    };
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(
+        printed(&output),
+        [json!([
+            [
+                ["pointerdown", "whole-label"],
+                ["click", "whole-label"],
+                ["click", "whole"]
+            ],
+            true
+        ])]
+    );
 }
 
 /// A link wrapped over two lines, its first line ending a line a spacer fills and its second
