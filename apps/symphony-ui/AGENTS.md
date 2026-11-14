@@ -289,10 +289,10 @@ never the whole target, which the release run runs.
   client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it does
   not draw: `symphony-api`'s feature `skip-board-fields`, which `Cargo.toml` turns on for the
   wasm32 build alone) and the media layer's notice moving to the program's script
-  (`perf/tasks-first-visit-gets-room`, against main's build at 0d63e30) take `/tasks` to
-  280,752 bytes (from 299,189: the board's WASM 247,325 from 265,716, the shell 7,817 from
-  7,851), `/agents` and a task page to 548,846 and 549,439 (from 567,094 and 567,687, the task
-  pages' chunk 18 KB less) and `/reports` to 298,888 (from 298,707), the program's script now
+  (`perf/tasks-first-visit-gets-room`, against main's build at 029d581) take `/tasks` to
+  281,222 bytes (from 299,662: the board's WASM 247,735 from 266,112, the shell 7,880 from
+  7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task
+  pages' chunk 18 KB less) and `/reports` to 298,951 (from 298,790), the program's script now
   holding the notice; every other page stays within 50 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
