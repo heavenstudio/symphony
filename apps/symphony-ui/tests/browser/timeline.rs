@@ -650,7 +650,55 @@ fn a_wide_box_that_cuts_its_lanes_is_reserved_as_tall_as_its_whole_lanes_on_the_
         room.as_f64().unwrap().abs() <= 2.0,
         "{room} px left under the box's foot"
     );
+    // A click on a part of the last whole lane focuses it, as the keyboard does: its detail shows
+    // in the legend's place, and in this box with no room to spare neither the foot nor the lanes
+    // move, the lane it is in still whole.
+    chrome.eval("document.getElementById('timeline').scrollIntoView()");
+    frames(&mut chrome);
+    let at_rest = chrome.eval(FOOT_AND_LANES);
+    let part = chrome.eval(LAST_WHOLE_PART);
+    assert_eq!(part["hit"], json!(true), "the part is covered: {part}");
+    for kind in ["mousePressed", "mouseReleased"] {
+        chrome.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": part["x"], "y": part["y"], "button": "left", "clickCount": 1}),
+        );
+    }
+    frames(&mut chrome);
+    assert_eq!(
+        chrome.eval("document.activeElement?.closest('.tl-lane')?.dataset.lane ?? null"),
+        part["lane"],
+        "the click focused the part"
+    );
+    assert_eq!(
+        shown(&mut chrome, ".tl-detail").len(),
+        1,
+        "its detail shows"
+    );
+    assert!(
+        shown(&mut chrome, ".tl-legend li").is_empty(),
+        "the detail takes the legend's place"
+    );
+    assert_eq!(
+        chrome.eval(FOOT_AND_LANES),
+        at_rest,
+        "the focus moved the foot or the lanes: {}",
+        chrome.eval(LANE_EDGES)
+    );
+    assert_eq!(
+        chrome.eval(WHOLE_LANES),
+        json!(true),
+        "a lane cut through: {}",
+        chrome.eval(LANE_EDGES)
+    );
 }
+
+/// The foot's height, the lanes' part's height and how many lanes it shows whole, in pixels.
+const FOOT_AND_LANES: &str = "(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); return [Math.round(document.querySelector('.tl-foot').getBoundingClientRect().height), Math.round(body.height), [...document.querySelectorAll('.tl-lanes > .tl-lane:not(.tl-axis)')].filter(lane => lane.getBoundingClientRect().bottom <= body.bottom + 1).length]; })()";
+
+/// The widest part of the last lane the box shows whole: its lane, the point a click takes, and
+/// whether the part is on top there.
+const LAST_WHOLE_PART: &str = "(() => { const end = document.getElementById('tl-body').getBoundingClientRect().bottom; const lane = [...document.querySelectorAll('.tl-lanes > .tl-lane[data-lane]')].filter(lane => lane.getBoundingClientRect().bottom <= end + 1 && lane.querySelector('[role=img]')).pop(); const part = [...lane.querySelectorAll('[role=img]')].sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]; const b = part.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; return {x, y, lane: lane.dataset.lane, hit: document.elementFromPoint(x, y)?.closest('[role=img]') === part}; })()";
 
 /// Open the task's page and wait for its wide timeline's `lanes` lanes; the box's height then.
 fn visit(chrome: &mut super::chrome::Chrome, site: &Site, lanes: usize) -> f64 {

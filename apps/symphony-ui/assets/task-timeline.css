@@ -17,8 +17,8 @@
    list. */
 .tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }
 /* The foot takes as little of the box as it can, so the steps keep the rest: "Show all" on the
-   legend's line, the legend wrapping beside it, and the lanes' detail on a line of its own only
-   while it says something. */
+   legend's line, the legend wrapping beside it, and the lanes' detail in the legend's place while
+   a part of the lanes has the focus, so the foot never grows and cuts through a lane. */
 .tl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px var(--sp-4); padding-top:var(--sp-2); }
 .tl-foot .tl-legend { flex:1 1 0; }
 .tl-more { margin-left:auto; }
@@ -113,7 +113,7 @@
 .tl-key-work { background:var(--primary); }
 .tl-key-wait { background:color-mix(in srgb, var(--primary) 28%, transparent); }
 .tl-key.tl-g { position:relative; top:0; width:18px; height:16px; border-radius:0; }
-.tl-detail { flex-basis:100%; margin:0; color:var(--muted-foreground); font-size:var(--fs-xs); }
+.tl-detail { flex:1 1 0; margin:0; color:var(--muted-foreground); font-size:var(--fs-xs); }
 
 @media (min-width: 900px) {
   /* Lanes cut under the last whole one (task_timeline.rs `settle`) need no fade: "Show all N lanes"
@@ -126,6 +126,7 @@
   .tl-machine.tl-wide { display:inline; }
   .tl-legend .tl-wide { display:inline-flex; }
   .tl-detail.tl-wide { display:block; }
+  .tl-foot:has(.tl-detail) .tl-legend { display:none; }
   .tl-more-steps { display:none; }
   .tl-more-lanes { display:inline; }
 }

@@ -956,9 +956,12 @@ fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_
     assert!(wide.contains(".tl-body[data-cut]::after { display:none; }"));
     assert!(!phone.contains("data-cut"));
     // "Show all" sits on the legend's line, the legend wrapping beside it, and the lanes' detail
-    // reserves no line of its own.
+    // reserves no line of its own: it takes the legend's place while it shows.
     assert!(phone.contains(".tl-foot .tl-legend { flex:1 1 0; }"));
     assert!(!CSS.contains("min-height:1.3em"));
+    assert!(phone.contains(".tl-detail { flex:1 1 0;"));
+    assert!(!CSS.contains("flex-basis:100%"));
+    assert!(wide.contains(".tl-foot:has(.tl-detail) .tl-legend { display:none; }"));
     // The gate states' marks are in the legend wide only, beside the lanes that draw them: a rule
     // as specific as the legend's items' own hides them on a phone.
     assert!(phone.contains(".tl-legend .tl-wide { display:none; }"));

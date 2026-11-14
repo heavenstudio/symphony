@@ -1691,6 +1691,10 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
                         li { class: "tl-wide", span { class: "tl-key tl-g tl-g-{state.as_str()}" } "gate {state.as_str()}" }
                     }
                 }
+                // Only while a part of the lanes has the focus, in the legend's place beside "Show
+                // all": a line of its own would take room from the lanes and cut through the one
+                // the focus is in.
+                if !detail().is_empty() { p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" } }
                 if clipped() || all() {
                     button { class: "dx-button tl-more", "data-style": "outline", "data-size": "default", r#type: "button", "aria-expanded": "{all()}", onclick: move |_| all.toggle(),
                         if all() { "Show the latest" } else {
@@ -1699,9 +1703,6 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
                         }
                     }
                 }
-                // A line of its own under the legend and "Show all", only while a part of the
-                // lanes has the focus: empty, it would take a line from the steps.
-                if !detail().is_empty() { p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" } }
             }
         }
     }
@@ -1747,7 +1748,7 @@ fn stop_at(mut active: Signal<usize>, to: usize) {
 
 /// The attributes and handlers of the lanes' part `index` of `count`: one stop of one arrow-key
 /// group (the first, until another is chosen), its words for assistive technology, and its whole
-/// detail shown under the lanes while it has the focus.
+/// detail shown in the legend's place under the lanes while it has the focus.
 fn stop(
     index: usize,
     count: usize,
