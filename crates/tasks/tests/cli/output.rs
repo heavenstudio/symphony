@@ -31,7 +31,11 @@ fn each_command_says_what_it_did_in_one_line() {
         &["role", "sim/b", "orchestrator"],
         "orchestrator on sim/b\n",
     );
-    says(&exe, &["claim", "sim/a"], "claimed sim/a\n");
+    says(
+        &exe,
+        &["claim", "sim/a"],
+        "claimed sim/a: its work goes on the branch sim/a, which the land takes\n",
+    );
     says(&exe, &["reserve", "sim/b"], "reserved sim/b\n");
     says(&exe, &["release", "sim/b"], "released sim/b (design)\n");
     says(&exe, &["move", "sim/a", "review"], "sim/a is review\n");
@@ -45,7 +49,13 @@ fn each_command_says_what_it_did_in_one_line() {
         !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()),
         "{sent:?}"
     );
-    says(&rev, &["verdict", "sim/a", "approve"], "sim/a is done\n");
+    // Done is not landed: outside a checkout the default landing is named.
+    says(
+        &rev,
+        &["verdict", "sim/a", "approve"],
+        "sim/a is approved: done on the board, not on the default branch until it lands; `just \
+         land sim/a --as HANDLE` lands it\n",
+    );
     says(
         &orch,
         &["parent", "sim/b", "sim/a"],
@@ -67,8 +77,26 @@ fn each_command_says_what_it_did_in_one_line() {
             "--instruction",
         ],
     );
-    c.ok(&exe, &["claim", "sim/b/m"]);
+    // An instruction subtask's slug is never a branch: its claim names none.
+    says(&exe, &["claim", "sim/b/m"], "claimed sim/b/m\n");
     says(&exe, &["done", "sim/b/m", "4 ms"], "sim/b/m is done\n");
+    // Nor is a slice's, which works on its parent's branch and lands with it: its claim names no
+    // branch.
+    c.ok(&orch, &["create", "sim/b/s", "S", "--parent", "sim/b"]);
+    says(&exe, &["claim", "sim/b/s"], "claimed sim/b/s\n");
+    // A subtask never goes to review, but a task put under another while in review is one: its
+    // approve names no land of its own.
+    c.ok(&orch, &["create", "sim/c", "C"]);
+    c.ok(&exe, &["claim", "sim/c"]);
+    c.ok(&exe, &["move", "sim/c", "review"]);
+    c.ok(&rev, &["role", "sim/c", "reviewer"]);
+    c.ok(&orch, &["parent", "sim/c", "sim/b"]);
+    says(
+        &rev,
+        &["verdict", "sim/c", "approve"],
+        "sim/c is approved: done on the board; its work lands when the task it is under, sim/b, \
+         does\n",
+    );
     says(&exe, &["next"], "sim/b  p2  B\n");
     says(&exe, &["leave"], "left\n");
 }
