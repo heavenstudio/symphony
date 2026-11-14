@@ -3,7 +3,8 @@
 //! it does linked; its process killed, a call after the pause starts it again (the lib's
 //! `plugins::process` tests show the calls meanwhile, with a pause longer than the test); its
 //! process ending with its input whatever its calls do; and what its calls cost linked, through
-//! the loopback and from its process.
+//! the loopback and from its process, and what a register read costs linked, card by card from its
+//! process and in one request.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read as _, Write as _};
@@ -172,6 +173,72 @@ fn a_plugins_process_answers_its_components_and_card_kinds_as_it_does_linked() {
             "{line}"
         );
     }
+}
+
+/// A register of `count` cards as the board reads it: every other card the test plugin's kind
+/// recognises, each third with a slot, each fifth checked, each with a question and its answer.
+fn register(count: usize) -> Vec<symphony::board::Doc> {
+    let mut lines = Vec::new();
+    for n in 0..count {
+        let (what, slot) = match (n % 2, n % 3) {
+            (0, 0) => ("Pick every widget", " *Slot:* North · cover"),
+            (0, _) => ("Pick every widget", ""),
+            _ => ("Hold the broken one", ""),
+        };
+        let done = if n % 5 == 4 { "x" } else { " " };
+        lines.push(format!("- [{done}] **pick-{n}** — {what} {n}.{slot}"));
+        lines.push(format!("  ↳ A or B for {n}?"));
+        lines.push("  B please".to_string());
+    }
+    vec![symphony::board::Doc {
+        path: "docs/WIDGETS.md".into(),
+        comments: Vec::new(),
+        decisions: symphony::register::parse_decisions(&lines),
+    }]
+}
+
+/// Every card-kind answer the board asks of each card of `docs` from `plugins`, as one value.
+fn read_of(plugins: &Plugins, root: &Path, docs: &[symphony::board::Doc]) -> Vec<String> {
+    let mut read = Vec::new();
+    for doc in docs {
+        let on = doc.path.as_str();
+        for card in &doc.decisions {
+            read.push(format!(
+                "{:?}",
+                (
+                    plugins.slot(card),
+                    plugins.pictures(root, on, card),
+                    plugins.approval_needs_agent(card),
+                    plugins.triage_category(on, card),
+                    plugins.chosen(card),
+                    plugins.auto_approvable(card),
+                    plugins.gates(on, card),
+                )
+            ));
+        }
+    }
+    read
+}
+
+#[test]
+fn a_register_read_of_the_plugins_process_is_one_request_and_answers_as_linked() {
+    let tree = Tree::new();
+    let project = project(&tree, "timing = true\n");
+    let root = tree.root.as_path();
+    let docs = register(12);
+    let linked = read_of(&Plugins::new(vec![&PIPED]), root, &docs);
+    assert!(linked.iter().any(|read| read.contains("North")));
+    let piped = Plugins::at(&project, root).reading(root, &docs);
+    assert_eq!(read_of(&piped, root, &docs), linked);
+    // One request for the read, and no call of a card after it.
+    let record = lines(&symphony::plugins::record(&project, root));
+    let calls: Vec<String> = record
+        .iter()
+        .map(|line| format!("{}.{}", line["seam"], line["call"]).replace('"', ""))
+        .collect();
+    assert_eq!(calls, ["card_kinds.read"]);
+    assert_eq!(record[0]["name"], "every");
+    assert!(record[0].get("failed").is_none(), "{}", record[0]);
 }
 
 #[test]
@@ -533,4 +600,71 @@ fn the_cost_of_a_plugins_calls_linked_through_the_loopback_and_from_its_process(
         median(&mut linked_ms),
         median(&mut piped_ms)
     );
+}
+
+/// What a register read of the test plugin's card kinds costs linked, from its process card by
+/// card, and from its process in one request (`card_kinds.read`): a measurement, not a check. Run
+/// alone, it prints each read's median in milliseconds over registers of 50 and 500 cards, the
+/// reads interleaved and none recorded, and the bytes of the batch's lines. Best in a release
+/// build on a quiet machine (docs/PLUGIN_PROTOCOL.md says the command).
+#[test]
+#[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
+fn the_cost_of_a_register_read_linked_card_by_card_from_its_process_and_batched() {
+    const READS: usize = 30;
+    let tree = Tree::new();
+    let root = tree.root.as_path();
+    let linked = Plugins::new(vec![&PIPED]);
+    let piped = Plugins::at(&project(&tree, ""), root);
+    assert!(
+        process::remote(piped.list()[0])
+            .unwrap()
+            .declaration()
+            .is_ok()
+    );
+    println!("medians in milliseconds of {READS} reads of each register, unrecorded");
+    for count in [50, 500] {
+        let docs = register(count);
+        let expected = read_of(&linked, root, &docs);
+        let (mut alone, mut by_card, mut batched) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..READS {
+            let timed = |times: &mut Vec<f64>, read: &dyn Fn() -> Vec<String>| {
+                let started = Instant::now();
+                let answered = std::hint::black_box(read());
+                times.push(started.elapsed().as_secs_f64() * 1e3);
+                assert_eq!(answered, expected);
+            };
+            timed(&mut alone, &|| read_of(&linked, root, &docs));
+            timed(&mut by_card, &|| read_of(&piped, root, &docs));
+            timed(&mut batched, &|| {
+                read_of(&piped.reading(root, &docs), root, &docs)
+            });
+        }
+        println!(
+            "{count} cards: linked {:.3}, from the process card by card {:.3}, batched {:.3}",
+            median(&mut alone),
+            median(&mut by_card),
+            median(&mut batched)
+        );
+    }
+    // The batch's lines, as a recorded read sees them.
+    let recorded = Tree::new();
+    let project = project(&recorded, "timing = true\n");
+    let plugins = Plugins::at(&project, &recorded.root);
+    let docs = register(500);
+    let _ = read_of(
+        &plugins.reading(&recorded.root, &docs),
+        &recorded.root,
+        &docs,
+    );
+    for line in lines(&symphony::plugins::record(&project, &recorded.root)) {
+        println!(
+            "500 cards in one {}.{}: request {} B, answer {} B, {} µs in the plugin, {} µs waited",
+            line["seam"].as_str().unwrap(),
+            line["call"].as_str().unwrap(),
+            line["request_bytes"],
+            line["answer_bytes"],
+            line["us"],
+            line["round_trip_us"]
+        );
+    }
 }

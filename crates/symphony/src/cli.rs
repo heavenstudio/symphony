@@ -193,7 +193,7 @@ fn status_in(
             return 2;
         }
     };
-    let plugins = crate::plugins::Plugins::of(&root);
+    let plugins = crate::plugins::Plugins::of(&root).reading(&root, &docs);
     let said = if parsed.flag("--json") {
         to_json(&plugins, &docs)
     } else {
@@ -851,8 +851,9 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             return 1;
         }
     };
+    let plugins = crate::plugins::Plugins::of(&root).reading(&root, &docs);
     let said = if command == "stats" {
-        match triage::stats(&crate::plugins::Plugins::of(&root), &docs) {
+        match triage::stats(&plugins, &docs) {
             Ok(found) => triage::render_stats(&found),
             Err(problem) => {
                 let _ = writeln!(err, "✖ {problem}");
@@ -860,7 +861,6 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             }
         }
     } else {
-        let plugins = crate::plugins::Plugins::of(&root);
         triage::render_queue(&triage::queue(
             &plugins,
             &docs,

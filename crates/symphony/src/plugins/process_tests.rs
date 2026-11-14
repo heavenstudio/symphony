@@ -7,6 +7,7 @@ use symphony_plugin::vocabulary::Span;
 use symphony_plugin::{Card, ThreadLine};
 
 use super::*;
+use crate::plugins::Plugins;
 use crate::test_tree::Tree;
 
 /// A plugin with a component and a card kind, each answer made of what it is given.
@@ -653,7 +654,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.2: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.3: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -1118,7 +1119,7 @@ struct Breaking {
     pipe: io::PipeReader,
 }
 
-impl Read for Breaking {
+impl io::Read for Breaking {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.pipe.read(buf)? {
             0 if !buf.is_empty() => Err(io::Error::other("the pipe broke")),
@@ -1913,4 +1914,337 @@ fn how_a_process_ended_is_its_code_or_its_signal() {
     assert_eq!(ended(ExitStatus::from_raw(3 << 8)), "exited with code 3");
     assert_eq!(ended(ExitStatus::from_raw(0)), "exited with code 0");
     assert_eq!(ended(ExitStatus::from_raw(9)), "was killed by signal 9");
+}
+
+/// A start of a peer that declares `declared` and answers every other request as `plugin`'s
+/// process does, keeping what `seen` sees.
+fn serving_as(plugin: &'static dyn Plugin, declared: Declaration, seen: Seen) -> Start {
+    let respond: Respond = Arc::new(move |id, request| {
+        let line = format!("{{\"id\":{id},\"request\":{request}}}\n");
+        let mut answered = Vec::new();
+        symphony_plugin::serve_on(plugin, line.as_bytes(), &mut answered).unwrap();
+        Said::Bytes(answered)
+    });
+    hand_made(declared, respond, seen, "exited with code 0")
+}
+
+/// That `kind` answers every call of `card` as `linked` does, its pictures read at `root`.
+fn kinds_alike(kind: &dyn CardKind, linked: &dyn CardKind, root: &Path, card: &Card<'_>) {
+    let slug = card.slug;
+    assert_eq!(kind.name(), linked.name());
+    assert_eq!(kind.markers(), linked.markers());
+    assert_eq!(kind.recognises(card), linked.recognises(card), "{slug}");
+    assert_eq!(
+        kind.pictures(root, card),
+        linked.pictures(root, card),
+        "{slug}"
+    );
+    assert_eq!(kind.slot(card), linked.slot(card), "{slug}");
+    assert_eq!(
+        kind.triage_category(card),
+        linked.triage_category(card),
+        "{slug}"
+    );
+    assert_eq!(
+        kind.auto_approvable(card),
+        linked.auto_approvable(card),
+        "{slug}"
+    );
+    assert_eq!(kind.gates(card), linked.gates(card), "{slug}");
+    assert_eq!(
+        kind.approval_needs_agent(card),
+        linked.approval_needs_agent(card),
+        "{slug}"
+    );
+    assert_eq!(kind.chosen(card), linked.chosen(card), "{slug}");
+}
+
+/// `count` cards of [`TINY`]'s, `pick-1` on, each of a text long enough that a request of it
+/// outweighs its answer.
+fn long_cards(count: usize) -> Vec<CardData> {
+    (1..=count)
+        .map(|n| {
+            let text = format!("Pick tiny {n}. {}", "Its long story. ".repeat(40));
+            let card = with_card(&text, CardData::of);
+            CardData {
+                slug: format!("pick-{n}"),
+                ..card
+            }
+        })
+        .collect()
+}
+
+/// The calls of `heard`, the lines a peer was sent, that are register reads.
+fn reads(heard: &[String]) -> Vec<ReadCards> {
+    heard
+        .iter()
+        .filter_map(|line| {
+            let read: Raw = serde_json::from_str(line).ok()?;
+            match serde_json::from_str::<Request>(read.request?.get()).ok()? {
+                Request::ReadCards(asked) => Some(asked),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_register_read_asks_its_cards_in_as_few_requests_as_fit_a_line_and_answers_each_as_linked() {
+    let tree = Tree::new();
+    let cards = long_cards(7);
+    // A line that holds three of them as the host counts one, its id the longest an id is.
+    let three = serde_json::to_vec(&Envelope::<Request, ()>::asking(
+        u64::MAX,
+        ReadCards {
+            root: tree.root.clone(),
+            cards: cards[..3].to_vec(),
+        }
+        .into(),
+    ))
+    .unwrap()
+    .len();
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        Limits {
+            line: three,
+            ..patient()
+        },
+    );
+    let read = remote.read_cards(&tree.root, &cards).unwrap();
+    // Seven cards, three to a line: three requests, in the cards' order, none past the bound.
+    let asked = reads(&seen.heard());
+    let sent: Vec<Vec<CardData>> = asked.iter().map(|read| read.cards.clone()).collect();
+    assert_eq!(
+        sent,
+        [
+            cards[..3].to_vec(),
+            cards[3..6].to_vec(),
+            cards[6..].to_vec()
+        ]
+    );
+    assert!(asked.iter().all(|read| read.root == tree.root));
+    for line in seen.heard() {
+        assert!(line.len() <= three, "{} > {three}", line.len());
+    }
+    // Every call of every card is answered from the read as linked, with no request more.
+    let heard = seen.heard().len();
+    let (kind, linked) = (read.card_kinds()[0], TINY.card_kinds()[0]);
+    for card in &cards {
+        card.read(|card| kinds_alike(kind, linked, &tree.root, card));
+    }
+    assert_eq!(seen.heard().len(), heard);
+    assert!(read.of(remote) && !read.of(&TINY));
+    // A card the read does not hold, and the pictures of another checkout, are asked one by one.
+    let elsewhere = Path::new("/elsewhere");
+    let other = long_cards(8).pop().unwrap();
+    other.read(|card| assert_eq!(kind.slot(card), linked.slot(card)));
+    cards[0].read(|card| {
+        assert_eq!(
+            kind.pictures(elsewhere, card),
+            linked.pictures(elsewhere, card)
+        );
+    });
+    assert_eq!(seen.heard().len(), heard + 2);
+    assert_eq!(reads(&seen.heard()).len(), 3);
+}
+
+#[test]
+fn a_card_too_long_for_a_line_alone_is_left_to_its_own_calls_and_the_others_read() {
+    let tree = Tree::new();
+    let mut cards = long_cards(3);
+    let one = serde_json::to_vec(&Envelope::<Request, ()>::asking(
+        u64::MAX,
+        ReadCards {
+            root: tree.root.clone(),
+            cards: cards[..1].to_vec(),
+        }
+        .into(),
+    ))
+    .unwrap()
+    .len();
+    cards[1].text = format!(
+        "Pick tiny 2.\n*Slot:* North\n{}",
+        "Its long story. ".repeat(45)
+    );
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        Limits {
+            line: one,
+            ..patient()
+        },
+    );
+    let read = remote.read_cards(&tree.root, &cards).unwrap();
+    let sent: Vec<Vec<CardData>> = reads(&seen.heard())
+        .into_iter()
+        .map(|read| read.cards)
+        .collect();
+    assert_eq!(sent, [vec![cards[0].clone()], vec![cards[2].clone()]]);
+    // The long card's own request is past the bound too: it is answered as the kind's default.
+    let kind = read.card_kinds()[0];
+    cards[1].read(|card| {
+        assert_eq!(TINY.slot(card).as_deref(), Some("North"));
+        assert_eq!(kind.slot(card), None);
+    });
+    cards[2].read(|card| assert_eq!(kind.slot(card), TINY.slot(card)));
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: card_kinds.slot of tiny: its request is a line of "),
+        "{log}"
+    );
+}
+
+/// Registers of [`TINY`]'s cards, two documents' worth, read as the board reads them.
+fn registers() -> Vec<crate::board::Doc> {
+    let doc = |path: &str, lines: &[&str]| crate::board::Doc {
+        path: path.into(),
+        comments: Vec::new(),
+        decisions: crate::register::parse_decisions(lines),
+    };
+    vec![
+        doc(
+            "docs/WIDGETS.md",
+            &[
+                "- [ ] **pick-a** — Pick a tiny widget. *Slot:* North",
+                "  ↳ A or B?",
+                "  B please",
+                "- [x] **pick-b** — hold the broken one",
+                "  ↳ done",
+            ],
+        ),
+        doc("docs/OTHER.md", &["- [ ] **plain** — Nothing tiny here."]),
+    ]
+}
+
+/// That `plugins` answers every card of `docs` as `linked` does, as the board asks of a card.
+fn read_alike(plugins: &Plugins, linked: &Plugins, root: &Path, docs: &[crate::board::Doc]) {
+    for doc in docs {
+        let on = doc.path.as_str();
+        for card in &doc.decisions {
+            assert_eq!(plugins.slot(card), linked.slot(card));
+            assert_eq!(
+                plugins.pictures(root, on, card),
+                linked.pictures(root, on, card)
+            );
+            assert_eq!(
+                plugins.approval_needs_agent(card),
+                linked.approval_needs_agent(card)
+            );
+            assert_eq!(
+                plugins.triage_category(on, card),
+                linked.triage_category(on, card)
+            );
+            assert_eq!(plugins.chosen(card), linked.chosen(card));
+            assert_eq!(plugins.auto_approvable(card), linked.auto_approvable(card));
+            assert_eq!(plugins.gates(on, card), linked.gates(on, card));
+        }
+    }
+}
+
+#[test]
+fn a_read_of_the_registers_is_one_request_and_answers_every_card_as_linked() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        patient(),
+    );
+    let docs = registers();
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    let asked = reads(&seen.heard());
+    assert_eq!(asked.len(), 1, "one request for the read");
+    // Each card as it is asked: with its document, and with none.
+    let docs_sent: Vec<(&str, &str)> = asked[0]
+        .cards
+        .iter()
+        .map(|card| (card.slug.as_str(), card.doc.as_str()))
+        .collect();
+    assert_eq!(
+        docs_sent,
+        [
+            ("pick-a", "docs/WIDGETS.md"),
+            ("pick-a", ""),
+            ("pick-b", "docs/WIDGETS.md"),
+            ("pick-b", ""),
+            ("plain", "docs/OTHER.md"),
+            ("plain", ""),
+        ]
+    );
+    let heard = seen.heard().len();
+    read_alike(&plugins, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    assert_eq!(seen.heard().len(), heard, "every answer from the read");
+    // The plugins as they were are asked card by card still.
+    let unread = Plugins::new(vec![remote]);
+    read_alike(&unread, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    assert!(seen.heard().len() > heard);
+    // A read of plugins none of which answers from a process asks nothing.
+    let linked = Plugins::new(vec![&TINY]).reading(&tree.root, &docs);
+    assert!(linked.read.is_empty());
+}
+
+#[test]
+fn a_plugin_of_the_previous_minor_is_asked_a_reads_cards_one_by_one_and_answers_the_same() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let previous = Version {
+        major: PROTOCOL.major,
+        minor: ReadCards::SINCE - 1,
+    };
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(
+            &TINY,
+            Declaration {
+                protocol: previous,
+                ..tiny_declared()
+            },
+            seen.clone(),
+        ),
+        patient(),
+    );
+    let docs = registers();
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    assert!(plugins.read.is_empty());
+    read_alike(&plugins, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    let heard = seen.heard();
+    assert!(reads(&heard).is_empty(), "{heard:?}");
+    assert!(
+        heard
+            .iter()
+            .any(|line| line.contains("\"card_kinds.slot\"")),
+        "{heard:?}"
+    );
+}
+
+#[test]
+fn a_read_whose_process_is_down_answers_each_card_as_a_kind_that_says_nothing() {
+    let tree = Tree::new();
+    let (remote, _) = ending_once(&tree, Duration::from_secs(600));
+    let docs = registers();
+    // Its declaration came at its start; the read is its first call, which finds it ending.
+    assert!(remote.declaration().is_ok());
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    assert!(plugins.read.is_empty());
+    let bare: &'static dyn Plugin = &BarePlugin;
+    read_alike(&plugins, &Plugins::new(vec![bare]), &tree.root, &docs);
+}
+
+/// A plugin whose one card kind is [`BareKind`], named as [`TINY`]'s is.
+struct BarePlugin;
+
+impl Plugin for BarePlugin {
+    fn name(&self) -> &str {
+        "tiny"
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![&BareKind]
+    }
 }

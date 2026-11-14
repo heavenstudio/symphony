@@ -53,7 +53,11 @@ not timed: a protocol sends it once, as `plugin.declare`, and the loopback recor
 each plugin, record and setting in a process. The Symphony's own `task` component is no plugin's
 and is not measured. Every method of `Plugin` and of each seam's trait is a call above or a part of
 the declaration, and the measure forwards each: a test reads the traits' methods from their source
-and fails on one the protocol or the measure lacks.
+and fails on one the protocol or the measure lacks. One call is no method: `card_kinds.read`, the
+batch a register read asks a plugin's process in one request (`BATCHES` in
+`symphony_plugin::protocol`, [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#card-kinds-in-one-request)),
+recorded as the process's call, `name` its kinds' names; a linked plugin, measured or under the
+loopback, is asked each card's calls.
 
 ## The record
 

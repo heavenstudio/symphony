@@ -857,7 +857,10 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
             ),
         }
     }
-    // And every call of the protocol is a seam's method, and asked of the test plugin.
+    // And every call of the protocol is a seam's method, and asked of the test plugin; a batch
+    // carries its seam's calls, and only a host speaking to a process sends one.
+    let batches: BTreeSet<&str> = symphony_plugin::protocol::BATCHES.iter().copied().collect();
+    let calls: BTreeSet<&str> = calls.difference(&batches).copied().collect();
     for tag in &calls {
         let (seam, method) = tag.split_once('.').unwrap();
         if seam == "plugin" {

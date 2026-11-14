@@ -69,10 +69,8 @@ checkout's file names no command for the plugin, the branch's page has the linke
 none linked, none. A command a branch writes in its own `[plugins.process]` takes effect once it
 lands.
 
-Card kinds from a process cost about eight round trips per card for each read of the register (one
-for each call a card kind answers of a card), until the register's reads are batched into one request
-a read. No consumer turns `[plugins.process]` on for a plugin with card kinds before then;
-components cost one round trip each.
+A component's call costs one round trip, and a register read one request for all its cards
+([below](#card-kinds-in-one-request)), not a round trip for each call of each card.
 
 A plugin's binary is its `main` calling the SDK with the plugin it links:
 
@@ -138,6 +136,33 @@ runs a linked plugin's command alone, so a plugin with commands is refused under
 ARGS…`, with streams of its own and the command's exit code as its own (its low byte, as an exit
 status holds it). `commands.run` is the loopback's alone.
 
+## Card kinds in one request
+
+A card kind answers eight calls of a card, and a read of the registers asks them of every card: the
+board's snapshot, `symphony status`, triage and the postponed queue. From a process, a read asks
+them in one request, `card_kinds.read` (0.3): the read's cards, each as the read asks it (with its
+document, and with none, as a card's slot, choice and thread are asked), and the answer, for each
+card, each kind's eight answers in the plugin's order (`KindAnswers`), the pictures read in the
+checkout the request names. The cards go in as many requests as keep each line within the 16 MiB
+bound, a card too long for a line alone asked card by card. The read's answers stand for that read
+alone: a card it did not hold, a request that had no answer, an answer that does not hold one entry
+for each card, and a plugin of 0.2, which has no batch, are asked card by card, as before. A panic
+in any kind's call refuses the request whole, and its cards are asked card by card.
+
+What it costs, measured (below, the second test): registers of 50 and 500 cards, the test plugin's
+one card kind, each read made 30 times interleaved and none recorded, in a debug build on a machine
+under load (load averages 55 to 73 before and after each of two runs; the machine was not quiet):
+
+| Cards | Linked | From the process, card by card | From the process, in one request |
+|---|---|---|---|
+| 50 | 1.1 ms | 101 to 117 ms | 14.8 ms |
+| 500 | 10.6 ms | 940 to 971 ms | 114 to 119 ms |
+
+The 500 cards are 1,000 in the request (each with its document and with none): a request of 206
+KB and an answer of 410 KB, 35 to 39 ms in the plugin and 72 to 93 ms waited. A read from a process
+in one request costs 11 to 13 times the linked one and a seventh to an eighth of the card-by-card
+one, at either size.
+
 ## The line
 
 Each line is one JSON object, the envelope: an `id`, and exactly one of
@@ -180,19 +205,20 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":2}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":3}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.2.
+process is killed and not started again until its program changes. The protocol is 0.3.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
 as for a plugin that does not implement that method, and a call the seam requires (a component's
-`render`) is shown failed, naming the protocol the plugin speaks. Every call is 0.1's. 0.2 hands a
-page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts` unless
-`[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads as
-`artifacts` from a host of 0.1.
+`render`) is shown failed, naming the protocol the plugin speaks. Every call but one is 0.1's. 0.2
+hands a page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts`
+unless `[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads
+as `artifacts` from a host of 0.1. 0.3 adds `card_kinds.read`, a register read's card kinds in one
+request: a plugin of 0.2 is asked them card by card, and answers the same.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
@@ -236,16 +262,18 @@ Under `[plugins] timing` or `loopback` ([PLUGIN_CALLS](PLUGIN_CALLS.md)) each ca
 process writes its line to the project's record, `path` `process`: `us` the plugin's own time as it
 says it (its JSON both ways and the call), `round_trip_us` the host's whole wait (its line built
 and written, the answer read back), the two lines' bytes, and `failed` with why when the call had
-no answer. The declaration is the start's and is not recorded.
+no answer. A register read's batch is one line for each request, `card_kinds` `read`, its `name`
+the kinds' names. The declaration is the start's and is not recorded.
 
 In a Symphony checkout, what a call costs linked, through the loopback and from a process, for its
 test plugin's components and card kind, as the median of a thousand interleaved rounds: each call's
 row, components.render among them, and the range of what a call costs from the process more than
 linked over them all. A call of a known time (the test plugin's `slow`, spending 500 µs in the
 plugin) shows each meter moves by it, and the test fails if one does not. Then a card's eight
-card-kind calls summed, from which a register read is an extrapolation and not a measured read, and
-a page of ten components drawn whole, linked and from a process, neither page recorded. It is a
-measurement, not a check: a process call waits on two wake-ups across threads and processes and a
+card-kind calls summed, and a page of ten components drawn whole, linked and from a process, neither
+page recorded. A second test reads registers of 50 and 500 cards linked, from a process card by
+card and from a process in one request, each read checked against the linked one, and prints the
+batch's lines ([above](#card-kinds-in-one-request)). Each is a measurement, not a check: a process call waits on two wake-ups across threads and processes and a
 linked one on none, so a loaded machine inflates the difference by an amount nobody knows. Take it on
 a quiet machine, in a release build, twice, with the load average before and after each run:
 
