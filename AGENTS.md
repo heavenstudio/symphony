@@ -375,12 +375,14 @@ alone: with no link, or a link to a build older than the guard, the call goes th
 **Looking at a page.** An agent sees a page with `just symphony-cli shot URL --out FILE.png`:
 a private headless Chrome (`crates/chrome-devtools`, the driver the client's browser tests
 use, on a profile and process of its own that die with the run) opens URL, waits until
-the page has drawn, runs the steps `--click CSS`, `--type CSS=TEXT`, `--key NAME`,
-`--hover CSS`, `--eval JS` (its JSON on stdout), `--pause MS` and `--shot FILE.png` in
-the order given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and
-`--scheme dark` set the view, `--wait-for CSS` and `--timeout SECS` bound the waits, and
-`--report` prints the console errors, failed requests and horizontal overflow it saw;
-`--help` says the rest. It only reads the page, so the live board
+the page has drawn, its frames' and dedicated workers' loads among it, dismissing each dialog
+as it opens (a confirm or a prompt as by its Cancel), runs the steps `--click CSS`,
+`--type CSS=TEXT`, `--key NAME`, `--hover CSS`, `--eval JS` (its JSON on stdout),
+`--pause MS` and `--shot FILE.png` in the order given, then saves the PNG. `--phone`, `--size WxH`,
+`--full-page` and `--scheme dark` set the view, `--wait-for CSS` and `--timeout SECS`
+bound the waits, and `--report` prints the console errors (a frame's naming its address),
+failed requests, dialogs dismissed and horizontal overflow it saw; `--help` says the
+rest. It only reads the page, so the live board
 (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot; it never starts, stops or
 reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
 folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
