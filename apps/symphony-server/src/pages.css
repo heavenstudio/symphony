@@ -1,5 +1,6 @@
 /* The server's own pages (the project list and a miss), after the client's tokens and frame. */
-html { background:var(--background); }
+/* An `#anchor` lands below the sticky header, as board.css has it on the client's pages. */
+html { background:var(--background); scroll-padding-top:76px; }
 body { margin:0; color:var(--foreground); background:var(--background); font:16px/1.55 var(--font-sans); -webkit-font-smoothing:antialiased; }
 a { color:var(--primary); }
 /* The column a project's pages stand in (board.css's `main`), its title at their titles' size; the
@@ -14,4 +15,11 @@ a { color:var(--primary); }
 .projects .counts, .projects .health, .projects .refused { display:block; margin-top:var(--sp-1); font-size:var(--fs-sm); color:var(--muted-foreground); }
 .projects .health { color:var(--question); }
 .projects .refused { margin-top:var(--sp-2); padding:var(--sp-2) var(--sp-3); border-left:4px solid var(--dislike); border-radius:var(--r-sm); background:var(--muted); color:var(--foreground); }
+/* A Markdown file no entrypoint serves, drawn read-only (media_files.rs): a document's measure, its
+ * code and tables scrolling within it rather than the page. */
+.file-page { max-width:var(--measure); overflow-wrap:anywhere; }
+.file-page code, .file-page pre { font-family:var(--font-mono); font-size:var(--fs-sm); }
+.file-page pre { overflow-x:auto; padding:var(--sp-3); background:var(--muted); border-radius:var(--r-sm); overflow-wrap:normal; }
+.file-page table { display:block; overflow-x:auto; border-collapse:collapse; }
+.file-page th, .file-page td { padding:var(--sp-1) var(--sp-2); border:1px solid var(--border); vertical-align:top; }
 @media (max-width:760px) { .server-page { padding:var(--sp-4) var(--sp-4) var(--sp-6); } .server-page h1 { font-size:var(--fs-2xl); } .projects li { padding:var(--sp-3) var(--sp-4); } }

@@ -35,7 +35,9 @@ link and on the wire; its reads, saves and commits name the file `Project::file`
 maps it to, and every walk goes through `Project::walk`, so what an entrypoint's
 patterns and renderers leave out is never listed or read. The Symphony's own routes
 (`symphony_api::SYMPHONY_ROUTES`, which `assets/shell.js` repeats) win over every
-entrypoint.
+entrypoint. A Markdown file no entrypoint serves (this guide, RULES.md) opened as a page
+is drawn read-only by the server in the project's look, its headings' anchors kept and
+nothing to review (`apps/symphony-server/src/media_files.rs`); fetched, it is the file.
 
 One server serves every project the machine folder's registry holds
 (`crates/symphony/src/machine/registry.rs`: `projects.json` beside the server's record,
