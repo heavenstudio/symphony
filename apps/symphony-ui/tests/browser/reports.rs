@@ -244,10 +244,13 @@ fn asked(site: &Site) -> Vec<String> {
 }
 
 /// Open work's axis and legend: the top of its axis, each legend button's name with whether it is
-/// pressed (shown), and whether any part of a bar wears Ready's colour.
+/// pressed (shown), and whether any part of a bar wears Ready's colour. Its words are read from the
+/// page as drawn (`textContent`), never as laid out (`innerText`): a chart just mounted sits in a
+/// `content-visibility: auto` slot whose contents Chrome skips until its next rendering update,
+/// which lays them out before it paints, and meanwhile every `innerText` in it is empty.
 fn open_work(chrome: &mut Chrome) -> Value {
     chrome.eval(
-        "(() => { const c = document.querySelector('#chart-open'); if (!c) return null; const ticks = [...c.querySelectorAll('.chart-y span')]; return {top: ticks.length ? ticks[ticks.length - 1].innerText : null, keys: [...c.querySelectorAll('.chart-key')].map(b => [b.innerText.trim(), b.getAttribute('aria-pressed')]), ready_drawn: [...c.querySelectorAll('.seg')].some(s => s.getAttribute('style').includes('--chart-1)'))}; })()",
+        "(() => { const c = document.querySelector('#chart-open'); if (!c) return null; const ticks = [...c.querySelectorAll('.chart-y span')]; return {top: ticks.length ? ticks[ticks.length - 1].textContent : null, keys: [...c.querySelectorAll('.chart-key')].map(b => [b.textContent.trim(), b.getAttribute('aria-pressed')]), ready_drawn: [...c.querySelectorAll('.seg')].some(s => s.getAttribute('style').includes('--chart-1)'))}; })()",
     )
 }
 
@@ -255,7 +258,7 @@ fn open_work(chrome: &mut Chrome) -> Value {
 fn toggle_ready(chrome: &mut Chrome) {
     assert_eq!(
         chrome.eval(
-            "(() => { const b = [...document.querySelectorAll('#chart-open .chart-key')].find(b => b.innerText.trim() === 'Ready'); b?.focus(); return document.activeElement === b; })()"
+            "(() => { const b = [...document.querySelectorAll('#chart-open .chart-key')].find(b => b.textContent.trim() === 'Ready'); b?.focus(); return document.activeElement === b; })()"
         ),
         json!(true),
         "Ready's button takes the focus"
@@ -269,12 +272,21 @@ fn toggle_ready(chrome: &mut Chrome) {
 #[test]
 fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_its_axis() {
     let site = served(&crowded());
+    // The last 24 hours answered as that window (the fortnight's periods under its name), so the
+    // page rests on it and draws Days only from Days' own answer.
+    let mut hours = crowded();
+    hours["grain"] = json!("hour");
+    hours["days"] = json!(1);
+    site.set_json(
+        &format!("{}?grain=hour&days=1", symphony_api::REPORTS_PATH),
+        &hours,
+    );
     let Some(mut chrome) = chrome() else { return };
     screen(&mut chrome, 1440, 900, false);
     open(
         &mut chrome,
         &site,
-        "[data-ready=reports] #chart-open .chart-plot",
+        "[data-ready=reports][aria-busy=false] #chart-open .chart-plot",
     );
     assert_eq!(
         asked(&site),
@@ -304,7 +316,7 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
     toggle_ready(&mut chrome);
     assert!(
         chrome.wait_for(
-            "document.querySelector('#chart-open .chart-y span:last-child')?.innerText === '6'",
+            "document.querySelector('#chart-open .chart-y span:last-child')?.textContent === '6'",
             SHOWN
         ),
         "Ready hidden, the axis is the other stages': {}",
@@ -317,7 +329,7 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
     open(
         &mut chrome,
         &site,
-        "[data-ready=reports] #chart-open .chart-plot",
+        "[data-ready=reports][aria-busy=false] #chart-open .chart-plot",
     );
     assert_eq!(
         asked(&site).last().map(String::as_str),
@@ -333,7 +345,7 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
     toggle_ready(&mut chrome);
     assert!(
         chrome.wait_for(
-            "document.querySelector('#chart-open .chart-y span:last-child')?.innerText === '150'",
+            "document.querySelector('#chart-open .chart-y span:last-child')?.textContent === '150'",
             SHOWN
         ),
         "Ready shown again: {}",
