@@ -24,41 +24,40 @@ pub fn escape(text: &str) -> String {
 pub fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        let decoded = rest.find(';').filter(|end| *end <= 10).and_then(|end| {
-            let name = &rest[1..end];
-            let c = match name {
-                "amp" => '&',
-                "lt" => '<',
-                "gt" => '>',
-                "quot" => '"',
-                "apos" => '\'',
-                _ => {
-                    let number = name.strip_prefix('#')?;
-                    let code = match number.strip_prefix(['x', 'X']) {
-                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
-                        None => number.parse().ok()?,
-                    };
-                    char::from_u32(code)?
-                }
-            };
-            Some((c, end))
-        });
-        match decoded {
-            Some((c, end)) => {
-                out.push(c);
-                rest = &rest[end + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
+    while let Some((before, after)) = rest.split_once('&') {
+        out.push_str(before);
+        if let Some((c, past)) = reference(after) {
+            out.push(c);
+            rest = past;
+        } else {
+            out.push('&');
+            rest = after;
         }
     }
     out.push_str(rest);
     out
+}
+
+/// The character the reference `text` opens with names (the text past its `&`: a name of at most
+/// nine bytes, then `;`), and the text past its `;`; none for anything else.
+fn reference(text: &str) -> Option<(char, &str)> {
+    let (name, past) = text.split_once(';').filter(|(name, _)| name.len() <= 9)?;
+    let c = match name {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let code = match number.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => number.parse().ok()?,
+            };
+            char::from_u32(code)?
+        }
+    };
+    Some((c, past))
 }
 
 /// Python's `urllib.parse.quote(text, safe)`: every byte but letters, digits, `_.-~` and `safe`, as `%XX`.

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, PoisonError};
 
 pub use crate::syntax::lines as splitlines;
 pub use crate::syntax::{is_space, is_word};
@@ -58,7 +58,10 @@ pub fn rstrip(s: &str) -> &str {
 
 /// The first `n` characters of `s`, as Python's `s[:n]`.
 pub fn prefix_chars(s: &str, n: usize) -> &str {
-    s.char_indices().nth(n).map_or(s, |(at, _)| &s[..at])
+    s.char_indices()
+        .nth(n)
+        .and_then(|(at, _)| s.get(..at))
+        .unwrap_or(s)
 }
 
 /// `pathlib.Path.read_text(encoding="utf-8")`: universal newlines, so `\r\n` and `\r` read as `\n`.
@@ -73,7 +76,7 @@ pub fn read_text(path: &Path) -> io::Result<String> {
     };
     let stamp = FileStamp::read(&path)?;
     {
-        let text = TEXT.lock().unwrap_or_else(|e| e.into_inner());
+        let text = TEXT.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((before, cached)) = text.get(&path)
             && *before == stamp
         {
@@ -84,7 +87,7 @@ pub fn read_text(path: &Path) -> io::Result<String> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let text = universal_newlines(text);
     if FileStamp::read(&path).ok().as_ref() == Some(&stamp) {
-        let mut cache = TEXT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = TEXT.lock().unwrap_or_else(PoisonError::into_inner);
         if cache.len() >= 2048 && !cache.contains_key(&path) {
             cache.clear();
         }
@@ -103,13 +106,14 @@ pub fn universal_newlines(text: String) -> String {
 
 /// Python's `str(pathlib.Path(s))`: repeated and trailing slashes and `.` parts dropped.
 pub fn path_str(s: &str) -> String {
-    let (root, rest) = if s.starts_with("//") && !s.starts_with("///") {
-        ("//", &s[2..])
-    } else if s.starts_with('/') {
-        ("/", s.trim_start_matches('/'))
-    } else {
-        ("", s)
-    };
+    let (root, rest) =
+        if let Some(rest) = s.strip_prefix("//").filter(|rest| !rest.starts_with('/')) {
+            ("//", rest)
+        } else if s.starts_with('/') {
+            ("/", s.trim_start_matches('/'))
+        } else {
+            ("", s)
+        };
     let parts: Vec<&str> = rest
         .split('/')
         .filter(|part| !part.is_empty() && *part != ".")

@@ -152,6 +152,10 @@ fn unescape_reads_the_named_references_and_numbers_back() {
     assert_eq!(unescape("&#notanumber;"), "&#notanumber;");
     assert_eq!(unescape("&averylongname;"), "&averylongname;");
     assert_eq!(unescape("&amp"), "&amp");
+    // A reference's name is at most nine bytes; an `&` that opens none is kept and read past.
+    assert_eq!(unescape("&#x0000041;"), "A");
+    assert_eq!(unescape("&#x00000041;"), "&#x00000041;");
+    assert_eq!(unescape("&&lt;é&gt"), "&<é&gt");
 }
 
 #[test]
