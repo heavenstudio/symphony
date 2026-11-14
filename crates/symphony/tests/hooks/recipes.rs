@@ -160,8 +160,8 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     // Its board is not made yet: the step that makes it is left.
     assert!(
         out.contains(
-            "\n- make the board: the first board command makes it (`just tasks list`, which \
-             starts the board's server)"
+            "\n- make the board: the first board command makes it (`just tasks list`); the \
+             Symphony only reads a board and never makes one\n"
         ),
         "{out}"
     );

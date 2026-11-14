@@ -1251,9 +1251,8 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
 }
 
 /// The step that makes a board not made yet.
-const MAKE_BOARD: &str = "make the board: the first board command makes it (`just tasks list`, \
-                          which starts the board's server); the Symphony only reads a board and \
-                          never makes one";
+const MAKE_BOARD: &str = "make the board: the first board command makes it (`just tasks list`); \
+                          the Symphony only reads a board and never makes one";
 
 #[test]
 fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {

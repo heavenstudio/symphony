@@ -1186,8 +1186,8 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
     }
     if unmade_board(root, machine.surreal) {
         steps.push(
-            "make the board: the first board command makes it (`just tasks list`, which starts \
-             the board's server); the Symphony only reads a board and never makes one"
+            "make the board: the first board command makes it (`just tasks list`); the Symphony \
+             only reads a board and never makes one"
                 .to_string(),
         );
     }
