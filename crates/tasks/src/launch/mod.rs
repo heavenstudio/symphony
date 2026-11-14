@@ -21,7 +21,7 @@
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
-//! the project, and a launch's first message is `/work SLUG HANDLE` alone ([`Bounds`]).
+//! the project, and a launch's first message is its skill's alone ([`Bounds`]).
 //!
 //! A terminal is closed only when all of these hold: it is this board's (`symphony.board`); its
 //! agent is idle (or it is a shell with nothing in it, or its program ended), its foreground is the
@@ -250,7 +250,9 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     // not resolved again.
     let mut admitted = None;
     if let Some(bounds) = &m.bounds {
-        bounds.prompt(slug, &ask.prompt).map_err(Error::Refused)?;
+        bounds
+            .prompt(slug, role, &ask.prompt)
+            .map_err(Error::Refused)?;
         if let Some(given) = &ask.worktree {
             admitted = Some(bounds.admit("--worktree", given).map_err(Error::Refused)?);
         }

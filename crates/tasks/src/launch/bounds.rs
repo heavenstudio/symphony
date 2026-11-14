@@ -7,8 +7,9 @@
 //! ([`super::Machine::wt_base`], where a launch makes them), each path's links and `..` resolved
 //! first: `launch --worktree DIR`, the worktree a launch makes, and the worktree a record names that
 //! a restore makes again and starts in, an older record's too. A launch takes no `--prompt` there:
-//! an agent's first message is its person's own word, so it is `/work SLUG HANDLE` alone, and what
-//! else the launcher has to say goes on the task's thread, which `/work` reads, as board text.
+//! an agent's first message is its person's own word, so it is `/work SLUG HANDLE` alone (a
+//! reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and what else the launcher has
+//! to say goes on the task's thread, which the skill reads, as board text.
 //!
 //! The conversation a restore resumes is the one the record names. Under the mark `tasks api`'s
 //! `record_launch` writes no record a restore would start elsewhere, nor one naming a conversation;
@@ -99,19 +100,21 @@ impl Bounds {
         ))
     }
 
-    /// Whether a launch may give its agent `prompt` after `/work SLUG HANDLE`: only none.
+    /// Whether a launch may give its agent of `role` `prompt` after `/work SLUG HANDLE` (a
+    /// reviewer's `/review-task SLUG HANDLE`): only none.
     ///
     /// # Errors
     ///
     /// One line saying where the text goes instead.
-    pub fn prompt(&self, slug: &str, prompt: &str) -> Result<(), String> {
+    pub fn prompt(&self, slug: &str, role: &str, prompt: &str) -> Result<(), String> {
         if prompt.trim().is_empty() {
             return Ok(());
         }
+        let skill = super::skill(role);
         Err(format!(
             "no --prompt through a recipe an agent runs unasked: an agent's first message is its \
-             person's own word, so it is /work {slug} HANDLE alone; say the rest on the task's \
-             thread (just tasks say {slug} TEXT), which /work reads, or run the binary by itself"
+             person's own word, so it is /{skill} {slug} HANDLE alone; say the rest on the task's \
+             thread (just tasks say {slug} TEXT), which /{skill} reads, or run the binary by itself"
         ))
     }
 

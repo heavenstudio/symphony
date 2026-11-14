@@ -266,8 +266,9 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   base (`<repo>-wt/`, or `SYMPHONY_WT_DIR`), or from a linked worktree into the
   main checkout's artifacts folder, never into a git folder; any other is
   refused. A given checkout with a live or stale executor is refused. Its first
-  message is `/work SLUG HANDLE` alone: put anything else on the task's thread,
-  which the agent reads. The agent appears
+  message is `/work SLUG HANDLE` alone (a reviewer's `/review-task SLUG HANDLE`,
+  each with `$` for Codex): put anything else on the task's thread, which the
+  agent reads. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
   configured multiplexer's project space. Explicit flags and the destination
   project's launch configuration select the agent, model and effort: its

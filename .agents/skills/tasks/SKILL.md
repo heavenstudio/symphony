@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 2af4ba7cc5cc9da1 files=SKILL.md -->
+<!-- symphony-stamp: 009df8fc52e52d99 files=SKILL.md -->
 
 # Work from the task board
 
@@ -267,8 +267,9 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   base (`<repo>-wt/`, or `SYMPHONY_WT_DIR`), or from a linked worktree into the
   main checkout's artifacts folder, never into a git folder; any other is
   refused. A given checkout with a live or stale executor is refused. Its first
-  message is `/work SLUG HANDLE` alone: put anything else on the task's thread,
-  which the agent reads. The agent appears
+  message is `/work SLUG HANDLE` alone (a reviewer's `/review-task SLUG HANDLE`,
+  each with `$` for Codex): put anything else on the task's thread, which the
+  agent reads. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
   configured multiplexer's project space. Explicit flags and the destination
   project's launch configuration select the agent, model and effort: its

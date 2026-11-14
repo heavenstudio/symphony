@@ -392,6 +392,18 @@ fn unasked_a_launch_gives_its_agent_no_word_of_the_launchers() {
          person's own word, so it is /work sim/jump HANDLE alone; say the rest on the task's \
          thread (just tasks say sim/jump TEXT), which /work reads, or run the binary by itself"
     );
+    // A reviewer's is its own skill's.
+    let review = Ask {
+        role: "reviewer".into(),
+        ..ask.clone()
+    };
+    assert_eq!(
+        refused(unasked(&w, &review)),
+        "no --prompt through a recipe an agent runs unasked: an agent's first message is its \
+         person's own word, so it is /review-task sim/jump HANDLE alone; say the rest on the \
+         task's thread (just tasks say sim/jump TEXT), which /review-task reads, or run the \
+         binary by itself"
+    );
     assert_eq!(w.calls_of(&["run"]), Vec::<Vec<String>>::new());
     assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![]);
     assert_eq!(workers(&w), Vec::<String>::new());

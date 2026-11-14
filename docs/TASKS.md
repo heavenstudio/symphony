@@ -326,7 +326,8 @@ too, lead only into those places or under the project's worktree base (`<repo>-w
 or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
 line naming the folder and starts nothing. A launch takes no `--prompt` there: an
 agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
-alone, and the rest goes on the task's thread, which `/work` reads. A restore
+alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
+rest goes on the task's thread, which the skill reads. A restore
 resumes the conversation its record names. Under the mark `tasks api`'s
 `record_launch` records neither a worktree outside those places nor a conversation
 id; no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, and
