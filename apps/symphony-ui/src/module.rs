@@ -246,13 +246,11 @@ mod program {
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
             Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
             Chunk::Timeline => rsx! { crate::split::TimelinePart {} },
-            // No kind: `install` registers none for it, so no root of its own is launched.
-            Chunk::Media => rsx! {},
         }
     }
 
     pub fn install() {
-        for chunk in Chunk::KINDS {
+        for chunk in Chunk::ALL {
             let start = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || run(chunk));
             let stop = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || change(chunk, false));
             let callbacks = js_sys::Object::new();

@@ -644,8 +644,12 @@ never the whole target, which the release run runs.
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),
   and the program's from a chunk of its own (`split::MediaPart`, `media` in the program's map of
   chunks and in no manifest), so the program's main module holds none of it: the task pages, the
-  chat on the board and Reports fetch it only when media first shows. Mockups stay at 1280x800, scaled by their card's width,
-  with only `allow-scripts` in their sandbox. Never add `allow-same-origin`.
+  chat on the board and Reports fetch it only when media first shows. A chunk that does not load
+  leaves the page as it is and is asked for again by the next media shown: the shell loads the
+  page again when its build is gone, and otherwise puts up `#media-error` with a retry that
+  shows the media again (`reviewMediaFailed`, `assets/shell.js`). Mockups stay at 1280x800,
+  scaled by their card's width, with only `allow-scripts` in their sandbox. Never add
+  `allow-same-origin`.
   A file a plugin's renderer draws in a viewer is a `Media::Viewer`, drawn by
   `viewer::FileViewer` from its `symphony_api::Viewer` data alone: the custom
   element (its markup from `Viewer::element_html`, every value escaped), its

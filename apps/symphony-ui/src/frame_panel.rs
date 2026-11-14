@@ -605,7 +605,7 @@ fn BoardMedia() -> Element {
     #[cfg(feature = "page-program")]
     {
         let needed = crate::media_live::use_activation();
-        rsx! { if needed() { crate::split::MediaPart {} } }
+        rsx! { if needed() { crate::split::MediaPart { needed } } }
     }
     #[cfg(not(feature = "page-program"))]
     rsx! { crate::media_live::MediaRuntime {} }

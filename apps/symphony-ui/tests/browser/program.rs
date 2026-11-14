@@ -4,11 +4,18 @@
 //! media layer is a chunk of its own, which a page fetches only once it shows media. The page shown
 //! before stays until the chunk is in; a chunk that does not load ends in the shell's
 //! `gone` state (assets/shell.js) with that page under its notice, never an empty page or one left
-//! waiting.
+//! waiting. A media layer that does not load leaves its page shown under a notice whose retry
+//! loads it, or loads the page again when its build is gone.
 
 use serde_json::json;
 
-use super::{SHOWN, STALL, Site, assets::module, chrome, chrome::Chrome, common, dist};
+use super::{
+    SHOWN, STALL, Site,
+    assets::{media_chunk, module},
+    chrome,
+    chrome::Chrome,
+    common, dist,
+};
 
 /// The stand-in with what a task page reads.
 fn site() -> Site {
@@ -109,14 +116,37 @@ fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_pro
     );
 }
 
-/// How many times the stand-in was asked for the media layer's chunk, which no kind is, so the
-/// shell's manifest never names it: the program's map of its chunks does.
-fn media_asked(site: &Site) -> usize {
-    site.requests()
-        .iter()
-        .filter(|path| path.starts_with("/assets/module_") && path.contains("_media-"))
-        .count()
+/// How many times the stand-in was asked for the media layer's chunk ([`media_chunk`]).
+pub(super) fn media_asked(site: &Site) -> usize {
+    asks(site, &[&media_chunk(dist())])[0]
 }
+
+/// The stand-in with a task whose brief is a picture, `/near.svg`, below the page's head.
+fn picture_site() -> Site {
+    let site = site();
+    let mut page = super::look_parity::responses()["/api/task-page"].clone();
+    page["blocks"] = json!([{"type":"image","image":{"src":"/near.svg","alt":"near","presentation":{"attributes":{"width":"200","height":"200"}}}}]);
+    site.set_json("/api/task-page", &page);
+    site.set_file(
+        "/near.svg",
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+        "image/svg+xml",
+    );
+    site
+}
+
+/// Open the picture task's page, mark it (`__kept`, which a load of the page again drops) and
+/// scroll its picture into view, as a reader would: it shows, which asks for the media layer.
+fn show_picture(chrome: &mut Chrome, site: &Site) {
+    chrome.open(&site.url("/task/visual/in-progress"));
+    shows(chrome, "article.task");
+    chrome.eval("window.__kept = true");
+    chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
+}
+
+/// The media layer took the picture up: it marks the page's pictures once its chunk is in.
+const TAKEN_UP: &str =
+    "document.querySelector('main img[alt=near][data-zoom-ready]')?.naturalWidth === 200";
 
 #[test]
 fn the_media_layer_is_fetched_only_by_a_page_that_shows_media_and_then_opens_its_pictures() {
@@ -139,25 +169,11 @@ fn the_media_layer_is_fetched_only_by_a_page_that_shows_media_and_then_opens_its
         );
     }
     // The same task, its brief now a picture, in a browser of its own.
-    let mut page = super::look_parity::responses()["/api/task-page"].clone();
-    page["blocks"] = json!([{"type":"image","image":{"src":"/near.svg","alt":"near","presentation":{"attributes":{"width":"200","height":"200"}}}}]);
-    site.set_json("/api/task-page", &page);
-    site.set_file(
-        "/near.svg",
-        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
-        "image/svg+xml",
-    );
+    let site = picture_site();
     let Some(mut chrome) = chrome() else { return };
-    chrome.open(&site.url("/task/visual/in-progress"));
-    shows(&mut chrome, "article.task");
-    // Below the page's head, the picture shows once it is scrolled to, as a reader would; the
-    // media layer marks the page's pictures once its chunk is in.
-    chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
+    show_picture(&mut chrome, &site);
     assert!(
-        chrome.wait_for(
-            "document.querySelector('main img[alt=near][data-zoom-ready]')?.naturalWidth === 200",
-            SHOWN
-        ),
+        chrome.wait_for(TAKEN_UP, SHOWN),
         "the picture is never taken up by the media layer: {:?}; {:?}",
         chrome.eval("[...document.querySelectorAll('main img')].map(image => image.outerHTML)"),
         site.requests()
@@ -172,6 +188,78 @@ fn the_media_layer_is_fetched_only_by_a_page_that_shows_media_and_then_opens_its
         "the picture never opens in the viewer: {:?}",
         chrome.eval("document.getElementById('media-lightbox')?.outerHTML")
     );
+    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
+}
+
+#[test]
+fn a_media_layer_whose_chunk_does_not_load_says_so_and_its_retry_loads_it() {
+    let site = picture_site();
+    let media = media_chunk(dist());
+    // Its build still served, the media layer's chunk does not load: the page stays, and says so.
+    site.retire(&media);
+    let Some(mut chrome) = chrome() else { return };
+    show_picture(&mut chrome, &site);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#media-error[role=alert]') !== null",
+            SHOWN
+        ),
+        "a media layer that does not load is silent: {:?}",
+        site.requests()
+    );
+    assert_eq!(
+        chrome.eval("document.querySelector('#media-error')?.textContent"),
+        json!("Media could not be loaded. Retry loading media")
+    );
+    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
+    assert!(drawn(&mut chrome, "article.task"), "the task page is gone");
+    assert!(
+        drawn(&mut chrome, "main img[alt=near]"),
+        "the picture is gone"
+    );
+    assert_eq!(chrome.eval(TAKEN_UP), json!(false));
+    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
+    // A later load works: the retry shows the media again, which asks for the chunk again.
+    site.restore(&media);
+    chrome.eval("document.querySelector('#media-error button').click()");
+    assert!(
+        chrome.wait_for(TAKEN_UP, SHOWN),
+        "the retry never loads the media layer: {:?}",
+        site.requests()
+    );
+    assert_eq!(media_asked(&site), 2, "{:?}", site.requests());
+    assert_eq!(
+        chrome.eval("document.getElementById('media-error') === null && window.__kept === true"),
+        json!(true),
+        "the notice stays up, or the page was loaded again"
+    );
+}
+
+#[test]
+fn a_media_layer_whose_build_is_gone_loads_the_page_again() {
+    let site = picture_site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/task/visual/in-progress"));
+    shows(&mut chrome, "article.task");
+    let loads = |site: &Site| {
+        site.requests()
+            .iter()
+            .filter(|path| *path == "/task/visual/in-progress")
+            .count()
+    };
+    assert_eq!(loads(&site), 1, "{:?}", site.requests());
+    // Its build gone from the server, the media layer's chunk with it: once the picture shows,
+    // the page loads again, onto the build served now.
+    site.retire(&media_chunk(dist()));
+    site.retire(&shell(&mut chrome));
+    chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
+    if let Err(stall) =
+        test_time::until_true("a page whose media is gone loaded again", STALL, || {
+            loads(&site) >= 2
+        })
+    {
+        panic!("{stall}: {:?}", site.requests());
+    }
     assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
 }
 
