@@ -2209,6 +2209,48 @@ fn a_page_the_page_opens_brings_it_back_in_front_unwaited_as_it_is_told_of_once_
     );
 }
 
+#[test]
+fn a_page_opened_while_the_page_is_asked_is_put_behind_it_so_the_page_answers() {
+    // As Chrome holds the page when a page of its own site, opened later (from a timer) while the
+    // page is being asked something, shows a dialog in front: the page answers nothing, its probes
+    // included, until it is brought back in front, which closes that dialog. Told of that page as
+    // the evaluation waits, the driver brings the page in front, and the evaluation is answered.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut held = Vec::new();
+        let mut fronted = false;
+        while let Some(command) = peer.next() {
+            let asked = command["sessionId"] == "page" && command["method"] == "Runtime.evaluate";
+            if command["method"] == "Page.bringToFront" {
+                fronted = true;
+                for command in held.drain(..) {
+                    answer(peer, &command);
+                }
+            } else if asked && !fronted {
+                if command["params"]["expression"] == "document.title" {
+                    peer.send(json!({"method": "Target.targetCreated", "params": {
+                        "targetInfo": {"targetId": "opened", "type": "page", "url": ""}}}));
+                }
+                held.push(command);
+            } else {
+                answer(peer, &command);
+            }
+        }
+        fronted
+    });
+    fn answer(peer: &Peer, command: &Value) {
+        let value = if command["params"]["expression"] == "document.title" {
+            json!("answered")
+        } else {
+            json!(0)
+        };
+        peer.reply(command, json!({"result": {"value": value}}));
+    }
+    chrome.keep_in_front().unwrap();
+    assert_eq!(chrome.eval("document.title").unwrap(), json!("answered"));
+    drop(chrome);
+    assert!(peer.join().unwrap());
+}
+
 /// A loopback server ([`framing_server`]) and how a test drives it: its address and port, the
 /// paths of the held requests as each arrives, and a release of one held document's rest.
 struct Framing {

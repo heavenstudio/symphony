@@ -3133,15 +3133,15 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
     // anything: the opened page shows its dialog while it is in front. A dialog shown in front holds
     // the process the two pages share, and every answer of the page's, until another tab is in
     // front: the alerting page's own load left that order to a loaded machine's chance, and the
-    // page never answered. One more opens a blank page within the click and writes it a script
-    // that alerts at once, then marks the opener, so the click itself waits on the process the
-    // alert holds; and, with no click, a step once the page has settled arms a timer that does the
-    // same, so that page opens while the shot waits on the page, whatever the load. Each opens a
-    // tab. The shot leaves a page it did not open as Chrome leaves it: let start, and behind the
-    // shot's page, brought back in front as soon as Chrome tells of the new one, where Chrome
-    // lets its dialogs go (an alert as by its OK, a confirm as by its Cancel) and its script goes
-    // on. Each click returns, and every time the page goes on with the window it opened and is
-    // shot, and the report has no dialog of the opened page's.
+    // page never answered. One more opens a blank page and writes it a script that alerts at once,
+    // then marks the opener, within the click, so the click itself waits on the process the alert
+    // holds. Each opens a tab. The shot leaves a page it did not open as Chrome leaves it: let
+    // start, and behind the shot's page, brought back in front as soon as Chrome tells of the new
+    // one, where Chrome lets its dialogs go (an alert as by its OK, a confirm as by its Cancel)
+    // and its script goes on. Each click returns, the page goes on with the window it opened and
+    // is shot, and the report has no dialog of the opened page's. (A page opened later, from a
+    // timer, needs the click's user activation, which lapses after five seconds, so no form of it
+    // here is free of the machine's load: the driver's own tests hold that case.)
     let other = site();
     let site = site();
     let away = format!("http://localhost:{}", other.addr.port());
@@ -3181,9 +3181,9 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
     window.opened.document.write("<script>setTimeout(() => {{ confirm('as it opens'); alert('as it opens'); {marking}; }});<\/script>");
     window.opened.document.close();
   }};
-  const openAlerting = said => {{
+  const openAlerting = () => {{
     openPage('');
-    window.opened.document.write("<script>alert('" + said + "'); {marking};<\/script>");
+    window.opened.document.write("<script>alert('within the click'); {marking};<\/script>");
     window.opened.document.close();
   }};
 </script>
@@ -3192,26 +3192,20 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
 <button id="alerting" type="button" onclick="openPage('/alerting.html')">alerting</button>
 <button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>
 <button id="asking" type="button" onclick="openAsking()">asking as it opens</button>
-<button id="written" type="button" onclick="openAlerting('within the click')">alerting within the click</button>"#
+<button id="written" type="button" onclick="openAlerting()">alerting within the click</button>"#
         )
         .into_bytes(),
         "text/html",
     );
-    for steps in [
-        &["--click", "#same"][..],
-        &["--click", "#cross"],
-        &["--click", "#alerting", "--wait-for", "#after"],
-        &["--click", "#later", "--wait-for", "#after"],
-        &["--click", "#asking", "--wait-for", "#after"],
-        &["--click", "#written", "--wait-for", "#after"],
-        &[
-            "--eval",
-            "void setTimeout(() => openAlerting('from a timer'))",
-            "--wait-for",
-            "#after",
-        ],
+    let marked = ["--wait-for", "#after"];
+    for (button, waits) in [
+        ("#same", &[][..]),
+        ("#cross", &[][..]),
+        ("#alerting", &marked[..]),
+        ("#later", &marked[..]),
+        ("#asking", &marked[..]),
+        ("#written", &marked[..]),
     ] {
-        let case = steps.join(" ");
         let Some(chrome) = chrome::find() else {
             eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
             return;
@@ -3222,8 +3216,14 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
         let output = shot(
             &chrome,
             &[
-                &[url.as_str(), "--out", out.to_str().unwrap()][..],
-                steps,
+                &[
+                    url.as_str(),
+                    "--out",
+                    out.to_str().unwrap(),
+                    "--click",
+                    button,
+                ][..],
+                waits,
                 &[
                     "--eval",
                     "[!!window.opened, window.opened.closed]",
@@ -3234,14 +3234,10 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
         )
         .output()
         .unwrap();
-        assert!(output.status.success(), "{case}: {}", said(&output));
-        // The last two: a step that arms the timer prints its own value (null) before them.
-        let printed = printed(&output);
-        let [.., opened, report] = printed.as_slice() else {
-            panic!("{case}: {printed:?}");
-        };
-        assert_eq!(*opened, json!([true, false]), "{case}");
-        assert_eq!(report["dialogs"], json!([]), "{case}: {report}");
+        assert!(output.status.success(), "{button}: {}", said(&output));
+        let [opened, report] = printed(&output).try_into().unwrap();
+        assert_eq!(opened, json!([true, false]), "{button}");
+        assert_eq!(report["dialogs"], json!([]), "{button}: {report}");
         assert!(Picture::read(&out).width > 0);
     }
 }
