@@ -523,8 +523,8 @@ fn a_done_task_names_the_move_back_to_review_only_until_its_landing_closes_it() 
     assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
 }
 
-/// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
-/// claims, approves the task; the executor of a work slice of it is refused, in these words.
+/// A reviewer that claimed an instruction subtask made `--for` it, which puts nothing on the task's
+/// branch, still approves the task; the executor of a work slice of it is refused, in these words.
 #[test]
 fn the_reviewer_of_a_review_instruction_approves_and_a_slices_executor_is_refused() {
     let c = Case::new();
