@@ -22,7 +22,7 @@ estimate is not measured. The Dioxus figures are the baseline's, main at `a8490d
 compiler checks the wire's types and that every block, span and media kind a plugin renders is
 drawn. Nothing is written again, and the work under way on it (one runtime shared between its
 modules, now on main) goes on. Where it is ahead today, at full speed: a return visit to a small
-board or a task's page is a third quicker, most likely by its device cache; and a card moved
+board or a task's page is about a quarter quicker, most likely by its device cache; and a card moved
 between columns is drawn in 23 ms where the Preact board takes 43, every batch agreeing.
 
 **B: move the client to JSX on Preact,** a page kind at a time, with the same source able to
@@ -57,7 +57,7 @@ over every block kind would replace ([What a switch would cost](#what-a-switch-w
 
 **Level, or not a reason.** Typing is a tie, and Load more on 2,000 cards is level. Scrolling the
 long document at full speed, the JSX pages have one or two frames over 50 ms where the Dioxus page
-has six to nine, in 14 rounds of 15; a card's move is the reverse, quicker on Dioxus, as above.
+has six to nine, in 13 rounds of 15; a card's move is the reverse, quicker on Dioxus, as above.
 Memory is a wash: one run, and the wasm module's reserved memory is not a live heap. With the CPU
 slowed the JSX return visits are quicker, but that is most likely the cost of the device cache's
 own draw, which the JSX pages leave out and B would port, so it counts for neither side. Code size
@@ -368,7 +368,7 @@ What they say:
   batches ran while the load rose to 165: the board's ratios fell to about 0.4 there, and the
   guide's React ratio rose to 1.30. The other batches agree with each other; these two are the
   ones to read with care, and the guide's React figure is left undecided because of it.
-- **Warm, the Dioxus board and task page are sooner,** by a third, every batch agreeing. The
+- **Warm, the Dioxus board and task page are sooner,** by about a quarter, every batch agreeing. The
   likely cause, read in the code and the requests and not traced, is the device cache, which
   draws a return visit from what the device holds before its reads come back; the JSX pages leave
   it out and wait for their reads. On the guide, where the cache draws
@@ -426,7 +426,7 @@ at loads from about 70 to 250; a task's page opened from the board comes in half
 phone's screen the gap is wider still: the JSX board paints first in about a quarter of the Dioxus
 time and is usable in 0.4 of it, cold, and in about a quarter of it warm. The Dioxus pages spend
 two to three times the script time and one and a half to ten times the time in long tasks.
-**The warm visit turns over:** the Dioxus board's return, a third quicker than the JSX board's at
+**The warm visit turns over:** the Dioxus board's return, about a quarter quicker than the JSX board's at
 full speed, is three and a half times slower here (2.3 s against 0.64 s), and slower than its own
 cold visit; its reads, all answered `304`, finish at about 1.8 s where at full speed they finish
 at 0.16 s, so the page is waiting on its own main thread, not the server. The device cache's draw
@@ -460,8 +460,8 @@ batches' load was 215–240, 193–245 and 104–182 for 500 cards, and 67–87,
 **The ratios held from a load of 67 to one of 245.** Cold, the JSX boards are usable at three
 quarters of the Dioxus time on both sizes, as on the bench board, in every batch but one: the
 500-card board's first batch, at a load over 200, where Dioxus took three times as long (ratio
-about 0.33). **Warm, the order turns** on a larger board: the Dioxus board's return visit, a
-third quicker on 120 cards, is about level on 500 (React a little quicker, Preact undecided) and
+about 0.33). **Warm, the order turns** on a larger board: the Dioxus board's return visit, about
+a quarter quicker on 120 cards, is about level on 500 (React a little quicker, Preact undecided) and
 slower on 2,000, where the JSX boards are quicker
 warm too (0.79 and 0.88, every batch agreeing). That its device cache has more to draw before the
 reads on a larger board is the likely cause, inferred and not traced. The JSX boards' JavaScript heap grows with the board, to 4 to 6 MB at 2,000 cards; the
@@ -731,7 +731,7 @@ task's evidence, not in the repository.
 **Measured here.** Every figure in the tables, from the runs named, on one busy machine; the
 bytes, decoded code, DOM counts, heaps and DOM changes, which repeated round after round; the
 time ratios and how they held across batches; the pictures' match; the line counts; the build
-times; the sizes in the cost of a switch, read from the tree at the baseline.
+times; the sizes in the cost of a switch, read from the tree at the baseline or, where a row names it, on main.
 
 **Read in code or in the requests, not measured apart.** That the return visit's difference in
 bytes is the device cache's empty `304`s; that the Dioxus client's JavaScript heap is small
