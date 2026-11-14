@@ -1,7 +1,7 @@
-//! Whose approve a land goes by, and what it does with one that does not do: never one from a
-//! session that executed the task, nor its orchestrator's but on a fast fix; an approve naming no
-//! commit covers none made during its review; a tip merged by hand is no land to finish; and an
-//! approved task goes back to review while its tip is not on main.
+//! Whose approve a land goes by, and what it does with one that does not do: its reviewer's after
+//! its own changes, never one from a session that executed the task, nor its orchestrator's but on
+//! a fast fix; an approve naming no commit covers none made during its review; a tip merged by hand
+//! is no land to finish; and an approved task goes back to review while its tip is not on main.
 
 use super::*;
 use symphony_board::NewTask;
@@ -117,6 +117,30 @@ fn the_reviewer_of_its_review_instruction_lands_it_and_a_slices_executor_does_no
         "{said}"
     );
     assert_eq!(head(&r.root, "main^2"), tip);
+}
+
+/// A later round goes to the same reviewer, as the skills say: its own earlier changes leave it a
+/// fresh reviewer, and its approve of the fixed tip lands the task.
+#[test]
+fn the_same_reviewers_approve_after_its_own_changes_lands_the_task() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let first = head(&wt, "HEAD");
+    let people = judged(&r, SLUG, "changes", &format!("{first}: it jumps twice"));
+    write(&wt, "sim/jump.gd", "extends Node # once\n");
+    git(&wt, &["commit", "-qam", "jump once"]);
+    let fixed = head(&wt, "HEAD");
+    let store = &r.board.store;
+    store.move_to(SLUG, "review", &people.exe).unwrap();
+    store
+        .verdict(SLUG, &people.rev, "approve", &format!("{fixed}: once"))
+        .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    result.unwrap();
+    let by = format!("land {SLUG}: approved by {} at ", people.rev);
+    assert!(said.starts_with(&by), "{said}");
+    assert_eq!(head(&r.root, "main^2"), fixed);
 }
 
 #[test]

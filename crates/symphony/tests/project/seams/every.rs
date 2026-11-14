@@ -92,8 +92,9 @@ impl Plugin for Every {
     }
 }
 
-/// [`EVERY`] as a plugin's process serves it: its name, its components and its card kind, the
-/// seams a process answers, and a component that takes as long as it is told.
+/// [`EVERY`] as a plugin's process serves it: its name and each seam a process answers (its
+/// components, card kind, renderer, route, navigation, home region, board action, watch, doc check,
+/// command and theme), and a component that takes as long as it is told.
 pub(super) struct Piped;
 
 pub(super) static PIPED: Piped = Piped;
@@ -108,20 +109,58 @@ impl Plugin for Piped {
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
         vec![&EVERY]
     }
+    fn renderers(&self) -> Vec<&dyn Renderer> {
+        EVERY.renderers()
+    }
+    fn routes(&self) -> Vec<&dyn Route> {
+        EVERY.routes()
+    }
+    fn nav(&self) -> Vec<NavItem> {
+        EVERY.nav()
+    }
+    fn home_regions(&self) -> Vec<&dyn HomeRegion> {
+        EVERY.home_regions()
+    }
+    fn board_actions(&self) -> Vec<&dyn BoardAction> {
+        EVERY.board_actions()
+    }
+    fn watches(&self) -> Vec<&dyn Watch> {
+        EVERY.watches()
+    }
+    fn doc_checks(&self) -> Vec<&dyn DocCheck> {
+        EVERY.doc_checks()
+    }
+    fn commands(&self) -> Vec<&dyn Command> {
+        EVERY.commands()
+    }
+    fn theme(&self) -> Option<Theme> {
+        EVERY.theme()
+    }
 }
 
 /// A component that spends its argument's microseconds before it answers, so a measurement shows
-/// its meters move by a known time; `hang` it never answers in a test's time.
+/// its meters move by a known time; `hang` it never answers in a test's time, the file
+/// [`HANGING`] written in the page's root first, so a test sees the call is in it.
 struct Slow;
 
 static SLOW: Slow = Slow;
+
+/// What `slow hang` writes in its page's root once the call is in the component.
+pub const HANGING: &str = "slow-hanging";
 
 impl Component for Slow {
     fn name(&self) -> &str {
         "slow"
     }
-    fn render(&self, _: &Page<'_>, argument: &str, _: Option<&str>) -> Result<Vec<Block>, String> {
+    fn render(
+        &self,
+        page: &Page<'_>,
+        argument: &str,
+        _: Option<&str>,
+    ) -> Result<Vec<Block>, String> {
         if argument == "hang" {
+            // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
+            let _ = std::fs::write(page.root.join(HANGING), "");
             std::thread::sleep(std::time::Duration::from_secs(600));
         }
         let micros: u64 = argument

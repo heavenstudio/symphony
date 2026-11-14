@@ -218,7 +218,7 @@ pub fn apply(
     waiting: &mut [Card],
     now: u64,
 ) -> Result<(), ReviewError> {
-    let cards = eligible(docs, &Plugins::of(root));
+    let cards = eligible(docs, &Plugins::of(root).reading(root, docs));
     apply_cards(root, owner, &cards, waiting, now).map(|_| ())
 }
 
@@ -294,7 +294,7 @@ pub fn act(
             &crate::branches::branch_cards(root),
             &plugins,
         );
-        let cards = eligible(&docs, &plugins);
+        let cards = eligible(&docs, &plugins.reading(root, &docs));
         act_with_cards(root, owner, path, slug, action, now, Some(&cards))
     } else {
         act_with_cards(root, owner, path, slug, action, now, None)

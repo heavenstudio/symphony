@@ -6,7 +6,9 @@
 //   node fixture/make.mjs PRESET FOLDER
 //
 // PRESET: `bench` (120 tasks, a task of 80 messages, the documents), `big500`, `big2000` (that many
-// tasks, short briefs, the same documents). FOLDER must not exist. The environment names the tools:
+// tasks, short briefs, the same documents), `plugins` (12 tasks, the same documents, and two of a
+// project's own blocks with their modules, `docs/PLUGINS.md` and `docs/PROBE.md`, for the plugins
+// section of the comparison). FOLDER must not exist. The environment names the tools:
 // TASKS_BIN (the board's binary), SERVER_BIN (`symphony-server`), SYMPHONY_SURREAL (the pinned
 // SurrealDB) and SYMPHONY_MACHINE_DIR (a temporary machine folder): never the live board, which
 // this script cannot reach, as its board is the new repository's own.
@@ -19,9 +21,10 @@ const PRESETS = {
   bench: { tasks: 120, thread: 80, briefs: "long" },
   big500: { tasks: 500, thread: 20, briefs: "short" },
   big2000: { tasks: 2000, thread: 20, briefs: "short" },
+  plugins: { tasks: 12, thread: 4, briefs: "short" },
 };
 if (!PRESETS[preset] || !folder) {
-  console.error("usage: node fixture/make.mjs bench|big500|big2000 FOLDER");
+  console.error("usage: node fixture/make.mjs bench|big500|big2000|plugins FOLDER");
   process.exit(2);
 }
 for (const name of ["TASKS_BIN", "SERVER_BIN", "SYMPHONY_SURREAL", "SYMPHONY_MACHINE_DIR"]) {
@@ -102,6 +105,37 @@ function documents() {
     if (s % 6 === 0) guide += `### Section ${s} detail\n\n${paragraph(3)}\n\n`;
   }
   fs.writeFileSync(path.join(docs, "GUIDE.md"), guide);
+  if (preset === "plugins") plugins(docs);
+}
+
+// A project's own blocks (src/custom.jsx): a chart of the comparison's own first-visit bytes, and
+// the probe, in a document of its own as it posts an owner's approve each time it is drawn in the
+// page. The modules are the project's files, served beside its documents.
+function plugins(docs) {
+  const blocks = path.join(docs, "blocks");
+  fs.mkdirSync(blocks);
+  for (const name of ["chart.js", "probe.js"]) fs.copyFileSync(new URL(`blocks/${name}`, import.meta.url), path.join(blocks, name));
+  const block = (value) => "```custom\n" + JSON.stringify(value) + "\n```\n";
+  const bars = [
+    ["the board, Dioxus", 307.3],
+    ["the board, Preact", 43.5],
+    ["a task's page, Dioxus", 768.0],
+    ["a task's page, Preact", 48.4],
+    ["the guide, Dioxus", 491.7],
+    ["the guide, Preact", 59.6],
+  ].map(([label, value], index) => ({ label, value, accent: index % 2 === 0 }));
+  fs.writeFileSync(
+    path.join(docs, "PLUGINS.md"),
+    "# A project's own block\n\nThe chart below is drawn by the project's module, `docs/blocks/chart.js`, from the JSON in the block.\n\n" +
+      "## First visits\n\n" +
+      block({ kind: "chart", module: "/docs/blocks/chart.js", data: { title: "A first visit, kB on the wire (the comparison's Size table)", unit: "kB", bars } }) +
+      `\n## After it\n\n${paragraph(3)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(docs, "PROBE.md"),
+    "# What a module reaches\n\nThe probe below tries what a project's module could do from where it is drawn. It posts an owner's approve on a card of the register.\n\n" +
+      block({ kind: "probe", module: "/docs/blocks/probe.js", data: { read: "/api/board", write: { path: "docs/DECISIONS.md", slug: "bench-card-12" } } }),
+  );
 }
 
 function git(...args) {

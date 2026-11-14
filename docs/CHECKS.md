@@ -31,8 +31,9 @@ A reviewer runs the same focused tests itself, never the suite, reads the diff a
 evidence and judges whether it is good enough for the change's risk. Evidence that falls short is
 a `changes` verdict naming what to add. The reviewer's approve is the task's stamp: the board
 verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read, RULES.md
-`workflow/reviewers-not-the-owner`), which the task [[task:tools/review-as-stamps]] records as a
-stamp on the task it reviews. A slice's evidence is judged in its parent's review. A fix whose
+`workflow/reviewers-not-the-owner`), given on the task it reviews, never on a review subtask, and
+drawn as a round of its review gate ([Gates](TASKS.md#gates)). A slice's evidence is judged in
+its parent's review. A fix whose
 recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed as one with `just
 tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
 which did not execute it: its approve, naming the tip, is the verdict the default land goes by on

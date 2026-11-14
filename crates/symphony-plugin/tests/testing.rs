@@ -1,7 +1,8 @@
 //! The kit's test harness (`symphony_plugin::testing`) on this repository's test plugin, the one its
-//! process serves (`every::PIPED`, crates/symphony/tests/project/seams/every.rs): its components and
-//! its card kind asked as a host asks them, through the protocol's requests and answers, in a build
-//! that links the kit alone and no Symphony library. What a plugin's own tests do.
+//! process serves (`every::PIPED`, crates/symphony/tests/project/seams/every.rs): what it declares,
+//! and its components and its card kind asked as a host asks them, through the protocol's requests
+//! and answers, in a build that links the kit alone and no Symphony library. What a plugin's own
+//! tests do.
 
 use std::path::{Path, PathBuf};
 
@@ -64,6 +65,16 @@ fn the_plugin_declares_what_its_process_answers_to_a_host_of_this_protocol() {
     assert_eq!(declared.card_kinds.len(), 1);
     assert_eq!(declared.card_kinds[0].name, "every");
     assert_eq!(declared.card_kinds[0].markers, ["Slot"]);
+    assert_eq!(declared.renderers[0].extensions, ["every"]);
+    assert_eq!(declared.routes, ["every"]);
+    assert_eq!(declared.nav[0].href, "/x/every");
+    assert_eq!(declared.home_regions, ["every"]);
+    assert_eq!(declared.board_actions, ["every"]);
+    assert_eq!(declared.watches, [["data/every", "pictures"]]);
+    assert_eq!(declared.doc_checks[0].name, "every");
+    assert_eq!(declared.commands[0].name, "every");
+    assert_eq!(declared.commands[0].summary, "print its arguments");
+    assert_eq!(declared.theme.unwrap().package, "every");
 }
 
 #[test]

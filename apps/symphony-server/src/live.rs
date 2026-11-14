@@ -1642,6 +1642,7 @@ fn run(
             }
             measured("reports tick", || hub.reports_tick(board.as_ref()));
             measured("asks tick", || hub.asks_tick());
+            measured("project tick", || hub.tell_project());
         }
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));

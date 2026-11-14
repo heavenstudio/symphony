@@ -21,8 +21,8 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use crate::protocol::{
-    Answered, Declaration, Envelope, LINE_MAX, Lined, Member, PageData, ProblemData, Raw, Request,
-    read_line,
+    Answered, Declaration, Envelope, KindAnswers, LINE_MAX, Lined, Member, PageData, ProblemData,
+    Raw, Request, read_line,
 };
 use crate::{Docs, Page, Plugin};
 
@@ -370,6 +370,22 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
         Request::Chosen(asked) => {
             let kind = named(plugin.card_kinds(), "card kind", &asked.kind, |k| k.name())?;
             reply(&asked.card.read(|card| kind.chosen(card)))
+        }
+        Request::ReadCards(asked) => {
+            let kinds = plugin.card_kinds();
+            let read: Vec<Vec<KindAnswers>> = asked
+                .cards
+                .iter()
+                .map(|card| {
+                    card.read(|card| {
+                        kinds
+                            .iter()
+                            .map(|kind| KindAnswers::of(*kind, &asked.root, card))
+                            .collect()
+                    })
+                })
+                .collect();
+            reply(&read)
         }
         Request::Draw(asked) => {
             let renderer = named(plugin.renderers(), "renderer", &asked.renderer, |r| {

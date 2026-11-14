@@ -25,6 +25,26 @@ fn outside_a_repository_it_is_under_the_roots_artifacts() {
     );
 }
 
+/// The store's place is the project's artifacts setting alone: the project is not loaded for it, so
+/// no plugin's process starts, and one that cannot start leaves the store where the setting says.
+#[test]
+fn the_store_is_where_the_artifacts_setting_says_with_no_plugin_started() {
+    let tree = Tree::new();
+    tree.write(
+        "symphony.toml",
+        "[project]\nartifacts = \"out\"\n\n[plugins]\ncrates = [\"shelf\"]\n\n\
+         [plugins.process]\nshelf = [\"./bin/shelf-plugin\"]\n\n\
+         [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [\"shelf\"]\n",
+    );
+    assert_eq!(
+        default_path(&tree.root, None),
+        std::fs::canonicalize(&tree.root)
+            .unwrap()
+            .join("out/asks/asks.db")
+    );
+    assert!(!tree.path("out/plugins").exists());
+}
+
 #[test]
 fn in_this_repo_it_is_under_the_main_checkouts_ignored_artifacts() {
     let path = default_path(Path::new(env!("CARGO_MANIFEST_DIR")), None);
