@@ -111,13 +111,19 @@ run_stable() {
     exec "$stable" "$@"
 }
 
-# What the last build this launcher asked Cargo for read, and under what (`write_fresh`), its
-# modification time that of `$before`, made before Cargo started, so a file changed while Cargo built
-# counts as changed. A run whose build `fresh` finds as it was runs `$stable` without asking Cargo,
-# whose no-op check costs a board command more than the rest of the launcher does.
+# What the last build this launcher asked Cargo for read, and under what (`write_fresh`), with the
+# second taken before Cargo started. A run whose build `fresh` finds as it was runs `$stable` without
+# asking Cargo, whose no-op check costs a board command more than the rest of the launcher does.
 depinfo="$target/debug/$name.d"
 fresh_file="$target/rs-bin/.$name.fresh"
-fresh_format='symphony rs-bin fresh 1'
+fresh_format='symphony rs-bin fresh 2'
+# A file's identity as the relink compares it (time and size), and its status change time, which
+# moves whenever anything at all is written to the file, renamed onto its path or done to its times,
+# and which nothing sets back but the clock: each of the files named, links followed, in seconds.
+case "$OSTYPE" in
+    darwin*) identity=(/usr/bin/stat -f '%Fm %z'); changed=(/usr/bin/stat -L -f %c) ;;
+    *) identity=(stat -c '%y %s'); changed=(stat -L -c %Z) ;;
+esac
 
 # The program `$1` as Cargo's wrapper finds it from the checkout's root, in `found`: as written when
 # it holds a slash, else the first in PATH (an empty or relative entry read from the root), else
@@ -139,15 +145,15 @@ find_program() {
     done
 }
 
-# The environment Cargo builds under, as one quoted word in `key`: what it builds where, the cargo and
-# rustc it runs, HOME (where Cargo's and rustup's own settings are), and each variable Cargo, rustc or
-# rustup reads (CARGO*, RUSTC*, RUSTDOC*, RUSTFLAGS*, RUSTUP*, __CARGO*) or `$1` names (those the
-# target's build scripts declared), set or not. A name bash cannot read, as a target triple's hyphens
-# make one, is left out.
+# The environment Cargo builds under, as one quoted word in `key`: what it builds from and where, the
+# cargo and rustc it runs, HOME (where Cargo's and rustup's own settings are), and each variable Cargo,
+# rustc or rustup reads (CARGO*, RUSTC*, RUSTDOC*, RUSTFLAGS*, RUSTUP*, __CARGO*) or `$1` names (those
+# the target's build scripts declared and its sources read), set or not. A name bash cannot read, as
+# a target triple's hyphens make one, is left out.
 key=""
 build_key() {
     local word
-    key="$target $package $name"
+    key="$root $target $package $name"
     find_program "${CARGO:-cargo}"
     key+=" cargo=$found"
     find_program rustc
@@ -160,11 +166,14 @@ build_key() {
 }
 
 # Whether `$stable` is what Cargo would build now, as the stamp says: one this launcher wrote, under
-# this environment, each path it names as it was (`+ PATH` there and older than the stamp in whole
-# seconds, as bash 3.2 reads times, so a change in the stamp's own second counts; `- PATH` absent),
-# and written in the past, so a clock set back since counts too. Anything else asks Cargo.
+# this environment, at a second not after now (a clock set back since counts as a change), each path
+# it names as it was: `- PATH` still absent, and `+ PATH` there with its status last changed in a
+# second before the stamp's, so a change in the stamp's own second counts. What the stamp's own file
+# times say counts for nothing, so a stamp copied, restored or touched vouches for no change made
+# after its second. Anything else asks Cargo.
 fresh() {
-    local line count=0 at="" names="" now
+    local line count=0 at="" names="" now time
+    local -a paths=()
     [ -x "$stable" ] && [ -f "$fresh_file" ] && [ -r "$fresh_file" ] || return 1
     # Line by line: bash reads a regular file in blocks only up to newlines.
     while IFS= read -r line; do
@@ -178,16 +187,27 @@ fresh() {
                 [ "$line" = "key $key" ] || return 1
                 ;;
             [1-4]:*) return 1 ;;
-            *:'+ /'*) [[ -e ${line#+ } && $fresh_file -nt ${line#+ } ]] || return 1 ;;
+            *:'+ /'*) paths+=("${line#+ }") ;;
             *:'- /'*) [[ ! -e ${line#- } && ! -L ${line#- } ]] || return 1 ;;
             *) return 1 ;;
         esac
     done 2>/dev/null < "$fresh_file"
     # A last line with no newline is no line the launcher wrote.
-    [ "$count" -gt 4 ] && [ -z "$line" ] || return 1
+    [ "$count" -gt 4 ] && [ -z "$line" ] && [ "${#paths[@]}" -gt 0 ] || return 1
     case "$at" in '' | *[!0-9]*) return 1 ;; esac
     now="$(date +%s)" || return 1
-    [ "$now" -ge "$at" ] 2>/dev/null
+    [ "$now" -ge "$at" ] 2>/dev/null || return 1
+    # One stat for every path; one gone or unreadable fails it.
+    time="$("${changed[@]}" "${paths[@]}" 2>/dev/null)" || return 1
+    set -f
+    # shellcheck disable=SC2086 # one time a word
+    set -- $time
+    set +f
+    [ "$#" -eq "${#paths[@]}" ] || return 1
+    for time; do
+        case "$time" in '' | *[!0-9]*) return 1 ;; esac
+        [ "$time" -lt "$at" ] || return 1
+    done
 }
 
 # `+ PATH` when there is something at PATH, else `- PATH`, on `lines`.
@@ -195,16 +215,19 @@ fresh_mark() {
     if [ -e "$1" ]; then lines+="+ $1"$'\n'; else lines+="- $1"$'\n'; fi
 }
 
-# The stamp `fresh` reads, after a build this launcher asked Cargo for, which started after `$before`
-# was made at `$at` (seconds). It names Cargo's own account of what the build read (`debug/NAME.d`:
-# each source of the workspace's packages it compiled, each file a source includes and each one a
-# local build script watches) and the manifest of each package holding one; the workspace's manifest
-# and lock, this launcher and Cargo's wrapper; each Cargo configuration and toolchain pin Cargo or
-# rustup would read, from the root up and in CARGO_HOME, and rustup's settings, there or not; and the
-# environment, with each variable a build script in the target declared. None when that account is
-# not plain absolute paths of files there.
+# The stamp `fresh` reads, after a build this launcher asked Cargo for, which started in the second
+# `$at`. It names Cargo's own account of what the build read (`debug/NAME.d`: each source of the
+# workspace's packages it compiled, each file a source includes and each file or folder a local build
+# script watches, with everything under such a folder, as Cargo looks at all of it) and the manifest
+# of each package holding one; the workspace's manifest and lock, this launcher and Cargo's wrapper;
+# each Cargo configuration and toolchain pin Cargo or rustup would read, from the root up and in
+# CARGO_HOME, and rustup's settings, there or not; and the environment, with each variable a build
+# script in the target declared and each one a source read as rustc recorded it (`# env-dep:` in the
+# dep-info of each unit in the target). None when that account is not plain absolute paths of files
+# there.
 write_fresh() {
-    local content path dir last="" seen=$'\n' lines="" names
+    local content path dir last="" seen=$'\n' lines="" names walked
+    local -a folders=() tops=()
     [ -f "$depinfo" ] && [ -r "$depinfo" ] || return 1
     IFS= read -r -d '' content 2>/dev/null < "$depinfo" || true
     while [ "${content%$'\n'}" != "$content" ]; do content="${content%$'\n'}"; done
@@ -218,6 +241,7 @@ write_fresh() {
             return 1
         fi
         lines+="+ $path"$'\n'
+        [ ! -d "$path" ] || folders+=("$path")
         dir="${path%/*}"
         [ "$dir" != "$last" ] || continue
         last="$dir"
@@ -232,6 +256,22 @@ write_fresh() {
         done
     done
     set +f
+    if [ "${#folders[@]}" -gt 0 ]; then
+        # Each folder under none of the others, walked once.
+        for path in "${folders[@]}"; do
+            for dir in "${folders[@]}"; do
+                case "$path" in "$dir"/*) continue 2 ;; esac
+            done
+            tops+=("$path")
+        done
+        walked="$(find -L "${tops[@]}" -mindepth 1 -print)" || return 1
+        case "$walked" in *\\* | *$'\t'*) return 1 ;; esac
+        while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            [[ "$path" == /* ]] && [ -e "$path" ] || return 1
+            lines+="+ $path"$'\n'
+        done <<< "$walked"
+    fi
     lines+="+ $root/Cargo.toml"$'\n'"+ $root/tools/rs-bin.sh"$'\n'"+ $root/tools/cargo.sh"$'\n'
     fresh_mark "$root/Cargo.lock"
     dir="$root"
@@ -245,26 +285,26 @@ write_fresh() {
     fresh_mark "${CARGO_HOME:-${HOME-}/.cargo}/config.toml"
     fresh_mark "${CARGO_HOME:-${HOME-}/.cargo}/config"
     fresh_mark "${RUSTUP_HOME:-${HOME-}/.rustup}/settings.toml"
-    names="$(cat "$target"/debug/build/*/output 2>/dev/null |
-        sed -n 's/^cargo::\{0,1\}rerun-if-env-changed=\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p' |
-        sort -u | tr '\n' ' ')" || true
+    names="$({
+        cat "$target"/debug/build/*/output 2>/dev/null |
+            sed -n 's/^cargo::\{0,1\}rerun-if-env-changed=\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p'
+        grep -h -s '^# env-dep:' "$target"/debug/deps/*.d "$target"/debug/build/*/*.d |
+            sed -n 's/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p; s/^# env-dep:\([A-Za-z_][A-Za-z0-9_]*\)$/\1/p'
+    } | sort -u | tr '\n' ' ')" || true
     build_key "$names"
     printf '%s\nat %s\nenv %s\nkey %s\n%s' "$fresh_format" "$at" "$names" "$key" "$lines" > "$fresh_file.$$" &&
-        touch -r "$before" "$fresh_file.$$" && mv -f "$fresh_file.$$" "$fresh_file"
+        mv -f "$fresh_file.$$" "$fresh_file"
 }
 
 if [ "$mode" = run ] && fresh; then run_stable "$@"; fi
 
-# A build: the stamp's time is taken first, beside the stable copies, once the target folder exists
-# (one that does not yet is the seed's to make, tools/seed-target.sh, so the first build of a checkout
-# leaves no stamp and the next asks Cargo once more).
-before="" at=""
+# A build: the stamp's second is taken first, once the target folder exists (one that does not yet is
+# the seed's to make, tools/seed-target.sh, so the first build of a checkout leaves no stamp and the
+# next asks Cargo once more).
+at=""
 if [ -d "$target" ]; then
-    mkdir -p "$target/rs-bin"
     at="$(date +%s)"
-    before="$target/rs-bin/.$name.before.$$"
-    : > "$before"
-    trap 'rm -f "$before" "$fresh_file.$$"' EXIT
+    trap 'rm -f "$fresh_file.$$"' EXIT
 fi
 # A freshness check before a board or server command is no build of a task's: it is not recorded.
 TASKS_RECORDER=off "$root/tools/cargo.sh" build --quiet --locked -p "$package" --bin "$name" >&2
@@ -272,10 +312,6 @@ if [ ! -x "$binary" ]; then
     printf 'symphony rs-bin: Cargo produced no native executable at %s\n' "$binary" >&2
     exit 2
 fi
-case "$OSTYPE" in
-    darwin*) identity=(/usr/bin/stat -f '%Fm %z') ;;
-    *) identity=(stat -c '%y %s') ;;
-esac
 same=no
 if [ -x "$stable" ]; then
     ids="$("${identity[@]}" "$binary" "$stable" 2>/dev/null)" || ids=""
@@ -289,9 +325,9 @@ if [ "$same" = no ]; then
     ln "$binary" "$staged" 2>/dev/null || cp -p "$binary" "$staged"
     mv -f "$staged" "$stable"
 fi
-if [ -n "$before" ]; then
+if [ -n "$at" ]; then
     write_fresh || rm -f "$fresh_file"
-    rm -f "$before" "$fresh_file.$$"
+    rm -f "$fresh_file.$$"
 fi
 if [ "$mode" = build ]; then printf '%s\n' "$stable"; exit 0; fi
 if [ "$mode" = link ]; then

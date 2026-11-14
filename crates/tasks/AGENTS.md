@@ -7,7 +7,7 @@ The `symphony-board` crate (this folder) is the task board ([TASKS](../../docs/T
 store over SurrealDB, the server it starts in `symphony/tasks/` in the git common
 dir, and the `tasks` binary, which is `just tasks`. Here `just tasks` and `just
 agent-send` go through `tools/rs-bin.sh`, which builds with Cargo before a run
-once anything Cargo reads moved ([the root guide](../../AGENTS.md#rust)); in a
+once anything Cargo reads changed ([the root guide](../../AGENTS.md#rust)); in a
 project they are the recipes `symphony init` installs, which run its
 linked build. The board clients of `just symphony-cli` (`taskcli.rs`) run the
 `tasks` build the heartbeat finds: the checkout's `.target/bin/tasks` link, else
@@ -564,7 +564,8 @@ for seconds. So `tools/rs-bin.sh` runs `rs-bin/NAME` in the target folder, a
 hard link to that copy renewed only when the copy's modification time or size
 moved (the copy keeps the time of the build it copies): a no-op build runs the
 file the last run ran, and a run whose stamp (`rs-bin/.NAME.fresh`) finds nothing
-Cargo reads moved runs it without asking Cargo (`tests/launcher/fresh.rs`).
+Cargo reads changed since that build began runs it without asking Cargo
+(`tests/launcher/fresh.rs`).
 `--build` and `--link` always build; `--build` prints that path, `--link` points
 `.target/bin/NAME` at it by a rename (the link the heartbeat hook runs, building
 nothing), and `--where` names Cargo's own copy without building. A

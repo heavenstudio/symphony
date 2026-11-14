@@ -36,11 +36,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// The stand-in for `cargo build --quiet --locked -p PACKAGE --bin NAME`, run in the checkout's root;
 /// `@BUILD@` is the shared stand-in build. As Cargo does, it builds one at a time per target folder,
 /// writes `debug/NAME.d` naming the sources it read (the binary's, and those of a dependency crate
-/// at `crates/dep` when there is one; none with `STANDIN_DEPINFO=none`, a path spelled with an escape
-/// with `escaped`) and leaves a build script's output declaring the variables it reads. Each run
-/// first appends its binary's name to `STANDIN_CALLS`, when that names a file, and whether the target
-/// folder was new to it.
-const CARGO: &str = r#"#!/usr/bin/env bash
+/// at `crates/dep` when there is one, with the folder `crates/dep/assets` its build script would
+/// watch when there is that; none with `STANDIN_DEPINFO=none`, a path spelled with an escape with
+/// `escaped`), leaves a build script's output declaring the variables it reads, and rustc's account
+/// of the variables the sources read (`# env-dep:` in the binary's own and the build script's
+/// dep-info). Each run first appends its binary's name to `STANDIN_CALLS`, when that names a file,
+/// and whether the target folder was new to it. Building its own build (`STANDIN_UPLIFT=copy`), it
+/// writes `STANDIN_EDIT`, when that names a file, once it has read the sources, and finishes only in
+/// a later second of the clock.
+const CARGO: &str = r##"#!/usr/bin/env bash
 set -euo pipefail
 name=""; while [ $# -gt 0 ]; do if [ "$1" = --bin ]; then name="$2"; fi; shift; done
 [ -n "$name" ] || exit 0
@@ -57,14 +61,22 @@ inputs=("$PWD/$source")
 if [ -d crates/dep/src ]; then
     for file in crates/dep/src/*.rs; do inputs+=("$PWD/$file"); done
 fi
+watched=""
+if [ -d crates/dep/assets ]; then watched=" $PWD/crates/dep/assets"; fi
 depinfo="$CARGO_TARGET_DIR/debug/$name.d"
 case "${STANDIN_DEPINFO:-plain}" in
     none) rm -f "$depinfo" ;;
     escaped) printf '%s: %s %s\n' "$CARGO_TARGET_DIR/debug/$name" "${inputs[*]}" "$PWD/a\\ b.rs" > "$depinfo" ;;
-    *) printf '%s: %s\n' "$CARGO_TARGET_DIR/debug/$name" "${inputs[*]}" > "$depinfo" ;;
+    *) printf '%s: %s%s\n' "$CARGO_TARGET_DIR/debug/$name" "${inputs[*]}" "$watched" > "$depinfo" ;;
 esac
 printf 'cargo:rerun-if-env-changed=STANDIN_CC\ncargo:rerun-if-env-changed=CC_standin-triple\n' \
     > "$CARGO_TARGET_DIR/debug/build/standin-0/output"
+probe="# env-dep:STANDIN_PROBE"
+if [ -n "${STANDIN_PROBE+set}" ]; then probe="$probe=$STANDIN_PROBE"; fi
+printf '%s: %s\n\n# env-dep:CARGO_PKG_NAME=standin\n# env-dep:CARGO_BIN_EXE_fake-hc=%s\n%s\n' \
+    "$CARGO_TARGET_DIR/debug/deps/$name-0" "${inputs[*]}" "$CARGO_TARGET_DIR/debug/fake-hc" "$probe" \
+    > "$CARGO_TARGET_DIR/debug/deps/$name-0.d"
+printf '# env-dep:STANDIN_BUILD_PROBE\n' > "$CARGO_TARGET_DIR/debug/build/standin-0/build_script_build-0.d"
 uplifted="$CARGO_TARGET_DIR/debug/.$name.uplift"
 if [ "${STANDIN_UPLIFT:-link}" = link ]; then
     ln -f "@BUILD@" "$uplifted"
@@ -73,6 +85,15 @@ if [ "${STANDIN_UPLIFT:-link}" = link ]; then
 fi
 text="$(cat "$source")"
 for file in "${inputs[@]:1}"; do text="$text dep $(cat "$file")"; done
+if [ -n "$watched" ]; then
+    for file in $(find crates/dep/assets -type f | sort); do text="$text asset $(cat "$file")"; done
+fi
+if [ -n "${STANDIN_PROBE+set}" ]; then text="$text probe $STANDIN_PROBE"; fi
+if [ -n "${STANDIN_EDIT:-}" ]; then
+    printf 'edited while building' > "$STANDIN_EDIT"
+    edited="$(date +%s)"
+    while [ "$(date +%s)" -le "$edited" ]; do sleep 0.02; done
+fi
 deps="$CARGO_TARGET_DIR/debug/deps/$name-0"
 if [ ! -f "$deps.source" ] || [ "$(cat "$deps.source")" != "$text" ]; then
     printf '#!/bin/sh\necho "%s from %s source %s exe $0 cwd $(pwd -P) args $*"\n' \
@@ -83,7 +104,7 @@ if [ ! -f "$deps.source" ] || [ "$(cat "$deps.source")" != "$text" ]; then
 fi
 cp -p "$deps" "$uplifted"
 mv -f "$uplifted" "$CARGO_TARGET_DIR/debug/$name"
-"#;
+"##;
 
 /// The shared stand-in build, run as `CHECKOUT/.target/rs-bin/NAME`: what that checkout's source of
 /// NAME holds, where it runs and with what.
