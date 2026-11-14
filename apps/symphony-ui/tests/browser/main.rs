@@ -4,8 +4,10 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 300 KB gzipped, everything the board needs (shell, JS glue,
-//!   wasm, CSS, API data, the feed's head and messages), independently for `/` and `/tasks`.
+//! - a first visit loads at most 300 KB gzipped to `/` and 150 KB to `/tasks` (lowered from 300 KB
+//!   as the task board moved to the React client, app/client-moves-to-react/task-board),
+//!   everything the page needs (shell, JS glue, wasm or the React client's scripts, CSS, API data,
+//!   the feed's head and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
 //!   beside the total. Deferred page kinds and the whole build are reported separately; a
 //!   visit pays for the resources it actually loads;
@@ -73,6 +75,10 @@ use serde_json::json;
 use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 300_000.0;
+/// The task board's first-visit cap (`/tasks`), lowered from [`FIRST_VISIT_BYTES`] once the board
+/// moved to the React client: 112,538 bytes on the fixture then, the rest room for the code the
+/// kinds moving after it share with it.
+const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -186,15 +192,20 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     let mut entries = Vec::new();
     // Each kind gets a fresh browser profile, including when kinds share CSS. A cached
     // sibling must not make an oversized entry pass. Keep that profile for the return visit.
-    for (path, kind, ready, budgeted) in [
-        ("/", "review", ".hero-title", true),
-        ("/tasks", "board", "[data-slug='tools/example']", true),
-        ("/agents", "program", ".agents", false),
-        ("/docs/", "docs", "[data-ready=folder]", false),
-        ("/queue", "queue", "[data-ready=queue]", false),
-        ("/reports", "program", "[data-ready=reports]", false),
-        ("/task/visual/in-progress", "program", "article.task", false),
-        ("/docs/look-parity.md", "docs", ".doc-card", false),
+    for (path, kind, ready, cap) in [
+        ("/", "review", ".hero-title", Some(FIRST_VISIT_BYTES)),
+        (
+            "/tasks",
+            "board",
+            "[data-slug='tools/example']",
+            Some(TASKS_FIRST_VISIT_BYTES),
+        ),
+        ("/agents", "program", ".agents", None),
+        ("/docs/", "docs", "[data-ready=folder]", None),
+        ("/queue", "queue", "[data-ready=queue]", None),
+        ("/reports", "program", "[data-ready=reports]", None),
+        ("/task/visual/in-progress", "program", "article.task", None),
+        ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
         chrome.open(&site.url(path));
@@ -269,8 +280,8 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} return visit: {again} bytes; keep-alive pings beside it: {} bytes",
             ping_bytes(&returned)
         );
-        if budgeted {
-            entries.push((path, bytes, again));
+        if let Some(cap) = cap {
+            entries.push((path, cap, bytes, again));
         }
     }
     let Some(mut chrome) = chrome() else { return };
@@ -290,10 +301,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         prefetched_bytes(&idle),
         with_panel - before
     );
-    for (path, first, again) in entries {
+    for (path, cap, first, again) in entries {
         assert!(
-            first <= FIRST_VISIT_BYTES,
-            "{path} first visit loads {first} bytes, over {FIRST_VISIT_BYTES}"
+            first <= cap,
+            "{path} first visit loads {first} bytes, over {cap}"
         );
         assert!(
             again <= RETURN_VISIT_BYTES,

@@ -1354,7 +1354,7 @@ fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
 /// as the board answers the tasks page. They carry what cards on a live board carry, so their
 /// heights differ as real cards' do: one role chip or two, a link chip or two on some, and titles
 /// of one, two or three lines. (The board shows no subtasks, so no card here has a parent.)
-fn thirty_ready() -> Value {
+pub(super) fn thirty_ready() -> Value {
     let mut numbers: Vec<u32> = (1..=30).collect();
     numbers.sort_by_key(u32::to_string);
     let role = |role: &str, handle: &str| json!({"handle": handle, "role": role, "since": 0.0, "expires": null, "health": "live"});

@@ -6,8 +6,8 @@
 //! file sets a token and a layout; `pantry` names the shelf plugin and the theme package it
 //! provides; `gamma`, in the one case that registers it, serves its documents at its root.
 use super::{
-    FIRST_VISIT_BYTES, SHOWN, binaries, chrome, chrome::Chrome, completed_requests, dist,
-    needed_bytes, owner_controls::ScratchBoard, ping_bytes,
+    FIRST_VISIT_BYTES, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome, chrome::Chrome,
+    completed_requests, dist, needed_bytes, owner_controls::ScratchBoard, ping_bytes,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -470,8 +470,8 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
             ping_bytes(&requests)
         );
         assert!(
-            bytes <= FIRST_VISIT_BYTES,
-            "{page} first visit loads {bytes} bytes, over {FIRST_VISIT_BYTES}: {requests:#?}"
+            bytes <= TASKS_FIRST_VISIT_BYTES,
+            "{page} first visit loads {bytes} bytes, over {TASKS_FIRST_VISIT_BYTES}: {requests:#?}"
         );
         let theme = browser.eval(THEME);
         assert_eq!(theme["primary"], json!(primary), "{page}: {theme}");

@@ -39,8 +39,9 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, document and review-home modules and the program, build the React client's
-  kinds (`web`: one Vite build of `apps/symphony-web`, [its guide](../symphony-web/AGENTS.md)),
+  document and review-home modules and the program, build the React client's
+  kinds (`web`: one Vite build of `apps/symphony-web`, the queue and the task board,
+  [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
@@ -54,8 +55,8 @@ never the whole target, which the release run runs.
   the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
-  in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
-  of their own, under their 300,000-byte caps, which a program shared with them would pass. The
+  in the one instance (a `VirtualDom` per root, `module.rs`); home keeps a module of its own,
+  under its 300,000-byte cap, which a program shared with it would pass. The
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the program's styles another kind loads too and its own by name, and refuses a style no
   kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
@@ -148,7 +149,7 @@ never the whole target, which the release run runs.
   opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
   never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
   against their own opens.
-- **A return visit.** Home and the task board (and the React client's queue, the same way) draw what they kept of
+- **A return visit.** Home (and the React client's queue and task board, the same way) draws what it kept of
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
   read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
@@ -162,7 +163,8 @@ never the whole target, which the release run runs.
   otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
   by the feed. The header's reads are never kept. A check that fails is asked again, waiting
   longer each time (`state::Backoff`), until it answers: the counts, each column drawn from the
-  device and the work (`board_live::check`), the queue (the React client's `src/queue.tsx`); the feed's `machine-work`
+  device and the work (`LiveBoard.check` in the React client's `src/boardlive.tsx`), the queue
+  (its `src/queue.tsx`); the feed's `machine-work`
   event, which carries the whole work, answers for the work's read. Once every column drawn from
   the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
   listed is dropped, whichever stage the work places it in by then. `cache::Freshness` says what
@@ -221,9 +223,10 @@ never the whole target, which the release run runs.
   API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
   `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
   raced by the reads ahead; `tests/browser/cache_ahead.rs` covers them.
-- **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
+- **Budget.** `/` has a 300 KB first-visit gzip budget and `/tasks` a 150 KB one, each
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
-  both the owner's, the first-visit cap raised by the owner to 300 KB, and
+  both the owner's, the first-visit cap raised by the owner to 300 KB, `/tasks`' lowered to
+  150 KB as the task board moved to the React client, and
   never loosened by an agent). A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
@@ -239,18 +242,16 @@ never the whole target, which the release run runs.
   page is open and are reported beside the total: leaving the pings out is
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
-  On the fixture a first visit to `/tasks` takes 261,350 bytes, 38,650 under the
-  cap: the board WASM 230,907, its glue 11,086, the shared style sheet 9,175,
+  On the fixture a first visit to `/tasks` took, while this client drew the board, 261,350
+  bytes, 38,650 under the cap: the board WASM 230,907, its glue 11,086, the shared style sheet 9,175,
   the shell 6,151 (the client cache's store about 1,430 of it), the HTML 1,142, API
   replies 2,804 (`/api/machine-work` 247 of them) and the feed's head and
   opening comment 85. `/` takes 232,052; cached returns take 1,986 and 2,397.
   Drawing a return visit from the device costs the first visit its code: about
-  14.0 KB of the board's WASM and 6.9 KB of home's, most
-  of the board's in `board_live` (the draw, the check and its retries) and the
-  cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
+  6.9 KB of home's WASM (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 13.3 KB of `/tasks`, 2.4 KB of `/`, 13.0 KB of a task page and
+  about 2.4 KB of `/`, 13.0 KB of a task page and
   `/agents` and 6.8 KB of the documents. Documents
   drawn from the device, an entrypoint's page kept and the reads ahead
   (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
@@ -302,7 +303,13 @@ never the whole target, which the release run runs.
   281,222 bytes (from 299,662: the board's WASM 247,735 from 266,112, the shell 7,880 from
   7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task
   pages' chunk 18 KB less) and `/reports` to 298,951 (from 298,790), the program's script now
-  holding the notice; every other page stays within 50 bytes of main's. Each
+  holding the notice; every other page stays within 50 bytes of main's. The task board's move
+  to the React client (`app/client-moves-to-react/task-board`, against main's build at 8bd7918)
+  takes `/tasks` to 112,538 bytes (from 281,188: its script 12,983 and the chunk it shares
+  with the queue 77,233, where the board's WASM was 247,586 and its glue 11,304) and its cap to
+  150,000; `/queue` to 103,340 (from 101,789: its script 3,626 beside that chunk, from 79,332
+  in one; a move between the two fetches the other's script alone), `/` to 237,632 (from
+  237,724), and every other page within 50 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -352,8 +359,11 @@ never the whole target, which the release run runs.
   listener) never writes a signal: it sends on a `futures_channel` that a
   spawned task drains. `use_effect` runs after the frame's edits are in the
   page and again whenever a signal it read changes.
-- **Task views.** `tasks.rs` draws columns and hierarchy; `board_live.rs` owns
-  summary-only counts, columns and deltas. `task_detail.rs` and `task_live.rs`
+- **Task views.** The task board (`/tasks`) is the React client's: `src/board.tsx` draws its
+  columns and groups, `src/boardlive.tsx` owns its summary-only counts, columns and deltas, and
+  its card is `src/taskcard.tsx`, as the agents page's will be ([its
+  guide](../symphony-web/AGENTS.md)). `tasks.rs` draws the agents page's cards (`TaskRow`) and
+  keeps the task state the program shares. `task_detail.rs` and `task_live.rs`
   own task pages and agents, compiled only into their page kind. A task page's
   gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
   read from `/api/task-gates` when it nears the screen and again when the one
@@ -372,7 +382,7 @@ never the whole target, which the release run runs.
   while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
   work does only when it puts a task in another stage (`MachineWork::places_alike`), not at each
   heartbeat. An answer is dropped only for another view (search, window, connection, board
-  version, `board_live::BoardData::view`) or a newer read of the same part, never for an event
+  version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
   that came while it was read: the events since are replayed onto it, and the refresh reads again
   (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
   grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history, subtasks, hierarchy groups
@@ -461,12 +471,12 @@ never the whole target, which the release run runs.
   browser tests of their next ghost turn the store off (`NO_STORE` in `tests/browser/main.rs`).
   What a first visit cannot know a ghost keeps from the last one, per project in the
   browser: the board's columns and counts, kept once the server has answered both its counts and
-  the machine's work that places its build and test columns (`tasks::SHAPE`, `board_shape`,
-  `board_live::keep_shape`; none kept is every column with a card) and the rows of each
-  column's first page as they stood in a window as wide, each one's pitch and its rows of chips
-  (phases, links, roles), a drawn card's or the place a row still waiting holds (`tasks::CARDS`,
-  `kept_cards`, `drawn_rows`; a card's ghost draws a pill per row of chips and the title lines
-  its pitch has room for); the queue's rows
+  the machine's work that places its build and test columns (`SHAPE`, `boardShape` and
+  `keepShape` in the React client's `src/board.tsx`; none kept is every column with a card) and
+  the rows of each column's first page as they stood in a window as wide, each one's pitch and
+  its rows of chips (phases, links, roles), a drawn card's or the place a row still waiting holds
+  (`CARDS`, `keptCards`, `drawnRows` there; a card's ghost draws a pill per row of chips and the
+  title lines its pitch has room for); the queue's rows
   per group (`ROWS` in the React client's `queue.tsx`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide
   (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
@@ -475,10 +485,10 @@ never the whole target, which the release run runs.
   a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
   shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`). The
   timeline's box takes the height `timeline_slot::reserved` gives it. What is kept is measured
-  as it draws, every 100 ms, and kept again when it changed (`tasks::keep_rows`,
+  as it draws, every 100 ms, and kept again when it changed (the board's `keepRows`,
   `viewport::remember_drawn`), until no region in it still waits within the sentinel's reach of
-  the screen (`within_reach`; for a column, of the board's own scroller: `waits_near`,
-  `clip_to`) or every row of a column has drawn (`tasks::keeps_watching`), for
+  the screen (`within_reach`; for a column, of the board's own scroller: the React client's
+  `waitsNear`) or every row of a column has drawn (the board's `keepsWatching`), for
   `viewport::KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
   phone rows draw many seconds after their data. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
@@ -489,14 +499,14 @@ never the whole target, which the release run runs.
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
   heading (one node from ghost to board, so its link keeps focus) and controls at once, each
-  column reserving a card's box per row of its first page (`tasks::PAGE`), at the pitch kept
-  for its place, else `tasks::ROW`, a typical card (a title of two lines, a row of links and one
-  of roles; its ghost draws no role chip in a column no agent has taken up, `tasks::unstaffed`),
+  column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
+  pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
+  one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),
   and showing Load more only once its first
   page is in; a row of that page still waiting to be drawn holds what its own card will take,
-  its ghost as tall (`tasks::row_card`, `card_height::row_height`). A first read that fails
+  its ghost as tall (`rowCard`, `rowHeight` in `src/cardheight.ts`). A first read that fails
   with nothing drawn yet (a board not made, say) is said in place of the board's ghost, which
-  would wait for ever, in the read's words with a retry (`tasks::UnreadBoard`); the page reads
+  would wait for ever, in the read's words with a retry (`UnreadBoard`); the page reads
   again by itself too. A live update that adds or
   removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
   sets its data: once the reader has scrolled the box around what they read or the page, the
@@ -643,7 +653,9 @@ never the whole target, which the release run runs.
   are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
   kind's own follow it: a first visit asks for them once, and every kind caches
   the same file. The task timeline's few styles do not narrow it: it is drawn only
-  in a task page, which has the shared file already. The server's own pages inline
+  in a task page, which has the shared file already. The pictures' styles (`media-`), which
+  every kind of this client loads, stay out of it: the React client's kinds (the queue, the task
+  board) take the shared file and their own, and show no picture. The server's own pages inline
   `board.css`'s tokens and `frame.css` from copies in its package
   (`apps/symphony-server/src/`), which it carries to crates.io: a change to either
   is copied there too, and `crates/symphony/tests/packages.rs` fails until it is.

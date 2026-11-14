@@ -65,10 +65,62 @@ fn main() {
 
 /// apps/symphony-web/src/wire.ts, before Biome formats it.
 fn types() -> String {
+    let types = declarations();
+    let names: BTreeSet<&str> = types.iter().map(|one| one.name.as_str()).collect();
+    for one in &types {
+        for named in &one.names {
+            assert!(
+                names.contains(named.as_str()),
+                "{} names {named}, which the file does not declare: add it to the list",
+                one.name
+            );
+        }
+    }
+    let mut out = String::from(
+        "// The Symphony's wire types as the web client reads them, written from crates/symphony-api\n\
+         // by its `typescript` example (`just client-wire`). Never edited by hand: `just client-lint`\n\
+         // fails when this file and the Rust types disagree.\n\n",
+    );
+    let text = |text: &str| Value::from(text).to_string();
+    let constants = [
+        ("PROJECT_ELEMENT", text(api::PROJECT_ELEMENT)),
+        ("BOARD_PATH", text(api::BOARD_PATH)),
+        ("FEED_PATH", text(api::FEED_PATH)),
+        ("FEED_EVENT", text(api::FEED_EVENT)),
+        ("PING_EVENT", text(api::PING_EVENT)),
+        ("SERVER_EVENT", text(api::SERVER_EVENT)),
+        ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
+        ("FILE_QUERY", text(api::FILE_QUERY)),
+    ];
+    for (name, value) in constants {
+        let _ = writeln!(out, "export const {name} = {value};");
+    }
+    let _ = writeln!(
+        out,
+        "export const SYMPHONY_ROUTES = {} as const;",
+        json!(api::SYMPHONY_ROUTES)
+    );
+    let pages = json!({
+        "HOME": api::page_names::HOME,
+        "QUEUE": api::page_names::QUEUE,
+        "DOCS": api::page_names::DOCS,
+        "BOARD": api::page_names::BOARD,
+        "REPORTS": api::page_names::REPORTS,
+        "AGENTS": api::page_names::AGENTS,
+        "PROJECTS": api::page_names::PROJECTS,
+    });
+    let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
+    for one in &types {
+        let _ = write!(out, "\nexport {}\n", one.decl);
+    }
+    out
+}
+
+/// The types the client reads, in wire.ts's order.
+fn declarations() -> Vec<Declared> {
     // JSON numbers are read by the browser as doubles whatever their Rust width.
     let cfg = Config::new().with_large_int("number");
-    // The types the client reads, in the file's order.
-    let types = [
+    vec![
         declared::<api::ProjectView>(&cfg),
         declared::<api::NavItem>(&cfg),
         declared::<api::Board>(&cfg),
@@ -125,55 +177,7 @@ fn types() -> String {
         declared::<api::GalleryItem>(&cfg),
         declared::<api::Viewer>(&cfg),
         declared::<api::View>(&cfg),
-    ];
-    let names: BTreeSet<&str> = types.iter().map(|one| one.name.as_str()).collect();
-    for one in &types {
-        for named in &one.names {
-            assert!(
-                names.contains(named.as_str()),
-                "{} names {named}, which the file does not declare: add it to the list",
-                one.name
-            );
-        }
-    }
-    let mut out = String::from(
-        "// The Symphony's wire types as the web client reads them, written from crates/symphony-api\n\
-         // by its `typescript` example (`just client-wire`). Never edited by hand: `just client-lint`\n\
-         // fails when this file and the Rust types disagree.\n\n",
-    );
-    let text = |text: &str| Value::from(text).to_string();
-    let constants = [
-        ("PROJECT_ELEMENT", text(api::PROJECT_ELEMENT)),
-        ("BOARD_PATH", text(api::BOARD_PATH)),
-        ("FEED_PATH", text(api::FEED_PATH)),
-        ("FEED_EVENT", text(api::FEED_EVENT)),
-        ("PING_EVENT", text(api::PING_EVENT)),
-        ("SERVER_EVENT", text(api::SERVER_EVENT)),
-        ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
-        ("FILE_QUERY", text(api::FILE_QUERY)),
-    ];
-    for (name, value) in constants {
-        let _ = writeln!(out, "export const {name} = {value};");
-    }
-    let _ = writeln!(
-        out,
-        "export const SYMPHONY_ROUTES = {} as const;",
-        json!(api::SYMPHONY_ROUTES)
-    );
-    let pages = json!({
-        "HOME": api::page_names::HOME,
-        "QUEUE": api::page_names::QUEUE,
-        "DOCS": api::page_names::DOCS,
-        "BOARD": api::page_names::BOARD,
-        "REPORTS": api::page_names::REPORTS,
-        "AGENTS": api::page_names::AGENTS,
-        "PROJECTS": api::page_names::PROJECTS,
-    });
-    let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
-    for one in &types {
-        let _ = write!(out, "\nexport {}\n", one.decl);
-    }
-    out
+    ]
 }
 
 /// The project views the cases read routes under: the plain project, one under the one server's
@@ -912,6 +916,18 @@ fn samples() -> Value {
         counts: api::Counts::default(),
         progress: api::Progress::default(),
     };
+    let mut samples = serde_json::Map::new();
+    samples.insert("queue".into(), json!(queue));
+    samples.insert("emptyQueue".into(), json!(api::Queue::default()));
+    samples.insert("board".into(), json!(board));
+    samples.extend(task_board_samples());
+    samples.insert("blocks".into(), json!(blocks()));
+    Value::Object(samples)
+}
+
+/// The task board's reads, as [`samples`] holds them: its listings, the machines' work and the
+/// feed's changes of a task.
+fn task_board_samples() -> Vec<(String, Value)> {
     let mut idle = task("w/b", "ready", None);
     idle.links.clear();
     idle.roles.clear();
@@ -971,20 +987,23 @@ fn samples() -> Value {
         value: None,
         removed: true,
     };
-    json!({
-        "queue": queue,
-        "emptyQueue": api::Queue::default(),
-        "board": board,
-        "listing": listing,
-        "emptyListing": empty,
-        "work": guided,
-        "emptyWork": api::MachineWork::default(),
-        "taskChange": change,
-        "bareChange": api::TaskChange { key: "w/b".into(), fields: api::TaskFields::default() },
-        "taskAdded": added,
-        "taskRemoved": removed,
-        "blocks": blocks(),
-    })
+    let bare = api::TaskChange {
+        key: "w/b".into(),
+        fields: api::TaskFields::default(),
+    };
+    [
+        ("listing", json!(listing)),
+        ("emptyListing", json!(empty)),
+        ("work", json!(guided)),
+        ("emptyWork", json!(api::MachineWork::default())),
+        ("taskChange", json!(change)),
+        ("bareChange", json!(bare)),
+        ("taskAdded", json!(added)),
+        ("taskRemoved", json!(removed)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
 }
 
 /// Blocks holding every kind of block, span, media, container, inline tag, vector shape and

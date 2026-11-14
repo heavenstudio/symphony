@@ -3,9 +3,11 @@
 The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves; every other page is still the Dioxus
-client's. Like that client it reads the server's JSON API and never runs server code or inserts
-server-rendered HTML.
+review queue (`/queue`) is the first kind it serves and the task board (`/tasks`, `/task/` being
+the Dioxus program's) the second; every other page is still the Dioxus client's. The board's task
+card is a component of its own (`src/taskcard.tsx`), which the agents page and the task page
+draw once they move. Like that client it reads the server's JSON API and never runs server code
+or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
 look or behaviour) is built on its page once that page's kind has moved here, in this package,
@@ -134,7 +136,9 @@ stay the Dioxus program's kinds, which the shell mounts beside any page.
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
-(`src/queue.css`). A component drawn by a Dioxus component library keeps its markup and class
+(`src/queue.css`). The task board has none: its rules are the shared sheet's
+(`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's cards use too. A
+component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 ## Moving a page kind

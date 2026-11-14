@@ -60,7 +60,7 @@ the page draws comes before its first API answer.
 - **Home `/`** reads `/api/board` (`live.rs`, `fetch_board`).
 - **The task board `/tasks`** reads `/api/board`, then the counts
   (`/api/task-board?counts=1`), then each column near the screen. Each column waits 250 ms before
-  its read (`apps/symphony-ui/src/board_live.rs`, `column`), on the first visit as on a filter
+  its read (`apps/symphony-web/src/boardlive.tsx`, `LiveBoard.column`), on the first visit as on a filter
   change.
 - **A task page** reads `/api/board`, then, only once it has answered, `/api/task-page`, then the
   thread's newest page (`/api/task-history`) and the subtasks when they near the screen
@@ -469,7 +469,7 @@ exercised; a format change clears the cache; the stale notice and the waiting bu
 first-visit budget test still passes.
 
 Independent of the cache, and cheaper: the 250 ms each `/tasks` column waits before its first read
-(`board_live.rs`, `column`) is most of that page's warm time on loopback. The wait folds repeated
+(`boardlive.tsx`, `LiveBoard.column`) is most of that page's warm time on loopback. The wait folds repeated
 requests for one column into one read; a column's first read could go at once and fold the
 repeats that follow it (inferred, not tried).
 
