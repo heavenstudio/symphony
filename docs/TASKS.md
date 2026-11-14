@@ -328,7 +328,14 @@ too, lead only into those places or under the project's worktree base (`<repo>-w
 beside a main checkout that lists the command's checkout as its own, so a worktree's
 `.git` file rewritten to name another repository has none, or `SYMPHONY_WT_DIR`), never
 into a git folder, or the command refuses with one line naming the folder and starts
-nothing. A launch takes no `--prompt` there: an
+nothing. A submodule, a `--separate-git-dir` checkout or a bare repository's worktree
+has no main checkout (its common dir is no `.git` folder), so under the mark a launch
+there makes its worktree only under `SYMPHONY_WT_DIR`, or takes `--worktree DIR` in the
+checkout. The launcher's git commands run in that checkout itself (`root_of` in
+`crates/tasks/src/launch/mod.rs`; with no mark and no `SYMPHONY_WT_DIR` its worktrees go
+beside it), so what a launch makes there is of its own repository, never of the one
+holding its common dir, a submodule's superproject. A launch under the mark takes no
+`--prompt`: an
 agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
 alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
 rest goes on the task's thread, which the skill reads. A restore
