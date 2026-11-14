@@ -448,7 +448,9 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
         format!(
             "landings: 7 on origin/main since {RELEASE} ({}); the last tools/g ({})\n\
              next run: after 13 more landings (7 of 20), or the scheduled run\n\
-             last refresh: green, of {RELEASE} by the run {}, 2026-11-12 10:00 (1 h ago)\n  \
+             last publish: of {RELEASE} by the run {id}, 2026-11-12 10:00 (1 h ago)\n  \
+             not published: [releases] publish is off\n\
+             last refresh: green, of {RELEASE} by the run {id}, 2026-11-12 10:00 (1 h ago)\n  \
              consumer: its pin to {RELEASE} is on the branch {BRANCH} ({made}), made through its \
              own commit gate and not pushed\n  \
              consumer: its main is fast-forwarded to {BRANCH} ({made}) in its main checkout \
@@ -463,7 +465,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
              symphony-status` says which process answers)\n",
             &release[..12],
             &last[..12],
-            run["id"].as_str().unwrap(),
+            id = run["id"].as_str().unwrap(),
             made = &made[..12],
         )
     );

@@ -162,7 +162,7 @@ fn limits_says_a_value_it_cannot_read_and_shows_the_default_in_force() {
     );
     assert!(
         ran.out
-            .contains("\nlow_volume               4       default\n"),
+            .contains("\nlow_volume               4           default\n"),
         "{}",
         ran.out
     );
@@ -205,12 +205,12 @@ fn outside_a_repository_every_limit_is_its_default() {
         lines[..7],
         [
             "LIMITS: no project file outside a repository, so every default",
-            "orchestrator_slots       none    default",
-            "low_volume               4       default",
-            "machine_agents           none    default",
-            "review_alarm_ratio       2       default",
-            "review_alarm_hours       4       default",
-            "review_alarm_clear_hours 1       default",
+            "orchestrator_slots       none        default",
+            "low_volume               4           default",
+            "machine_agents           none        default",
+            "review_alarm_ratio       2           default",
+            "review_alarm_hours       4           default",
+            "review_alarm_clear_hours 1           default",
         ]
     );
 }

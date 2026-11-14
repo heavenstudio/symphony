@@ -111,10 +111,17 @@ _size-check:
     @tools/cargo.sh build --release --locked -p symphony-server -p symphony-app -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
     @tools/rs-bin.sh symphony-build size-budget . "${CARGO_TARGET_DIR:-.target}/release"
 
-# The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit
-# and every test target, each a step of this run with a log of its own, run whatever the ones before
-# it did; red when any step is, naming each. `just verify STEP...` runs those steps alone. The native
-# browser harness runs headless Chrome; no game engine or display is needed.
+# Each published package whose version crates.io holds, packaged here and compared with what
+# crates.io holds of that version: red, naming the package, where the sources moved and the version
+# did not (docs/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
+crates-check:
+    @tools/rs-bin.sh symphony-build crates-check .
+
+# The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
+# the crates check and every test target, each a step of this run with a log of its own, run
+# whatever the ones before it did; red when any step is, naming each. `just verify STEP...` runs
+# those steps alone. The native browser harness runs headless Chrome; no game engine or display is
+# needed.
 verify *STEPS:
     @{{record}} --pipeline verify test "just verify${*:+ $*}" just --justfile {{quote(justfile())}} _verify "$@"
 
