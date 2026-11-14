@@ -93,9 +93,9 @@ the trade like for like and the two readings of it, and settles neither
 **What Preact gains.** About 60 kB less on every first visit, all of it React's runtime (the
 board 44 kB against 104, a task's page 48 against 109, the guide 60 against 120), and about 200 kB
 less script to decode; nothing on a second page, where both send 23 kB. A cold visit spends about
-a tenth to a quarter less time running script, on every page and at every speed, every batch
-agreeing (the board 34 ms against 43 at full speed, 151 against 173 slowed four times, 113
-against 154 on a phone's screen; [Render](#render)), though its long tasks are no shorter (slowed,
+a tenth to a quarter less time running script, on each of the three pages at every speed, every
+batch agreeing (the board 34 ms against 43 at full speed, 151 against 173 slowed four times, 113
+against 154 on a phone's screen; [Render](#render)), though its long tasks are no shorter, the batches split (slowed,
 163 ms against 146 on the board, 90 against 66 on a phone's screen). Neither leads in when a page
 is usable: slowed four times, Preact's board and guide are usable a little sooner and React's task
 page is; at full speed React opens a task from the board sooner and draws a card's move in 30 ms
@@ -881,7 +881,7 @@ it asks of the page and of the module:
 |---|---|---|
 | a project's module in the page, by kind | there today as `Media::Viewer`: a custom element whose script `media_live` adds once; a JSON block would ride an attribute, with no client change | the prototype's page form, 30 lines; or the viewer ported, which `blocks.jsx` draws without loading its script |
 | a sandboxed frame, data in and height out | `MockupFrame` draws the frame and `media_live` scales it already; the data and height would be a `srcdoc` and a message listener there, through web-sys, with the same frame script as a string, of the order of the prototype's 88 lines | the prototype's frame form, 88 lines |
-| a project's component in the client's own framework, or one replacing a client component | compiled in: every consumer's components in the client this repository ships, or a client built and served per project | a module importing the client's Preact through an import map, built against its major version; each component a project may replace becomes an interface the client keeps |
+| a project's component in the client's own framework, or one replacing a client component | compiled in: every consumer's components in the client this repository ships, or a client built and served per project | a module importing the client's library (Preact or React) through an import map, built against its major version; each component a project may replace becomes an interface the client keeps |
 | what the drawn data reaches | in the page: the origin, so every project's API and storage and the owner's writes; in a frame: nothing | the same: it depends on the form, not on the framework |
 
 **For the choice.** For today's plugins, nothing changes beyond the lost check that every block
@@ -1205,9 +1205,9 @@ on two runtimes. React needs none of it.
 board 103.8 kB against 43.5, a task's page 108.9 against 48.4, the guide 120.1 against 59.6, in
 React's runtime (its entry chunk 72 kB against 11); nothing more on a second page (23.0 against
 22.7), the runtime being in already; about 200 kB more script decoded on every first visit; and
-a tenth to a quarter more time running script on a cold visit, every page, speed and batch (the
+a tenth to a quarter more time running script on a cold visit, each of the three pages at every speed (the
 board 43 ms against 34 at full speed, 173 against 151 slowed, 154 against 113 on a phone's
-screen), while Preact's long tasks are no shorter (slowed, 146 ms on React's board against 163).
+screen), while Preact's long tasks are no shorter, the batches split (slowed, 146 ms on React's board against 163).
 In when a page is usable neither leads throughout: with the CPU slowed, Preact's board and guide are usable a
 little sooner cold (0.49 and 0.81 of the Dioxus time, against React's 0.52 and 0.87) and React's
 task page is (0.60 against 0.70); at full speed, opening a task from the board is quicker on React
