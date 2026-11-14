@@ -1,0 +1,296 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  active,
+  CategoryChips,
+  changed,
+  chooseTopic,
+  chosenTopic,
+  counts,
+  keepRows,
+  PostponeControls,
+  QueuePage,
+  queueCategory,
+  readQueue,
+  recallRows,
+  TaskTag,
+  visible,
+  WaitingQueue,
+} from "./queue";
+import { STALE } from "./shared";
+import { CASES, memoryStorage } from "./testing";
+import type { Card } from "./wire";
+
+/** A card of `doc`, its slug `slug`. */
+function card(doc: string, slug = "s"): Card {
+  return { doc, slug, title: `Decision ${slug}`, doc_title: "D", why: "design call" };
+}
+
+/** Thirty picture cards and three engineering ones. */
+function cards(): Card[] {
+  return [
+    ...Array.from({ length: 30 }, (_, n) => card("docs/pictures/CARDS.md", `pictures-${n}`)),
+    ...Array.from({ length: 3 }, (_, n) => card("docs/engineering/CARDS.md", `engineering-${n}`)),
+  ];
+}
+
+const draw = (selected: string, items = cards()) =>
+  renderToStaticMarkup(<WaitingQueue items={items} selected={selected} onSelect={() => {}} />);
+
+describe("a card's topic", () => {
+  it.each(CASES.queueCategory)("of %j is %j, as crates/symphony-api says", (path, topic) => {
+    expect(queueCategory(path)).toBe(topic);
+  });
+});
+
+describe("the topics", () => {
+  it("count each topic's cards, in the topics' order, summing to the group", () => {
+    const found = counts(cards().map((one) => one.doc));
+    expect([...found]).toEqual([
+      ["engineering", 3],
+      ["pictures", 30],
+    ]);
+    expect([...found.values()].reduce((sum, n) => sum + n, 0)).toBe(33);
+  });
+
+  it("show all for a topic chosen before that the queue no longer has", () => {
+    const found = new Map([["lamps", 1]]);
+    expect(active("lamps", found)).toBe("lamps");
+    expect(active("gone", found)).toBe("");
+    expect(active("", found)).toBe("");
+  });
+});
+
+describe("what waits on the owner", () => {
+  it("shows the chosen topic while it has cards, else all of them", () => {
+    const items = [card("docs/lamps/a.md"), card("docs/DECISIONS.md"), card("docs/lamps/b.md")];
+    expect(visible(items, "")).toHaveLength(3);
+    const lamps = visible(items, "lamps");
+    expect(lamps).toHaveLength(2);
+    expect(lamps.every((one) => one.doc.startsWith("docs/lamps/"))).toBe(true);
+    expect(visible(items, "gone")).toHaveLength(3);
+  });
+
+  it("draws every card, and its chips count each topic and all", () => {
+    const all = draw("");
+    expect(all.match(/data-card=/g)).toHaveLength(33);
+    expect(all).toContain("All (33)");
+    expect(all).toContain("pictures (30)");
+    expect(all).toContain("engineering (3)");
+    expect(all).toContain("Waiting on you (33)");
+    expect(all).not.toContain("Showing");
+  });
+
+  it("keeps only the chosen topic's rows, and says how many of all it shows", () => {
+    const pictures = draw("pictures");
+    expect(pictures.match(/data-card=/g)).toHaveLength(30);
+    expect(pictures).not.toContain('data-card="docs/engineering/');
+    expect(pictures).toContain("Showing 30 of 33");
+    const engineering = draw("engineering");
+    expect(engineering.match(/data-card=/g)).toHaveLength(3);
+    expect(engineering).not.toContain('data-card="docs/pictures/');
+  });
+
+  it("falls back to all for a topic chosen before that is gone", () => {
+    expect(draw("removed-folder")).toBe(draw(""));
+  });
+
+  it("says when nothing waits", () => {
+    const empty = draw("pictures", []);
+    expect(empty).toContain("All (0)");
+    expect(empty).toContain("nothing to decide");
+    expect(empty).not.toContain("data-card=");
+  });
+});
+
+describe("the topic chips", () => {
+  const chips = (selected: string) =>
+    renderToStaticMarkup(
+      <CategoryChips
+        topics={
+          new Map([
+            ["engineering", 3],
+            ["pictures", 30],
+          ])
+        }
+        selected={selected}
+        onSelect={() => {}}
+      />,
+    );
+  const pressed = (markup: string) =>
+    [...markup.matchAll(/aria-pressed="true" data-category="([^"]*)"/g)].map((match) => match[1]);
+
+  it("press the chosen topic's, or all's", () => {
+    expect(pressed(chips("pictures"))).toEqual(["pictures"]);
+    expect(pressed(chips(""))).toEqual([""]);
+    expect(pressed(chips("gone"))).toEqual([""]);
+  });
+
+  it("are a labelled group of small outline buttons", () => {
+    const markup = chips("");
+    expect(markup).toContain('role="group" aria-label="Review categories"');
+    expect(markup.match(/class="dx-button" data-style="outline" data-size="sm"/g)).toHaveLength(3);
+  });
+});
+
+describe("this device's topic", () => {
+  beforeEach(() => vi.stubGlobal("localStorage", memoryStorage()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("is kept for the next visit, and all clears it", () => {
+    expect(chosenTopic()).toBe("");
+    chooseTopic("pictures");
+    expect(chosenTopic()).toBe("pictures");
+    chooseTopic("");
+    expect(chosenTopic()).toBe("");
+  });
+
+  it("is all where the browser keeps nothing", () => {
+    vi.stubGlobal("localStorage", memoryStorage(true));
+    chooseTopic("pictures");
+    expect(chosenTopic()).toBe("");
+  });
+});
+
+describe("the rows each group showed", () => {
+  it("are kept in the queue's order and read back as kept", () => {
+    const kept = keepRows([1, 0, 3]);
+    expect(kept).toBe("1 0 3");
+    expect(recallRows(kept)).toEqual([1, 0, 3]);
+  });
+
+  it("are none for a group the kept line does not say, or says unreadably", () => {
+    expect(recallRows("")).toEqual([null, null, null]);
+    expect(recallRows("2 x")).toEqual([2, null, null]);
+    expect(recallRows("  4\t+5 -1 9")).toEqual([4, 5, null]);
+  });
+});
+
+describe("the queue read", () => {
+  it("is the server's answer as crates/symphony-api writes it", () => {
+    const queue = readQueue(CASES.samples.queue);
+    expect(queue?.waiting.map((one) => one.slug)).toEqual(["lamp-colour", "s"]);
+    expect(queue?.agent[0]?.branch).toBe("app/lamps");
+    expect(readQueue(CASES.samples.emptyQueue)).toEqual(CASES.samples.emptyQueue);
+  });
+
+  it("takes a field it does not draw as the server sends it, or without it", () => {
+    expect(readQueue({ waiting: [], spot_check: [], agent: [], newer: 1 })).not.toBeNull();
+  });
+
+  it.each([
+    ["nothing", null],
+    ["no agent group", { waiting: [], spot_check: [] }],
+    [
+      "a card without its title",
+      { waiting: [{ slug: "s", doc: "d", doc_title: "t", why: "w" }], spot_check: [], agent: [] },
+    ],
+    [
+      "a card postponed by a word",
+      { waiting: [{ ...card("d"), postponed: "yes" }], spot_check: [], agent: [] },
+    ],
+    [
+      "a card's task of another type",
+      { waiting: [{ ...card("d"), task: 1 }], spot_check: [], agent: [] },
+    ],
+    [
+      "an item's branch of another type",
+      {
+        waiting: [],
+        spot_check: [],
+        agent: [{ href: "", path: "", slug: "", title: "", kind: "", text: "", branch: 2 }],
+      },
+    ],
+    [
+      "an item without its text",
+      {
+        waiting: [],
+        spot_check: [{ href: "", path: "", slug: "", title: "", kind: "" }],
+        agent: [],
+      },
+    ],
+  ])("is none for %s", (_, value) => {
+    expect(readQueue(value)).toBeNull();
+  });
+});
+
+describe("the feed's events", () => {
+  it.each([
+    "queue-item",
+    "queue-item-order",
+    "spot-check",
+    "spot-check-order",
+    "agent-queue",
+    "agent-queue-order",
+  ])("move the queue with %s", (region) => {
+    expect(changed({ changes: [{ region: "docs" }, { region }] })).toBe(true);
+  });
+
+  it.each([
+    ["another region", { changes: [{ region: "docs" }] }],
+    ["no changes", { changes: [] }],
+    ["changes of another type", { changes: "queue-item" }],
+    ["nothing", undefined],
+  ])("leave it with %s", (_, delta) => {
+    expect(changed(delta)).toBe(false);
+  });
+});
+
+describe("a card's task", () => {
+  it("is a chip leading to its page, and none without one", () => {
+    expect(renderToStaticMarkup(<TaskTag task="app/lamps" />)).toBe(
+      '<a class="chip" href="/task/app/lamps">app/lamps</a>',
+    );
+    expect(renderToStaticMarkup(<TaskTag task={null} />)).toBe("");
+    expect(renderToStaticMarkup(<TaskTag />)).toBe("");
+  });
+});
+
+describe("a card's Later", () => {
+  afterEach(() => STALE.set(false));
+  const controls = (postponed: boolean) =>
+    renderToStaticMarkup(<PostponeControls path="docs/A.md" slug="s" postponed={postponed} />);
+
+  it("is Later, or Undo Later on a postponed card, which says so", () => {
+    expect(controls(false)).toContain(">Later</button>");
+    expect(controls(false)).not.toContain("postponed");
+    expect(controls(true)).toContain('<small class="postponed">postponed</small>');
+    expect(controls(true)).toContain(">Undo Later</button>");
+  });
+
+  it("waits, saying so, while the page may show what is out of date", () => {
+    STALE.set(true);
+    expect(controls(false)).toMatch(/disabled="".*>Checking…<\/button>/);
+  });
+});
+
+describe("the queue's page", () => {
+  beforeEach(() => vi.stubGlobal("localStorage", memoryStorage()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens on its heading and the ghost of each group while it loads", () => {
+    const markup = renderToStaticMarkup(<QueuePage scope="" refreshed={0} />);
+    expect(markup).toContain('data-ready="loading" aria-busy="true"');
+    expect(markup).toContain("<h1>Review queue</h1>");
+    expect(markup).toContain('<a href="/">← Home</a>');
+    expect(markup).toContain("Loading the queue…");
+    expect(markup.match(/class="card ghost-group"/g)).toHaveLength(3);
+    // The rows each group is guessed to hold, the first with its rank and its chips.
+    expect(markup.match(/class="ghost-row"/g)).toHaveLength(4 + 2 + 2);
+    expect(markup.match(/class="ghost-rank"/g)).toHaveLength(4);
+    expect(markup.match(/class="ghost-pill"/g)).toHaveLength(2);
+  });
+
+  it("draws as many ghost rows as each group showed last, twelve at most, and says a group was empty", () => {
+    localStorage.setItem("queue-rows", "20 0 1");
+    const markup = renderToStaticMarkup(<QueuePage scope="" refreshed={0} />);
+    expect(markup.match(/class="ghost-rank"/g)).toHaveLength(12);
+    expect(markup.match(/class="ghost-row"/g)).toHaveLength(12 + 1);
+    expect(markup.match(/class="ghost-none"/g)).toHaveLength(1);
+  });
+
+  it("leads home under its checkout", () => {
+    const markup = renderToStaticMarkup(<QueuePage scope="proposal~x" refreshed={0} />);
+    expect(markup).toContain('<a href="/@proposal~x/">← Home</a>');
+  });
+});

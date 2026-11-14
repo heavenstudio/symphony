@@ -1,0 +1,116 @@
+# apps/symphony-web/
+
+The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
+the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
+whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
+review queue (`/queue`) is the first kind it serves; every other page is still the Dioxus
+client's. Like that client it reads the server's JSON API and never runs server code or inserts
+server-rendered HTML.
+
+**Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
+look or behaviour) is built on its page once that page's kind has moved here, in this package,
+never on its Dioxus page: until the kind moves, the improvement waits for it. The one exception is
+a fix on a Dioxus page for a bug that loses data or blocks use, which is made where the page is.
+
+## The tools
+
+Each is pinned, and each is the smallest set that does its job; a dependency added is argued on
+its task's thread first.
+
+- **Node and npm.** `.node-version` pins Node, which `tools/node.sh` runs as rustup runs the
+  pinned Rust: the `node` on PATH when it is that version, else fnm's copy (installed once), else
+  it refuses, naming the version. npm is the one that Node ships, held to its version by
+  `package.json`'s `engines` under `.npmrc`'s `engine-strict`. `npm.sh ARGS` runs npm here on
+  that Node after `npm ci` from the committed `package-lock.json` whenever `node_modules` was not
+  installed from those very bytes, offline after the first fetch (`--prefer-offline`), two runs in
+  one checkout taking turns (`tools/check_lock.sh`). `.npmrc` saves exact versions and asks no
+  outside service anything but the registry.
+- **React 19** (`react`, `react-dom`), the only run-time dependencies.
+- **TypeScript**, strict (`tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit`. It emits
+  nothing: Vite strips the types. `skipLibCheck` leaves the packages' own declarations unchecked,
+  which name Node's types this package does not take.
+- **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
+  `KINDS`; JSX by Vite's own transform, so no React plugin; no dev server, no public folder and
+  no module preload, as the Symphony's server and shell serve and load the files.
+- **Biome** lints and formats (`biome.json`: its recommended rules with the React and test
+  domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
+  typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
+  is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
+- **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
+
+`just client-lint` (`check.sh`) runs the wire types' check, Biome, `tsc --noEmit` and the unit
+tests with their coverage, each whatever the ones before it did, and `just lint-rs` runs it, so a
+task's gate and the release run's lint both do. `just client-wire` writes the wire types.
+
+## The wire types
+
+`src/wire.ts` holds the TypeScript of the types the client reads from `crates/symphony-api` and
+the constants it names (the feed's path and events, the Symphony's routes, the cache's format), as
+that crate's `typescript` example prints them through ts-rs (the derives sit behind the crate's
+`typescript` feature, which no build of the server or the Dioxus client turns on). It is never
+edited by hand: `just client-wire` writes it, and `just client-lint` fails when the committed file
+is not what the Rust types print. `src/wire.cases.json` comes from the same example: what the
+crate's functions the client carries in TypeScript answer for a set of inputs (`here`, `strip`,
+the routes of a project's view, a card's topic), with a sample of each read the client checks
+at run time, so the unit tests hold the TypeScript to the Rust.
+
+A read is checked where it arrives (`readQueue`, `readPageBoard`): a guard checks the fields
+the page draws, each of its type, and nothing else, so a field a newer server adds, or one it
+drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
+unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
+event of a region or kind the page does not know is not its own, and is left alone.
+`skip-board-fields` is the Dioxus client's: it leaves fields out of its wasm's reader to save
+code, and `JSON.parse` costs no code per field, so this client has no such feature: its types say
+what the server sends, and its guards read what it draws.
+
+## The tests
+
+Unit tests sit beside their module (`queue.test.tsx` beside `queue.tsx`) and run in Node, with no
+DOM and no DOM library: markup is drawn with `react-dom/server` and compared as text, and a test
+that needs a global (`localStorage`, `fetch`, `location`) stubs it with `vi.stubGlobal`, the
+browser's storage held in memory by `testing.ts`. Time is Vitest's fake timers, never the clock.
+What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
+browser target's (`apps/symphony-ui/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
+which opens a moved page as it opened the Dioxus one and is its parity check. A kind's entry
+(`src/kinds/`) and the generated types are left out of the coverage, which `npm.sh run test`
+prints.
+
+## The build and the distribution
+
+`apps/symphony-ui/bundle.sh` builds this client as its kind `web` (`npm.sh run build`, into the
+build's own folder), beside the Dioxus kinds, and `package.sh` puts both in one distribution: it
+copies Vite's assets into the stage, so one `builds.json` names every file of the build, and adds
+each kind to the shell's manifest from Vite's (`.vite/manifest.json`): its script and its styles,
+the shared sheet first and then the CSS its entry imports, and no wasm. It refuses a kind both
+clients build, and a build with no web kinds. Files are named `NAME-HASH16.EXT` with a hex hash, as
+the server caches such a name for good. No path or clock enters the bytes: the build is the same
+from any checkout, so it builds from the checkout, not from the release snapshot the Dioxus build
+uses, and `tools/client-key.sh` adds this package's hash (every file git lists here but its
+guides) to the snapshot's name, so the regenerator rebuilds the distribution when either changes.
+The server embeds the files as it embeds the rest, and needs no Node to run.
+
+The shell imports a kind of this client with `import()` in place of the Dioxus glue's init: its
+entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it before it settles,
+and `stop`, which unmounts it, its feed and reads with it. A move between a kind of this client
+and a Dioxus kind stops one and runs the other as between two Dioxus kinds; a move within a kind
+is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
+and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay
+stay the Dioxus program's kinds, which the shell mounts beside any page.
+
+Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
+server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
+class names this client's markup uses, and the kind's own sheet, imported by its module
+(`src/queue.css`). A component drawn by a Dioxus component library keeps its markup and class
+(`button.tsx` draws the shared Button's `dx-button`).
+
+## Moving a page kind
+
+1. Draw the page in a module of its own (`src/NAME.tsx`), its reads guarded and its pure parts
+   exported for the unit tests, with an entry in `src/kinds/NAME.tsx` and the name in `KINDS`.
+2. Take the Dioxus kind out of `apps/symphony-ui` (its sources where nothing else uses them, its
+   feature, its place in `bundle.sh`'s and `package.sh`'s kinds and `tests/wasm_build.rs`), and
+   move its style sheet here.
+3. Run its browser tests against the built distribution, change none to pass, and take its
+   pictures beside the Dioxus page's, desktop and phone, light and dark.
+4. Hold its first visit to the cap its page has, and lower a cap the move earns, in that commit.

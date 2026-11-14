@@ -9,6 +9,7 @@ use crate::NavItem;
 /// The project as the client's header and home read it, inlined in the page the server serves
 /// (the script element whose id is [`PROJECT_ELEMENT`]), so the first paint needs no request.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ProjectView {
     /// The name its theme package shows in the header and the tab: the project's own by default.
     pub name: String,

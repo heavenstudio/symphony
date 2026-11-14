@@ -48,6 +48,95 @@ fn queue_stylesheet_failure_keeps_the_previous_page_and_allows_retry() {
     );
 }
 
+/// Wait until the page shown has opened a feed stream since the stand-in had served `before` feed
+/// requests, and that stream is the only one open: the page it replaced closed its own. A quiet
+/// machine has it within 10 s; a stall past its backstop ([`test_time::backstop`]) is the error.
+fn follows_alone(site: &Site, before: usize) -> Result<(), test_time::Stall> {
+    test_time::until_true(
+        "the page shown following the feed on the only stream open",
+        test_time::backstop(std::time::Duration::from_secs(10)),
+        || site.feed_requests() > before && site.feeds() == 1,
+    )
+}
+
+/// The queue is the web client's and home the Dioxus client's: a move from one to the other, by a
+/// link, Back or Forward, keeps the page before it drawn until the next is, never a frame with no
+/// page, and the page shown follows the feed on a stream of its own.
+#[test]
+fn moves_between_home_and_the_queue_draw_each_page_and_keep_the_feed_both_ways() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let mut queue = queue_fixture();
+    site.set_json("/api/queue", &queue);
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/"));
+    wait_for_board(&mut browser);
+    follows_alone(&site, 0).expect("home never followed the feed");
+    // Each frame drawn from here on: one with no page root shown and drawn is a blank page.
+    browser.eval(
+        r#"window.blankFrames = 0;
+        window.drawnFrames = 0;
+        const tick = () => {
+            const roots = [...document.querySelectorAll('#main > [id^="review-root-"]')];
+            drawnFrames += 1;
+            if (!roots.some(root => !root.hidden && root.firstElementChild)) blankFrames += 1;
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);"#,
+    );
+    // Home is the kind `review`, in its root; the queue the kind `queue`, in its own.
+    let queue_shown = "document.documentElement.dataset.navigation === 'ready' \
+        && document.querySelector('#review-root-queue:not([hidden]) [data-ready=queue] #you h2') !== null \
+        && document.getElementById('review-root-review')?.hidden === true";
+    let home_shown = "document.documentElement.dataset.navigation === 'ready' \
+        && document.querySelector('#review-root-review:not([hidden]) [data-ready=board] .hero-title') !== null \
+        && document.getElementById('review-root-queue')?.hidden === true";
+
+    let before = site.feed_requests();
+    browser.eval("document.querySelector('a[href=\"/queue\"]').click()");
+    assert!(
+        browser.wait_for(queue_shown, SHOWN),
+        "home's link must show the queue"
+    );
+    follows_alone(&site, before).expect("the queue never followed the feed");
+    queue["waiting"] = json!([]);
+    site.set_json("/api/queue", &queue);
+    site.push(
+        4183,
+        &json!({"version":4183,"changes":[{"region":"queue-item","data":{"key":"fixture","removed":true}}]}).to_string(),
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#you h2')?.textContent === 'Waiting on you (0)'",
+            SHOWN
+        ),
+        "the queue must follow the feed it opened"
+    );
+
+    let before = site.feed_requests();
+    browser.eval("history.back()");
+    assert!(browser.wait_for(home_shown, SHOWN), "Back must show home");
+    follows_alone(&site, before).expect("home never followed the feed again");
+
+    let before = site.feed_requests();
+    browser.eval("history.forward()");
+    assert!(
+        browser.wait_for(queue_shown, SHOWN),
+        "Forward must show the queue"
+    );
+    follows_alone(&site, before).expect("the queue never followed the feed again");
+    assert_eq!(
+        texts(&mut browser, "#you h2"),
+        ["Waiting on you (0)"],
+        "the queue shown again reads the queue as it is"
+    );
+    assert_eq!(
+        browser.eval("drawnFrames > 0 && blankFrames"),
+        json!(0),
+        "no frame may show no page, of the {} drawn",
+        browser.eval("drawnFrames")
+    );
+}
+
 #[test]
 fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position() {
     let site = Site::start(dist(), &common::fixture("board.json"));
@@ -85,14 +174,13 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
             Node.prototype.insertBefore = insertBefore;
             for (const link of heldStyles) insertBefore.call(document.head, link, headed.get(link));
         };
-        Object.defineProperty(window, 'reviewModule_queue', { configurable: true, set(module) {
-            const run = module.run;
-            module.run = function() {
-                window.queueStartedWithStyles = heldStyles.length > 0 && heldStyles.every(link => link.sheet !== null);
-                return run.apply(this, arguments);
-            };
-            Object.defineProperty(window, 'reviewModule_queue', { value: module });
-        }});
+        // Whether the held styles were in when the queue drew its first element in its root: the
+        // page's own mount, whichever client's module draws it.
+        new MutationObserver((records, observer) => {
+            if (!document.getElementById('review-root-queue')?.firstElementChild) return;
+            window.queueStartedWithStyles = heldStyles.length > 0 && heldStyles.every(link => link.sheet !== null);
+            observer.disconnect();
+        }).observe(document, { childList: true, subtree: true });
     "#}));
     browser.open(&site.url("/@topic/queue#agent"));
     assert!(browser.wait_for("heldStyles.length > 0", SHOWN));
@@ -203,7 +291,9 @@ fn restored_queue_counts_order_scope_anchors_and_refresh_keep_reading_position()
         "returning to the agent section must align its heading within one pixel"
     );
     wait_for_feed(&site).expect("the page never followed the feed");
-    browser.eval("window.scrollBy(0,100);window.keptScroll=scrollY;window.keptRow=document.querySelector('#agent li[data-card]')");
+    // Ends on a value Chrome can send back: an element React drew holds its fiber, a chain too long
+    // to serialize.
+    browser.eval("window.scrollBy(0,100);window.keptScroll=scrollY;window.keptRow=document.querySelector('#agent li[data-card]');true");
     queue["waiting"] = json!([]);
     queue["spot_check"] = json!([]);
     queue["branches"] = json!([]);

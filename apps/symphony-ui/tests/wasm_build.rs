@@ -19,8 +19,11 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: four page kinds, and the program.
-const KINDS: [&str; 5] = ["board", "docs", "review", "queue", "program"];
+/// What bundle.sh builds, each with its own dx run: three page kinds, and the program.
+const KINDS: [&str; 4] = ["board", "docs", "review", "program"];
+/// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
+/// kind is its script, with no wasm, and its styles.
+const WEB: [&str; 1] = ["queue"];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
@@ -314,10 +317,11 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The four kinds built alone, and each of the program's: the media layer is none.
+    // The three kinds built alone, each of the program's (the media layer is none) and the web
+    // client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
-        KINDS.len() - 1 + PROGRAM.len() - 1
+        KINDS.len() - 1 + PROGRAM.len() - 1 + WEB.len()
     );
     assert!(manifest.get(MEDIA).is_none(), "{manifest}");
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
@@ -349,7 +353,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..4] {
+    for kind in &KINDS[..3] {
         for key in ["script", "wasm"] {
             file(manifest[kind][key].as_str().unwrap());
         }
@@ -359,6 +363,34 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
             "{kind} loads the shared stylesheet, then its own"
         );
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+    }
+    // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
+    // and the shared stylesheet before the CSS its entry imports.
+    for kind in WEB {
+        let script = manifest[kind]["script"].as_str().unwrap();
+        assert!(
+            script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
+            "{script}"
+        );
+        let module = String::from_utf8(file(script)).unwrap();
+        assert!(
+            module.contains(" as run") && module.contains(" as stop"),
+            "{kind}"
+        );
+        assert!(manifest[kind].get("wasm").is_none(), "{kind}");
+        assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+        let styles = manifest[kind]["styles"].as_array().unwrap();
+        assert_eq!(styles[0], shared, "{kind}");
+        let own = styles[1..].iter().map(|style| style.as_str().unwrap());
+        assert_eq!(
+            own.clone().count(),
+            1,
+            "{kind} loads the shared stylesheet, then its own: {styles:?}"
+        );
+        for style in own {
+            assert!(style.starts_with(&format!("/assets/{kind}-")), "{style}");
+            assert!(!file(style).is_empty(), "{style}");
+        }
     }
     // The program's kinds: its one script and main module, which split-repair named by their bytes,
     // and a chunk each, preloaded beside them.
@@ -871,6 +903,11 @@ case "$PATH" in "$PWD/apps/symphony-ui/bin:"*) printf 'client-path=yes\n' ;; *) 
 printf 'arg=%s\n' "$@"
 "#,
     );
+    // The web client's checks, which bash reads as data.
+    executable(
+        &tree.join("apps/symphony-web/check.sh"),
+        "printf 'client-lint cwd=%s\\n' \"$PWD\"\n",
+    );
     let output = tree.join("output with spaces");
     let done = Command::new("just")
         .current_dir(&tree)
@@ -898,7 +935,9 @@ printf 'arg=%s\n' "$@"
             concat!(
                 "cwd={0}\nclient-path=no\narg=fmt\narg=--all\narg=--check\n",
                 "cwd={0}\nclient-path=no\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
-                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n"
+                "cwd={0}\nclient-path=no\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n",
+                "client-lint cwd={0}\n"
             ),
             tree.display()
         )

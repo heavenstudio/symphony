@@ -1,6 +1,7 @@
 # Symphony
 
-The app's workspace owns its server and Dioxus client under `apps/`, and the review
+The app's workspace owns its server and its two web clients under `apps/` (the React one,
+`apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one), and the review
 library, wire types, task board, working-directory scanner, headless Chrome driver and
 the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
 under `crates/`.
@@ -62,7 +63,8 @@ is its theme package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.cs
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder. `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
+from this folder; `just lint-rs` runs `just client-lint` as well, the React client's checks on
+its pinned Node ([its guide](apps/symphony-web/AGENTS.md)). `tools/cargo.sh` runs ordinary Cargo in this workspace, preserving
 its arguments, streams, status and inherited limits. A build or test goes through
 `tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
 and `verify` recipes, each as one operation: the board's recorder (`tasks run`, the
@@ -121,8 +123,9 @@ scripts run it by
 it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
 links them ([CHECKS](docs/CHECKS.md#size-budgets)).
 
-`just client-update` builds the client's four page modules and its program (the pages that
-share one runtime, `apps/symphony-ui/src/split.rs`) and publishes their bundle
+`just client-update` builds the Dioxus client's three page modules and its program (the pages
+that share one runtime, `apps/symphony-ui/src/split.rs`) and the React client's page kinds (one
+Vite build, `apps/symphony-web`), and publishes their bundle, one shell and one `builds.json`,
 under `apps/symphony-server/client/public/`. A branch commits no distribution, whatever
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
 as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the
@@ -140,7 +143,8 @@ packages it builds with, the workspace manifest, lock, Cargo configuration, tool
 pin and the server's notice styles, the sources of the split repair the program's build
 runs (`symphony-build split-repair`), and the other members' manifests over empty targets. Its
 path, and so the asset names, follow those bytes alone: a change anywhere else needs no new
-distribution. dx runs from one path in every checkout and common
+distribution. The React client builds from the checkout, as no path enters its bytes; the
+regenerator's key (`tools/client-key.sh`) is that snapshot's name and its package's hash. dx runs from one path in every checkout and common
 dir as well (`apps/symphony-ui/dx-path.sh`), since Cargo mixes its path, as the workspace's
 rustc wrapper, into every byte of the client's wasm.
 The server package embeds those bytes at build time, so an
@@ -163,7 +167,8 @@ binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit, 
 workspace's native/headless browser tests locally, each step whatever the ones before it did and
 with a log of its own (`tools/verify.sh`): the release run's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-release-run)). Local acceptance requires a working
-Chrome executable; the consuming project's game, display and gate binaries are not prerequisites.
+Chrome executable and the React client's pinned Node (on PATH, or fnm to fetch it once:
+`tools/node.sh`); the consuming project's game, display and gate binaries are not prerequisites.
 This repository has no hosted GitHub CI requirement.
 
 Native board fixtures use the fixture source-root function to find
@@ -172,8 +177,9 @@ downloads finish before server readiness is measured. `tools/fixture_process.sh`
 closes inherited descriptors and supplies the owned EOF watchdog. These helpers
 do not start the shared board or Symphony server.
 
-Read [the client guide](apps/symphony-ui/AGENTS.md) and
-[the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project applies its own Rust, review and resource policy.
+Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
+guide](apps/symphony-web/AGENTS.md) and [the board guide](crates/tasks/AGENTS.md) before editing
+those packages. A consuming project applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
 ## This repository as its own project

@@ -1,0 +1,314 @@
+{
+  "here": [
+    ["", "/tasks", "/tasks"],
+    ["", "/", "/"],
+    ["", "tasks", "tasks"],
+    ["", "//cdn.example/x", "//cdn.example/x"],
+    ["", "#top", "#top"],
+    ["", "https://a.example/b", "https://a.example/b"],
+    ["", "", ""],
+    ["/alpha", "/tasks", "/alpha/tasks"],
+    ["/alpha", "/", "/alpha/"],
+    ["/alpha", "tasks", "tasks"],
+    ["/alpha", "//cdn.example/x", "//cdn.example/x"],
+    ["/alpha", "#top", "#top"],
+    ["/alpha", "https://a.example/b", "https://a.example/b"],
+    ["/alpha", "", ""]
+  ],
+  "strip": [
+    ["", "/alpha", "/alpha"],
+    ["", "/alpha/", "/alpha/"],
+    ["", "/alpha/queue", "/alpha/queue"],
+    ["", "/alphabet", "/alphabet"],
+    ["", "/queue", "/queue"],
+    ["", "/", "/"],
+    ["/alpha", "/alpha", "/"],
+    ["/alpha", "/alpha/", "/"],
+    ["/alpha", "/alpha/queue", "/queue"],
+    ["/alpha", "/alphabet", "/alphabet"],
+    ["/alpha", "/queue", "/queue"],
+    ["/alpha", "/", "/"]
+  ],
+  "views": [
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [] },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [], "base": "/alpha" },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": ["docs", "design"] },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", true, true],
+        ["design/B.md", true, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [""] },
+      "routes": [
+        ["", true, true],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", true, true],
+        ["design/B.md", true, false],
+        ["README.md", true, false],
+        ["notes", true, true],
+        ["shelf", true, true],
+        ["maps/", true, true],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", true, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "README.md"
+    },
+    {
+      "view": {
+        "name": "",
+        "register": "",
+        "nav": [
+          { "label": "▤ shelf", "title": "▤ shelf", "href": "/shelf", "document": "docs/SHELF.md" },
+          { "label": "◇ maps", "title": "◇ maps", "href": "/maps/", "document": "docs/MAPS.md" }
+        ],
+        "entrypoints": []
+      },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    }
+  ],
+  "queueCategory": [
+    ["docs/ROOT.md", "docs"],
+    ["docs/lamps/a.md", "lamps"],
+    ["docs/a/b/c.md", "a"],
+    ["@proposal~topic/docs/pictures/CARDS.md", "pictures"],
+    ["@scope", "docs"],
+    ["other/a.md", "docs"],
+    ["docs/", "docs"],
+    ["", "docs"]
+  ],
+  "samples": {
+    "queue": {
+      "waiting": [
+        {
+          "postponed": true,
+          "slug": "lamp-colour",
+          "doc": "@proposal~lamps/docs/lamps/LAMPS.md",
+          "doc_title": "Lamps",
+          "title": "Which colour do the lamps take?",
+          "summary": "Warm or cold.",
+          "why": "design · gates 2 items",
+          "posted": "2026-11-14 08:32",
+          "pictures": [{ "src": "/thumb/a.png", "caption": "A", "waiting": true }],
+          "task": "app/lamps"
+        },
+        {
+          "slug": "s",
+          "doc": "docs/DECISIONS.md",
+          "doc_title": "Decisions",
+          "title": "T",
+          "why": "w"
+        }
+      ],
+      "spot_check": [
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered."
+        }
+      ],
+      "agent": [
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered.",
+          "branch": "app/lamps"
+        }
+      ],
+      "branches": []
+    },
+    "emptyQueue": { "waiting": [], "spot_check": [], "agent": [], "branches": [] },
+    "board": {
+      "version": 7,
+      "build": "/assets/symphony-shell-0123456789abcdef.js",
+      "ping_ms": 15000,
+      "next": [
+        {
+          "postponed": true,
+          "slug": "lamp-colour",
+          "doc": "@proposal~lamps/docs/lamps/LAMPS.md",
+          "doc_title": "Lamps",
+          "title": "Which colour do the lamps take?",
+          "summary": "Warm or cold.",
+          "why": "design · gates 2 items",
+          "posted": "2026-11-14 08:32",
+          "pictures": [{ "src": "/thumb/a.png", "caption": "A", "waiting": true }],
+          "task": "app/lamps"
+        },
+        {
+          "slug": "s",
+          "doc": "docs/DECISIONS.md",
+          "doc_title": "Decisions",
+          "title": "T",
+          "why": "w"
+        }
+      ],
+      "counts": {
+        "waiting": 0,
+        "docs_waiting": 0,
+        "spot_check": 0,
+        "answered_today": 0,
+        "tasks": null
+      },
+      "progress": { "regions": [], "docs": 0, "decisions_waiting": 0 }
+    }
+  }
+}

@@ -160,7 +160,8 @@ audit on main after the land's round files it within minutes
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
    `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   and any other `crates/NAME` is `NAME`.
+   and any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
+   package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
      path as a filter (`store::work` for `crates/tasks/src/store/work.rs`);
@@ -171,8 +172,9 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs`, and, when `apps/symphony-ui` changed, the client built (`just client-update`)
-   for its tests and pictures, its distribution never committed.
+4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-ui` or
+   `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+   pictures, its distribution never committed.
 5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
    as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
 
@@ -234,26 +236,26 @@ The thread gets the four commands and their result lines. No `perf`: the stateme
 sends is unchanged, and a change to it would add `--test perf`. No client test: no client file
 changed.
 
-**A row on the home queue.** The branch shows each card's priority beside its title in the home
-queue's rows, in `apps/symphony-ui/src/queue.rs` and `apps/symphony-ui/assets/queue.css`.
+**A row on the queue page.** The branch shows each card's priority beside its title in the queue
+page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/queue.css`.
 
 ```
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
-just test-rs -p symphony-ui --test view queue::
-just test-rs -p symphony-ui --test browser -- queue polish:: projects:: budget phone::
+just client-lint
+just test-rs -p symphony-ui --test browser -- queue polish:: projects::
 just client-update
 just lint-rs
 ```
 
-A new view test pins the priority in the row's markup; `queue` runs the browser tests of the
-queue's counts, order, spacing and filter colours, which a taller row or new markup could break,
-and the branch updates any that pinned the old row, naming it. `polish::` and `projects::` draw
-the home page too: its panels and its one heading, and the link each row draws under the
-project's base. `budget` and `phone::` are there because the home page is an entry page and its
-bytes grew. The thread gets the eight pictures, the commands and their result lines and the
-updated tests named; the commit holds the source alone, `just client-update`'s distribution put
-back as main has it.
+A new unit test in `queue.test.tsx` pins the priority in the row's markup, and `just client-lint`
+runs it with the lint, the type check and the wire types' check; `queue` runs the browser tests of
+the queue's counts, order, spacing and filter colours, which a taller row or new markup could
+break, and the branch updates any that pinned the old row, naming it. `polish::` and `projects::`
+draw the page's panels and its one heading, and the link each row draws under the project's base.
+A change to home's rows would add `budget` and `phone::`, as home is an entry page. The thread
+gets the eight pictures, the commands and their result lines and the updated tests named; the
+commit holds the source alone, `just client-update`'s distribution put back as main has it.
 
 ## The release run
 
@@ -521,7 +523,8 @@ too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
-client distribution. Its key (`tools/client-key.sh`, the release snapshot's name) skips a tip
+client distribution. Its key (`tools/client-key.sh`, the release snapshot's name and the React
+client's package's hash) skips a tip
 whose client inputs and committed distribution passed before; otherwise `just client-check`
 builds the client fresh and compares it with the committed one, and only when they differ does
 `just client-update` rebuild it and `just client-check` compare again, the change landed on main

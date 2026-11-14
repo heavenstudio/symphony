@@ -264,9 +264,6 @@ fn comparisons_label_each_kind_and_link_the_task() {
     assert!(html.contains("Unchanged prose"));
     assert!(!html.contains("data-difference"));
 }
-#[path = "view/queue.rs"]
-mod queue;
-
 fn region_of(id: &str, totals: &[u32]) -> symphony_api::Region {
     symphony_api::Region {
         id: id.into(),
