@@ -1,43 +1,24 @@
-//! What keeps working across the rename of `nightly` to `release`: the old command runs a due
-//! count, as a landing's `on_land` and a build older than the rename run it, and refuses anything
-//! else; the first run moves the records, the checkout and its build from their old names, reads
-//! the old records as release runs, and writes to and closes the reds the old series still holds
-//! open.
+//! What keeps working across the rename of `nightly` to `release`: a brief's `--release COMMIT`
+//! hears the flag's new name; the first run moves the records, the checkout and its build from
+//! their old names, reads the old records as release runs, and writes to and closes the reds the
+//! old series still holds open.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 
 use symphony_board::{NewSession, NewTask};
 
-use super::cadence::{counting, landing};
+use super::cadence::counting;
 use super::{CHECK, DAY, Fixture, NOW, git};
 
-/// What the old command says of anything but a due count.
-const REFUSED: &str = "`symphony-build nightly` is now `symphony-build release`\n";
-
 #[test]
-fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
+fn the_old_flag_is_refused_naming_the_new_one_and_runs_nothing() {
     let fixture = counting(1);
-    for args in [
-        &["--check", CHECK][..],
-        &["--status"][..],
-        &["--commit", "HEAD"][..],
-        &["--help"][..],
-        &[][..],
-    ] {
-        let (code, out, err) = fixture.named_with("nightly", NOW, args, &[]);
-        assert_eq!(
-            (code, out.as_str(), err.as_str()),
-            (2, "", REFUSED),
-            "{args:?}"
-        );
-    }
-    // Sent on to the new name, a brief's `--release COMMIT` hears the flag's new name, in one line.
+    // A brief's `--release COMMIT` hears the flag's new name, in one line.
     for args in [
         &["--release", "HEAD"][..],
         &["--check", CHECK, "--release=HEAD"][..],
     ] {
-        let (code, out, err) = fixture.named_with("release", NOW, args, &[]);
+        let (code, out, err) = fixture.release_at(NOW, args);
         assert_eq!(
             (code, out.as_str(), err.as_str()),
             (2, "", "`--release COMMIT` is now `--commit COMMIT`\n"),
@@ -46,74 +27,6 @@ fn the_old_command_runs_a_due_count_as_the_new_one_and_refuses_anything_else() {
     }
     assert!(!fixture.records().exists(), "nothing ran");
     assert!(!fixture.worktree().exists());
-    // The tip's launcher, a stand-in that says what it was asked to build and names this test's
-    // own build as what it built.
-    let built = fixture.root.join("built.log");
-    fixture.write(
-        "tools/rs-bin.sh",
-        &format!(
-            "#!/bin/sh\necho \"$* in $(pwd -P)\" >> '{}'\necho '{}'\n",
-            built.display(),
-            super::BIN
-        ),
-    );
-    fs::set_permissions(
-        fixture.main.join("tools/rs-bin.sh"),
-        fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
-    fixture.commit("its launcher");
-    git(&fixture.main, &["push", "-q", "origin", "main"]);
-
-    // A build older than the rename hands its due count's run on so, to a build of the tip that
-    // may be this one: it runs here, built already.
-    let first = landing(&fixture, "tools/one");
-    let (code, out, err) = fixture.named_with(
-        "nightly",
-        NOW,
-        &["--check", CHECK, "--due", "tools/one", &first],
-        &[("SYMPHONY_NIGHTLY_DRIVER", super::BIN)],
-    );
-    assert_eq!(code, 0, "{out}{err}");
-    assert!(
-        out.starts_with(&format!("release: tools/one landed ({})\n", &first[..12])),
-        "{out}"
-    );
-    assert!(
-        out.contains("release: green; tagged release-2026-11-12"),
-        "{out}"
-    );
-    assert!(!built.exists(), "handed on already, it builds nothing");
-    assert_eq!(fixture.runs()[0]["kind"], "release");
-
-    // A landing's `on_land` naming the old command: its count's run is handed to a build of the tip
-    // in the release run's own checkout, as `release --due` hands it.
-    let second = landing(&fixture, "tools/two");
-    let (code, out, err) = fixture.named_with(
-        "nightly",
-        NOW + 60.0,
-        &["--check", CHECK, "--due", "tools/two", &second],
-        &[],
-    );
-    assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(
-        fs::read_to_string(&built).unwrap(),
-        format!(
-            "--build symphony-build in {}\n",
-            fixture.worktree().display()
-        )
-    );
-    assert!(
-        out.contains(&format!(
-            "release: the run goes on from {}, built in its own checkout\n",
-            super::BIN
-        )),
-        "{out}"
-    );
-    let runs = fixture.runs();
-    assert_eq!(runs.len(), 2, "{out}");
-    assert_eq!(runs[1]["kind"], "release");
-    assert_eq!(runs[1]["result"], "green", "{out}");
 }
 
 /// The checkout a build older than the rename made at `wt/nightly`, locked and marked as it did,

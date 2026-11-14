@@ -225,38 +225,8 @@ impl Fixture {
         args: &[&str],
         extra: &[(&str, &str)],
     ) -> Command {
-        self.command_as("release", before, now, args, extra)
-    }
-
-    /// `symphony NAME ARGS` as the release run's command, its name before the rename included
-    /// (`nightly`): its exit code, stdout and stderr.
-    fn named_with(
-        &self,
-        name: &str,
-        now: f64,
-        args: &[&str],
-        extra: &[(&str, &str)],
-    ) -> (i32, String, String) {
-        let done = output(&mut self.command_as(name, &[], now, args, extra)).unwrap();
-        (
-            done.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&done.stdout).into_owned(),
-            String::from_utf8_lossy(&done.stderr).into_owned(),
-        )
-    }
-
-    /// `symphony NAME ARGS` from the main checkout, started through `before`, its clock at `now`,
-    /// with `extra` in its environment, to start.
-    fn command_as(
-        &self,
-        name: &str,
-        before: &[&str],
-        now: f64,
-        args: &[&str],
-        extra: &[(&str, &str)],
-    ) -> Command {
         let mut line = before.to_vec();
-        line.extend([BIN, name]);
+        line.extend([BIN, "release"]);
         let mut command = Command::new(line[0]);
         command
             .args(&line[1..])
@@ -268,7 +238,6 @@ impl Fixture {
             .env_remove("TASKS_RECORDER")
             .env_remove("TASKS_WORK")
             .env_remove("SYMPHONY_RELEASE_DRIVER")
-            .env_remove("SYMPHONY_NIGHTLY_DRIVER")
             .env_remove("SYMPHONY_RELEASE_RELOAD_SECONDS")
             .env_remove("SYMPHONY_RELEASE_REGENERATOR_SECONDS")
             .envs(identity())

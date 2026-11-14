@@ -39,9 +39,10 @@ orchestrator_slots = 8
 guide = "docs/TASKS.md"
 # What a land starts once the task is closed, with its slug and merge appended: the release
 # cadence, a release run once `[releases] every_landings` tasks have landed (docs/RELEASES.md). The
-# count runs the build of `symphony-build` this checkout links (`tools/rs-bin.sh --link
-# symphony-build`, once) and builds nothing; a due run builds in its own checkout. The release run
-# is `symphony-build`'s, a binary no project is given, never the shipped `symphony`'s.
+# count runs the build of `symphony-build` this checkout links, which any `just release` here links
+# or renews (`tools/rs-bin.sh --link symphony-build` by hand), and builds nothing; a due run builds
+# in its own checkout. The release run is `symphony-build`'s, a binary no project is given, never
+# the shipped `symphony`'s.
 on_land = [".target/bin/symphony-build", "release", "--due"]
 
 # A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).

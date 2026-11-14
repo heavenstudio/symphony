@@ -211,9 +211,9 @@ orchestrator does either only on the owner's word. The owner, 2026-11-12: "It wo
 release a new version every given number of tasks done, say 20 and refresh server/clients", then
 "yes, a green release should refresh". So a land also starts a release run once 20 tasks have landed
 since the last release or the last run that checked something (`[releases] every_landings`, run by
-`[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link the main
-checkout makes once with `tools/rs-bin.sh --link symphony-build`, which counts with git and
-builds nothing short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
+`[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link that any
+`just release` in the main checkout makes or renews, which counts with git and builds nothing
+short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
 run at once. A green release then refreshes the machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a

@@ -223,9 +223,6 @@ pub(super) fn build(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("split-repair") => split_repair::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
-        // Its name before the rename, unlisted: `nightly --due` runs as `release --due`, and
-        // anything else is refused naming the new one.
-        Some(crate::release::LEGACY) => crate::release::legacy(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(&SYMPHONY_BUILD, name));
             2
@@ -549,19 +546,20 @@ mod tests {
             "{err}"
         );
         assert!(err.contains("\nsymphony-build release: error: "), "{err}");
-        // The release run's name before the rename, unlisted, runs no run but a due count's.
-        assert_eq!(
-            built(&["nightly"]),
-            (
-                2,
-                String::new(),
-                "`symphony-build nightly` is now `symphony-build release`\n".into()
-            )
-        );
-        let refused =
-            "symphony-build: unknown command \"status\" (`symphony-build help` lists them)\n";
-        for args in [&["status"][..], &["status", "--help"], &["help", "status"]] {
-            assert_eq!(built(args), (2, String::new(), refused.into()), "{args:?}");
+        // A command of the shipped binary's, and the release run's name before the rename, which
+        // nothing here runs any more.
+        for name in ["status", "nightly"] {
+            let refused = format!(
+                "symphony-build: unknown command {name:?} (`symphony-build help` lists them)\n"
+            );
+            for args in [
+                &[name][..],
+                &[name, "--due"],
+                &[name, "--help"],
+                &["help", name],
+            ] {
+                assert_eq!(built(args), (2, String::new(), refused.clone()), "{args:?}");
+            }
         }
     }
 }

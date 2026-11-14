@@ -475,9 +475,11 @@ the hour, and its green release refreshes the server and its projects
   filed, then the refresh. A tip that cannot be built so is said, and its run goes on from the
   linked build, which meets the same red in its checks. The record names what started it
   (`cause`: `20 landings since release-…, the last SLUG`). A red run files its reds, as any
-  release run does. A main checkout that links no `symphony-build` starts no count: the land
-  shows its refusal, and `tools/rs-bin.sh --link symphony-build` in the main checkout makes the
-  link, or renews it. No landing is lost meanwhile: the next count reads them all from git.
+  release run does. The link comes from `just release`: every run of the recipe in the main
+  checkout, `--status` too, builds `symphony-build` and makes the link or renews it
+  (`tools/rs-bin.sh --link symphony-build` does it alone). A main checkout that links none starts
+  no count: the land shows its refusal. No landing is lost meanwhile: the next count reads them
+  all from git.
 - **The release candidate holds it.** Before it counts, `--due` settles the release candidate
   under the run's lock ([the advance](#the-release-candidate)), unless a run holds the lock, which
   settles it itself. While one is open and a red of it waits, the count starts nothing, however
@@ -672,13 +674,12 @@ this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`
 
 - **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
   exit 2, until the first release `just release` cuts; then it goes.
-- **The old command.** `symphony-build nightly --due …` runs as `symphony-build release --due …`
-  does, so an `on_land` that names it goes on, and so does a due count's run handed on by an older
-  build (`SYMPHONY_NIGHTLY_DRIVER` counts as `SYMPHONY_RELEASE_DRIVER`). Anything else it refuses,
-  saying "`symphony-build nightly` is now `symphony-build release`", exit 2, and
-  `symphony-build release --release COMMIT` says "`--release COMMIT` is now `--commit COMMIT`",
-  exit 2; neither runs anything. This repository's `on_land` names `release --due`
-  ([the trigger](#the-cadence)).
+- **The old command.** Neither `symphony` nor `symphony-build` has a `nightly`: this repository's
+  `on_land` names `symphony-build release --due` ([the trigger](#the-cadence)), and a due count
+  hands its run only to the tip's `symphony-build`. An older build's count, which handed its run to
+  the tip's `symphony`, would find no release run there; none runs, as no `on_land` names an older
+  build any more. `symphony-build release --release COMMIT` says "`--release COMMIT` is now
+  `--commit COMMIT`", exit 2, and runs nothing.
 - **The records.** Until a run moves them, `--status` and the cadence read the records where an
   older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
   lock before it decides anything, so no older build's run, and no second run starting at the same
@@ -707,8 +708,8 @@ this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`
   and nothing is filed beside it. The old prefix goes once none is open.
 
 An older build that runs a count after a newer one moved the folder finds no record there, and a
-due run of it makes the old folder and checkout again; so a landing of this build is followed at
-once by its link in the main checkout ([the trigger](#the-cadence)).
+due run of it makes the old folder and checkout again; `on_land` names only the linked
+`symphony-build`, which `just release` keeps current ([the trigger](#the-cadence)).
 
 ## Never
 

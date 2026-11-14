@@ -418,15 +418,9 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
 /// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
-/// What a build older than the rename tells the build it hands a due count's run to, which may be
-/// this one ([`legacy`]): the same as [`DRIVER`].
-const LEGACY_DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
 /// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
-/// The command's name before the rename to `release`, which a build older than it runs
-/// ([`legacy`]).
-pub const LEGACY: &str = "nightly";
 /// `--commit` as it was named before the rename, which older briefs and reds say.
 const LEGACY_COMMIT: &str = "--release";
 
@@ -444,27 +438,9 @@ fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
         })
 }
 
-/// `symphony-build nightly ARGS`, the command's name before the rename: its exit code. A landing's
-/// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
-/// handing a due count's run to a build of the tip (which may be this one), run it as `release
-/// --due` would; anything else is refused, saying the new name, exit 2.
-pub fn legacy(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    if args.iter().any(|arg| arg == "--due") {
-        return main(args, out, err);
-    }
-    let _ = writeln!(
-        err,
-        "`symphony-build {LEGACY}` is now `symphony-build release`"
-    );
-    2
-}
-
-/// Whether this process is the build a due count handed its run to, by this build or by one older
-/// than the rename.
+/// Whether this process is the build a due count handed its run to.
 fn driven() -> bool {
-    [DRIVER, LEGACY_DRIVER]
-        .into_iter()
-        .any(|name| std::env::var_os(name).is_some())
+    std::env::var_os(DRIVER).is_some()
 }
 
 /// Say each line of `noted` on `out`, as a run says what it did on the way.
@@ -572,8 +548,7 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         .args(["--build", "symphony-build"])
         .current_dir(&place.checkout)
         .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER)
-        .env_remove(LEGACY_DRIVER);
+        .env_remove(DRIVER);
     let done = group::output_until(&mut build, until).map_err(|failed| match failed {
         group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
         group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
