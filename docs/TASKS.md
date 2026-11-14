@@ -2139,13 +2139,16 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
   the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
-  or leaves the open statuses another way.
+  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
+  `done` or `cancelled`, or leaves the open statuses another way.
 - **Work in review takes no slot.** The cap counts the tasks being built, not
   the review of them: a task's slot frees when it moves to `review`, and a move
-  into `review` is never refused. Its return to `in_progress`, on a changes
-  verdict or a move, goes between open statuses and starts nothing: it is never
-  refused, and counts again from then, as it was being worked already.
+  into `review` is never refused. The work under a task in review goes with it,
+  judged by the task whose work it is and the tasks above it, as red work is: a
+  reviewer's review mirror or instruction subtask in progress takes no slot
+  either, and starts at any count. The task's return to `in_progress`, on a
+  changes verdict or a move, goes between open statuses and starts nothing: it
+  is never refused, and counts again from then, as it was being worked already.
 - **Each open task, one slot.** A subtask holds a slot of its own, so
   gathering open work under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
@@ -2175,8 +2178,8 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   slot frees when one of them goes to review or is done or cancelled; not
   counted, as work in review takes no slot: sim/b (review)`. The count is the
   number of entries listed before the work named apart. `tasks api` holds the
-  same cap. A start inside a slot already counted (an instruction for work in
-  progress) is never refused.
+  same cap. A start inside a slot already open (a mirror or an instruction of a
+  task in review, an instruction for work in progress) is never refused.
 - **A landing's hold.** A landing that holds a task in review blocked while
   every stamp its branch lacks is one nobody is producing does it with a hold
   (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
@@ -2224,10 +2227,12 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
   the mark of an open red that stays open as ordinary work (main's green
   reached it once work on it started): it and the work under it count from
-  then, decided and held as a close is, never refused; a task unmarked or
+  then as any work does, none while it is in review, decided and held as a
+  close is, never refused; a task unmarked or
   closed is left as it is. A refusal names the owner's open red work after its
-  counted slots: `…; a slot frees when one of them is done or cancelled; not
-  counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
+  counted slots: `…; a slot frees when one of them goes to review or is done or
+  cancelled; not counted, as red work takes no slot: tests/main-red-abc
+  (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the
   agents API count no red work. As with review, nothing authenticates a
   session: a filer is honour-based, guarding against a mistake, not malice.

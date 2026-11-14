@@ -14,11 +14,13 @@
 //! - a review mirror counts with the task it reviews: `review/BRANCH` (`review-N/BRANCH`) with the
 //!   task whose slug or recorded executor branch is `BRANCH`, and `SLUG/review` with `SLUG`.
 //!
-//! Work in review takes no slot ([`Ledger::reviews`]). The owner, 2026-11-13: "reviewer should not
-//! count as a slot. It's task based". The cap counts the tasks being built: a task frees its slot
-//! when it moves to review, and a refusal names the work in review apart, as not counted. Its return
-//! to in progress, on a changes verdict or a move, goes between open statuses and so starts nothing:
-//! never refused, it counts again from then, as it was being worked already.
+//! Work in review takes no slot ([`Ledger::reviewing`], [`Ledger::reviews`]). The owner,
+//! 2026-11-13: "reviewer should not count as a slot. It's task based". The cap counts the tasks
+//! being built: a task frees its slot when it moves to review, and the work under it goes with it,
+//! a reviewer's mirror or instruction subtask in progress included, which so starts at any count.
+//! A refusal names the work in review apart, as not counted. The task's return to in progress, on a
+//! changes verdict or a move, goes between open statuses and so starts nothing: never refused, it
+//! counts again from then, as it was being worked already.
 //!
 //! Red work takes no slot ([`Ledger::red`]): an open task filed for a red that stops every landing
 //! ([`crate::red`]) and the work under it, its mirrors and instructions included, start at any count
@@ -48,7 +50,7 @@ pub use change::{changed, reds, started};
 /// The statuses a task holds a slot in.
 pub const OPEN: [&str; 2] = ["in_progress", "review"];
 /// The open status the cap does not count: built, its work is the reviewer's ([`Ledger::reviews`]).
-pub const REVIEW: &str = "review";
+const REVIEW: &str = "review";
 /// How a refusal names the status of blocked work a hold keeps open.
 pub const HELD: &str = "blocked, held";
 /// The key of the project file naming the cap, in `[limits]` or, where an older build reads it,
@@ -356,6 +358,14 @@ impl<'a> Ledger<'a> {
         self.exempting(slug).next().is_some()
     }
 
+    /// Whether `slug` is work in review: it, the task it reviews or a task above them is in review.
+    /// So a reviewer's mirror or instruction subtask under a task in review is that task's review,
+    /// whatever its own status, as red work is judged by the red above it.
+    pub fn reviewing(&self, slug: &'a str) -> bool {
+        let in_review = |at: &str| self.tasks.get(at).is_some_and(|t| t.status == REVIEW);
+        in_review(slug) || self.chain(slug).into_iter().any(in_review)
+    }
+
     /// Every owner's open slots, in one pass over the open tasks: those the cap counts, then the
     /// red work and the work in review it does not.
     fn tally(&self) -> [HashMap<&'a str, Held<'a>>; 3] {
@@ -365,7 +375,7 @@ impl<'a> Ledger<'a> {
             let place = self.place(task.slug);
             let apart = if self.red(task.slug) {
                 1
-            } else if task.status == REVIEW {
+            } else if self.reviewing(task.slug) {
                 2
             } else {
                 0

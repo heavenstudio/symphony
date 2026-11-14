@@ -187,6 +187,40 @@ fn only_in_progress_and_held_blocked_work_hold_a_slot_and_review_is_named_apart(
 }
 
 #[test]
+fn a_reviewers_instruction_and_mirror_under_a_task_in_review_start_at_the_cap_named_apart() {
+    let before = Ledger::new(
+        [
+            led("a", None, "review", "o"),
+            led("b", None, "in_progress", "o"),
+            led("c", None, "ready", "o"),
+            told("a/review-by-x", "a", "ready"),
+            entry("review/a", None, "ready"),
+            entry("a/fix", Some("a"), "in_progress"),
+        ],
+        [],
+    );
+    let start =
+        |ledger: &Ledger<'static>, slug: &str| ledger.changed(slug, Some("in_progress"), None, &[]);
+    for slug in ["a/review-by-x", "review/a"] {
+        let after = start(&before, slug);
+        assert!(after.reviewing(slug), "{slug}: judged by a, in review");
+        assert_eq!(started(&before, &after, 1), Ok(vec![]), "{slug}");
+    }
+    assert!(before.reviewing("a/fix"), "the work under a task in review");
+    assert!(!before.reviewing("b") && !before.reviewing("c"));
+    let both = start(&start(&before, "a/review-by-x"), "review/a");
+    let full = started(&both, &start(&both, "c"), 1).unwrap_err();
+    assert_eq!(
+        refusal("c cannot start", &full, &[], 1),
+        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: b (in_progress); a slot frees when one of them goes to review or is done or cancelled; not counted, as work in review takes no slot: a (review) with a/fix (in_progress) with a/review-by-x (in_progress) with review/a (in_progress)"
+    );
+    // A changes verdict sends a back to work: its slot counts again, the reviewer's work in it.
+    let back = both.changed("a", Some("in_progress"), None, &[]);
+    assert_eq!(back.counts()["o"], 2);
+    assert!(back.reviews().is_empty());
+}
+
+#[test]
 fn work_a_hold_keeps_open_returns_without_a_new_slot_and_other_blocked_work_takes_one() {
     let before = Ledger::new(
         [

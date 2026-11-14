@@ -12,7 +12,7 @@ fn red<'a>(entry: Entry<'a>) -> Entry<'a> {
 fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_it_holds() {
     let open = Ledger::new(
         [
-            red(led("red", None, "review", "o")),
+            red(led("red", None, "in_progress", "o")),
             entry("red/fix", Some("red"), "in_progress"),
             entry("red/new", Some("red"), "ready"),
             led("a", None, "in_progress", "o"),

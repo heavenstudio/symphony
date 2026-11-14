@@ -207,6 +207,36 @@ fn work_in_review_takes_no_slot_and_a_refusal_names_it_apart() {
 }
 
 #[test]
+fn a_reviewers_instruction_and_mirror_under_a_task_in_review_are_claimed_at_the_cap() {
+    let seed = eight_and_seed(&[("work/r", "review"), ("work/next", "ready")]);
+    let id = seed.dump.tasks.len() as i64 + 1;
+    let seed = seed.task_row(TaskRow {
+        id,
+        parent: Some("work/r".into()),
+        instruction: true,
+        ..task("work/r/review", "ready")
+    });
+    let f = Fixture::new(with(seed, "review/work/r", "ready", None, None));
+    let store = capped(&f, 8);
+    // The reviewer's instruction subtask, as the skills staff one, and a mirror, at the cap.
+    assert_eq!(
+        store.claim("work/r/review", K).unwrap().status,
+        "in_progress"
+    );
+    assert_eq!(
+        store.claim("review/work/r", W).unwrap().status,
+        "in_progress"
+    );
+    assert_eq!(
+        refused(store.claim("work/next", K)),
+        format!(
+            "work/next cannot start: {HOLDS_EIGHT}; not counted, as work in review takes no slot: work/r (review) with review/work/r (in_progress) with work/r/review (in_progress){}",
+            reserve_hint("work/next")
+        )
+    );
+}
+
+#[test]
 fn a_move_into_review_frees_a_slot_and_a_changes_verdict_returns_the_work_past_the_cap() {
     let f = Fixture::new(
         eight_and_seed(&[("work/next", "ready"), ("work/later", "ready")]).session("lark"),
