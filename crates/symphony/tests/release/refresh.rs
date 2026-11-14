@@ -2,8 +2,10 @@
 //! fixture's Symphony from git has its pin moved to the release on a branch of its own, through
 //! its own commit gate and never pushed, its main fast-forwarded to it in its main checkout when
 //! that checkout is ready for it, and its board's schema moved to the pin its main locks, its store
-//! snapshotted first; a red gate, a main checkout not ready, hooks that refuse, or a board whose
-//! database is not running moves nothing more and is a red task until a refresh gets through.
+//! snapshotted first. A gate that refuses the move, a main checkout not ready or hooks that refuse
+//! the fast-forward move nothing more and are the project's to finish, filed nowhere; the
+//! refresh's own work that fails (a worktree it cannot make, a migrate that fails, a board whose
+//! database is not running) is a red task until a refresh gets through.
 //! Every project is a scratch repository, its board a scratch database of the test's own, and the
 //! shared server a stand-in on a private port.
 
@@ -467,8 +469,15 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
     );
 }
 
+/// What `--status` says under a refresh one of whose steps is its project's to finish.
+const BY_HAND: &str = "  by hand: a project whose own gate refused the move meets that itself; one \
+                       whose hooks kept the move from its main lands its branch symphony/RELEASE \
+                       through its own landing; a main checkout off its default branch or with \
+                       tracked edits is put right by its owner; then an orchestrator's `just \
+                       release --refresh` finishes the rest\n";
+
 #[test]
-fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_through() {
+fn a_commit_gate_that_refuses_the_move_is_the_projects_to_finish_and_filed_nowhere() {
     let (fixture, _) = refreshing();
     let consumer = locked_consumer(&fixture);
     // Released with no project registered (nothing to refresh), then registered.
@@ -482,31 +491,20 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     register(&fixture, &[("consumer", &consumer)]);
     let head = git(&consumer, &["rev-parse", "HEAD"]);
     let before = checkout(&consumer);
-    fs::write(fixture.root.join("gate-red"), "").unwrap();
     let home = cargo_home(&fixture);
     // The shared server is built from the Symphony's own main checkout.
     let port = shared_server(&fixture, &fixture.main);
 
+    // The refresh's own work fails: a folder of someone's where its worktree goes. Red, filed.
+    let tree = fixture.root.join("wt/release-refresh/consumer");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(tree.join("mine.txt"), "keep").unwrap();
     let (code, out, err) =
-        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+        fixture.release_with(NOW + 30.0, &["--refresh"], &[("CARGO_HOME", &home)]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        out.contains(&format!(
-            "release: refresh: the shared server (process 4242, port {port}) is built from {}, \
-             this repository's main checkout, which its own reload follows\n",
-            fixture.main.display()
-        )),
-        "{out}"
-    );
-    assert!(
         out.contains("release: refresh-consumer red (")
-            && out.contains(&format!(
-                "its commit gate refused the move to {RELEASE} (`git commit --quiet --file "
-            ))
-            && out.contains(
-                "exited 1: the gate is red), so nothing of consumer moved: no branch was made, and \
-             its main is as it was"
-            ),
+            && out.contains("is in the way and is not the release run's worktree of"),
         "{out}"
     );
     assert!(
@@ -515,12 +513,54 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
     );
     let red = &fixture.reds()["tests/release-red-refresh-consumer"];
     assert!(red.red());
-    assert!(red.body.contains("the gate is red"), "{}", red.body);
     assert!(
         red.body
             .contains("Then an orchestrator reruns the refresh, `just release --refresh`"),
         "{}",
         red.body
+    );
+    assert_eq!(fs::read_to_string(tree.join("mine.txt")).unwrap(), "keep");
+    fs::remove_dir_all(&tree).unwrap();
+
+    // Its own commit gate refuses the move: no branch, its main as it was, and the step is the
+    // project's to finish, green here, filed nowhere, closing nothing.
+    fs::write(fixture.root.join("gate-red"), "").unwrap();
+    let (code, out, err) =
+        fixture.release_with(NOW + 60.0, &["--refresh"], &[("CARGO_HOME", &home)]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: the shared server (process 4242, port {port}) is built from {}, \
+             this repository's main checkout, which its own reload follows\n",
+            fixture.main.display()
+        )),
+        "{out}"
+    );
+    let said = format!(
+        "release: refresh: consumer: the project's to finish: its commit gate refused the move to \
+         {RELEASE} (`git commit --quiet --file "
+    );
+    assert!(
+        out.contains(&said)
+            && out.contains(
+                "exited 1: the gate is red), so nothing of consumer moved: no branch was made, and \
+                 its main is as it was; what its gate refuses (its last lines are in this step's \
+                 log) is the project's own to meet, and once it passes an orchestrator's `just \
+                 release --refresh` makes the move again\n"
+            ),
+        "{out}"
+    );
+    assert!(
+        out.contains("release: refresh-consumer the project's to finish ("),
+        "{out}"
+    );
+    assert!(
+        !out.contains("release: filed") && !out.contains("release: closed"),
+        "{out}"
+    );
+    assert!(
+        fixture.reds()["tests/release-red-refresh-consumer"].red(),
+        "the open red of its own work stays open"
     );
     assert!(git(&consumer, &["branch", "--list", BRANCH]).is_empty());
     assert_eq!(git(&consumer, &["rev-parse", "HEAD"]), head);
@@ -529,19 +569,43 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
         worktrees(&consumer),
         [consumer.to_string_lossy().into_owned()]
     );
-    assert!(!fixture.root.join("wt/release-refresh/consumer").exists());
+    assert!(!tree.exists());
+    // The run's record says which, its log keeps the gate's last lines, and so does the status.
+    let run = fixture.runs().pop().unwrap();
+    assert_eq!(run["result"], "green", "{run}");
+    assert_eq!(
+        run["refreshed"]["theirs"],
+        serde_json::json!(["refresh-consumer"])
+    );
+    assert_eq!(run["refreshed"]["steps"][0]["exit_code"], 0, "{run}");
+    let said = run["refreshed"]["said"].as_array().unwrap();
+    assert!(
+        said.iter().any(|line| line
+            .as_str()
+            .unwrap()
+            .starts_with("consumer: the project's to finish: its commit gate refused")),
+        "{run}"
+    );
+    let log = fs::read_to_string(run["refreshed"]["steps"][0]["log"].as_str().unwrap()).unwrap();
+    assert!(
+        log.contains("the gate is red\n")
+            && log.ends_with("the project's to finish, not red here\n"),
+        "{log}"
+    );
     let status = fixture.run(NOW + 90.0, &["--status"], 0);
     assert!(
-        status.contains(
-            "  by hand: a project whose own gate or hooks refuse the move lands its branch \
-             symphony/RELEASE through its own landing; a main checkout off its default branch or \
-             with tracked edits is put right by its owner; then an orchestrator's `just release \
-             --refresh` finishes the rest\n"
-        ),
+        status.contains(&format!(
+            "last refresh: green, of {RELEASE} by the run {}, ",
+            run["id"].as_str().unwrap()
+        )) && status.contains("\n  consumer: the project's to finish: its commit gate refused")
+            && status.contains(&format!(
+                "  refresh-consumer the project's to finish, filed nowhere here; log {}\n{BY_HAND}",
+                run["refreshed"]["steps"][0]["log"].as_str().unwrap()
+            )),
         "{status}"
     );
 
-    // Green again, a retry makes the branch, moves its main to it and closes the red.
+    // Green again, a retry makes the branch, moves its main to it and closes its own work's red.
     fs::remove_file(fixture.root.join("gate-red")).unwrap();
     let (code, out, err) =
         fixture.release_with(NOW + 120.0, &["--refresh"], &[("CARGO_HOME", &home)]);
@@ -560,6 +624,8 @@ fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_throug
         git(&consumer, &["rev-parse", BRANCH])
     );
     assert_eq!(gated(&fixture).len(), 2);
+    let status = fixture.run(NOW + 150.0, &["--status"], 0);
+    assert!(!status.contains("by hand"), "{status}");
 }
 
 #[test]
@@ -594,21 +660,48 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         ".git/symphony/tasks/snapshots/before-schema-16-{RELEASE}.surql"
     ));
 
-    // Off its default branch: the branch is made, its main stays, and its board is moved to the
-    // schema of the pin its main locks, whatever release is newest.
+    let not_red = |out: &str| {
+        assert!(
+            out.contains("release: refresh-consumer the project's to finish (")
+                && !out.contains("release: filed")
+                && !out.contains("release: closed"),
+            "{out}"
+        );
+    };
+    let left_for_it = format!(
+        "the branch {BRANCH} is left for it, and once its owner puts that right an orchestrator's \
+         `just release --refresh` fast-forwards it and moves its board"
+    );
+
+    // Off its default branch while its board's move fails: the branch is made and its main stays,
+    // which is the project's to finish, but the failed migrate is the refresh's own red, filed.
+    fs::write(fixture.root.join("migrate-red"), "").unwrap();
     let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
     assert_eq!(code, 1, "{out}{err}");
     assert_eq!(fixture.remote_tags(), [RELEASE]);
     let made = git(&consumer, &["rev-parse", BRANCH]);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
+    let off = format!(
+        "release: refresh: consumer: the project's to finish: its main checkout {shown} is on the \
+         branch elsewhere, not its main, so its main was not moved: {left_for_it}\n"
+    );
+    assert!(out.contains(&off), "{off}\n{out}");
     assert!(
-        out.contains(&format!(
-            "its main checkout {shown} is on the branch elsewhere, not its main, so its main was \
-             not moved: the branch {BRANCH} is left for it, and once that is put right an \
-             orchestrator's `just release --refresh` fast-forwards it and moves its board"
-        )),
+        out.contains("release: refresh-consumer red (")
+            && out.contains("`just tasks migrate` in ")
+            && out.contains("release: filed tests/release-red-refresh-consumer"),
         "{out}"
     );
+    assert_eq!(board.schema("tasks").unwrap(), Some(5));
+    assert!(fixture.reds()["tests/release-red-refresh-consumer"].red());
+    fs::remove_file(fixture.root.join("migrate-red")).unwrap();
+
+    // Its migrate green, its main checkout still off its branch: its board is moved to the schema
+    // of the pin its main locks, whatever release is newest, and the step is the project's to
+    // finish, which neither files nor closes a red.
+    let (code, out, err) = fixture.release_with(NOW + 15.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(&off), "{off}\n{out}");
     assert!(
         out.contains(&format!(
             "release: refresh: consumer: its board moved from schema 5 to 16, its store \
@@ -617,20 +710,30 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         )),
         "{out}"
     );
+    not_red(&out);
     assert_eq!(board.schema("tasks").unwrap(), Some(16));
     assert!(fixture.reds()["tests/release-red-refresh-consumer"].red());
+    let status = fixture.run(NOW + 20.0, &["--status"], 0);
+    assert!(
+        status.contains(&format!("\n  {}", &off["release: refresh: ".len()..]))
+            && status
+                .contains("  refresh-consumer the project's to finish, filed nowhere here; log ")
+            && status.ends_with(BY_HAND),
+        "{status}"
+    );
 
     // On no branch at all: not moved either.
     git(&consumer, &["checkout", "-q", "--detach", "main"]);
     let (code, out, err) = fixture.release_with(NOW + 30.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "its main checkout {shown} is on a detached HEAD, not its main, so its main was not \
-             moved"
+            "release: refresh: consumer: the project's to finish: its main checkout {shown} is on \
+             a detached HEAD, not its main, so its main was not moved: {left_for_it}\n"
         )),
         "{out}"
     );
+    not_red(&out);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
 
     // On its main with a tracked edit: still not moved.
@@ -639,24 +742,25 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     let kept = fs::read_to_string(&manifest).unwrap();
     fs::write(&manifest, format!("{kept}# an edit of its owner's\n")).unwrap();
     let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
             "release: refresh: consumer: its pin to {RELEASE} is on the branch {BRANCH} ({}) \
              already\n",
             &made[..12]
         )) && out.contains(&format!(
-            "its main checkout {shown} has tracked edits (host/Cargo.toml), so its main was not \
-             moved"
+            "release: refresh: consumer: the project's to finish: its main checkout {shown} has \
+             tracked edits (host/Cargo.toml), so its main was not moved: {left_for_it}\n"
         )) && out.contains("consumer: its board is at schema 16, its pin's: nothing to move"),
         "{out}"
     );
+    not_red(&out);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     fs::write(&manifest, kept).unwrap();
 
     // Its hooks refuse the fast-forward: asked first, by a transaction aborted, they refuse it, so
     // nothing moves, nothing passes them by, and not a file of its checkout is written (the shared
-    // server may be built from it).
+    // server may be built from it). The branch waits for its own landing.
     fs::write(fixture.root.join("ff-red"), "").unwrap();
     let written = |path: &str| {
         fs::metadata(consumer.join(path))
@@ -666,19 +770,21 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     };
     let (lock_at, manifest_at) = (written("Cargo.lock"), written("host/Cargo.toml"));
     let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!(
-            "git refuses the move of its main to {} when asked first, in a ref transaction then \
-             aborted (",
+            "release: refresh: consumer: the project's to finish: git refuses the move of its main \
+             to {} when asked first, in a ref transaction then aborted (",
             &made[..12]
         )) && out.contains("main moves only by its own landing")
             && out.contains(&format!(
                 "so its main was not moved and nothing was written in its checkout: the branch \
-                 {BRANCH} is left for its own landing"
+                 {BRANCH} is left for its own landing, and once that lands it an orchestrator's \
+                 `just release --refresh` moves its board\n"
             )),
         "{out}"
     );
+    not_red(&out);
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     assert_eq!(
         git(
@@ -696,7 +802,7 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
     fs::remove_file(fixture.root.join("ff-red")).unwrap();
 
     // Its main moved on meanwhile: the branch is made again on its tip, and its main
-    // fast-forwarded to it; the red closes.
+    // fast-forwarded to it; the red of the failed migrate closes.
     fs::write(consumer.join("notes.txt"), "its own work\n").unwrap();
     git(&consumer, &["add", "notes.txt"]);
     git(&consumer, &["commit", "-q", "-m", "its own work"]);
@@ -788,8 +894,9 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     };
     let refused = |made: &str| {
         format!(
-            "git refused the fast-forward of its main to {}, through its hooks or its checkout \
-             (`git merge --ff-only --quiet {made}` exited ",
+            "release: refresh: consumer: the project's to finish: git refused the fast-forward of \
+             its main to {}, through its hooks or its checkout (`git merge --ff-only --quiet \
+             {made}` exited ",
             &made[..12]
         )
     };
@@ -802,7 +909,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     )
     .unwrap();
     let (code, out, err) = fixture.release_with(NOW, &["--check", super::CHECK], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     let made = git(&consumer, &["rev-parse", &format!("refs/heads/{BRANCH}")]);
     assert!(
         out.contains(&refused(&made))
@@ -812,9 +919,11 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
                  host/Cargo.toml into its checkout first, now put back as its main has them: the \
                  branch {BRANCH} is left for its own landing",
                 &head[..12]
-            )),
+            ))
+            && out.contains("release: refresh-consumer the project's to finish ("),
         "{out}"
     );
+    assert!(fixture.reds().is_empty(), "filed nowhere");
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     assert_eq!(status(), "M  justfile", "the owner's staged file alone");
     assert!(at_main("Cargo.lock") && at_main("host/Cargo.toml"));
@@ -826,7 +935,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     // An edit of its owner's, not staged: kept, and the move's files put back.
     fs::write(&late, "echo '# the owner' >> justfile\n").unwrap();
     let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&refused(&made))
             && out.contains("now put back as its main has them: the branch"),
@@ -840,7 +949,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     // that puts it back, never one that throws away anything else; the other is put back.
     fs::write(&late, "echo '# the owner' >> Cargo.lock\n").unwrap();
     let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     let put_back = format!("git -C {shown} restore --staged --worktree -- Cargo.lock");
     assert!(
         out.contains(&format!(
@@ -868,7 +977,7 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
     fs::write(&late, "true\n").unwrap();
     let (code, out, err) = fixture.release_with(NOW + 180.0, &["--refresh"], &extra);
     fs::remove_file(&locked).unwrap();
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&refused(&made))
             && out.contains(&format!(
@@ -897,8 +1006,9 @@ fn a_move_refused_after_its_ask_puts_back_only_what_it_wrote_and_names_what_it_c
         )),
         "{out}"
     );
+    // Each refusal was the project's to finish: nothing was filed, so nothing closes.
     assert!(
-        out.contains("release: closed tests/release-red-refresh-consumer"),
+        !out.contains("release: closed") && fixture.reds().is_empty(),
         "{out}"
     );
 }
@@ -946,15 +1056,20 @@ fn a_branch_holding_more_than_the_move_never_reaches_main() {
     assert_eq!(git(&consumer, &["rev-parse", "main"]), head);
     fs::remove_file(fixture.root.join("gate-stages")).unwrap();
 
+    // A branch that is more than the move is the refresh's own red, filed.
+    assert!(fixture.reds()["tests/release-red-refresh-consumer"].red());
+
     // Its owner drops that branch; and a tag of the same name, which git would take for the
-    // name, points at its old main. Its guard refuses this time: the branch made again is left.
+    // name, points at its old main. Its guard refuses this time: the branch made again is left,
+    // the project's to finish.
     git(&consumer, &["branch", "-D", BRANCH]);
     git(&consumer, &["tag", BRANCH, &head]);
     fs::write(fixture.root.join("ff-red"), "").unwrap();
     let (code, out, err) = fixture.release_with(NOW + 60.0, &["--refresh"], &extra);
-    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("when asked first, in a ref transaction then aborted"),
+        out.contains("when asked first, in a ref transaction then aborted")
+            && out.contains("release: refresh-consumer the project's to finish ("),
         "{out}"
     );
     let made = git(&consumer, &["rev-parse", &branch]);
