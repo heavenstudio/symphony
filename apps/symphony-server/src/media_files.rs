@@ -1,5 +1,8 @@
 //! Project media and the vendored viewers, served by the native server. Raw documents (including
 //! SVG/XML and mockups opened full size) keep the frame's opaque-origin sandbox in their response.
+//! A Markdown file no entrypoint serves (a guide such as `AGENTS.md`) opened as a page is drawn
+//! read-only in the project's look instead, its headings' ids a document's, so `#anchor` lands, in
+//! that sandbox with no script run ([`PAGE_POLICY`]). A fetch of it gets the file.
 
 use std::path::{Component, Path};
 
@@ -8,6 +11,23 @@ use axum::response::{IntoResponse, Response};
 
 pub(crate) fn handles(path: &str) -> bool {
     path == "/favicon.ico" || path.starts_with("/static/") || mime(path).is_some()
+}
+
+/// What a text file is served as: Markdown, source and settings alike.
+const TEXT: &str = "text/plain; charset=utf-8";
+
+/// Whether `request` opens a page: a link followed or an address typed (`Sec-Fetch-Dest:
+/// document`), or, from a browser that sends no fetch metadata, a request asking for HTML. A fetch,
+/// a picture or a frame is none.
+fn navigation(request: &axum::http::Request<()>) -> bool {
+    let headers = request.headers();
+    match headers.get("sec-fetch-dest") {
+        Some(destination) => destination == "document",
+        None => headers
+            .get(header::ACCEPT)
+            .and_then(|accept| accept.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html")),
+    }
 }
 
 fn mime(path: &str) -> Option<&'static str> {
@@ -34,9 +54,7 @@ fn mime(path: &str) -> Option<&'static str> {
             "ttf" => "font/ttf",
             "otf" => "font/otf",
             "gltf" | "json" => "application/json",
-            "md" | "txt" | "toml" | "yaml" | "yml" | "rs" | "gd" | "sh" => {
-                "text/plain; charset=utf-8"
-            }
+            "md" | "txt" | "toml" | "yaml" | "yml" | "rs" | "gd" | "sh" => TEXT,
             "csv" => "text/csv; charset=utf-8",
             "bin" => "application/octet-stream",
             "wav" => "audio/wav",
@@ -63,6 +81,15 @@ fn served_type(drawn: Option<&'static str>, path: &str) -> &'static str {
         .or_else(|| mime(path))
         .unwrap_or("application/octet-stream")
 }
+
+/// The sandbox every project file is served in, the frame's: its scripts run in an opaque origin,
+/// with no reach into the app's.
+const FILE_POLICY: &str = "sandbox allow-scripts";
+
+/// The sandbox a Markdown file drawn as a page is served in: the raw HTML its text may hold (a
+/// `<script>`, an `onerror`, a `javascript:` link) runs nothing, as the file served as text ran
+/// nothing. The page needs no script of its own; its data block is read, never run.
+const PAGE_POLICY: &str = "sandbox allow-scripts; script-src 'none'";
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
 /// script, plugin, form or navigation, nothing loaded but itself.
@@ -192,6 +219,27 @@ pub(crate) async fn contained(
     if !stat.is_file() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let kind = content_type(root, &wanted.to_string_lossy());
+    if kind == TEXT
+        && path.extension().is_some_and(|extension| extension == "md")
+        && navigation(request)
+        && let Ok(text) = tokio::fs::read_to_string(&path).await
+    {
+        let name = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
+        let html = symphony::render::plain_html(&text);
+        let mut page = crate::pages::html(
+            StatusCode::OK,
+            crate::pages::file(root, &shared.base, &name, &html),
+        );
+        for (name, value) in [
+            (header::CONTENT_SECURITY_POLICY, PAGE_POLICY),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ] {
+            page.headers_mut()
+                .insert(name, value.parse().expect("file page header"));
+        }
+        return page;
+    }
     let (etag, cache) =
         symphony::assets::cache_headers(&path, request.uri().query().unwrap_or_default());
     let cached = crate::api::matches_etag(request, &etag);
@@ -206,11 +254,8 @@ pub(crate) async fn contained(
         response
     };
     for (name, value) in [
-        (
-            header::CONTENT_TYPE,
-            content_type(root, &wanted.to_string_lossy()),
-        ),
-        (header::CONTENT_SECURITY_POLICY, "sandbox allow-scripts"),
+        (header::CONTENT_TYPE, kind),
+        (header::CONTENT_SECURITY_POLICY, FILE_POLICY),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::CACHE_CONTROL, cache),
         (header::ETAG, etag.as_str()),
@@ -224,8 +269,108 @@ pub(crate) async fn contained(
 
 #[cfg(test)]
 mod tests {
-    use super::{content_type, handles, served_type};
+    use super::{answer, content_type, handles, served_type};
     use crate::testing::Tree;
+    use axum::http::{Request, header};
+
+    /// A Markdown file no entrypoint serves, opened as a page, is drawn under the project's header
+    /// with its headings' anchors, its raw HTML as written under a policy that runs no script of it
+    /// (a `<script>`, an `onerror`, a `javascript:` link); fetched, it is the file, as any other
+    /// file is however it is asked for.
+    #[tokio::test]
+    async fn a_markdown_file_opened_as_a_page_is_drawn_and_fetched_is_the_file() {
+        let tree = Tree::new();
+        let root = crate::testing::repository(&tree);
+        let live = [
+            "<script>x()</script>",
+            "<img src=\"x\" onerror=\"y()\" />",
+            "<a href=\"javascript:z()\">go</a>",
+        ];
+        let guide = format!(
+            "# Guide\n\n## Command ownership\n\nSee [docs](docs/TOPIC.md).\n\n{}\n\n\
+             <img src=\"x\" onerror=\"y()\" />\n\n[go](javascript:z())\n",
+            live[0]
+        );
+        std::fs::write(root.join("GUIDE.md"), guide).unwrap();
+        std::fs::write(root.join("notes.txt"), "plain notes").unwrap();
+        let gate = crate::gate::Gate::new(
+            std::sync::Arc::new(|_| Ok(None)),
+            std::sync::Arc::new(std::time::Instant::now),
+        );
+        let shared = crate::front::Shared::project(1, 1234, &root, None, gate, "/alpha");
+        let ask = |path: &str, headers: &[(&str, &str)]| {
+            let mut request = Request::builder().uri(path);
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
+            let request = request.body(()).unwrap();
+            let (shared, root, path) = (shared.clone(), root.clone(), path.to_string());
+            async move {
+                let response = answer(&shared, &root, &path, &request).await;
+                let head = response.headers().clone();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let said = |name| {
+                    head.get(name)
+                        .map_or("", |v| v.to_str().unwrap())
+                        .to_string()
+                };
+                (
+                    said(header::CONTENT_TYPE),
+                    said(header::CONTENT_SECURITY_POLICY),
+                    String::from_utf8(body.to_vec()).unwrap(),
+                )
+            }
+        };
+        let opened = [
+            &[("Sec-Fetch-Dest", "document"), ("Accept", "text/html")][..],
+            &[("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")],
+        ];
+        for headers in opened {
+            let (kind, policy, page) = ask("/GUIDE.md", headers).await;
+            assert_eq!(
+                (kind.as_str(), policy.as_str()),
+                ("text/html; charset=utf-8", super::PAGE_POLICY)
+            );
+            // The file's own script comes out as written; the policy is what runs none of it.
+            for written in live {
+                assert!(page.contains(written), "{written} in {page}");
+            }
+            for drawn in [
+                "<title>GUIDE.md · ",
+                "<a href=\"/alpha/\">Home</a>",
+                "<article class=\"file-page\"><h1 id=\"guide\">Guide</h1>",
+                "<h2 id=\"command-ownership\">Command ownership</h2>",
+                "<a href=\"docs/TOPIC.md\">docs</a>",
+            ] {
+                assert!(page.contains(drawn), "{drawn} in {page}");
+            }
+        }
+        let directives: Vec<&str> = super::PAGE_POLICY.split(';').map(str::trim).collect();
+        assert!(
+            directives.contains(&"sandbox allow-scripts")
+                && directives.contains(&"script-src 'none'"),
+            "an opaque origin, and no script, inline, handler or javascript: URL, runs: {directives:?}"
+        );
+        let fetched = [
+            (
+                "/GUIDE.md",
+                &[("Sec-Fetch-Dest", "empty"), ("Accept", "text/html")][..],
+            ),
+            ("/GUIDE.md", &[]),
+            ("/notes.txt", &[("Sec-Fetch-Dest", "document")]),
+        ];
+        for (path, headers) in fetched {
+            let (kind, policy, body) = ask(path, headers).await;
+            let file = std::fs::read_to_string(root.join(&path[1..])).unwrap();
+            assert_eq!(
+                (kind.as_str(), policy.as_str()),
+                (super::TEXT, super::FILE_POLICY)
+            );
+            assert_eq!(body, file, "{path} {headers:?}");
+        }
+    }
 
     #[test]
     fn a_file_a_renderer_draws_takes_its_type_over_its_extensions_own() {

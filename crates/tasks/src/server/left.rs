@@ -174,11 +174,20 @@ impl Home {
     /// None only once every look for [`GONE_FOR`], or for that bound when it is shorter, found
     /// nothing the record may name: a server seen between two programs is found at the next look.
     fn left_server(&self, replay: &Replay) -> Result<Option<LeftReplay>, ServerError> {
+        self.left_server_by(|| self.left_server_now(replay))
+    }
+
+    /// [`Home::left_server`], each of its looks made by `look`: [`Home::left_server_now`], or a
+    /// test's, which counts them and moves a process from one program to the next between two.
+    fn left_server_by(
+        &self,
+        mut look: impl FnMut() -> Result<Option<LeftReplay>, String>,
+    ) -> Result<Option<LeftReplay>, ServerError> {
         let bound = self.answer_wait().min(TELLING);
         let until = Instant::now() + bound;
         let mut gone_since = None;
         loop {
-            match self.left_server_now(replay) {
+            match look() {
                 Ok(None) => {
                     if gone_since.get_or_insert_with(Instant::now).elapsed() >= GONE_FOR.min(bound)
                     {
@@ -393,7 +402,7 @@ impl Home {
 
 #[cfg(test)]
 mod tests {
-    use super::{GONE, RECORD, Replay};
+    use super::{GONE, LeftReplay, RECORD, Replay};
     use crate::server::{
         Home, LOG, PS_FAILS, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION, ServerError,
     };
@@ -598,9 +607,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A server that no listing names one for a moment, between two programs as a wrapper runs
-    /// `surreal` by `exec`, while the record names a pid that has ended, is found once it is one:
-    /// the record is settled as gone only after every look for a second found none.
+    /// A server that no listing names one at a look, between two programs as a wrapper runs
+    /// `surreal` by `exec`, while the record names a pid that has ended, is found at the next look
+    /// once it is one, never settled as gone: the record is settled as gone only after every look
+    /// for a second found none. What it is about is counted in looks, never timed: the process
+    /// moves to the server's program between the first look and the second, whatever the load.
     #[test]
     fn a_server_seen_between_two_programs_is_found_never_settled_as_gone() {
         let (dir, home) = folder("between");
@@ -614,31 +625,49 @@ mod tests {
             ..Replay::default()
         };
         home.mark_replay(&replay).unwrap();
-        // No server's command line for its first 0.3 s (its words are in its environment), then a
-        // server on the data by `exec`, its pid the same.
+        // No server's command line until its stdin closes (its words are in its environment), then
+        // a server on the data by `exec`, its pid the same.
         let mut between = command("/bin/sh")
             .arg("-c")
-            .arg(
-                "sleep 0.3; exec \"$SYMPHONY_SURREAL\" start --bind 127.0.0.1:1 \"$SYMPHONY_DATA\"",
-            )
+            .arg("read go; exec \"$SYMPHONY_SURREAL\" start --bind 127.0.0.1:1 \"$SYMPHONY_DATA\"")
             .env("SYMPHONY_SURREAL", &surreal)
             .env("SYMPHONY_DATA", home.data())
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let pid = i64::from(between.id());
-        let began = Instant::now();
-        let left = home.left_server(&replay);
-        let took = began.elapsed();
+        let mut go = between.stdin.take();
+        let (mut looks, mut moved) = (Vec::new(), None);
+        let left = home.left_server_by(|| {
+            let found = home.left_server_now(&replay);
+            looks.push(found.clone());
+            // After the first look, which found none: the process moves to the server's program,
+            // and the next look is made once a listing shows it there.
+            if let Some(go) = go.take() {
+                drop(go);
+                moved = Some(test_time::until_true(
+                    "the process's exec into a server on the data",
+                    test_time::backstop(Duration::from_secs(1)),
+                    || matches!(home.listed(), Ok(Some(listed)) if listed.pid == pid),
+                ));
+            }
+            found
+        });
         between.kill().unwrap();
         between.wait().unwrap();
-        assert_eq!(
-            left.map(|left| left.map(|left| (left.server.pid, left.named))),
-            Ok(Some((pid, false)))
-        );
-        assert!(took < Duration::from_secs(1), "looked for {took:?}");
+        moved.expect("a first look").unwrap();
+        let found = LeftReplay {
+            server: Running {
+                addr: "127.0.0.1:1".into(),
+                pid,
+                version: SURREAL_VERSION.into(),
+            },
+            named: false,
+        };
+        assert_eq!(looks, [Ok(None), Ok(Some(found.clone()))]);
+        assert_eq!(left, Ok(Some(found)));
         assert!(dir.join(RECORD).exists());
         assert!(!dir.join(LOG).exists(), "said gone");
 
