@@ -3,7 +3,8 @@
 //! order decide what goes: the tasks opened last, the documents visited most
 //! (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board task
 //! perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a prefetch and
-//! naming its tag, keeping what it is sent unvisited. The page loads the store alone,
+//! naming its tag, keeping what it is sent unvisited; a page going away aborts the transactions
+//! it has open and keeps again once back. The page loads the store alone,
 //! so no release build is needed. The page's clock is set by each step (`t.at`), and V8's precise
 //! coverage of the store is reported once every case has run.
 
@@ -192,6 +193,7 @@ fn the_store_keeps_reads_by_format_and_project_and_holds_the_approved_caps() {
     an_item_last_used_by_a_clock_ahead_decays_and_ages_from_now(&mut chrome);
     a_part_saved_by_a_clock_ahead_reads_as_saved_now(&mut chrome);
     forgetting_an_item_leaves_items_whose_names_begin_with_its_own(&mut chrome);
+    a_page_going_away_aborts_its_transactions_and_keeps_again_once_back(&mut chrome);
     let mut ran = coverage(&mut chrome);
     for page in ["/nodb.html", "/denied.html", "/hung.html", "/late.html"] {
         chrome.open(&site.url(page));
@@ -938,6 +940,81 @@ fn forgetting_an_item_leaves_items_whose_names_begin_with_its_own(chrome: &mut C
             "items": ["alpha\ndocument:a x", "alpha document:a\nb", "alpha document:a1", "alpha document:a:2"],
         })
     );
+}
+
+/// A page that goes away (`pagehide`: left, into its back/forward cache or for good; Chrome's
+/// `freeze`) aborts the transactions it has open, so a page kept for back and forward holds no
+/// lock on the stores, which Chrome evicts it for once another page of the origin asks for one. A
+/// keep cut short so keeps nothing, not even its item, and what was kept before it stays; while
+/// away the store starts nothing; once back (`pageshow`, `resume`) it checks the format again, a
+/// check cut short by going away again giving nothing until the page is back once more, and then
+/// reads and keeps as before.
+fn a_page_going_away_aborts_its_transactions_and_keeps_again_once_back(chrome: &mut Chrome) {
+    for (leave, back) in [
+        (
+            "dispatchEvent(new PageTransitionEvent('pagehide', {persisted: true}))",
+            "dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}))",
+        ),
+        (
+            "document.dispatchEvent(new Event('freeze'))",
+            "document.dispatchEvent(new Event('resume'))",
+        ),
+    ] {
+        fresh(chrome, 1_000);
+        let said = run(
+            chrome,
+            &format!(
+                r#"
+                const leave = () => {leave}, back = () => {back};
+                // The page goes away as soon as the store's next call of `name` has been made: its
+                // transaction open, its requests asked, no answer heard.
+                const goingAt = (proto, name) => {{
+                    const real = proto[name];
+                    proto[name] = function (...args) {{
+                        proto[name] = real;
+                        const made = real.apply(this, args);
+                        queueMicrotask(leave);
+                        return made;
+                    }};
+                }};
+                const before = await C.keep(1, "alpha", "task:a", "task", "page", 'W/"a"', {{title: "A"}}, undefined, false);
+                goingAt(IDBObjectStore.prototype, "put");
+                const lost = await C.keep(1, "alpha", "task:b", "task", "page", 'W/"b"', {{title: "B"}}, undefined, false);
+                const away = [
+                    await C.keep(1, "alpha", "task:c", "task", "page", "", {{title: "C"}}, undefined, false),
+                    await C.read(1, "alpha", "task:a", "page"),
+                    await C.visit(1, "alpha", "task:a", "task", false),
+                    await C.forget(1, "alpha", "task:a"),
+                ];
+                const keptAway = await t.items();
+                back();
+                // Back, the store's first transaction is the format's check.
+                goingAt(IDBDatabase.prototype, "transaction");
+                const cut = await C.read(1, "alpha", "task:a", "page");
+                back();
+                const shown = await C.read(1, "alpha", "task:a", "page");
+                const kept = await C.keep(1, "alpha", "task:c", "task", "page", "", {{title: "C"}}, undefined, false);
+                return {{
+                    before, lost, away, keptAway: Object.keys(keptAway), sizeAway: keptAway["alpha task:a"]?.size,
+                    cut, shown: shown?.value ?? null, kept,
+                    again: (await C.read(1, "alpha", "task:c", "page"))?.value ?? null,
+                    items: await t.kept(), parts: await t.parts(),
+                }};
+                "#
+            ),
+        );
+        assert_eq!(
+            said,
+            json!({
+                "before": true, "lost": null, "away": [null, null, null, null],
+                "keptAway": ["alpha task:a"], "sizeAway": "{\"title\":\"A\"}".len(),
+                "cut": null, "shown": {"title": "A"}, "kept": true, "again": {"title": "C"},
+                "items": ["alpha task:a", "alpha task:c"],
+                "parts": ["alpha task:a page", "alpha task:c page"],
+            }),
+            "going away by {leave}"
+        );
+    }
 }
 
 /// An open that does not answer within its deadline: the page's first call waits for it, no
