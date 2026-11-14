@@ -19,12 +19,13 @@
 //! (`CODEX_THREAD_ID`, [`own_thread`]), which the board writes into the handle's open Codex record
 //! (`codex:`). So a conversation a record names was recorded by the board's own launcher (the id it
 //! chose at a launch, or one it read from the agent's terminal, the hook's binding or a callback),
-//! or is the Codex thread an agent registered from its own process. Two limits stay: `--as` names
-//! any handle, so an agent may give another handle its own conversation (the hook binds the
+//! or is the Codex thread an agent registered from its own process. Three limits stay: `--as`
+//! names any handle, so an agent may give another handle its own conversation (the hook binds the
 //! session to the handle its board command names, and a callback registers its thread for it),
-//! whose restore then resumes that agent's conversation; and a record an older build wrote is not
-//! told apart. The binary run by itself, which no rule allows, starts an agent anywhere, records
-//! any conversation and binds any agent.
+//! whose restore then resumes that agent's conversation; a record an older build wrote is not told
+//! apart; and a folder is checked before the agent starts in it, so a folder on its path replaced
+//! by a link in between still leads out. The binary run by itself, which no rule allows, starts an
+//! agent anywhere, records any conversation and binds any agent.
 
 use crate::NewLaunch;
 use crate::cli::Env;

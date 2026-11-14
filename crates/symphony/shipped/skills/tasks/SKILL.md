@@ -241,7 +241,9 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    Its first `just tasks …` command run as its handle (that command's own
    `--as <handle>`) binds it,
    and from then on each of its tool calls is its heartbeat (the project hooks,
-   `just tasks beat`): an agent coding or running tests reads live.
+   `.target/bin/symphony hook tasks-beat`, which runs the board binary's
+   `tasks beat` directly, not through `just`): an agent coding or running tests
+   reads live.
    A handle only mentioned in a command binds nothing, and a session with its
    legacy monitor is never bound to a subagent. Native callback sessions bind
    their own tool-call heartbeat normally.

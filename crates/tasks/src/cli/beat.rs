@@ -1,5 +1,7 @@
-//! `just tasks beat`: the hook that turns an agent's tool calls into its heartbeat (Claude Code's
-//! PreToolUse on Bash and PostToolUse on every tool, `symphony hook tasks-beat`). It runs around
+//! `tasks beat`: the hook that turns an agent's tool calls into its heartbeat (Claude Code's
+//! PreToolUse on Bash and PostToolUse on every tool, `.target/bin/symphony hook tasks-beat`, which
+//! runs this binary's `beat` directly, not through `just`, so unmarked: `just tasks beat` binds
+//! nothing, as [`beat_event`] says). It runs around
 //! every tool call of every session in the repository, so it prints nothing, never fails, never
 //! starts the board's server and waits on it at most `WAIT`: any trouble, and the call goes on.
 

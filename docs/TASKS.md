@@ -337,11 +337,13 @@ registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`, which it
 detects with no address), which the board writes into the handle's open Codex
 record. So a record's conversation is one the board's launcher recorded (the id it
 chose at a launch, or one it read from the agent's terminal, the hook's binding or
-a callback) or the Codex thread an agent registered from its own process. Two
+a callback) or the Codex thread an agent registered from its own process. Three
 limits stay: `--as` names any handle, so an agent may give another handle its own
 conversation (the hook binds the session to the handle its board command names,
 and a callback registers its thread for it), whose restore then resumes that
-agent's conversation; and a record an older build wrote is not told apart. The
+agent's conversation; a record an older build wrote is not told apart; and a
+folder is checked before the agent starts in it, so a folder on its path replaced
+by a link in between still leads out. The
 reply recipes keep their writes to the same places
 (AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
 writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
@@ -995,7 +997,8 @@ for sessions with no native channel. Tool calls are still the heartbeat.
 
 A **subagent** has no monitor; its own tool calls are its heartbeat. The
 project's `PreToolUse` (Bash) and `PostToolUse` hooks
-(`.target/bin/symphony hook tasks-beat`, `just tasks beat`) see the Claude Code agent id
+(`.target/bin/symphony hook tasks-beat`, which runs the board binary's `tasks beat`
+directly, not through `just`, so unmarked) see the Claude Code agent id
 on each of its tool calls. A `just tasks …` command the subagent runs binds it
 to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`
