@@ -1454,55 +1454,79 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
 /// Once the page is shown: at once if it is, else at the first change of visibility that shows it.
 #[cfg(target_arch = "wasm32")]
 async fn shown() {
-    use wasm_bindgen::{JsCast, closure::Closure};
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
-    if !document.hidden() {
-        return;
+    if document.hidden() {
+        let watched = document.clone();
+        heard(document.into(), "visibilitychange", move || {
+            !watched.hidden()
+        })
+        .await;
     }
+}
+
+/// Once the page crosses the width the lanes replace the list at ([`wide`]), either way, so a draw
+/// measured on one side is measured again on the other.
+#[cfg(target_arch = "wasm32")]
+async fn crossed() {
+    let was = wide();
+    match web_sys::window() {
+        Some(window) => heard(window.into(), "resize", move || wide() != was).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The first `kind` event on `target` after which `done` holds. Its listener is taken off however
+/// the wait ends (a reader unmounted mid-wait included).
+#[cfg(target_arch = "wasm32")]
+async fn heard(
+    target: web_sys::EventTarget,
+    kind: &'static str,
+    done: impl Fn() -> bool + 'static,
+) {
+    use wasm_bindgen::{JsCast, closure::Closure};
     let (send, seen) = futures_channel::oneshot::channel::<()>();
     let send = std::cell::RefCell::new(Some(send));
-    let watched = document.clone();
     let listener = Closure::<dyn FnMut()>::new(move || {
-        if !watched.hidden()
+        if done()
             && let Some(send) = send.borrow_mut().take()
         {
             let _ = send.send(());
         }
     });
-    /// The listener, taken off however the wait ends (a reader unmounted mid-wait included).
-    struct Listening(web_sys::Document, Closure<dyn FnMut()>);
+    struct Listening(web_sys::EventTarget, &'static str, Closure<dyn FnMut()>);
     impl Drop for Listening {
         fn drop(&mut self) {
-            let _ = self.0.remove_event_listener_with_callback(
-                "visibilitychange",
-                self.1.as_ref().unchecked_ref(),
-            );
+            let _ = self
+                .0
+                .remove_event_listener_with_callback(self.1, self.2.as_ref().unchecked_ref());
         }
     }
-    let _ = document
-        .add_event_listener_with_callback("visibilitychange", listener.as_ref().unchecked_ref());
-    let _listening = Listening(document, listener);
+    let _ = target.add_event_listener_with_callback(kind, listener.as_ref().unchecked_ref());
+    let _listening = Listening(target, kind, listener);
     let _ = seen.await;
 }
 
 /// The id of the part of the box the steps are drawn in, which the box clips to its height.
 const BODY: &str = "tl-body";
 
+/// Whether the page is wide: from 900 px, where the style sheets draw the lanes, not the list.
+#[cfg(target_arch = "wasm32")]
+fn wide() -> bool {
+    web_sys::window()
+        .and_then(|window| window.inner_width().ok())
+        .and_then(|width| width.as_f64())
+        .is_some_and(|width| width >= 900.0)
+}
+
 /// The part of the box the steps are drawn in, the box, and whether the page is wide (the lanes).
 #[cfg(target_arch = "wasm32")]
 fn parts() -> Option<(web_sys::Element, web_sys::Element, bool)> {
-    let window = web_sys::window()?;
-    let document = window.document()?;
+    let document = web_sys::window()?.document()?;
     let body = document.get_element_by_id(BODY)?;
     let slot = document.get_element_by_id(crate::timeline_slot::SLOT)?;
-    let wide = window
-        .inner_width()
-        .ok()
-        .and_then(|width| width.as_f64())
-        .is_some_and(|width| width >= 900.0);
-    Some((body, slot, wide))
+    Some((body, slot, wide()))
 }
 
 /// After a draw: whether the steps overflow the box (and so "Show all" is offered, on a phone),
@@ -1522,7 +1546,9 @@ fn settle(slug: &str, all: bool) -> bool {
         .map_or(0.0, |steps| steps.get_bounding_client_rect().height());
     let held = f64::from(body.client_height());
     if !all {
-        let natural = slot.get_bounding_client_rect().height() - held + drawn;
+        // Wide the box holds every lane: its own height is the whole timeline's.
+        let height = slot.get_bounding_client_rect().height();
+        let natural = if wide { height } else { height - held + drawn };
         crate::timeline_slot::keep(slug, wide, natural);
     }
     drawn > held + 1.0
@@ -1572,7 +1598,20 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
     {
         let slug = slug.clone();
         let drawn = timeline.clone();
+        // A page that crosses 900 px is measured again: drawn wide, where nothing overflows, and
+        // narrowed to a phone, its list overflows the phone's box.
+        let crossings = use_signal(|| 0_u32);
+        use_hook(move || {
+            let mut crossings = crossings;
+            spawn(async move {
+                loop {
+                    crossed().await;
+                    crossings += 1;
+                }
+            })
+        });
         use_effect(use_reactive((&drawn,), move |(_,)| {
+            let _ = crossings();
             let all = all();
             // Read, not peeked: the "Show all" a clip brings can take room from the steps (a line
             // of the foot), so the box is measured again with it there.

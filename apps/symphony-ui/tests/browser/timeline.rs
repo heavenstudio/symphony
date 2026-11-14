@@ -206,7 +206,7 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     // Thirteen steps overflow the phone's box: the latest in view, the rest behind "Show all".
     assert_eq!(chrome.eval(MORE), json!("Show all 13 steps"));
     assert_eq!(
-        chrome.eval("(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); const last = [...document.querySelectorAll('.tl-list .tl-row')].pop().getBoundingClientRect(); return last.bottom <= body.bottom + 1 && last.top >= body.top; })()"),
+        chrome.eval(LATEST_IN_VIEW),
         json!(true),
         "the latest step is in view"
     );
@@ -251,6 +251,44 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
+}
+
+/// Whether the phone's list shows its latest step whole inside the part that holds it.
+const LATEST_IN_VIEW: &str = "(() => { const body = document.getElementById('tl-body').getBoundingClientRect(); const last = [...document.querySelectorAll('.tl-list .tl-row')].pop().getBoundingClientRect(); return last.bottom <= body.bottom + 1 && last.top >= body.top; })()";
+
+/// A page drawn wide, where the box holds every lane, and narrowed to a phone (a tablet turned, a
+/// window halved) collapses its list as a phone draws it: the latest steps in view, the rest
+/// behind "Show all"; widened again, it holds every lane, with no "Show all".
+#[test]
+fn a_timeline_drawn_wide_and_narrowed_to_a_phone_collapses_as_a_phone_draws_it() {
+    let site = served(&fixture());
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 13);
+    assert_eq!(chrome.eval(MORE), Value::Null, "Show all offered wide");
+    view(&mut chrome, 390, true);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.tl-drawn.tl-clipped .tl-more') !== null",
+            SHOWN
+        ),
+        "narrowed, the list was not measured again: {}",
+        chrome.eval("document.querySelector('.tl-drawn').className")
+    );
+    frames(&mut chrome);
+    assert_eq!(chrome.eval(MORE), json!("Show all 13 steps"));
+    assert_eq!(chrome.eval(BOX_HEIGHT), json!(240));
+    assert_eq!(
+        chrome.eval(LATEST_IN_VIEW),
+        json!(true),
+        "the latest step is in view"
+    );
+    view(&mut chrome, 1280, false);
+    assert!(
+        chrome.wait_for("document.querySelector('.tl-clipped') === null", SHOWN),
+        "widened, the lanes were not measured again"
+    );
+    assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true));
+    assert_eq!(chrome.eval(MORE), Value::Null, "Show all offered wide");
 }
 
 #[test]
