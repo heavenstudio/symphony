@@ -1633,6 +1633,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   each commit made before the verdict and before the task last went to review; the
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
+- **No owner's answer left behind.** A worktree on the branch whose documents hold an owner
+  line no commit has (the owner's answer on a card only the branch holds, which the Symphony
+  saves into that worktree's register: [REVIEW](REVIEW.md#one-app-every-worktree)) refuses
+  the land, naming the worktree and its files: a land of the branch's commits would leave the
+  answer behind. It is said to `@executor`, which commits it on the branch and has the new tip
+  approved, as for a conflict below.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
   `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
