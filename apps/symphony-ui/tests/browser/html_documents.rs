@@ -170,8 +170,9 @@ fn the_server_draws_an_html_document_and_a_markdown_documents_mockup_of_it() {
         page.eval("document.body ? document.body.innerHTML.slice(0, 2000) : '(no body)'")
     );
     assert_eq!(page.eval("window.probeReport.origin"), json!("null"));
-    assert_eq!(
-        page.eval("document.querySelector('.mockup-frame iframe').getAttribute('src')"),
-        json!("/docs/probe.html?raw")
-    );
+    // The server names the mockup's version in its address (`?v=`); the frame adds the file's query.
+    let src = page.eval("document.querySelector('.mockup-frame iframe').getAttribute('src')");
+    let (path, query) = src.as_str().unwrap().split_once('?').unwrap();
+    assert_eq!(path, "/docs/probe.html", "{src}");
+    assert!(symphony_api::asks_for_file(query), "{src}");
 }
