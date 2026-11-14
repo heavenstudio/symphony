@@ -356,11 +356,12 @@ fn every_copy_a_package_carries_is_the_file_it_copies() {
 }
 
 /// No file a published package carries, its manifest's comments among them, gives a rule as the
-/// owner's dated words: each says the rule it sets, without the quote, the date or the card. What
-/// each package carries is what `cargo package --list` names.
+/// owner's words, dated or quoted: each says the rule it sets, without the quote, the date or the
+/// card. What each package carries is what `cargo package --list` names.
 #[test]
-fn no_published_package_carries_the_owners_dated_words() {
-    let dated = regex::Regex::new(r"(?i)owner('s (word|rule))?,? (of )?20\d\d-\d\d").unwrap();
+fn no_published_package_carries_the_owners_words() {
+    let words =
+        regex::Regex::new(r#"(?i)owner('s (word|rule))?,? (of )?20\d\d-\d\d|owner's ""#).unwrap();
     let mut found = Vec::new();
     for package in members().iter().filter(|package| published(package)) {
         let out = Command::new(env!("CARGO"))
@@ -385,14 +386,14 @@ fn no_published_package_carries_the_owners_dated_words() {
             found.extend(
                 text.lines()
                     .enumerate()
-                    .filter(|(_, line)| dated.is_match(line))
+                    .filter(|(_, line)| words.is_match(line))
                     .map(|(at, line)| format!("{}: {file}:{}: {line}", name(package), at + 1)),
             );
         }
     }
     assert!(
         found.is_empty(),
-        "the owner's dated words, to say as the rule they set:\n{}",
+        "the owner's words, dated or quoted, to say as the rule they set:\n{}",
         found.join("\n")
     );
 }
