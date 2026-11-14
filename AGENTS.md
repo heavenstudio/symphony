@@ -327,7 +327,8 @@ project's own `tasks` or `symphony-*` recipe, which the allow rule still passes,
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
 Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
-left (`Next:`): the project file, its document folders, the justfile's import, the links
+left (`Next:`): the project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by
+its address in this repository, its document folders, the justfile's import, the links
 to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
 beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
 rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the

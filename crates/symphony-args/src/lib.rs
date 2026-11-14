@@ -11,6 +11,17 @@ pub fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) ->
     2
 }
 
+/// A command line that is `--version` alone, which every shipped command answers before it reads
+/// its arguments: `NAME VERSION` said on `out`, and true. Any other line is left to the command,
+/// nothing said, and false. `version` is the caller's package's (`env!("CARGO_PKG_VERSION")`).
+pub fn version(args: &[String], name: &str, version: &str, out: &mut dyn Write) -> bool {
+    if !matches!(args, [only] if only == "--version") {
+        return false;
+    }
+    let _ = writeln!(out, "{name} {version}");
+    true
+}
+
 /// An option a command takes: its name, and whether a value follows it.
 pub struct Flag {
     pub name: &'static str,
