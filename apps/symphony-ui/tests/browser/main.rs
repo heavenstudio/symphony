@@ -238,12 +238,15 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
                 && !r.from_cache),
             "{path} did not fetch its {kind} module: {requests:#?}"
         );
-        assert!(
-            requests
-                .iter()
-                .any(|r| r.url.ends_with(".wasm") && r.bytes > 0.0 && !r.from_cache),
-            "{path} fetched no WASM: {requests:#?}"
-        );
+        // A kind of the web client (apps/symphony-web) is its script alone.
+        if !assets::web(dist(), kind) {
+            assert!(
+                requests
+                    .iter()
+                    .any(|r| r.url.ends_with(".wasm") && r.bytes > 0.0 && !r.from_cache),
+                "{path} fetched no WASM: {requests:#?}"
+            );
+        }
         let bytes = needed_bytes(&requests);
         eprintln!(
             "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes; \

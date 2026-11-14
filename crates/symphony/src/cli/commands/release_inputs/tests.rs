@@ -917,15 +917,27 @@ fn the_regenerators_client_key_captures_the_inputs_as_the_client_build_does() {
             "bundle.sh captures no `{wanted}` after the lines before it"
         );
     }
-    // Its key is the one bundle.sh names its snapshot's lock by, after that capture.
+    // Its key is the one bundle.sh names its snapshot's lock by, after that capture, and then the
+    // web client's package's hash, which bundle.sh builds from the checkout.
     let printed = key
         .lines()
         .skip_while(|line| *line != "# Its key, as bundle.sh names its snapshot's lock:")
         .nth(1)
         .unwrap();
+    let snapshot = r#""$publisher" release-inputs "${snapshot_args[@]}" --key"#;
+    assert!(printed.contains(snapshot), "{printed}");
     assert!(
-        lines.any(|line| line.contains(printed)),
-        "bundle.sh names its lock by no `{printed}`"
+        printed.starts_with(r"printf '%s web-%s\n' ") && printed.ends_with(r#" "$web""#),
+        "{printed}"
+    );
+    assert!(
+        lines.any(|line| line.contains(snapshot)),
+        "bundle.sh names its lock by no `{snapshot}`"
+    );
+    assert!(
+        key.contains(r#"cd "$root/apps/symphony-web""#)
+            && bundle.contains(r#"bash "$checkout/apps/symphony-web/npm.sh" run"#),
+        "the key hashes the web client's package, which bundle.sh builds"
     );
     assert_eq!(
         key.lines().last(),

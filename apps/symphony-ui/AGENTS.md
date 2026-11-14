@@ -5,6 +5,9 @@ the root guide](../../AGENTS.md#rust).
 
 `apps/symphony-ui` is one Dioxus app, the framework the owner chose to experiment
 further with, the browser now and the desktop window later, from the same code.
+Its pages are moving to the React client, a page kind at a time
+([its guide](../symphony-web/AGENTS.md), which says where a UI improvement is built); a kind
+moved leaves this package.
 It reads the server's JSON API, whose wire types are
 `crates/symphony-api` (tested against its `fixtures/`), and never runs server
 code: no fullstack server functions. Dioxus is pinned `=0.7.10` and built by
@@ -36,8 +39,10 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, document, review-home and queue modules and the program, then
-  assemble their content-hashed assets with `package.sh`. Naming a kind (`program` among
+  board, document and review-home modules and the program, build the React client's
+  kinds (`web`: one Vite build of `apps/symphony-web`, [its guide](../symphony-web/AGENTS.md)),
+  then assemble their content-hashed assets with `package.sh`, which refuses a kind both
+  clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
   `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
@@ -143,12 +148,12 @@ never the whole target, which the release run runs.
   opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
   never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
   against their own opens.
-- **A return visit.** Home, the queue and the task board draw what they kept of
+- **A return visit.** Home and the task board (and the React client's queue, the same way) draw what they kept of
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
   read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
   copy's tag and `cache: "no-store"` (`request::get_if`): a `304` is the copy, a `200` replaces it
-  on the page and on the device. The queue keeps `/api/queue` (`queue`). The task board keeps its
+  on the page and on the device. The queue keeps `/api/queue` (`queue`, `cache::board::QUEUE`). The task board keeps its
   default view only (no search, the last 24 hours, stages by the machine's activity): the counts
   (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
   search, another window or a Load more page; a column drawn from the device is checked at once,
@@ -157,7 +162,7 @@ never the whole target, which the release run runs.
   otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
   by the feed. The header's reads are never kept. A check that fails is asked again, waiting
   longer each time (`state::Backoff`), until it answers: the counts, each column drawn from the
-  device and the work (`board_live::check`), the queue (`queue.rs`); the feed's `machine-work`
+  device and the work (`board_live::check`), the queue (the React client's `src/queue.tsx`); the feed's `machine-work`
   event, which carries the whole work, answers for the work's read. Once every column drawn from
   the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
   listed is dropped, whichever stage the work places it in by then. `cache::Freshness` says what
@@ -240,12 +245,12 @@ never the whole target, which the release run runs.
   replies 2,804 (`/api/machine-work` 247 of them) and the feed's head and
   opening comment 85. `/` takes 232,052; cached returns take 1,986 and 2,397.
   Drawing a return visit from the device costs the first visit its code: about
-  14.0 KB of the board's WASM, 6.9 KB of home's and 8.5 KB of the queue's, most
+  14.0 KB of the board's WASM and 6.9 KB of home's, most
   of the board's in `board_live` (the draw, the check and its retries) and the
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 13.3 KB of `/tasks`, 2.4 KB of `/`, 7.8 KB of `/queue`, 13.0 KB of a task page and
+  about 13.3 KB of `/tasks`, 2.4 KB of `/`, 13.0 KB of a task page and
   `/agents` and 6.8 KB of the documents. Documents
   drawn from the device, an entrypoint's page kept and the reads ahead
   (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
@@ -359,8 +364,8 @@ never the whole target, which the release run runs.
   a task nothing gates shows none, and a failed read says so in its place. In the
   program alone (the task pages, Reports, the chat, the menus and the timeline, which
   share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
-  `page-tasks`, which `page-program` turns on), so the board's, home's, the documents'
-  and the queue's transport is unchanged; a post never does. As attach.rs does, it puts its own style
+  `page-tasks`, which `page-program` turns on), so the board's, home's and the documents'
+  transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
@@ -462,7 +467,7 @@ never the whole target, which the release run runs.
   (phases, links, roles), a drawn card's or the place a row still waiting holds (`tasks::CARDS`,
   `kept_cards`, `drawn_rows`; a card's ghost draws a pill per row of chips and the title lines
   its pitch has room for); the queue's rows
-  per group (`queue::ROWS`) and each
+  per group (`ROWS` in the React client's `queue.tsx`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide
   (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
   task never opened at that width takes the last task's (`recall_height` falls back to the
@@ -508,14 +513,9 @@ never the whole target, which the release run runs.
   again with every `IntersectionObserver` callback 800 ms late. No scrollbar takes room there
   (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `tests/browser/skeleton.rs`
   covers the rest.
-- **Queue.** `queue.rs` renders `/api/queue` at `/queue`, in its own page kind.
-  The existing feed refreshes its owner decisions, spot checks, agent work and
-  branch cards on queue-region deltas and reconnects. Branch cards share the ranked
-  owner queue. Section anchors remain `#you`, `#spot` and `#agent`; row bodies use `NearViewport`.
-  Owner decisions arrive in mixed document-folder order, also used by the home preview.
-  `queue_filter.rs` derives counts from the complete snapshot and stores the selected
-  owner category through `Platform` on this device. Chips use the shared Button;
-  an absent saved category displays All without hiding new work.
+- **Queue.** `/queue` is the React client's, the first page kind it took over
+  ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Home's preview of the
+  queue stays here, in `view.rs` and `live.rs`, until home moves.
 - **Reports.** `reports.rs` renders `/api/reports` at `/reports`, the program's `reports`
   kind: a chunk of its own over the runtime, frame and components the program's main module
   holds for the task pages too, so a move between them fetches the other's chunk alone. Its
@@ -581,7 +581,10 @@ never the whole target, which the release run runs.
   prints a real-document census and checks that the data survives serialization.
 - **The page.** `package.sh` writes the shell, whose single history adapter is
   `assets/shell.js`: the page kinds' manifest on its first line (`const modules =
-  …;`), then that script minified by the esbuild dx fetched. Its
+  …;`), then that script minified by the esbuild dx fetched. A kind of the React client's
+  names its script and styles and no wasm: the shell imports that script, a module exporting
+  `run` and `stop`, in place of the glue's init, and a move between it and a Dioxus kind stops
+  one and starts the other as between two Dioxus kinds. Its
   `html[data-navigation]` is `loading` until the shell's navigation finishes,
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made
   after the new page mounts instead of applying its late top reset.

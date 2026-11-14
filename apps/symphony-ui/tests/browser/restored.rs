@@ -335,6 +335,8 @@ fn later_advances_the_document_and_another_device_can_undo_it() {
     phone.eval(
         "document.querySelector('[data-doc-key=\"card:bravo\"] .doc-actions button').click()",
     );
+    // The choices are the click's to draw, as on the other device above: waited for, not assumed.
+    assert!(phone.wait_for("[...document.querySelectorAll('[data-doc-key=\"card:bravo\"] .verdict-choices button')].some(b=>b.textContent==='Later')", SHOWN), "{}", phone.eval("document.querySelector('[data-doc-key=\"card:bravo\"]')?.outerHTML ?? document.body.innerText"));
     phone.eval("[...document.querySelectorAll('[data-doc-key=\"card:bravo\"] .verdict-choices button')].find(b=>b.textContent==='Later').click()");
     assert!(phone.wait_for(
         "location.hash==='#charlie' && document.querySelector('[data-ready=document]') !== null",

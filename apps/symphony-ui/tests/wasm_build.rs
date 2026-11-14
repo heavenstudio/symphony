@@ -6,6 +6,7 @@
 //! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
 //! and wasm-bindgen. Real seven-module compilation and browser acceptance are separate checks.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -19,8 +20,11 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: four page kinds, and the program.
-const KINDS: [&str; 5] = ["board", "docs", "review", "queue", "program"];
+/// What bundle.sh builds, each with its own dx run: three page kinds, and the program.
+const KINDS: [&str; 4] = ["board", "docs", "review", "program"];
+/// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
+/// kind is its script, with no wasm, and its styles.
+const WEB: [&str; 1] = ["queue"];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
@@ -314,10 +318,11 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The four kinds built alone, and each of the program's: the media layer is none.
+    // The three kinds built alone, each of the program's (the media layer is none) and the web
+    // client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
-        KINDS.len() - 1 + PROGRAM.len() - 1
+        KINDS.len() - 1 + PROGRAM.len() - 1 + WEB.len()
     );
     assert!(manifest.get(MEDIA).is_none(), "{manifest}");
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
@@ -349,7 +354,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..4] {
+    for kind in &KINDS[..3] {
         for key in ["script", "wasm"] {
             file(manifest[kind][key].as_str().unwrap());
         }
@@ -359,6 +364,34 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
             "{kind} loads the shared stylesheet, then its own"
         );
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+    }
+    // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
+    // and the shared stylesheet before the CSS its entry imports.
+    for kind in WEB {
+        let script = manifest[kind]["script"].as_str().unwrap();
+        assert!(
+            script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
+            "{script}"
+        );
+        let module = String::from_utf8(file(script)).unwrap();
+        assert!(
+            module.contains(" as run") && module.contains(" as stop"),
+            "{kind}"
+        );
+        assert!(manifest[kind].get("wasm").is_none(), "{kind}");
+        assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+        let styles = manifest[kind]["styles"].as_array().unwrap();
+        assert_eq!(styles[0], shared, "{kind}");
+        let own = styles[1..].iter().map(|style| style.as_str().unwrap());
+        assert_eq!(
+            own.clone().count(),
+            1,
+            "{kind} loads the shared stylesheet, then its own: {styles:?}"
+        );
+        for style in own {
+            assert!(style.starts_with(&format!("/assets/{kind}-")), "{style}");
+            assert!(!file(style).is_empty(), "{style}");
+        }
     }
     // The program's kinds: its one script and main module, which split-repair named by their bytes,
     // and a chunk each, preloaded beside them.
@@ -871,6 +904,11 @@ case "$PATH" in "$PWD/apps/symphony-ui/bin:"*) printf 'client-path=yes\n' ;; *) 
 printf 'arg=%s\n' "$@"
 "#,
     );
+    // The web client's checks, which bash reads as data.
+    executable(
+        &tree.join("apps/symphony-web/check.sh"),
+        "printf 'client-lint cwd=%s\\n' \"$PWD\"\n",
+    );
     let output = tree.join("output with spaces");
     let done = Command::new("just")
         .current_dir(&tree)
@@ -898,7 +936,9 @@ printf 'arg=%s\n' "$@"
             concat!(
                 "cwd={0}\nclient-path=no\narg=fmt\narg=--all\narg=--check\n",
                 "cwd={0}\nclient-path=no\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
-                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n"
+                "cwd={0}\nclient-path=no\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n",
+                "client-lint cwd={0}\n"
             ),
             tree.display()
         )
@@ -935,4 +975,68 @@ fn a_lint_in_a_trees_own_build_folder_leaves_the_trees_status_as_it_was() {
     succeeded(&done, "cargo symphony-ui clippy");
     assert_eq!(status(), before, "the lint changed the tree it ran in");
     assert!(record_in(&tree.join(".target")).is_file());
+}
+
+/// Every file under `dir`, by its path there, with its bytes.
+fn files_in(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = BTreeMap::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                found.insert(path.strip_prefix(dir).unwrap().to_path_buf(), bytes);
+            }
+        }
+    }
+    found
+}
+
+/// The web client's build (apps/symphony-web, the real Vite build bundle.sh runs) is the same bytes
+/// whatever NODE_ENV the shell that starts it exports: a shell's `development` would otherwise
+/// build React's development code, twice the size, and a release run's check from a clean shell
+/// would find the published client is not what it builds.
+#[test]
+fn the_web_clients_build_is_the_same_bytes_whatever_node_env_says() {
+    let scratch = Scratch::new("web-node-env");
+    let build = |name: &str, node_env: Option<&str>| {
+        let out = scratch.0.join(name);
+        let mut npm = Command::new("bash");
+        npm.arg(crate_dir().join("../symphony-web/npm.sh"))
+            .args(["run", "--silent", "build", "--", "--outDir"])
+            .arg(&out)
+            .arg("--emptyOutDir")
+            .env_remove("NODE_ENV");
+        if let Some(value) = node_env {
+            npm.env("NODE_ENV", value);
+        }
+        succeeded(&npm.output().expect("run npm.sh"), name);
+        files_in(&out)
+    };
+    let plain = build("plain", None);
+    assert!(
+        plain
+            .keys()
+            .any(|path| path.extension().is_some_and(|e| e == "js")),
+        "{:?}",
+        plain.keys()
+    );
+    for node_env in ["development", "test"] {
+        let built = build(node_env, Some(node_env));
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            plain.keys().collect::<Vec<_>>(),
+            "NODE_ENV={node_env}"
+        );
+        for (path, bytes) in &plain {
+            assert!(
+                built[path] == *bytes,
+                "NODE_ENV={node_env}: {}",
+                path.display()
+            );
+        }
+    }
 }

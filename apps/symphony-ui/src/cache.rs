@@ -82,7 +82,8 @@ fn scoped(scope: &str, name: &str) -> String {
 pub mod board {
     /// `/api/board`, as home and the queue drew it.
     pub const BOARD: &str = "board";
-    /// `/api/queue`.
+    /// `/api/queue`, which the web client's queue keeps (apps/symphony-web/src/cache.ts): named
+    /// here so that no other part takes its name.
     pub const QUEUE: &str = "queue";
     /// The task board's counts (`/api/task-board?counts=1`).
     pub const COUNTS: &str = "counts";

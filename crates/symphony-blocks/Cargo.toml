@@ -17,8 +17,15 @@ categories = ["development-tools", "encoding"]
 # What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
 include = ["src/**", "README.md", "LICENSE"]
 
+[features]
+# The TypeScript declarations of the types the web client reads (ts-rs's derive), which
+# symphony-api's own `typescript` feature turns on for the client's generated wire types. Off for
+# every build that runs: nothing it compiles is in the server, a plugin or a client.
+typescript = ["dep:ts-rs"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The features the server's build unifies on serde_json (docs/CHECKS.md), so this package's own tests

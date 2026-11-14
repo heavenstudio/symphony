@@ -1,4 +1,5 @@
-//! Server-backed Later/Undo controls shared by the queue and the verdict editor.
+//! Server-backed Later/Undo controls of the verdict editor (the queue's are the web client's,
+//! apps/symphony-web/src/queue.tsx).
 
 use crate::{cache::STALE, docs, frame::FrameRefresh, request};
 use dioxus::prelude::*;

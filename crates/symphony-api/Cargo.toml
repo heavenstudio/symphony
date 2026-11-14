@@ -22,11 +22,16 @@ include = ["src/**", "README.md", "LICENSE"]
 # crate that reads no task's fields turns it on: the browser's client, in its wasm32 dependencies
 # (apps/symphony-ui/Cargo.toml), where that reader is about 18 KB gzipped of a page's first visit.
 skip-board-fields = []
+# The TypeScript declarations of the types the web client reads (ts-rs's derive), and the example
+# that writes them into apps/symphony-web/src/wire.ts (`just client-wire`) or checks that file
+# against them (`just client-lint`). Off for every build that runs.
+typescript = ["dep:ts-rs", "symphony-blocks/typescript"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # The plugin kit's block vocabulary, which these types carry: re-exported under the names it has here.
 symphony-blocks = { path = "../symphony-blocks", version = "1.0.0" }
+ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
 repository-read = { path = "../repository-read" }
@@ -39,3 +44,11 @@ serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtri
 
 [lints]
 workspace = true
+
+# The web client's wire types (apps/symphony-web/src/wire.ts), printed from these types; its own
+# tests run when it is named with the feature on (`cargo test -p symphony-api --features typescript
+# --example typescript`, which `just client-lint` runs). Never `test = true`: the release run's
+# units lane (tools/test-lanes.sh) would name it without the feature, which cargo refuses.
+[[example]]
+name = "typescript"
+required-features = ["typescript"]

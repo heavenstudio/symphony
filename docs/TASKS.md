@@ -1983,8 +1983,8 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   the generators so a Symphony older than keys still reads the file), a command whose last
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`symphony/tasks/land/regenerated.json`) need nothing made. This repository's key
-  is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
-  client input builds no client. A key names one generator, so the file is refused when
+  is the release snapshot's name and the React client's package's hash
+  (`tools/client-key.sh`), so a land that changed no client input builds no client. A key names one generator, so the file is refused when
   two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
   inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When

@@ -11,20 +11,12 @@
 
 use std::cell::Cell;
 use std::cell::RefCell;
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 use std::pin::pin;
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 use symphony_api::{BOARD_PATH, FEED_PATH};
 #[cfg(feature = "page-review")]
 use symphony_api::{Board, Delta};
@@ -39,11 +31,7 @@ pub(crate) use feed::{Feed, back};
 pub(crate) const FEED_NOTICE: &str = "Reconnecting: the board may be out of date";
 const REMOVED_DOCUMENT_NOTICE: &str =
     "This document was removed. Your draft is kept on this device.";
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 use {
     futures_channel::mpsc::unbounded,
     futures_util::{
@@ -55,19 +43,15 @@ use {
 use crate::state::reload_for;
 #[cfg(feature = "page-tasks")]
 use crate::task_live::Data;
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 use {
     crate::cache::{Freshness, Item, board},
     crate::state::{Backoff, Ended},
     crate::task_live,
 };
-// Home and the queue draw the board this device kept; a task page draws its task's own parts
+// Home draws the board this device kept; a task page draws its task's own parts
 // (`task_live::opened`).
-#[cfg(any(feature = "page-review", feature = "page-queue"))]
+#[cfg(feature = "page-review")]
 use crate::request::Answer;
 #[cfg(feature = "page-review")]
 use {crate::platform, crate::state::apply, crate::view::BoardView, crate::words::Moment};
@@ -81,11 +65,7 @@ const STYLE: Asset = asset!(
 );
 
 /// The performance mark set once the board is first drawn (the phone test times it).
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 const READY_MARK: &str = "board-ready";
 /// Where the tab keeps the build it last loaded the page again for ([`reload_for`]).
 const RELOADED_FOR: &str = "symphony-ui-reloaded-for";
@@ -99,8 +79,7 @@ pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::n
     feature = "page-board",
     feature = "page-tasks",
     feature = "page-docs",
-    feature = "page-review",
-    feature = "page-queue"
+    feature = "page-review"
 ))]
 pub(crate) fn local_moment(ms: f64) -> Option<crate::words::Moment> {
     let date = js_sys::Date::new(&JsValue::from_f64(ms));
@@ -117,11 +96,7 @@ pub(crate) fn local_moment(ms: f64) -> Option<crate::words::Moment> {
 pub fn App() -> Element {
     std::hint::black_box(&STYLE);
     let route = crate::navigation::use_navigation();
-    #[cfg(any(
-        feature = "page-tasks",
-        feature = "page-review",
-        feature = "page-queue"
-    ))]
+    #[cfg(any(feature = "page-tasks", feature = "page-review"))]
     let task_route = use_memo(move || format!("/{}", route().path));
     let current = route();
     let page = match current.path.as_str() {
@@ -152,21 +127,13 @@ pub fn App() -> Element {
             } }
         }
         #[cfg(all(
-            any(
-                feature = "page-tasks",
-                feature = "page-review",
-                feature = "page-queue"
-            ),
+            any(feature = "page-tasks", feature = "page-review"),
             not(feature = "page-program")
         ))]
         _ => {
             rsx! { BoardPage { key: "{current.scope}", route: task_route, scope: current.scope.clone() } }
         }
-        #[cfg(not(any(
-            feature = "page-tasks",
-            feature = "page-review",
-            feature = "page-queue"
-        )))]
+        #[cfg(not(any(feature = "page-tasks", feature = "page-review")))]
         _ => rsx! { p { "Loading page…" } },
     };
     rsx! {
@@ -222,8 +189,7 @@ pub(crate) fn PageNotices(
         feature = "page-board",
         feature = "page-tasks",
         feature = "page-docs",
-        feature = "page-review",
-        feature = "page-queue"
+        feature = "page-review"
     ))]
     let device = device.map(|(saved, unreachable)| {
         let saved = local_moment(saved)
@@ -236,8 +202,7 @@ pub(crate) fn PageNotices(
         feature = "page-board",
         feature = "page-tasks",
         feature = "page-docs",
-        feature = "page-review",
-        feature = "page-queue"
+        feature = "page-review"
     )))]
     let device = device.and(None::<String>);
     let checking = reconnecting || device.is_some();
@@ -361,10 +326,7 @@ impl Drop for NoticeGeometry {
 
 #[cfg(feature = "page-review")]
 type PageBoard = Board;
-#[cfg(all(
-    any(feature = "page-tasks", feature = "page-queue"),
-    not(feature = "page-review")
-))]
+#[cfg(all(feature = "page-tasks", not(feature = "page-review")))]
 #[derive(Clone, serde::Deserialize)]
 struct PageBoard {
     version: u64,
@@ -372,11 +334,7 @@ struct PageBoard {
     build: String,
 }
 
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 #[component]
 pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let frame = use_context::<crate::frame::FrameRefresh>();
@@ -384,23 +342,20 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let stale = use_signal(|| false);
     let trouble = use_signal(|| None::<String>);
     let mut retry = use_signal(|| 0_u64);
-    // Home and the queue draw the board this device kept, and keep the one they read
+    // Home draws the board this device kept, and keeps the one it reads
     // (docs/analysis/client-cache.md); a task page's slice is its own.
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    #[cfg(feature = "page-review")]
     let freshness = use_context_provider(|| Signal::new(Freshness::default()));
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
-    let kept =
-        use_hook(|| matches!(route.peek().as_str(), "/" | "/queue").then(|| Item::board(&scope)));
-    #[cfg(not(any(feature = "page-review", feature = "page-queue")))]
+    #[cfg(feature = "page-review")]
+    let kept = use_hook(|| (route.peek().as_str() == "/").then(|| Item::board(&scope)));
+    #[cfg(not(feature = "page-review"))]
     let (kept, _) = (None::<Item>, scope);
-    #[cfg(feature = "page-queue")]
-    let queue_refreshed = use_signal(|| 0_u64);
     #[cfg(feature = "page-review")]
     let mut now = use_signal(local_now);
     #[cfg(feature = "page-tasks")]
     let data = use_signal(Data::default);
     use_hook(|| {
-        #[cfg(any(feature = "page-review", feature = "page-queue"))]
+        #[cfg(feature = "page-review")]
         if let Some(item) = kept.clone() {
             draw_kept_board(item, board, freshness);
         }
@@ -410,15 +365,13 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
             trouble,
             kept.clone(),
             PageViews {
-                #[cfg(feature = "page-queue")]
-                queue_refreshed,
                 #[cfg(feature = "page-tasks")]
                 route,
                 #[cfg(feature = "page-tasks")]
                 data,
                 frame,
                 retry,
-                #[cfg(any(feature = "page-review", feature = "page-queue"))]
+                #[cfg(feature = "page-review")]
                 freshness,
             },
         ));
@@ -465,9 +418,9 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
             mark(READY_MARK);
         }
     });
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    #[cfg(feature = "page-review")]
     let device = freshness.read().shown();
-    #[cfg(not(any(feature = "page-review", feature = "page-queue")))]
+    #[cfg(not(feature = "page-review"))]
     let device = None::<(f64, bool)>;
     // A task page this device kept is drawn before the board is read.
     #[cfg(feature = "page-tasks")]
@@ -487,12 +440,6 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
         };
         #[cfg(not(feature = "page-review"))]
         let front = rsx! { p { "Page unavailable" } };
-        #[cfg(feature = "page-queue")]
-        let front = if route() == "/queue" {
-            rsx! { crate::queue::QueuePage { scope, refreshed: queue_refreshed } }
-        } else {
-            front
-        };
         // What the device drew is not the machine's work now: shown as out of touch until read.
         #[cfg(feature = "page-tasks")]
         let front = if route().starts_with("/task/") || route() == "/agents" {
@@ -520,7 +467,7 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
 }
 
 /// Draw the board `item` kept, unless the server's came first.
-#[cfg(any(feature = "page-review", feature = "page-queue"))]
+#[cfg(feature = "page-review")]
 fn draw_kept_board(
     item: Item,
     mut board: Signal<Option<PageBoard>>,
@@ -538,13 +485,9 @@ fn draw_kept_board(
 }
 
 /// The board, read fresh: its version starts the feed. Kept as `kept`'s, when the page keeps it.
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 async fn fetch_board(kept: Option<&Item>) -> Result<PageBoard, String> {
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    #[cfg(feature = "page-review")]
     if let Some(item) = kept {
         return match crate::request::get_if(&task_live::url(BOARD_PATH), "").await? {
             Answer::Fresh(value, tag) => {
@@ -556,20 +499,14 @@ async fn fetch_board(kept: Option<&Item>) -> Result<PageBoard, String> {
             Answer::Same => Err("The server answered 304 to a plain read".into()),
         };
     }
-    #[cfg(not(any(feature = "page-review", feature = "page-queue")))]
+    #[cfg(not(feature = "page-review"))]
     let _ = kept;
     crate::request::get(&task_live::url(BOARD_PATH)).await
 }
 
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 #[derive(Clone, Copy)]
 struct PageViews {
-    #[cfg(feature = "page-queue")]
-    queue_refreshed: Signal<u64>,
     #[cfg(feature = "page-tasks")]
     route: Memo<String>,
     #[cfg(feature = "page-tasks")]
@@ -577,15 +514,11 @@ struct PageViews {
     frame: crate::frame::FrameRefresh,
     /// The reader's presses of Retry, which cut the wait before the next read.
     retry: Signal<u64>,
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    #[cfg(feature = "page-review")]
     freshness: Signal<Freshness>,
 }
 
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 async fn keep_live(
     mut board: Signal<Option<PageBoard>>,
     mut stale: Signal<bool>,
@@ -619,11 +552,6 @@ async fn keep_live(
                 freshen(views, |shown| shown.answered(board::BOARD));
                 #[cfg(feature = "page-tasks")]
                 task_live::load(views.route, views.data).await;
-                #[cfg(feature = "page-queue")]
-                {
-                    let mut revision = views.queue_refreshed;
-                    revision += 1;
-                }
                 ended = follow(board, stale, since, quiet, views).await;
                 freshen(views, Freshness::lost);
             }
@@ -638,14 +566,10 @@ async fn keep_live(
 }
 
 /// Tell what the page shows from this device ([`Freshness`]) what its board's read and feed did:
-/// home's and the queue's in their page's signal, a task page's in its data.
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+/// home's in its page's signal, a task page's in its data.
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 fn freshen(views: PageViews, change: impl Fn(&mut Freshness)) {
-    #[cfg(any(feature = "page-review", feature = "page-queue"))]
+    #[cfg(feature = "page-review")]
     {
         let mut freshness = views.freshness;
         change(&mut freshness.write());
@@ -682,11 +606,7 @@ pub(crate) enum Heard {
 /// change); or until the page goes away. Each event is applied where it lands, the owner told
 /// when more cards wait on them, the page loaded again for another client build. How the stream
 /// ended.
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review"))]
 async fn follow(
     mut board: Signal<Option<PageBoard>>,
     mut stale: Signal<bool>,
@@ -695,8 +615,6 @@ async fn follow(
     views: PageViews,
 ) -> Ended {
     let PageViews {
-        #[cfg(feature = "page-queue")]
-        mut queue_refreshed,
         #[cfg(feature = "page-tasks")]
         route,
         #[cfg(feature = "page-tasks")]
@@ -757,10 +675,6 @@ async fn follow(
             continue;
         }
         frame.heard(&value);
-        #[cfg(feature = "page-queue")]
-        if crate::queue::changed(&value) {
-            queue_refreshed += 1;
-        }
         #[cfg(feature = "page-tasks")]
         let Ok(refresh) = task_live::apply(&value, data) else {
             break;
@@ -869,12 +783,7 @@ pub(crate) async fn sleep(ms: i32) {
 
 /// Waits `ms` before a read is tried again, or less once the reader presses Retry (`retry`
 /// counts the presses).
-#[cfg(any(
-    feature = "page-tasks",
-    feature = "page-review",
-    feature = "page-queue",
-    feature = "page-docs"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-review", feature = "page-docs"))]
 pub(crate) async fn pause(ms: i32, retry: Signal<u64>) {
     let asked = *retry.peek();
     let mut left = ms;

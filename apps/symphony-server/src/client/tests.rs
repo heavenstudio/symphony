@@ -45,9 +45,35 @@ fn selection_keeps_install_override_and_local_build_failures_authoritative() {
     );
 }
 
+/// The names an ES module's last `export{…}` clause gives what it exports, as a minifier writes it
+/// (`export{a as run,b as stop}`); none for a module without one.
+fn module_exports(module: &str) -> Vec<&str> {
+    let Some((_, clause)) = module.rsplit_once("export{") else {
+        return Vec::new();
+    };
+    let clause = clause.split('}').next().unwrap_or_default();
+    clause
+        .split(',')
+        .map(|item| item.rsplit(" as ").next().unwrap_or(item).trim())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_modules_exports_are_read_from_its_clause() {
+    assert_eq!(
+        module_exports("let a;export{tr as run,nr as stop};"),
+        ["run", "stop"]
+    );
+    assert_eq!(module_exports("export{run, stop}"), ["run", "stop"]);
+    assert_eq!(module_exports("export{}"), Vec::<&str>::new());
+    assert_eq!(module_exports("globalThis.x=1"), Vec::<&str>::new());
+}
+
 /// The shipped distribution is the regenerator's, made after a land from main's sources (a branch
-/// commits none): every page kind it names has its script, its wasm and, for a kind of the program
-/// (apps/symphony-ui/src/split.rs), its chunk.
+/// commits none): every page kind it names has its script and, for a kind of the Dioxus client, its
+/// wasm and, for a kind of the program (apps/symphony-ui/src/split.rs), its chunk; a kind of the web
+/// client (apps/symphony-web) is a script that exports its `run` and `stop`.
 #[test]
 fn shipped_shell_references_its_real_modules_and_valid_wasm() {
     let shell =
@@ -90,11 +116,18 @@ fn shipped_shell_references_its_real_modules_and_valid_wasm() {
             let bytes = super::asset(path).unwrap();
             if key != "script" {
                 assert!(bytes.starts_with(b"\0asm"), "{path}");
-            } else {
+            } else if module.get("wasm").is_some() {
                 assert!(
                     std::str::from_utf8(bytes)
                         .unwrap()
                         .contains("reviewModuleReady_")
+                );
+            } else {
+                // A kind of the web client is its script alone, which the shell runs and stops.
+                let exported = module_exports(std::str::from_utf8(bytes).unwrap());
+                assert!(
+                    exported.contains(&"run") && exported.contains(&"stop"),
+                    "{path} exports {exported:?}"
                 );
             }
         }

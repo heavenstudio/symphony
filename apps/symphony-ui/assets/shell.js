@@ -81,6 +81,9 @@ window.reviewShell = { gone, alarm };
 
 async function initialize(kind) {
     const spec = modules[kind];
+    // A kind of the web client (apps/symphony-web) is its script alone, which exports its own `run`
+    // and `stop`: no wasm, no initializer to wait on.
+    if (!spec.wasm) return import(spec.script);
     // The module's initializer fetches its wasm only once its script has been fetched and run, and
     // a program kind's run its chunk (src/split.rs) only once that wasm has: a preload asks for all
     // at once, and each fetch takes the preloaded response.

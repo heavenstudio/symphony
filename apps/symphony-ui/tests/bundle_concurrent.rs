@@ -20,12 +20,14 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The four page kinds built alone; and the program's kinds (src/split.rs), one build of it.
-const KINDS: [&str; 4] = ["board", "docs", "review", "queue"];
+/// The three page kinds built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 3] = ["board", "docs", "review"];
 const PROGRAM: [&str; 5] = ["tasks", "reports", "panel", "overlay", "timeline"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
 const CHUNKS: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
+/// The web client's kinds, one Vite build of them all.
+const WEB: [&str; 1] = ["queue"];
 
 /// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
@@ -65,6 +67,20 @@ mkdir -p "$out"
 cp -R "$work/public" "$out/"
 "#;
 
+/// The stand-in web client's build, which bundle.sh runs as `bash apps/symphony-web/npm.sh run
+/// --silent build -- --outDir OUT --emptyOutDir`: each kind's script and style sheet, and Vite's
+/// manifest naming them.
+const WEB_BUILD: &str = r#"#!/bin/bash
+set -euo pipefail
+[ "$*" = "run --silent build -- --outDir $6 --emptyOutDir" ]
+out="$6"
+rm -rf "$out"
+mkdir -p "$out/.vite" "$out/assets"
+printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.js"
+printf '/*%s-queue*/body{}' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.css"
+printf '{"src/kinds/queue.tsx":{"file":"assets/queue-%s.js","name":"queue","src":"src/kinds/queue.tsx","isEntry":true,"css":["assets/queue-%s.css"]}}\n' "$BUNDLE_ID" "$BUNDLE_ID" > "$out/.vite/manifest.json"
+"#;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -102,6 +118,8 @@ impl Fixture {
         )
         .unwrap();
         executable(&base.join("cargo"), "#!/bin/bash\nexit 0\n");
+        // Read by bash as data, never executed.
+        executable(&base.join("apps/symphony-web/npm.sh"), WEB_BUILD);
         executable(
             &base.join("common/symphony/tools/dx-home/tools/wasm-bindgen-fixture/wasm-bindgen"),
             "#!/bin/bash\nexit 0\n",
@@ -180,7 +198,7 @@ impl Fixture {
         let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
         assert_eq!(
             manifest.as_object().unwrap().len(),
-            KINDS.len() + PROGRAM.len()
+            KINDS.len() + PROGRAM.len() + WEB.len()
         );
         // The stage holds its build alone, and its builds.json names every file of it by its shell,
         // for publish-client to keep beside the builds published before it.
@@ -190,11 +208,11 @@ impl Fixture {
             .collect();
         files.sort();
         // Each kind's script, wasm and style sheet; the program's script and main module, a chunk
-        // for each of its kinds and the media layer's, and its three own style sheets; and the
-        // shell.
+        // for each of its kinds and the media layer's, and its three own style sheets; each web
+        // kind's script and style sheet; and the shell.
         assert_eq!(
             files.len(),
-            3 * KINDS.len() + 2 + CHUNKS.len() + 3 + 1,
+            3 * KINDS.len() + 2 + CHUNKS.len() + 3 + 2 * WEB.len() + 1,
             "{files:?}"
         );
         let media: Vec<_> = files
@@ -242,6 +260,22 @@ impl Fixture {
         let read_asset = |url: &serde_json::Value| {
             fs::read(public.join(url.as_str().unwrap().trim_start_matches('/'))).unwrap()
         };
+        // A web kind is its script and its styles, this bundle's: no wasm.
+        for kind in WEB {
+            let entry = &manifest[kind];
+            assert_eq!(
+                read_asset(&entry["script"]),
+                format!("export{{a as run,b as stop}};/*{id}*/\n").as_bytes()
+            );
+            assert!(entry.get("wasm").is_none(), "{kind}");
+            let styles: Vec<_> = entry["styles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(read_asset)
+                .collect();
+            assert_eq!(styles, [format!("/*{id}-{kind}*/body{{}}").into_bytes()]);
+        }
         for (at, kind) in CHUNKS
             .iter()
             .enumerate()

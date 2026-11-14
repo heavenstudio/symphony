@@ -178,6 +178,7 @@ pub struct Upload {
 
 /// `GET /api/board`: what the front page shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Board {
     /// The feed's version this snapshot is at: the client follows the feed from here.
     pub version: u64,
@@ -195,6 +196,7 @@ pub struct Board {
 
 /// A card waiting on the owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Card {
     /// The owner's view order only; no verdict or document marker changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -234,6 +236,7 @@ impl Card {
 
 /// The row of counts, each linking to where its detail lives.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Counts {
     /// Cards waiting on the owner: the whole queue, not only the ones the board shows.
     pub waiting: u32,
@@ -250,6 +253,7 @@ pub struct Counts {
 
 /// The task board's counts.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskCounts {
     pub in_progress: u32,
     pub in_review: u32,
@@ -258,6 +262,7 @@ pub struct TaskCounts {
 
 /// The home's progress: the project's plugin regions and the document progress.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Progress {
     /// The regions the project's plugins add to the home, in the order they are registered.
     #[serde(default)]
@@ -270,6 +275,7 @@ pub struct Progress {
 
 /// One event of the feed: what changed since the version before.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Delta {
     /// The version after this change: the next `since`.
     pub version: u64,
@@ -280,6 +286,7 @@ pub struct Delta {
 /// A region of the board that moved, with its new data: `{"region": "...", "data": ...}`, the
 /// region first (as the server writes it).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "region", content = "data", rename_all = "kebab-case")]
 pub enum Change {
     /// One card's words or pictures changed; it keeps its place in the queue.
@@ -292,8 +299,10 @@ pub enum Change {
     Client {
         build: String,
     },
-    /// A region this client does not know yet; it is ignored. Never sent.
+    /// A region this client does not know yet; it is ignored. Never sent, so the web client's wire
+    /// types leave it out: it reads a region it does not know as any `{region, data}`.
     #[serde(skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     Other,
 }
 
@@ -386,6 +395,7 @@ pub fn queue_category(path: &str) -> &str {
 
 /// The complete review queue, with mixed owner decisions, and the two queues below it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Queue {
     pub waiting: Vec<Card>,
     pub spot_check: Vec<QueueItem>,
@@ -395,6 +405,7 @@ pub struct Queue {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct QueueItem {
     pub href: String,
     pub path: String,
@@ -407,12 +418,14 @@ pub struct QueueItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Pending {
     pub items: Vec<PendingItem>,
     pub docs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct PendingItem {
     pub path: String,
     pub slug: String,
@@ -422,11 +435,13 @@ pub struct PendingItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Activity {
     pub items: Vec<ActivityItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ActivityItem {
     pub id: String,
     pub kind: String,

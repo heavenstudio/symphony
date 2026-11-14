@@ -61,8 +61,9 @@ custom_only() {
     done
     [ "$at" = "${#bytes[@]}" ]
 }
-# The program last: its styles are placed by what the other kinds load.
-for module_kind in board docs review queue program; do
+# The program last: its styles are placed by what the other kinds load. The web client's kinds
+# (apps/symphony-web) are placed after the shared stylesheet, below.
+for module_kind in board docs review program; do
     module="$out/.modules/$module_kind"
     # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
     # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
@@ -161,7 +162,34 @@ if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     shared_name="shared-$(shasum -a 256 "$stage/shared.css" | cut -c1-16).css"
     mv "$stage/shared.css" "$stage/assets/$shared_name"
     manifest="$(jq --argjson shared "$shared" --arg href "$prefix/assets/$shared_name" 'map_values(.styles |= [$href] + (. - $shared))' <<< "$manifest")"
+    shared="$(jq -cn --arg href "$prefix/assets/$shared_name" '[$href]')"
 fi
+# The web client's kinds, which bundle.sh built with Vite into .modules/web: each entry of Vite's
+# manifest is a kind, its script the module the shell imports (it exports `run` and `stop`, and has
+# no wasm), its styles the shared stylesheet and then the CSS its entry and the chunks it imports
+# carry, theirs first. A kind is one client's: one both build is refused, and so is a build
+# without the web client's.
+web="$out/.modules/web"
+if [ ! -f "$web/.vite/manifest.json" ]; then
+    echo "symphony-ui: the web client's build is missing: $web/.vite/manifest.json" >&2
+    exit 2
+fi
+bash "$here/assets-copy.sh" "$web/assets" "$stage/assets"
+while IFS= read -r entry; do
+    web_kind="$(jq -r --arg entry "$entry" '.[$entry].name' "$web/.vite/manifest.json")"
+    if jq -e --arg kind "$web_kind" 'has($kind)' <<< "$manifest" > /dev/null; then
+        echo "symphony-ui: $web_kind is a page kind of both clients; refusing to package it" >&2
+        exit 2
+    fi
+    manifest="$(jq --arg kind "$web_kind" --arg entry "$entry" --arg prefix "$prefix/" --argjson shared "$shared" \
+        --slurpfile vite "$web/.vite/manifest.json" '
+        $vite[0] as $chunks
+        | def css($key): [($chunks[$key].imports // [])[] | css(.)[]] + ($chunks[$key].css // []);
+        . + {($kind): {
+            script: ($prefix + $chunks[$entry].file),
+            styles: ($shared + (reduce css($entry)[] as $style ([]; if any(.[]; . == $style) then . else . + [$style] end) | map($prefix + .)))
+        }}' <<< "$manifest")"
+done < <(jq -r 'to_entries[] | select(.value.isEntry) | .key' "$web/.vite/manifest.json" | LC_ALL=C sort)
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
@@ -197,4 +225,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: home, the board, the documents and the queue as modules of their own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: home, the board and the documents as modules of their own, the web client's kinds (the queue) as its own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
