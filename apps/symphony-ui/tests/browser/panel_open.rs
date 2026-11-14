@@ -2,7 +2,8 @@
 //! after the click, loading; the panel's script, wasm and styles are requested together; once a
 //! page is idle the persistent modules' files are warmed into the HTTP cache, outside the first
 //! visit's transfer; an open chat reads its thread when the page's feed says it moved, never on a
-//! timer.
+//! timer. On the board, whose page has no media layer, the chat fetches the program's only for a
+//! thread that shows media.
 
 use super::{
     SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
@@ -701,6 +702,84 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
         "a new recipient is read once"
     );
     assert_eq!(browser.eval("askPoll.length"), json!(0));
+}
+
+#[test]
+fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media() {
+    let site = site();
+    site.set_json("/api/ask", &chat(&["First question"]));
+    site.set_file(
+        "/mockup.html",
+        b"<!doctype html><title>Mockup</title>".to_vec(),
+        "text/html",
+    );
+    let Some(mut browser) = chrome() else { return };
+    // The board's own page has no media layer: the chat's panel holds one there.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "localStorage.setItem('review-quick-draft', JSON.stringify({open: false, task: false, ask: 7}));"}),
+    );
+    browser.open(&site.url("/tasks"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector(\"[data-slug='tools/example']\") !== null",
+            SHOWN
+        ),
+        "the board is never drawn"
+    );
+    wait_for_feed(&site).expect("the page holds its feed open");
+    browser.eval("document.querySelector('#quick-open').click()");
+    assert!(
+        browser.wait_for(
+            "[...document.querySelectorAll('#quick-sheet .quick-message p:not(.by)')].some(p => p.textContent === 'First question')",
+            SHOWN
+        ),
+        "the chat opens on its thread: {}",
+        browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+    );
+    assert_eq!(chat_reads(&mut browser, &site, 1), 1);
+    assert_eq!(
+        super::program::media_asked(&site),
+        0,
+        "a chat of text fetched the media layer: {:?}",
+        site.requests()
+    );
+    // The thread moves on to a mockup, which the open chat reads and shows.
+    let mut thread = chat(&["First question", "A mockup"]);
+    thread["ask"]["messages"][1]["blocks"] =
+        json!([{"type":"media","media":{"kind":"mockup","src":"/mockup.html","label":"Mockup"}}]);
+    site.set_json("/api/ask", &thread);
+    site.push(
+        4184,
+        r#"{"version":4184,"changes":[{"region":"asks","data":{"threads":[{"id":7,"path":""}]}}]}"#,
+    );
+    // The mockup shows once it is scrolled to in the thread, as a reader would.
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#quick-root .mockup-shell') !== null",
+            SHOWN
+        ),
+        "the thread's move is never read: {}",
+        browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+    );
+    browser.eval(
+        "document.querySelector('#quick-root .mockup-shell').scrollIntoView({block:'center'})",
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#quick-root .mockup-frame iframe')?.getAttribute('style')?.includes('transform:scale(') === true",
+            SHOWN
+        ),
+        "the media layer never scales the chat's mockup: {:?}; {:?}",
+        browser.eval("document.querySelector('#quick-root .mockup-shell')?.outerHTML ?? null"),
+        site.requests()
+    );
+    assert_eq!(
+        super::program::media_asked(&site),
+        1,
+        "{:?}",
+        site.requests()
+    );
 }
 
 /// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a

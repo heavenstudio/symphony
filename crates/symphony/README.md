@@ -4,9 +4,9 @@ Symphony's library and its `symphony` command. Symphony is a document, review an
 
 The product's commands install together:
 
-    cargo install --locked --config profile.release.strip=true symphony-app symphony-board symphony-server
+    cargo install --locked --config profile.release.strip=true --config profile.release.codegen-units=1 symphony-app symphony-board symphony-server
 
-`symphony-app` installs `symphony`, `symphony-board` the board's `tasks` and `agent-send`, and `symphony-server` the server. The `--config` line strips the symbol table, as Symphony's own release builds do; without it each binary is a quarter to a third larger.
+`symphony-app` installs `symphony`, `symphony-board` the board's `tasks` and `agent-send`, and `symphony-server` the server. The two `--config` settings strip the symbol table and build each crate as one codegen unit, as Symphony's own release builds do: without the first each binary is a quarter to a third larger, and without the second 0.5 to 2.7 MB larger.
 
 The library keeps the name `symphony`: a dependent names it `symphony = { package = "symphony-app", … }`, and its code says `symphony::`.
 

@@ -529,7 +529,7 @@ fn the_command_line_lands_and_refuses_with_one_line() {
     assert_ne!(code, 0);
     assert_eq!(
         err.trim_end().lines().last().unwrap(),
-        format!("✖ {SLUG} is in_progress, with no approving verdict standing"),
+        format!("✖ {}", unapproved(SLUG, "in_progress")),
         "{err}"
     );
     assert_eq!(head(&r.root, "main"), before);
@@ -658,7 +658,7 @@ fn a_task_with_no_approval_is_refused_on_its_thread() {
         let line = if status == "done" {
             format!("{SLUG} was closed after its approval: done: elsewhere")
         } else {
-            format!("{SLUG} is {status}, with no approving verdict standing")
+            unapproved(SLUG, status)
         };
         assert_refused(&r, &result, &line, &before);
         assert_eq!(last(&r, SLUG), format!("land refused: {line}"));
@@ -905,10 +905,7 @@ fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     store.move_to(SLUG, "review", &people.exe).unwrap();
     // The old approve no longer stands: no land until a fresh one.
     let line = landed(&r, SLUG, &people.orch).1.unwrap_err();
-    assert_eq!(
-        line,
-        format!("{SLUG} is review, with no approving verdict standing")
-    );
+    assert_eq!(line, unapproved(SLUG, "review"));
     store
         .verdict(
             SLUG,
@@ -933,19 +930,110 @@ fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     assert_eq!(store.get(SLUG).unwrap().status, "done");
 }
 
+/// The refusal of a task in `status` with no approve standing: who approves it, and by what.
+fn unapproved(slug: &str, status: &str) -> String {
+    let approve = format!(
+        "a fresh reviewer, one that did not write it, approves it naming the tip it read: `just \
+         tasks verdict {slug} approve \"FULL_SHA: why\" --as HANDLE`"
+    );
+    match status {
+        "review" => format!("{slug} is review, with no approving verdict standing: {approve}"),
+        _ => format!(
+            "{slug} is {status}, with no approving verdict standing: it goes to review (`just \
+             tasks move {slug} review`), where {approve}"
+        ),
+    }
+}
+
 #[test]
 fn a_branch_already_on_main_or_not_there_is_refused() {
     let r = Repo::new();
     manifest(&r, "");
-    let people = approved(&r, SLUG, "good");
     let before = head(&r.root, "main");
+    let people = approved(&r, SLUG, &format!("{before}: good"));
     let (_, result) = landed(&r, SLUG, &people.orch);
-    assert_refused(&r, &result, &format!("no branch {SLUG} to land"), &before);
+    // The approve names main's tip, no branch of the work's: the rename is said with the branch to
+    // name, never main's.
+    assert_refused(
+        &r,
+        &result,
+        &format!(
+            "no branch {SLUG} to land: the land takes the branch named as the task, {SLUG}: \
+             rename the branch holding the approved work (`git branch -m BRANCH {SLUG}`), then \
+             land again"
+        ),
+        &before,
+    );
 
     git(&r.root, &["branch", SLUG, "main"]);
     let (_, result) = landed(&r, SLUG, &people.orch);
     // No merge brought it: what landed it is the tip itself.
     assert_refused(&r, &result, &outside(&r, &before, &before), &before);
+}
+
+/// Work on a branch not named as the task: the land names the branch whose tip is the commit the
+/// approve names, and the rename, and lands once the branch is renamed.
+#[test]
+fn work_on_a_branch_not_named_as_the_task_is_refused_naming_it_and_its_rename() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, "bye", "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip}: it reads right"));
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = format!(
+        "no branch {SLUG} to land: the land takes the branch named as the task, {SLUG}, and the \
+         approved tip {} is on bye: `git branch -m bye {SLUG}` renames it, then land again",
+        &tip[..7]
+    );
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(last(&r, SLUG), format!("land refused: {line}"));
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+
+    git(&r.root, &["branch", "-m", "bye", SLUG]);
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+}
+
+/// An approve on the command line says the task is not on the default branch until it lands, and
+/// what lands it: the default landing, or the project's own `land`, which replaces it.
+#[test]
+fn an_approve_names_the_default_branch_and_the_land_that_lands_it() {
+    let r = Repo::new();
+    git(&r.root, &["branch", "trunk", "main"]);
+    project_file(&r, "[project]\ndefault_branch = \"trunk\"\n");
+    let approve = |slug: &str| {
+        let store = &r.board.store;
+        let (exe, rev) = (r.board.session("worker"), r.board.session("reviewer"));
+        r.task(slug);
+        store.claim(slug, &exe).unwrap();
+        store.move_to(slug, "review", &exe).unwrap();
+        store.take_role(slug, &rev, "reviewer").unwrap();
+        let args: Vec<String> = ["verdict", slug, "approve", "good", "--as", &rev]
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let env = r.env(&r.root);
+        let code = symphony_board::cli::main(&args, &env, &mut "".as_bytes(), &mut out, &mut err);
+        assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+        String::from_utf8(out).unwrap()
+    };
+    assert_eq!(
+        approve("sim/a"),
+        "sim/a is approved: done on the board, not on trunk until it lands; `just land sim/a --as \
+         HANDLE` lands it\n"
+    );
+    write(&r.root, "justfile", "land *ARGS:\n    @echo its own\n");
+    assert_eq!(
+        approve("sim/b"),
+        format!(
+            "sim/b is approved: done on the board, not on trunk until it lands; the `land` recipe \
+             of the project's own lands it ({}): `just land sim/b`\n",
+            r.root.join("justfile").display()
+        )
+    );
 }
 
 /// The refusal of a tip on main that no record of a land's merge covers, `merge` the commit that

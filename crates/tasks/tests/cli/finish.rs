@@ -84,9 +84,15 @@ fn a_verdict_that_finishes_a_task_is_cleaned_up_after() {
         .handle;
     board.take_role("sim/a", &reviewer, "reviewer").unwrap();
     let ran = p.as_(&reviewer, &["verdict", "sim/a", "approve", "fine"]);
+    // In a checkout whose justfile runs no land of its own: its default branch and the default
+    // landing are named.
     assert_eq!(
         ran.out,
-        format!("sim/a is done\n{}", closed_line("sim/a", &worker))
+        format!(
+            "sim/a is approved: done on the board, not on main until it lands; `just land sim/a \
+             --as HANDLE` lands it\n{}",
+            closed_line("sim/a", &worker)
+        )
     );
 }
 
