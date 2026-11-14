@@ -8,10 +8,14 @@
     "dev": "vite",
     "build:react": "vite build --mode react",
     "build:preact": "vite build --mode preact",
-    "build": "npm run build:react && npm run build:preact"
+    "build": "npm run build:react && npm run build:preact",
+    "build:probe": "vite build --mode probe-react && vite build --mode probe-preact"
   },
   "dependencies": {
+    "@tanstack/react-query": "5.107.1",
+    "@tanstack/react-virtual": "3.14.26",
     "preact": "11.2.0",
+    "radix-ui": "1.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
