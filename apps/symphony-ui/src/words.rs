@@ -49,10 +49,6 @@ impl Moment {
         self.0
     }
 
-    fn hour(self) -> i64 {
-        self.0.rem_euclid(1440) / 60
-    }
-
     fn day(self) -> i64 {
         self.0.div_euclid(1440)
     }
@@ -131,46 +127,6 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let day_of_year = (153 * month_from_march + 2) / 5 + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
-}
-
-/// "Good morning", "Good afternoon" or "Good evening".
-pub fn greeting(now: Moment) -> &'static str {
-    match now.hour() {
-        0..=11 => "Good morning",
-        12..=17 => "Good afternoon",
-        _ => "Good evening",
-    }
-}
-
-/// How long something has waited, short: "new", "3 h", "7 d"; "" without a time.
-pub fn age(posted: Option<&str>, now: Moment) -> String {
-    let Some(then) = posted.and_then(Moment::parse) else {
-        return String::new();
-    };
-    let minutes = (now.0 - then.0).max(0);
-    if minutes >= 1440 {
-        format!("{} d", minutes / 1440)
-    } else if minutes >= 60 {
-        format!("{} h", minutes / 60)
-    } else {
-        "new".to_string()
-    }
-}
-
-/// The line under the greeting.
-pub fn lead(waiting: u32, docs: u32) -> String {
-    if waiting == 0 {
-        return "Your queue is empty.".to_string();
-    }
-    format!(
-        "{waiting} {} on you across {docs} {}. Start with the one below.",
-        if waiting == 1 {
-            "card waits"
-        } else {
-            "cards wait"
-        },
-        plural(docs, "document")
-    )
 }
 
 /// The feed's `tasks-status`: whether the task board answers (`None` when the event does not say),

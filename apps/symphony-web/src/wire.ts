@@ -9,8 +9,11 @@ export const FEED_EVENT = "delta";
 export const PING_EVENT = "ping";
 export const SERVER_EVENT = "server";
 export const CACHE_FORMAT = 2;
+export const BOARD_CARDS = 5;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const VERSION_HEADER = "symphony-version";
+export const VERDICT_TASKS = "verdicts/";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -384,8 +387,6 @@ export type TaskFields = {
   instruction?: boolean | null;
 };
 
-export type ItemChange<T> = { key: string; value?: T | null; removed?: boolean };
-
 export type MachineWork = {
   freshness: WorkFreshness;
   machines: Array<MachineObservation>;
@@ -667,4 +668,134 @@ export type View = {
    * The element's method a press calls after setting them.
    */
   call: string | null;
+};
+
+export type Document = {
+  version: number;
+  path: string;
+  title: string;
+  waiting: Array<string>;
+  crumbs: Array<Crumb>;
+  headings: Array<Heading>;
+  sections: Array<Section>;
+  cards: Array<DocumentCard>;
+  threads: { [key in string]: Fragment };
+  tasks: Array<DocumentTask>;
+  comparison?: DocumentComparison | null;
+};
+
+export type DocumentComparison = { task: string };
+
+export type DocumentOutline = {
+  document: Document;
+  anchors: { [key in string]: Array<string> };
+  /**
+   * The hash of each card's thread, by the card's slug, as a section's `hash` is taken. A thread
+   * is no part of its card section's `hash`, so a client that keeps a card's body and thread on
+   * the device tells by this whether the thread changed since (docs/analysis/client-cache.md,
+   * "What is kept").
+   */
+  thread_hashes?: { [key in string]: string };
+};
+
+export type DocumentSections = { version: number; change: DocumentChange };
+
+export type Crumb = { name: string; href: string | null };
+
+export type Heading = { level: number; anchor: string; text: string };
+
+export type Fragment = { blocks: Array<Block> };
+
+export type Section = {
+  start: number;
+  end: number;
+  key: string;
+  hash: string;
+  part: number | null;
+  blocks: Array<Block>;
+  comparison?: SectionComparison | null;
+};
+
+export type Difference = "added" | "changed" | "removed";
+
+export type SectionComparison = { kind: Difference; before?: Array<Block> };
+
+export type DocumentCard = {
+  slug: string;
+  state: string;
+  text: string;
+  group: string;
+  open: boolean;
+};
+
+export type DocumentTask = { slug: string; title: string; status: string };
+
+export type Folder = {
+  path: string;
+  title: string;
+  crumbs: Array<Crumb>;
+  docs: number;
+  intro: Document | null;
+  entries: Array<FolderEntry>;
+};
+
+export type FolderEntry = {
+  kind: string;
+  path: string;
+  title: string;
+  docs: number;
+  waiting: number;
+  summary: string;
+};
+
+export type DocumentChange = {
+  path: string;
+  removed?: boolean;
+  sections?: Array<Section>;
+  deleted?: Array<string>;
+  positions?: Array<SectionPosition>;
+  order?: Array<string> | null;
+  threads?: { [key in string]: Fragment | null };
+  title?: string | null;
+  waiting?: Array<string> | null;
+  crumbs?: Array<Crumb> | null;
+  headings?: Array<Heading> | null;
+  cards?: Array<ItemChange<DocumentCard>>;
+  tasks?: Array<DocumentTask> | null;
+  /**
+   * An empty vector clears the comparison; otherwise contains its single context.
+   */
+  comparison?: Array<DocumentComparison> | null;
+};
+
+export type SectionPosition = { key: string; start: number; end: number; part: number | null };
+
+export type ItemChange<T> = { key: string; value?: T | null; removed?: boolean };
+
+export type Version = { sha: string; date: string; subject: string };
+
+export type DocumentDiff = { sha: string; subject: string; diff: string };
+
+export type Ask = {
+  id: number;
+  path: string;
+  anchor: string;
+  quote: string;
+  question: string;
+  asked: number;
+  updated: number;
+  answers: Array<AskAnswer>;
+  messages: Array<AskMessage>;
+  status: string;
+};
+
+export type AskAnswer = { text: string; by: string; at: number };
+
+export type AskMessage = {
+  seq: number;
+  kind: string;
+  by: string;
+  text: string;
+  at: number;
+  blocks?: Array<Block>;
 };

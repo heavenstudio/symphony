@@ -3,11 +3,11 @@
 The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second and the task
-board (`/tasks`, `/task/` being the Dioxus program's) the third; every other page is still the
-Dioxus client's. The board's task card is a component of its own (`src/taskcard.tsx`), which the
-agents page and the task page draw once they move. Like that client it reads the server's JSON API
-and never runs server code or inserts server-rendered HTML.
+review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home (`/`,
+the kind `review`) the third and the task board (`/tasks`, `/task/` being the Dioxus program's) the
+fourth; every other page is still the Dioxus client's. The board's task card is a component of its
+own (`src/taskcard.tsx`), which the agents page and the task page draw once they move. Like that
+client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
 look or behaviour) is built on its page once that page's kind has moved here, in this package,
@@ -76,9 +76,10 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`): a guard checks
-the fields the page draws, each of its type, and nothing else, so a field a newer server adds, or
-one it drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
+`document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
+draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
+the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
 `skip-board-fields` is the Dioxus client's: it leaves fields out of its wasm's reader to save
@@ -90,7 +91,9 @@ what the server sends, and its guards read what it draws.
 Unit tests sit beside their module (`queue.test.tsx` beside `queue.tsx`) and run in Node, with no
 DOM and no DOM library: markup is drawn with `react-dom/server` and compared as text, and a test
 that needs a global (`localStorage`, `fetch`, `location`) stubs it with `vi.stubGlobal`, the
-browser's storage held in memory by `testing.ts`. Time is Vitest's fake timers, never the clock.
+browser's storage held in memory by `testing.ts`; what reads the page's elements (the media
+layer) is given a small tree of elements of its test's own (`media-layer.test.ts`). Time is
+Vitest's fake timers, never the clock.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
 browser target's (`apps/symphony-ui/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
 which opens a moved page as it opened the Dioxus one and is its parity check. A kind's entry
@@ -134,15 +137,28 @@ to keep in), and it opens every IndexedDB transaction: this client opens none of
 A move between a kind of this client and a Dioxus kind stops one and runs the other as between
 two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
 and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay
-stay the Dioxus program's kinds, which the shell mounts beside any page.
+stay the Dioxus program's kinds, which the shell mounts beside any page. A page that shows media
+mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
+the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
+overlay's picture viewer, which it reaches through the shell's `reviewOverlay` as the Dioxus
+pages do, all of it ending with the kind's mount.
 
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
-(`src/queue.css`). The task board has none: its rules are the shared sheet's
+(`src/queue.css`; home's is the Dioxus client's media sheet, `apps/symphony-ui/assets/media.css`,
+which the shared sheet leaves out). The task board has none: its rules are the shared sheet's
 (`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's cards use too. A
 component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
+
+Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
+has its own. A presentation's style is written as given, by a ref (`writtenStyle`): React's `style`
+takes an object, which it sets property by property, and would lose a value marked `!important` or
+a declaration after a comment. As the Dioxus interpreter writes a style, a property the element
+already had and the written style does not set (a centred container's `text-align`) is kept. A
+`javascript:` address in an href or a src is replaced by React 19 with one that throws, where the
+Dioxus client writes it as given: a difference in the safe direction, kept.
 
 ## Reports
 
@@ -162,7 +178,8 @@ the plot, the readout and the table, and the axis scales to the series shown (`s
 hiding a large one makes the rest larger; a period stays hatched only when no series, hidden or
 not, recorded it. A tap or the arrow keys pick a period, the same on every chart, and its readout
 says every value as text; each chart's table holds every period. Figures are written as the
-Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`). The
+Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`,
+`words.ts`, which home's percentages use too). The
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.

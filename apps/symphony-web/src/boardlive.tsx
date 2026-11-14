@@ -24,11 +24,11 @@ import {
   FRESH,
   type Freshness,
   failed,
-  gone,
   type Item,
   keepLater,
   columns as keptColumns,
   keptView,
+  left,
   readKept,
   shown,
   visitLater,
@@ -548,7 +548,8 @@ export class LiveBoard {
     d.cursors.clear();
     d.pendingMore = [];
     // The columns this device drew went with their tasks.
-    for (const status of d.drawn) this.freshen((f) => gone(f, columnPart(status)));
+    const drawnParts = d.drawn.map(columnPart);
+    this.freshen((f) => left(f, drawnParts));
     d.drawn = [];
     const view = d.view;
     this.host.redraw();

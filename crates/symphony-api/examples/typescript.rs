@@ -81,6 +81,16 @@ fn types() -> String {
          // by its `typescript` example (`just client-wire`). Never edited by hand: `just client-lint`\n\
          // fails when this file and the Rust types disagree.\n\n",
     );
+    out.push_str(&constants());
+    for one in &types {
+        let _ = write!(out, "\nexport {}\n", one.decl);
+    }
+    out
+}
+
+/// The constants the client names, as wire.ts declares them.
+fn constants() -> String {
+    let mut out = String::new();
     let text = |text: &str| Value::from(text).to_string();
     let constants = [
         ("PROJECT_ELEMENT", text(api::PROJECT_ELEMENT)),
@@ -90,8 +100,11 @@ fn types() -> String {
         ("PING_EVENT", text(api::PING_EVENT)),
         ("SERVER_EVENT", text(api::SERVER_EVENT)),
         ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
+        ("BOARD_CARDS", api::BOARD_CARDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
+        ("VERSION_HEADER", text(api::VERSION_HEADER)),
+        ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -111,9 +124,6 @@ fn types() -> String {
         "PROJECTS": api::page_names::PROJECTS,
     });
     let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
-    for one in &types {
-        let _ = write!(out, "\nexport {}\n", one.decl);
-    }
     out
 }
 
@@ -150,7 +160,6 @@ fn declarations() -> Vec<Declared> {
         declared::<api::FieldValue>(&cfg),
         declared::<api::TaskChange>(&cfg),
         declared::<api::TaskFields>(&cfg),
-        declared::<api::ItemChange<api::Task>>(&cfg),
         declared::<api::MachineWork>(&cfg),
         declared::<api::MachineObservation>(&cfg),
         declared::<api::WorkOperation>(&cfg),
@@ -181,6 +190,29 @@ fn declarations() -> Vec<Declared> {
         declared::<api::GalleryItem>(&cfg),
         declared::<api::Viewer>(&cfg),
         declared::<api::View>(&cfg),
+        // A document's and a folder's pages: their reads, the feed's changes and the asks.
+        declared::<api::Document>(&cfg),
+        declared::<api::DocumentComparison>(&cfg),
+        declared::<api::DocumentOutline>(&cfg),
+        declared::<api::DocumentSections>(&cfg),
+        declared::<api::Crumb>(&cfg),
+        declared::<api::Heading>(&cfg),
+        declared::<api::Fragment>(&cfg),
+        declared::<api::Section>(&cfg),
+        declared::<api::Difference>(&cfg),
+        declared::<api::SectionComparison>(&cfg),
+        declared::<api::DocumentCard>(&cfg),
+        declared::<api::DocumentTask>(&cfg),
+        declared::<api::Folder>(&cfg),
+        declared::<api::FolderEntry>(&cfg),
+        declared::<api::DocumentChange>(&cfg),
+        declared::<api::SectionPosition>(&cfg),
+        declared::<api::ItemChange<api::DocumentCard>>(&cfg),
+        declared::<api::Version>(&cfg),
+        declared::<api::DocumentDiff>(&cfg),
+        declared::<api::Ask>(&cfg),
+        declared::<api::AskAnswer>(&cfg),
+        declared::<api::AskMessage>(&cfg),
     ]
 }
 
@@ -276,9 +308,28 @@ fn cases() -> Result<Value, String> {
     .iter()
     .map(|src| json!([src, api::file_address(src)]))
     .collect();
+    let verdicts: Vec<Value> = [
+        "verdicts/2026-11-11-1244",
+        "verdicts/",
+        "verdicts",
+        "app/verdicts/a",
+        "Verdicts/a",
+        "",
+    ]
+    .iter()
+    .map(|slug| {
+        let task = api::DocumentTask {
+            slug: (*slug).into(),
+            title: String::new(),
+            status: "ready".into(),
+        };
+        json!([slug, task.answers_verdicts()])
+    })
+    .collect();
     let mut cases = bases();
     cases["views"] = routes();
     cases["queueCategory"] = categories.into();
+    cases["answersVerdicts"] = verdicts.into();
     cases["isHtml"] = html.into();
     cases["slugOrder"] = slug_orders();
     cases["stages"] = stages();
@@ -286,6 +337,7 @@ fn cases() -> Result<Value, String> {
     cases["fileAddress"] = addresses.into();
     cases["elementHtml"] = elements();
     cases["encoded"] = encodings();
+    cases["decode"] = decodings();
     cases["samples"] = samples();
     cases["carried"] = carried()?;
     Ok(cases)
@@ -362,6 +414,23 @@ fn encodings() -> Value {
         .collect()
 }
 
+/// What [`api::View::decode`] reads out of a view's attribute value, line by line: the pairs.
+fn decodings() -> Value {
+    [
+        "angle=0deg 25deg auto\nzoom=a=b",
+        "no pair\n=empty\nBad=x\nok=",
+        "a=1\r\nb=2\r\n",
+        "a=1\r",
+        "x=a\rb\n\n\ny-2=",
+        "\n",
+        "",
+        "a-=1\n9=2\nb c=3",
+    ]
+    .iter()
+    .map(|value| json!([value, api::View::decode(value)]))
+    .collect()
+}
+
 /// The Rust the web client carries in TypeScript, each function by its file, its name and the
 /// TypeScript that carries it. Their source goes into the cases whole ([`carried`]), so a change to
 /// one, which the cases' inputs may not show, fails `just client-lint` until the cases are written
@@ -399,6 +468,11 @@ const CARRIED: &[(&str, &str, &str)] = &[
     (API_PROJECT, "asks_for_file", "asksForFile, src/project.ts"),
     (API_PROJECT, "file_address", "fileAddress, src/project.ts"),
     (API_LIB, "queue_category", "queueCategory, src/queue.tsx"),
+    (
+        API_LIB,
+        "answers_verdicts",
+        "answersVerdicts, src/document.ts",
+    ),
     (API_TASK_QUERIES, "slug_order", "slugOrder, src/task.ts"),
     (API_TASK_QUERIES, "kind", "isTask, src/task.ts"),
     (API_TASK_QUERIES, "is_task", "isTask, src/task.ts"),
@@ -410,6 +484,7 @@ const CARRIED: &[(&str, &str, &str)] = &[
     (API_TASK_STAGE, "conflicts", "conflicts, src/work.ts"),
     (BLOCKS_MEDIA, "element_html", "elementHtml, src/media.tsx"),
     (BLOCKS_MEDIA, "encoded", "encoded, src/media.tsx"),
+    (BLOCKS_MEDIA, "decode", "decode, src/media.tsx"),
     (BLOCKS_MEDIA, "is_name", "isName, src/media.tsx"),
     (BLOCKS_MEDIA, "is_element", "isElement, src/media.tsx"),
     (BLOCKS_MEDIA, "escape", "escapeText, src/media.tsx"),
@@ -950,6 +1025,11 @@ fn samples() -> Value {
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
     samples.insert("blocks".into(), json!(blocks()));
+    samples.extend(
+        documents()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value)),
+    );
     Value::Object(samples)
 }
 
@@ -1025,13 +1105,290 @@ fn task_board_samples() -> Vec<(String, Value)> {
         ("work", json!(guided)),
         ("emptyWork", json!(api::MachineWork::default())),
         ("taskChange", json!(change)),
-        ("bareChange", json!(bare)),
+        ("bareTaskChange", json!(bare)),
         ("taskAdded", json!(added)),
         ("taskRemoved", json!(removed)),
     ]
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+/// A value of each read a document's or a folder's page checks, as the server writes it: every
+/// field, then only those always sent.
+fn documents() -> Vec<(&'static str, Value)> {
+    use document_sample as part;
+    let change = part::change();
+    vec![
+        ("outline", json!(part::outline())),
+        ("bareOutline", json!(part::bare_outline())),
+        (
+            "sections",
+            json!(api::DocumentSections {
+                version: 13,
+                change: change.clone(),
+            }),
+        ),
+        ("change", json!(change)),
+        (
+            "bareChange",
+            json!(api::DocumentChange {
+                path: "docs/A.md".into(),
+                ..api::DocumentChange::default()
+            }),
+        ),
+        ("folder", json!(part::folder(Some(part::document())))),
+        ("bareFolder", json!(part::folder(None))),
+        (
+            "versions",
+            json!({"versions": [api::Version {
+                sha: "0123abc".into(),
+                date: "2026-11-14".into(),
+                subject: "Lamps".into(),
+            }]}),
+        ),
+        (
+            "diff",
+            json!(api::DocumentDiff {
+                sha: "0123abc".into(),
+                subject: "Lamps".into(),
+                diff: "-a\n+b".into(),
+            }),
+        ),
+        (
+            "asks",
+            json!({"asks": [part::ask()], "listening": true, "recipient": "amber-heron"}),
+        ),
+        (
+            "noAsks",
+            json!({"asks": [], "listening": false, "recipient": null}),
+        ),
+    ]
+}
+
+/// The parts of the documents' samples.
+mod document_sample {
+    use std::collections::BTreeMap;
+
+    use symphony_api::{self as api, Block, Span};
+
+    fn paragraph(words: &str) -> Block {
+        Block::Paragraph {
+            spans: vec![Span::Text { text: words.into() }],
+        }
+    }
+
+    fn fragment(words: &str) -> api::Fragment {
+        api::Fragment {
+            blocks: vec![paragraph(words)],
+            html: String::new(),
+            media: Vec::new(),
+        }
+    }
+
+    fn section(
+        key: &str,
+        part: Option<usize>,
+        comparison: Option<api::SectionComparison>,
+    ) -> api::Section {
+        api::Section {
+            start: 3,
+            end: 9,
+            key: key.into(),
+            hash: "h1".into(),
+            part,
+            blocks: vec![paragraph("Body")],
+            html: String::new(),
+            media: Vec::new(),
+            comparison,
+        }
+    }
+
+    fn changed() -> api::SectionComparison {
+        api::SectionComparison {
+            kind: api::Difference::Changed,
+            before: vec![paragraph("Before")],
+        }
+    }
+
+    fn card() -> api::DocumentCard {
+        api::DocumentCard {
+            slug: "lamp-colour".into(),
+            state: "pending".into(),
+            text: "Which colour?".into(),
+            group: "decide".into(),
+            open: true,
+        }
+    }
+
+    fn crumb(href: Option<&str>) -> api::Crumb {
+        api::Crumb {
+            name: "docs".into(),
+            href: href.map(Into::into),
+        }
+    }
+
+    fn task() -> api::DocumentTask {
+        api::DocumentTask {
+            slug: "app/lamps".into(),
+            title: "Lamps".into(),
+            status: "in_progress".into(),
+        }
+    }
+
+    /// A document with every field: a heading, a changed section, a card's section and its
+    /// thread, a task and a comparison.
+    pub(super) fn document() -> api::Document {
+        api::Document {
+            version: 12,
+            path: "docs/lamps/LAMPS.md".into(),
+            title: "Lamps".into(),
+            waiting: vec!["lamp-colour".into()],
+            crumbs: vec![crumb(Some("/docs/")), crumb(None)],
+            headings: vec![api::Heading {
+                level: 2,
+                anchor: "colour".into(),
+                text: "Colour".into(),
+            }],
+            sections: vec![
+                section("colour", None, Some(changed())),
+                section("card:lamp-colour", Some(1), None),
+            ],
+            cards: vec![card()],
+            threads: BTreeMap::from([("lamp-colour".to_string(), fragment("Agreed."))]),
+            tasks: vec![task()],
+            comparison: Some(api::DocumentComparison {
+                task: "design/lamps".into(),
+            }),
+        }
+    }
+
+    pub(super) fn outline() -> api::DocumentOutline {
+        api::DocumentOutline {
+            document: document(),
+            anchors: BTreeMap::from([("colour".to_string(), vec!["colour".to_string()])]),
+            thread_hashes: BTreeMap::from([("lamp-colour".to_string(), "t1".to_string())]),
+        }
+    }
+
+    /// An outline of a document holding nothing but what is always sent.
+    pub(super) fn bare_outline() -> api::DocumentOutline {
+        api::DocumentOutline {
+            document: api::Document {
+                version: 0,
+                path: "docs/A.md".into(),
+                title: "A".into(),
+                waiting: vec![],
+                crumbs: vec![],
+                headings: vec![],
+                sections: vec![],
+                cards: vec![],
+                threads: BTreeMap::new(),
+                tasks: vec![],
+                comparison: None,
+            },
+            anchors: BTreeMap::new(),
+            thread_hashes: BTreeMap::new(),
+        }
+    }
+
+    /// A change with every field: a section and a thread written and removed, a card changed
+    /// and one removed, and every part of the document's own written.
+    pub(super) fn change() -> api::DocumentChange {
+        api::DocumentChange {
+            path: "docs/lamps/LAMPS.md".into(),
+            removed: true,
+            sections: vec![section("colour", Some(0), Some(changed()))],
+            deleted: vec!["old".into()],
+            positions: vec![api::SectionPosition {
+                key: "colour".into(),
+                start: 4,
+                end: 10,
+                part: None,
+            }],
+            order: Some(vec!["colour".into(), "card:lamp-colour".into()]),
+            threads: BTreeMap::from([
+                ("lamp-colour".to_string(), Some(fragment("Agreed."))),
+                ("lamp-size".to_string(), None),
+            ]),
+            title: Some("Lamps".into()),
+            waiting: Some(vec![]),
+            crumbs: Some(vec![crumb(None)]),
+            headings: Some(vec![]),
+            cards: vec![
+                api::ItemChange {
+                    key: "lamp-colour".into(),
+                    value: Some(card()),
+                    removed: false,
+                },
+                api::ItemChange {
+                    key: "lamp-size".into(),
+                    value: None,
+                    removed: true,
+                },
+            ],
+            tasks: Some(vec![task()]),
+            comparison: Some(vec![]),
+        }
+    }
+
+    fn entry(kind: &str) -> api::FolderEntry {
+        api::FolderEntry {
+            kind: kind.into(),
+            path: "docs/lamps".into(),
+            title: "Lamps".into(),
+            docs: 3,
+            waiting: 1,
+            summary: "The lamps.".into(),
+        }
+    }
+
+    pub(super) fn folder(intro: Option<api::Document>) -> api::Folder {
+        api::Folder {
+            path: "docs".into(),
+            title: "Docs".into(),
+            crumbs: vec![crumb(None)],
+            docs: 4,
+            intro,
+            entries: vec![entry("folder"), entry("doc")],
+        }
+    }
+
+    /// An ask answered, with a message holding blocks and one holding none.
+    pub(super) fn ask() -> api::Ask {
+        let message = api::AskMessage {
+            seq: 1,
+            kind: "question".into(),
+            by: "owner".into(),
+            text: "Why?".into(),
+            at: 1.5,
+            blocks: vec![paragraph("Why?")],
+            html: String::new(),
+            media: Vec::new(),
+        };
+        api::Ask {
+            id: 7,
+            path: "docs/lamps/LAMPS.md".into(),
+            anchor: "colour".into(),
+            quote: "warm".into(),
+            question: "Why?".into(),
+            asked: 1.0,
+            updated: 2.5,
+            answers: vec![api::AskAnswer {
+                text: "Because.".into(),
+                by: "agent".into(),
+                at: 2.0,
+            }],
+            messages: vec![
+                message.clone(),
+                api::AskMessage {
+                    blocks: vec![],
+                    ..message
+                },
+            ],
+            status: "open".into(),
+        }
+    }
 }
 
 /// A window of one period every source recorded whole, with every status, wait, role and gauge it
@@ -1191,10 +1548,18 @@ mod sample {
             .collect()
     }
 
+    /// The style every presentation of the sample holds, which a client writes as given: a value
+    /// marked `!important` and a declaration after a comment holding a `;`, which a client that
+    /// sets a style property by property would lose.
+    const STYLE: &str = "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ \
+                         background-color: rgba(0, 96, 192, 0.1)";
+
     fn presentation(class: &str, attributes: &[(&str, &str)]) -> api::Presentation {
+        let mut attributes = pairs(attributes);
+        attributes.insert("style".into(), STYLE.into());
         api::Presentation {
             class: class.into(),
-            attributes: pairs(attributes),
+            attributes,
             ..api::Presentation::default()
         }
     }

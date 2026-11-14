@@ -136,7 +136,7 @@ describe("a listing as the client reads it", () => {
 describe("a change the feed sends", () => {
   it("of a task's fields is read as it was sent", () => {
     expect(readTaskChange(CASES.samples.taskChange)).toEqual(CASES.samples.taskChange);
-    expect(readTaskChange(CASES.samples.bareChange)).toEqual(CASES.samples.bareChange);
+    expect(readTaskChange(CASES.samples.bareTaskChange)).toEqual(CASES.samples.bareTaskChange);
     expect(readTaskChange({ key: "w/a", fields: { title: null } })).not.toBeNull();
   });
 

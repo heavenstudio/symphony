@@ -20,13 +20,13 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: two page kinds, and the program.
-const KINDS: [&str; 3] = ["docs", "review", "program"];
+/// What bundle.sh builds, each with its own dx run: the documents' kind, and the program.
+const KINDS: [&str; 2] = ["docs", "program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
 /// kind is its script, with no wasm, and its styles, the shared stylesheet and then as many of its
 /// own as given here. The task board has none: its styles (assets/board.css) are every Dioxus
 /// kind's, in the shared file.
-const WEB: [(&str, usize); 3] = [("board", 0), ("queue", 1), ("reports", 1)];
+const WEB: [(&str, usize); 4] = [("board", 0), ("queue", 1), ("reports", 1), ("review", 1)];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
@@ -320,8 +320,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The two kinds built alone, each of the program's (the media layer is none) and the web
-    // client's.
+    // The kind built alone, each of the program's (the media layer is none) and the web client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
         KINDS.len() - 1 + PROGRAM.len() - 1 + WEB.len()
@@ -356,7 +355,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..2] {
+    for kind in &KINDS[..1] {
         for key in ["script", "wasm"] {
             file(manifest[kind][key].as_str().unwrap());
         }
@@ -622,14 +621,14 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             .output()
             .expect("run cargo-symphony-ui")
     };
-    let done = size(&["floor_dioxus", "review"]);
+    let done = size(&["floor_dioxus", "docs"]);
     succeeded(&done, "cargo symphony-ui size");
     let out = scratch.0.join("sizes").canonicalize().unwrap();
 
     // bundle.sh's arguments for a page kind (the dist test's), the probe's with its own bin.
     for (name, bin, features) in [
         ("floor_dioxus", "floor_dioxus", "web,size-probe"),
-        ("review", "symphony-ui", "page-review"),
+        ("docs", "symphony-ui", "page-docs"),
     ] {
         let dx = fs::read_to_string(dx_said.join(name)).expect("dx never bundled it");
         assert_eq!(
@@ -663,11 +662,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             linked.join(format!("{stem}.wasm")).display(),
             out.join(format!(
                 "{}-nodwarf.wasm",
-                if stem == "symphony-ui" {
-                    "review"
-                } else {
-                    stem
-                }
+                if stem == "symphony-ui" { "docs" } else { stem }
             ))
             .display()
         ))
@@ -676,7 +671,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     assert_eq!(bindgen.len(), 2);
     for (call, (name, stem)) in bindgen
         .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("review", "symphony-ui")])
+        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
     {
         assert_eq!(
             *call,
@@ -691,7 +686,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     assert_eq!(opt.len(), 2);
     for (call, (name, stem)) in opt
         .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("review", "symphony-ui")])
+        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
     {
         assert_eq!(
             *call,
@@ -713,7 +708,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let stdout = String::from_utf8(done.stdout).unwrap();
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{stdout}");
-    for (line, name) in lines.iter().zip(["floor_dioxus", "review"]) {
+    for (line, name) in lines.iter().zip(["floor_dioxus", "docs"]) {
         let numbers: Vec<usize> = line
             .split(|c: char| !c.is_ascii_digit())
             .filter(|word| !word.is_empty())
@@ -764,7 +759,7 @@ fn cargo_symphony_ui_clippy_cleans_another_trees_wasm32_build_before_it_lints_th
     };
     let mut clippy: Vec<_> = KINDS.iter().map(|kind| format!("clippy -p symphony-ui --target {WASM32} --lib --bins --locked --no-default-features --features web,page-{kind} -- -D warnings")).collect();
     clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin symphony-ui-dev --locked --no-default-features --features web,devtools -- -D warnings"));
-    clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin floor_dioxus --bin floor_websys --bin entry_websys --locked --no-default-features --features web,size-probe -- -D warnings"));
+    clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin floor_dioxus --bin floor_websys --locked --no-default-features --features web,size-probe -- -D warnings"));
     let mut expected = vec![
         format!("clean --workspace --target {WASM32} --profile dev --quiet --locked"),
         format!("clean --workspace --target {WASM32} --profile wasm-release --quiet --locked"),

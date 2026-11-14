@@ -1,12 +1,11 @@
-//! The Symphony's client: the board view of `/`, drawn from the server's JSON API
-//! (crates/symphony-api) and kept current by its feed of deltas.
+//! The Symphony's Dioxus client: the pages the web client (apps/symphony-web) does not draw yet,
+//! drawn from the server's JSON API (crates/symphony-api) and kept current by its feed of deltas.
 //!
-//! - [`state`]: a feed event applied to the board, pure; what moved, what to tell the owner.
+//! - [`state`]: following the feed, pure: the waits after a lost feed, another build loaded.
 //! - [`words`]: the board's words and times.
-//! - [`view`]: the components, pure functions of a [`symphony_api::Board`].
 //! - [`cache`]: what a page drew, kept on the device by the shell's store (`assets/cache.js`).
-//! - [`platform`]: the one trait every platform hook goes behind (notifications, a link opened
-//!   outside, storage), so the browser and the desktop window run the same app.
+//! - [`platform`]: the one trait every platform hook goes behind (a link opened outside,
+//!   storage), so the browser and the desktop window run the same app.
 //! - `live` (wasm only): the fetch and the feed.
 
 #![cfg_attr(not(feature = "page-program"), forbid(unsafe_code))]
@@ -62,8 +61,6 @@ pub mod theme;
 ))]
 pub mod timeline_slot;
 pub mod trouble;
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-review"))]
-pub mod view;
 pub mod viewer;
 pub mod viewport;
 pub mod words;

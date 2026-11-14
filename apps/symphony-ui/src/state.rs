@@ -1,7 +1,9 @@
-//! The pure half of following the feed: one event applied to the board in place, how long to
-//! wait before trying a lost feed again, and when another client build loads the page again.
+//! The pure half of following the feed: how long to wait before trying a lost feed again, when
+//! another client build loads the page again, and what the panel's toasts and the asks' readers
+//! make of what it heard. Home applies each event to its board in the web client
+//! (apps/symphony-web/src/home-board.ts).
 
-use symphony_api::{ActivityItem, BOARD_CARDS, Board, Change, Delta};
+use symphony_api::ActivityItem;
 
 /// The first wait before a lost feed is tried again, in ms.
 const FIRST_WAIT_MS: i32 = 1_000;
@@ -316,88 +318,4 @@ impl Toasts {
     pub fn items(&self) -> impl Iterator<Item = &ActivityItem> {
         self.shown.iter().map(|(_, item)| item)
     }
-}
-
-/// A region of the board that moved.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Region {
-    /// The card at this index of `Board::next`.
-    Card(usize),
-    Queue,
-    Counts,
-    Progress,
-}
-
-/// What the owner is told when more cards wait on them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Notice {
-    pub title: String,
-    pub body: String,
-}
-
-/// What an event did.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Outcome {
-    /// The regions that moved, in the event's order.
-    pub moved: Vec<Region>,
-    /// Set when more cards wait on the owner after the event than before it.
-    pub notice: Option<Notice>,
-}
-
-/// Apply `delta` to `board`. An event at or before the board's version was already applied
-/// (the feed replays from `since` on a reconnect), so it changes nothing.
-pub fn apply(board: &mut Board, delta: &Delta) -> Outcome {
-    let mut outcome = Outcome::default();
-    if delta.version <= board.version {
-        return outcome;
-    }
-    let waiting = board.counts.waiting;
-    for change in &delta.changes {
-        match change {
-            Change::Card(card) => {
-                if let Some(index) = board
-                    .next
-                    .iter()
-                    .position(|shown| shown.slug == card.slug && shown.doc == card.doc)
-                {
-                    board.next[index] = card.clone();
-                    outcome.moved.push(Region::Card(index));
-                }
-            }
-            Change::Queue(cards) => {
-                board.next = cards.iter().take(BOARD_CARDS).cloned().collect();
-                outcome.moved.push(Region::Queue);
-            }
-            Change::Counts(counts) => {
-                board.counts = counts.clone();
-                outcome.moved.push(Region::Counts);
-            }
-            Change::Progress(progress) => {
-                board.progress = progress.clone();
-                outcome.moved.push(Region::Progress);
-            }
-            Change::Client { build } => board.build.clone_from(build),
-            Change::Other => {}
-        }
-    }
-    board.version = delta.version;
-    if board.counts.waiting > waiting {
-        let count = board.counts.waiting;
-        outcome.notice = Some(Notice {
-            title: format!(
-                "{count} {} on you",
-                if count == 1 {
-                    "card waits"
-                } else {
-                    "cards wait"
-                }
-            ),
-            body: board
-                .next
-                .first()
-                .map(|card| card.title.clone())
-                .unwrap_or_default(),
-        });
-    }
-    outcome
 }

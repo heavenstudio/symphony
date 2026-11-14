@@ -20,15 +20,20 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The two page kinds built alone; and the program's kinds (src/split.rs), one build of it.
-const KINDS: [&str; 2] = ["docs", "review"];
+/// The page kind built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 1] = ["docs"];
 const PROGRAM: [&str; 4] = ["tasks", "panel", "overlay", "timeline"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
 const CHUNKS: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
 /// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
 /// own (the task board's styles are the Dioxus kinds' board.css).
-const WEB: [(&str, bool); 3] = [("board", false), ("queue", true), ("reports", true)];
+const WEB: [(&str, bool); 4] = [
+    ("board", false),
+    ("queue", true),
+    ("reports", true),
+    ("review", true),
+];
 
 /// The stand-in dx: the first bundle's docs build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
@@ -78,7 +83,7 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in board queue reports; do
+for kind in board queue reports review; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
     if [ "$kind" != board ]; then

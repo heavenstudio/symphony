@@ -605,6 +605,7 @@ pub struct AgentPage {
 
 /// A document snapshot and the feed cursor taken atomically with it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Document {
     pub version: u64,
     pub path: String,
@@ -623,6 +624,7 @@ pub struct Document {
 /// Why this document shows differences from main. The task link is global, while document links
 /// and all writes retain the selected checkout's scope.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentComparison {
     pub task: String,
 }
@@ -630,6 +632,7 @@ pub struct DocumentComparison {
 /// Metadata for a document whose bodies and threads are fetched near the viewport. Anchor ids
 /// reserve their destinations before their section's markup is mounted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentOutline {
     pub document: Document,
     pub anchors: std::collections::BTreeMap<String, Vec<String>>,
@@ -703,18 +706,21 @@ impl DocumentOutline {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentSections {
     pub version: u64,
     pub change: DocumentChange,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Crumb {
     pub name: String,
     pub href: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Heading {
     pub level: u8,
     pub anchor: String,
@@ -722,17 +728,21 @@ pub struct Heading {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Fragment {
     #[serde(default)]
     pub blocks: Vec<Block>,
     /// Internal compatibility with the server's Markdown pipeline; never sent to the client.
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Section {
     pub start: usize,
     pub end: usize,
@@ -742,8 +752,10 @@ pub struct Section {
     #[serde(default)]
     pub blocks: Vec<Block>,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<SectionComparison>,
@@ -751,6 +763,7 @@ pub struct Section {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub enum Difference {
     Added,
     Changed,
@@ -759,6 +772,7 @@ pub enum Difference {
 
 /// Main's previous content is loaded with this section's body, never in its outline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SectionComparison {
     pub kind: Difference,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -766,6 +780,7 @@ pub struct SectionComparison {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentCard {
     pub slug: String,
     pub state: String,
@@ -775,6 +790,7 @@ pub struct DocumentCard {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentTask {
     pub slug: String,
     pub title: String,
@@ -794,6 +810,7 @@ impl DocumentTask {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Folder {
     pub path: String,
     pub title: String,
@@ -804,6 +821,7 @@ pub struct Folder {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct FolderEntry {
     pub kind: String,
     pub path: String,
@@ -816,6 +834,7 @@ pub struct FolderEntry {
 /// Document deltas never carry an unchanged fragment. Positions are separate from content, so an
 /// inserted line does not resend every card below it. `order` is present only when keys move.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentChange {
     pub path: String,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -848,6 +867,7 @@ pub struct DocumentChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SectionPosition {
     pub key: String,
     pub start: usize,
@@ -856,6 +876,7 @@ pub struct SectionPosition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Version {
     pub sha: String,
     pub date: String,
@@ -863,6 +884,7 @@ pub struct Version {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentDiff {
     pub sha: String,
     pub subject: String,
@@ -870,6 +892,7 @@ pub struct DocumentDiff {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Ask {
     pub id: i64,
     pub path: String,
@@ -884,6 +907,7 @@ pub struct Ask {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AskAnswer {
     pub text: String,
     pub by: String,
@@ -891,6 +915,7 @@ pub struct AskAnswer {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AskMessage {
     pub seq: i64,
     pub kind: String,
@@ -899,10 +924,13 @@ pub struct AskMessage {
     pub at: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocks: Vec<Block>,
-    /// Legacy reads only; `format=blocks` leaves these fields empty.
+    /// Legacy reads only; `format=blocks` leaves these fields empty, so the web client, which reads
+    /// blocks alone, is never sent them.
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
 }
 
@@ -910,8 +938,8 @@ pub struct AskMessage {
 /// Upserts replace that record, removals delete it; an order event moves one key after `after`,
 /// or to the front when `after` is null. The server never sends the whole task board in a delta.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ItemChange<T> {
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

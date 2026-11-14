@@ -63,7 +63,7 @@ custom_only() {
 }
 # The program last: its styles are placed by what the other kinds load. The web client's kinds
 # (apps/symphony-web) are placed after the shared stylesheet, below.
-for module_kind in docs review program; do
+for module_kind in docs program; do
     module="$out/.modules/$module_kind"
     # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
     # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
@@ -148,8 +148,9 @@ done
 # The task timeline's module only ever draws inside a task page, whose styles are in already: the
 # shared file is the pages' (its own few styles do not narrow it), and it names that file too, so
 # it loads only what the page has not. The pictures' styles (`media-`) stay out of it, though every
-# Dioxus kind loads them: the web client's kinds, which show no picture (the queue, Reports, the
-# task board), take the shared file and their own.
+# Dioxus kind loads them: the web client's kinds take the shared file and their own, home with its
+# own copy of them (its entry's CSS), and the queue, Reports and the task board, which show no
+# picture, with none.
 shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
@@ -222,4 +223,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: home and the documents as modules of their own, the web client's kinds (the queue, Reports, the task board) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the documents as a module of their own, the web client's kinds (home, the queue, Reports, the task board) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

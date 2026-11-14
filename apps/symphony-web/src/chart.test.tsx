@@ -5,7 +5,6 @@ import {
   type ChartData,
   ChartTable,
   coverage,
-  fixed,
   format,
   GhostChart,
   gap,
@@ -59,30 +58,6 @@ function openWork(): SeriesData[] {
 }
 
 describe("a figure's words", () => {
-  it.each([
-    [2.125, 2, "2.12"],
-    [0.125, 2, "0.12"],
-    [2.5, 0, "2"],
-    [3.5, 0, "4"],
-    [0.25, 1, "0.2"],
-    [0.75, 1, "0.8"],
-    [12.25, 1, "12.2"],
-    [1234.5, 0, "1234"],
-    [2.875, 2, "2.88"],
-    [0.375, 2, "0.38"],
-    [1.005, 2, "1.00"],
-    [33.333333333333336, 2, "33.33"],
-    [9.995, 2, "9.99"],
-    [9.96, 1, "10.0"],
-    [99.5, 0, "100"],
-    [-0, 2, "-0.00"],
-    [-0.001, 2, "-0.00"],
-    [-2.5, 0, "-2"],
-    [7, 0, "7"],
-  ])("write %d to %d places as Rust's {:.N} does: %s", (value, places, text) => {
-    expect(fixed(value, places)).toBe(text);
-  });
-
   it("drop trailing zeros, and never write a negative zero", () => {
     expect(short(2.5, 2)).toBe("2.5");
     expect(short(3, 2)).toBe("3");
