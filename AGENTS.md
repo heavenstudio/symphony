@@ -82,12 +82,28 @@ planner, test selection, certificate or shared slot pool. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
 slot wrapper and gates, which compile and test its own consumers.
 
-`tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
-relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
-that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
-is never recorded. A board
+`tools/rs-bin.sh NAME` runs a declared workspace binary as `rs-bin/NAME` in the target
+folder, a hard link to Cargo's copy renewed only when Cargo relinked, so a no-op build
+costs no new executable's first run. A run asks Cargo to build first unless nothing
+Cargo would read changed since the last build the launcher asked it for began, as a
+stamp beside the link says (`rs-bin/.NAME.fresh`, holding the second that build began
+and the identity of the build it vouches for, so one linked in its place since asks too):
+each file Cargo's own `debug/NAME.d` names, everything under a folder it names (one a
+build script watches) and the manifest above each; the workspace's manifest and lock,
+the launcher and `tools/cargo.sh`; every Cargo configuration and toolchain pin from the
+root up and in Cargo's and rustup's homes; and the variables Cargo, rustc and rustup
+read, those the target's build scripts declared and those its sources read as rustc
+recorded them (`# env-dep:` in each unit's dep-info). A file counts as changed when its
+status changed (its ctime, which a write, a move, a copy keeping times or a touch sets
+to now) in that second or after, so the stamp's own file times count for nothing; an
+account it cannot read or a stamp from the future asks Cargo. It does not see a
+variable whose name bash cannot read (a target triple's hyphens; the underscore twin a
+build script declares with it is seen) or a toolchain a channel pin names updated in
+place (this workspace pins a version), and a clock set back past the stamp's second
+fools it as it fools Cargo.
+`--build NAME` builds and prints that path, `--where NAME` names Cargo's own copy
+without building or attesting freshness, and `--link NAME` builds and points
+`.target/bin/NAME` at it; no build of the launcher's is recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
 moves its live schema forward only for a build of the schema source the main checkout
@@ -97,7 +113,8 @@ containing project. `just symphony
 
 `symphony-build` (`crates/symphony/src/bin/symphony-build.rs`, `symphony::cli::build_main`) holds
 the commands only this repository's own build and release run use: `publish-client`,
-`release-inputs`, `size-budget`, `split-repair` and `release`. The recipes and scripts run it by
+`release-inputs`, `size-budget`, `crates-check`, `split-repair` and `release`. The recipes and
+scripts run it by
 `tools/rs-bin.sh symphony-build`; it is never shipped or installed (`init::BUILDS` does not name
 it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
 links them ([CHECKS](docs/CHECKS.md#size-budgets)).
@@ -138,7 +155,9 @@ built path and byte with that committed distribution. The distribution keeps the
 previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
 build is gone loads again onto the current one. The check allows those older builds and refuses
 a build or a file beyond them. `just verify` runs lint, that real client check, the shipped
-binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit and the
+binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit, the crates check
+(each published package's version on crates.io holding its sources,
+[RELEASES](docs/RELEASES.md#packages-on-cratesio)) and the
 workspace's native/headless browser tests locally, each step whatever the ones before it did and
 with a log of its own (`tools/verify.sh`): the release run's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-release-run)). Local acceptance requires a working
@@ -213,7 +232,10 @@ run once 20 tasks have landed since the last release or the last run that checke
 `just release` in the main checkout makes or renews, which counts with git and builds nothing
 short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
-run at once. A green release then refreshes the machine
+run at once. A green release, once pushed, publishes on crates.io each package whose version it
+lacks only while `[releases] publish` says so, which this repository leaves off: turning it on is
+the owner's word ([the packages](docs/RELEASES.md#packages-on-cratesio)). It then refreshes the
+machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
 branch of its own through its own commit gate, its main fast-forwarded to that branch's one
 commit, by its hash, in its main checkout through its own hooks when that commit is the move and
@@ -267,8 +289,10 @@ stamped line, only where there is none, and adds `/.target/` and the artifacts f
 line. Each recipe runs
 the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
 linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
-Symphony's board clients share). Stamped copies are kept current; an unstamped
-project copy wins. Project-specific skills and taste data stay in the project.
+Symphony's board clients share). Stamped copies are kept current; one that differs from
+its stamp, an edit since, is written over all the same, its line saying so and where the
+project's own goes (a recipe in its justfile); an unstamped project copy wins.
+Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
 permission rule but the allow rules. A rule carries no stamp, so init removes only one a
 landed init wrote and it no longer does: an allow rule (`RETIRED`: the env-prefixed
@@ -326,13 +350,15 @@ themselves, which no rule allows, write where they are told: the owner's way to 
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
-Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
-left (`Next:`): the project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by
-its address in this repository, its document folders, the justfile's import, the links
-to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
-beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
-rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
-pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
+Init refuses a `--root` that is not a folder or is in no git checkout (a bare repository or a
+`.git` folder is none), making nothing. It ends by printing what is left (`Next:`): the
+project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by its address in
+this repository, its document folders, the justfile's import, the links to the project's
+builds the recipes and hooks find nowhere (with the `ln -s` for those beside the running
+`symphony`, and the `cargo build` in a Symphony checkout for the rest), `just` when it is not
+on PATH, the board's SurrealDB (the line that fetches the pinned tarball and checks its
+SHA-256), the board's making while it is not made (`just tasks list`: the Symphony only reads
+a board) and the machine's registration; then that Claude
 Code counts the allow rules only once the folder is trusted. It warns on stderr while
 the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs, the guides and the binaries' strings is an installed recipe or

@@ -507,6 +507,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            published: None,
             rerun: None,
         }
     }

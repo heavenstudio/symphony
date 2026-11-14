@@ -672,10 +672,12 @@ if [ -n "${FAIL_CLIENT:-}" ]; then echo 'client-check stand-in: differs'; exit 1
 exit 0
 "#;
 
-/// `tools/rs-bin.sh`'s stand-in: red under `FAIL_PUBLISH`, and the size budgets under `FAIL_SIZE`.
+/// `tools/rs-bin.sh`'s stand-in: red under `FAIL_PUBLISH`, the size budgets under `FAIL_SIZE` and
+/// the crates check under `FAIL_CRATES`.
 const RS_BIN: &str = r#"#!/bin/sh
 if [ -n "${FAIL_PUBLISH:-}" ]; then exit 4; fi
 if [ "$2" = size-budget ] && [ -n "${FAIL_SIZE:-}" ]; then echo 'size stand-in: past its budget'; exit 3; fi
+if [ "$2" = crates-check ] && [ -n "${FAIL_CRATES:-}" ]; then echo 'crates stand-in: sources moved'; exit 5; fi
 exit 0
 "#;
 
@@ -819,16 +821,17 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
 }
 
 /// The steps of a verify, in the order it runs them, each with the label its record keeps.
-const STEPS: [(&str, &str); 5] = [
+const STEPS: [(&str, &str); 6] = [
     ("lint", "just lint-rs"),
     ("client-check", "just client-check"),
     ("size-check", "just size-check"),
     ("docs-audit", "docs audit"),
+    ("crates-check", "crates check"),
     ("tests", "tests"),
 ];
 
 #[test]
-fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_and_tests() {
+fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_checks_docs_and_tests() {
     let setup = Setup::new("record-script-verify");
     let recipes = Recipes::new(&setup);
     let (tree, runs) = (&recipes.tree, &recipes.runs);
@@ -842,12 +845,12 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(&recipes.work, runs, 6));
+    let first = symphony_api::fold(day_lines(&recipes.work, runs, 7));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(&recipes.work, runs, 12);
+    let lines = day_lines(&recipes.work, runs, 14);
     // A start line and an end line for each run and step, and none for the commands inside them.
-    assert_eq!(lines.len(), 24, "{lines:#?}");
+    assert_eq!(lines.len(), 28, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
         .into_iter()
         .filter(|line| first.iter().all(|earlier| earlier.run != line.run))
@@ -861,7 +864,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
     let commit = git_says(tree, &["rev-parse", "HEAD"]);
     let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
-        assert_eq!(runs.len(), 6, "{runs:#?}");
+        assert_eq!(runs.len(), 7, "{runs:#?}");
         let verify = named(runs, None);
         assert_eq!(
             (
@@ -922,7 +925,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
         );
     }
     // Each step's operation is a child of its run's; the commands inside them are none.
-    let history = setup.history(12);
+    let history = setup.history(14);
     for record in &history {
         let line = second
             .iter()
@@ -989,12 +992,13 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("FAIL_CLIENT", "yes"),
             ("NO_CLIENT", "yes"),
             ("FAIL_SIZE", "yes"),
+            ("FAIL_CRATES", "yes"),
             ("FAIL_TESTS", "yes"),
         ],
     );
     assert_eq!(red.status.code(), Some(1), "{red:?}");
     // Every step ran past the reds before it, each recorded as its own command ended.
-    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 6));
+    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 7));
     let ended: Vec<_> = STEPS
         .iter()
         .map(|(step, _)| {
@@ -1011,6 +1015,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("client-check", Some(End::Red), Some(1)),
             ("size-check", Some(End::Red), Some(3)),
             ("docs-audit", Some(End::Green), Some(0)),
+            ("crates-check", Some(End::Red), Some(5)),
             ("tests", Some(End::Red), Some(9)),
         ]
     );
@@ -1027,6 +1032,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("client-check", 1, "just client-check build/verified-client"),
             ("size-check", 3, "just size-check"),
             ("docs-audit", 0, "just symphony-cli docs-audit --check"),
+            ("crates-check", 5, "just crates-check"),
             ("tests", 9, "tools/test-lanes.sh"),
         ]
     );
@@ -1041,6 +1047,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     assert!(log("lint").starts_with("fmt stand-in: a diff\n"));
     assert!(log("client-check").contains("client-check stand-in: differs\n"));
     assert!(log("size-check").starts_with("size stand-in: past its budget\n"));
+    assert!(log("crates-check").starts_with("crates stand-in: sources moved\n"));
     // The stale client is gone, and the tests say they were served none.
     assert!(!stale.exists(), "the client check's folder was cleared");
     let tests = log("tests");
@@ -1055,6 +1062,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
         ("lint", 8),
         ("client-check", 1),
         ("size-check", 3),
+        ("crates-check", 5),
         ("tests", 9),
     ] {
         let head = format!("verify: {name} red, exit {code} (");
@@ -1068,7 +1076,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     assert!(out.contains("\nverify: docs-audit green ("), "{out}");
     assert!(out.contains(&format!("; {none}\n")), "{out}");
     assert!(
-        out.ends_with("\nverify: red in lint, client-check, size-check, tests\n"),
+        out.ends_with("\nverify: red in lint, client-check, size-check, crates-check, tests\n"),
         "{out}"
     );
 }
@@ -1099,6 +1107,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
             ("client-check", 1),
             ("size-check", 0),
             ("docs-audit", 0),
+            ("crates-check", 0),
             ("tests", 0)
         ]
     );
@@ -1116,7 +1125,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         "{tests}"
     );
     assert_eq!(
-        steps[4].3,
+        steps[5].3,
         "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/test-lanes.sh"
     );
     assert!(
@@ -1138,7 +1147,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         tests.contains("\nverify: the client check did not run in this verify, so "),
         "{tests}"
     );
-    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 9));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 10));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let labels: Vec<&str> = (lines.iter())
         .filter(|line| line.step.is_none())
@@ -1155,7 +1164,8 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     assert_eq!(unknown.status.code(), Some(2), "{unknown:?}");
     assert!(
         String::from_utf8_lossy(&unknown.stderr).starts_with(
-            "verify: no step nothing; the steps are lint client-check size-check docs-audit tests\n"
+            "verify: no step nothing; the steps are lint client-check size-check docs-audit \
+             crates-check tests\n"
         ),
         "{unknown:?}"
     );

@@ -88,9 +88,11 @@ a measurement before and after.
   or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication. The packages test is also the closest one for a change to a file a package
-  carries a copy of (the client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it
-  fails until the copy is made again, naming the `cp`.
+  never a publication. A change to a published package's sources adds `just crates-check`, red
+  for a package whose version crates.io holds with other sources, which only reads crates.io. The
+  packages test is also the closest one for a change to a file a package carries a copy of (the
+  client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
+  made again, naming the `cp`.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
@@ -255,7 +257,8 @@ back as main has it.
 ## The release run
 
 `just verify` is the full verification: lint, the real client check, the
-[size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
+[size budgets](#size-budgets), the docs audit, the crates check
+([RELEASES](RELEASES.md#packages-on-cratesio)), and every test target of the workspace, the
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
@@ -282,8 +285,9 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
-and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+budgets, the docs audit, the crates check and the tests (`tools/verify.sh`), each whatever the
+ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
+is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 `build/verify/STEP.log` (a folder of the run's when the release run runs it), which `steps.tsv`
 beside it lists with each step's exit status, seconds and command and the load average it ended
@@ -415,10 +419,14 @@ On macOS every binary of the three packages links with `-no_exported_symbols` (e
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
 link writes by default an export trie, a name for each global symbol, for code that loads the
 binary to find them by, and no code loads these: the trie the flag leaves out is about 360 KB of
-the server and 330 KB of `symphony` and of `tasks`. Two dependencies build in one codegen unit
-(`Cargo.toml`), comrak and regex-syntax, whose large constant tables each unit that reads one
-would otherwise hold a copy of: about 200 KB of the server and of `symphony`, and 100 KB of
-`tasks`.
+the server and 330 KB of `symphony` and of `tasks`. Every crate builds in one codegen unit
+(`codegen-units = 1` under `Cargo.toml`'s `[profile.release]`): in the compiler's default 16 a
+crate compiles a generic or helper into each unit that reaches it, with its unwind tables, inlines
+across none of them, and copies a large constant table (comrak's, regex-syntax's Unicode tables)
+into each unit that reads it. One unit saves about 2.7 MB of the server, 1.8 MB of `symphony`,
+2.4 MB of `tasks` and 0.5 MB of `agent-send`. It costs each crate's release compile, a cold
+release build about 30 % longer, and a change's size no longer moves with code shifting between
+units.
 
 The release profile leaves out the symbol table (`strip = true`), and with no export trie either,
 nothing in a shipped binary names a function. A panic still prints its thread, file:line:col and
@@ -426,13 +434,12 @@ message, but `RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw a
 lldb and atos (so `sample`, a crash report and Instruments) name no frame. A build to debug or
 profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps every name.
 
-The release profile, the two codegen units and the link flag are this workspace's: a consuming
-project that builds its own host or board binaries in a workspace of its own gets them only by
-setting them there. That is `strip = true` under `[profile.release]` and a
-`[profile.release.package.NAME]` with `codegen-units = 1` for comrak and for regex-syntax in its
-workspace's `Cargo.toml`, and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols`
-printed by its host package's own `build.rs`, as Cargo passes a link argument only to the bins of
-the package that prints it, never to a dependent's.
+The release profile and the link flag are this workspace's: a consuming project that builds its
+own host or board binaries in a workspace of its own gets them only by setting them there. That is
+`strip = true` and `codegen-units = 1` under `[profile.release]` in its workspace's `Cargo.toml`,
+and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols` printed by its host package's
+own `build.rs`, as Cargo passes a link argument only to the bins of the package that prints it,
+never to a dependent's.
 
 It is a step of `just verify` (`size-check`), so [the release run](#the-release-run) runs it on
 main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a

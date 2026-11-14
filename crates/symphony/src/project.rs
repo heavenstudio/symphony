@@ -219,6 +219,9 @@ pub struct Releases {
     /// Whether a green release refreshes the machine: each consuming project's pin and board,
     /// and the shared server through its own reload.
     pub refresh: bool,
+    /// Whether a green release, once pushed, publishes on crates.io each package whose version
+    /// crates.io lacks; off unless the project says, so nothing is published but on its word.
+    pub publish: bool,
     /// How many reruns of a release candidate may come back red before it is dropped and main's
     /// tip is run again; 0 holds no candidate.
     pub candidate_reruns: u32,
@@ -246,6 +249,7 @@ impl Default for Releases {
         Releases {
             every_landings: Releases::EVERY_LANDINGS,
             refresh: true,
+            publish: false,
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
         }
@@ -398,7 +402,8 @@ impl Project {
     /// The project as the client's header and home read it: its theme package's name, its register
     /// (by its route when an entrypoint holds it, as every link names a document), its plugins'
     /// navigation and its entrypoints' URLs, at the server's root (the server sets the base). Its
-    /// review guide is a file only the project's folder can show: [`Project::view_at`] reads it.
+    /// review guide, and whether its register's file is there, only the project's folder can show:
+    /// [`Project::view_at`] reads them.
     pub fn view(&self) -> symphony_api::ProjectView {
         symphony_api::ProjectView {
             name: crate::theme::Package::of(self).name,
@@ -412,11 +417,18 @@ impl Project {
         }
     }
 
-    /// [`Project::view`] of the project at `root`, with its review guide's route.
+    /// [`Project::view`] of the project at `root`, with its review guide's route, and no register
+    /// when its file is not there (a new project has none yet), so no link leads nowhere.
     pub fn view_at(&self, root: &Path) -> symphony_api::ProjectView {
+        let view = self.view();
         symphony_api::ProjectView {
             guide: self.guide(root).unwrap_or_default(),
-            ..self.view()
+            register: if root.join(&self.register).is_file() {
+                view.register.clone()
+            } else {
+                String::new()
+            },
+            ..view
         }
     }
 
@@ -573,6 +585,7 @@ impl Project {
             releases: Releases {
                 every_landings: file.releases.every_landings,
                 refresh: file.releases.refresh,
+                publish: file.releases.publish,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,
             },

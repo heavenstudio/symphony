@@ -23,6 +23,7 @@ shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
 Symphony. It starts detached, so it outlives whoever started it, and that is
 also the restart: a server that was killed is started again on the same data.
+A start says so in one line on stderr, as it takes seconds.
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -303,9 +304,10 @@ build linked at `.target/bin/tasks`, else, from a linked worktree, the main
 checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
 to make when it finds none. The Symphony's own board clients find it the same
 way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
-`tools/rs-bin.sh` builds the binary before every run, so the first command after
-a change to its sources takes a minute or two, later ones only Cargo's check
-that nothing changed. On the live board it is the main checkout's build, from
+`tools/rs-bin.sh` builds the binary before a run once its sources or settings
+changed, so the first command after such a change takes a minute or two, and
+later ones run the build without asking Cargo ([the launcher](../AGENTS.md#rust)).
+On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
@@ -357,7 +359,10 @@ checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
 it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there.
+there. A new project's board is made by its first board command, `just tasks list`
+say, which `symphony init` lists among the steps left too while the board is not
+made: the Symphony only reads a board, and its board page says so, in the
+refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
@@ -1516,7 +1521,13 @@ reason with no words is refused.
 ### The default landing
 
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
-task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
+task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
+task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
+of one says that the task is done on the board but not on the default branch until it lands, and
+the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
+with the task it is under, and a land
+with no branch so named names the branch whose tip is the commit the approve names, and the rename
+(`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
 land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
 guard against accident, not the gate: anyone can set an environment variable, and what
@@ -1582,7 +1593,9 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/cli/commands/size_budget.rs",
+  "/crates/symphony/src/cli/commands/crates_check.rs", "/crates/symphony/src/release/crates.rs",
+  "/crates/symphony/src/docs_audit.rs",
   "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
   "/crates/symphony/src/release/checks.rs",
   "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
@@ -1593,8 +1606,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   defaults decide what `#[cfg(feature = …)]` and `required-features` leave out of a test run)
   and what tests alone build with (`[dev-dependencies]`), the recipes and the scripts and budget under
   `tools/` they run, the lint and format settings, the project file's tables that say what
-  checks, lands and releases, and the checks' own code: the size budgets, the docs audit,
-  the release run's checks and their steps, this land with its list, and the red and
+  checks, lands and releases, and the checks' own code: the size budgets, the crates check, the
+  docs audit, the release run's checks and their steps, this land with its list, and the red and
   fast-fix marks. A project's own list replaces it. Beside the list a Rust file counts where
   the diff reaches a test-only module (its file saying `#![cfg(test)]`, declared under a
   test's attribute, by `#[path]` too, or declared by a test-only module), an item a test's
@@ -1840,7 +1853,9 @@ since past the first live line (registered 90 seconds or more before), and eithe
 channel, a `just tasks wait` in progress, an `attach` monitor) or already holds the orchestrator role
 on an unfinished task. A session that only registered is given nothing by the board's own choice,
 so a throwaway that registers and goes moves nothing. With none that stays, the task is marked
-waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`), and the first
+waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`, and `create` that
+it waits, while any orchestrator that has not left is on the board: a new project's has none, and
+says nothing of it), and the first
 orchestrator to come to stay is given it at the next whole-board read, told in one line however
 many it was given: `GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten
 named), in its wait, its monitor or its channel. The board's gives reach their receiver as that one
@@ -2562,8 +2577,10 @@ The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
 this browser last drew the task's timeline, at most 240 px on a phone and wide (the
 owner's choice, so the brief and the thread start near the page's top), with
 placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out (the latest steps in
-view on a phone, the first lanes wide), and "Show all" lets it grow.
+adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
+steps in view), and wide the lanes ending under the last that fits whole, the box kept
+that tall for the next visit. "Show all" lets it grow, naming what it shows: the steps
+on a phone, the lanes wide.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

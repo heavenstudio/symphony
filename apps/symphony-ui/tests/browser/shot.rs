@@ -2352,18 +2352,103 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
+/// Resolves once the shell has begun warming the persistent modules (assets/shell.js, `warm`): it
+/// does so once the page has drawn its data and gone quiet, as it starts reading ahead the links
+/// on the screen (`ahead`), so the shot's settle after it spans the page's reads ahead. Neither
+/// warming nor this wait reads this device's store.
+const WARMING: &str = "new Promise(resolve => { const look = () => \
+     document.querySelector('link[rel=prefetch]') ? resolve(true) : setTimeout(look, 100); look(); })";
+
+/// The home's links to the project's pages, by their words.
+const HOME_LINKS: &str =
+    "[...document.querySelectorAll('.dash-links a')].map(link => link.textContent.trim())";
+
+/// A new project's home, the real server's, as `symphony init` leaves the project: no
+/// docs/DECISIONS.md yet. The shot waits until the page has gone quiet and starts its reads ahead
+/// (of its next card's document, the links before it first), then is drawn and saved: the home
+/// links no register, so nothing reads one ahead. Before, the home linked docs/DECISIONS.md and
+/// read it ahead, the server answered 404, and that answer, its body never read, stayed in flight
+/// in Chrome's eyes until the shot's timeout. With the file there, the home links it and is shot
+/// as well.
+#[test]
+fn a_new_projects_home_without_a_register_links_none_and_is_shot_drawn() {
+    const LATER: &str = "# Later\n\n- [ ] **alpha** — First question.\n";
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    for (documents, register) in [
+        (&[("docs/LATER.md", LATER)][..], false),
+        (
+            &[
+                ("docs/LATER.md", LATER),
+                ("docs/DECISIONS.md", "# Decision register\n"),
+            ][..],
+            true,
+        ),
+    ] {
+        let site = super::restored::Native::start_committed(None, "main", documents, None);
+        let scratch = Scratch::new(if register {
+            "registered"
+        } else {
+            "unregistered"
+        });
+        let out = scratch.join("home.png");
+        let output = shot(
+            &chrome,
+            &[
+                &site.url("/"),
+                "--out",
+                out.to_str().unwrap(),
+                "--wait-for",
+                ".hero .docchip",
+                "--eval",
+                WARMING,
+                "--eval",
+                HOME_LINKS,
+                "--report",
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "register {register}: {}",
+            said(&output)
+        );
+        let [warming, links, report] = printed(&output).try_into().unwrap();
+        assert_eq!(warming, json!(true));
+        let links: Vec<&str> = links
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(links.contains(&"Full queue"), "{links:?}");
+        assert_eq!(
+            links.contains(&"Decision register"),
+            register,
+            "the register linked only once its file is there: {links:?}"
+        );
+        assert!(
+            !report.to_string().contains("DECISIONS.md"),
+            "no read of a register failed: {report}"
+        );
+        let picture = Picture::read(&out);
+        assert!(
+            picture.colours([0.0, 0.0, 1440.0, 900.0], 1.0) > 16,
+            "register {register}: the home is not drawn in the picture"
+        );
+    }
+}
+
 /// What a shot of `url` that failed, its page not drawn within [`PATIENT`] seconds, said it still
 /// waited for, each part once: they come in the order each began, which a page's frames leave to
 /// the machine.
 fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
-    waiting_within(output, url, PATIENT)
-}
-
-/// [`still_waiting`], for a shot given `timeout` seconds.
-fn waiting_within(output: &Output, url: &str, timeout: &str) -> BTreeSet<String> {
     assert_eq!(output.status.code(), Some(1), "{}", said(output));
     let prefix = format!(
-        "symphony shot: {url}: the page was not drawn within {timeout}s: still waiting for "
+        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     let parts = stderr
@@ -2420,12 +2505,14 @@ fn shared_fetching(path: &str) -> Vec<u8> {
 #[test]
 fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming_each() {
     // A sandboxed frame whose document the stand-in never answers, a frame of another site whose
-    // stylesheet it never answers, and a dedicated worker of the page whose fetch it never answers:
-    // the page's own document waits for its frames, and the shot fails at its timeout naming each
-    // frame that never loaded, by its address, and what it still waits for in it, and the worker's
-    // fetch by the worker's script, never as a frame's. The timeout is the patient one, which only
-    // a stall reaches, so by then the page has gone as far as it ever will, however loaded the
-    // machine. No picture is left.
+    // stylesheet it never answers, a dedicated worker of the page whose fetch it never answers, and
+    // one whose script it never answers: the page's own document waits for its frames, and the shot
+    // fails at its timeout naming each frame that never loaded, by its address, and what it still
+    // waits for in it, and the first worker's fetch by the worker's script, never as a frame's.
+    // Chrome attaches no worker to a script not yet answered, so the second's script stays a
+    // request of the page's own in flight, named as one, never as a frame or a worker. The timeout
+    // is the patient one, which only a stall reaches, so by then the page has gone as far as it
+    // ever will, however loaded the machine. No picture is left.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2437,12 +2524,13 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
     site.hold_route("/hung.html", true);
     site.set_file("/hung-worker.js", fetching("/hung-data"), "text/javascript");
     site.hold_route("/hung-data", true);
+    site.hold_route("/unanswered-worker.js", true);
     let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
     site.set_file(
         "/hung-frames.html",
         format!(
             r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>
-<script>new Worker('/hung-worker.js');</script>"#
+<script>new Worker('/hung-worker.js'); new Worker('/unanswered-worker.js');</script>"#
         )
         .into_bytes(),
         "text/html",
@@ -2457,6 +2545,10 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
         still_waiting(&output, &url),
         BTreeSet::from([
             "the document to load (it is interactive)".to_string(),
+            format!(
+                "1 request(s) in flight: {}",
+                site.url("/unanswered-worker.js")
+            ),
             format!(
                 "the frame {} to load (its document is in flight)",
                 site.url("/hung.html")
@@ -3028,48 +3120,6 @@ fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_sa
         FRAMED_GREEN,
         "the worker's answer is not drawn"
     );
-}
-
-#[test]
-fn a_dedicated_workers_script_never_answered_fails_the_shot_within_its_timeout_naming_it() {
-    // A dedicated worker whose script the stand-in never answers: Chrome attaches no worker, so the
-    // script stays a request of the page's in flight, and the shot, given five seconds, fails at
-    // them naming it, never as a frame or a worker of its own. The page has nothing else to load,
-    // so the script is all it waits for however busy the machine. No picture is left.
-    let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
-        return;
-    };
-    let site = site();
-    site.hold_route("/unanswered-worker.js", true);
-    site.set_file(
-        "/unanswered.html",
-        format!(
-            r#"<!doctype html>{NO_ICON}<p>a worker never started</p>
-<script>new Worker('/unanswered-worker.js');</script>"#
-        )
-        .into_bytes(),
-        "text/html",
-    );
-    let scratch = Scratch::new("unanswered-worker");
-    let out = scratch.join("unanswered.png");
-    let url = site.url("/unanswered.html");
-    let output = shot(
-        &chrome,
-        &[&url, "--out", out.to_str().unwrap(), "--timeout", "5"],
-    )
-    .output()
-    .unwrap();
-    assert_eq!(
-        waiting_within(&output, &url, "5"),
-        BTreeSet::from([format!(
-            "1 request(s) in flight: {}",
-            site.url("/unanswered-worker.js")
-        )]),
-        "{}",
-        said(&output)
-    );
-    assert!(!out.exists(), "a failed shot left a picture");
 }
 
 #[test]

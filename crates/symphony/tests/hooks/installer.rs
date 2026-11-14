@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_lookup() {
-    let tree = Tree::new();
+    let tree = Tree::checkout();
     let mut init = Command::new(BIN);
     init.args(["init", "--root"])
         .arg(&tree.root)
@@ -76,7 +76,7 @@ fn installed_commands_forward_whole_events_and_skip_missing_builds_without_a_loo
 
 #[test]
 fn real_init_preserves_unstamped_hooks_and_updates_stamped_paths_and_quoting() {
-    let tree = Tree::new();
+    let tree = Tree::checkout();
     for command in [
         "\"$CLAUDE_PROJECT_DIR/.target/bin/symphony\" hook tasks-beat",
         "'/old path/symphony' hook tasks-beat",
@@ -245,7 +245,7 @@ fn the_installed_hooks_run_the_main_checkouts_build_from_a_worktree_and_else_the
 
 #[test]
 fn the_installed_guard_passes_on_its_own_refusal_alone() {
-    let tree = Tree::new();
+    let tree = Tree::checkout();
     let done = Command::new(BIN)
         .args(["init", "--root"])
         .arg(&tree.root)

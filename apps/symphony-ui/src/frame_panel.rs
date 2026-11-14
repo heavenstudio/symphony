@@ -592,7 +592,21 @@ pub fn PanelApp() -> Element {
         AppearancePanel {}
         // The board itself has no media. When its conversation is mounted, that persistent
         // panel owns media there; every other page kind owns its own adapter instead.
-        if route().path == "tasks" { crate::media_live::MediaRuntime {} }
+        if route().path == "tasks" { BoardMedia {} }
         QuickPanel { route: route(), draft }
     } }
+}
+
+/// The media layer of the conversation on the board. The program's is a chunk of its own, loaded
+/// once the conversation shows media, as a page of the program loads it (`live::MediaLayer`).
+#[cfg(feature = "page-panel")]
+#[component]
+fn BoardMedia() -> Element {
+    #[cfg(feature = "page-program")]
+    {
+        let needed = crate::media_live::use_activation();
+        rsx! { if needed() { crate::split::MediaPart { needed } } }
+    }
+    #[cfg(not(feature = "page-program"))]
+    rsx! { crate::media_live::MediaRuntime {} }
 }
