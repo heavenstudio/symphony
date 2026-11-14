@@ -12,11 +12,12 @@
 //!   pattern of its own as well as a colour, with a line at now. Each segment is a stop of one
 //!   arrow-key group holding its words, and the list stays for assistive technology.
 //!
-//! The box keeps the height the page gave it: the latest steps that fit show, a read that adds a
-//! step moves nothing outside it, and "Show all" lets it grow. The module reads the timeline when
-//! its task is asked for, again when the task changes, and each `every` seconds while the task is
-//! open and its page shown, asking with the validator of the last answer so an unchanged timeline
-//! is a `304`.
+//! On a phone the box keeps the height the page gave it: the latest steps that fit show, a read
+//! that adds a step moves nothing outside it, and "Show all" lets it grow. Wide (from 900 px, where
+//! the lanes replace the list) it grows to hold every lane, with no "Show all". The module reads
+//! the timeline when its task is asked for, again when the task changes, and each `every` seconds
+//! while the task is open and its page shown, asking with the validator of the last answer so an
+//! unchanged timeline is a `304`.
 
 use crate::words::plural;
 use dioxus::prelude::*;
@@ -1453,161 +1454,115 @@ async fn read(slug: &str, tag: Option<&str>) -> Result<Read, String> {
 /// Once the page is shown: at once if it is, else at the first change of visibility that shows it.
 #[cfg(target_arch = "wasm32")]
 async fn shown() {
-    use wasm_bindgen::{JsCast, closure::Closure};
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
-    if !document.hidden() {
-        return;
+    if document.hidden() {
+        let watched = document.clone();
+        heard(document.into(), "visibilitychange", move || {
+            !watched.hidden()
+        })
+        .await;
     }
+}
+
+/// Once the page crosses the width the lanes replace the list at ([`wide`]), either way, so a draw
+/// measured on one side is measured again on the other.
+#[cfg(target_arch = "wasm32")]
+async fn crossed() {
+    let was = wide();
+    match web_sys::window() {
+        Some(window) => heard(window.into(), "resize", move || wide() != was).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The first `kind` event on `target` after which `done` holds. Its listener is taken off however
+/// the wait ends (a reader unmounted mid-wait included).
+#[cfg(target_arch = "wasm32")]
+async fn heard(
+    target: web_sys::EventTarget,
+    kind: &'static str,
+    done: impl Fn() -> bool + 'static,
+) {
+    use wasm_bindgen::{JsCast, closure::Closure};
     let (send, seen) = futures_channel::oneshot::channel::<()>();
     let send = std::cell::RefCell::new(Some(send));
-    let watched = document.clone();
     let listener = Closure::<dyn FnMut()>::new(move || {
-        if !watched.hidden()
+        if done()
             && let Some(send) = send.borrow_mut().take()
         {
             let _ = send.send(());
         }
     });
-    /// The listener, taken off however the wait ends (a reader unmounted mid-wait included).
-    struct Listening(web_sys::Document, Closure<dyn FnMut()>);
+    struct Listening(web_sys::EventTarget, &'static str, Closure<dyn FnMut()>);
     impl Drop for Listening {
         fn drop(&mut self) {
-            let _ = self.0.remove_event_listener_with_callback(
-                "visibilitychange",
-                self.1.as_ref().unchecked_ref(),
-            );
+            let _ = self
+                .0
+                .remove_event_listener_with_callback(self.1, self.2.as_ref().unchecked_ref());
         }
     }
-    let _ = document
-        .add_event_listener_with_callback("visibilitychange", listener.as_ref().unchecked_ref());
-    let _listening = Listening(document, listener);
+    let _ = target.add_event_listener_with_callback(kind, listener.as_ref().unchecked_ref());
+    let _listening = Listening(target, kind, listener);
     let _ = seen.await;
 }
 
 /// The id of the part of the box the steps are drawn in, which the box clips to its height.
 const BODY: &str = "tl-body";
 
+/// Whether the page is wide: from 900 px, where the style sheets draw the lanes, not the list.
+#[cfg(target_arch = "wasm32")]
+fn wide() -> bool {
+    web_sys::window()
+        .and_then(|window| window.inner_width().ok())
+        .and_then(|width| width.as_f64())
+        .is_some_and(|width| width >= 900.0)
+}
+
 /// The part of the box the steps are drawn in, the box, and whether the page is wide (the lanes).
 #[cfg(target_arch = "wasm32")]
 fn parts() -> Option<(web_sys::Element, web_sys::Element, bool)> {
-    let window = web_sys::window()?;
-    let document = window.document()?;
+    let document = web_sys::window()?.document()?;
     let body = document.get_element_by_id(BODY)?;
     let slot = document.get_element_by_id(crate::timeline_slot::SLOT)?;
-    let wide = window
-        .inner_width()
-        .ok()
-        .and_then(|width| width.as_f64())
-        .is_some_and(|width| width >= 900.0);
-    Some((body, slot, wide))
+    Some((body, slot, wide()))
 }
 
-/// The lanes' rows a cut may end under, wide: each lane, a gate's row among them, never the axis
-/// or the Gates heading alone.
-#[cfg(target_arch = "wasm32")]
-const LANE_ROWS: &str = ".tl-lanes > .tl-lane:not(.tl-axis):not(.tl-gates-head)";
-
-/// Where the lanes are cut when they do not fit in the room `held` (pixels from the top of the
-/// part that holds them): under the last lane that fits whole, `bottoms` being where each lane
-/// ends, top to bottom. None when every lane fits, or none does (the box then clips as it can).
-pub fn lane_edge(bottoms: &[f64], held: f64) -> Option<f64> {
-    if bottoms.last().is_none_or(|&last| last <= held + 1.0) {
-        return None;
-    }
-    bottoms
-        .iter()
-        .copied()
-        .take_while(|&bottom| bottom <= held + 1.0)
-        .last()
-}
-
-/// The height a wide box `height` pixels tall keeps for its task's next visit, its lanes `drawn`
-/// pixels tall overflowing the room `held` it leaves them, each lane ending at `bottoms`: as tall
-/// as the lanes the tallest box ([`crate::timeline_slot::WIDE`]) would hold whole, not the lanes
-/// this box holds, so a box kept short grows back once its timeline gains lanes. As tall as every
-/// lane where the tallest box holds them all, or none whole.
-pub fn kept_wide(height: f64, held: f64, drawn: f64, bottoms: &[f64]) -> f64 {
-    let room = held + (f64::from(crate::timeline_slot::WIDE) - height).max(0.0);
-    height - held + lane_edge(bottoms, room).unwrap_or(drawn)
-}
-
-/// After a draw: whether the steps overflow the box (and so "Show all" is offered), and the
-/// height the timeline took, kept for the task's next visit so its box is reserved as tall. The
-/// steps are measured by what is drawn of them (the list on a phone, the lanes wide), never by the
-/// part that holds them, which is at least as tall as the box leaves it. Wide, lanes that overflow
-/// are cut under the last that fits whole ([`lane_edge`]), never through one, and the box kept for
-/// the next visit is as tall as the tallest box's cut ([`kept_wide`]).
+/// After a draw: whether the steps overflow the box (and so "Show all" is offered, on a phone),
+/// and the height the timeline took, kept for the task's next visit so its box is reserved as
+/// tall. The steps are measured by what is drawn of them (the list on a phone, the lanes wide),
+/// never by the part that holds them, which is at least as tall as the box leaves it. Wide the box
+/// grows to hold every lane, so they never overflow, and the height kept is the whole timeline's.
 #[cfg(target_arch = "wasm32")]
 fn settle(slug: &str, all: bool) -> bool {
-    use wasm_bindgen::JsCast;
     let Some((body, slot, wide)) = parts() else {
         return false;
     };
-    let style = body
-        .dyn_ref::<web_sys::HtmlElement>()
-        .map(web_sys::HtmlElement::style);
-    // Measured at the room the box leaves, not at an earlier cut.
-    if let Some(style) = &style {
-        let _ = style.remove_property("max-height");
-    }
-    let _ = body.remove_attribute("data-cut");
     let drawn = body
         .query_selector(if wide { ".tl-lanes" } else { ".tl-list" })
         .ok()
         .flatten()
         .map_or(0.0, |steps| steps.get_bounding_client_rect().height());
     let held = f64::from(body.client_height());
-    let over = drawn > held + 1.0;
-    let height = slot.get_bounding_client_rect().height();
-    let (cut, natural) = if wide && !all && over {
-        let top = body.get_bounding_client_rect().top();
-        let rows = body.query_selector_all(LANE_ROWS).ok();
-        let bottoms: Vec<f64> = rows
-            .map(|rows| {
-                (0..rows.length())
-                    .filter_map(|n| rows.item(n)?.dyn_into::<web_sys::Element>().ok())
-                    .map(|row| row.get_bounding_client_rect().bottom() - top)
-                    .collect()
-            })
-            .unwrap_or_default();
-        (
-            lane_edge(&bottoms, held),
-            kept_wide(height, held, drawn, &bottoms),
-        )
-    } else {
-        (None, height - held + drawn)
-    };
-    if let (Some(cut), Some(style)) = (cut, &style) {
-        let _ = style.set_property("max-height", &format!("{cut:.2}px"));
-        let _ = body.set_attribute("data-cut", "");
-    }
     if !all {
+        // Wide the box holds every lane: its own height is the whole timeline's.
+        let height = slot.get_bounding_client_rect().height();
+        let natural = if wide { height } else { height - held + drawn };
         crate::timeline_slot::keep(slug, wide, natural);
     }
-    over
+    drawn > held + 1.0
 }
 
-/// How many lanes the wide timeline draws: one for each of its own and one for the gates, all of
-/// them under one heading.
-pub fn lane_count(lanes: &Lanes) -> usize {
-    lanes.lanes.len() + usize::from(!lanes.gates.is_empty())
-}
-
-/// What "Show all" says on a phone, where it shows the list's steps, and wide, where it shows the
-/// lanes: what it reveals, counted.
-pub fn show_all(steps: usize, lanes: usize) -> (String, String) {
-    let words = |n: usize, word: &str| {
-        let n = u32::try_from(n).unwrap_or(u32::MAX);
-        format!("Show all {n} {}", plural(n, word))
-    };
-    (words(steps, "step"), words(lanes, "lane"))
+/// What "Show all" says: the phone's list's steps it shows, counted.
+pub fn show_all(steps: usize) -> String {
+    let n = u32::try_from(steps).unwrap_or(u32::MAX);
+    format!("Show all {n} {}", plural(n, "step"))
 }
 
 /// The timeline drawn in its box: its totals, the steps (the phone's list and the wide lanes, the
-/// style sheet shows one and keeps the list for assistive technology), what the bars mean, and
-/// "Show all" when the steps overflow the box.
+/// style sheet shows one and keeps the list for assistive technology), what the bars mean, and on
+/// a phone "Show all" when the steps overflow the box.
 #[component]
 pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
     let mut all = use_signal(|| false);
@@ -1638,16 +1593,28 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
             .any(|gate| gate.spans.iter().any(|span| span.state == *state))
     })
     .collect();
-    // The style sheet shows one of the two: the list's steps on a phone, the lanes wide.
-    let (more_steps, more_lanes) = show_all(rows.len(), lane_count(&lanes));
+    let more = show_all(rows.len());
     #[cfg(target_arch = "wasm32")]
     {
         let slug = slug.clone();
         let drawn = timeline.clone();
+        // A page that crosses 900 px is measured again: drawn wide, where nothing overflows, and
+        // narrowed to a phone, its list overflows the phone's box.
+        let crossings = use_signal(|| 0_u32);
+        use_hook(move || {
+            let mut crossings = crossings;
+            spawn(async move {
+                loop {
+                    crossed().await;
+                    crossings += 1;
+                }
+            })
+        });
         use_effect(use_reactive((&drawn,), move |(_,)| {
+            let _ = crossings();
             let all = all();
             // Read, not peeked: the "Show all" a clip brings can take room from the steps (a line
-            // of the foot), so the box is measured again with it there and cut at that room.
+            // of the foot), so the box is measured again with it there.
             let shown = clipped();
             let over = settle(&slug, all);
             // Showing all, the box has grown to hold every step and says nothing of whether its
@@ -1691,16 +1658,13 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
                         li { class: "tl-wide", span { class: "tl-key tl-g tl-g-{state.as_str()}" } "gate {state.as_str()}" }
                     }
                 }
-                // Only while a part of the lanes has the focus, in the legend's place beside "Show
-                // all": a line of its own would take room from the lanes and cut through the one
-                // the focus is in.
+                // Only while a part of the lanes has the focus, in the legend's place: a line of its
+                // own would grow the box and move what is under it.
                 if !detail().is_empty() { p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" } }
+                // A phone's alone: wide the style sheet hides it, the box holding every lane.
                 if clipped() || all() {
                     button { class: "dx-button tl-more", "data-style": "outline", "data-size": "default", r#type: "button", "aria-expanded": "{all()}", onclick: move |_| all.toggle(),
-                        if all() { "Show the latest" } else {
-                            span { class: "tl-more-steps", "{more_steps}" }
-                            span { class: "tl-more-lanes", "{more_lanes}" }
-                        }
+                        if all() { "Show the latest" } else { "{more}" }
                     }
                 }
             }

@@ -376,13 +376,13 @@ never the whole target, which the release run runs.
   preparing the landing tool must not hold up the brief or the message box.
   The task page compiles only the timeline's box (`timeline_slot.rs`, its small
   `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
-  as this browser last drew the task's timeline (`project::stored`), at most 240 px
-  at any width (the owner's), with placeholder rows, so nothing outside it moves and
-  the brief starts near the page's top; "Show all" grows it, its words the phone's
-  steps or, wide, the lanes, which a box too short for them ends under the last whole
-  one (`task_timeline::lane_edge`), keeping for the next visit the height a 240 px box
-  would end at (`task_timeline::kept_wide`), so a box kept short grows back as the task
-  gains lanes. Near the screen it
+  as this browser last drew the task's timeline (`project::stored`), with placeholder
+  rows, so nothing outside it moves when the timeline comes. On a phone it is at most
+  240 px (the owner's), so the brief starts near the page's top, and "Show all N steps"
+  grows it; from 900 px, the lanes' width, it grows to the whole timeline once drawn, with
+  no "Show all" (the owner's), keeping that height, uncapped, for the next visit
+  (`timeline_slot::WIDE`, a typical whole timeline, for a task never drawn there). Near
+  the screen it
   asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
   (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
   and only a box whose `data-slug` is the task asked for. Boxes are numbered as

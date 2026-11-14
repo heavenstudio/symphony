@@ -2606,16 +2606,17 @@ so each time reads on the server's local clock as it then stood, the thread's.
   answer that cannot be read leaves the lanes out, never the timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, at most 240 px on a phone and wide (the
-owner's choice, so the brief and the thread start near the page's top), with
-placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
-steps in view), and wide the lanes ending under the last that fits whole, the box kept
-for the next visit as tall as the lanes a 240 px box holds whole, so it grows back as the
-task gains lanes. "Show all" lets it grow, naming what it shows: the steps on a phone,
-the lanes wide; it sits on the legend's line, and the whole of the lanes' part the focus is
-on (a click focuses one too) is said in the legend's place while one has it, so the lanes
-never lose room to it.
+this browser last drew the task's timeline, with placeholder rows in it, so nothing on
+the page moves when the timeline comes. On a phone the box is at most 240 px (the
+owner's choice, so the brief and the thread start near the page's top), and a read that
+adds a step moves nothing either: the steps fit the box, what does not fit fading out
+(the latest steps in view), and "Show all N steps", on the legend's line, lets it grow.
+From 900 px wide, where the lanes replace the list, the timeline is shown whole, with no
+"Show all" (the owner's choice: a collapse there saves little room and hides the lanes):
+the box grows to hold every lane and keeps that height for the next visit, a task never
+drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
+focus is on (a click focuses one too) is said in the legend's place while one has it, so
+the box does not grow for it.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per
