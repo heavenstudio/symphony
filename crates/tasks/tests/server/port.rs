@@ -11,7 +11,9 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use symphony_board::port::{ATTEMPTS, NotStarted, Start, in_use, listens, start_on_free_port};
+use symphony_board::port::{
+    ATTEMPTS, LSOF_AT, NotStarted, Start, in_use, listens, start_on_free_port,
+};
 use symphony_board::sys;
 use symphony_board::sys::{Child, Command, Stdio};
 
@@ -258,14 +260,8 @@ fn lsof_runs_through_the_runner_it_is_handed_and_what_it_said_is_the_answer() {
     let asked = |addr: &str, answer: Output| {
         let mut runs = Vec::new();
         let listening = listens(42, addr.parse().unwrap(), |command: &mut Command| {
-            runs.push(
-                std::iter::once(command.get_program())
-                    .chain(command.get_args())
-                    .map(|word| word.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            );
-            Ok(answer)
+            runs.push(words(command));
+            Ok(answer.clone())
         });
         (listening, runs)
     };
@@ -293,10 +289,80 @@ fn lsof_runs_through_the_runner_it_is_handed_and_what_it_said_is_the_answer() {
         refused.to_string(),
         "lsof could not say what pid 42 listens on: lsof: no such option -w"
     );
-    let not_run = listens(42, "127.0.0.1:7001".parse().unwrap(), |_: &mut Command| {
-        Err(std::io::Error::from(std::io::ErrorKind::NotFound))
-    });
-    assert_eq!(not_run.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+}
+
+/// A command's program and arguments, as one line.
+fn words(command: &Command) -> String {
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|word| word.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn lsof_found_by_no_name_is_run_at_usr_sbin_and_one_that_cannot_run_is_no_answer() {
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+    const ARGS: &str = "-nP -w -a -p 42 -iTCP@127.0.0.1:7001 -sTCP:LISTEN -Fp";
+
+    /// What `listens` comes to when each run of its `lsof` answers as `answers` says, in turn, and
+    /// the command each run was.
+    fn asked(answers: Vec<std::io::Result<Output>>) -> (std::io::Result<bool>, Vec<String>) {
+        let mut answers = answers.into_iter();
+        let mut runs = Vec::new();
+        let listening = listens(
+            42,
+            "127.0.0.1:7001".parse().unwrap(),
+            |command: &mut Command| {
+                runs.push(words(command));
+                answers.next().expect("no run past the answers given")
+            },
+        );
+        (listening, runs)
+    }
+    let found = || {
+        Ok(Output {
+            status: ExitStatus::from_raw(0),
+            stdout: b"p42\n".to_vec(),
+            stderr: Vec::new(),
+        })
+    };
+    let by_name = format!("lsof {ARGS}");
+    let at = format!("{LSOF_AT} {ARGS}");
+    assert_eq!(LSOF_AT, "/usr/sbin/lsof");
+
+    // One found by name is the one asked: no second run.
+    let (listening, runs) = asked(vec![found()]);
+    assert!(listening.unwrap());
+    assert_eq!(runs, std::slice::from_ref(&by_name));
+    // None by name, as a PATH without /usr/sbin finds none on macOS: the one at /usr/sbin answers.
+    let (listening, runs) = asked(vec![Err(Error::from(ErrorKind::NotFound)), found()]);
+    assert!(listening.unwrap());
+    assert_eq!(runs, [by_name.clone(), at.clone()]);
+    // None there either: no answer, never a no, its kind kept and both places said.
+    let (listening, runs) = asked(vec![
+        Err(Error::from_raw_os_error(2)),
+        Err(Error::from_raw_os_error(2)),
+    ]);
+    let not_run = listening.unwrap_err();
+    assert_eq!(not_run.kind(), ErrorKind::NotFound);
+    assert_eq!(
+        not_run.to_string(),
+        "lsof could not run: none is found on PATH, and /usr/sbin/lsof could not run either (No \
+         such file or directory (os error 2))"
+    );
+    assert_eq!(runs, [by_name.clone(), at]);
+    // One found by name that may not be run is the answer: nothing else is run in its place.
+    let (listening, runs) = asked(vec![Err(Error::from_raw_os_error(13))]);
+    let denied = listening.unwrap_err();
+    assert_eq!(denied.kind(), ErrorKind::PermissionDenied);
+    assert_eq!(
+        denied.to_string(),
+        "lsof could not run: Permission denied (os error 13)"
+    );
+    assert_eq!(runs, [by_name]);
 }
 
 #[test]

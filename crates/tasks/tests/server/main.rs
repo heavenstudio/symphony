@@ -27,6 +27,7 @@ mod left_replay;
     reason = "the perf target waits on what a socket hears; these tests read it in a wait of their own"
 )]
 mod listeners;
+mod no_lsof;
 mod own_board;
 mod port;
 mod reclaim;
