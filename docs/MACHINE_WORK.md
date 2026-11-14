@@ -215,7 +215,8 @@ commands read. A `/work` or `/review-task` agent never runs `just tasks leave`, 
 finished one's binding stays; it stops counting once it goes quiet, wherever it last ran. A
 session holds a task when it executes it in concept, design, ready or in progress,
 or reviews it in review. Of several, it holds the one all the others are under (a
-feature's executor holds its `/work` instruction too). None, or several with no
+feature's executor that also holds a subtask of it, a slice or an instruction, holds the
+feature). None, or several with no
 one above the rest, is no task.
 
 Each step wins over the ones after it: a named task or session over a placed one, a

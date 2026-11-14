@@ -1084,7 +1084,7 @@ the move's own cap read decides. `leave` carries its
 gives in its own transaction, over the orchestrator roles it read (`$held`). The waiting mark is
 the board field `fields._board.waiting`, on the topmost task of a tree nobody holds, lifted by the
 give or once the tree is held. A plain `Store::create` gives none: the command line's and the
-API's `create`, the owner's task, staffing's review job and the regenerator's red give
+API's `create`, the owner's task and the regenerator's red give
 (`Store::give_filed`); `set_parent` gives a task it moves out from under its orchestrator's to
 that one in the move's own write (`Store::kept_at_move`, read only when a task above it leaves
 its line), its cap read counting the work as that one's; and every reader of the whole board

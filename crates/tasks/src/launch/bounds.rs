@@ -49,7 +49,10 @@ impl Bounds {
     /// main checkout at `root` ([`super::worktree_base`]), which counts only when `root` is the main
     /// checkout `cwd`'s checkout confirms ([`Places::main`], what [`confine`] admits the main
     /// artifacts folder by). `root` is read from the worktree's `.git` file, untracked, and one
-    /// rewritten to name another repository moves `root`, and the base beside it, there.
+    /// rewritten to name another repository moves `root`, and the base beside it, there. A
+    /// submodule, a `--separate-git-dir` checkout or a bare repository's worktree has no main
+    /// checkout (its `root` is the checkout itself, [`super::root_of`], which no repository lists
+    /// back), so only `SYMPHONY_WT_DIR` gives it a base ([`Bounds::of`]).
     pub fn new(cwd: &Path, root: &Path, wt_base: &Path) -> Bounds {
         let places = confine::places(cwd);
         let confirmed = places
@@ -121,7 +124,9 @@ impl Bounds {
             ),
             None => {
                 ", and no worktree base, which is taken only beside a main checkout that lists \
-                     this checkout as its own"
+                     this checkout as its own, or where SYMPHONY_WT_DIR names one (a submodule, a \
+                     --separate-git-dir checkout or a bare repository's worktree has no main \
+                     checkout)"
                     .into()
             }
         };

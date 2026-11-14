@@ -23,21 +23,22 @@ compiler checks the wire's types and that every block, span and media kind a plu
 drawn. Nothing is written again, and the work under way on it (one runtime shared between its
 modules, now on main) goes on. Where it is ahead today, at full speed: a return visit to a small
 board or a task's page is about a quarter quicker, most likely by its device cache; and a card moved
-between columns is drawn in 23 ms where the Preact board takes 43, every batch agreeing.
+between columns is drawn in 23 ms where the Preact board takes 43, every batch agreeing (React's
+30 ms is undecided).
 
-**B: move the client to JSX on Preact,** a page kind at a time, with the same source able to
-build on React through the compat alias should Preact ever fall short. It costs a rewrite of
-about 19,000 lines of Rust and 7,800 of their tests, Node where the client builds, and the
+**B: move the client to JSX,** a page kind at a time, on Preact or on React: the library is a
+choice of its own, made after this one ([below](#preact-or-react)). It costs a
+rewrite of about 19,000 lines of Rust and 7,800 of their tests, Node where the client builds, and the
 compiler's checks, which only TypeScript types generated from `crates/symphony-api` and a test
 over every block kind would replace ([What a switch would cost](#what-a-switch-would-cost)).
 
 **Recommended: B.** The reasons, each from the measurements below:
 
-- **A first visit is about a tenth to a quarter of the bytes, like for like.** As measured,
-  Preact's pages send 9 % to 14 % of the Dioxus pages' bytes, the task page set against its 566 kB
-  without the timeline's module, which the JSX page lacks; with the left-out parts added at the
-  estimate above, about 10 % to 25 %, a quarter at worst on the board. React's are about 20 % to
-  45 %. A second page, a task's opened from the board, is 23 kB measured and about 35 to 55 kB
+- **A first visit is a tenth to a quarter of the bytes on Preact, a fifth to under a half on
+  React, like for like.** As measured, Preact's pages send 9 % to 14 % of the Dioxus pages' bytes
+  and React's 19 % to 34 %, the task page set against its 566 kB without the timeline's module,
+  which the JSX page lacks; with the left-out parts added at the estimate above, about 10 % to
+  25 % on Preact, a quarter at worst on the board, and about 20 % to 45 % on React. A second page, a task's opened from the board, is 23 kB measured and about 35 to 55 kB
   with its left-out parts, where the Dioxus client fetches the next kind's code whole, about
   550 kB on main (6 % to 10 %). The gap is the framework's: each Dioxus page kind is a wasm module
   with its own runtime ([Size](#size)).
@@ -50,8 +51,8 @@ over every block kind would replace ([What a switch would cost](#what-a-switch-w
   ([Render](#render)).
 - **The build and the repository.** A Vite build of the three pages takes about 3 s, where the
   Dioxus client's eight builds take a minute or more whatever changed; no `dx`, `wasm-bindgen`,
-  one-path wrapper, input snapshot or split repair. The three pages build to 0.2 MB, and a whole
-  JSX client would be perhaps twice that (inferred), against 5.9 MB a Dioxus build on main, which
+  one-path wrapper, input snapshot or split repair. The three pages build to 0.2 MB on Preact and
+  0.4 MB on React, and a whole JSX client would be perhaps twice that (inferred), against 5.9 MB a Dioxus build on main, which
   the repository takes again, as new wasm, at every regeneration that changed the client
   ([Code and build](#code-and-build)).
 
@@ -60,7 +61,15 @@ long document at full speed, the JSX pages have one or two frames over 50 ms whe
 has six to nine, in 13 rounds of 15; a card's move is the reverse, quicker on Dioxus, as above.
 Memory is a wash: one run, and the wasm module's reserved memory is not a live heap. With the CPU
 slowed the JSX return visits are quicker, but that is most likely the cost of the device cache's
-own draw, which the JSX pages leave out and B would port, so it counts for neither side. Code size
+own draw, which the JSX pages leave out and B would port, so it counts for neither side. Plugins
+are about level too: today's render to blocks on the server, which either client draws, and a
+project's own script costs about the same on either, in the page or in a sandboxed frame; only JSX
+could take a project's component into the client's own runtime, a small point for B at most, as
+that form reaches the whole origin and can post as the owner
+([Plugins and front-end extension](#plugins-and-front-end-extension)). The desktop app as decided
+is level too: its shell shows whichever client each server serves, so the reason Dioxus was chosen
+for, one code for the browser and the desktop window, goes unused, and only its own few screens
+count, as the two UI stacks below ([The desktop app](#the-desktop-app)). Code size
 is about level like for like: the one closely matched pair, the blocks, is 815 lines of JSX
 against 962 of Rust (0.85), and the JSX is untyped where a port would be TypeScript
 ([Responsiveness](#responsiveness), [Code and build](#code-and-build)).
@@ -75,10 +84,65 @@ parts at the estimate above, but that estimate is not measured. And every time h
 a busy machine: the ratios held across batches at different loads, but no absolute figure is a
 quiet machine's.
 
-**Preact rather than React:** about half React's bytes on every first visit (the entry chunk with
-the runtime and the frame is 11 kB against 72 kB), its times as good or within the spread of
-React's except where its effects wait a frame ([Render](#render)), and the same source still
-builds on React.
+### Preact or React
+
+Inside B the library is a choice of its own, and the findings leave it open: this section gives
+the trade like for like and the two readings of it, and settles neither
+([the ecosystem](#the-ecosystem-preact-against-react) has the sources).
+
+**What Preact gains.** About 60 kB less on every first visit, all of it React's runtime (the
+board 44 kB against 104, a task's page 48 against 109, the guide 60 against 120), and about 200 kB
+less script to decode; nothing on a second page, where both send 23 kB. A cold visit spends about
+a tenth to a quarter less time running script, on each of the three pages at every speed, every
+batch agreeing (the board 34 ms against 43 at full speed, 151 against 173 slowed four times, 113
+against 154 on a phone's screen; [Render](#render)), though its long tasks are no shorter, the batches split (slowed,
+163 ms against 146 on the board, 90 against 66 on a phone's screen). Neither leads in when a page
+is usable: slowed four times, Preact's board and guide are usable a little sooner and React's task
+page is; at full speed React opens a task from the board sooner and draws a card's move in 30 ms
+against 43 ([the way back](#the-way-back)). The board is also read from a phone over the tailnet
+([the desktop client](desktop-client.md)), so a first visit can cross a network to a phone-class
+CPU, where the bytes and the script count for more than here: every visit here was served from
+the same machine with only the CPU slowed, so what 60 kB costs on a phone's network was not
+measured. The bytes saved are a fixed amount, so their share falls as libraries are added: with
+the three probed, the board would be about 0.63 of React's bytes, not 0.42 (an estimate).
+
+**What Preact costs.** React's code runs through a compatibility layer that trails React: React
+18's `createRoot` reached it in 11 weeks and its hooks in 14 to 24, its transitions only in name
+(they run at once); React 19's refs as props and `use` in 22 months, and its actions, form hooks
+and document metadata not at all. Its current major, Preact 11, was first published on 30
+September 2026, and much of what it answers React 19 with came in 11.x (refs as props, `use`, the
+compiler's runtime). The libraries are written and tested for React: Radix, React Aria,
+Headless UI and TanStack Router say they do not support Preact, React Aria is reported broken on
+Preact 11, and React Router's newest major no longer builds on it. And keeping React reachable,
+so that a library that stops working on Preact means a switch and not a rewrite, is a standing
+cost, none of it in place today: a second build at every gate, which catches only what fails to
+build unless the browser tests also run on it; a lint rule that refuses Preact's own packages as
+well as `preact`; and every library driven on both builds before it is taken
+([the way back](#the-way-back)).
+
+**What React costs.** The 60 kB on every first visit, the 200 kB of script to decode and the
+tenth to a quarter more time running it. It needs no compatibility layer, none of the guards
+above, and takes the libraries and tools as their authors support them.
+
+**The reading for Preact.** What a port would reach for first runs on it: the probe drove Radix's
+six controls, TanStack Query and TanStack Virtual alike on both builds, each adding the same bytes
+on either, and the Markdown, the charts, the timeline and the blocks need no library at all. So
+the libraries' lead may never be drawn on, while the 60 kB and the script are paid on every first
+visit for good, a phone's over the network among them. Its weakest point: those gains bought no
+lead in when a page is usable, and they are held by guards that every gate pays for and that a
+library's next major can still defeat, sometimes only when a control is drawn, on a compat major
+six weeks old.
+
+**The reading for React.** Preact's gains, the bytes and the script time, bought no lead in when a
+page is usable, at full speed, slowed four times or on a phone's screen. Against them stand four
+libraries of the kinds a client reaches for that say they do not support Preact, a router whose
+newest major does not build on it, and guards that cost every gate and are not built. React
+carries none of that. Its weakest point: it pays about 60 kB more on every first visit, a board's
+104 kB where Preact's is 44, and more script, most where they count most, on a phone over a
+network that was not measured, for a lead in libraries that the probe has not yet needed.
+
+Which weighs more, the bytes and the script or the libraries' support, is a matter of what the
+owner values more, and it is chosen after the move is, if the client moves to JSX.
 
 ## The experiment
 
@@ -635,7 +699,7 @@ The Dioxus build's floor is high because each of its eight modules is a `dx` bui
 its wasm through `wasm-bindgen` and `wasm-opt`, whatever changed; a page's change costs the most
 of a minute on this machine either way. The JSX build is one Vite run of a second or two a
 target. That is three pages against a whole client: a whole JSX client would take longer and
-build to more than the three pages' 0.2 MB, perhaps twice both, as the other kinds are about half
+build to more than the three pages' 0.2 MB on Preact (0.4 MB on React), perhaps twice both, as the other kinds are about half
 the client; that is inferred, not measured. Built twice from the same lockfile on this machine,
 the JSX build's 22 files came out byte for byte the same. The first Dioxus build ran with the machine's `dx` and `wasm-bindgen` already built (in
 the git common dir, once a machine), and the first JSX one with npm's download already cached;
@@ -678,6 +742,235 @@ with a DOM library); the browser tests drive the DOM, not the code, so they can 
 as this experiment's measurements drive both. The experiment itself has no tests: it is a
 measurement, not a client.
 
+## Plugins and front-end extension
+
+What a project's plugin is on each client, and what a project's own code in the browser would take
+and reach on each. A small prototype in the experiment answers the last part
+([below](#the-prototype)).
+
+**Today's plugins draw nothing in the browser.** A plugin is the project's Rust, linked into the
+host or answering from a process of its own ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)). It renders
+to the block vocabulary (`crates/symphony-blocks`), never HTML, and the client draws each kind with
+one component. So a JSX client changes nothing for a plugin: the experiment's `blocks.jsx` draws
+every block, span and media kind from the same JSON. What it loses is the compiler's check that
+every kind is drawn ([Types across the wire](#code-and-build)).
+
+**A project's own browser code already has two ways in, on the Dioxus client, and neither belongs
+to the framework.**
+
+- *In the page.* A `Media::Viewer` names a custom element and the module script that defines it,
+  a project file. `media_live::load_viewer` adds that script to the page once, as
+  `<script type="module">`, and the client draws the element from the viewer's data alone. The
+  script runs as the page does. The element's attributes are strings, so a JSON value can ride
+  one: a plugin's component could put a project's chart in a document today with no change to the
+  client.
+- *In a sandbox.* A `Media::Mockup` draws a project's `.html` file in an iframe whose sandbox
+  allows scripts only, and the server sends every project file with `Content-Security-Policy:
+  sandbox allow-scripts` (`apps/symphony-server/src/media_files.rs`). It takes no data in and
+  sends no height out: it is 1280 by 800, scaled to its card.
+
+A custom element and a frame are DOM, drawn alike from Dioxus or from JSX. So loading a project's
+script at run time is not something a JSX client makes possible: both clients can.
+
+**What JSX adds is extension inside the client's own framework.** A project's module could export a
+Preact or React component that the client mounts in its own tree, sharing its runtime, contexts and
+state. It could also replace one of the client's own components by name: this is the form in which
+a project overrides the client's functions. For that, the page hands the module its framework (an
+import map naming the client's own Preact or React chunk, or the framework passed in), and the project builds
+against the client's major version. The Dioxus client cannot take a component at run time: each
+separately built wasm module carries its own runtime (the program's chunks share one only because
+they are one build, [Moving parts](#code-and-build)). So a project's Dioxus component would be
+compiled into the client. Either the one client this repository ships, and the server embeds,
+holds every consumer's components, or each project gets a client of its own: built with `dx`, a
+minute or more a build, and served per project by a server that serves one client to every
+project today. The prototype does not build this form. Its module is a plain `draw(element, data)`,
+which either client can host. A component form differs from it in what it shares with the page,
+not in what it can reach.
+
+### The prototype
+
+`experiments/client-jsx` draws one block of a project's own, plain JSON
+`{"kind", "module", "data"}`: the data, and the address of the project's module that draws it
+(`src/custom.jsx`). The vocabulary has no such kind, and none was added, so the experiment reads a
+fenced code block in the language `custom` as one. The sample module, `fixture/blocks/chart.js`,
+draws a bar chart of this document's first-visit figures with DOM calls only, so a label is always
+text. It is drawn in two forms by the same module, and the README names the commands:
+
+- **Sandboxed** (`src/custom-frame.jsx`, the default). The block is an iframe whose sandbox allows
+  scripts and nothing else. With no `allow-same-origin` its origin is opaque, and it gets no
+  navigation of the page. Its page is written as its `srcdoc`, with a policy of its own:
+  `default-src 'none'`, scripts only inline or from a blob it makes. The page fetches the module's
+  text and sends it in by `postMessage`, with the data, the page's theme tokens and its colour
+  scheme. The frame imports the module from a blob, draws, and sends its height out whenever it
+  changes. The page listens only to its own frame, sends to it once, and holds the frame's height
+  between 40 and 4,000 px.
+- **In the page** (`src/custom-page.jsx`, with `?blocks=page`). The module is imported, registered
+  by its kind, and its `draw` is called with an element of the page.
+
+### What the module reached
+
+A probe module (`fixture/blocks/probe.js`) tried each of these from where it was drawn, on a
+private server with a scratch board, in headless Chrome 157:
+
+| what the module tried | in the page | in the sandboxed frame |
+|---|---|---|
+| read the page around it | yes: its title and text | no: a `SecurityError`, as the frame's origin is opaque |
+| replace one of the page's functions (`fetch`) | yes | no: a `SecurityError` |
+| read the API (`/api/board`) | yes, 200 | no: refused by the frame's policy (`connect-src`) |
+| post an owner's approve on a card (`/api/decision`) | yes, 200: the card took the approve as the owner's, and the register was committed | no: refused by the frame's policy |
+| localStorage, IndexedDB, cookies | yes, each | no: a `SecurityError` each, as the frame has no storage of its own |
+| navigate the page | not tried, as it would leave the page | no: a `SecurityError`, as the sandbox lets the frame navigate nothing but itself |
+
+**The approve is what matters.** A plugin's server half already runs as the owner's own code, as the
+host's user ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md#turning-it-on)). So the sandbox does not
+protect against the module's author: they could do the same another way. What it protects is the
+data the module draws, which comes from documents and a board that agents write. A slip in the
+module, such as an `innerHTML` over a label, turns that text into script in the owner's page. A
+same-origin request passes the writes' origin check (`apps/symphony-server/src/write.rs`), so that
+script can approve a card as the owner. In the frame, the same slip reaches nothing. The machine's
+one server serves every project on the same origin (`/<id>/`), so a module drawn in the page
+reaches every project's API and stored state, not just its own. The Dioxus client's viewers are
+the in-page form today.
+
+The frame does not stop everything. It may navigate itself, which no policy forbids, so the data
+handed to it could leave that way, though the page then sends it nothing more.
+
+### What the sandbox costs
+
+The same chart, a cold first visit to its document, in both forms on both builds: 10 rounds each,
+the two forms in turn within a round, at a one-minute load of 141 to 181 on 16 cores. The time runs
+from the block's latch opening to the module's drawing, by the prototype's own marks. Bytes are on
+the wire, head and gzip body. Lines are non-blank, comments included.
+
+| | sandboxed frame | in the page |
+|---|---:|---:|
+| the form's chunk, Preact (React) | 1,747 B (1,778) | 640 B (662) |
+| the project's module, either build | 1,630 B | 1,630 B |
+| the whole first visit, Preact (React) | 55.0 kB (115.5) | 53.9 kB (114.4) |
+| the latch to the chart drawn, Preact: median (range) | 41 ms (33–71) | 29 ms (22–47) |
+| the same, React | 45 ms (28–97) | 13 ms (8–225) |
+| lines | 88 | 30 |
+
+The frame was later than the page form in 9 rounds of 10 on each build, by a median of 10 ms on
+Preact and 32 ms on React in the same round. Reading the block, which both forms share
+(`src/custom.jsx`, 87 lines with the measurement's log), adds 0.7 kB of gzip to every page that
+draws blocks: the blocks chunk goes from 5.20 to 5.92 kB on Preact and 5.34 to 6.07 kB on React, at
+gzip's best level. The meter moves with the work: a module that spends 100 ms before drawing read
+139 and 231 ms framed and 112 and 115 ms in the page, against 37 to 39 and 11 to 57 for the chart in
+the same runs, on React. All of these times were taken on a busy machine: only the ratios between
+the forms carry.
+
+So the sandbox costs about a kilobyte and 10 to 30 ms at the median. The prototype also showed what
+it asks of the page and of the module:
+
+- **The theme goes in by message.** The frame cannot read the page's style sheets, so the page hands
+  it its tokens and its colour scheme. Without the scheme, a dark page drew the frame on an opaque
+  white backdrop, as Chrome does for a frame whose scheme is not its page's. Pictures of both are
+  kept with the task's evidence.
+- **The height comes out by message**, and the frame takes it. Until then the block holds a
+  reserved height.
+- **The module is one file.** Imported from a blob, it cannot import another file: a module whose
+  first line imports `/docs/blocks/chart.js` failed in the frame ("Failed to resolve module
+  specifier") and drew in the page. A project bundles its module.
+- **No styles cross the frame's edge, either way.** In the page, the probe's table took the
+  document's table style. In the frame, it kept its own.
+
+### Each form on each client
+
+| | the Dioxus client | a JSX client |
+|---|---|---|
+| a project's module in the page, by kind | there today as `Media::Viewer`: a custom element whose script `media_live` adds once; a JSON block would ride an attribute, with no client change | the prototype's page form, 30 lines; or the viewer ported, which `blocks.jsx` draws without loading its script |
+| a sandboxed frame, data in and height out | `MockupFrame` draws the frame and `media_live` scales it already; the data and height would be a `srcdoc` and a message listener there, through web-sys, with the same frame script as a string, of the order of the prototype's 88 lines | the prototype's frame form, 88 lines |
+| a project's component in the client's own framework, or one replacing a client component | compiled in: every consumer's components in the client this repository ships, or a client built and served per project | a module importing the client's library (Preact or React) through an import map, built against its major version; each component a project may replace becomes an interface the client keeps |
+| what the drawn data reaches | in the page: the origin, so every project's API and storage and the owner's writes; in a frame: nothing | the same: it depends on the form, not on the framework |
+
+**For the choice.** For today's plugins, nothing changes beyond the lost check that every block
+kind is drawn, which the cost of a switch already counts. A project's own browser code, in the
+page or in a sandboxed frame, costs about the same on either client, because those two forms are
+DOM and messages, not framework. JSX makes one thing cheap that Dioxus makes a rebuild: a project's
+component inside the client, sharing its runtime or replacing its parts. That form also reaches the
+most: it runs as the page does, on the origin every project shares, and can post as the owner, and
+every part it may replace becomes an interface the client has to keep. It counts for B only if
+projects should extend the client from inside, and even then the question of whom to trust stays
+open. It is a small point for B, not a reason.
+
+### Verified and inferred, for this section
+
+**Measured or run here.** The prototype in both forms on both builds; the probe's results; the
+owner's approve it posted and the register's commit; the bytes, times and lines in the tables; the
+frame's white backdrop without the page's colour scheme; a module's import failing in the frame
+and drawing in the page; that `blocks.jsx` draws every kind.
+
+**Read in code, not run.** That the Dioxus client loads a viewer's script into the page
+(`media_live.rs`) and draws a mockup in a scripts-only sandbox (`media.rs`); that a viewer's
+attribute could carry a JSON block with no change to the client; that every project file is served
+in a sandbox (`media_files.rs`); that a same-origin write passes the origin check (`write.rs`,
+which the probe's 200 bears out); that a plugin's server half runs as the owner's code.
+
+**Inferred, not tried.** That a module drawn in the page reaches other projects' API and storage on
+the machine's one server: the probe ran on a private server that serves one project, and the
+inference rests on the shared origin. Also inferred: that a frame can carry the data handed to it
+away by navigating itself; what a sandboxed frame would take in the Dioxus client; that a project's
+Dioxus component has to be compiled in; and what a component form, or a component that replaces a
+client's own, would take on a JSX client.
+
+## The desktop app
+
+How the decided desktop app ([the desktop client](desktop-client.md)) meets each client, read from
+that analysis, its card and the code; nothing was built or run for this section. Nothing of the
+app exists to rewrite: its task, `tools/desktop-app`, is on the board, ready and never claimed,
+behind `tools/server-projects-list`, also ready, and the workspace has no `apps/symphony-desktop`.
+
+- **The shell shows each server's pages, whichever client drew them.** The decided design is A: a
+  native shell on tao and wry whose web views load each server's own pages from that server, at
+  its release. The follower, the dock badge, the menu-bar item and the notifications are the
+  shell's own Rust and read the API, never the page. So a JSX client that a server serves works in
+  it as in a browser tab. The two things the shell asks of a page are the browser's, not the
+  framework's: the Notification stub it injects answers whatever asks the web Notification API
+  (the Dioxus client asks through `web_sys::Notification`, `platform.rs`), and a link off the
+  origin or a `window.open` is caught by the web view's rules. *Read in the design and the code;
+  that a JSX page runs unchanged in a wry web view is inferred, as no app exists to try it in, and
+  the experiment's pages neither notify nor open windows: home, which notifies, was not ported.*
+- **The one tie is the app's own few screens.** The server list, adding a server and "this server
+  does not answer" are planned in Dioxus desktop around the server's web view, the owner's answer
+  to that analysis's third question, with plain wry drawing them should Dioxus desktop not host a
+  second web view, which the first slice tries. With a JSX client they either stay Dioxus, so the
+  repository holds two UI stacks (a row of [What a switch would cost](#what-a-switch-would-cost)),
+  or become small local pages in a web view, which is what the plain-wry fallback already is.
+  Pages need one thing Dioxus screens do not: the decisions are Rust in the shell's library, so
+  a page reaches them through a channel from page to shell (wry's IPC handler), which the first
+  release has nowhere else, and which must answer the app's own pages and never a server's.
+  Either way it is three small screens. *The plan read in the design; the channel inferred.*
+- **The rejected B's largest cost was the desktop renderer's, and it goes with either client's web
+  build.** B compiled the client into the app with Dioxus's `desktop` feature, where Dioxus runs
+  the app natively and only draws into a web view, so every file that calls the browser through
+  `web-sys`, `js-sys` or `wasm-bindgen` needed a native or script-bridge version: 31 in that
+  analysis, 38 files of `apps/symphony-ui/src` on this branch, test files left out. A JSX client bundled into
+  the app would run in the web view as script, with the browser's own `fetch`, `EventSource`,
+  observers and storage, so that cost goes. But so would it for today's client: its web build,
+  wasm and shell bundled into the app the same way, runs on the same browser APIs, a form that
+  analysis did not weigh. The rest of B's cost stays on either client: the app's own origin, so CORS
+  for a viewer's module and every write through a native HTTP client, as the save check refuses
+  another origin (`write.rs`, `allowed`); every server's projects in that one origin's storage, so
+  each key takes the server first; what the server inlines in its pages (the project's element,
+  its theme) read over the API; and the whole wire a contract between releases. *B's native half
+  read in that analysis, the files counted here; that either web build would run bundled is
+  inferred, not tried.*
+- **The reason the client is Dioxus goes unused under A.** It was chosen for "the browser now and
+  the desktop window later, from the same code" (`apps/symphony-ui/AGENTS.md`, its `Cargo.toml`),
+  with every platform hook behind `platform::Platform` so that a desktop implementation could join
+  the browser's (`platform.rs`; none has). Under A the client never runs as the desktop
+  window's code: the window shows the web build each server serves, on its `Browser` platform. Only
+  the shell's own screens use Dioxus desktop, and they are new code. The phone keeps it so: Dioxus's
+  mobile target is its desktop renderer, so what carries to iOS is A's shell, not the client. The
+  reason would come back only with B, which was not chosen, and even then either web build would
+  serve, as above. *Read in the code and the design.*
+
+**For the choice.** As decided, the desktop app takes whichever client each server serves, and its
+one tie, its own few screens, is already a row of what a switch would cost. The reason Dioxus was
+chosen for, one code for the browser and the desktop window, is not one the app as decided uses,
+so it no longer counts for A.
+
 ## What a switch would cost
 
 What depends on the client being Rust, with its size at the baseline or on main where a row says
@@ -691,14 +984,15 @@ repair step), not taken away.
 | The browser tests | 24,468 lines in 45 files (`tests/browser`), Rust over `crates/chrome-devtools` | most stay, as they drive the DOM a port keeps; the budget and module tests change with the build. The tests of the wasm build itself go: `wasm_build`, `bundle_concurrent`, `client_release` and `tools`, about 2,100 lines |
 | The wire types | the client links `crates/symphony-api` (158 public types, 5,752 lines) and names 82 of its paths | types generated for TypeScript and checked, or none; the shared functions ported and held equal by tests |
 | The plugin blocks | `block_view.rs` (546 lines) draws the blocks and media every plugin renders to | a component per block (`blocks.jsx`, 815 lines here, media with it) |
-| The build | `dx` and `wasm-bindgen` built per machine, the wasm32 target, eight builds a release; `bundle.sh`, `package.sh`, `dx-path.sh`, `remap-rustc.sh`, `wasm-fresh.sh`, `tools.sh`, `assets-copy.sh`, `dev.sh` and `cargo-symphony-ui`, 544 lines | Node and npm where the client builds (52 packages in this lock, 40 MB installed), one Vite build |
+| The build | `dx` and `wasm-bindgen` built per machine, the wasm32 target, eight builds a release; `bundle.sh`, `package.sh`, `dx-path.sh`, `remap-rustc.sh`, `wasm-fresh.sh`, `tools.sh`, `assets-copy.sh`, `dev.sh` and `cargo-symphony-ui`, 544 lines | Node and npm where the client builds (52 packages for the three pages, 40 MB installed; 129 and 56 MB with [the probe](#the-probe)'s three libraries), one Vite build |
 | The shell and release inputs | `shell.js` (528 lines), `cache.js` (216), `release_inputs.rs` (596; 605 on main) with `release_inputs/config.rs` (138) and its tests (935), `publish.rs` (222) | Vite's chunks and preloads, the lockfile, `publish-client` kept; the input snapshot, there because `dx` mixes paths into the wasm, likely not needed |
 | The split and its repair (main, since the baseline) | `symphony-build split-repair` (`crates/symphony/src/cli/commands/split_repair*`, 1,402 lines and 1,287 of tests), `src/split.rs` (226), `src/module.rs` (270), `assets/chunks.js` (23) | retired: Vite splits the chunks itself |
 | The development front door | the server's `dx` front door (`apps/symphony-server/src/development.rs`, 654 lines) and `just symphony-ui-dev` | Vite's dev server proxying the API, or the same front door over it |
 | The size probes | `examples/wasm_size.rs` (674 lines), `probes/` (5 files, 512 lines) | retired; a bundle analyser for the chunks |
 | The block kinds' check | the compiler refuses a client that does not draw every block, span and media kind | a test that draws every kind, or TypeScript's exhaustive `switch` over generated types |
+| A project's own browser code | a viewer's script loaded into the page and a mockup in a scripts-only sandbox, with no project code in the client; a project's own component only by compiling it into the client | the same two forms, as they are DOM and not the framework's, a sandboxed frame with data in and height out about 90 lines on either client; a project's component at run time becomes possible, and the client's library (Preact or React) and each component a project may replace then become an interface consumers build against ([Plugins and front-end extension](#plugins-and-front-end-extension)) |
 | A byte-for-byte `client-check` | `rust-toolchain.toml` pins Rust; `dx` and `wasm-bindgen` are pinned and built per machine | Node and npm pinned the same way, with the lockfile; this experiment's build came out byte for byte the same twice on one machine, but across machines and Node versions was not tried |
-| The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too |
+| The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too, which reach the shell's Rust through a channel of their own ([The desktop app](#the-desktop-app)) |
 | The distribution | committed, three builds kept: 20.0 MB, 24 wasm files, a size line of 20,750,000 bytes; 106 commits regenerated it in the week to this run, each about 6.3 MB of new wasm | about 0.4 MB a build on React, 0.2 MB on Preact, the style sheets included; the regenerator, `client-check` and `publish-client` stay, needing Node where they run |
 | The guides | `apps/symphony-ui/AGENTS.md` (598 lines), the client's paragraphs in `AGENTS.md`, [CHECKS](../CHECKS.md) and [RELEASES](../RELEASES.md) | written again |
 
@@ -708,14 +1002,229 @@ the distribution is committed), `symphony shot`, and the browser tests' driver. 
 one step: the shell already loads a module per page kind, so a kind could move at a time, with
 both builds in the distribution meanwhile.
 
+## The ecosystem, Preact against React
+
+Preact runs this client's React source through `preact/compat`, a layer that answers to React's
+API with Preact underneath. The sections above weigh what that saves; this one weighs what it
+costs: what compat leaves out of React 19, whether the libraries and tools a whole client would use
+run on it, how the two projects are kept, and the way back to React. Every claim was read on 14
+November 2026, for the versions the experiment pins (Preact 11.2.0, React 19.3.1, Vite 8.3.8), in
+the project's own guide, published code or tracker, or was shown by a build here; one that none of
+these settles says so. The trade it leaves open is set out in [Preact or React](#preact-or-react).
+
+### What compat does of React 19
+
+Read in Preact 11.2.0's published `compat` sources and its guide
+([Differences to React](https://preactjs.com/guide/v11/differences-to-react),
+[Upgrading from 10.x](https://preactjs.com/guide/v11/upgrade-guide)), against the names React
+19.3.1 exports. Preact's guide says what it aims at: compatibility "is measured against the current
+and previous major releases of React", and its pages "reflect React 15.x through 17.x, with some
+18.x and 19.x additions". The three JSX pages use only hooks both have had for years (`useState`,
+`useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `useReducer`, `memo`).
+
+| feature | React 19 | preact/compat 11.2.0 | for this client |
+|---|---|---|---|
+| concurrent rendering, transitions | a render can be interrupted or put off: `startTransition`, `useTransition`'s pending flag, `useDeferredValue` | none: `startTransition` runs its callback at once, `useTransition`'s pending flag is always false, `useDeferredValue` returns its value unchanged (`compat/src/hooks.js`) | no page uses them. A page that kept typing smooth by putting off a long list's draw would block on Preact |
+| Suspense and `use` | `Suspense` for code and data, `use` reading a promise or a context | `Suspense` and `lazy` as through 10.x; `use`, for a promise and for a context, since 11.0.0 (10.29.8 has none); no 300 ms hold of a boundary's content | the pages load a kind's chunk by hand, alike on both ([the experiment](#the-experiment)) |
+| actions: `useActionState`, `useOptimistic`, `useFormStatus`, `requestFormReset`, a function as a form's `action` | yes | none exported. The issue asking for React 19's features was closed with "we can't really track them as one unit" and a request for an issue a feature ([#4613](https://github.com/preactjs/preact/issues/4613)); a search of the tracker found none for these | the client posts JSON with `fetch` and needs none of them; a library that starts using them stops building on Preact ([React Router](#the-libraries-a-whole-client-would-use)) |
+| server components and server functions | yes, with a framework and a JavaScript server | none in Preact's guide or packages; nothing on its tracker says either way | none: the Rust server serves the client and no JavaScript server renders |
+| the newer hooks: `useId`, `useSyncExternalStore`, `useInsertionEffect`, `useEffectEvent` | yes | yes; `useInsertionEffect` is `useLayoutEffect`, and `useEffectEvent` (11.0.0) keeps the latest function in a ref | the probe's libraries run on `useSyncExternalStore` and `flushSync` ([the probe](#the-probe)) |
+| refs as props, a context as its own provider | yes | yes: Preact 11 passes `ref` as a prop to function components, compat also puts it in `props` where libraries written for React 19 read it, and a context is its own provider | none |
+| element identity | elements marked `react.transitional.element`, which `react-is` 19 checks | elements marked `react.element`, so `react-is` 19's checks answer false for every compat element; compat exports its own `isElement` and `isFragment` | none of the probe's libraries reads `react-is`; one that sorts its children with it (Recharts does, by its source) may differ, untried |
+| document metadata and resource hints: `<title>`, `<meta>`, `<link>` hoisted from any component; `preload`, `preinit`, `preconnect` | yes | none. "We have no plans for it" (a maintainer, June 2025, on the open [#4695](https://github.com/preactjs/preact/issues/4695)), and another maintainer against it again in October 2026 | the server writes the page's head; a page title is set by hand on either |
+| events | its own events, delegated from the root (the [memory](#memory) run counted 162 listeners on React's board, 16 on Preact's); `onChange` "fires on every keystroke" ([`<input>`](https://react.dev/reference/react-dom/components/input)); "Events from portals propagate according to the React tree rather than the DOM tree" ([`createPortal`](https://react.dev/reference/react-dom/createPortal)) | the browser's own events, on each element. Compat maps `onChange` on a text field to `input`, `onFocus` and `onBlur` to `focusin` and `focusout`, `onDoubleClick` to `dblclick`; `nativeEvent` is the event itself and `persist` does nothing. Events "don't bubble up through `<Portal>` components" (the guide) | handlers written for React run alike, as the three pages show. A handler on the parent of a portal, such as a popup's, does not hear the popup's events on Preact |
+| hydration | `hydrateRoot`, streamed | `hydrateRoot`; Preact 11 resumes hydration into streamed markup | none: no component is drawn on the server |
+| error boundaries | a class's `getDerivedStateFromError` and `componentDidCatch`; `createRoot`'s `onCaughtError` and `onUncaughtError` | the class methods, and Preact's own `useErrorBoundary`; `createRoot` takes no options | a boundary per page works alike |
+| `StrictMode` | in development, renders, runs effects and ref callbacks an extra time and checks for deprecated APIs ([`StrictMode`](https://react.dev/reference/react/StrictMode)) | a `Fragment`: it checks nothing | a development check that Preact lacks; a React build in development keeps it |
+| portals | yes | yes, in Preact's core since 11 | the probe's popups are portals and work |
+| the React Compiler | its output imports `react/compiler-runtime` | compat has carried a `compiler-runtime` since 11.1.0 (a `useMemo` per cache, [PR #5323](https://github.com/preactjs/preact/pull/5323), merged in October 2026); React's documentation does not mention Preact | unconfirmed: no report of a compiled app on Preact was found, and none was tried |
+
+### The libraries a whole client would use
+
+**What the Dioxus client writes itself.** It has no router (the shell loads a module per page
+kind, and `navigation.rs` handles the history), no data library (its own requests, feed and device
+cache), no Markdown renderer or highlighter (the server renders Markdown with comrak, without a
+highlighter, into the blocks the client draws), no chart library (the Reports chart and the task
+timeline are its own SVG), no drag and drop (a card moves through the feed; a file dropped on the
+message box is the browser's own drop), no virtual list (Load more and the near-the-screen latch)
+and no form or animation library. The one library it uses for its controls is DioxusLabs'
+`dioxus-primitives`: the dialog, dropdown menu, select, tabs, tooltip and checkbox
+(`apps/symphony-ui/src/components`). So under either JSX library the Markdown, the highlighting,
+the charts, the timeline and the blocks need no library at all, as `blocks.jsx` draws the blocks
+here; what a port would most likely reach for is a set of accessible controls to replace
+dioxus-primitives, then a data cache, then perhaps a router and a virtual list.
+
+Each library at its newest version on npm, by its own documentation or tracker, by Preact's
+tracker, or by a build here; "works" is said only where one of those says it.
+
+| library | React 19 | preact/compat | for this client |
+|---|---|---|---|
+| **Radix** (`radix-ui` 1.8.1): controls | supported | "We do not officially support Preact" ([#3610](https://github.com/radix-ui/primitives/issues/3610), July 2025). Its range slider's thumbs are not drawn on Preact ([#3666](https://github.com/preactjs/preact/issues/3666), open since 2022; a Preact change aimed at it is under review, [PR #5322](https://github.com/preactjs/preact/pull/5322)) | the six controls the client uses work alike on both in the probe; the slider, which the client does not draw, fails on Preact there too |
+| **React Aria** (`react-aria-components` 1.22.1): controls | supported | "not work that the team is able to take on in the near future" ([#781](https://github.com/adobe/react-spectrum/issues/781), closed 2024); its collections and keyboard handling are reported broken on Preact 11 ([#10755](https://github.com/adobe/react-spectrum/issues/10755), open since October 2026, a fix proposed) | by that report, not usable on Preact for now; not tried |
+| **Headless UI** (`@headlessui/react` 2.2.10): controls | supported | "we don't have Preact support" ([#1352](https://github.com/tailwindlabs/headlessui/issues/1352), 2022) | unsupported; not tried |
+| **Base UI** (`@base-ui/react` 1.9.0): controls | supported | no statement of support found; its maintainers merged "Restore Preact support" ([PR #2086](https://github.com/mui/base-ui/pull/2086), 2025) and Preact fixes since, and a crash under compat with server rendering is open ([#4670](https://github.com/mui/base-ui/issues/4670)) | likely usable, unconfirmed: not tried |
+| **TanStack Query** (`@tanstack/react-query` 5.107.1): data cache | supported | works in the probe; two reports under compat on its tracker were closed as Preact's or the test runner's to fix ([#3966](https://github.com/TanStack/query/issues/3966), 2022, which a user there reported fixed by Preact 10.10.3, unconfirmed; [#8555](https://github.com/TanStack/query/issues/8555), 2025, marked upstream and pointed at a Vitest issue). An official Preact adapter, `@tanstack/preact-query`, exists since February 2026 ([its docs](https://tanstack.com/query/latest/docs/framework/preact/overview)) | reads, paging and a feed event's re-read work alike on both in the probe |
+| **SWR** 2.5.1: data cache | supported | "the basic preact example works with swr" (a maintainer, [#1649](https://github.com/vercel/swr/issues/1649), 2021); nothing since | not tried |
+| **React Router**: router | supported | 7.18.5 reads `useOptimistic` only if React has it, and on Preact a throwaway build here routed and followed a link. 8.x (since June 2026; 8.5.1 in November 2026) imports `useOptimistic` outright and asks for React 19.2.7 or later, and its Preact build fails: `"useOptimistic" is not exported by "node_modules/preact/compat/dist/compat.mjs"` | 7 works; 8 does not build on Preact |
+| **TanStack Router** 1.170: router | supported | "pretty much react-only" and "we are currently not supporting preact" (its maintainers, [#1741](https://github.com/TanStack/router/issues/1741), 2024 and 2025); a Preact adapter offered by a Preact maintainer was closed unmerged by its author ([PR #6700](https://github.com/TanStack/router/pull/6700), February 2026) | unsupported; not tried |
+| **wouter** 3.13.0, **preact-iso** 2.12.2: router | wouter supported | wouter ships `wouter-preact` ("Supports both React and Preact!", [its README](https://github.com/molefrog/wouter)); preact-iso is Preact's own | each is a Preact package, not React source ([the way back](#the-way-back)); the experiment's own 40-line history adapter needs neither |
+| **dnd-kit**: drag and drop | supported | `@dnd-kit/core` 6.3.1: "Seems to be working" (a user, [#897](https://github.com/clauderic/dnd-kit/issues/897), 2022). The rewrite, `@dnd-kit/react` 0.5.3, names React, Vue, Svelte, Solid and plain JavaScript, not Preact (its maintainer closing #897, February 2026) | no page drags today; not tried |
+| **TanStack Virtual** (`@tanstack/react-virtual` 3.14.26): virtual list | supported | works in the probe; a Preact release broke it and was fixed the same day ([#4973](https://github.com/preactjs/preact/issues/4973), December 2025); a Preact adapter offered the same way was closed the same way ([PR #1124](https://github.com/TanStack/virtual/pull/1124)) | a 2,000-card column works alike on both in the probe |
+| **react-window** 2.5.3, **react-virtuoso** 4.18: virtual list | supported | react-window: nothing found for 2.x; react-virtuoso: lists left blank after their first draw under the alias ([#266](https://github.com/petyosi/react-virtuoso/issues/266), 2021, closed in 2022 with no fix named) and a crash its maintainer put down to "something related to Preact itself" ([#1154](https://github.com/petyosi/react-virtuoso/issues/1154), 2024, closed as not planned), nothing since | not tried |
+| **react-markdown** 10.1.0; **Shiki**, **highlight.js**, **Prism** | supported | react-markdown: its maintainer, asked about Preact, answered that the two are not "going to work together normally" and suggested turning Markdown into HTML with another library, or aliasing React to Preact ([#730](https://github.com/remarkjs/react-markdown/issues/730), 2023); nothing on compat since. Shiki, highlight.js, Prism and the Markdown parsers (markdown-it, marked, micromark) are framework-free | none needed: the server renders Markdown into blocks |
+| **Recharts** 3.10.1, **visx** 4.0.0, **Nivo** 0.99: charts | supported | Recharts under compat drew its tooltips and legend but not the chart itself until a Preact fix in 10.28.3 ([#6857](https://github.com/recharts/recharts/issues/6857), January 2026). visx: "Does visx work with preact? yup! alias `react` + `react-dom` to `preact/compat`" ([its README](https://github.com/airbnb/visx)). Nivo: nothing found | none needed: the chart and the timeline are the client's own SVG and would port as they are |
+| **React Hook Form** 7.92.0, **TanStack Form** 1.33: forms | supported | React Hook Form has fixed Preact bugs ([#7683](https://github.com/react-hook-form/react-hook-form/issues/7683), "support preact with onTouched mode"), with no statement of support found; TanStack Form has an official Preact adapter (`@tanstack/preact-form`, first published on npm in May 2026, [its docs](https://tanstack.com/form/latest/docs/framework/preact/quick-start)) | none needed: the forms are a few fields each |
+| **Motion** 14.14, **react-spring** 10.1, **auto-animate** 0.10: animation | supported | Motion: "We don't explicitly support Preact no" ([#332](https://github.com/motiondivision/motion/issues/332), 2019); react-spring: two reports on Preact's tracker ([#1795](https://github.com/preactjs/preact/issues/1795), 2019; [#2662](https://github.com/preactjs/preact/issues/2662), 2020) closed by a Preact maintainer in July 2026 "as unreproducible/stale", and no open issue on its own tracker names Preact; auto-animate: "Preact users can use the hook `useAutoAnimate` by importing it from `@formkit/auto-animate/preact`" ([its docs](https://auto-animate.formkit.com/)) | none needed: the client animates with CSS |
+
+The plugin blocks need no library on either side: the client draws each block kind with a
+component of its own, as `blocks.jsx` does here. A project's own component mounted in the
+client's runtime ([Plugins and front-end extension](#plugins-and-front-end-extension)) would run
+on the client's library, so on Preact it too would go through compat.
+
+### The probe
+
+Three of these were added to the experiment, picked by what the three pages draw or read, and in
+each kind the one most downloaded from npm in the week to 13 November 2026 (by npm's download
+counts): **Radix**, for the controls every page has and the experiment left inert or drew without
+their popups (a task's priority and the message's recipient, a card's comment kind, the frame's
+menus, the picture viewer), which also says it does not support Preact, so its answer was the
+least certain; **TanStack Query**, for the reads every page makes, their paging and the re-reads a
+feed event starts; and **TanStack Virtual**, for the board's columns at 2,000 cards and a long
+thread. Drag and drop was left out because no page drags, and a router because the pages need
+none (React Router was built on its own instead, outside the experiment: the table above). They
+are on a page of their own (`probe.html`, `src/probe/`), so the three pages' build is byte for byte
+the one measured; the README names the commands.
+
+Each probe was driven in a private headless Chrome by `symphony shot`, with real clicks and keys,
+on both builds served by a plain static server, and each check reads what the control did, not its
+markup. Radix's range slider was driven the same way as a control: Preact's own tracker holds it
+as broken, so it shows whether the checks can tell.
+
+| library | what was driven | React | Preact | added, gzip (Brotli), React | added, gzip (Brotli), Preact |
+|---|---|---|---|---|---|
+| Radix (`radix-ui` 1.8.1): select, dropdown menu, dialog, tabs, tooltip, checkbox | a select picked by pointer and by keys; a menu item chosen by keys, focus back on its trigger; a modal dialog opened, focus inside it, the rest hidden, closed by Escape with focus back; tabs by click and arrows; a tooltip on hover; a checkbox | every check passed | every check passed, the same values | 39.9 kB (35.3) | 39.6 kB (35.1) |
+| TanStack Query 5.107.1 | a count and a column read; Load more to the column's end; a feed event invalidating both, every page read again and drawn | every check passed | every check passed | 10.5 kB (9.6) | 10.5 kB (9.6) |
+| TanStack Virtual 3.14.26 | 2,000 cards of uneven heights in a 600 px box: 15 rows in the DOM; scrolled to the end, the last card drawn flush with the box's bottom, 14 rows in the DOM | every check passed | every check passed, the same counts and sizes | 10.3 kB (9.4) | 10.3 kB (9.4) |
+| the control: Radix's range slider | two thumbs drawn, one focused and moved with the arrow keys | thumbs drawn, value moved from 20 to 22 | thumbs `display: none`, none could take focus, the value stayed at 20 | 10.4 kB (9.3) | 10.3 kB (9.2) |
+| the runtime alone (the probe's entry) | | | | 68.9 kB (59.3) | 11.0 kB (10.1) |
+
+No build warned, no page logged an error, and React's and Preact's checks printed the same values
+but for the slider. The bytes are each library's chunks with the probe's own few lines, beyond the
+entry, gzipped at the best level as the server sends them. Two things follow:
+
+- **A library costs the same bytes on both sides.** Its code is the same; what differs is the
+  runtime under it, about 58 kB here (69 kB against 11 kB) and 60 kB in the three pages
+  ([Size](#size)). So Preact's saving is a fixed amount a first visit, not a share of it: with all
+  three libraries on one page, about 60 kB, the board's first visit would be about 104 kB on Preact
+  and 164 kB on React, 0.63 of React's bytes where it is 0.42 without them (an estimate, from the
+  bytes above; no page here loads all three).
+- **A build that passes is not a library that works.** The slider builds on Preact without a
+  warning and fails only when drawn. React Router 8 fails at the build instead. Only driving a
+  library on the Preact build tells.
+
+### The tools
+
+| tool | React 19 | Preact | for this client |
+|---|---|---|---|
+| devtools | React DevTools | Preact's own extension, through `preact/debug` ([Debugging](https://preactjs.com/guide/v11/debugging)); no Preact page says React DevTools works with a compat build (unconfirmed either way) | each build is inspected with its own extension |
+| component tests | Testing Library for React; `vitest-browser-react`, which Vitest provides "out of the box" ([browser mode](https://vitest.dev/guide/browser/)) | `@testing-library/preact` 3.2.6 (released in October 2026, the first since May 2024); `vitest-browser-preact`, which Vitest lists among "community packages", published by a Preact maintainer since May 2025, 2.0.0 on 6 November 2026. React's Testing Library under the alias: documented by neither side, not tried | a JavaScript runner would test the Preact build with Preact's packages, or the components on React |
+| Playwright's component tests | its experimental per-framework packages are removed; one gallery any dev server renders ([the docs](https://playwright.dev/docs/test-components)) | the same gallery, no Preact mention | the client's browser tests drive the DOM over the workspace's own driver, whatever draws it |
+| TypeScript under the alias | `@types/react` | Preact's guide maps `react` and `react-dom` to compat in `paths`: "you might need to disable type checking on your node_modules" (`skipLibCheck`, [TypeScript](https://preactjs.com/guide/v11/typescript)) | types generated from the wire are the same on both; a library's own React types go unchecked under the alias |
+| lint | `eslint-plugin-react-hooks` 7.1 | the same plugin knows a hook by its name, not where it was imported from (read in its source), so it runs on this source; `eslint-config-preact` 2.0.0 takes its 5.x | the same source, the same lint |
+| Vite | `@vitejs/plugin-react`, Fast Refresh | `@preact/preset-vite` 2.10.6 adds the alias, Prefresh's hot reload and the devtools bridge in development (its README, on npm); the experiment uses `@vitejs/plugin-react` and the alias for both builds | a production build needs no preset; development on Preact would take Preact's for hot reload (unconfirmed whether React's Fast Refresh works on the alias) |
+| source maps and error overlay | the packages ship no source maps (none in react or react-dom 19.3.1 as installed); the development build reports an error with its component stack and has `captureOwnerStack` (read in its source) | 11.2.0 ships a map beside each module (seven, compat's among them); `preact/debug` prints its warnings and errors with component and owner stacks (its source; [Debugging](https://preactjs.com/guide/v11/debugging)), which compat does not export under React's name | Vite's error overlay ([`server.hmr.overlay`](https://vite.dev/config/server-options)) and its maps of the client's own code ([`build.sourcemap`](https://vite.dev/config/build-options)) are Vite's, alike on both; whether a production build carries a package's own maps through was not tried |
+
+### How the two are kept
+
+- **Releases.** In the year to 14 November 2026, npm shows 22 stable releases of Preact (10.28.0
+  to 11.2.0, with 11.0.0 on 30 September 2026) and 29 of React (four lines, 19.0 to 19.3, kept
+  patched side by side; 19.3.0 on 9 September 2026).
+- **Who keeps them.** Preact's npm package has six publishers; React's [team
+  page](https://react.dev/community/team) lists 32 members, its seven-member leadership council at
+  Meta and Vercel.
+- **How fast compat followed React,** by the first Preact release whose published compat has the
+  feature: React 18.0.0 (29 March 2022) brought `createRoot`, which compat had 11 weeks later
+  (10.8.0); `useSyncExternalStore`, `useTransition`, `useInsertionEffect` and `useDeferredValue` 14
+  weeks later (10.9.0); `useId` 24 weeks later (10.11.0). React 19.0.0 (5 December 2024) brought
+  refs as props and `use`, which compat had 22 months later (11.0.0, its reported React version
+  moving from 18.3.1 to 19.0.0 then); React 19.2's `useEffectEvent` took a year. Actions, the form
+  hooks and document metadata have not come.
+- **Long open.** Of compat's issues, three are open and old: keys from `toChildArray`
+  ([#2888](https://github.com/preactjs/preact/issues/2888), 2020), Radix's slider (2022,
+  reproduced in the probe) and document metadata (2025, no plans).
+- **Who ships it.** Preact's [own page](https://preactjs.com/about/we-are-using) lists users from
+  Etsy, Uber, Lyft and The New York Times to small studios; the list is added to by the users
+  themselves and carries no dates, so it says who once shipped Preact, not who does today.
+- **Preact 11 is new.** 11.0.0 was published on 30 September 2026, six weeks before this was
+  read, and refs as props, `use` and the compiler's runtime came with 11.x; React Aria is reported
+  broken on it ([#10755](https://github.com/adobe/react-spectrum/issues/10755)). The probe ran on
+  11.2.0; how 11 holds up across the libraries' next majors has no record yet.
+
+**The risk, plainly.** The libraries are written and tested for React: Radix, React Aria,
+Headless UI, TanStack Router and Motion say on their trackers that they do not support Preact, or
+not explicitly; TanStack Query, TanStack Form, wouter, visx and auto-animate say they do, most
+through a Preact package of their own; the rest say nothing either way. So a library
+that works on compat today can stop at its next major once it uses something compat lacks, and
+nothing in the library warns of it. React Router did exactly that: 7 works on Preact, 8 imports a
+React 19 hook compat has never had and does not build. The same can come from React's side, as
+compat took 22 months to follow React 19.
+
+### The way back
+
+**One source builds both today.** The experiment's two builds differ by one block of Vite's
+configuration, the alias; the code imports only `react` and `react-dom`. That stays true only while
+nothing in the source or its libraries needs Preact itself: Preact's own APIs (its signals, its
+`useErrorBoundary`, `preact/hooks` or `preact` imported directly), a Preact package in place of a
+React one (`@tanstack/preact-query`, `wouter-preact`, `preact-iso`, Preact's Testing Library for
+tests that only Preact can run), or behaviour only Preact has (its effects after the next frame,
+events not crossing a portal) that the code comes to rely on. The first two stop React's build
+and are lines to rewrite before it builds again; the third builds on React and behaves otherwise,
+which only running it shows.
+
+**What would keep the door open.** None of it is in place: nothing the Symphony builds or tests
+reads the experiment, whose own build only makes both. A gate would have to hold four things:
+
+- the source imports React's names only, and lint refuses an import of any Preact package
+  outside the build's configuration: `preact` and its subpaths, `@preact/*` (`@preact/signals`
+  among them) and the Preact editions of libraries (`wouter-preact`, `@tanstack/preact-query`,
+  `@tanstack/preact-form`, `preact-iso`), which a check of the lockfile can find, as each names
+  `preact` as a peer dependency (read on npm);
+- the gate builds both modes, so a library that needs what compat lacks fails there, as React
+  Router 8 does, not after a release;
+- the browser tests, or a named set of them, run on both builds, so that code relying on what
+  only Preact does fails on React at the gate rather than at the switch; without it, a switch
+  costs a pass of the browser tests on React and the fixes that pass finds;
+- a library is taken only once its use is driven on both builds, since a build that passes proves
+  nothing (the slider).
+
+That is a standing cost of choosing Preact: a second production build and a second run of the
+browser tests at every gate, a lint rule and a lockfile check kept up, and every library driven
+on two runtimes. React needs none of it.
+
+**What React costs instead,** from the tables above: about 60 kB more on every first visit, the
+board 103.8 kB against 43.5, a task's page 108.9 against 48.4, the guide 120.1 against 59.6, in
+React's runtime (its entry chunk 72 kB against 11); nothing more on a second page (23.0 against
+22.7), the runtime being in already; about 200 kB more script decoded on every first visit; and
+a tenth to a quarter more time running script on a cold visit, each of the three pages at every speed (the
+board 43 ms against 34 at full speed, 173 against 151 slowed, 154 against 113 on a phone's
+screen), while Preact's long tasks are no shorter, the batches split (slowed, 146 ms on React's board against 163).
+In when a page is usable neither leads throughout: with the CPU slowed, Preact's board and guide are usable a
+little sooner cold (0.49 and 0.81 of the Dioxus time, against React's 0.52 and 0.87) and React's
+task page is (0.60 against 0.70); at full speed, opening a task from the board is quicker on React
+(0.58 against Preact's undecided 1.00) and a card's move is drawn in 30 ms on React against 43 on
+Preact, the medians ([Render](#render)).
+
 ## Pictures
 
 Each page was pictured on each client with `symphony shot`, in a wide window and on a phone, from
 the bench fixture through each client's own server: the board, the task's page, the guide, the
-decision register, and a card of the register after its verdict posted. They are kept with the
-task's evidence, not in the repository.
+decision register, and a card of the register after its verdict posted. Those below are the board,
+the task's page and the guide, wide and on a phone, and a card after its verdict, each on Dioxus
+first and on Preact under it.
 
-- **React and Preact** draw every page byte for byte alike: the same source gives the same DOM.
+- **React and Preact** draw every page byte for byte alike: the same source gives the same DOM, so
+  Preact's pictures stand for React's. Only their verdicts' pictures differ, as each client's run
+  gave its verdict on a card of its own.
 - **The board, the guide and the register** draw as Dioxus draws them, to a few hundred pixels in
   a picture of 1.3 million (0.005 % to 0.04 %): a letter's anti-aliasing where the two clients
   split a line into text nodes differently, the scrollbar's thumb, and the header's crumb to the
@@ -725,6 +1234,37 @@ task's evidence, not in the repository.
   page follows them. Above and below them the two match.
 - **A verdict** posts and shows on both: the card takes its stamp and colour, the thread its
   verdict line, and the form says the verdict saved.
+
+**The board**, wide, then on a phone:
+
+![The board on the Dioxus client, wide](client-framework-board-dioxus-wide.webp)
+![The board on the Preact client, wide](client-framework-board-preact-wide.webp)
+
+![The board on the Dioxus client, on a phone](client-framework-board-dioxus-phone.webp)
+![The board on the Preact client, on a phone](client-framework-board-preact-phone.webp)
+
+**A task's page**, wide, then on a phone: the Dioxus page draws the gates and the timeline under
+the head, which the Preact page leaves out.
+
+![A task's page on the Dioxus client, wide](client-framework-task-dioxus-wide.webp)
+![A task's page on the Preact client, wide](client-framework-task-preact-wide.webp)
+
+![A task's page on the Dioxus client, on a phone](client-framework-task-dioxus-phone.webp)
+![A task's page on the Preact client, on a phone](client-framework-task-preact-phone.webp)
+
+**The guide**, wide, then on a phone, where the two are the same picture:
+
+![The guide on the Dioxus client, wide](client-framework-document-dioxus-wide.webp)
+![The guide on the Preact client, wide](client-framework-document-preact-wide.webp)
+
+![The guide on the Dioxus client, on a phone](client-framework-document-dioxus-phone.webp)
+![The guide on the Preact client, on a phone](client-framework-document-preact-phone.webp)
+
+**A verdict on a card of the register**, wide: an approve on the Dioxus client, a reject on the
+Preact client.
+
+![A card of the register after an approve on the Dioxus client, wide](client-framework-verdict-dioxus-wide.webp)
+![A card of the register after a reject on the Preact client, wide](client-framework-verdict-preact-wide.webp)
 
 ## Verified and inferred
 
