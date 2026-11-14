@@ -2352,6 +2352,96 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
+/// Resolves once the shell has begun warming the persistent modules (assets/shell.js, `warm`): it
+/// does so once the page has drawn its data and gone quiet, as it starts reading ahead the links
+/// on the screen (`ahead`), so the shot's settle after it spans the page's reads ahead. Neither
+/// warming nor this wait reads this device's store.
+const WARMING: &str = "new Promise(resolve => { const look = () => \
+     document.querySelector('link[rel=prefetch]') ? resolve(true) : setTimeout(look, 100); look(); })";
+
+/// The home's links to the project's pages, by their words.
+const HOME_LINKS: &str =
+    "[...document.querySelectorAll('.dash-links a')].map(link => link.textContent.trim())";
+
+/// A new project's home, the real server's, as `symphony init` leaves the project: no
+/// docs/DECISIONS.md yet. The shot waits until the page has gone quiet and starts its reads ahead
+/// (of its next card's document, the links before it first), then is drawn and saved: the home
+/// links no register, so nothing reads one ahead. Before, the home linked docs/DECISIONS.md and
+/// read it ahead, the server answered 404, and that answer, its body never read, stayed in flight
+/// in Chrome's eyes until the shot's timeout. With the file there, the home links it and is shot
+/// as well.
+#[test]
+fn a_new_projects_home_without_a_register_links_none_and_is_shot_drawn() {
+    const LATER: &str = "# Later\n\n- [ ] **alpha** — First question.\n";
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    for (documents, register) in [
+        (&[("docs/LATER.md", LATER)][..], false),
+        (
+            &[
+                ("docs/LATER.md", LATER),
+                ("docs/DECISIONS.md", "# Decision register\n"),
+            ][..],
+            true,
+        ),
+    ] {
+        let site = super::restored::Native::start_committed(None, "main", documents, None);
+        let scratch = Scratch::new(if register {
+            "registered"
+        } else {
+            "unregistered"
+        });
+        let out = scratch.join("home.png");
+        let output = shot(
+            &chrome,
+            &[
+                &site.url("/"),
+                "--out",
+                out.to_str().unwrap(),
+                "--wait-for",
+                ".hero .docchip",
+                "--eval",
+                WARMING,
+                "--eval",
+                HOME_LINKS,
+                "--report",
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "register {register}: {}",
+            said(&output)
+        );
+        let [warming, links, report] = printed(&output).try_into().unwrap();
+        assert_eq!(warming, json!(true));
+        let links: Vec<&str> = links
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(links.contains(&"Full queue"), "{links:?}");
+        assert_eq!(
+            links.contains(&"Decision register"),
+            register,
+            "the register linked only once its file is there: {links:?}"
+        );
+        assert!(
+            !report.to_string().contains("DECISIONS.md"),
+            "no read of a register failed: {report}"
+        );
+        let picture = Picture::read(&out);
+        assert!(
+            picture.colours([0.0, 0.0, 1440.0, 900.0], 1.0) > 16,
+            "register {register}: the home is not drawn in the picture"
+        );
+    }
+}
+
 /// What a shot of `url` that failed, its page not drawn within [`PATIENT`] seconds, said it still
 /// waited for, each part once: they come in the order each began, which a page's frames leave to
 /// the machine.

@@ -23,6 +23,7 @@ shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
 Symphony. It starts detached, so it outlives whoever started it, and that is
 also the restart: a server that was killed is started again on the same data.
+A start says so in one line on stderr, as it takes seconds.
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -303,9 +304,10 @@ build linked at `.target/bin/tasks`, else, from a linked worktree, the main
 checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
 to make when it finds none. The Symphony's own board clients find it the same
 way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
-`tools/rs-bin.sh` builds the binary before every run, so the first command after
-a change to its sources takes a minute or two, later ones only Cargo's check
-that nothing changed. On the live board it is the main checkout's build, from
+`tools/rs-bin.sh` builds the binary before a run once its sources or settings
+changed, so the first command after such a change takes a minute or two, and
+later ones run the build without asking Cargo ([the launcher](../AGENTS.md#rust)).
+On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
@@ -357,7 +359,10 @@ checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
 it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there.
+there. A new project's board is made by its first board command, `just tasks list`
+say, which `symphony init` lists among the steps left too while the board is not
+made: the Symphony only reads a board, and its board page says so, in the
+refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|

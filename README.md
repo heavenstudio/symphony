@@ -65,7 +65,9 @@ In the project's main checkout, a git repository, run `symphony init`. It instal
 skills, the recipes (`symphony.just`, which the project's justfile imports), the allow rules and
 the hooks, and ends with `Next:`, what it cannot do for you: the project file (its tables and keys
 are in [PROJECT_FILE](docs/PROJECT_FILE.md)), the documents' folder, the links to the builds, the
-SurrealDB the board runs and the project's registration with the machine's server. Do each, then
+SurrealDB the board runs, the board's making (its first board command, `just tasks list`, makes
+it: the Symphony only reads a board) and the project's registration with the machine's server. Do
+each, then
 run `symphony init` again until it says `Next: nothing`.
 
 The first task, by hand: `just tasks register` prints a handle, say `calm-swift`; `just tasks

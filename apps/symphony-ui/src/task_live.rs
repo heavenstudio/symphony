@@ -29,6 +29,9 @@ pub struct Data {
     pub thread_loaded: bool,
     thread_requested: bool,
     child_requested: bool,
+    /// A task came under the shown one since its subtasks were read: they are read again with the
+    /// page ([`refresh`]), as the feed sent its changed fields alone.
+    child_came: bool,
     pub before: Option<i64>,
     pub agent_total: usize,
     pub approval: Option<(symphony_api::TaskOffer, f64)>,
@@ -92,6 +95,7 @@ impl Data {
         self.approval = None;
         self.thread_requested = false;
         self.child_requested = false;
+        self.child_came = false;
         self.child_cursor = None;
         self.before = None;
         self.page_copy = None;
@@ -366,7 +370,7 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
         let region = property(&change, "region").as_string().unwrap_or_default();
         let value = property(&change, "data");
         match region.as_str() {
-            "task" | "task-summary" => {
+            "task" => {
                 let change: ItemChange<Task> = decode(value)?;
                 if let Some(page) = &mut next.detail
                     && (page.children.iter().any(|t| t.slug == change.key)
@@ -398,7 +402,7 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                             next.missing = Some(change.key.clone());
                             next.error = "This task was removed".into();
                         }
-                    } else if region == "task" {
+                    } else {
                         reload_detail = true;
                     }
                 }
@@ -410,22 +414,42 @@ fn apply_event(value: &JsValue, mut data: Signal<Data>) -> Result<bool, String> 
                     item(tasks, change, |t| &t.slug);
                 }
             }
+            // The feed sends a task it changed as these fields alone: a view that does not hold
+            // the task reads it again when the change brings it in.
             "task-fields" => {
                 let change: TaskChange = decode(value)?;
-                if let Some(task) = next
+                let listed = next
                     .tasks
                     .as_mut()
-                    .and_then(|tasks| tasks.iter_mut().find(|t| t.slug == change.key))
-                {
-                    crate::tasks::merge(task, &change.fields);
-                }
-                if let Some(page) = next.detail.as_mut().filter(|p| p.task.slug == change.key) {
-                    crate::tasks::merge(&mut page.task, &change.fields);
-                    if change.fields.body.is_some() || change.fields.status.is_some() {
-                        reload_detail = true;
-                    }
+                    .and_then(|tasks| tasks.iter_mut().find(|t| t.slug == change.key));
+                let listed = listed
+                    .map(|task| crate::tasks::merge(task, &change.fields))
+                    .is_some();
+                // A task the agents page lists no record of, which it now shows.
+                reload_page |= selected == "/agents"
+                    && !listed
+                    && next.agents.as_ref().is_some_and(|agents| {
+                        crate::tasks::agents_page_takes(&change.fields, |handle| {
+                            agents.agents.iter().any(|agent| agent.handle == handle)
+                        })
+                    });
+                if let Some(page) = next.detail.as_mut() {
+                    let done = crate::tasks::page_fields(page, &change);
+                    reload_detail |= done.reload;
+                    next.child_came |= done.child_came;
                 }
             }
+            // A holder's health: its roles on the page's task, its subtasks and the agents'
+            // tasks say it.
+            "session" => crate::tasks::holder_health(
+                next.tasks.iter_mut().flatten().chain(
+                    next.detail
+                        .iter_mut()
+                        .flat_map(|page| std::iter::once(&mut page.task).chain(&mut page.children)),
+                ),
+                &property(&value, "key").as_string().unwrap_or_default(),
+                property(&property(&value, "value"), "health").as_string(),
+            ),
             "message" => {
                 let message: Message = decode(value.clone())?;
                 if next
@@ -569,11 +593,13 @@ pub async fn refresh(route: Memo<String>, mut data: Signal<Data>) {
                 d.freshness.answered(kept::PAGE);
                 // What a page drawn from this device was asked to read meanwhile, it reads now.
                 let thread = drawn && d.thread_requested && !d.thread_loaded;
-                let subtasks = drawn
-                    && d.child_requested
-                    && d.detail
-                        .as_ref()
-                        .is_some_and(|p| p.children.is_empty() && p.children_count > 0);
+                let came = std::mem::take(&mut d.child_came);
+                let subtasks = d.child_requested
+                    && (came
+                        || (drawn
+                            && d.detail
+                                .as_ref()
+                                .is_some_and(|p| p.children.is_empty() && p.children_count > 0)));
                 drop(d);
                 replay(since, route, data);
                 if thread {
@@ -592,6 +618,9 @@ pub async fn refresh(route: Memo<String>, mut data: Signal<Data>) {
                 }
             }
         }
+    } else if selected == "/agents" && data.peek().drawn(&selected) {
+        // What the feed changed on an agents page drawn: its first page merged, not read afresh.
+        merge_agents("", None, route, data).await;
     } else {
         Box::pin(load(route, data)).await;
     }
@@ -827,7 +856,7 @@ pub async fn children(more: bool, route: Memo<String>, mut data: Signal<Data>) {
     }
 }
 
-pub async fn more_agents(lost: bool, route: Memo<String>, mut data: Signal<Data>) {
+pub async fn more_agents(lost: bool, route: Memo<String>, data: Signal<Data>) {
     if route() != "/agents" {
         return;
     }
@@ -845,21 +874,37 @@ pub async fn more_agents(lost: bool, route: Memo<String>, mut data: Signal<Data>
     let cursor = cursor_query(cursor.as_deref());
     let health = if lost { "&health=lost" } else { "" };
     let query = format!("{health}{cursor}");
-    match get::<AgentPage>(&format!(
-        "/api/agent-page?{}",
-        query.trim_start_matches('&')
-    ))
-    .await
-    {
+    let query = format!("?{}", query.trim_start_matches('&'));
+    merge_agents(&query, Some(lost), route, data).await;
+}
+
+/// Read the agents page at `query` and merge its answer into the page drawn, the agents and the
+/// tasks it lists put in or replaced: the next page of the lost agents or of the others (`paged`),
+/// whose cursor moves on, or else its first page again for what the feed changed, which keeps both
+/// cursors and the lost agents opened.
+async fn merge_agents(
+    query: &str,
+    paged: Option<bool>,
+    route: Memo<String>,
+    mut data: Signal<Data>,
+) {
+    match get::<AgentPage>(&format!("/api/agent-page{query}")).await {
         Ok(page) if route() == "/agents" => {
             let mut shown = data.write();
             shown.local = page.local;
-            if lost {
-                shown.lost_cursor = page.next;
-                shown.lost_loaded = true;
-            } else {
-                shown.agent_cursor = page.next;
-                shown.agent_total = page.total;
+            match paged {
+                Some(true) => {
+                    shown.lost_cursor = page.next;
+                    shown.lost_loaded = true;
+                }
+                Some(false) => {
+                    shown.agent_cursor = page.next;
+                    shown.agent_total = page.total;
+                }
+                None => {
+                    shown.agent_total = page.total;
+                    shown.error.clear();
+                }
             }
             if let Some(view) = &mut shown.agents {
                 for agent in page.view.agents {
