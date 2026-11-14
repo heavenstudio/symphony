@@ -37,13 +37,10 @@ use serde::{Deserialize, Serialize};
 pub mod agent_activity;
 mod agent_probes;
 mod agents;
-mod blocks;
-mod field_value;
 pub mod gates;
 pub mod health;
 mod links;
 mod machine_work;
-mod media;
 mod project;
 pub mod report_page;
 pub mod reports;
@@ -52,11 +49,9 @@ mod task_queries;
 mod task_stage;
 pub mod timeline;
 pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
-pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
-pub use media::{GalleryItem, Media, View, Viewer};
 pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
@@ -68,7 +63,17 @@ pub use task_queries::{
 };
 pub use task_stage::{TaskListing, TaskStage};
 pub use timeline::{TASK_TIMELINE_PATH, TaskTimeline};
-pub use {agent_probes::AgentProbes, agents::*, blocks::*, machine_work::*, project::*};
+pub use {agent_probes::AgentProbes, agents::*, machine_work::*, project::*};
+
+/// The plugin kit's block vocabulary (`symphony-blocks`), which these wire types carry: document
+/// content as data, what a page draws that markup cannot, and the data a plugin's seams return
+/// (a gate's own with [`gates`]). Re-exported under the names it has always had here.
+pub use symphony_blocks::{
+    Block, CalloutKind, CardGroup, CardState, Cell, ContainerKind, FieldValue, FigureSize,
+    GalleryItem, Image, InlineKind, LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar,
+    Region, Span, TaskOffer, ThreadAuthor, ThreadEntry, VectorKind, VectorShape, Verdict, View,
+    Viewer,
+};
 
 /// The route that answers a [`Front`].
 pub const FRONT_PATH: &str = "/api/front";
@@ -217,19 +222,6 @@ impl Card {
     }
 }
 
-/// One picture a card shows.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Picture {
-    /// Where the picture is served; `None` for an item not drawn yet ("picture coming").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub src: Option<String>,
-    /// The candidate's letter ("A"), or the item's name.
-    pub caption: String,
-    /// The picture still waits on the owner's review.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub waiting: bool,
-}
-
 /// The row of counts, each linking to where its detail lives.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counts {
@@ -264,33 +256,6 @@ pub struct Progress {
     pub docs: u32,
     /// The decisions waiting across them.
     pub decisions_waiting: u32,
-}
-
-/// A region of the home a plugin adds: a headline over bars of done, waiting and remaining work.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Region {
-    /// The region's id among the project's regions, stable across snapshots.
-    pub id: String,
-    pub title: String,
-    /// The line under the headline's percentage (`21 of 31 items approved`).
-    pub note: String,
-    pub bars: Vec<ProgressBar>,
-    /// The legend's words for done, waiting and remaining, in that order.
-    pub legend: [String; 3],
-}
-
-/// One bar of a home region: how much of `total` is done, waiting, and (the rest) remaining.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgressBar {
-    pub key: String,
-    pub name: String,
-    /// Where the bar links: a project-relative path.
-    pub page: String,
-    /// What the bar says on hover.
-    pub title: String,
-    pub done: u32,
-    pub waiting: u32,
-    pub total: u32,
 }
 
 /// One event of the feed: what changed since the version before.
@@ -574,18 +539,6 @@ pub struct TaskBrief {
     pub omitted: usize,
     #[serde(default)]
     pub revision: String,
-}
-
-/// What a project's board action offers the owner on a task: a button named `label` beside the
-/// task's `branch`, shown while there is a `payload`, which the button sends back to the action
-/// `action` as it came (approve to land: the exact patch to land).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskOffer {
-    /// The board action's name.
-    pub action: String,
-    pub label: String,
-    pub branch: String,
-    pub payload: Option<String>,
 }
 
 /// The route the owner's answer to a [`TaskOffer`] is posted to: `slug`, `action`, `payload` and

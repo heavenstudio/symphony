@@ -4,8 +4,8 @@
 //! a consumer writes it (a few functions, one of them generic, are named alone, their signatures
 //! left to the conciliation below), a struct it builds by its fields built by them all (by those it
 //! names, where it fills the rest from `Default`), a variant it builds, compares or matches built,
-//! compared or matched as it does (but the blocks', below), a trait it implements implemented with
-//! the methods it writes, a type it names named. Nothing it defines is called but `compared` and
+//! compared or matched as it does, a trait it implements implemented with the methods it writes, a
+//! type it names named. Nothing it defines is called but `compared` and
 //! `asserted`, which do nothing: it is compiled by the test build and by `just lint-rs` (clippy
 //! over every target), so a change that would break a consumer in what this file holds fails a
 //! task's gate rather than a run later.
@@ -22,11 +22,8 @@
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
 //! consumer's code calls. Not held by any of them, and caught only by the release run's conciliation
 //! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on the
-//! candidate): the blocks a consumer builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`,
-//! `Image`, `Presentation` and `Fragment`, and the variants of `FigureSize`, `ContainerKind` and
-//! `InlineKind` it builds, compares or matches with them: the markup's vocabulary, which grows with
-//! it), the signature of a function a guard names alone, and a field it reads or a method it calls
-//! on a value that is not named in a guard.
+//! candidate): the signature of a function a guard names alone, and a field it reads or a method it
+//! calls on a value that is not named in a guard.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a
@@ -67,7 +64,7 @@ use symphony_plugin::vocabulary::{
 use symphony_plugin::{
     BoardAction, Card, CardKind, Command, Component, DocCheck, Docs, Drawing, File, HomeRegion,
     Page, Plugin, Problem, Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme,
-    ThreadLine, Watch,
+    ThreadLine, Watch, vocabulary,
 };
 
 #[test]
@@ -219,9 +216,7 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: Option<(&LinkTarget, &Presentation, &Span)> = None;
 
     // The plugin vocabulary a consumer's plugin builds by its fields: every field named, so one
-    // added here breaks it, but for `Theme`, built by the fields it names over `Default`. (The
-    // blocks themselves, `Block`, `Span`, `Media`, `Cell`, `Image`, `Presentation` and `Fragment`,
-    // are left to the release run's conciliation, as the header says.)
+    // added here breaks it, but for `Theme`, built by the fields it names over `Default`.
     let _ = |text: String| NavItem {
         label: text.clone(),
         title: text.clone(),
@@ -283,6 +278,215 @@ fn the_names_consumers_call_keep_their_shapes() {
         open_label: label.clone(),
         close_label: label,
     };
+
+    // The blocks a consumer's plugin builds: the variants of `Block`, `Span` and `Media` it builds,
+    // each by every field as a variant is, with the variants of `FigureSize`, `ContainerKind` and
+    // `InlineKind` it builds them with, and the structs they hold by the fields it names
+    // (`Presentation` over `Default`, or by `Presentation::class`, its class read); the variants it
+    // matches, as it matches them; `Block` and `Span` compared in `assert_eq!`. Its plugin names them
+    // through `symphony_plugin::vocabulary` and its tests through `symphony_api`: one type by either
+    // path. Each enum then matched whole, the header's tripwire.
+    let _ = |text: String, spans: Vec<Span>, blocks: Vec<Block>, items: Vec<GalleryItem>| {
+        let presentation = Presentation {
+            title: text.clone(),
+            attributes: [(text.clone(), text.clone())].into(),
+            ..Presentation::default()
+        };
+        let _: &String = &presentation.class;
+        let image = Image {
+            src: text.clone(),
+            alt: text.clone(),
+            presentation: presentation.clone(),
+        };
+        let cell = Cell {
+            header: false,
+            spans: spans.clone(),
+            presentation: Presentation::class(text.clone()),
+        };
+        let viewer = Viewer::default();
+        [
+            Block::Paragraph {
+                spans: spans.clone(),
+            },
+            Block::Figure {
+                picture: Some(image),
+                caption: spans,
+                href: Some(text.clone()),
+                badge: Some(text.clone()),
+                size: FigureSize::Small,
+            },
+            Block::Container {
+                tag: ContainerKind::Div,
+                presentation: presentation.clone(),
+                blocks,
+            },
+            Block::Table {
+                head: vec![cell.clone()],
+                rows: vec![vec![cell]],
+                presentation,
+            },
+            Block::Media {
+                media: Media::Gallery {
+                    items,
+                    viewer: viewer.clone(),
+                },
+            },
+            Block::Media {
+                media: Media::Viewer {
+                    src: text.clone(),
+                    label: text,
+                    poster: None,
+                    viewer,
+                },
+            },
+        ]
+    };
+    let _ = |text: String, spans: Vec<Span>, blocks: Vec<Block>, image: Image| {
+        let shape: Vec<VectorShape> = Vec::new();
+        [
+            Span::Text { text: text.clone() },
+            Span::Strong {
+                spans: spans.clone(),
+            },
+            Span::Code { text: text.clone() },
+            Span::Link {
+                href: text.clone(),
+                target: None,
+                title: String::new(),
+                spans: spans.clone(),
+            },
+            Span::LineBreak,
+            Span::Image { image },
+            Span::Icon {
+                shape,
+                label: text.clone(),
+                named: false,
+                tip: text,
+            },
+            Span::Styled {
+                tag: InlineKind::Small,
+                presentation: Presentation::default(),
+                spans: spans.clone(),
+            },
+            Span::Styled {
+                tag: InlineKind::Span,
+                presentation: Presentation::default(),
+                spans,
+            },
+            Span::Blocks { blocks },
+        ]
+    };
+    let _ = [
+        FigureSize::Small,
+        FigureSize::Row,
+        FigureSize::Large,
+        FigureSize::Tile,
+        FigureSize::Cell,
+        FigureSize::Slot,
+        FigureSize::Wide,
+    ];
+    let _ = |block: &Block| {
+        matches!(block, Block::Heading { anchor, .. } if anchor.is_empty())
+            || matches!(block, Block::Component { kind, blocks }
+                if kind.is_empty() && matches!(&blocks[0], Block::Figure { picture: None, size: FigureSize::Wide, .. }))
+            || matches!(block, Block::Paragraph { spans }
+                if matches!(spans.as_slice(), [Span::Styled { presentation, spans, .. }]
+                    if presentation.class.is_empty() && spans.is_empty()))
+    };
+    asserted::<Block>();
+    asserted::<Span>();
+    let _ = |blocks: Vec<Block>, html: String, media: Vec<Media>| Fragment {
+        blocks,
+        html,
+        media,
+    };
+    let _: fn(Block) -> vocabulary::Block = std::convert::identity;
+    let _: fn(Span) -> vocabulary::Span = std::convert::identity;
+    let _: fn(Media) -> vocabulary::Media = std::convert::identity;
+    let _: fn(Image) -> vocabulary::Image = std::convert::identity;
+    let _: fn(Presentation) -> vocabulary::Presentation = std::convert::identity;
+    let _: fn(FigureSize) -> vocabulary::FigureSize = std::convert::identity;
+    let _: fn(ContainerKind) -> vocabulary::ContainerKind = std::convert::identity;
+    let _: fn(InlineKind) -> vocabulary::InlineKind = std::convert::identity;
+    let _ = |block: Block| match block {
+        Block::Heading { .. }
+        | Block::Paragraph { .. }
+        | Block::List { .. }
+        | Block::Table { .. }
+        | Block::Code { .. }
+        | Block::Quote { .. }
+        | Block::Rule
+        | Block::Callout { .. }
+        | Block::Card { .. }
+        | Block::Component { .. }
+        | Block::Media { .. }
+        | Block::Image { .. }
+        | Block::Figure { .. }
+        | Block::Caption { .. }
+        | Block::Comparison { .. }
+        | Block::Group { .. }
+        | Block::Container { .. }
+        | Block::Details { .. }
+        | Block::SettledCard { .. }
+        | Block::Thread { .. }
+        | Block::Comment { .. }
+        | Block::Unknown { .. } => {}
+    };
+    let _ = |span: Span| match span {
+        Span::Text { .. }
+        | Span::Emphasis { .. }
+        | Span::Strong { .. }
+        | Span::Code { .. }
+        | Span::Link { .. }
+        | Span::WikiLink { .. }
+        | Span::LineBreak
+        | Span::Image { .. }
+        | Span::Media { .. }
+        | Span::Component { .. }
+        | Span::Icon { .. }
+        | Span::Styled { .. }
+        | Span::Graphic { .. }
+        | Span::Blocks { .. }
+        | Span::Unknown { .. } => {}
+    };
+    let _ = |media: Media| match media {
+        Media::Mockup { .. } | Media::Viewer { .. } | Media::Gallery { .. } => {}
+    };
+    let _ = |size: FigureSize| match size {
+        FigureSize::Small
+        | FigureSize::Row
+        | FigureSize::Large
+        | FigureSize::Tile
+        | FigureSize::Cell
+        | FigureSize::Slot
+        | FigureSize::Wide => {}
+    };
+    let _ = |tag: ContainerKind| match tag {
+        ContainerKind::Div
+        | ContainerKind::Section
+        | ContainerKind::Figure
+        | ContainerKind::Figcaption
+        | ContainerKind::Aside
+        | ContainerKind::Header
+        | ContainerKind::Footer
+        | ContainerKind::Address
+        | ContainerKind::Center => {}
+    };
+    let _ = |kind: InlineKind| match kind {
+        InlineKind::Span
+        | InlineKind::Small
+        | InlineKind::Sub
+        | InlineKind::Sup
+        | InlineKind::Time
+        | InlineKind::Mark
+        | InlineKind::Kbd
+        | InlineKind::Samp
+        | InlineKind::Delete
+        | InlineKind::Insert
+        | InlineKind::Underline
+        | InlineKind::Abbreviation => {}
+    };
+
     // What its route and its renderer answer: its route builds `Reply::File`, and its route's test
     // matches a `Reply` whole, a file by its path and JSON by what it prints; its renderer builds
     // `Drawing::Viewer`, and `Drawing` is matched whole as the header's tripwire.

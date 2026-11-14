@@ -1,7 +1,10 @@
 //! The project as the client reads it: the view the server inlines in every page it serves, the
-//! routes the Symphony answers itself, and a plugin's navigation entries.
+//! routes the Symphony answers itself, and the plugins' navigation entries ([`NavItem`], the plugin
+//! kit's).
 
 use serde::{Deserialize, Serialize};
+
+use crate::NavItem;
 
 /// The project as the client's header and home read it, inlined in the page the server serves
 /// (the script element whose id is [`PROJECT_ELEMENT`]), so the first paint needs no request.
@@ -191,20 +194,6 @@ fn within(route: &str, path: &str) -> bool {
 
 /// The id of the element holding a [`ProjectView`] in the served page.
 pub const PROJECT_ELEMENT: &str = "symphony-project";
-
-/// A plugin's entry in the header and in the home's links.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NavItem {
-    /// The header's word (`▤ shelf`), drawn as the plugin gives it, after the Symphony's own
-    /// ([`page_names`]).
-    pub label: String,
-    /// The home's link text (`Shelf items`).
-    pub title: String,
-    /// The path it opens (`/shelf`), a client page.
-    pub href: String,
-    /// The document that page shows, a project-relative path.
-    pub document: String,
-}
 
 #[cfg(test)]
 mod tests {

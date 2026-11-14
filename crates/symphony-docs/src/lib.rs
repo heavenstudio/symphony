@@ -5,6 +5,9 @@
 //! its `file:line`, or else the [`Index`] the build writes its typed tables from. [`syntax`] is how
 //! the Symphony reads a document: lines, headings and anchors, fences and code, links, components,
 //! and card lines with their entries.
+//!
+//! One of the plugin kit's three crates, with `symphony-plugin` and `symphony-blocks`
+//! (`symphony_plugin`'s doc says what each holds); it depends on no other workspace crate.
 
 #![forbid(unsafe_code)]
 
