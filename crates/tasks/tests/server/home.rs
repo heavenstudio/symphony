@@ -3,8 +3,8 @@
 //! confused with another process or with a server on other data.
 
 use crate::common::{
-    Repository, Scratch, command_of, exists, gone, healthy_occupier, parent_of, script, signal,
-    surreal,
+    Repository, Scratch, Told, command_of, exists, gone, healthy_occupier, parent_of, script,
+    signal, surreal,
 };
 use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
@@ -39,26 +39,11 @@ fn session_of(pid: i64) -> i32 {
     unsafe { getsid(i32::try_from(pid).unwrap()) }
 }
 
-/// What a `Home` tells, a line at a time ([`Home::telling`]).
-#[derive(Clone, Default)]
-struct Told(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
-
-impl Told {
-    fn home(&self, home: Home) -> Home {
-        let lines = std::sync::Arc::clone(&self.0);
-        home.telling(move |line| lines.lock().unwrap().push(line.to_string()))
-    }
-
-    fn lines(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
-    }
-}
-
 #[test]
 fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     let s = Scratch::new("start");
     let told = Told::default();
-    let home = told.home(s.home());
+    let home = s.home().telling(told.sink());
     assert_eq!(home.recorded(), None);
     assert!(!home.has_store());
     let first = home.ensure().unwrap();
@@ -82,7 +67,7 @@ fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     assert_eq!(home.schema("tasks").unwrap(), None);
     // A server found running is used, saying nothing.
     assert_eq!(home.ensure().unwrap(), first);
-    assert_eq!(told.home(s.home()).ensure().unwrap(), first);
+    assert_eq!(s.home().telling(told.sink()).ensure().unwrap(), first);
     assert_eq!(told.lines().len(), 1, "{:?}", told.lines());
 }
 

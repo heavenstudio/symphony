@@ -331,7 +331,8 @@ themselves, which no rule allows, write where they are told: the owner's way to 
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
-Init refuses a `--root` that is not a folder or is in no git repository, making nothing. It
+Init refuses a `--root` that is not a folder or is in no git checkout (a bare repository or a
+`.git` folder is none), making nothing. It
 ends by printing what is left (`Next:`): the project file, its document folders, the
 justfile's import, the links to the project's builds the recipes and hooks find nowhere (with
 the `ln -s` for those beside the running `symphony`, and the `cargo build` in a Symphony

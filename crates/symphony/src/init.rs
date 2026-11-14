@@ -27,8 +27,8 @@
 //! `allow-duplicate-recipes` itself, which is brought current. Retiring the recipes removes the
 //! stamped copy and that stamped line. The project's `.gitignore` gets a line
 //! for each folder the Symphony fills that it does not ignore yet: the build links' `.target/` and
-//! the artifacts folder. A run refuses a root that is not a folder, or is in no git repository
-//! (the board lives in the repository's common dir), making nothing. It ends with
+//! the artifacts folder. A run refuses a root that is not a folder, or is in no git checkout (the
+//! board lives in the repository's common dir; a git dir is git's own), making nothing. It ends with
 //! what is left for the owner to do ([`steps`]) and what it cannot see from the folder, that Claude
 //! Code must trust it ([`TRUST`]), and warns when the heartbeat has no build to run.
 
@@ -1027,6 +1027,20 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     (!builds::runnable(home.surreal())).then(|| home.surreal().to_path_buf())
 }
 
+/// Whether `root` lies in its repository's git dir `common` (canonical) and in no checkout there:
+/// a bare repository, or a folder of a checkout's `.git`, which git answers a common dir for too.
+/// A worktree placed inside the git dir has a `.git` of its own, and is a checkout.
+fn in_git_dir(root: &Path, common: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    root.starts_with(common)
+        && !root
+            .ancestors()
+            .take_while(|folder| folder.starts_with(common))
+            .any(|folder| folder.join(".git").symlink_metadata().is_ok())
+}
+
 /// Whether the board of the checkout at `root`, its server run from `named` (`SYMPHONY_SURREAL`)
 /// or the pinned one, is not made yet, read without starting anything: by the server's answer
 /// while one runs (the Symphony's reads start it, and never make the board), else by its store not
@@ -1403,10 +1417,22 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
         );
         return refuse(err, USAGE, "init", &problem);
     }
-    if let Err(outside) = symphony_board::git::common_dir(&root) {
+    let common = match symphony_board::git::common_dir(&root) {
+        Ok(common) => common,
+        Err(outside) => {
+            let problem = format!(
+                "{outside}: the board lives in the project's git repository, so init sets up only \
+                 a folder in a checkout of one (`git init` makes it one)"
+            );
+            return refuse(err, USAGE, "init", &problem);
+        }
+    };
+    if in_git_dir(&root, &common) {
         let problem = format!(
-            "{outside}: the board lives in the project's git repository, so init sets up only a \
-             folder in one (`git init` makes it one)"
+            "{} is in the git dir {}, in no checkout of it: init sets up only a folder in a git \
+             checkout, never among git's own files",
+            root.display(),
+            common.display()
         );
         return refuse(err, USAGE, "init", &problem);
     }

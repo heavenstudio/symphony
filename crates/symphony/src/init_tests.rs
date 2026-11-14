@@ -918,11 +918,41 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
             real.display()
         )) && err.ends_with(
             "): the board lives in the project's git repository, so init sets up only a folder in \
-             one (`git init` makes it one)\n"
+             a checkout of one (`git init` makes it one)\n"
         ),
         "{err}"
     );
     assert_eq!(outside.names(""), Vec::<String>::new());
+    // A git dir is in no checkout, though git answers a common dir there: a checkout's `.git` and
+    // a bare repository are refused, and nothing is made among git's own files.
+    let bare = Tree::new();
+    bare.write("HEAD", "ref: refs/heads/main\n");
+    bare.write("objects/.keep", "");
+    bare.write("refs/.keep", "");
+    let listing = |dir: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    for git_dir in [tree.path(".git"), bare.root.clone()] {
+        let before = listing(&git_dir);
+        let (code, out, err) = run(&["--root", git_dir.to_str().unwrap()]);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        let real = git_dir.canonicalize().unwrap();
+        assert_eq!(
+            err,
+            format!(
+                "{USAGE}\nsymphony init: error: {} is in the git dir {}, in no checkout of it: \
+                 init sets up only a folder in a git checkout, never among git's own files\n",
+                real.display(),
+                real.display()
+            )
+        );
+        assert_eq!(listing(&git_dir), before, "{git_dir:?}: nothing made");
+    }
     let (code, _, err) = run(&["stray"]);
     assert_eq!(code, 2);
     assert!(err.contains("unrecognized arguments: stray"), "{err}");
@@ -1253,6 +1283,53 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
 /// The step that makes a board not made yet.
 const MAKE_BOARD: &str = "make the board: the first board command makes it (`just tasks list`); \
                           the Symphony only reads a board and never makes one";
+
+#[test]
+fn every_checkout_layout_is_a_checkout_and_a_git_dir_is_none() {
+    use crate::test_layouts::{git, others, repository};
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree.path("lantern"));
+    let found = others(&tree.root);
+    // A worktree of the bare repository placed inside it has a `.git` of its own.
+    let inside = found.bare.join("inside");
+    git(
+        &found.bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inside",
+            inside.to_str().unwrap(),
+        ],
+    );
+    let in_git_dir_here = |root: &Path| {
+        let common = symphony_board::git::common_dir(root).unwrap();
+        in_git_dir(root, &common)
+    };
+    for checkout in [
+        &main,
+        &linked,
+        &main.join("docs"),
+        &found.submodule,
+        &found.separate,
+        &found.bare_worktree,
+        &inside,
+    ] {
+        assert!(!in_git_dir_here(checkout), "{checkout:?} is a checkout");
+    }
+    for git_dir in [
+        main.join(".git"),
+        main.join(".git/refs"),
+        tree.path("outer/.git/modules/sub"),
+        tree.path("sep.gitdir"),
+        found.bare.clone(),
+        found.bare.join("refs"),
+    ] {
+        assert!(in_git_dir_here(&git_dir), "{git_dir:?} is in a git dir");
+    }
+    assert!(!in_git_dir(&tree.path("gone"), &main.join(".git")));
+}
 
 #[test]
 fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {

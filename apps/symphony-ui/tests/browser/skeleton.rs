@@ -306,7 +306,8 @@ fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_an
             "ghost": false, "status": ["trouble card unread-board"], "alerts": 0, "busy": "false"}),
         "the block stands in the ghost's place, says the read's error once, and the page is not busy"
     );
-    browser.eval("document.querySelector('main .unread-board button').click()");
+    // The page reads again by itself too: a read of its own may have drawn the board already.
+    browser.eval("document.querySelector('main .unread-board button')?.click()");
     assert!(
         browser.wait_for(
             "document.querySelector('main .unread-board') === null && document.querySelector('.pipeline') !== null",
