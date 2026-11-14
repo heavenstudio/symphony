@@ -117,7 +117,7 @@ async function pause(ms: number, retry: { current: number }, signal: AbortSignal
 }
 
 /** What the page under the board shows of it, and hears of its feed. */
-interface Views {
+export interface Views {
   /** Changes what the page shows from this device. */
   freshen(change: (f: Freshness) => Freshness): void;
   /** The board was read: each view reads its own parts again. */
@@ -237,38 +237,7 @@ export function BoardPage({ scope, kept, children, moves }: BoardPageProps) {
       },
       frame,
     };
-    void (async () => {
-      const backoff = new Backoff();
-      while (!signal.aborted) {
-        await back(signal);
-        let ended: Ended = { lost: 0 };
-        try {
-          const read = await readBoard(scope, item);
-          if (signal.aborted) return;
-          reloadIfRedeployed(read.build);
-          show(read);
-          views.freshen((f) => answered(f, BOARD));
-          views.read();
-          ended = await follow(
-            board,
-            setStale,
-            read.version,
-            Math.floor((read.ping_ms * 5) / 2),
-            scope,
-            views,
-            signal,
-          );
-          views.freshen(lost);
-        } catch (error) {
-          if (signal.aborted) return;
-          views.freshen((f) => failed(f, BOARD));
-          setTrouble(said(error));
-        }
-        if (signal.aborted) return;
-        setStale(true);
-        await pause(backoff.wait(ended), retry, signal);
-      }
-    })();
+    void keepBoard(scope, item, { board, show, setStale, setTrouble, retry, views }, signal);
     const minutes = setInterval(flushReload, 60_000);
     return () => {
       controller.abort();
@@ -305,13 +274,82 @@ export function BoardPage({ scope, kept, children, moves }: BoardPageProps) {
   );
 }
 
-/** The board, read fresh: its version starts the feed. Kept as `item`'s, when the page keeps it. */
-async function readBoard(scope: string, item: Item | null): Promise<PageBoard> {
+/** What the board's loop changes on the page that runs it. */
+export interface BoardRun {
+  board: { current: PageBoard | null };
+  show(read: PageBoard): void;
+  setStale(stale: boolean): void;
+  setTrouble(said: string): void;
+  /** How many times the reader pressed Retry. */
+  retry: { current: number };
+  views: Views;
+}
+
+/** The loop's waits: until the page is back, and between one try and the next. */
+export interface BoardWaits {
+  back(signal: AbortSignal): Promise<void>;
+  pause(ms: number, retry: { current: number }, signal: AbortSignal): Promise<void>;
+}
+
+/**
+ * Read the board, follow its feed until the stream is lost, and start again after a pause, until
+ * `signal` ends. After each wait it does nothing more once `signal` has ended: no read, no copy
+ * kept on the device, nothing drawn.
+ */
+export async function keepBoard(
+  scope: string,
+  item: Item | null,
+  run: BoardRun,
+  signal: AbortSignal,
+  waits: BoardWaits = { back, pause },
+): Promise<void> {
+  const backoff = new Backoff();
+  while (!signal.aborted) {
+    await waits.back(signal);
+    if (signal.aborted) return;
+    let ended: Ended = { lost: 0 };
+    try {
+      const read = await readBoard(scope, item, signal);
+      if (signal.aborted) return;
+      reloadIfRedeployed(read.build);
+      run.show(read);
+      run.views.freshen((f) => answered(f, BOARD));
+      run.views.read();
+      ended = await follow(
+        run.board,
+        run.setStale,
+        read.version,
+        Math.floor((read.ping_ms * 5) / 2),
+        scope,
+        run.views,
+        signal,
+      );
+      if (signal.aborted) return;
+      run.views.freshen(lost);
+    } catch (error) {
+      if (signal.aborted) return;
+      run.views.freshen((f) => failed(f, BOARD));
+      run.setTrouble(said(error));
+    }
+    run.setStale(true);
+    await waits.pause(backoff.wait(ended), run.retry, signal);
+  }
+}
+
+/**
+ * The board, read fresh: its version starts the feed. Kept as `item`'s, when the page keeps it and
+ * `signal` has not ended while it was read.
+ */
+async function readBoard(
+  scope: string,
+  item: Item | null,
+  signal: AbortSignal,
+): Promise<PageBoard> {
   const answer = await getIf(scoped(scope, BOARD_PATH), "");
   if (answer.same) throw new Error("The server answered 304 to a plain read");
   const read = readPageBoard(answer.value);
   if (!read) throw new Error("The board's answer has no version, ping or build");
-  if (item) keepLater(item, BOARD, answer.etag, answer.value);
+  if (item && !signal.aborted) keepLater(item, BOARD, answer.etag, answer.value);
   return read;
 }
 

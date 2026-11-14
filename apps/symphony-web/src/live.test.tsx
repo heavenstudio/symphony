@@ -1,17 +1,20 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { boardItem } from "./cache";
 import {
   BoardPage,
   FEED_NOTICE,
   flushReload,
   followClient,
+  keepBoard,
   noticeGeometry,
   PageNotices,
   readPageBoard,
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
-import { CASES, memoryStorage } from "./testing";
+import { asking, CASES, memoryStorage, reply, server } from "./testing";
+import { CACHE_FORMAT } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -135,6 +138,112 @@ describe("a page loaded again for the build the server serves", () => {
     expect(after).toHaveBeenCalledTimes(1);
     flushReload();
     expect(after).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the board's loop", () => {
+  /**
+   * A loop over the stubbed server, for the board item, on a page whose window and document hear
+   * events and that has no EventSource, so its feed cannot open. What it drew, kept and waited.
+   */
+  const loop = (waitBack: (page: AbortController) => Promise<void> = async () => {}) => {
+    const asked = server();
+    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal(
+      "document",
+      Object.assign(new EventTarget(), { getElementById: () => null, querySelector: () => null }),
+    );
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const keep = vi.fn(async () => {});
+    vi.stubGlobal("symphonyCache", { keep });
+    const page = new AbortController();
+    const did: unknown[] = [];
+    const paused: number[] = [];
+    const done = keepBoard(
+      "",
+      boardItem(""),
+      {
+        board: { current: null },
+        show: (read) => did.push(["show", read.version]),
+        setStale: (stale) => did.push(["stale", stale]),
+        setTrouble: (why) => did.push(["trouble", why]),
+        retry: { current: 0 },
+        views: {
+          freshen: () => {},
+          read: () => did.push(["read"]),
+          heard: () => {},
+          frame: { refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() },
+        },
+      },
+      page.signal,
+      {
+        back: () => waitBack(page),
+        // The reader leaves while the loop waits to try again.
+        pause: async (ms) => {
+          paused.push(ms);
+          page.abort();
+        },
+      },
+    );
+    return { asked, keep, page, did, paused, done };
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the board, keeps it for the device, draws it, and waits to read it again", async () => {
+    const { asked, keep, did, paused, done } = loop();
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/board");
+    asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await done;
+    expect(keep).toHaveBeenCalledWith(
+      CACHE_FORMAT,
+      "",
+      "board:",
+      "board",
+      "board",
+      "b1",
+      CASES.samples.board,
+      undefined,
+      false,
+    );
+    expect(did).toEqual([["show", 7], ["read"], ["stale", true]]);
+    expect(paused).toHaveLength(1);
+  });
+
+  it("says a failed read and waits to try again, keeping nothing", async () => {
+    const { asked, keep, did, paused, done } = loop();
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { version: "seven" }, "b1"));
+    await done;
+    expect(keep).not.toHaveBeenCalled();
+    expect(did).toEqual([
+      ["trouble", "The board's answer has no version, ping or build"],
+      ["stale", true],
+    ]);
+    expect(paused).toHaveLength(1);
+  });
+
+  it("reads nothing once the page is gone while it waits for the page to be back", async () => {
+    // The shell stops the kind while the page is away, which ends that wait.
+    const { asked, did, paused, done } = loop(async (page) => page.abort());
+    await new Promise((settled) => setTimeout(settled, 0));
+    expect(asked).toEqual([]);
+    await done;
+    expect(did).toEqual([]);
+    expect(paused).toEqual([]);
+  });
+
+  it("keeps and draws nothing once the page is gone before the board answers", async () => {
+    const { asked, keep, page, did, paused, done } = loop();
+    await asking(asked, 1);
+    // The shell stops the kind before the board answers.
+    page.abort();
+    asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await done;
+    expect(keep).not.toHaveBeenCalled();
+    expect(did).toEqual([]);
+    expect(paused).toEqual([]);
   });
 });
 

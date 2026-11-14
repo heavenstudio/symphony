@@ -45,7 +45,9 @@ serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtri
 [lints]
 workspace = true
 
-# The web client's wire types (apps/symphony-web/src/wire.ts), printed from these types.
+# The web client's wire types (apps/symphony-web/src/wire.ts), printed from these types; its own
+# tests run with the feature on (`cargo test -p symphony-api --features typescript`).
 [[example]]
 name = "typescript"
 required-features = ["typescript"]
+test = true

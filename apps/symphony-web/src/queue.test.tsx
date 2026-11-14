@@ -20,7 +20,7 @@ import {
   WaitingQueue,
 } from "./queue";
 import { STALE } from "./shared";
-import { CASES, memoryStorage } from "./testing";
+import { asking, CASES, memoryStorage, reply, server } from "./testing";
 import type { Card } from "./wire";
 
 /** A card of `doc`, its slug `slug`. */
@@ -265,36 +265,6 @@ describe("a card's Later", () => {
     expect(controls(false)).toMatch(/disabled="".*>Checking…<\/button>/);
   });
 });
-
-/** The server, its answers held until a test gives them: each fetch's address, body and reply. */
-function server() {
-  const asked: { url: string; body: unknown; answer: (response: Response) => void }[] = [];
-  vi.stubGlobal("document", { getElementById: () => null });
-  vi.stubGlobal(
-    "fetch",
-    (url: string, init: RequestInit) =>
-      new Promise<Response>((answer) => {
-        const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
-        asked.push({ url, body, answer });
-      }),
-  );
-  return asked;
-}
-
-/** A JSON reply of `status`, tagged `etag` when one is given. */
-const reply = (status: number, body: unknown, etag?: string) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: etag === undefined ? {} : { ETag: etag },
-  });
-
-/** Lets the replies given so far reach the code that awaits them, until `asked` holds `count`. */
-async function asking(asked: unknown[], count: number): Promise<void> {
-  for (let turn = 0; turn < 50 && asked.length < count; turn += 1) {
-    await new Promise((done) => setTimeout(done, 0));
-  }
-  expect(asked).toHaveLength(count);
-}
 
 describe("Later and its Undo", () => {
   afterEach(() => vi.unstubAllGlobals());

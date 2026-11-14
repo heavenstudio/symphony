@@ -261,54 +261,51 @@ fn carried() -> Result<Value, String> {
             Ok(json!({
                 "rust": format!("crates/symphony-api/src/{file} {name}"),
                 "typescript": ts,
-                "source": source(text, name)?.lines().collect::<Vec<_>>(),
+                "source": source(text, name)?,
             }))
         })
         .collect::<Result<Vec<_>, String>>()
         .map(Value::from)
 }
 
-/// The function `name` in `text`, from its line to its closing brace. The braces are counted
-/// outside string literals; a function named twice, or found nowhere, stops the example.
-fn source<'a>(text: &'a str, name: &str) -> Result<&'a str, String> {
-    let found: Vec<usize> = ["(", "<"]
-        .iter()
-        .flat_map(|after| {
-            let signature = format!("fn {name}{after}");
-            text.match_indices(&signature)
-                .map(|(at, _)| at)
-                .collect::<Vec<_>>()
-        })
+/// The function `name` in `text`, line by line: from its `fn` line to the first line after it that
+/// is that line's indentation and `}`, rustfmt's form, which `cargo fmt --check` in `just lint-rs`
+/// holds; so no brace inside it, in a string, a character or a comment, ends it early. A function
+/// declared on no line or on two, or with no such closing line, stops the example. Its tests run
+/// with `just test-rs -p symphony-api --features typescript --example typescript`.
+fn source<'a>(text: &'a str, name: &str) -> Result<Vec<&'a str>, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let declared: Vec<usize> = (0..lines.len())
+        .filter(|&at| lines.get(at).is_some_and(|line| declares(line, name)))
         .collect();
-    let [start] = found[..] else {
+    let [start] = declared[..] else {
         return Err(format!(
-            "crates/symphony-api holds `fn {name}` {} times: CARRIED names one",
-            found.len()
+            "crates/symphony-api declares `fn {name}` on {} lines: CARRIED names one",
+            declared.len()
         ));
     };
-    let before = text.get(..start).unwrap_or_default();
-    let line = before.rfind('\n').map_or(0, |at| at + 1);
-    let (mut depth, mut quoted, mut escaped) = (0_usize, false, false);
-    for (at, ch) in text.get(start..).unwrap_or_default().char_indices() {
-        match ch {
-            _ if escaped => escaped = false,
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            '{' if !quoted => depth += 1,
-            '}' if !quoted => {
-                depth -= 1;
-                if depth == 0 {
-                    return text
-                        .get(line..=start + at)
-                        .ok_or_else(|| format!("`fn {name}` is not whole text"));
-                }
-            }
-            _ => {}
-        }
+    let first = lines.get(start).copied().unwrap_or_default();
+    // An empty body, which rustfmt leaves on the `fn` line.
+    if first.trim_end().ends_with("{}") {
+        return Ok(vec![first]);
     }
-    Err(format!(
-        "`fn {name}` has no closing brace this reader finds"
-    ))
+    let indent = first.strip_suffix(first.trim_start()).unwrap_or_default();
+    let close = format!("{indent}}}");
+    let after = lines.iter().skip(start + 1).position(|line| *line == close);
+    let end = after.ok_or_else(|| format!("`fn {name}` has no line `{close}` after it"))?;
+    Ok(lines
+        .get(start..=start + 1 + end)
+        .unwrap_or_default()
+        .to_vec())
+}
+
+/// Whether `line` declares the function `name`: code, not a comment, naming `fn name(` or
+/// `fn name<`.
+fn declares(line: &str, name: &str) -> bool {
+    !line.trim_start().starts_with("//")
+        && ["(", "<"]
+            .iter()
+            .any(|after| line.contains(&format!("fn {name}{after}")))
 }
 
 /// `here` and `strip` under no base and one, each for a set of paths.
@@ -469,4 +466,83 @@ fn samples() -> Value {
         progress: api::Progress::default(),
     };
     json!({ "queue": queue, "emptyQueue": api::Queue::default(), "board": board })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source;
+
+    /// Functions as rustfmt writes them, with braces no closing line holds: in a character, a
+    /// comment, a string and a format argument; and a doc comment that names one of them.
+    const TEXT: &str = "\
+pub fn empty() {}
+
+/// Says `fn brace(`, which declares nothing.
+pub fn brace(value: char) -> bool {
+    // A comment's } closes nothing.
+    let closing = '}';
+    if value == closing {
+        return true;
+    }
+    format!(\"{value}}}\") == \"}\"
+}
+
+impl Wire {
+    fn method(&self) -> char {
+        '}'
+    }
+}
+
+fn twice() {
+    let _ = 1;
+}
+
+fn twice() {
+    let _ = 2;
+}
+
+fn open() {
+    let _ = 1;";
+
+    #[test]
+    fn a_function_runs_from_its_fn_line_to_the_line_at_its_indentation_that_closes_it() {
+        assert_eq!(
+            source(TEXT, "brace"),
+            Ok(vec![
+                "pub fn brace(value: char) -> bool {",
+                "    // A comment's } closes nothing.",
+                "    let closing = '}';",
+                "    if value == closing {",
+                "        return true;",
+                "    }",
+                "    format!(\"{value}}}\") == \"}\"",
+                "}",
+            ])
+        );
+        assert_eq!(
+            source(TEXT, "method"),
+            Ok(vec![
+                "    fn method(&self) -> char {",
+                "        '}'",
+                "    }"
+            ])
+        );
+        assert_eq!(source(TEXT, "empty"), Ok(vec!["pub fn empty() {}"]));
+    }
+
+    #[test]
+    fn a_function_declared_on_no_line_or_two_or_never_closed_stops_the_example() {
+        assert_eq!(
+            source(TEXT, "missing"),
+            Err("crates/symphony-api declares `fn missing` on 0 lines: CARRIED names one".into())
+        );
+        assert_eq!(
+            source(TEXT, "twice"),
+            Err("crates/symphony-api declares `fn twice` on 2 lines: CARRIED names one".into())
+        );
+        assert_eq!(
+            source(TEXT, "open"),
+            Err("`fn open` has no line `}` after it".into())
+        );
+    }
 }

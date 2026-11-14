@@ -16,19 +16,19 @@ a fix on a Dioxus page for a bug that loses data or blocks use, which is made wh
 
 Each is pinned, and each is the smallest set that does its job; a dependency added is argued on
 its task's thread first. The pins are the latest stable releases (no beta, rc, canary or nightly)
-of Node, npm and every package, moved together, the lockfile written again, in a task of their own.
+of Node and of every package, npm being the one the pinned Node ships, moved together, the
+lockfile written again, in a task of their own.
 
 - **Node and npm.** `.node-version` pins Node, which `tools/node.sh` runs as rustup runs the
   pinned Rust: the `node` on PATH when it is that version, else fnm's copy (installed once), else
-  it refuses, naming the version. npm is the version `package.json`'s `engines` pins, which
-  `.npmrc`'s `engine-strict` holds every run to: the one that Node ships when it is that one, else
-  that version fetched once by Node's own (`npm pack`, checked against the registry's integrity)
-  into `.npm/VERSION`, and run from there. `npm.sh ARGS` runs npm here on that Node after `npm ci`
-  from the committed `package-lock.json` whenever `node_modules` was not installed from those very
-  bytes, offline after the first fetch (`--prefer-offline`), two runs in one checkout taking turns
-  (`tools/check_lock.sh`). `.npmrc` saves exact versions and asks no outside service anything but
-  the registry. An install runs no package's install script: npm runs none it is not told to
-  allow, and none is (`fsevents`, Vite's watcher on macOS, ships its binary built).
+  it refuses, naming the version. npm is the one that Node ships, held to its version by
+  `package.json`'s `engines` under `.npmrc`'s `engine-strict`. `npm.sh ARGS` runs npm here on
+  that Node after `npm ci` from the committed `package-lock.json` whenever `node_modules` was not
+  installed from those very bytes, offline after the first fetch (`--prefer-offline`), two runs in
+  one checkout taking turns (`tools/check_lock.sh`). `.npmrc` saves exact versions, runs no
+  package's install script (`ignore-scripts`; `fsevents`, Vite's watcher on macOS, ships its
+  binary built, and a script `npm run` names still runs) and asks no outside service anything but
+  the registry.
 - **React 19** (`react`, `react-dom`), the only run-time dependencies.
 - **TypeScript**, strict (`tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit`. It emits
@@ -65,7 +65,11 @@ ported to that TypeScript, with cases that show it, before `just client-wire` wr
 again; a function the client comes to carry is added to `CARRIED` with its cases. What this cannot
 see is a port left undone by a `just client-wire` run alone (the review reads the file's diff), a
 change outside the functions named (a helper they call that is not listed), and an input no case
-lists on which the two disagree.
+lists on which the two disagree. Each function is read from its `fn` line to the line at its
+indentation that closes it, rustfmt's form, which `cargo fmt --check` holds, so no brace in a
+string, a character or a comment cuts it short (the reader's tests: `just test-rs -p symphony-api
+--features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
+(`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
 A read is checked where it arrives (`readQueue`, `readPageBoard`): a guard checks the fields
 the page draws, each of its type, and nothing else, so a field a newer server adds, or one it
@@ -115,9 +119,12 @@ it: an effect's own (its cleanup aborts it), or, for a handler or a read with no
 (a click's post, the frame's activity read), the kind's mount (`useMount()`, `src/mount.ts`, which
 `stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
 moves no one, and a late read writes nothing over the next kind's. A Dioxus page had this from
-its framework, a spawned task dying with its component; here each such wait says it. A move between a kind of this client
-and a Dioxus kind stops one and runs the other as between two Dioxus kinds; a move within a kind
-is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
+its framework, a spawned task dying with its component; here each such wait says it. The device
+cache's store is the shell's (`assets/cache.js`, `symphonyCache`, which `src/cache.ts` names what
+to keep in), and it opens every IndexedDB transaction: this client opens none of its own.
+
+A move between a kind of this client and a Dioxus kind stops one and runs the other as between
+two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
 and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay
 stay the Dioxus program's kinds, which the shell mounts beside any page.
 
@@ -135,5 +142,9 @@ class names this client's markup uses, and the kind's own sheet, imported by its
    feature, its place in `bundle.sh`'s and `package.sh`'s kinds and `tests/wasm_build.rs`), and
    move its style sheet here.
 3. Run its browser tests against the built distribution, change none to pass, and take its
-   pictures beside the Dioxus page's, desktop and phone, light and dark.
+   pictures beside the Dioxus page's, desktop and phone, light and dark. Where a list reorders
+   under the reader, Chrome's scroll anchoring may leave the two pages at different places, as
+   each framework's keyed diff moves other nodes (React keeps the one it moves least, so the page
+   follows it): that is the browser's, not a parity break, and `overflow-anchor: none` shows the
+   two alike.
 4. Hold its first visit to the cap its page has, and lower a cap the move earns, in that commit.
