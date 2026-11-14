@@ -80,12 +80,19 @@ planner, test selection, certificate or shared slot pool. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
 slot wrapper and gates, which compile and test its own consumers.
 
-`tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
-relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
-that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
-is never recorded. A board
+`tools/rs-bin.sh NAME` runs a declared workspace binary as `rs-bin/NAME` in the target
+folder, a hard link to Cargo's copy renewed only when Cargo relinked, so a no-op build
+costs no new executable's first run. A run asks Cargo to build first unless nothing
+Cargo would read moved since the last build the launcher asked it for, as a stamp
+beside the link says (`rs-bin/.NAME.fresh`, its time taken before that build started):
+each file Cargo's own `debug/NAME.d` names and the manifest above each, the workspace's
+manifest and lock, the launcher and `tools/cargo.sh`, every Cargo configuration and
+toolchain pin from the root up and in Cargo's and rustup's homes, and the variables
+Cargo, rustc, rustup and the target's build scripts read; a file changed in the
+stamp's own second, an account it cannot read or a stamp from the future asks Cargo.
+`--build NAME` builds and prints that path, `--where NAME` names Cargo's own copy
+without building or attesting freshness, and `--link NAME` builds and points
+`.target/bin/NAME` at it; no build of the launcher's is recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
 moves its live schema forward only for a build of the schema source the main checkout

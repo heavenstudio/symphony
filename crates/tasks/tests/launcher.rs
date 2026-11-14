@@ -22,6 +22,9 @@ mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.
 #[path = "launcher/seed.rs"]
 mod seed;
+// A run that finds nothing Cargo reads changed runs its build without asking Cargo.
+#[path = "launcher/fresh.rs"]
+mod fresh;
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -31,29 +34,55 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The stand-in for `cargo build --quiet --locked -p PACKAGE --bin NAME`, run in the checkout's root;
-/// `@BUILD@` is the shared stand-in build.
+/// `@BUILD@` is the shared stand-in build. As Cargo does, it builds one at a time per target folder,
+/// writes `debug/NAME.d` naming the sources it read (the binary's, and those of a dependency crate
+/// at `crates/dep` when there is one; none with `STANDIN_DEPINFO=none`, a path spelled with an escape
+/// with `escaped`) and leaves a build script's output declaring the variables it reads. Each run
+/// first appends its binary's name to `STANDIN_CALLS`, when that names a file, and whether the target
+/// folder was new to it.
 const CARGO: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 name=""; while [ $# -gt 0 ]; do if [ "$1" = --bin ]; then name="$2"; fi; shift; done
 [ -n "$name" ] || exit 0
-mkdir -p "$CARGO_TARGET_DIR/debug/deps"
-if [ "${STANDIN_UPLIFT:-link}" = link ]; then
-    ln -f "@BUILD@" "$CARGO_TARGET_DIR/debug/$name"
-    exit 0
+if [ -n "${STANDIN_CALLS:-}" ]; then
+    if [ -d "$CARGO_TARGET_DIR" ]; then echo "$name" >> "$STANDIN_CALLS"; else echo "$name into a new target" >> "$STANDIN_CALLS"; fi
 fi
+mkdir -p "$CARGO_TARGET_DIR/debug/deps" "$CARGO_TARGET_DIR/debug/build/standin-0"
+until mkdir "$CARGO_TARGET_DIR/standin.lock" 2>/dev/null; do sleep 0.01; done
+trap 'rmdir "$CARGO_TARGET_DIR/standin.lock"' EXIT
 for source in "crates/tasks/src/bin/$name.rs" "crates/symphony/src/bin/$name.rs"; do
     [ -f "$source" ] && break
 done
+inputs=("$PWD/$source")
+if [ -d crates/dep/src ]; then
+    for file in crates/dep/src/*.rs; do inputs+=("$PWD/$file"); done
+fi
+depinfo="$CARGO_TARGET_DIR/debug/$name.d"
+case "${STANDIN_DEPINFO:-plain}" in
+    none) rm -f "$depinfo" ;;
+    escaped) printf '%s: %s %s\n' "$CARGO_TARGET_DIR/debug/$name" "${inputs[*]}" "$PWD/a\\ b.rs" > "$depinfo" ;;
+    *) printf '%s: %s\n' "$CARGO_TARGET_DIR/debug/$name" "${inputs[*]}" > "$depinfo" ;;
+esac
+printf 'cargo:rerun-if-env-changed=STANDIN_CC\ncargo:rerun-if-env-changed=CC_standin-triple\n' \
+    > "$CARGO_TARGET_DIR/debug/build/standin-0/output"
+uplifted="$CARGO_TARGET_DIR/debug/.$name.uplift"
+if [ "${STANDIN_UPLIFT:-link}" = link ]; then
+    ln -f "@BUILD@" "$uplifted"
+    mv -f "$uplifted" "$CARGO_TARGET_DIR/debug/$name"
+    exit 0
+fi
+text="$(cat "$source")"
+for file in "${inputs[@]:1}"; do text="$text dep $(cat "$file")"; done
 deps="$CARGO_TARGET_DIR/debug/deps/$name-0"
-if ! cmp -s "$source" "$deps.source"; then
+if [ ! -f "$deps.source" ] || [ "$(cat "$deps.source")" != "$text" ]; then
     printf '#!/bin/sh\necho "%s from %s source %s exe $0 cwd $(pwd -P) args $*"\n' \
-        "$name" "$PWD" "$(cat "$source")" > "$deps.new"
+        "$name" "$PWD" "$text" > "$deps.new"
     chmod +x "$deps.new"
     mv -f "$deps.new" "$deps"
-    cp "$source" "$deps.source"
+    printf '%s' "$text" > "$deps.source"
 fi
-rm -f "$CARGO_TARGET_DIR/debug/$name"
-cp -p "$deps" "$CARGO_TARGET_DIR/debug/$name"
+cp -p "$deps" "$uplifted"
+mv -f "$uplifted" "$CARGO_TARGET_DIR/debug/$name"
 "#;
 
 /// The shared stand-in build, run as `CHECKOUT/.target/rs-bin/NAME`: what that checkout's source of
@@ -376,7 +405,9 @@ fn a_build_that_relinked_nothing_runs_the_same_file_and_a_relink_a_new_one() {
     let target = f.main.join(".target");
     let (stable, copy) = (target.join("rs-bin/tasks"), target.join("debug/tasks"));
     let inode = |path: &Path| fs::metadata(path).unwrap().ino();
-    let copying = [("STANDIN_UPLIFT", "copy")];
+    // Every run here asks Cargo: with no account of what a build read, none can be found unchanged
+    // (launcher/fresh.rs).
+    let copying = [("STANDIN_UPLIFT", "copy"), ("STANDIN_DEPINFO", "none")];
     let run = || f.run(&f.main, &f.main, &copying, &["tasks", "list"]).ok();
     // The hooks' link: one naming anything else is left as it is; a run points one naming Cargo's
     // own copy at the file it runs, the same build, and `--build` leaves it.
