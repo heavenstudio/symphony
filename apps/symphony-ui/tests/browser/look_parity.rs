@@ -1,6 +1,6 @@
 //! Computed styles and real input against the release client. API fixtures supply content only;
 //! hover, focus, layout and component markup are all the production client and stylesheets.
-use super::{SHOWN, chrome, common, dist};
+use super::{SHOWN, assets::module, chrome, common, dist};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -1105,11 +1105,13 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser.eval("window.reviewPanelReady === true"),
         json!(false)
     );
+    // The activity panel's own file: the chat's chunk of the program.
+    let panel = module(dist(), "panel").chunk().clone();
     assert!(
         browser
             .requests()
             .iter()
-            .all(|request| !request.url.contains("/assets/panel-") || request.prefetch),
+            .all(|request| !request.url.ends_with(&panel) || request.prefetch),
         "the activity module loaded before interaction, beyond an idle prefetch"
     );
     let activity_open = "window.reviewPanelReady === true && document.getElementById('activity-panel') !== null && document.getElementById('bell').getAttribute('aria-expanded') === 'true'";
@@ -1137,9 +1139,7 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser
             .requests()
             .iter()
-            .filter(|request| request.kind == "Script"
-                && request.url.contains("/assets/panel-")
-                && request.status == 200)
+            .filter(|request| request.url.ends_with(&panel) && request.status == 200)
             .count(),
         1,
         "reopening activity should reuse its deferred module"

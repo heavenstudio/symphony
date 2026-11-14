@@ -208,16 +208,22 @@ never the whole target, which the release run runs.
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
-  7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
-  462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
-  unchanged, its page and thread each a `304` of 82) and a document at 464,410. A task page's
-  timeline, its own module, which carries none of the cache's code, comes once the page has
-  drawn and is idle: 202,155 bytes outside its first visit (its WASM 186,101, glue 12,344,
-  style sheet 2,605 and first read 1,105), and `/agents` never loads it. Once a page has its
-  data and is idle, the shell warms the chat's and the menus' modules, 745,884 bytes outside
-  its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
-  compiled framework; later visits reuse cached imports. The home budget test
+  about 13.3 KB of `/tasks` (295,869 bytes in all, 4,131 under the cap), 2.4 KB of `/`
+  (236,431 in all), 7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of
+  the documents. The same run reports `/agents` at 572,118, `/docs/` at 474,953, `/queue` at
+  253,966, `/reports` at 306,606, a task page at 572,711 (2,240 on a return that finds it
+  unchanged, its page and thread each a `304` of 82) and a document at 476,570. The task
+  pages, `/agents` and Reports are kinds of the program (Build, above): a first visit to one
+  takes the program's script (17,912 bytes on the wire) and main module (216,780) and its
+  kind's chunk (the task pages' 315,186, Reports' 48,986), and a move between them takes the
+  target's chunk alone. A task page's timeline, a chunk of the same program, comes once the
+  page has drawn and is idle: 54,354 bytes outside its first visit (its chunk 50,645, style
+  sheet 2,604 and first read 1,105), and `/agents` never loads it. Once a page has its data
+  and is idle, the shell warms the chat's and the menus' chunks, with the program's script
+  and main module where the page is not one of the program's: 609,165 bytes outside home's
+  first visit, 374,473 outside a task page's, and the chat's first open transfers nothing
+  more. Each module pays for its own compiled framework, the program once for all its
+  kinds; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
