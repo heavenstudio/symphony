@@ -1523,12 +1523,22 @@ pub fn lane_edge(bottoms: &[f64], held: f64) -> Option<f64> {
         .last()
 }
 
+/// The height a wide box `height` pixels tall keeps for its task's next visit, its lanes `drawn`
+/// pixels tall overflowing the room `held` it leaves them, each lane ending at `bottoms`: as tall
+/// as the lanes the tallest box ([`crate::timeline_slot::WIDE`]) would hold whole, not the lanes
+/// this box holds, so a box kept short grows back once its timeline gains lanes. As tall as every
+/// lane where the tallest box holds them all, or none whole.
+pub fn kept_wide(height: f64, held: f64, drawn: f64, bottoms: &[f64]) -> f64 {
+    let room = held + (f64::from(crate::timeline_slot::WIDE) - height).max(0.0);
+    height - held + lane_edge(bottoms, room).unwrap_or(drawn)
+}
+
 /// After a draw: whether the steps overflow the box (and so "Show all" is offered), and the
 /// height the timeline took, kept for the task's next visit so its box is reserved as tall. The
 /// steps are measured by what is drawn of them (the list on a phone, the lanes wide), never by the
 /// part that holds them, which is at least as tall as the box leaves it. Wide, lanes that overflow
 /// are cut under the last that fits whole ([`lane_edge`]), never through one, and the box kept for
-/// the next visit is as tall as that.
+/// the next visit is as tall as the tallest box's cut ([`kept_wide`]).
 #[cfg(target_arch = "wasm32")]
 fn settle(slug: &str, all: bool) -> bool {
     use wasm_bindgen::JsCast;
@@ -1550,7 +1560,8 @@ fn settle(slug: &str, all: bool) -> bool {
         .map_or(0.0, |steps| steps.get_bounding_client_rect().height());
     let held = f64::from(body.client_height());
     let over = drawn > held + 1.0;
-    let cut = if wide && !all && over {
+    let height = slot.get_bounding_client_rect().height();
+    let (cut, natural) = if wide && !all && over {
         let top = body.get_bounding_client_rect().top();
         let rows = body.query_selector_all(LANE_ROWS).ok();
         let bottoms: Vec<f64> = rows
@@ -1561,16 +1572,18 @@ fn settle(slug: &str, all: bool) -> bool {
                     .collect()
             })
             .unwrap_or_default();
-        lane_edge(&bottoms, held)
+        (
+            lane_edge(&bottoms, held),
+            kept_wide(height, held, drawn, &bottoms),
+        )
     } else {
-        None
+        (None, height - held + drawn)
     };
     if let (Some(cut), Some(style)) = (cut, &style) {
         let _ = style.set_property("max-height", &format!("{cut:.2}px"));
         let _ = body.set_attribute("data-cut", "");
     }
     if !all {
-        let natural = slot.get_bounding_client_rect().height() - held + cut.unwrap_or(drawn);
         crate::timeline_slot::keep(slug, wide, natural);
     }
     over
@@ -1678,7 +1691,6 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
                         li { class: "tl-wide", span { class: "tl-key tl-g tl-g-{state.as_str()}" } "gate {state.as_str()}" }
                     }
                 }
-                p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" }
                 if clipped() || all() {
                     button { class: "dx-button tl-more", "data-style": "outline", "data-size": "default", r#type: "button", "aria-expanded": "{all()}", onclick: move |_| all.toggle(),
                         if all() { "Show the latest" } else {
@@ -1687,6 +1699,9 @@ pub fn TimelineView(timeline: Rc<TaskTimeline>, slug: String) -> Element {
                         }
                     }
                 }
+                // A line of its own under the legend and "Show all", only while a part of the
+                // lanes has the focus: empty, it would take a line from the steps.
+                if !detail().is_empty() { p { class: "tl-detail tl-wide", "aria-hidden": "true", "{detail}" } }
             }
         }
     }

@@ -368,8 +368,8 @@ pub fn crumbs(root: &Path, rel: &str) -> Vec<Crumb> {
         .collect()
 }
 
-/// The second- and third-level headings outside code, each anchor once. Inside a register only the
-/// groups that wait on the owner are listed, with their topics.
+/// The second- and third-level headings outside code, each anchor once. Inside a register every
+/// group is listed, with the topics only of the groups that wait on the owner.
 pub fn headings(text: &str) -> Vec<Heading> {
     let waiting: Vec<&str> = [Group::Decide, Group::Auto, Group::Confirm]
         .iter()

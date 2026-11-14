@@ -2569,8 +2569,10 @@ owner's choice, so the brief and the thread start near the page's top), with
 placeholder rows in it, so nothing on the page moves when the timeline comes or a read
 adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
 steps in view), and wide the lanes ending under the last that fits whole, the box kept
-that tall for the next visit. "Show all" lets it grow, naming what it shows: the steps
-on a phone, the lanes wide.
+for the next visit as tall as the lanes a 240 px box holds whole, so it grows back as the
+task gains lanes. "Show all" lets it grow, naming what it shows: the steps on a phone,
+the lanes wide; it sits on the legend's line, and the line saying the whole of the lanes'
+part the keyboard is on shows only while one is.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

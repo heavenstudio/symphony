@@ -16,10 +16,11 @@
 /* Where the box cuts the steps, they fade out: at the foot of the lanes, at the top of a phone's
    list. */
 .tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }
-/* Lanes cut under the last whole one (task_timeline.rs `settle`) need no fade: "Show all N lanes"
-   says the rest. */
-.tl-body[data-cut]::after { display:none; }
+/* The foot takes as little of the box as it can, so the steps keep the rest: "Show all" on the
+   legend's line, the legend wrapping beside it, and the lanes' detail on a line of its own only
+   while it says something. */
 .tl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px var(--sp-4); padding-top:var(--sp-2); }
+.tl-foot .tl-legend { flex:1 1 0; }
 .tl-more { margin-left:auto; }
 /* "Show all" names what it shows: the list's steps on a phone, the lanes wide. */
 .tl-more-lanes { display:none; }
@@ -106,13 +107,18 @@
 /* What the bars mean, and the detail of the lanes' part the keyboard is on. */
 .tl-legend { display:flex; flex-wrap:wrap; gap:4px var(--sp-4); margin:0; padding:0; list-style:none; color:var(--muted-foreground); font-size:var(--fs-xs); }
 .tl-legend li { display:inline-flex; align-items:center; gap:6px; }
+/* The gates' marks are the lanes' alone: a phone's list draws none, and its legend leaves them out. */
+.tl-legend .tl-wide { display:none; }
 .tl-key { display:inline-block; width:16px; height:8px; border-radius:2px; }
 .tl-key-work { background:var(--primary); }
 .tl-key-wait { background:color-mix(in srgb, var(--primary) 28%, transparent); }
 .tl-key.tl-g { position:relative; top:0; width:18px; height:16px; border-radius:0; }
-.tl-detail { flex-basis:100%; min-height:1.3em; margin:0; color:var(--muted-foreground); font-size:var(--fs-xs); }
+.tl-detail { flex-basis:100%; margin:0; color:var(--muted-foreground); font-size:var(--fs-xs); }
 
 @media (min-width: 900px) {
+  /* Lanes cut under the last whole one (task_timeline.rs `settle`) need no fade: "Show all N lanes"
+     says the rest. Only wide: a page narrowed to a phone's list after a cut keeps that list's fade. */
+  .tl-body[data-cut]::after { display:none; }
   /* The list stays for assistive technology, the lanes drawn in its place. */
   .tl-list { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   .tl-lanes { display:block; }

@@ -925,8 +925,10 @@ fn the_host_render_draws_the_list_the_lanes_with_their_words_and_what_the_bars_m
         .map(|after| after.split('<').next().unwrap())
         .collect();
     assert_eq!(legend, ["met", "missing", "waived"], "{html}");
-    // No overflow is measured on the host: no "Show all".
+    // No overflow is measured on the host: no "Show all". No part of the lanes has the focus: no
+    // line for its detail.
     assert!(!html.contains("Show all"), "{html}");
+    assert!(!html.contains("tl-detail"), "{html}");
     assert!(html.contains("id=\"tl-body\""), "{html}");
 }
 
@@ -949,6 +951,18 @@ fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_
     ));
     assert!(phone.contains(".tl-clipped .tl-body::after { content:\"\"; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }"));
     assert!(!wide.contains("tl-clipped"));
+    // Lanes cut under a whole one hide their fade wide only: narrowed to a phone after a cut, the
+    // list keeps its fade at the top.
+    assert!(wide.contains(".tl-body[data-cut]::after { display:none; }"));
+    assert!(!phone.contains("data-cut"));
+    // "Show all" sits on the legend's line, the legend wrapping beside it, and the lanes' detail
+    // reserves no line of its own.
+    assert!(phone.contains(".tl-foot .tl-legend { flex:1 1 0; }"));
+    assert!(!CSS.contains("min-height:1.3em"));
+    // The gate states' marks are in the legend wide only, beside the lanes that draw them: a rule
+    // as specific as the legend's items' own hides them on a phone.
+    assert!(phone.contains(".tl-legend .tl-wide { display:none; }"));
+    assert!(wide.contains(".tl-legend .tl-wide { display:inline-flex; }"));
     // A light page draws the segments' words in its own colour.
     assert!(CSS.contains(
         "@media not (prefers-color-scheme: dark) { .tl-seg { color:var(--foreground); } }"
@@ -1114,6 +1128,39 @@ fn lanes_that_overflow_end_under_the_last_that_fits_whole() {
         "not even the first lane fits"
     );
     assert_eq!(lane_edge(&[], 40.0), None, "no lanes");
+}
+
+/// A wide box keeps for the next visit what the tallest box would hold whole, so one kept short for
+/// a task of few lanes grows back as the task gains lanes, and never past the tallest box's cut.
+#[test]
+fn a_wide_box_kept_short_grows_back_to_the_lanes_the_tallest_box_holds() {
+    use crate::timeline_slot::WIDE;
+    let wide = f64::from(WIDE);
+    // The axis, Stage (to 58), Executor (to 94), Builds & tests (to 182), two gates.
+    let bottoms = [58.0, 94.0, 182.0, 202.0, 222.0];
+    let drawn = 222.0;
+    // At the tallest box the foot and totals take 100 px: 140 left, Stage and Executor whole.
+    assert_eq!(kept_wide(wide, 140.0, drawn, &bottoms), wide - 140.0 + 94.0);
+    assert_eq!(
+        kept_wide(wide, 140.0, drawn, &bottoms),
+        wide - 140.0 + lane_edge(&bottoms, 140.0).unwrap(),
+        "the tallest box keeps its own cut"
+    );
+    // A box kept at 160 px for a task of two lanes leaves 60, Stage alone; it keeps what 240 px
+    // holds, Stage and Executor: it grows.
+    let grown = kept_wide(160.0, 60.0, drawn, &bottoms);
+    assert_eq!(grown, 160.0 - 60.0 + 94.0);
+    assert!(grown > 160.0, "{grown}");
+    assert_eq!(lane_edge(&bottoms, 60.0), Some(58.0), "this visit's cut");
+    // Where the tallest box holds every lane, the lanes whole.
+    assert_eq!(kept_wide(160.0, 60.0, 130.0, &[58.0, 94.0, 130.0]), 230.0);
+    // Where not even the first lane would fit, the lanes whole: the slot keeps it within the box.
+    assert_eq!(kept_wide(wide, 20.0, drawn, &bottoms), wide - 20.0 + drawn);
+    // A box drawn taller than the tallest (a kept height from a taller build) keeps its own cut.
+    assert_eq!(
+        kept_wide(300.0, 200.0, drawn, &bottoms),
+        300.0 - 200.0 + 182.0
+    );
 }
 
 /// "Show all" counts what it shows: the steps of the phone's list, the lanes wide, a lane for
