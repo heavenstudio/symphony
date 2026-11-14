@@ -12,7 +12,7 @@
 
 # Every regular file under apps/symphony-server/client/public, as the server's build script embeds
 # them: the generations `symphony-build publish-client` keeps.
-client = 20_290_000
+client = 20_480_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
