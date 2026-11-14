@@ -551,11 +551,12 @@ B decides the rest:
 - **An old protocol major:** the protocol is on its first, and no settings key or command is
   retired, so how long an old major is kept is asked when a second is planned.
 
-The first numbers: each helper starts at 1.0.0, the number whose majors and minors B's promise is
-written in. The kit starts at 0.1.0, one version for its three packages, and takes 1.0.0 once its
-blocks have left the app's wire types in `symphony-api`: until then nearly every release, changing
-a wire type, would need a new major, which says nothing. Cargo reads a change of 0.y as it reads a
-new major, so a project naming the kit at 0.1 takes any 0.1.z and never a 0.2.
+The first numbers: the kit (`symphony-plugin`, `symphony-blocks` and `symphony-docs`, one version
+for the three) and each helper start at 1.0.0, the number whose majors and minors B's promise is
+written in. The kit could take it only once its blocks had left the app's wire types for
+`symphony-blocks`: with them inside it, nearly every release, changing a wire type, would have
+needed a new major, which says nothing. `symphony-api`, the app's wire types, stays at 0.1.0 and
+promises no name.
 
 ## Verified and inferred
 

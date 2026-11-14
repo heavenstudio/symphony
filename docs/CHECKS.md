@@ -160,11 +160,12 @@ A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turn
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
 link `serde_json` with `arbitrary_precision`, `float_roundtrip`, `preserve_order` and `raw_value`,
 as the server does, and so do the own runs of `symphony-board` and `symphony`, as the `tasks` and
-`symphony` binaries do (the board's dependency asks for them), of `symphony-api` and
-`symphony-plugin` (a dev-dependency asks for them, which never reaches the client or a plugin's
-build) and of `symphony-schema` (`raw_value` aside, which changes no read), while the own runs of
-`symphony-ui` and `chrome-devtools` link it with none of them, so a test of theirs that reads a
-JSON object's key order or a number's text can pass alone and fail in the workspace's run.
+`symphony` binaries do (the board's dependency asks for them), of `symphony-api`,
+`symphony-blocks` and `symphony-plugin` (a dev-dependency asks for them, which never reaches the
+client or a plugin's build) and of `symphony-schema` (`raw_value` aside, which changes no read),
+while the own runs of `symphony-ui` and `chrome-devtools` link it with none of them, so a test of
+theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
+workspace's run.
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters

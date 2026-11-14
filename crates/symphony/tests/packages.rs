@@ -11,12 +11,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// The members crates.io gets, by package name: the plugin kit and the helpers.
-const PUBLISHED: [&str; 8] = [
+/// The members crates.io gets, by package name: the plugin kit, the helpers and the app's wire types.
+const PUBLISHED: [&str; 9] = [
     "process-cwd",
     "repository-read",
     "symphony-api",
     "symphony-args",
+    "symphony-blocks",
     "symphony-docs",
     "symphony-env",
     "symphony-plugin",
@@ -24,7 +25,7 @@ const PUBLISHED: [&str; 8] = [
 ];
 
 /// The plugin kit, whose three packages carry one version.
-const KIT: [&str; 3] = ["symphony-api", "symphony-docs", "symphony-plugin"];
+const KIT: [&str; 3] = ["symphony-blocks", "symphony-docs", "symphony-plugin"];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -110,6 +111,12 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     }
     if std::fs::read(here.join("LICENSE")).ok().as_deref() != Some(licence) {
         lacks.push("no LICENSE in the package holding the workspace's".to_owned());
+    } else if !std::fs::symlink_metadata(here.join("LICENSE")).is_ok_and(|meta| meta.is_file()) {
+        lacks.push(
+            "its LICENSE is a link, which the client's release inputs refuse \
+             (`symphony-build release-inputs`): a copy of the workspace's"
+                .to_owned(),
+        );
     }
     let keywords: Vec<&str> = package["keywords"]
         .as_array()
