@@ -945,16 +945,17 @@ fn the_style_sheet_shows_the_list_on_a_phone_and_the_lanes_from_900_px_in_theme_
     // A phone's text keeps clear of the + button's column.
     assert!(phone.contains("@media (max-width: 899.98px) {\n  .tl-drawn { padding-right:40px; }"));
     // A phone's clipped list is drawn from its end, the latest steps in view, and fades out at its
-    // top; clipped lanes fade out at their foot.
+    // top; the lanes are never clipped, and no fade is drawn wide.
     assert!(phone.contains(
-        "  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }\n  .tl-clipped .tl-list { flex:none; }\n  .tl-clipped .tl-body::after { top:0; bottom:auto; background:linear-gradient(var(--card), transparent); }\n}"
+        "  .tl-clipped .tl-body { display:flex; flex-direction:column; justify-content:flex-end; }\n  .tl-clipped .tl-list { flex:none; }\n  .tl-clipped .tl-body::after { content:\"\"; position:absolute; left:0; right:0; top:0; height:28px; background:linear-gradient(var(--card), transparent); pointer-events:none; }\n}"
     ));
-    assert!(phone.contains(".tl-clipped .tl-body::after { content:\"\"; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }"));
+    assert_eq!(CSS.matches("::after").count(), 1, "{CSS}");
     assert!(!wide.contains("tl-clipped"));
-    // Lanes cut under a whole one hide their fade wide only: narrowed to a phone after a cut, the
-    // list keeps its fade at the top.
-    assert!(wide.contains(".tl-body[data-cut]::after { display:none; }"));
-    assert!(!phone.contains("data-cut"));
+    assert!(!CSS.contains("data-cut"));
+    // "Show all" is a phone's alone: wide the box holds every lane, and the style sheet hides the
+    // button even where a draw at a phone's width offered it.
+    assert!(wide.contains(".tl-foot .tl-more { display:none; }"));
+    assert!(!CSS.contains("tl-more-"));
     // "Show all" sits on the legend's line, the legend wrapping beside it, and the lanes' detail
     // reserves no line of its own: it takes the legend's place while it shows.
     assert!(phone.contains(".tl-foot .tl-legend { flex:1 1 0; }"));
@@ -1098,94 +1099,10 @@ fn the_next_read_is_the_timelines_own_while_open_a_minute_after_a_failure_none_o
     assert_eq!(next_read(None), None);
 }
 
-/// Wide lanes that overflow end under the last that fits whole, a pixel's rounding allowed; none
-/// is cut when all fit, and none when not even the first does (the box clips as it can).
+/// "Show all" counts the phone's list's steps it shows.
 #[test]
-fn lanes_that_overflow_end_under_the_last_that_fits_whole() {
-    // The axis is 22 px, then Stage (to 58), Executor (to 94), Builds & tests (to 182), Gates.
-    let bottoms = [58.0, 94.0, 182.0, 202.0, 222.0];
-    assert_eq!(
-        lane_edge(&bottoms, 90.0),
-        Some(58.0),
-        "Executor cut through"
-    );
-    assert_eq!(lane_edge(&bottoms, 94.0), Some(94.0));
-    assert_eq!(lane_edge(&bottoms, 94.6), Some(94.0));
-    assert_eq!(lane_edge(&bottoms, 95.0), Some(94.0), "a pixel's rounding");
-    assert_eq!(
-        lane_edge(&bottoms, 180.0),
-        Some(94.0),
-        "two pixels short of Builds & tests"
-    );
-    assert_eq!(lane_edge(&bottoms, 220.0), Some(202.0));
-    assert_eq!(
-        lane_edge(&bottoms, 221.0),
-        None,
-        "the last lane a pixel over fits"
-    );
-    assert_eq!(lane_edge(&bottoms, 222.0), None, "every lane fits");
-    assert_eq!(lane_edge(&bottoms, 400.0), None);
-    assert_eq!(
-        lane_edge(&bottoms, 40.0),
-        None,
-        "not even the first lane fits"
-    );
-    assert_eq!(lane_edge(&[], 40.0), None, "no lanes");
-}
-
-/// A wide box keeps for the next visit what the tallest box would hold whole, so one kept short for
-/// a task of few lanes grows back as the task gains lanes, and never past the tallest box's cut.
-#[test]
-fn a_wide_box_kept_short_grows_back_to_the_lanes_the_tallest_box_holds() {
-    use crate::timeline_slot::WIDE;
-    let wide = f64::from(WIDE);
-    // The axis, Stage (to 58), Executor (to 94), Builds & tests (to 182), two gates.
-    let bottoms = [58.0, 94.0, 182.0, 202.0, 222.0];
-    let drawn = 222.0;
-    // At the tallest box the foot and totals take 100 px: 140 left, Stage and Executor whole.
-    assert_eq!(kept_wide(wide, 140.0, drawn, &bottoms), wide - 140.0 + 94.0);
-    assert_eq!(
-        kept_wide(wide, 140.0, drawn, &bottoms),
-        wide - 140.0 + lane_edge(&bottoms, 140.0).unwrap(),
-        "the tallest box keeps its own cut"
-    );
-    // A box kept at 160 px for a task of two lanes leaves 60, Stage alone; it keeps what 240 px
-    // holds, Stage and Executor: it grows.
-    let grown = kept_wide(160.0, 60.0, drawn, &bottoms);
-    assert_eq!(grown, 160.0 - 60.0 + 94.0);
-    assert!(grown > 160.0, "{grown}");
-    assert_eq!(lane_edge(&bottoms, 60.0), Some(58.0), "this visit's cut");
-    // Where the tallest box holds every lane, the lanes whole.
-    assert_eq!(kept_wide(160.0, 60.0, 130.0, &[58.0, 94.0, 130.0]), 230.0);
-    // Where not even the first lane would fit, the lanes whole: the slot keeps it within the box.
-    assert_eq!(kept_wide(wide, 20.0, drawn, &bottoms), wide - 20.0 + drawn);
-    // A box drawn taller than the tallest (a kept height from a taller build) keeps its own cut.
-    assert_eq!(
-        kept_wide(300.0, 200.0, drawn, &bottoms),
-        300.0 - 200.0 + 182.0
-    );
-}
-
-/// "Show all" counts what it shows: the steps of the phone's list, the lanes wide, a lane for
-/// each of the timeline's own and one for its gates.
-#[test]
-fn show_all_counts_the_steps_on_a_phone_and_the_lanes_wide() {
-    let timeline = pictures();
-    let drawn = lanes(&timeline);
-    assert!(!drawn.gates.is_empty());
-    assert_eq!(lane_count(&drawn), drawn.lanes.len() + 1);
-    let mut gateless = drawn.clone();
-    gateless.gates.clear();
-    assert_eq!(lane_count(&gateless), drawn.lanes.len());
-    assert_eq!(
-        show_all(rows(&timeline).len(), lane_count(&drawn)),
-        (
-            format!("Show all {} steps", rows(&timeline).len()),
-            format!("Show all {} lanes", drawn.lanes.len() + 1)
-        )
-    );
-    assert_eq!(
-        show_all(1, 1),
-        ("Show all 1 step".to_string(), "Show all 1 lane".to_string())
-    );
+fn show_all_counts_the_steps_of_a_phones_list() {
+    let steps = rows(&pictures()).len();
+    assert_eq!(show_all(steps), format!("Show all {steps} steps"));
+    assert_eq!(show_all(1), "Show all 1 step");
 }
