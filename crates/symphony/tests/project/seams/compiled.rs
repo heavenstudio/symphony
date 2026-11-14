@@ -162,3 +162,19 @@ fn a_cards_title_and_summary_leave_out_the_registers_markers_and_its_plugins_kin
         "Pick one."
     );
 }
+
+#[test]
+fn a_page_hands_its_components_the_projects_artifacts_folder() {
+    let doc = "# A\n\n[[every:lantern]]\n";
+    let plain = naming(&["every"]);
+    let html = symphony::render::Render::new(&plain.root).html(doc, "docs/A.md");
+    assert!(html.contains("lantern None in artifacts/every"), "{html}");
+    // A project that names a folder of its own hands that one.
+    let named = naming(&["every"]);
+    named.write(
+        symphony::project::FILE,
+        "[project]\nartifacts = \"out/kept\"\n\n[plugins]\ncrates = [\"every\"]\n",
+    );
+    let html = symphony::render::Render::new(&named.root).html(doc, "docs/A.md");
+    assert!(html.contains("lantern None in out/kept/every"), "{html}");
+}
