@@ -58,9 +58,14 @@ dark as the file's own styles follow them. It runs in a sandboxed frame whose sc
 origin of their own, never the app's: the app's storage, cookies, feed, API and page are out of
 its reach, and it cannot navigate the app away, submit a form or open a window, so a link in it
 opens in the frame or not at all. The files beside it (stylesheets, scripts, pictures) load from
-its entrypoint and from nowhere else, and it opens no connection, a fetch of its own files among
-them. The file itself, asked for by anything but a page's own load, is served under that same
-sandbox, so no address of it runs with the app's origin. An HTML document has none of a Markdown
+under its entrypoint's address and from nowhere else, and it opens no connection, a fetch of its
+own files among them. For an entrypoint at the project's root that address is the whole project's,
+the app's own files and answers among it: the page can load any of them as a script, a stylesheet
+or a picture, a script running in the page's own origin, and fetch none, so no answer of the app's
+reaches it as data. Its route is the app's page, however it
+is asked for; the frame loads the file at the route's own address with `?raw` added, and the file
+is only ever served under that same sandbox, so no address of it runs with the app's origin. An
+HTML document has none of a Markdown
 document's outline, sections, cards, verdicts, notes, editing, versions or search. An entrypoint
 whose `types` name `media` before `html`, or `media` without it, keeps listing its `.html` files
 by name among its pictures; opened, each is drawn in the same frame. One whose `types` name

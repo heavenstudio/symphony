@@ -62,15 +62,18 @@ pub fn MockupFrame(src: String, caption: String, #[props(default)] thumb: bool) 
         return rsx! {};
     }
     let caption = label(&src, &caption).to_string();
-    // A sandboxed frame sends no Referer: its address names the project itself.
+    // A sandboxed frame sends no Referer: its address names the project itself. The frame loads the
+    // file's address, which an HTML document's route needs (its route is the app's page); the
+    // links open the route.
     let src = crate::project::href(&src);
+    let file = symphony_api::file_address(&src);
     rsx! {
         span { class: if thumb { "mockup-shell thumb" } else { "mockup-shell" },
             ..reveal,
             if shown() {
                 span { class: if thumb { "mockup mockup-thumb" } else { "mockup" },
                     span { class: "mockup-frame",
-                        iframe { src: src.clone(), "sandbox": "allow-scripts", "loading": "lazy", width: "1280", height: "800", title: caption.clone(), tabindex: "-1", referrerpolicy: "no-referrer" }
+                        iframe { src: file, "sandbox": "allow-scripts", "loading": "lazy", width: "1280", height: "800", title: caption.clone(), tabindex: "-1", referrerpolicy: "no-referrer" }
                         if !thumb { a { class: "mockup-open", href: src.clone(), target: "_blank", rel: "noopener noreferrer", "aria-label": "Open {caption} full size" } }
                     }
                     if !thumb {
@@ -301,6 +304,25 @@ mod tests {
             let html = dioxus_ssr::render_element(rsx! { MediaView { media } });
             assert!(html.contains(tag), "expected {tag}: {html}");
         }
+    }
+
+    /// A mockup's frame loads its file's address, which an HTML document's route needs (the route
+    /// is the app's page), whatever headers the browser sends; its full-size links open the route.
+    #[test]
+    fn a_mockups_frame_loads_its_files_address_and_its_links_open_its_route() {
+        let html = dioxus_ssr::render_element(rsx! {
+            MockupFrame { src: "/docs/board/a.html?state=b#x", caption: "Board" }
+        });
+        assert!(
+            html.contains(r#"src="/docs/board/a.html?state=b&#38;raw#x""#),
+            "{html}"
+        );
+        assert_eq!(
+            html.matches(r#"href="/docs/board/a.html?state=b#x""#)
+                .count(),
+            2,
+            "{html}"
+        );
     }
 
     #[test]

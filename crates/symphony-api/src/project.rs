@@ -98,8 +98,9 @@ impl ProjectView {
             && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_page(page))
     }
 
-    /// Whether `path` is a document route naming an HTML page: the app draws it whole in a
-    /// sandboxed frame, where the server answers anything but a page's own load with the file.
+    /// Whether `path` is a document route naming an HTML page: the app's page, whatever the request,
+    /// which draws the document whole in a sandboxed frame loading its file's own address
+    /// ([`file_address`]).
     pub fn is_html_route(&self, path: &str) -> bool {
         self.is_document_route(path) && !self.is_folder_route(path) && is_html(path)
     }
@@ -204,6 +205,31 @@ fn extension(name: &str) -> Option<&str> {
 
 fn html_extension(extension: &str) -> bool {
     extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+}
+
+/// The query key that asks an HTML document's route for the file itself, in its sandbox: the
+/// address the document's frame and a Markdown document's mockup frame load ([`file_address`]).
+/// Without it the route is the app's page, whatever headers the request carries. A query names no
+/// file, so the address is the route's own folder for the files beside it and no file's name.
+pub const FILE_QUERY: &str = "raw";
+
+/// Whether `query`, a URL's query without its `?`, asks for the file: it holds [`FILE_QUERY`], with
+/// a value or none.
+pub fn asks_for_file(query: &str) -> bool {
+    query
+        .split('&')
+        .any(|pair| pair.split('=').next() == Some(FILE_QUERY))
+}
+
+/// `src`, an HTML document's address (its route, or a path of the site), asking for the file:
+/// [`FILE_QUERY`] added to its query, before its fragment, unless it asks already.
+pub fn file_address(src: &str) -> String {
+    let (address, fragment) = src.split_at(src.find('#').unwrap_or(src.len()));
+    match address.split_once('?') {
+        Some((_, query)) if asks_for_file(query) => src.to_string(),
+        Some(_) => format!("{address}&{FILE_QUERY}{fragment}"),
+        None => format!("{address}?{FILE_QUERY}{fragment}"),
+    }
 }
 
 /// Whether the route `path` is `route` or lies under it; every path lies under the empty route.

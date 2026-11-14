@@ -37,6 +37,16 @@ fn an_html_page_is_listed_beside_the_markdown_documents_by_its_title() {
     );
     tree.write("docs/lamps/bare.HTM", "<p>No title here.</p>");
     tree.write("docs/lamps/empty.html", "<title> </title>");
+    // The title is read from the page's head alone: a large page's at its top is found, and one
+    // that comes only after 16 KiB is not read for.
+    tree.write(
+        "docs/lamps/big.html",
+        &format!("<title>Big page</title><p>{}</p>", "words ".repeat(50_000)),
+    );
+    tree.write(
+        "docs/lamps/late.html",
+        &format!("<!-- {} --><title>Too late</title>", "x".repeat(16 * 1024)),
+    );
     tree.write("docs/lamps/picture.png", "not shown");
     tree.write("docs/only-html/page.html", "<title>Alone</title>");
     let before = index_order(&tree.root, "docs");
@@ -61,9 +71,10 @@ fn an_html_page_is_listed_beside_the_markdown_documents_by_its_title() {
         ),
         (EntryKind::Doc, "Client readout & more", "", 0)
     );
-    // SPEC.md, east.md, old/notes.md, readout.html, bare.HTM, empty.html and page.html.
-    assert_eq!((folder.docs, count_documents(&tree.root, "docs")), (7, 7));
-    assert_eq!(entry(&folder, "docs/lamps").docs, 4);
+    // SPEC.md, east.md, old/notes.md, readout.html, bare.HTM, empty.html, big.html, late.html and
+    // page.html.
+    assert_eq!((folder.docs, count_documents(&tree.root, "docs")), (9, 9));
+    assert_eq!(entry(&folder, "docs/lamps").docs, 6);
     assert_eq!(entry(&folder, "docs/only-html").docs, 1);
     let lamps = render.folder("docs/lamps").unwrap();
     assert_eq!(
@@ -75,8 +86,10 @@ fn an_html_page_is_listed_beside_the_markdown_documents_by_its_title() {
         [
             ("docs/lamps/old", "Old", EntryKind::Folder),
             ("docs/lamps/bare.HTM", "bare", EntryKind::Doc),
+            ("docs/lamps/big.html", "Big page", EntryKind::Doc),
             ("docs/lamps/east.md", "East lamps", EntryKind::Doc),
             ("docs/lamps/empty.html", "empty", EntryKind::Doc),
+            ("docs/lamps/late.html", "late", EntryKind::Doc),
         ],
         "titled by file name without one, and no picture under the convention"
     );

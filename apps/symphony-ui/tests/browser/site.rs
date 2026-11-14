@@ -392,8 +392,9 @@ impl Site {
             .insert(path.to_string(), document.clone());
     }
 
-    /// Serve `html` as the HTML document at the route `path`, as the server does: a navigation to
-    /// the route gets the app's page, any other load of it (its frame's) the file. The stand-in
+    /// Serve `html` as the HTML document at the route `path`, as the server does: the route is the
+    /// app's page, whatever headers ask for it, and the file's address (the route with the file's
+    /// query, `symphony_api::file_address`), which its frame loads, the file. The stand-in
     /// sends no policy of its own with the file, so what a page sees of it is its frame's sandbox
     /// alone (the server's policy on it is its own test, apps/symphony-server/src/media_files.rs).
     pub fn set_html_page(&self, path: &str, html: &str) {
@@ -1020,10 +1021,10 @@ fn serve(
             }
         }
         let path = route_of(&target);
-        // A top-level load of a page, which a route of the app answers with its shell.
-        let navigation = headers
-            .get("sec-fetch-dest")
-            .is_some_and(|destination| destination == "document");
+        // An HTML document's file, asked for at its file's address; its route is the app's shell.
+        let file_asked = target
+            .split_once('?')
+            .is_some_and(|(_, query)| symphony_api::asks_for_file(query));
         let named = headers.get("if-none-match").cloned();
         // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
         // the shell's warmed modules are prefetches too, but no reads of the API.
@@ -1181,7 +1182,7 @@ fn serve(
                 "no-store",
             );
             Some(&board)
-        } else if let Some(page) = (!navigation)
+        } else if let Some(page) = file_asked
             .then(|| shared.lock().unwrap().html_pages.get(&path).cloned())
             .flatten()
         {
@@ -1199,7 +1200,7 @@ fn serve(
                         && (!last.contains('.')
                             || path.starts_with("/docs/")
                                 && (path.ends_with(".md")
-                                    || navigation && symphony_api::is_html(&path))))
+                                    || !file_asked && symphony_api::is_html(&path))))
                     .then(|| files.get("/"))
                     .flatten()
                 })

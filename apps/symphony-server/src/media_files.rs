@@ -19,7 +19,7 @@ const TEXT: &str = "text/plain; charset=utf-8";
 /// Whether `request` opens a page: a link followed or an address typed (`Sec-Fetch-Dest:
 /// document`), or, from a browser that sends no fetch metadata, a request asking for HTML. A fetch,
 /// a picture or a frame is none.
-pub(crate) fn navigation(request: &axum::http::Request<()>) -> bool {
+fn navigation(request: &axum::http::Request<()>) -> bool {
     let headers = request.headers();
     match headers.get("sec-fetch-dest") {
         Some(destination) => destination == "document",
@@ -119,19 +119,10 @@ fn entrypoint_source(host: &str, prefix: &str) -> Option<String> {
     named.then(|| format!("{host}{}", crate::api::encode_location(prefix)))
 }
 
-/// Marks a response to an HTML document's route as one of two by the request's destination: the
-/// app's page to a page's load, the file to anything else ([`navigation`]), so no cache gives one
-/// for the other.
-pub(crate) fn varies_by_destination(response: &mut Response) {
-    response.headers_mut().append(
-        header::VARY,
-        axum::http::HeaderValue::from_static("sec-fetch-dest"),
-    );
-}
-
 /// The file of the HTML document at the route `path` in the checkout at `root` (`scope` its
-/// worktree's, empty for the main checkout), to any read but a page's own load: the frame that
-/// draws it in the app, a fetch, a picture. Only a page its entrypoint shows and its walk reaches
+/// worktree's, empty for the main checkout), asked for at its file's address
+/// (`symphony_api::file_address`), which the frame that draws it in the app loads, whatever headers
+/// come with it. Only a page its entrypoint shows and its walk reaches
 /// ([`symphony::project::Project::html_page`]) is served, under [`html_policy`]; any other route is
 /// not found, a file outside its entrypoint included.
 pub(crate) async fn html_document(
@@ -144,7 +135,7 @@ pub(crate) async fn html_document(
     let project = symphony::project::Project::of(root);
     let found = project.html_page(root, path.trim_start_matches('/'));
     let canonical = tokio::fs::canonicalize(root).await;
-    let mut response = match (found, canonical) {
+    match (found, canonical) {
         (Some((entry, file)), Ok(canonical)) => {
             let scope = if scope.is_empty() {
                 String::new()
@@ -172,9 +163,7 @@ pub(crate) async fn html_document(
             response
         }
         _ => StatusCode::NOT_FOUND.into_response(),
-    };
-    varies_by_destination(&mut response);
-    response
+    }
 }
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
@@ -507,10 +496,11 @@ mod tests {
     }
 
     /// An HTML document's file, as its frame loads it: the file as written, under the frame's
-    /// sandbox, loading only its entrypoint's files and connecting nowhere, and varying by the
-    /// request's destination; any route that is no page its entrypoint shows and reaches is not
-    /// found, a file outside the entrypoint, behind a link out of the project or in a dot folder
-    /// among them.
+    /// sandbox, loading only its entrypoint's files and connecting nowhere; any route that is no
+    /// page its entrypoint shows and reaches is not found, a file outside the entrypoint, behind a
+    /// link out of the project or in a dot folder among them. The requests carry no fetch metadata,
+    /// as a browser's to a plain-http address do: none is read. The router's dispatch to it is
+    /// tested through the machine's routing (`projects_tests.rs`).
     #[tokio::test]
     async fn an_html_documents_file_is_served_sandboxed_to_its_entrypoint_and_nothing_else() {
         let tree = Tree::new();
@@ -562,13 +552,12 @@ mod tests {
                     said(header::CONTENT_TYPE),
                     said(header::CONTENT_SECURITY_POLICY),
                     said(header::X_CONTENT_TYPE_OPTIONS),
-                    said(header::VARY),
                     said(header::ETAG),
                 ];
                 (status, said, String::from_utf8(body.to_vec()).unwrap())
             }
         };
-        let framed = [("Sec-Fetch-Dest", "iframe"), ("Host", "127.0.0.1:1234")];
+        let framed = [("Host", "127.0.0.1:1234")];
         let policy = |within: &str| {
             format!(
                 "sandbox allow-scripts; default-src 'unsafe-inline' 'unsafe-eval' data: blob:{within}; \
@@ -581,34 +570,28 @@ mod tests {
         ] {
             let (status, said, body) = ask("/docs/analysis/readout.html", scope, &framed).await;
             assert_eq!((status, body.as_str()), (200, page), "{scope}");
-            let [kind, csp, sniff, vary, _] = said;
+            let [kind, csp, sniff, _] = said;
             assert_eq!(
-                [kind, csp, sniff, vary],
+                [kind, csp, sniff],
                 [
                     "text/html; charset=utf-8".to_string(),
                     policy(within),
                     "nosniff".into(),
-                    "sec-fetch-dest".into()
                 ],
                 "{scope}"
             );
         }
         // A host a source cannot spell: the document loads nothing beside itself.
-        let ipv6 = [("Sec-Fetch-Dest", "iframe"), ("Host", "[::1]:1234")];
+        let ipv6 = [("Host", "[::1]:1234")];
         let (status, said, _) = ask("/docs/analysis/readout.html", "", &ipv6).await;
         assert_eq!((status, said[1].clone()), (200, policy("")));
         // Asked again naming its tag: unchanged, under the same policy.
         let (_, said, _) = ask("/docs/analysis/readout.html", "", &framed).await;
-        let tagged = [framed[0], framed[1], ("If-None-Match", said[4].as_str())];
+        let tagged = [framed[0], ("If-None-Match", said[3].as_str())];
         let (status, again, body) = ask("/docs/analysis/readout.html", "", &tagged).await;
         assert_eq!(
-            (status, again[1].clone(), again[3].as_str(), body.as_str()),
-            (
-                304,
-                policy(" 127.0.0.1:1234/alpha/docs/"),
-                "sec-fetch-dest",
-                ""
-            )
+            (status, again[1].clone(), body.as_str()),
+            (304, policy(" 127.0.0.1:1234/alpha/docs/"), "")
         );
         for refused in [
             "/docs/analysis/missing.html",
@@ -621,11 +604,7 @@ mod tests {
             "/docs/analysis",
         ] {
             let (status, said, _) = ask(refused, "", &framed).await;
-            assert_eq!(
-                (status, said[1].as_str(), said[3].as_str()),
-                (404, "", "sec-fetch-dest"),
-                "{refused}"
-            );
+            assert_eq!((status, said[1].as_str()), (404, ""), "{refused}");
         }
     }
 

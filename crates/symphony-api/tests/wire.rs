@@ -550,6 +550,30 @@ fn an_html_page_under_an_entrypoint_is_a_document_drawn_in_its_frame() {
     }
 }
 
+/// The frame of an HTML document asks for its file by a query on its route, the route's own folder
+/// kept for the files beside it: added before a fragment, after a query of the author's, once.
+#[test]
+fn an_html_documents_frame_asks_for_its_file_by_a_query_on_its_route() {
+    for (src, file) in [
+        ("/docs/a/readout.html", "/docs/a/readout.html?raw"),
+        ("/alpha/@wt/docs/a.htm", "/alpha/@wt/docs/a.htm?raw"),
+        ("/docs/a.html#part", "/docs/a.html?raw#part"),
+        ("/docs/a.html?state=b", "/docs/a.html?state=b&raw"),
+        ("/docs/a.html?state=b#x", "/docs/a.html?state=b&raw#x"),
+        ("/docs/a.html?raw", "/docs/a.html?raw"),
+        ("/docs/a.html?x=1&raw=1#y", "/docs/a.html?x=1&raw=1#y"),
+    ] {
+        assert_eq!(symphony_api::file_address(src), file, "{src}");
+        let query = file.split(['?', '#']).nth(1).unwrap();
+        assert!(symphony_api::asks_for_file(query), "{file}");
+    }
+    for query in ["", "rawness", "x=raw", "raws=1", "state=b&r=aw"] {
+        assert!(!symphony_api::asks_for_file(query), "{query}");
+    }
+    assert!(symphony_api::asks_for_file("raw="));
+    assert_eq!(symphony_api::FILE_QUERY, "raw");
+}
+
 /// A project's day file (`symphony/reports/YYYY-MM-DD.json` in its git common dir), as the hourly
 /// roll-up writes it and the Reports page reads it: every figure of the hours and the day reads and
 /// writes back, each hour is named by its first second, and the hours sum to a span's figure.

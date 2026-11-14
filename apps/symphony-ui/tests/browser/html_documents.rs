@@ -1,10 +1,11 @@
 //! An HTML document opened at its route: the app's page around it, the file drawn in a frame whose
 //! scripts run, and never with the app's origin. From inside the frame the app's storage, cookies,
 //! page and API are out of reach, the app's page cannot be navigated away and no popup opens. The
-//! stand-in sends the file no policy of its own (`Site::set_html_page`), so what holds here is the
+//! stand-in sends the file no policy of its own (`Site::set_html_page`), so what holds there is the
 //! frame's sandbox alone; the server's policy on the file is tested beside it
-//! (apps/symphony-server/src/media_files.rs).
-use super::{SHOWN, chrome, chrome::Chrome, site};
+//! (apps/symphony-server/src/media_files.rs, projects_tests.rs), and the real server draws both an
+//! HTML document and a Markdown document's mockup of one here too.
+use super::{SHOWN, chrome, chrome::Chrome, restored::Native, site};
 use serde_json::{Value, json};
 
 /// The document's route, under the convention's `/docs/`.
@@ -104,7 +105,7 @@ fn an_html_document_runs_its_scripts_in_a_frame_that_never_reaches_the_app() {
         assert_eq!(
             page_state,
             json!({
-                "path": ROUTE, "sandbox": "allow-scripts", "src": ROUTE,
+                "path": ROUTE, "sandbox": "allow-scripts", "src": format!("{ROUTE}?raw"),
                 "eyebrow": "docs/analysis/probe.html", "header": "Docs", "kept": null,
                 "left": true, "right": true, "tall": true, "overflow": false,
                 "frames": 1,
@@ -117,4 +118,60 @@ fn an_html_document_runs_its_scripts_in_a_frame_that_never_reaches_the_app() {
             site.requests()
         );
     }
+}
+
+/// The real server, its routing and its policy: the HTML document's page draws its frame and the
+/// probe's script runs in it, in an opaque origin and refused all the same; and a Markdown document
+/// of the same folder showing that HTML document as a mockup draws it too, in a frame of its own,
+/// both frames at the file's address.
+#[test]
+fn the_server_draws_an_html_document_and_a_markdown_documents_mockup_of_it() {
+    let Some(mut page) = chrome() else { return };
+    let site = Native::start_committed(
+        None,
+        "main",
+        &[
+            ("docs/probe.html", PROBE),
+            ("docs/MOCKUP.md", "# Mockup\n\n![The probe](probe.html)\n"),
+        ],
+        None,
+    );
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": LISTEN }),
+    );
+    screen(&mut page, 1280, 900, false);
+    let report = opened(&mut page, &site.url("/docs/probe.html"));
+    for (what, refused) in [
+        ("origin", "null"),
+        ("localStorage", "SecurityError"),
+        ("cookie", "SecurityError"),
+        ("parent", "SecurityError"),
+        ("top", "SecurityError"),
+        ("popup", "refused"),
+        ("fetch", "TypeError"),
+    ] {
+        assert_eq!(report[what], refused, "{what} in {report}");
+    }
+    assert_eq!(
+        page.eval(
+            "[location.pathname, document.querySelector('iframe.html-frame').getAttribute('src')]"
+        ),
+        json!(["/docs/probe.html", "/docs/probe.html?raw"])
+    );
+    page.open(&site.url("/docs/MOCKUP.md"));
+    let drawn = page.wait_for(
+        "document.querySelector('.mockup-frame iframe') !== null && window.probeReport !== undefined",
+        SHOWN,
+    );
+    assert!(
+        drawn,
+        "the mockup was not drawn, or its script never ran, within {SHOWN:?}; the page shows: {}",
+        page.eval("document.body ? document.body.innerHTML.slice(0, 2000) : '(no body)'")
+    );
+    assert_eq!(page.eval("window.probeReport.origin"), json!("null"));
+    assert_eq!(
+        page.eval("document.querySelector('.mockup-frame iframe').getAttribute('src')"),
+        json!("/docs/probe.html?raw")
+    );
 }

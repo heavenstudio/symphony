@@ -105,10 +105,14 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .is_some_and(|s| s.contains("application/json"));
     let alias = if json_queue { None } else { legacy_page(path) };
     let view = project_view(&shared.root);
-    // An HTML document's route is the app's page where a page is opened, and the file itself in
-    // its sandbox to the frame that draws it and to any other read (`media_files::html_document`).
-    let html_route = view.is_html_route(path.trim_start_matches('/'));
-    let html_file = html_route && !crate::media_files::navigation(&request);
+    // An HTML document's route is the app's page, whatever headers ask for it; asked for with the
+    // file's query, the address its frame loads, it is the file itself in its sandbox
+    // (`symphony_api::file_address`, `media_files::html_document`).
+    let html_file = view.is_html_route(path.trim_start_matches('/'))
+        && request
+            .uri()
+            .query()
+            .is_some_and(symphony_api::asks_for_file);
     let static_file =
         !html_file && (client_page(&view, path) || path.starts_with("/assets/") || alias.is_some());
     // Typed document links can point to any project source or data file. Keep those raw downloads
@@ -248,6 +252,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         return Some(crate::media_files::upload(shared, file, &request).await);
     }
     if let Some(target) = alias {
+        // A `.` or `..` part (`/history/..%2f..%2fbeta%2fx.js`) would point the redirect out of
+        // the project, past any policy that bounds a page's loads by path: no such page.
+        if target.split('/').any(|part| part == "." || part == "..") {
+            return Some(StatusCode::NOT_FOUND.into_response());
+        }
         // Encode decoded path components again: spaces, percent signs and question marks in a
         // document name must remain path text. Keep the caller's query exactly as supplied.
         let target = if scope.is_empty() {
@@ -263,11 +272,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         return Some(axum::response::Redirect::permanent(&location).into_response());
     }
     if static_file && !json_queue {
-        let mut response = static_response(shared, path, &request).await;
-        if html_route {
-            crate::media_files::varies_by_destination(&mut response);
-        }
-        return Some(response);
+        return Some(static_response(shared, path, &request).await);
     }
     let hub = match warm(shared).await {
         Ok(hub) => hub,

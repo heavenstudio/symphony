@@ -106,26 +106,38 @@ pub(crate) fn html_title(text: &str) -> Option<String> {
     (!words.is_empty()).then_some(words)
 }
 
-/// A document's first heading (an HTML page's `<title>`), or its file name; a folder's README
-/// heading, or its name as a title ([`folder_title`]).
+/// How much of an HTML page its title is read from: its head, never the whole page, so a folder of
+/// large pages lists as fast as one of small ones.
+const HTML_HEAD: u64 = 16 * 1024;
+
+/// The first [`HTML_HEAD`] bytes of the HTML page at `path`, as text.
+fn html_head(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(HTML_HEAD)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A document's first heading (an HTML page's `<title>`, within its first [`HTML_HEAD`] bytes), or
+/// its file name; a folder's README heading, or its name as a title ([`folder_title`]).
 pub fn title(path: &Path) -> String {
     let doc = if path.is_dir() {
         path.join("README.md")
     } else {
         path.to_path_buf()
     };
-    let heading = |text: String| {
-        if crate::entrypoint::is_html(&doc.to_string_lossy()) {
-            html_title(&text)
-        } else {
-            first_heading(&text)
-        }
+    let found = if !doc.is_file() {
+        None
+    } else if crate::entrypoint::is_html(&doc.to_string_lossy()) {
+        html_head(&doc).and_then(|head| html_title(&head))
+    } else {
+        read_text(&doc).ok().and_then(|text| first_heading(&text))
     };
-    if let Some(found) = read_text(&doc)
-        .ok()
-        .filter(|_| doc.is_file())
-        .and_then(heading)
-    {
+    if let Some(found) = found {
         return found;
     }
     if path.is_dir() {
@@ -278,21 +290,31 @@ impl Place<'_> {
     /// cards, in the order the queue takes them ([`index_order`]).
     pub(crate) fn documents(&self) -> Vec<String> {
         self.titled(|renderer| renderer == MARKDOWN)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
     }
 
-    /// The folder's own documents but the README, Markdown and HTML together, by lowercase title:
-    /// what its page lists as documents.
-    pub(crate) fn listed(&self) -> Vec<String> {
+    /// The folder's own documents but the README, Markdown and HTML together, each with its title
+    /// ([`title`], read once), by lowercase title: what its page lists as documents.
+    pub(crate) fn listed(&self) -> Vec<(String, String)> {
         self.titled(|renderer| renderer == MARKDOWN || renderer == HTML)
     }
 
-    fn titled(&self, wanted: impl Fn(crate::entrypoint::Renderer) -> bool) -> Vec<String> {
-        let mut docs: Vec<String> = self
+    fn titled(
+        &self,
+        wanted: impl Fn(crate::entrypoint::Renderer) -> bool,
+    ) -> Vec<(String, String)> {
+        let mut docs: Vec<(String, String)> = self
             .files(wanted)
             .into_iter()
             .filter(|name| name != "README.md")
+            .map(|name| {
+                let title = title(&self.path().join(&name));
+                (name, title)
+            })
             .collect();
-        docs.sort_by_cached_key(|name| title(&self.path().join(name)).to_lowercase());
+        docs.sort_by_cached_key(|(_, title)| title.to_lowercase());
         docs
     }
 
