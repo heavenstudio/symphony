@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: c21d3e5a67a6ac31 files=SKILL.md -->
+<!-- symphony-stamp: b6bdb25a23d5fde4 files=SKILL.md -->
 
 # Work from the task board
 
@@ -166,8 +166,10 @@ Act on requests without an acknowledgement post.
 ## Review (reviewer)
 
 A reviewer works by the [review-task](../review-task/SKILL.md) skill, its whole prompt
-`/review-task SLUG HANDLE` (Codex: `$review-task SLUG HANDLE`): an independent verdict
-naming the tip it read, after rerunning the task's focused tests itself. Choose reviewer
+`/review-task SLUG HANDLE` (Codex: `$review-task SLUG HANDLE`) on the task it judges, never a
+subtask: an independent verdict naming the tip it read, after rerunning the task's focused
+tests itself, recorded on that task as a round of its review. A later round is the same
+reviewer's, resumed with the new tip. Choose reviewer
 families, models and launch methods under the project's policy; `just tasks limits`
 names the reviewer's model the project sets.
 
@@ -203,24 +205,35 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    lost or left holder moves it. You hear your own tasks, and those the board
    has not given an orchestrator yet; `just tasks list --doubled` lists tasks
    still holding two, to settle with `handover`.
-   **Every instruction to an agent is a subtask** (`--parent SLUG --for
-   <handle> [--instruction]`) whose body is the instruction verbatim, never a
-   file (a hook refuses a brief written to a file or a scratchpad);
-   `--body-file -` reads a long body from stdin. The agent's whole
-   prompt is `/work SLUG HANDLE` (Codex: `$work SLUG HANDLE`), a reviewer's
-   `/review-task SLUG HANDLE`, and the steps below that put the handle and the
-   rules in a brief are then already in that skill.
+   **A task's executor and reviewer work on the task itself**, with no
+   subtask: its brief and thread are their whole assignment, and anything
+   more for them goes on its thread (`--to @executor`, `--to @reviewer`),
+   never in a file (a hook refuses a brief written to a file or a
+   scratchpad). The executor's whole prompt is `/work SLUG HANDLE` (Codex:
+   `$work SLUG HANDLE`), a reviewer's `/review-task SLUG HANDLE`, and the
+   steps below that put the handle and the rules in a brief are then already
+   in that skill. A subtask (`--parent SLUG --for <handle> [--instruction]`,
+   its body the instruction verbatim; `--body-file -` reads a long body from
+   stdin) is a slice of the work, or an instruction that is neither the
+   task's work nor its review (a question, an errand), whose agent's prompt
+   is `/work SUBTASK HANDLE`.
    Choose an agent launch method under the project's policy, with a terminal
    of its own (`just tasks launch`, below) only when the work needs one:
    [task-orchestrator](../task-orchestrator/SKILL.md).
 2. For a subagent or `claude -p`, executor or reviewer, give it its own handle:
-   `just tasks register --kind worker|reviewer --parent <your handle>`, and
-   create its subtask (a review: an `--instruction` one under the task it
-   reviews) with `--for <handle>`. For a terminal, create the subtask without
-   `--for` and run `just tasks launch SLUG --kind K` (a reviewer:
-   `--role reviewer` too). Launch registers the handle, reserves the subtask (a
-   reviewer also takes the reviewer role on its parent), starts that agent in
-   its own terminal and worktree, and records its session.
+   `just tasks register --kind worker|reviewer --parent <your handle>`; its
+   skill claims the task (a reviewer takes the reviewer role on it) as that
+   handle. For a terminal run `just tasks launch SLUG --kind K` (a reviewer:
+   `--role reviewer` too). Launch registers the handle, reserves the task (a
+   reviewer takes the reviewer role on it instead), starts that agent in its
+   own terminal and worktree, and records its session on the task.
+   A later review round goes to the same reviewer: post the new tip on the
+   thread `--to @reviewer` and resume it (`SendMessage` to a subagent,
+   `claude -p --resume SESSION-ID`, `just tasks restore SLUG HANDLE` for a
+   closed terminal), never another reviewer or a review subtask. Resumed, it is
+   still a fresh reviewer for the land. Only when it cannot be resumed (no
+   conversation recorded, a Codex thread that never arrived, a reviewer that left)
+   does another reviewer take the role on the task.
    Its prompt is `/work SLUG HANDLE` (a reviewer's `/review-task SLUG HANDLE`)
    and nothing else: the skill tells it
    to run every command as `just tasks … --as <its handle>`, claim
@@ -265,7 +278,7 @@ worktree, so any of them can be restored; finished tasks are cleaned up.
 - `just tasks launch SLUG [--model M] [--kind codex|claude] [--role executor|reviewer]
   [--branch B | --detached] [--worktree DIR] [--tab STREAM]`:
   registers a handle (your child), makes the worktree under `<repo>-wt/` unless
-  given (an executor on its task's own branch; an instruction or reviewer detached at main).
+  given (an executor on its task's own branch; a reviewer or an instruction's agent detached at main).
   A given DIR must lead into the checkout you run it from or below the worktree
   base (`<repo>-wt/`, or `SYMPHONY_WT_DIR`), or from a linked worktree into the
   main checkout's artifacts folder, never into a git folder; any other is
