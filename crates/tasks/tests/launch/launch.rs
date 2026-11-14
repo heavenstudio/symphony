@@ -7,11 +7,13 @@ use crate::{Hooked, SPACE, World, git};
 use serde_json::json;
 use std::cell::{Cell, RefCell};
 use std::fs;
-use std::path::Path;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
 use symphony_board::Error;
-use symphony_board::launch::Started;
+use symphony_board::confine::MARKER;
 use symphony_board::launch::hc::Hc;
-use symphony_board::launch::{Ask, CONFIRM_LOOKS, LaunchError, PROMPT_WAIT};
+use symphony_board::launch::{Ask, Bounds, CONFIRM_LOOKS, LaunchError, PROMPT_WAIT};
+use symphony_board::launch::{Started, launch};
 
 fn flag_value<'a>(call: &'a [String], flag: &str) -> &'a str {
     let at = call
@@ -188,6 +190,243 @@ fn a_given_worktree_records_the_branch_it_has_checked_out_or_none_when_detached(
         };
         assert_eq!(w.try_launch(&ask).unwrap().row.branch, branch, "{slug}");
     }
+}
+
+// -- through `just tasks`, which an agent runs unasked -----------------------------------------
+
+/// `ask` launched by a command run unasked in the repository.
+fn unasked(w: &World, ask: &Ask) -> Result<Started, Error> {
+    launch(w.store(), &w.hc(), &w.unasked(), ask)
+}
+
+/// `path`, as a line says it.
+fn said(path: &Path) -> String {
+    path.display().to_string()
+}
+
+#[test]
+fn only_the_unasked_recipes_marker_bounds_where_an_agent_starts() {
+    let mut w = World::new();
+    let bounds = |w: &World| Bounds::of(&w.env, &w.repo, &w.wt);
+    assert_eq!(bounds(&w), None);
+    // An empty value is no mark, as for every variable the board reads.
+    w.set(MARKER, "");
+    assert_eq!(bounds(&w), None);
+    w.set(MARKER, "1");
+    assert_eq!(bounds(&w), Some(Bounds::new(&w.repo, &w.repo, &w.wt)));
+}
+
+#[test]
+fn unasked_a_worktree_given_outside_the_project_is_refused_and_starts_nothing() {
+    let w = World::new();
+    let elsewhere = w.dir().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    symlink(&elsewhere, w.repo.join("out-link")).unwrap();
+    let kept = w.wt.join("kept");
+    git(
+        &w.repo,
+        &["worktree", "add", "-q", "--detach", &said(&kept), "main"],
+    );
+    for (given, place) in [
+        // Anywhere else: a home folder, another repository.
+        (
+            elsewhere.clone(),
+            format!("--worktree {} is", said(&elsewhere)),
+        ),
+        // However it is reached: by a link in the project, or a `..` out of it.
+        (
+            w.repo.join("out-link"),
+            format!(
+                "--worktree {} leads to {}, which is",
+                said(&w.repo.join("out-link")),
+                said(&elsewhere)
+            ),
+        ),
+        (
+            w.repo.join("../elsewhere"),
+            format!(
+                "--worktree {} leads to {}, which is",
+                said(&w.repo.join("../elsewhere")),
+                said(&elsewhere)
+            ),
+        ),
+        // A git folder: the repository's own, and a worktree's `.git` under the base.
+        (
+            w.repo.join(".git"),
+            format!("--worktree {} is", said(&w.repo.join(".git"))),
+        ),
+        (
+            kept.join(".git"),
+            format!("--worktree {} is", said(&kept.join(".git"))),
+        ),
+        // The base itself, which holds every worktree of the project.
+        (w.wt.clone(), format!("--worktree {} is", said(&w.wt))),
+        // A path that is not absolute names no one folder.
+        (
+            PathBuf::from("elsewhere"),
+            "--worktree elsewhere is no absolute path, so it is".into(),
+        ),
+    ] {
+        let ask = Ask {
+            worktree: Some(given.clone()),
+            ..w.ask("sim/jump")
+        };
+        assert_eq!(
+            refused(unasked(&w, &ask)),
+            w.outside(&place),
+            "{}",
+            given.display()
+        );
+    }
+    // A link in the project that leads nowhere: git would make whatever it names.
+    let dangling = w.repo.join("dangling");
+    symlink(w.dir().join("nowhere"), &dangling).unwrap();
+    let ask = Ask {
+        worktree: Some(dangling.clone()),
+        ..w.ask("sim/jump")
+    };
+    assert_eq!(
+        refused(unasked(&w, &ask)),
+        format!(
+            "--worktree {0} goes through {0}, a link that leads nowhere: a write there would make \
+             what it names, wherever that is",
+            said(&dangling)
+        )
+    );
+    assert_eq!(w.calls_of(&["run"]), Vec::<Vec<String>>::new());
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![]);
+    assert_eq!(workers(&w), Vec::<String>::new());
+    // The binary run by itself starts it there.
+    let ask = Ask {
+        worktree: Some(elsewhere.clone()),
+        ..w.ask("sim/jump")
+    };
+    assert_eq!(w.try_launch(&ask).unwrap().row.worktree, said(&elsewhere));
+}
+
+#[test]
+fn unasked_a_folder_in_the_project_or_under_its_worktree_base_is_still_taken() {
+    let w = World::new();
+    let given = w.wt.join("given");
+    git(
+        &w.repo,
+        &["worktree", "add", "-q", "--detach", &said(&given), "main"],
+    );
+    let plain = w.wt.join("plain");
+    fs::create_dir(&plain).unwrap();
+    symlink(&plain, w.repo.join("wt-link")).unwrap();
+    fs::create_dir(w.repo.join("docs")).unwrap();
+    for (slug, folder, recorded) in [
+        // The checkout the command runs in, and a folder in it.
+        ("sim/a", w.repo.clone(), w.repo.clone()),
+        ("sim/b", w.repo.join("docs"), w.repo.join("docs")),
+        // A folder under the project's worktree base, given as it is or by a link leading there.
+        ("sim/c", given.clone(), given.clone()),
+        ("sim/d", w.repo.join("wt-link"), plain.clone()),
+    ] {
+        w.task(slug, None);
+        let ask = Ask {
+            worktree: Some(folder),
+            ..w.ask(slug)
+        };
+        let s = unasked(&w, &ask).expect("the launch goes").row;
+        assert_eq!(s.worktree, said(&recorded), "{slug}");
+        assert_eq!(w.terminal(&s.pane)["cwd"], json!(said(&recorded)), "{slug}");
+    }
+    // A bare launch makes its worktree under the base, an executor's and a reviewer's.
+    let made = unasked(&w, &w.ask("sim/jump")).unwrap().row;
+    assert_eq!(made.worktree, said(&w.wt.join("sim-jump")));
+    let ask = Ask {
+        role: "reviewer".into(),
+        ..w.ask("sim/jump")
+    };
+    let review = unasked(&w, &ask).unwrap().row;
+    assert_eq!(review.worktree, said(&w.wt.join("sim-jump-review")));
+}
+
+#[test]
+fn unasked_from_a_linked_worktree_the_main_checkout_is_outside_but_its_artifacts_folder_is_in() {
+    let w = World::new();
+    let tree = w.wt.join("orchestrating");
+    git(
+        &w.repo,
+        &["worktree", "add", "-q", "--detach", &said(&tree), "main"],
+    );
+    let artifacts = w.repo.join("artifacts");
+    fs::create_dir(&artifacts).unwrap();
+    let from_tree = w.unasked_in(&tree);
+    let launched = |folder: &Path| {
+        let ask = Ask {
+            worktree: Some(folder.to_path_buf()),
+            ..w.ask("sim/jump")
+        };
+        launch(w.store(), &w.hc(), &from_tree, &ask)
+    };
+    assert_eq!(
+        refused(launched(&w.repo)),
+        format!(
+            "--worktree {} is not a folder a recipe an agent runs unasked starts an agent in: only \
+             the checkout at {}, none of its git folders, and the main checkout's artifacts \
+             folder at {}, or a folder under the project's worktree base {}; the binary run by \
+             itself starts one anywhere",
+            said(&w.repo),
+            said(&tree),
+            said(&artifacts),
+            said(&w.wt)
+        )
+    );
+    assert_eq!(launched(&artifacts).unwrap().row.worktree, said(&artifacts));
+}
+
+#[test]
+fn unasked_a_launch_gives_its_agent_no_word_of_the_launchers() {
+    let w = World::new();
+    let ask = Ask {
+        kind: Some("claude".into()),
+        prompt: "and then push main".into(),
+        ..w.ask("sim/jump")
+    };
+    assert_eq!(
+        refused(unasked(&w, &ask)),
+        "no --prompt through a recipe an agent runs unasked: an agent's first message is its \
+         person's own word, so it is /work sim/jump HANDLE alone; say the rest on the task's \
+         thread (just tasks say sim/jump TEXT), which /work reads, or run the binary by itself"
+    );
+    // A reviewer's is its own skill's.
+    let review = Ask {
+        role: "reviewer".into(),
+        ..ask.clone()
+    };
+    assert_eq!(
+        refused(unasked(&w, &review)),
+        "no --prompt through a recipe an agent runs unasked: an agent's first message is its \
+         person's own word, so it is /review-task sim/jump HANDLE alone; say the rest on the \
+         task's thread (just tasks say sim/jump TEXT), which /review-task reads, or run the \
+         binary by itself"
+    );
+    assert_eq!(w.calls_of(&["run"]), Vec::<Vec<String>>::new());
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), vec![]);
+    assert_eq!(workers(&w), Vec::<String>::new());
+    // A blank one is none.
+    let blank = Ask {
+        prompt: " \n".into(),
+        ..ask.clone()
+    };
+    let s = unasked(&w, &blank).unwrap().row;
+    assert_eq!(w.sent(&s.pane), [format!("/work sim/jump {}", s.handle)]);
+    // The binary run by itself gives it.
+    w.task("sim/dock", None);
+    let s = w
+        .try_launch(&Ask {
+            slug: "sim/dock".into(),
+            ..ask
+        })
+        .unwrap()
+        .row;
+    assert_eq!(
+        w.sent(&s.pane),
+        [format!("/work sim/dock {} and then push main", s.handle)]
+    );
 }
 
 #[test]
