@@ -144,7 +144,7 @@ fn a_main_whose_generated_files_are_behind_it_is_released_nothing_and_filed_noth
     assert_eq!(code, 1, "{out}\n{err}");
     assert!(
         err.contains(&format!(
-            "symphony release: the client: red on main at {} since ",
+            "symphony-build release: the client: red on main at {} since ",
             &tip[..7]
         )) && err.contains(
             ": the generator the client failed (tests/main-red-regenerate); main holds none found \
@@ -293,7 +293,7 @@ fn a_night_no_regenerator_takes_main_for_is_refused_once_its_time_is_up() {
     );
     assert!(
         err.contains(&format!(
-            "symphony release: the client: never regenerated here; the next land starts the \
+            "symphony-build release: the client: never regenerated here; the next land starts the \
              regenerator, which makes them of main at {}: no release of a main whose generated \
              files are behind its sources",
             &tip[..7]
@@ -380,7 +380,7 @@ fn a_move_of_main_the_remote_never_gets_refuses_a_candidate_seen_behind() {
     assert_eq!(code, Some(1), "{out}\n{err}");
     assert!(
         err.contains(&format!(
-            "symphony release: main moved on to {} here, but origin/main is still at {}, whose \
+            "symphony-build release: main moved on to {} here, but origin/main is still at {}, whose \
              generated files the regenerator was last seen not to have made: no release of a \
              main whose generated files are behind its sources",
             &local[..12],

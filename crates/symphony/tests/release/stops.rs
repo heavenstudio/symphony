@@ -1,11 +1,11 @@
 //! A run ends within its time, and no run starts while a check of another runs: a killed run's
 //! check still running holds the next run off and the next run records it, what a check leaves
 //! outside its group holds nothing, a lock held with no run to say so is stuck, a process left in
-//! the checkout or the copies' folder stops the run before it checks anything and one a check
-//! leaves there stops it after that check, a checkout changed under a check is never released, a
-//! run told to stop (HUP, INT, TERM) stops its check and lets the next go, a remote that fails or
-//! hangs stops the run, a git lock an interrupted run left is cleared and one held stops the run.
-//! Each run that stops short is the board's red `tests/release-red-run`.
+//! the checkout stops the run before it checks anything and one a check leaves there stops it
+//! after that check, a checkout changed under a check is never released, a run told to stop (HUP,
+//! INT, TERM) stops its check and lets the next go, a remote that fails or hangs stops the run, a
+//! git lock an interrupted run left is cleared and one held stops the run. Each run that stops
+//! short is the board's red `tests/release-red-run`.
 
 use std::fs;
 use std::path::Path;
@@ -642,45 +642,6 @@ fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
-}
-
-#[test]
-fn a_process_in_the_conciliation_copies_folder_stops_the_run_too() {
-    let fixture = Fixture::new();
-    // The folder the run makes each project's copy ready in, in its turn.
-    let copies = fixture.root.join("wt/release-conciliate");
-    fs::create_dir_all(copies.join("consumer")).unwrap();
-    let copies = copies.canonicalize().unwrap();
-    let mut copying = Command::new("sleep")
-        .arg("1000")
-        .current_dir(copies.join("consumer"))
-        .spawn()
-        .unwrap();
-    let guard = Process(libc::pid_t::try_from(copying.id()).unwrap());
-    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
-    copying.kill().unwrap();
-    copying.wait().unwrap();
-    guard.ended();
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        err.contains(&format!(
-            "{} is in use by process {} (sleep), working in consumer: nothing is checked while a \
-             process is in the run's folders; end it, or move it out of that folder (a shell, a \
-             terminal tab, an editor or a Finder window there counts), and the next run goes",
-            copies.display(),
-            copying.id()
-        )),
-        "{err}"
-    );
-    assert!(
-        !out.contains("release: verify"),
-        "nothing was checked: {out}"
-    );
-    assert!(
-        out.contains("release: filed tests/release-red-run"),
-        "{out}"
-    );
-    assert!(fixture.remote_tags().is_empty());
 }
 
 #[test]

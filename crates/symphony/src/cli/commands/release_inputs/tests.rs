@@ -299,7 +299,7 @@ fn cli_status_and_output_failures_never_claim_success_or_publish_an_unselected_i
     assert!(
         String::from_utf8(err)
             .unwrap()
-            .starts_with("usage: symphony release-inputs ")
+            .starts_with("usage: symphony-build release-inputs ")
     );
     let mut args: Vec<String> = [
         &fixture.root,
@@ -339,7 +339,7 @@ fn cli_status_and_output_failures_never_claim_success_or_publish_an_unselected_i
     assert!(
         String::from_utf8(err)
             .unwrap()
-            .starts_with("symphony release-inputs: ")
+            .starts_with("symphony-build release-inputs: ")
     );
     assert!(
         root.join("Cargo.toml").is_file(),

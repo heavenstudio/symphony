@@ -1,7 +1,7 @@
 //! The program (`page-program`): the task pages with `/agents`, Reports, the chat, the menus and the
 //! task timeline as one program, which `dx bundle --wasm-split` cuts into a main module and a chunk
-//! for each of those kinds (bundle.sh, then `symphony split-repair`). The main module holds the
-//! runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
+//! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
+//! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
 //! part. The kinds share the one runtime, so a move between them loads a chunk, never another copy
 //! of the framework.
 //!

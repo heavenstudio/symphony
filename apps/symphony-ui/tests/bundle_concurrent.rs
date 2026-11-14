@@ -287,7 +287,7 @@ fn release_protocol(base: &Path) {
     // stand-ins keep this case on the target lock, seven-module assembly and failure release.
     executable(
         &base.join("tools/rs-bin.sh"),
-        "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = '--build symphony' ]\nprintf '%s/publisher\\n' \"$BUNDLE_ROOT\"\n",
+        "#!/bin/bash\nset -euo pipefail\n[ \"$1 $2\" = '--build symphony-build' ]\nprintf '%s/publisher\\n' \"$BUNDLE_ROOT\"\n",
     );
     executable(
         &base.join("publisher"),

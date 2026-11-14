@@ -1,5 +1,7 @@
-# What a Symphony plugin implements: the traits of each seam, and the block vocabulary of symphony-api
-# it renders to. Data in, data out, so a sidecar adapter can implement a trait later.
+# What a Symphony plugin implements: the traits of each seam, and the block vocabulary of
+# symphony-blocks it renders to. Data in, data out, so a sidecar adapter can implement a trait later.
+# With symphony-blocks and symphony-docs it is the plugin kit, which depends on no other workspace
+# crate.
 [package]
 name = "symphony-plugin"
 version = "0.1.0"
@@ -10,7 +12,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-symphony-api = { path = "../symphony-api" }
+# The block vocabulary a plugin renders to and the data its seams return (`vocabulary`).
+symphony-blocks = { path = "../symphony-blocks", version = "0.1.0" }
 # The docs checks' trait and the reading of a project's docs/ it is given.
 symphony-docs = { path = "../symphony-docs" }
 # The protocol's requests and answers (`protocol`): each seam's call as serde data.

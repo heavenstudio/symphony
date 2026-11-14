@@ -155,11 +155,12 @@ A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turn
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
 link `serde_json` with `arbitrary_precision`, `float_roundtrip`, `preserve_order` and `raw_value`,
 as the server does, and so do the own runs of `symphony-board` and `symphony`, as the `tasks` and
-`symphony` binaries do (the board's dependency asks for them), of `symphony-api` and
-`symphony-plugin` (a dev-dependency asks for them, which never reaches the client or a plugin's
-build) and of `symphony-schema` (`raw_value` aside, which changes no read), while the own runs of
-`symphony-ui` and `chrome-devtools` link it with none of them, so a test of theirs that reads a
-JSON object's key order or a number's text can pass alone and fail in the workspace's run.
+`symphony` binaries do (the board's dependency asks for them), of `symphony-api`,
+`symphony-blocks` and `symphony-plugin` (a dev-dependency asks for them, which never reaches the
+client or a plugin's build) and of `symphony-schema` (`raw_value` aside, which changes no read),
+while the own runs of `symphony-ui` and `chrome-devtools` link it with none of them, so a test of
+theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
+workspace's run.
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
 diff, `just check-fast`, is filed as the task [[task:tools/check-fast]]. Choosing the filters
@@ -236,8 +237,9 @@ back as main has it.
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
-folder (`../symphony-wt/release`), then conciliates the projects this machine serves with that
-commit. A green run tags a release; a red one files each red check as a task in the
+folder (`../symphony-wt/release`), and judges the commit by that alone: it builds and tests nothing
+of the projects this machine serves, whose own gates meet a change when they take a release. A
+green run tags a release; a red one files each red check as a task in the
 `tests/release-red-*` series at p0 ([TASKS](TASKS.md#slots)), staffed first and filed as a fast
 fix whose orchestrator lands only a fix changing no test or check (RULES.md
 `workflow/release-reds-first`), one task for each red step of verify, naming the commands that
@@ -344,7 +346,9 @@ binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
 `agent-send`) has a budget, and so does the client distribution the server embeds (every file
 under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
-`[profile.release]`, and runs `symphony size-budget`, which prints each size beside its budget.
+`[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
+budget (`symphony-build`, the commands only this repository's build and release run use, is no
+binary it delivers, and has no line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
@@ -400,9 +404,9 @@ A binary's line is its size, as `just size-check` measures it in the commit that
 plus 4 %, rounded down to a multiple of 10,000 bytes. The commit of a reduction sets the lines: it
 lowers the line of each binary it made smaller to that, and leaves a line where it stood when the
 rule would put it higher. The 4 % is the room the landings after a reduction share until the next
-one. Within its line, `symphony size-budget` prints where the rule brings down a binary's line
-that stands higher (`its line comes down to …`), so the commit of a reduction takes that number,
-not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
+one. Within its line, `symphony-build size-budget` prints where the rule brings down a binary's
+line that stands higher (`its line comes down to …`), so the commit of a reduction takes that
+number, not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
 allows, by the same rule: to the binary's size plus 4 %, never higher. The client's line is set by
 the same rule from the distribution main holds when it is set, and the check prints no such number
 for it: what the distribution holds rises and falls with the builds `publish-client` keeps.

@@ -1,13 +1,20 @@
 //! What a Symphony plugin implements. A plugin is a value implementing [`Plugin`]; a host binary
 //! compiles in the plugins it lists, and a project's `symphony.toml` names the ones it uses
-//! (`[plugins] crates`). Each seam below takes and returns plain data (paths, text and the wire
-//! types of `symphony-api`, re-exported in [`vocabulary`]), never a Symphony library type, so a
-//! plugin can answer from a process of its own as well as linked: each seam's call is the line
+//! (`[plugins] crates`). Each seam below takes and returns plain data (paths, text and the block
+//! vocabulary of `symphony-blocks`, re-exported in [`vocabulary`]), never a Symphony library type,
+//! so a plugin can answer from a process of its own as well as linked: each seam's call is the line
 //! protocol's data in [`protocol`], and a plugin's binary whose `main` is [`serve`]`(&PLUGIN)`
 //! answers it on its stdin and stdout (docs/PLUGIN_PROTOCOL.md).
 //!
 //! The client holds no plugin code: a component renders to [`vocabulary::Block`]s, which every
 //! project's client draws with the same generic components.
+//!
+//! This crate is one of the plugin kit's three, which move together as their types cross: this one
+//! (the seams, the data each call hands a plugin, the [`protocol`] and [`serve`]),
+//! `symphony-blocks` (the block vocabulary and the data the seams return, [`vocabulary`]) and
+//! `symphony-docs` (the doc checks, [`DocCheck`], and the docs' syntax they read). The kit's crates
+//! depend on no other workspace crate but each other, so a plugin built on the kit links nothing of
+//! the Symphony's library, board or server (docs/PLUGIN_PROTOCOL.md, "The kit").
 
 #![forbid(unsafe_code)]
 
@@ -21,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 /// The block vocabulary a plugin renders to, and the data its seams return.
 pub mod vocabulary {
-    pub use symphony_api::{
+    pub use symphony_blocks::{
         Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Gate, GatePast, GateState,
         Image, InlineKind, LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region,
         Span, TaskOffer, VectorKind, VectorShape, View, Viewer,

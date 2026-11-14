@@ -1,7 +1,7 @@
-//! `symphony split-repair PROGRAM PUBLIC`: the output of `dx bundle --wasm-split` in PUBLIC (its
-//! `index.html` and `assets/`) made safe and repeatable, in place, from PROGRAM, the program dx
-//! linked for it with its relocations (`wasm32-unknown-unknown/wasm-release/symphony-ui.wasm` in the
-//! build folder).
+//! `symphony-build split-repair PROGRAM PUBLIC`: the output of `dx bundle --wasm-split` in PUBLIC
+//! (its `index.html` and `assets/`) made safe and repeatable, in place, from PROGRAM, the program
+//! dx linked for it with its relocations (`wasm32-unknown-unknown/wasm-release/symphony-ui.wasm` in
+//! the build folder).
 //!
 //! dx 0.7.10's splitter (wasm-split-cli 0.7.10) has two faults, and this works around both:
 //!
@@ -24,7 +24,7 @@
 //! The two faults are dx's to fix: the reports for its tracker are kept with the evidence of
 //! `perf/client-shared-runtime/splitter-safe`. Once its splitter zeroes only bytes that no symbol
 //! the main module keeps lies over, and writes a chunk's segments in a fixed order, this command
-//! goes, with its call after `dx bundle --wasm-split` and its line in the CLI's listing.
+//! goes, with its call after `dx bundle --wasm-split` and its line in `symphony-build`'s listing.
 #![forbid(unsafe_code)]
 
 mod constants;
@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-const USAGE: &str = "usage: symphony split-repair PROGRAM PUBLIC";
+const USAGE: &str = "usage: symphony-build split-repair PROGRAM PUBLIC";
 
 /// Why a run stops: an output it would not stand behind (exit 1), or input it cannot read (2).
 #[derive(Debug, PartialEq, Eq)]
@@ -67,11 +67,11 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             0
         }
         Err(Failure::Unsafe(why)) => {
-            let _ = writeln!(err, "symphony split-repair: {why}");
+            let _ = writeln!(err, "symphony-build split-repair: {why}");
             1
         }
         Err(Failure::Input(why)) => {
-            let _ = writeln!(err, "symphony split-repair: {why}");
+            let _ = writeln!(err, "symphony-build split-repair: {why}");
             2
         }
     }

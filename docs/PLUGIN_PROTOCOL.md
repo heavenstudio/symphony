@@ -8,6 +8,21 @@ with no rebuild of the server. The requests and answers are the serde types of
 ([PLUGIN_CALLS](PLUGIN_CALLS.md)). The plugin's side is `symphony_plugin::serve`
 (`crates/symphony-plugin/src/serve.rs`) and the host's is `crates/symphony/src/plugins/process.rs`.
 
+## The kit
+
+A plugin, linked or a process, is built on the plugin kit: three crates that move together, as their
+types cross.
+
+- `symphony-plugin`: the seams a plugin implements, the data each call hands it, this protocol's
+  requests and answers, and `serve`.
+- `symphony-blocks`: the block vocabulary a plugin renders to and the data its seams return, as the
+  server sends them and the client draws them; `symphony_plugin::vocabulary` re-exports it.
+- `symphony-docs`: the doc checks a plugin adds and the docs' syntax they read.
+
+The kit's crates depend on no other workspace crate but each other. The app's own wire types, which
+move with the server and the client, are `symphony-api`'s, which re-exports the vocabulary under the
+same names.
+
 ## Turning it on
 
 In the project's `symphony.toml`, name the plugin in `[plugins] crates` as a linked one is named,
@@ -186,7 +201,7 @@ its members sorted and reversed, at every depth, and reads each back the same.
 A board field's value goes bare (`3.5` or `"high"`), as the board's own `FieldValue`, whose reader
 takes a number however serde hands it, that buffer's included. That leans on `serde_json`'s private
 form of a number under `arbitrary_precision`: a map whose one key is `$serde_json::private::Number`,
-its value the number's text, which `crates/symphony-api/src/field_value.rs` reads by that name. A
+its value the number's text, which `crates/symphony-blocks/src/field_value.rs` reads by that name. A
 `serde_json` that renamed the key would break the reading, and that file's tests would say so.
 
 Three types of the block vocabulary are read through that buffer, as they are tagged among their

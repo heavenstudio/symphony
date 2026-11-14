@@ -321,3 +321,68 @@ pub enum VectorKind {
     Polyline,
     Polygon,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A component's answer as `docs/PLUGIN_PROTOCOL.md` shows it on the line: each block and span
+    /// tagged by its `type` in kebab case, an empty presentation left out of a table, and every
+    /// other empty part of a presentation left out of it.
+    #[test]
+    fn blocks_write_tagged_by_their_type_and_read_back_the_same() {
+        let blocks = vec![
+            Block::Paragraph {
+                spans: vec![Span::Text { text: "A-1".into() }],
+            },
+            Block::Table {
+                head: Vec::new(),
+                rows: Vec::new(),
+                presentation: Presentation::default(),
+            },
+            Block::Container {
+                tag: ContainerKind::Figcaption,
+                presentation: Presentation::class("muted"),
+                blocks: vec![Block::Rule],
+            },
+            Block::SettledCard {
+                summary: vec![Span::LineBreak],
+                open: false,
+                blocks: Vec::new(),
+            },
+        ];
+        let json = serde_json::to_string(&blocks).unwrap();
+        assert_eq!(
+            json,
+            r#"[{"type":"paragraph","spans":[{"type":"text","text":"A-1"}]},{"type":"table","head":[],"rows":[]},{"type":"container","tag":"figcaption","presentation":{"class":"muted"},"blocks":[{"type":"rule"}]},{"type":"settled-card","summary":[{"type":"line-break"}],"open":false,"blocks":[]}]"#
+        );
+        assert_eq!(serde_json::from_str::<Vec<Block>>(&json).unwrap(), blocks);
+    }
+
+    #[test]
+    fn a_vocabulary_word_reads_back_as_its_variant_and_an_unknown_one_is_refused() {
+        for size in [
+            FigureSize::Small,
+            FigureSize::Row,
+            FigureSize::Large,
+            FigureSize::Tile,
+            FigureSize::Cell,
+            FigureSize::Slot,
+            FigureSize::Wide,
+        ] {
+            assert_eq!(size.as_str().parse::<FigureSize>(), Ok(size));
+            let json = serde_json::to_string(&size).unwrap();
+            assert_eq!(json, format!("\"{}\"", size.as_str()));
+        }
+        assert_eq!(
+            "auto-approved".parse::<CardState>(),
+            Ok(CardState::AutoApproved)
+        );
+        assert_eq!(
+            "huge".parse::<FigureSize>(),
+            Err("unknown FigureSize: huge".to_string())
+        );
+        assert!(Presentation::default().is_empty());
+        assert!(!Presentation::class("muted").is_empty());
+    }
+}

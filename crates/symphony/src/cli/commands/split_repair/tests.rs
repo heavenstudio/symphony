@@ -975,7 +975,7 @@ fn a_failed_check_writes_nothing_and_exits_1() {
     assert_eq!((code, out.as_str()), (1, ""));
     assert_eq!(
         err,
-        "symphony split-repair: symphony-ui_bg-dxh1a2b.wasm: the main module holds 0x6f at \
+        "symphony-build split-repair: symphony-ui_bg-dxh1a2b.wasm: the main module holds 0x6f at \
          0x400, where the program holds 0x4f: it is not that program's main module\n"
     );
     assert_eq!(files(&tree, "one"), before);
@@ -994,7 +994,7 @@ fn an_output_without_a_chunk_or_with_two_main_modules_is_refused_and_left_as_it_
     assert_eq!(
         err,
         format!(
-            "symphony split-repair: {}: no chunk, a module that defines no memory: it is not the \
+            "symphony-build split-repair: {}: no chunk, a module that defines no memory: it is not the \
              output of dx bundle --wasm-split\n",
             assets.display()
         )
@@ -1023,7 +1023,7 @@ fn a_module_no_script_names_is_refused() {
     let (code, _, err) = run(&[&program, tree.path("one").to_str().unwrap()]);
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("symphony split-repair: symphony-ui_bg-dxh1a2b.wasm: no script in "),
+        err.starts_with("symphony-build split-repair: symphony-ui_bg-dxh1a2b.wasm: no script in "),
         "{err}"
     );
 }
@@ -1070,7 +1070,7 @@ fn a_script_the_page_does_not_name_is_refused() {
     assert_eq!(code, 2);
     assert_eq!(
         err,
-        "symphony split-repair: symphony-ui-dxhaa11.js: index.html does not name it\n"
+        "symphony-build split-repair: symphony-ui-dxhaa11.js: index.html does not name it\n"
     );
 }
 
@@ -1086,7 +1086,7 @@ fn a_command_line_without_its_two_paths_is_its_usage_and_exit_2() {
     let (code, _, err) = run(&["/nowhere/program.wasm", "/nowhere/public"]);
     assert_eq!(code, 2);
     assert!(
-        err.starts_with("symphony split-repair: /nowhere/program.wasm: "),
+        err.starts_with("symphony-build split-repair: /nowhere/program.wasm: "),
         "{err}"
     );
 }

@@ -82,7 +82,7 @@ if [ "$(owned_git -C "$components" rev-parse HEAD)" != "${component_pin##*#}" ];
 fi
 owned_git -C "$components" ls-files --cached -z > "$inputs/components"
 snapshot_args=("$root" "$inputs/metadata.json" "$inputs/source" "$inputs/components")
-publisher="$("$root/tools/rs-bin.sh" --build symphony)"
+publisher="$("$root/tools/rs-bin.sh" --build symphony-build)"
 lock_folder="$("$publisher" release-inputs "${snapshot_args[@]}" --key)"
 snapshot="$(
     # The parent retains fd 9 for the target while this subshell takes the input lock.
@@ -119,10 +119,10 @@ cd "$here"
 # home or the board must not pay for the task pages' code, which a shared main module would hold
 # (docs/analysis/client-shared-runtime.md). The program, the task pages with Reports, the chat, the
 # menus and the task timeline, is one program that dx's splitter cuts into a main module and a
-# chunk for each (src/split.rs), and `symphony split-repair` makes that output safe and repeatable,
-# from the program dx linked, before anything is packaged; a failed repair fails the build. All
-# assets are content hashed; identical files from separate kinds share one URL and one browser-cache
-# entry.
+# chunk for each (src/split.rs), and `symphony-build split-repair` makes that output safe and
+# repeatable, from the program dx linked, before anything is packaged; a failed repair fails the
+# build. All assets are content hashed; identical files from separate kinds share one URL and one
+# browser-cache entry.
 for kind in "${kinds[@]}"; do
     rm -rf "$target/dx/symphony-ui/release/web"
     module="$out/.modules/$kind"

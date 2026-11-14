@@ -323,7 +323,7 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 17] = [
+const COMMANDS: [&str; 12] = [
     "status",
     "reply",
     "ask",
@@ -335,13 +335,41 @@ const COMMANDS: [&str; 17] = [
     "init",
     "project",
     "hook",
-    "publish-client",
-    "release-inputs",
-    "size-budget",
-    "split-repair",
-    "release",
     "serve",
 ];
+
+/// The commands only this repository's own build and release run use, `symphony-build`'s, with
+/// `nightly`, the release run's old name: the shipped binary has none of them, whatever it is
+/// asked, and lists none.
+#[test]
+fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
+    let (_, listing, _) = cli(&["help"]);
+    for name in [
+        "publish-client",
+        "release-inputs",
+        "size-budget",
+        "split-repair",
+        "release",
+        "nightly",
+    ] {
+        let refused =
+            format!("symphony: unknown command {name:?} (`just symphony-cli help` lists them)\n");
+        for args in [
+            vec![name],
+            vec![name, "--due"],
+            vec![name, "--help"],
+            vec!["help", name],
+        ] {
+            assert_eq!(cli(&args), (2, String::new(), refused.clone()), "{args:?}");
+        }
+        assert!(
+            !listing
+                .lines()
+                .any(|line| line.trim_start().starts_with(name)),
+            "{name}: {listing}"
+        );
+    }
+}
 
 #[test]
 fn help_lists_every_command_with_a_line_on_stdout_and_exit_zero() {

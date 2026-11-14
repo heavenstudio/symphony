@@ -42,7 +42,8 @@ never the whole target, which the release run runs.
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
   `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
   the task timeline: one script and main module, and a chunk for each, which
-  `symphony split-repair` puts right after dx (crates/symphony/src/cli/commands/split_repair.rs)
+  `symphony-build split-repair` puts right after dx
+  (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
   the shell's `gone` state, never a page left waiting, follows. A chunk mounts its kind's root
   in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
@@ -468,7 +469,7 @@ never the whole target, which the release run runs.
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made
   after the new page mounts instead of applying its late top reset.
   Compilation leaves `OUT/public` serving its last build;
-  packaging assembles beside it and `symphony publish-client` atomically exchanges the
+  packaging assembles beside it and `symphony-build publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
   intact; the next package removes abandoned staging folders. The stage holds its
   build alone, its files named in its `builds.json` by its shell; `publish-client`
