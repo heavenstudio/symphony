@@ -197,7 +197,7 @@ impl Home {
     /// one that does not answer within the patience is left as it is, and said, with how a replay
     /// is told from a hang ([`Home::unanswered`]).
     pub(super) fn stop_one(&self, running: &Running) -> Result<(), ServerError> {
-        match self.answers(running)? {
+        match self.answers(running) {
             Waited::Ended => Ok(()),
             Waited::Answers => self.end(running.pid),
             Waited::Silent => Err(ServerError::NotUp(format!(

@@ -287,7 +287,7 @@ impl Home {
                 self.forget_replay()?;
                 return Ok(None);
             };
-            match self.answers(&left.server)? {
+            match self.answers(&left.server) {
                 Waited::Answers => return Ok(Some(left)),
                 Waited::Silent => return Err(self.replay_unanswered(&left)),
                 Waited::Ended => {}

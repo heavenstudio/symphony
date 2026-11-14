@@ -481,7 +481,9 @@ impl Home {
     /// one older than the pinned version is replaced; a newer one is used as it is, so that two trees
     /// pinning two versions never end each other's server. An answer on a server's address, recorded or
     /// found, counts only from that process's own listener there ([`port::listens`]): a process that
-    /// took its port answers too. A recorded server that ends while it is waited for is started again.
+    /// took its port answers too. Where that cannot be told (no `lsof` runs), the answer counts, and
+    /// the start or the wait that took it says so in one line ([`unsure`]): nothing is ended on a
+    /// check that said nothing. A recorded server that ends while it is waited for is started again.
     /// One that runs and does not answer within the patience, recorded or not, is left running,
     /// never ended nor joined by a second: it is still replaying its log, or stuck, and the refusal
     /// says so. Refused while the board is held ([`Home::hold`]). A caller starting apart
@@ -503,7 +505,8 @@ impl Home {
             && !self.dir.join(left::RECORD).exists()
             && self.serves(running.pid)
             && rpc::healthy(&running.addr)
-            && owns(&running).unwrap_or(false)
+            // Unknown is the server's, said when it was started or found; not on each read.
+            && owns(&running).unwrap_or(true)
         {
             return Ok(running);
         }
@@ -521,7 +524,7 @@ impl Home {
         if let Some(running) = self.recorded()
             && self.serves(running.pid)
         {
-            match self.answers(&running)? {
+            match self.answers(&running) {
                 Waited::Answers if older(&running.version) => self.end(running.pid)?,
                 Waited::Answers => return Ok(running),
                 Waited::Ended => {}
@@ -529,7 +532,7 @@ impl Home {
             }
         }
         if let Some(running) = self.unrecorded() {
-            match self.answers(&running)? {
+            match self.answers(&running) {
                 Waited::Answers => {
                     self.record(&running)?;
                     return Ok(running);
@@ -735,18 +738,29 @@ impl Home {
 
     /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers
     /// on its address from a listener of its own ([`owns`]), it ends, or it runs and does neither.
-    fn answers(&self, running: &Running) -> Result<Waited, ServerError> {
+    /// One whose listener cannot be told answers, and a line says so ([`unsure`]).
+    fn answers(&self, running: &Running) -> Waited {
         let began = Instant::now();
         let wait = self.answer_wait();
         loop {
-            if rpc::healthy(&running.addr) && owns(running)? {
-                return Ok(Waited::Answers);
+            if rpc::healthy(&running.addr)
+                && owns(running).unwrap_or_else(|why| {
+                    (self.tell)(&unsure(
+                        "the board's server",
+                        running.pid,
+                        &running.addr,
+                        &why,
+                    ));
+                    true
+                })
+            {
+                return Waited::Answers;
             }
             if !pid_alive(running.pid) {
-                return Ok(Waited::Ended);
+                return Waited::Ended;
             }
             if began.elapsed() >= wait {
-                return Ok(Waited::Silent);
+                return Waited::Silent;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -922,7 +936,8 @@ impl Home {
     /// the port was taken meanwhile is started again on another ([`port`]), every start within the
     /// one patience. It is up once it answers and holds the port's listener itself
     /// ([`port::listens`]): a process that took its port answers too, while this server is still on
-    /// its way to ending. One that has not answered by then is left running, never signalled: it is
+    /// its way to ending. One whose listener cannot be told is up once it answers, a line saying so
+    /// ([`unsure`]). One that has not answered by then is left running, never signalled: it is
     /// still replaying its log, and a signal before its handlers are set ends it at once. `what`
     /// names the server in what is said of it; `on_start` is handed each start's pid and address as
     /// soon as the start says them, before it is waited for, and its error refuses the start, the
@@ -1001,25 +1016,17 @@ impl Home {
                 version: SURREAL_VERSION.into(),
             })?;
             loop {
-                if rpc::healthy(&addr) {
-                    match port::listens(child, reserved, output) {
-                        Ok(true) => {
-                            return Ok(Start::Up(Running {
-                                addr,
-                                pid,
-                                version: SURREAL_VERSION.into(),
-                            }));
-                        }
-                        Ok(false) => {}
-                        Err(problem) => {
-                            self.end(pid)?;
-                            return Err(ServerError::NotUp(format!(
-                                "{what} (pid {pid}, {addr}) answered, and {problem}; \
-                                 its log is {}",
-                                log.display()
-                            )));
-                        }
-                    }
+                if rpc::healthy(&addr)
+                    && port::listens(child, reserved, output).unwrap_or_else(|problem| {
+                        (self.tell)(&unsure(what, pid, &addr, &problem));
+                        true
+                    })
+                {
+                    return Ok(Start::Up(Running {
+                        addr,
+                        pid,
+                        version: SURREAL_VERSION.into(),
+                    }));
                 }
                 if !pid_alive(pid) {
                     return Ok(Start::Ended(since(&log, from)));
@@ -1081,18 +1088,27 @@ enum Waited {
 }
 
 /// Whether the process `running` names holds the listener on its address itself
-/// ([`port::listens`]): a health answer there is that server's only then. A record whose pid or
-/// address cannot be one, or an `lsof` that cannot say, is the error.
-fn owns(running: &Running) -> Result<bool, ServerError> {
-    let failed = |why: &dyn fmt::Display| {
-        ServerError::NotUp(format!(
-            "could not tell whether the board's server (pid {}, {}) listens there: {why}",
-            running.pid, running.addr
-        ))
-    };
-    let pid = u32::try_from(running.pid).map_err(|problem| failed(&problem))?;
-    let addr: SocketAddr = running.addr.parse().map_err(|problem| failed(&problem))?;
-    port::listens(pid, addr, output).map_err(|problem| failed(&problem))
+/// ([`port::listens`]): a health answer there is that server's only then. Where that cannot be
+/// told (a record whose pid or address cannot be one, an `lsof` that cannot run or say), why: an
+/// unknown, which its callers take as yes, never as no ([`unsure`]).
+fn owns(running: &Running) -> Result<bool, String> {
+    let pid = u32::try_from(running.pid).map_err(|problem| problem.to_string())?;
+    let addr: SocketAddr = running
+        .addr
+        .parse()
+        .map_err(|problem: std::net::AddrParseError| problem.to_string())?;
+    port::listens(pid, addr, output).map_err(|problem| problem.to_string())
+}
+
+/// The one line said of `what`, the server `pid` that answers on `addr`, when whether it holds that
+/// address's listener itself cannot be told (`why`): it is kept and taken as up. A check that could
+/// not say is never a "not listening", so no server that answers is ended or passed over on it: one
+/// was ended at each start where `lsof` could not run, and its next reader started another.
+fn unsure(what: &str, pid: i64, addr: &str, why: &dyn fmt::Display) -> String {
+    format!(
+        "· {what} (pid {pid}, {addr}) answers, and whether it holds that port's listener itself \
+         cannot be told, so it is kept as up: {why}"
+    )
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one
