@@ -144,6 +144,13 @@ impl Bucket {
         member(&self.0, key).is_some_and(|found| !found.is_null())
     }
 
+    /// Whether any source recorded the period: the roll-up, the agents, the board's health or git.
+    fn recorded(&self) -> bool {
+        ["flow", "agents", "health", "git"]
+            .iter()
+            .any(|source| self.has(source))
+    }
+
     /// The items of the list at `key` of the member `source`, each read the same way.
     fn list(&self, source: &str, key: &str) -> Vec<Bucket> {
         member(&self.0, source)
@@ -671,14 +678,19 @@ pub fn figures(page: &Page) -> [Figure; 4] {
     } else {
         let done: f64 = flows.iter().filter_map(|b| b.written("flow.done")).sum();
         let mean = Unit::Mean.format((done / float(flows.len()) * 10.0).round() / 10.0);
-        // The sum is the window's only where every period of it counted them.
+        // The sum is the window's only where every period of it counted them. A period rolled up
+        // without them was rolled up, in part at least, before the roll-up counted them.
         let periods = page.buckets.len();
+        let early = match rolled.len() - flows.len() {
+            0 => String::new(),
+            early => format!(", {early} rolled up before the count began"),
+        };
         Figure {
             label: "Done",
             value: short(done, 0),
             detail: if flows.len() < periods {
                 format!(
-                    "{mean} a {per} on average · {} of {periods} {per}s counted",
+                    "{mean} a {per} on average · {} of {periods} {per}s counted{early}",
                     flows.len()
                 )
             } else {
@@ -752,11 +764,18 @@ pub fn figures(page: &Page) -> [Figure; 4] {
 
 /// Whether any source recorded any period of `page`.
 fn recorded(page: &Page) -> bool {
-    page.buckets.iter().any(|b| {
-        ["flow", "agents", "health", "git"]
-            .iter()
-            .any(|source| b.has(source))
-    })
+    page.buckets.iter().any(Bucket::recorded)
+}
+
+/// `page` from its first period any source recorded: the periods before it, before the project's
+/// first file of any source, would be all hatching on every chart and count in no figure. A gap
+/// after it stays; a page no source recorded stays whole.
+fn from_first_record(mut page: Page) -> Page {
+    let before = page.buckets.iter().take_while(|b| !b.recorded()).count();
+    if before < page.buckets.len() {
+        page.buckets.drain(..before);
+    }
+    page
 }
 
 /// What the page says while the roll-up has written no file: when the next one is due.
@@ -840,9 +859,11 @@ fn controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Eleme
     }
 }
 
-/// One window's report. The period tapped is the same on every chart.
+/// One window's report, its axis from the first period recorded. The period tapped is the same on
+/// every chart.
 #[component]
 fn Report(page: Page) -> Element {
+    let page = from_first_record(page);
     let mut tapped = use_signal(|| None::<usize>);
     let selected = tapped();
     let figures = figures(&page);

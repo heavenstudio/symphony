@@ -522,8 +522,12 @@ fn tasks_done_are_the_tasks_counted_once_and_a_period_that_did_not_count_them_is
     let [figure, ..] = figures(&read(&wire));
     assert_eq!(
         (figure.value.as_str(), figure.detail.as_str()),
-        ("3", "3 a day on average · 1 of 3 days counted"),
-        "over Monday alone, the one period that counted them, and it says so"
+        (
+            "3",
+            "3 a day on average · 1 of 3 days counted, 1 rolled up before the count began"
+        ),
+        "over Monday alone, the one period that counted them, and it says so: Wednesday rolled up \
+         without them, Tuesday not rolled up at all"
     );
     wire.buckets[2].flow.as_mut().unwrap().done = Some(4);
     let whole = ReportsPage {
@@ -797,6 +801,74 @@ fn with_no_roll_up_yet_the_page_says_when_the_first_comes() {
         "{html}"
     );
     assert!(html.contains("2026-11-10.json: not a regular file"));
+}
+
+/// The axis starts at the first period any source recorded: a window wider than the project's
+/// files is drawn from its first record, its figures over those periods alone, a gap after it
+/// kept; agents recorded before the first roll-up are a record; a page no source recorded stays
+/// whole.
+#[test]
+fn the_axis_starts_at_the_first_period_any_source_recorded() {
+    let mut wide = wire();
+    wide.days = 5;
+    wide.from = MONDAY - 2.0 * DAY;
+    for day in [1.0, 2.0] {
+        wide.buckets.insert(
+            0,
+            ReportBucket {
+                start: MONDAY - day * DAY,
+                end: MONDAY - (day - 1.0) * DAY,
+                ..ReportBucket::default()
+            },
+        );
+    }
+    let starts = |page: &Page| -> Vec<String> {
+        axis(page)
+            .periods
+            .iter()
+            .map(|p| p.chars().take(3).collect())
+            .collect()
+    };
+    assert_eq!(starts(&read(&wide)), ["Sat", "Sun", "Mon", "Tue", "Wed"]);
+    let trimmed = from_first_record(read(&wide));
+    assert_eq!(
+        starts(&trimmed),
+        ["Mon", "Tue", "Wed"],
+        "from Monday, Tuesday's gap kept"
+    );
+    assert_eq!(
+        trimmed.buckets,
+        page().buckets,
+        "the periods as if its window began on Monday"
+    );
+    let html = view(Some(read(&wide)));
+    assert!(
+        html.contains("3.5 a day on average · 2 of 3 days counted"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("7 Nov") && !html.contains("8 Nov"),
+        "no period before Monday on any axis: {html}"
+    );
+    // Sunday's agents, before the first roll-up, are a record of it.
+    wide.buckets[1].agents = wire().buckets[0].agents.clone();
+    assert_eq!(
+        starts(&from_first_record(read(&wide))),
+        ["Sun", "Mon", "Tue", "Wed"]
+    );
+    let mut none = wide.clone();
+    for bucket in &mut none.buckets {
+        *bucket = ReportBucket {
+            start: bucket.start,
+            end: bucket.end,
+            ..ReportBucket::default()
+        };
+    }
+    assert_eq!(
+        from_first_record(read(&none)).buckets.len(),
+        5,
+        "nothing recorded: every period stays"
+    );
 }
 
 #[test]
