@@ -390,11 +390,13 @@ pub fn headings(text: &str) -> Vec<Heading> {
         let Some(found) = TOC_HEADING.captures(line).filter(|_| !fenced) else {
             continue;
         };
+        // In a register every group is listed, and the topics only of a group that waits on the
+        // owner: a settled group's topics repeat earlier groups' names (Releases, Page loading),
+        // and a repeated heading's anchor leads to its first.
         if in_register {
             if found["hashes"].len() == 2 {
                 listed = waiting.contains(&strip(&found["title"]));
-            }
-            if !listed {
+            } else if !listed {
                 continue;
             }
         }

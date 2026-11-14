@@ -92,11 +92,7 @@ pub fn TaskBoard(
     if unreported {
         statuses.retain(|s| !stages.contains(&s.as_str()));
     } else {
-        for stage in stages {
-            if !statuses.iter().any(|s| s == stage) {
-                statuses.push(stage.to_string());
-            }
-        }
+        with_machine_stages(&mut statuses);
     }
     let mut filtered: Vec<_> = tasks
         .iter()
@@ -180,6 +176,18 @@ fn status_label(status: &str) -> String {
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
+}
+
+/// `statuses` with Build and Test where the board draws their columns: after In progress, Build
+/// before Test. One already named is moved there; with no In progress they go last.
+fn with_machine_stages(statuses: &mut Vec<String>) {
+    let stages = [TaskStage::Build, TaskStage::Test].map(TaskStage::as_str);
+    statuses.retain(|status| !stages.contains(&status.as_str()));
+    let at = statuses
+        .iter()
+        .position(|status| status == TaskStage::Lifecycle("in_progress").as_str())
+        .map_or(statuses.len(), |at| at + 1);
+    statuses.splice(at..at, stages.map(String::from));
 }
 
 /// Build and Test of a project no machine reports for: one narrow rail where their columns go.
@@ -972,6 +980,43 @@ mod tests {
         ] {
             assert_eq!(super::status_label(status), label, "{status}");
         }
+    }
+
+    /// The Status filter lists Build and Test where the board draws them, between In progress and
+    /// Review, whether the server named them (anywhere, even twice) or not; with no In progress
+    /// they go last.
+    #[test]
+    fn the_status_filter_lists_build_and_test_after_in_progress() {
+        let owned = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let board = owned(&[
+            "backlog",
+            "concept",
+            "design",
+            "ready",
+            "in_progress",
+            "build",
+            "test",
+            "review",
+            "done",
+            "blocked",
+            "cancelled",
+        ]);
+        let mut named = LIFECYCLE.to_vec();
+        named.extend(["build", "test"]);
+        let mut twice = owned(&["test", "build"]);
+        twice.extend(owned(&LIFECYCLE));
+        twice.push("build".into());
+        for given in [owned(&LIFECYCLE), owned(&named), twice] {
+            let mut statuses = given.clone();
+            super::with_machine_stages(&mut statuses);
+            assert_eq!(statuses, board, "{given:?}");
+        }
+        let mut none = owned(&["backlog", "done"]);
+        super::with_machine_stages(&mut none);
+        assert_eq!(none, owned(&["backlog", "done", "build", "test"]));
+        let mut empty = Vec::new();
+        super::with_machine_stages(&mut empty);
+        assert_eq!(empty, owned(&["build", "test"]));
     }
 
     /// A card opens its task from its title: the title is the card's one link to the task, and

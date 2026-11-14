@@ -538,6 +538,24 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         list_row(alpha, Some(&counts), "", false)
             .contains("<span class=\"counts\">2 waiting on you</span>")
     );
+    // A board's in-progress count is the status's, the board's Build and Test columns in it, and
+    // it says so: the board's own In progress column leaves them out.
+    let counts = symphony_api::Counts {
+        waiting: 2,
+        tasks: Some(symphony_api::TaskCounts {
+            in_progress: 9,
+            in_review: 3,
+            agents_live: 1,
+        }),
+        ..Default::default()
+    };
+    let row = list_row(alpha, Some(&counts), "", false);
+    assert!(
+        row.contains(
+            "<span class=\"counts\">2 waiting on you · 9 in progress (Build and Test included) · 3 in review</span>"
+        ),
+        "{row}"
+    );
 }
 
 #[tokio::test]

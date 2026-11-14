@@ -16,8 +16,13 @@
 /* Where the box cuts the steps, they fade out: at the foot of the lanes, at the top of a phone's
    list. */
 .tl-clipped .tl-body::after { content:""; position:absolute; left:0; right:0; bottom:0; height:28px; background:linear-gradient(transparent, var(--card)); pointer-events:none; }
+/* Lanes cut under the last whole one (task_timeline.rs `settle`) need no fade: "Show all N lanes"
+   says the rest. */
+.tl-body[data-cut]::after { display:none; }
 .tl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px var(--sp-4); padding-top:var(--sp-2); }
 .tl-more { margin-left:auto; }
+/* "Show all" names what it shows: the list's steps on a phone, the lanes wide. */
+.tl-more-lanes { display:none; }
 
 /* The phone's list: the time, a mark on the rail, the label and its length, the bar under them. */
 .tl-list { --at:2.5rem; --rail:calc(var(--at) + 10px); position:relative; list-style:none; margin:0; padding:0; font-size:var(--fs-sm); }
@@ -115,6 +120,8 @@
   .tl-machine.tl-wide { display:inline; }
   .tl-legend .tl-wide { display:inline-flex; }
   .tl-detail.tl-wide { display:block; }
+  .tl-more-steps { display:none; }
+  .tl-more-lanes { display:inline; }
 }
 
 /* A word in the lanes shows only at the track widths that hold it (task_timeline.rs WIDTHS): a
