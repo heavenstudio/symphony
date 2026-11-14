@@ -80,8 +80,8 @@ pub fn command_with(program: impl AsRef<OsStr>, vars: &BTreeMap<String, String>)
 }
 
 impl crate::port::Lsof for Command {
-    fn lsof(args: &[&str]) -> Self {
-        let mut lsof = command("lsof");
+    fn lsof(program: &str, args: &[&str]) -> Self {
+        let mut lsof = command(program);
         lsof.args(args);
         lsof
     }
