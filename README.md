@@ -38,8 +38,11 @@ the source workspace's manifests and lockfile stay intact. A publication keeps t
 before it whole, and a same-name byte collision refuses it.
 
 Consumers take the libraries from this repository's `main` branch and commit the selected revision
-in their Cargo lockfile. A consuming project's host supplies its plugins and its own verification,
-approval and landing policy. Symphony supplies no standalone landing/stamp backend.
+in their Cargo lockfile. The plugin kit and the helpers are made to be published on crates.io by
+version as well, though none is published yet
+([RELEASES](docs/RELEASES.md#packages-on-cratesio)). A consuming project's host supplies its
+plugins and its own verification, approval and landing policy. Symphony supplies no standalone
+landing/stamp backend.
 
 ## License
 
