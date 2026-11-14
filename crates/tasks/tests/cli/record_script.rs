@@ -1112,9 +1112,25 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         ]
     );
     assert!(!tree.join("build/verify").exists(), "nothing in the tree");
+    assert!(
+        !tree.join("build/test-lanes").exists(),
+        "nothing in the tree"
+    );
     let tests = fs::read_to_string(folder.join("tests.log")).unwrap();
     let built = tree.join("build/verified-client/public").canonicalize();
-    assert_eq!(served(&tests), built.unwrap().display().to_string());
+    let built = built.unwrap().display().to_string();
+    assert_eq!(served(&tests), built);
+    // Each lane of the tests keeps its log beside the step's, which names it before any started.
+    for (lane, targets) in [("units", "--lib --bins"), ("doc", "--doc")] {
+        assert!(
+            tests.contains(&format!(
+                "/steps of a check/tests-lanes/{lane}.log ({targets})\n"
+            )),
+            "{tests}"
+        );
+        let log = fs::read_to_string(folder.join(format!("tests-lanes/{lane}.log"))).unwrap();
+        assert_eq!(log, format!("client={built}\nsteps=unset\n"), "{lane}");
+    }
     // What a step runs is not told the folder: a verify it runs lists its steps elsewhere.
     assert!(tests.contains("\nsteps=unset\n"), "{tests}");
     assert!(
@@ -1143,6 +1159,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     assert_eq!(names, ["docs-audit", "tests"]);
     let tests = fs::read_to_string(tree.join("build/verify/tests.log")).unwrap();
     assert_eq!(served(&tests), "unset", "{tests}");
+    assert!(tree.join("build/verify/tests-lanes/doc.log").is_file());
     assert!(
         tests.contains("\nverify: the client check did not run in this verify, so "),
         "{tests}"

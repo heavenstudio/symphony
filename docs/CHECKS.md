@@ -307,15 +307,32 @@ the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the
 targets, the libraries' and binaries' own tests, the rest, and the doc tests
 (`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
 step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
-lane by its name. The build and every lane
-give build scripts and proc macros the rest of the build's debug info, so every lane's units are
-the build's and no lane builds or links anything while the others run. Each lane's output follows
-the one before it whole in the step's log, then every red lane's list of the targets that failed as
-one list in cargo's words, the last the release run's reader keeps. The lanes share no port, store
-or build folder they write: every server, store and browser a test starts takes a port the system
-picks and a folder of its own; the one test writing the build folder (`wasm_build`, which links
-`symphony-build` there again) runs in the rest with every `symphony-app` target and `standalone`,
-which copies that folder; and the binaries a test would build for itself under its case's clock
+lane by its name. At most half the processors online run lanes at once (`getconf
+_NPROCESSORS_ONLN`; one when the system says no number), each taking the next lane none has taken.
+The build and every lane give build scripts and proc macros the rest of the build's debug info, so
+every lane's units are the build's and no lane builds or links anything while the others run.
+
+Each lane writes its log as it runs, `tests-lanes/NAME.log` beside the step's log
+(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), and the step's log names each
+before any lane starts: a run the release run stops, with SIGTERM and then SIGKILL, leaves every
+lane's output where the step's log said. SIGTERM, SIGHUP and an interrupt end the lanes, and the
+step prints what they wrote. Once every lane has ended, each lane's output follows the one before it
+whole in the step's log, then every red lane's targets that failed as one list in cargo's words,
+the last the release run's reader keeps. A lane is green only when it said the exit status 0. A red
+lane's targets are the list cargo ended its log with on failed targets (exit 101); any other red
+lane (killed by a signal, its cargo failing before any target, its status unsaid or none) is listed
+whole, `--workspace` and its targets, and named after its output by a line in cargo's words
+(`error: the lane NAME is red …, to rerun pass` and those arguments), which the reader reruns as a
+target that failed.
+
+The lanes share no port or store: every server, store and browser a test starts takes a port the
+system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
+links `symphony-build` there again) runs in the rest with every `symphony-app` target and
+`standalone`, which copies that folder. The browser lane writes it too when `SYMPHONY_UI_DIST`
+names no client: its own client build (`cargo symphony-ui dist`, whose `bundle.sh` runs
+`tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again while the rest runs
+it. Verify names the client its client check built, so only a verify whose client check built none
+leaves it to the browser lane. The binaries a test would build for itself under its case's clock
 are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
 run alone builds them as before).
 

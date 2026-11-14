@@ -23,6 +23,10 @@ const SIZE_CHECK_RED: &str = include_str!("fixtures/size-check-red.log");
 /// A tests' step run in lanes (tools/test-lanes.sh): the build, then each lane's output whole, two
 /// of them red, each with its own list, one a test printed among them, then the lists as one.
 const TESTS_LANES_RED: &str = include_str!("fixtures/tests-lanes-red.log");
+/// A tests' step run in lanes with three red, two of which listed no target of their own (one
+/// killed, one whose cargo failed before any target), each named by the runner, then the lists as
+/// one.
+const TESTS_LANES_DEAD: &str = include_str!("fixtures/tests-lanes-dead.log");
 
 fn read_in(text: &str) -> Failures {
     let tree = Tree::new();
@@ -80,6 +84,22 @@ fn a_test_run_in_lanes_names_each_failed_test_then_the_lists_of_its_red_lanes_as
             "    `-p symphony-app --test release`",
         ],
         "neither a lane's own list nor one a test printed is the run's"
+    );
+}
+
+#[test]
+fn a_red_lane_that_listed_no_target_of_its_own_is_named_in_the_runs_list() {
+    // The sweep's lane killed after a test failed, the browser's cargo failing before any target,
+    // the board's red in a target it listed.
+    assert_eq!(
+        quoted_lines(TESTS_LANES_DEAD).unwrap(),
+        [
+            "test land::a ... FAILED",
+            "error: 3 targets failed:",
+            "    `--workspace --test sweep`",
+            "    `--workspace --test browser`",
+            "    `-p symphony-board --test cli`",
+        ]
     );
 }
 

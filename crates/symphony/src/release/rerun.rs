@@ -1,13 +1,16 @@
 //! What reruns a red check's failures alone (RULES.md `tests/rerun-the-failure-alone`), read from
 //! its log in one pass ([`read`]): each test target cargo said failed (`error: test failed, to
-//! rerun pass `ARGS``, a doctest's and a bench's alike), with the tests libtest named `FAILED`
-//! since the target before it, and each recipe just said failed (`error: recipe `NAME` failed …`).
-//! A target that ended naming none, as one that crashed does, is rerun whole. A `just verify` that
-//! listed no steps (one older than its steps' list) and failed in no test is rerun by the step its
-//! recipes name ([`step`]): its lint, its client check or its size budget, each by its own recipe;
-//! its docs audit's recipe says nothing when it fails (`[no-exit-message]`), so no line names that
-//! one. A step's red is read from its own log. A test named before the log ended with no target
-//! after it (a run stopped at its time) is left to the log's tail.
+//! rerun pass `ARGS``, a doctest's and a bench's alike; the tests' lanes say a red lane that
+//! listed no target of its own in those words, its targets the arguments), with the tests libtest
+//! named `FAILED` since the target before it or since cargo started a target (`Running …`,
+//! `Doc-tests …`), whichever came last, so a test named by what ended with no such line (a lane
+//! killed) is no other target's, and each recipe just said failed (`error: recipe `NAME` failed
+//! …`). A target that ended naming none, as one that crashed does, is rerun whole. A `just verify`
+//! that listed no steps (one older than its steps' list) and failed in no test is rerun by the
+//! step its recipes name ([`step`]): its lint, its client check or its size budget, each by its own
+//! recipe; its docs audit's recipe says nothing when it fails (`[no-exit-message]`), so no line
+//! names that one. A step's red is read from its own log. A test named before the log ended with
+//! no target after it (a run stopped at its time) is left to the log's tail.
 //!
 //! A target that found files its own build had made gone (its executable, a library it links or a
 //! build script's output: cargo's `could not execute process … (never executed)` for a missing
@@ -105,6 +108,9 @@ pub(crate) fn read(log: &Path) -> Log {
         } else if let Some(recipe) = recipe(text) {
             found.recipes.push(recipe);
         } else if let Some(header) = header(text) {
+            // Tests named before a target started are no failures of it: what named them ended
+            // with no line of its own (a lane killed while it ran).
+            tests.clear();
             close(&mut found, &segment);
             previous = segment.header.take().map(|header| (header, segment.from));
             segment = Segment {
@@ -604,6 +610,59 @@ error: 6 targets failed:
                 "-p symphony-board --test sweep -- land::a --exact",
                 "-p symphony-app --test release -- cut::b --exact",
             ]
+        );
+    }
+
+    /// tools/test-lanes.sh's run with three red lanes: the sweep's killed after a test of it
+    /// failed, the browser's cargo failing before any target and the board's in a target, listing
+    /// it.
+    const LANES_DEAD: &str = include_str!("fixtures/tests-lanes-dead.log");
+
+    #[test]
+    fn a_red_lane_that_listed_no_target_is_rerun_whole_but_by_the_tests_it_named_failed() {
+        let log = read_in(LANES_DEAD);
+        assert_eq!(
+            log.targets,
+            [
+                target("--workspace --test sweep", &["land::a"]),
+                target("--workspace --test browser", &[]),
+                target("-p symphony-board --test cli", &[]),
+            ]
+        );
+        assert_eq!(log.went, None);
+        assert_eq!(
+            arguments(&log.targets),
+            [
+                "--workspace --test sweep -- land::a --exact",
+                "--workspace --test browser",
+                "-p symphony-board --test cli",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_test_named_failed_before_a_target_started_is_no_failure_of_it() {
+        // The same run without the lanes' own lines, as a runner that named no red lane printed
+        // it: the sweep's failed test is no failure of the board's target that failed after it,
+        // whose rerun by that name would run no test and read green.
+        let unnamed: String = (LANES_DEAD.lines())
+            .filter(|line| !line.starts_with("error: the lane "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_ne!(unnamed, LANES_DEAD);
+        let log = read_in(&unnamed);
+        assert_eq!(log.targets, [target("-p symphony-board --test cli", &[])]);
+        assert_eq!(arguments(&log.targets), ["-p symphony-board --test cli"]);
+        // A doctest's start too; a target's own failed tests after it are its.
+        let text = "     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... FAILED
+   Doc-tests p
+test src/lib.rs - f (line 1) ... FAILED
+error: doctest failed, to rerun pass `-p p --doc`
+";
+        assert_eq!(
+            failed_in(text),
+            [target("-p p --doc", &["src/lib.rs - f (line 1)"])]
         );
     }
 

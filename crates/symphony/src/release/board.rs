@@ -2117,6 +2117,30 @@ mod tests {
             ..unbuilt.clone()
         };
         assert_eq!(alone(&lanes, &night(&[])), alone(&unbuilt, &night(&[])));
+        // A red lane that listed no target of its own is rerun whole, by the tests it named failed
+        // when it named any, and the run's list names it.
+        let dead = Ran {
+            command: "tools/test-lanes.sh".into(),
+            log: tree.write(
+                "lanes-dead.log",
+                include_str!("fixtures/tests-lanes-dead.log"),
+            ),
+            ..ran("verify/tests", 137)
+        };
+        assert!(
+            alone(&dead, &night(&[])).ends_with(
+                "(3):\n- `just test-rs --workspace --test sweep -- land::a --exact`\n- `just \
+                 test-rs --workspace --test browser`\n- `just test-rs -p symphony-board --test cli`"
+            ),
+            "{}",
+            alone(&dead, &night(&[]))
+        );
+        assert!(
+            quoted(&dead)
+                .contains("    `--workspace --test sweep`\n    `--workspace --test browser`\n"),
+            "{}",
+            quoted(&dead)
+        );
         assert!(runs_tests("just test-rs -p symphony") && runs_tests("cargo test --lib"));
         assert!(runs_tests("tools/test-lanes.sh") && runs_tests("test-lanes.sh"));
         assert!(!runs_tests("just size-check") && !runs_tests("cargo build --tests"));
