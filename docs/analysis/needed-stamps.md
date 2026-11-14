@@ -199,9 +199,9 @@ its assessor. A reviewer has the same gap today ([left out](#left-out)).
 
 ## Where it meets other work
 
-- **Reviews as stamps** (the board task in review): a reviewer is recorded on the task it reviews,
-  with no subtask, and `review` is its approve. The assessor has the same shape: a role on the
-  task, a fixed skill, no subtask.
+- **Reviews as stamps** (landed): a reviewer is given the task it reviews, with no subtask, a later
+  round resuming the same one, and `review` is its approve. The assessor has the same shape: a role
+  on the task, a fixed skill, no subtask; each run is a fresh one, as it reads anew.
 - **The gates seam and panel:** the catalogue says which gates there are and the needs which of
   them the land requires; the panel draws both. A project's plugin gate of the same name still
   replaces the Symphony's on the page.
