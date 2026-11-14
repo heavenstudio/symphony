@@ -33,6 +33,7 @@ mod cadence;
 mod candidate;
 mod checks;
 mod consumers;
+pub(crate) mod crates;
 mod failures;
 mod git;
 mod gone;
@@ -106,7 +107,8 @@ options:
                         86400)
   --status              print the newest release, the last run and its age, the release
                         candidate, the landings since the last release and what the next run
-                        waits for, and the last refresh; run nothing
+                        waits for, the last publication on crates.io and the last refresh; run
+                        nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)
   --due [SLUG COMMIT]   start a run only when [releases] every_landings tasks have landed since
@@ -115,9 +117,11 @@ options:
                         git and building nothing. A due run goes on from a build of the tip made
                         in the run's own checkout. A landing's on_land command runs it, naming
                         the task and its merge
-  --refresh             refresh the machine to the newest release here again, checking nothing:
-                        an orchestrator's retry of a red or interrupted refresh, or of one a
-                        project's own gate, hooks or main checkout stopped, once that is met
+  --refresh             refresh the machine to the newest release here again, checking nothing,
+                        after publishing on crates.io what it left while [releases] publish is
+                        on: an orchestrator's retry of a red or interrupted refresh or a failed
+                        upload, or of one a project's own gate, hooks or main checkout stopped,
+                        once that is met
   --rerun               rerun the release candidate now, once every red of it is answered: each
                         check or step that was red, did not run or whose inputs changed; refused
                         while none is held or a red waits
@@ -142,6 +146,9 @@ const NOT_STARTED: &str = "the run's time was up before it started";
 /// The time a release's refresh has, past its run's checks: a project's commit gate and its board's
 /// move each run within it.
 const REFRESH: Duration = Duration::from_secs(2 * 3600);
+/// The time a release's publication on crates.io has, past its push: cargo's build of each package
+/// it uploads, the upload and cargo's wait for crates.io's index to list it.
+const PUBLISH: Duration = Duration::from_secs(3600);
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
 /// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
 /// ([`far_push`]), so a release named for another day than the machine's never leaves it.
@@ -441,6 +448,15 @@ fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
         })
 }
 
+/// The registry a run reads of crates.io: the tests' when [`crates::REGISTRY`] names one, else
+/// crates.io; none on the tests' clock without one, so no test reads crates.io.
+fn run_registry() -> Option<crates::Registry> {
+    if std::env::var_os(crates::REGISTRY).is_none() && std::env::var_os(CLOCK).is_some() {
+        return None;
+    }
+    Some(crates::Registry::of_env())
+}
+
 /// Whether this process is the build a due count handed its run to.
 fn driven() -> bool {
     std::env::var_os(DRIVER).is_some()
@@ -722,6 +738,7 @@ fn status(
             let _ = writeln!(out, "landings: cannot be counted: {problem}");
         }
     }
+    let _ = write!(out, "{}", record::publish_status(&runs, now));
     let _ = write!(out, "{}", record::refresh_status(&runs, now));
     0
 }
@@ -940,6 +957,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         unpushed: None,
         cause: options.cause.clone(),
         refreshed: None,
+        published: None,
         rerun: None,
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
@@ -1035,7 +1053,16 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             within,
         ),
     };
-    // A green release, tagged and pushed, refreshes the machine (docs/RELEASES.md).
+    // A green release, tagged and pushed, publishes on crates.io, then refreshes the machine
+    // (docs/RELEASES.md).
+    if ran.is_ok()
+        && !options.refresh
+        && record.pushed
+        && let Some(tag) = record.tag.clone()
+    {
+        let commit = record.commit.clone();
+        record.published = Some(refreshing.publish(&record.id, &tag, &commit, out));
+    }
     if ran.is_ok()
         && !options.refresh
         && let Some(tag) = record.tag.clone()
@@ -1127,6 +1154,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         .refreshed
         .as_ref()
         .is_some_and(|refresh| !refresh.green())
+        || (record.published.as_ref()).is_some_and(|published| published.failed)
     {
         code = 1;
     }
@@ -1272,10 +1300,9 @@ struct Refreshing<'a> {
 }
 
 impl Refreshing<'_> {
-    /// The machine refreshed to the release `tag` (`commit`) by the run `id`, within [`REFRESH`]
-    /// from now, which the lock's word is made to cover, so no later run takes it for stuck.
-    fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
-        let until = self.options.now + self.started.elapsed().as_secs_f64() + REFRESH.as_secs_f64();
+    /// The lock's word made to cover `more` from now, so no later run takes this one for stuck.
+    fn hold_for(&self, more: Duration) {
+        let until = self.options.now + self.started.elapsed().as_secs_f64() + more.as_secs_f64();
         let _ = record::hold(
             self.folder,
             &Running {
@@ -1284,6 +1311,82 @@ impl Refreshing<'_> {
                 ..self.running.clone()
             },
         );
+    }
+
+    /// The release `tag` (`commit`) published on crates.io by the run `id` ([`crates::publish`]),
+    /// each line of it said.
+    fn publish(
+        &self,
+        id: &str,
+        tag: &str,
+        commit: &str,
+        out: &mut dyn Write,
+    ) -> crates::Publication {
+        let published = self.publishing(id, tag, commit, out);
+        for line in published.lines() {
+            let _ = writeln!(out, "release: crates.io: {line}");
+        }
+        published
+    }
+
+    /// [`Refreshing::publish`]'s work: nothing while `[releases] publish` is off or under
+    /// `--no-push`, and on the tests' clock nothing but to the tests' registry through their
+    /// stand-in for cargo; else from
+    /// the run's own checkout, brought to `commit` first (a later run may have left it elsewhere),
+    /// within [`PUBLISH`] from now, which the lock's word is made to cover.
+    fn publishing(
+        &self,
+        id: &str,
+        tag: &str,
+        commit: &str,
+        out: &mut dyn Write,
+    ) -> crates::Publication {
+        let not = |why: String| crates::Publication::not(tag, &why, true);
+        if !self.repo.project.releases.publish {
+            return crates::Publication::not(tag, crates::OFF, false);
+        }
+        // As a run with --no-push pushes nothing, a refresh with it publishes nothing.
+        if !self.options.push {
+            return crates::Publication::not(tag, "--no-push publishes nothing", false);
+        }
+        if std::env::var_os(CLOCK).is_some()
+            && [crates::REGISTRY, crates::PUBLISHER]
+                .iter()
+                .any(|name| std::env::var_os(name).is_none())
+        {
+            return not(format!(
+                "{CLOCK} is the tests' clock: a run on it publishes only to the registry {} \
+                 names, through the stand-in for cargo {} names",
+                crates::REGISTRY,
+                crates::PUBLISHER
+            ));
+        }
+        self.hold_for(PUBLISH);
+        let until = Bound::hearing(Instant::now() + PUBLISH, self.heard);
+        let (repo, options) = (self.repo, self.options);
+        let mut place = match place::place(&repo.root, &repo.main, &repo.common, &options.worktree)
+        {
+            Ok(place) => place,
+            Err(why) => return not(format!("the run's checkout: {why}")),
+        };
+        if let Err(Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why)) = unused(&place, until)
+        {
+            return not(why);
+        }
+        match place.checkout(&repo.root, &repo.common, commit, until, options.now) {
+            Ok(noted) => note(out, &noted),
+            Err(why) => return not(format!("the run's checkout: {why}")),
+        }
+        let cargo = std::env::var_os(crates::PUBLISHER).unwrap_or_else(|| "cargo".into());
+        let log = record::logs(self.folder, id).join("publish.log");
+        let registry = crates::Registry::of_env();
+        crates::publish(&place.checkout, tag, &registry, &cargo, &log, until)
+    }
+
+    /// The machine refreshed to the release `tag` (`commit`) by the run `id`, within [`REFRESH`]
+    /// from now, which the lock's word is made to cover, so no later run takes it for stuck.
+    fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
+        self.hold_for(REFRESH);
         let name = (self.options.worktree.file_name())
             .map_or_else(|| "release".into(), |name| name.to_string_lossy());
         let trees = place::real(
@@ -1328,6 +1431,7 @@ fn refresh_only(
     record.commit.clone_from(commit);
     record.tip.clone_from(commit);
     let _ = writeln!(out, "release: refresh to {tag} ({})", short(commit));
+    record.published = Some(refreshing.publish(&record.id, &tag, commit, out));
     let refreshed = refreshing.to(&record.id, &tag, commit, out);
     record.result = if refreshed.green() { "green" } else { "red" }.into();
     record.refreshed = Some(refreshed);
@@ -1859,12 +1963,20 @@ fn night(
         .filter(|name| ran(name) || carried.iter().any(|kept| kept.name == *name))
         .collect();
     let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
+    // What it publishes on crates.io once pushed: each package whose version crates.io lacks now.
+    let publishes = match run_registry() {
+        Some(registry) if options.push && repo.project.releases.publish => {
+            crates::notes(&place.checkout, &registry, until)
+        }
+        _ => Vec::new(),
+    };
     let message = notes::message(
         &name,
         &candidate,
         notes::facts(&repo.root, &candidate),
         previous.as_ref(),
         &checked,
+        &publishes,
         &held_notes,
         &changes,
     );
@@ -2614,6 +2726,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            published: None,
             rerun: None,
         }
     }

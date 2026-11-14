@@ -17,9 +17,11 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 - **Its message** begins `NAME: Symphony main at COMMIT`, then a `Board schema N` line and a
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
-  passed and the commits on main's first-parent line since that release. The first release says
-  so instead. The schema is `VERSION` in `crates/tasks/src/schema.rs` and the pin `PIN` in
-  `crates/symphony/src/machine.rs`, read at the tagged commit.
+  passed, what it publishes on crates.io while the project publishes
+  ([the packages](#packages-on-cratesio)), and the commits on main's first-parent line since that
+  release. The first release says so instead. The schema is `VERSION` in
+  `crates/tasks/src/schema.rs` and the pin `PIN` in `crates/symphony/src/machine.rs`, read at the
+  tagged commit.
 - **Reading one:** `git ls-remote --tags origin 'release-*'` lists them, and
   `git tag -l --format='%(contents)' NAME` prints a message. A project names the tag in its
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
@@ -94,14 +96,71 @@ each carries all of this, that each copy is its file byte for byte, and that the
 is one crates.io takes.
 
 A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
-publishes yet. The first publication is the owner's act, or runs on the owner's word, with the
-owner's crates.io token in the owner's environment; no agent logs in or reads a token. It waits on
-one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each manifest
-names this repository as its `repository`, which answers 404 to anyone but the owner while the
-repository is private, so either the repository is made public first or the packages are published
-with no `repository` line. Up to then, the packages are proven by `cargo publish --dry-run` naming
-the thirteen together, which packages them in dependency order and builds each against the others as
-packaged, before any is on crates.io.
+has been published yet. The first publication is the owner's act, or runs on the owner's word,
+with the owner's crates.io token in the owner's environment; no agent logs in or reads a token. It
+waits on one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each
+manifest names this repository as its `repository`, which answers 404 to anyone but the owner while
+the repository is private, so either the repository is made public first or the packages are
+published with no `repository` line. Up to then, the packages are proven by `cargo publish
+--dry-run` naming the thirteen together, which packages them in dependency order and builds each
+against the others as packaged, before any is on crates.io.
+
+One more thing that answer touches: `symphony init`'s `Next:` names the project file's reference,
+docs/PROJECT_FILE.md, by its github.com URL in this repository (`init::PROJECT_FILE_REFERENCE`),
+true while a clone is the only way to the binaries. Once the packages are on crates.io with the
+repository still private, that link answers 404 to whoever installed them, so the reference then
+travels in `symphony-app`'s package or the binary prints it.
+
+**A release publishes them** only on the project's word: `[releases] publish = true` in
+`symphony.toml`, off when unsaid. This repository's `symphony.toml` leaves it off, so turning it on
+is the owner's word for the first publication. While it is off, a green release says
+`release: crates.io: not published: [releases] publish is off`, its record and `--status` say the
+same, and no `cargo publish` runs (`crates/symphony/src/release/crates.rs`). While it is on, a
+green release, once its tag is pushed and before [the refresh](#the-refresh), publishes from its
+own checkout brought to the release's commit, within an hour, the packages of the workspace that
+publish (`publish` unset, or naming `crates-io`) whose version crates.io's index lacks. A version
+the index lists already is skipped (`on crates.io already: …`), so a run again publishes only what
+is left. The rest go up by one `cargo publish --locked -p A -p B …` naming only them: cargo orders
+them, packages and builds each against the others as packaged before it uploads the first, so a
+package that does not build uploads none, and waits for the index between uploads. The index is
+read again after it: what it lists went up (`published …`), and the rest are left, with why. What
+cargo said goes to `logs/ID/publish.log`. The tests publish to a registry folder of their own
+through a stand-in for cargo, never to crates.io.
+
+- **The token** is cargo's own: `CARGO_REGISTRY_TOKEN` in the run's environment, cargo's
+  credentials or a credential provider, read by cargo and never by the run. With none, cargo
+  refuses the first upload, the step says `not published: no token: …` with the packages left; the
+  release stays green and the run's exit is unchanged.
+- **A failed command** says `not published: cargo publish failed (…)`, with cargo's line and the
+  log, then what the index read again lacks and that the release stays tagged. The release stands,
+  its tag pushed; the run exits 1 and nothing is filed: the record and `--status` keep it
+  (`last publish: red, …`). `just release --refresh`, an orchestrator's retry once the cause is put
+  right, publishes what is left before it refreshes, and so does the next release's run.
+- **A version crates.io had already**, which cargo refuses as existing though the first read of the
+  index lacked it, is no red: the step says what is left, and the next publication finishes it.
+- **`--no-push`** publishes nothing: a run under it pushes no tag and so publishes none, and a
+  refresh under it says `not published: --no-push publishes nothing`.
+- **Its notes**, written before its tag, say after the checks it passed what it publishes: each
+  package and version crates.io lacked then (`Publishes to crates.io: NAME VERSION, ….`), or that
+  crates.io holds each (`Publishes nothing: …`).
+
+**A version moves with its sources.** `just crates-check` (`symphony-build crates-check`, the step
+`crates-check` of the release run's `just verify`) packages, for each published package whose
+version crates.io lists, that package here (`cargo package --no-verify`, offline, building nothing)
+and compares every file with that version's `.crate` from crates.io, Cargo's own
+`.cargo_vcs_info.json` and `Cargo.lock` aside. A difference is red, naming the package and the
+files that differ: its version must move before a release publishes it. A version crates.io does
+not list yet is green, with nothing to compare, and a crates.io it cannot read is red too
+(exit 2). It reads crates.io and publishes nothing, so it is cheap enough for the evidence of a
+task that changes a published package; in the release run, its red is a step's
+(`tests/release-red-verify-crates-check`).
+
+**How a bump cascades.** A package names a published sibling at exactly the version the sibling is
+at (`crates/symphony/tests/packages.rs`), so a sibling's new version changes the manifest of each
+published package that builds with it. That package then packages other sources at its own
+version, and the crates check is red for it until its version moves too, and so on to each package
+that builds with it in turn. A helper's new version so moves each kit or product package that names
+it, the kit's three together and the product's five together, each line by its own version.
 
 Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
 consuming project names each package at a release tag (`tag = "release-…"`) and its `Cargo.lock`
@@ -168,8 +227,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
    into the checkout by path is not seen.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
-   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit and every test target of the
-   workspace, the board's `perf` and `child_guard` among them. Each check goes through the
+   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit, the crates check
+   ([the packages](#packages-on-cratesio)) and every test target of the workspace, the board's
+   `perf` and `child_guard` among them. Each check goes through the
    checkout's `tools/record.sh` as one test operation of the board's recorder, labelled
    `release NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
@@ -344,8 +404,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    `remote.origin.push` list) adds nothing to it. `--no-push` keeps the tag here. A push that
    fails keeps the tag here and is the red `run`; a later run on that same commit fails the same
    way, naming the push that delivers it, and `--status` names each release here that the last run
-   found missing from the remote. No run pushes an older tag. A pushed release then refreshes the
-   machine ([below](#the-refresh)).
+   found missing from the remote. No run pushes an older tag. A pushed release then publishes its
+   packages on crates.io while the project says so ([above](#packages-on-cratesio)), and refreshes
+   the machine ([below](#the-refresh)).
 
 **Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
 holds later runs off for its run's time). A check still running then is stopped (its
@@ -381,7 +442,8 @@ logs among the newest 14 runs'; nothing is filed for it.
 Each run is recorded in the git common dir: `.git/symphony/release/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's
 log under `logs/ID/`. The newest 60 records and the logs of the newest 14 runs stay. Its exit is 0
-green (or nothing new), 1 red, stopped short or refused, 2 a command line refused.
+green (or nothing new), 1 red, stopped short or refused, or a green release whose publication or
+refresh failed, 2 a command line refused.
 
 ## Out of cycle
 
@@ -720,7 +782,9 @@ does either only on the owner's word. The cadence's run has that word (*The cade
 land starts `--due` without asking, and the release it runs is automatic. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
-step left to it.
+step left to it. Turning `[releases] publish` on is the owner's word, the first publication's
+([the packages](#packages-on-cratesio)); once it is on, `just release --refresh` after a failed
+upload's cause is put right is an orchestrator's act as well.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -742,12 +806,15 @@ and answer (`open (in_progress)`, `open (landed here, not pushed)`, `answered: i
 the candidate to …`, `answered: its task closed as covered by …`), and what its rerun waits for;
 ended, how and when, its red runs, and whether the run of main's tip its drop made due has reached
 its checks; `none held`, or `off` while a bound is 0. Then it
-prints the cadence, the landings since what it counts from and what the next run waits for, and
+prints the cadence, the landings since what it counts from and what the next run waits for, the
+last publication on crates.io with each line it said ([the packages](#packages-on-cratesio)), and
 the last refresh, with each line it said and each step red or its project's to finish:
 
 ```text
 landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
 next run: after 13 more landings (7 of 20), or the scheduled run
+last publish: of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
+  not published: [releases] publish is off
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it

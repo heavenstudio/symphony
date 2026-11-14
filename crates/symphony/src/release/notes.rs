@@ -1,7 +1,8 @@
 //! What a release says it holds, in its tag's message: the board schema and the pin at its commit,
-//! each said changed or not since the release before it, the checks it passed, and the changes on
-//! main since that release. A project's update reads the schema and the pin to know whether it
-//! must update (docs/RELEASES.md), so the message names both by the words "Board schema" and "Pin".
+//! each said changed or not since the release before it, the checks it passed, the packages it
+//! publishes on crates.io, and the changes on main since that release. A project's update reads the
+//! schema and the pin to know whether it must update (docs/RELEASES.md), so the message names both
+//! by the words "Board schema" and "Pin".
 
 use std::path::Path;
 
@@ -81,15 +82,21 @@ fn fact(what: &str, now: Option<i64>, before: Option<(&str, Option<i64>)>) -> St
 }
 
 /// The tag `tag`'s message for the release of `commit`: what it holds against `previous` (none for
-/// the first release), the checks it passed, what a release candidate's record says of it
-/// (`candidate`, its lines: [`super::candidate::Candidate::notes`]), and `changes`, the commits on
-/// main since `previous`, one `SHORT SUBJECT` line each, newest first.
+/// the first release), the checks it passed, what it publishes on crates.io (`crates`, its lines:
+/// [`super::crates::notes`]), what a release candidate's record says of it (`candidate`, its lines:
+/// [`super::candidate::Candidate::notes`]), and `changes`, the commits on main since `previous`,
+/// one `SHORT SUBJECT` line each, newest first.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each is a part of the message, in the order it says them"
+)]
 pub(crate) fn message(
     tag: &str,
     commit: &str,
     facts: Facts,
     previous: Option<&Previous>,
     checks: &[String],
+    crates: &[String],
     candidate: &[String],
     changes: &[String],
 ) -> String {
@@ -104,11 +111,13 @@ pub(crate) fn message(
     if !checks.is_empty() {
         text.push_str(&format!("\nGreen: {}.\n", checks.join(", ")));
     }
-    if !candidate.is_empty() {
-        text.push('\n');
-        for line in candidate {
-            text.push_str(line);
+    for lines in [crates, candidate] {
+        if !lines.is_empty() {
             text.push('\n');
+            for line in lines {
+                text.push_str(line);
+                text.push('\n');
+            }
         }
     }
     match previous {
@@ -230,6 +239,7 @@ mod tests {
             None,
             &["verify".into()],
             &[],
+            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -259,6 +269,7 @@ mod tests {
             Some(&previous),
             &["verify".into(), "lint".into()],
             &[],
+            &[],
             &["bbb second".into(), "aaa first".into()],
         );
         assert_eq!(
@@ -279,6 +290,7 @@ mod tests {
             Facts::default(),
             None,
             &["verify".into()],
+            &[],
             &[
                 "Release candidate: first judged aaa.".into(),
                 "- tests/release-red-verify (verify): advanced it to bbb".into(),
@@ -289,6 +301,27 @@ mod tests {
             said.ends_with(
                 "Green: verify.\n\nRelease candidate: first judged aaa.\n- \
                  tests/release-red-verify (verify): advanced it to bbb\n\nThe first release.\n"
+            ),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn what_a_release_publishes_is_said_after_its_checks_and_before_its_candidate() {
+        let said = message(
+            "release-2026-11-12",
+            &"0".repeat(40),
+            Facts::default(),
+            None,
+            &["verify".into()],
+            &["Publishes to crates.io: a 1.0.0, b 0.1.0.".into()],
+            &["Release candidate: first judged aaa.".into()],
+            &[],
+        );
+        assert!(
+            said.ends_with(
+                "Green: verify.\n\nPublishes to crates.io: a 1.0.0, b 0.1.0.\n\nRelease candidate: \
+                 first judged aaa.\n\nThe first release.\n"
             ),
             "{said}"
         );
@@ -307,6 +340,7 @@ mod tests {
             &"0".repeat(40),
             Facts::default(),
             Some(&previous),
+            &[],
             &[],
             &[],
             &changes,

@@ -1,7 +1,7 @@
 //! A run's checks on Symphony's own board: one task per red step of a check that lists its steps
-//! ([`super::steps`]: `verify`'s lint, client check, size budgets, docs audit and tests), and per
-//! red check that lists none or is red beyond its steps, `tests/release-red-KEY` (KEY the check's
-//! name, a step's under its check's: `verify-size-check`), filed at p0, marked red
+//! ([`super::steps`]: `verify`'s lint, client check, size budgets, docs audit, crates check and
+//! tests), and per red check that lists none or is red beyond its steps, `tests/release-red-KEY`
+//! (KEY the check's name, a step's under its check's: `verify-size-check`), filed at p0, marked red
 //! ([`symphony_board::red`]: red work takes no orchestrator slot, `next` offers it before other
 //! work of its priority, and PULL names it first while nobody is on it 10 minutes after it was
 //! filed) and as a fast fix, under the bound the land holds a red's fix to
