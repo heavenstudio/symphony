@@ -53,11 +53,6 @@ const REGENERABLE: [&str; 11] = [
     ".codex/hooks*",
 ];
 
-/// Where the owner's verdicts are written into a worktree.
-const DOCS: &str = "docs";
-/// What marks an owner's line in a register: `[2026-10-06 10:00] owner · approved — …`.
-const OWNER_LINE: &str = "] owner";
-
 /// Whether `text` matches `pattern` as Python's `fnmatch.fnmatchcase` matches it, for the patterns
 /// above: `*` any run of characters (a `/` too), `?` any one; anything else itself.
 pub fn fnmatch(pattern: &str, text: &str) -> bool {
@@ -195,26 +190,6 @@ pub(in crate::sweep) fn clean_regenerable(path: &Path) -> bool {
             ".codex/hooks*",
         ],
     )
-}
-
-/// The files under docs/ in worktree `path` that hold an owner line no commit has: the owner's
-/// answer, written into the worktree's file, that removing the worktree would lose.
-pub fn owner_lines_left(path: &Path) -> Vec<String> {
-    let diff = stdout(path, &["diff", "-U0", "HEAD", "--", DOCS]).unwrap_or_default();
-    let mut left: Vec<String> = Vec::new();
-    let mut current = "";
-    for line in diff.lines() {
-        if let Some(file) = line.strip_prefix("+++ b/") {
-            current = file;
-        } else if line.starts_with('+')
-            && !line.starts_with("+++")
-            && line.split('—').next().unwrap_or("").contains(OWNER_LINE)
-            && !left.iter().any(|f| f == current)
-        {
-            left.push(current.to_string());
-        }
-    }
-    left
 }
 
 /// The latest time an agent at work in `path` changed what the sweep reads: its admin dir's HEAD,

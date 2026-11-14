@@ -161,12 +161,13 @@ impl Saves {
 
     /// A card's save from a branch's page, as main's own when the card is main's
     /// ([`branches::mains_card`]: main's copy of the document holds it, and the branch's page
-    /// draws main's card, or the branch's worktree is gone): its payload with its path the
-    /// document's name, saved under main's scope. None when the save stays the page's. So the
-    /// owner's line on a card main holds is main's, committed there, never left in a worktree a
-    /// land does not carry. A worktree listing that fails ([`branches::listed`]) says nothing of
-    /// the page's worktree, so the save stays the page's, and its own failure is the owner's to
-    /// see: never a worktree read as gone and its card answered on main's copy.
+    /// draws main's card): its payload with its path the document's name, saved under main's
+    /// scope. None when the save stays the page's. So the owner's line on a card main holds is
+    /// main's, committed there, never left in a worktree a land does not carry. A branch whose
+    /// worktree is gone is read at its branch, and with neither the card is main's. A worktree
+    /// listing that fails ([`branches::listed`]) says nothing of the page's worktree, so the save
+    /// stays the page's, and its own failure is the owner's to see: never a worktree read as gone
+    /// and its card answered on main's copy.
     fn mains(&self, scope: &str, payload: &Value) -> Option<Value> {
         let (scope, rel) = self.named(scope, string(payload, "path")).ok()?;
         if scope.is_empty() {
@@ -175,13 +176,12 @@ impl Saves {
         let tree = branches::listed(&self.root)?
             .into_iter()
             .find(|t| t.id() == scope);
-        branches::mains_card(
-            &self.root,
-            tree.as_ref().map(|t| t.path.as_path()),
-            rel,
-            string(payload, "slug"),
-        )
-        .then(|| {
+        let branch = scope.replace('~', "/");
+        let page = match &tree {
+            Some(tree) => branches::Page::Tree(&tree.path),
+            None => branches::Page::Gone(&branch),
+        };
+        branches::mains_card(&self.root, page, rel, string(payload, "slug")).then(|| {
             let mut payload = payload.clone();
             payload["path"] = json!(rel);
             payload
@@ -193,7 +193,11 @@ impl Saves {
         let root = if scope.is_empty() {
             self.root.clone()
         } else {
-            branches::trees(&self.root)
+            branches::listed(&self.root)
+                .ok_or_else(|| Failure {
+                    status: 503,
+                    error: "the worktrees could not be listed".into(),
+                })?
                 .into_iter()
                 .find(|t| t.id() == scope)
                 .map(|t| t.path)

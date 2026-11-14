@@ -410,6 +410,17 @@ fn a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages_and_main_takes_
 }
 
 #[test]
+fn a_line_on_a_card_the_branch_posted_and_main_closed_since_is_saved_on_main_as_its_page_draws_it()
+{
+    landed::a_line_on_a_card_main_closed_since_the_branch_posted_it_is_mains();
+}
+
+#[test]
+fn a_verdict_from_a_gone_worktrees_page_is_judged_on_its_branch_while_it_is_kept() {
+    landed::a_verdict_from_a_gone_worktrees_page_reads_its_kept_branch();
+}
+
+#[test]
 fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route() {
     routes::branch_card_in_project_folder();
 }

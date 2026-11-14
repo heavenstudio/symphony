@@ -87,6 +87,14 @@ keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
+
+[[entrypoints]]
+url = "spec"
+folder = "design/spec"
+
+[[entrypoints]]
+url = ""
+folder = "."
 "#,
     )
     .unwrap();
@@ -115,8 +123,11 @@ on_review = ["just", "review"]
             push: false,
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
+            documents: vec!["design/spec".into(), String::new()],
         }
     );
+    assert_eq!(Settings::default().documents, ["docs"]);
+    assert_eq!(Settings::parse("").unwrap().documents, ["docs"]);
 }
 
 #[test]
