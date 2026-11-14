@@ -501,6 +501,11 @@ fn while_merging_a_line_git_left_after_a_line_two_cards_share_is_not_the_branch_
 }
 
 #[test]
+fn a_comment_on_a_register_heading_is_refused_and_every_later_verdict_on_its_cards_saves() {
+    saving::a_comment_on_a_register_heading_leaves_its_cards_answerable();
+}
+
+#[test]
 fn a_branch_answer_to_a_main_card_with_a_picture_only_main_holds_reaches_the_owner() {
     owner::branch_answer_reaches_the_owner_whatever_mains_pictures();
 }

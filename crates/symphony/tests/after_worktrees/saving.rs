@@ -413,3 +413,159 @@ pub(super) fn a_merging_worktree_shows_its_last_committed_copy() {
         },
     );
 }
+
+/// A register as a save writes it, its groups and topics headed: `groups` holds each group's
+/// title and its cards' lines.
+fn headed(groups: &[(&str, String)]) -> String {
+    let body: Vec<String> = groups
+        .iter()
+        .map(|(title, cards)| format!("## {title}\n\n### Topic\n\n{cards}"))
+        .collect();
+    let text = format!(
+        "# Decisions\n\n<!-- register:start -->\n{}<!-- register:end -->\n",
+        body.join("\n")
+    );
+    assert_eq!(
+        symphony::register::sort_register(&text, &symphony::plugins::Plugins::default()).unwrap(),
+        text,
+        "the register as a save regroups it"
+    );
+    text
+}
+
+/// The sections of `page`, drawn from the register `file`, after which a `+ comment` would land in
+/// the register: every section but a card's (whose button opens its verdicts), by its key and the
+/// file's line its comment goes after.
+fn comments_into_the_register(page: &symphony_api::Document, file: &str) -> Vec<(String, usize)> {
+    let lines: Vec<&str> = file.lines().collect();
+    let marker = |text: &str| lines.iter().position(|line| *line == text).unwrap() + 1;
+    let (start, end) = (
+        marker("<!-- register:start -->"),
+        marker("<!-- register:end -->"),
+    );
+    page.sections
+        .iter()
+        .filter(|section| !section.key.starts_with("card:") && (start..end).contains(&section.end))
+        .map(|section| (section.key.clone(), section.end))
+        .collect()
+}
+
+/// Each comment of `comments` is refused, saying where it goes, and leaves the file at `path` as
+/// it was.
+fn comments_refused(
+    saves: &symphony::save::Saves,
+    scope: &str,
+    comments: &[(String, usize)],
+    path: &Path,
+) {
+    let before = std::fs::read_to_string(path).unwrap();
+    for (key, line) in comments {
+        let (status, error) = refused(
+            saves,
+            scope,
+            "/api/comment",
+            json!({"path":DOC, "after_line":line, "kind":"comment", "text":"About this group\nWhy here?"}),
+        );
+        assert_eq!(status, 400, "{key}");
+        assert!(
+            error.contains("inside the decision register")
+                && error.contains("Say it on the card itself"),
+            "{key}: {error}"
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), before, "{key}");
+    }
+}
+
+pub(super) fn a_comment_on_a_register_heading_leaves_its_cards_answerable() {
+    isolated(
+        "a_comment_on_a_register_heading_is_refused_and_every_later_verdict_on_its_cards_saves",
+        |_| {
+            let tree = super::landed::committing();
+            let resolved = card("bravo", 'r', "  [2026-11-11 09:05] agent · resolved\n");
+            tree.write(
+                DOC,
+                &headed(&[
+                    ("Needs your decision", card("alpha", ' ', "")),
+                    ("Resolved", resolved.clone()),
+                ]),
+            );
+            commit(&tree.root, "base", 1);
+            // The branch posts a card of its own, auto-approved, in a group of its own.
+            let wt = branch(&tree, "feat/heads", "heads");
+            std::fs::write(
+                wt.join(DOC),
+                headed(&[
+                    ("Needs your decision", card("alpha", ' ', "")),
+                    ("Auto-approved: spot-check", card("delta", 'a', "")),
+                    ("Resolved", resolved),
+                ]),
+            )
+            .unwrap();
+            commit(&wt, "post delta", 2);
+
+            // Main's page: the start marker and the first group heading are one block, and every
+            // heading's comment would land in the register.
+            let main = tree.read(DOC);
+            let page = docview::document(&Render::new(&tree.root), DOC, "", &[]).unwrap();
+            let comments = comments_into_the_register(&page, &main);
+            assert!(
+                comments
+                    .iter()
+                    .any(|(key, line)| key == "section:decisions:1" && *line == 4),
+                "the group heading's block, lines 3 to 4: {comments:?}"
+            );
+            assert!(comments.len() >= 3, "a group and two topics: {comments:?}");
+            let saves = symphony::save::Saves::start(&tree.root);
+            comments_refused(&saves, "", &comments, &tree.path(DOC));
+            // The cards stay answerable: alpha, approved with words, now waits on an agent.
+            post(
+                &saves,
+                "",
+                "/api/decision",
+                json!({"path":DOC, "slug":"alpha", "state":"approved", "note":"Keep it"}),
+            );
+            saves.close();
+            assert!(tree.read(DOC).contains("## Waiting on an agent"));
+
+            // The branch's page draws main's alpha in its group: the owner's group empties, and the
+            // start marker shares its block with the first group the page draws.
+            let file = std::fs::read_to_string(wt.join(DOC)).unwrap();
+            let page = branch_page(&tree.root, &wt, "feat~heads");
+            let groups: Vec<&str> = page
+                .headings
+                .iter()
+                .filter(|heading| heading.level == 2)
+                .map(|heading| heading.text.as_str())
+                .collect();
+            assert_eq!(
+                groups,
+                [
+                    "Auto-approved: spot-check",
+                    "Waiting on an agent",
+                    "Resolved"
+                ],
+                "regrouped"
+            );
+            let comments = comments_into_the_register(&page, &file);
+            assert!(
+                comments
+                    .iter()
+                    .any(|(key, line)| key == "section:decisions:1" && *line == 3),
+                "the drawn first heading stands for the start marker alone: {comments:?}"
+            );
+            let saves = symphony::save::Saves::start(&tree.root);
+            comments_refused(&saves, "feat~heads", &comments, &wt.join(DOC));
+            // The branch's own card stays answerable from its page.
+            post(
+                &saves,
+                "feat~heads",
+                "/api/decision",
+                json!({"path":DOC, "slug":"delta", "state":"approved", "note":""}),
+            );
+            saves.close();
+            let saved = std::fs::read_to_string(wt.join(DOC)).unwrap();
+            assert!(saved.contains("- [x] **delta**"), "{saved}");
+            assert!(!saved.contains("[!comment]"), "{saved}");
+        },
+    );
+}

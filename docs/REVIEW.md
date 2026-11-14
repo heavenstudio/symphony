@@ -409,6 +409,12 @@ title, and writes exactly this after the block you were on:
 > [!decision] Drop the brass finish from the lamp matrix.
 ```
 
+Anywhere but inside a decision register, which holds cards only: a callout
+between its markers would stop every later verdict on its cards, so a comment
+left on a register's group or topic heading is refused, the save saying to put
+it on the card itself (its **Verdict / message**) or on a block outside the
+register.
+
 The first line is the tag and a short title; the `>` lines under it are the
 body. `comment`, `question` and `decision` are open work until an agent nests
 a resolution under them. Older documents also hold `like` (what to keep, no
