@@ -384,6 +384,68 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
     ]
 }
 
+/// The structs `source` defines (a `pub struct` line each, the requests' one in `calls!`), each
+/// with whether `#[non_exhaustive]` stands among the attributes above it.
+fn structs(source: &str) -> Vec<(String, bool)> {
+    let lines: Vec<&str> = source.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            let name = line.trim().strip_prefix("pub struct ")?;
+            let name = name.split([' ', '<', '{']).next().unwrap_or(name);
+            let marked = lines[..at]
+                .iter()
+                .rev()
+                .map(|above| above.trim())
+                .take_while(|above| above.starts_with("#[") || above.starts_with("///"))
+                .any(|above| above == "#[non_exhaustive]");
+            Some((name.to_string(), marked))
+        })
+        .collect()
+}
+
+#[test]
+fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks_no_build() {
+    let found = structs(include_str!("protocol.rs"));
+    let unmarked: Vec<&str> = found
+        .iter()
+        .filter(|(_, marked)| !marked)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(
+        unmarked.is_empty(),
+        "mark each `#[non_exhaustive]` and give it a constructor: {unmarked:?}"
+    );
+    // The requests' one in `calls!`, and every struct of data besides.
+    let names: Vec<&str> = found.iter().map(|(name, _)| name.as_str()).collect();
+    for name in [
+        "$name",
+        "Version",
+        "Envelope",
+        "Cancel",
+        "PageData",
+        "CardData",
+        "Declaration",
+    ] {
+        assert!(names.contains(&name), "{name} in {names:?}");
+    }
+    // The reading sees a struct left unmarked.
+    let left = "/// A thing.\n#[derive(Clone)]\npub struct Left {\n    pub a: u8,\n}\n";
+    assert_eq!(structs(left), [("Left".to_string(), false)]);
+    let marked = "#[derive(Clone)]\n#[non_exhaustive]\npub struct Marked<T = u8> {}\n";
+    assert_eq!(structs(marked), [("Marked".to_string(), true)]);
+    // A request made by its `new` is the request of those fields.
+    assert_eq!(
+        Changed::new(3, PathBuf::from("/r")),
+        Changed {
+            watch: 3,
+            root: "/r".into()
+        }
+    );
+    assert_eq!(Version::new(0, 2), PROTOCOL);
+}
+
 #[test]
 fn every_call_goes_on_the_wire_as_its_seam_and_call_and_reads_back_the_same() {
     let requests = every_request();
