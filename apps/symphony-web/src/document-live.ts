@@ -158,15 +158,19 @@ export interface Copy {
  * The server's outline at `url`, read naming the tag of `copy`'s: a `304` is that copy again, at
  * the feed's cursor its answer names; a new outline replaces the copy, and this device keeps it in
  * `item`. A `304` that names no cursor opens no feed: the copy goes, and the outline is read again
- * whole. Null when the server has no such document.
+ * whole. Null when the server has no such document, and once `signal` ended: then nothing is
+ * kept, read again or changed, and its caller, which checks `signal` first, draws nothing.
  */
 export async function readOutlineAt(
   url: string,
   copy: { current: Copy | null },
   item: Item | null,
+  signal: AbortSignal,
 ): Promise<DocumentOutline | null> {
   for (;;) {
     const read = await getDocument(url, copy.current?.tag ?? "");
+    // getDocument takes no signal: a page that left while it read keeps and asks for nothing more.
+    if (signal.aborted) return null;
     if (read === null) {
       copy.current = null;
       return null;
@@ -462,7 +466,7 @@ export async function documentLive(page: DocumentLive, signal: AbortSignal): Pro
     if (signal.aborted) return;
     let ended: Ended = { lost: 0 };
     try {
-      const outline = await readOutlineAt(url, copy, page.kept);
+      const outline = await readOutlineAt(url, copy, page.kept, signal);
       if (signal.aborted) return;
       if (outline === null) {
         vanished(page);

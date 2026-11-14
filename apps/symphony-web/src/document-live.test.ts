@@ -5,6 +5,7 @@ import { documentState } from "./document";
 import {
   api,
   busy,
+  type Copy,
   DocumentLive,
   documentLive,
   FolderLive,
@@ -240,12 +241,14 @@ describe("the sections the owner is engaged in", () => {
 describe("the outline read naming its copy's tag", () => {
   const URL = "/api/document?path=docs%2FDECISIONS.md&view=outline";
   const item = documentItem(PATH, false);
+  /** The signal of a page that stays. */
+  const STAYS = new AbortController().signal;
 
   it("is the server's outline, kept with its tag for the next visit", async () => {
     const asked = serverOf();
     const store = deviceOf();
     const copy = { current: null };
-    const read = readOutlineAt(URL, copy, item);
+    const read = readOutlineAt(URL, copy, item, STAYS);
     await askedFor(asked, 1);
     expect(asked[0]?.headers).toEqual({});
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
@@ -267,11 +270,11 @@ describe("the outline read naming its copy's tag", () => {
   it("keeps nothing answered with no tag, or for a page that keeps nothing", async () => {
     const asked = serverOf();
     const store = deviceOf();
-    const untagged = readOutlineAt(URL, { current: null }, item);
+    const untagged = readOutlineAt(URL, { current: null }, item, STAYS);
     await askedFor(asked, 1);
     asked[0]?.answer(answered(200, OUTLINE_NOW));
     await untagged;
-    const unkept = readOutlineAt(URL, { current: null }, null);
+    const unkept = readOutlineAt(URL, { current: null }, null, STAYS);
     await askedFor(asked, 2);
     asked[1]?.answer(answered(200, OUTLINE_NOW, '"o1"'));
     await unkept;
@@ -282,7 +285,7 @@ describe("the outline read naming its copy's tag", () => {
     const asked = serverOf();
     deviceOf();
     const copy = { current: { tag: '"o1"', outline: OUTLINE_NOW } };
-    const read = readOutlineAt(URL, copy, item);
+    const read = readOutlineAt(URL, copy, item, STAYS);
     await askedFor(asked, 1);
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
     asked[0]?.answer(answered(304, null, "", 15));
@@ -301,7 +304,7 @@ describe("the outline read naming its copy's tag", () => {
         outline: DocumentOutline;
       } | null,
     };
-    const read = readOutlineAt(URL, copy, item);
+    const read = readOutlineAt(URL, copy, item, STAYS);
     await askedFor(asked, 1);
     asked[0]?.answer(answered(304, null));
     await askedFor(asked, 2);
@@ -320,7 +323,7 @@ describe("the outline read naming its copy's tag", () => {
         outline: DocumentOutline;
       } | null,
     };
-    const read = readOutlineAt(URL, copy, item);
+    const read = readOutlineAt(URL, copy, item, STAYS);
     await askedFor(asked, 1);
     asked[0]?.answer(reply(404, { error: "no such document" }));
     await expect(read).resolves.toBeNull();
@@ -330,14 +333,58 @@ describe("the outline read naming its copy's tag", () => {
   it("fails on a 304 to a plain read, and on an outline it cannot read", async () => {
     const asked = serverOf();
     deviceOf();
-    const plain = readOutlineAt(URL, { current: null }, item);
+    const plain = readOutlineAt(URL, { current: null }, item, STAYS);
     await askedFor(asked, 1);
     asked[0]?.answer(answered(304, null, "", 7));
     await expect(plain).rejects.toThrow("The server answered 304 to a plain read");
-    const unreadable = readOutlineAt(URL, { current: null }, item);
+    const unreadable = readOutlineAt(URL, { current: null }, item, STAYS);
     await askedFor(asked, 2);
     asked[1]?.answer(answered(200, { document: "none" }, '"o1"'));
     await expect(unreadable).rejects.toThrow("The server's outline could not be read");
+  });
+
+  /** A copy tagged `"o1"`, as the device or an earlier read left it. */
+  const held = () => ({
+    current: { tag: '"o1"', outline: OUTLINE_NOW } as Copy | null,
+  });
+
+  it("reads nothing again on a 304 naming no cursor once its page left", async () => {
+    const asked = serverOf();
+    const store = deviceOf();
+    const copy = held();
+    const left = new AbortController();
+    const read = readOutlineAt(URL, copy, item, left.signal);
+    await askedFor(asked, 1);
+    left.abort();
+    asked[0]?.answer(answered(304, null));
+    await expect(read).resolves.toBeNull();
+    // The read is over: no second request can follow it.
+    expect(asked).toHaveLength(1);
+    expect(copy.current?.tag).toBe('"o1"');
+    expect(store.keep).not.toHaveBeenCalled();
+  });
+
+  it("keeps and changes nothing once its page left, whatever the server answered", async () => {
+    const asked = serverOf();
+    const store = deviceOf();
+    const answers = [
+      answered(200, OUTLINE_NOW, '"o2"', 8),
+      reply(404, { error: "no such document" }),
+      answered(304, null, "", 15),
+      answered(200, { document: "none" }, '"o2"'),
+    ];
+    for (const [at, answer] of answers.entries()) {
+      const copy = held();
+      const left = new AbortController();
+      const read = readOutlineAt(URL, copy, item, left.signal);
+      await askedFor(asked, at + 1);
+      left.abort();
+      asked[at]?.answer(answer);
+      await expect(read).resolves.toBeNull();
+      expect(copy.current).toEqual({ tag: '"o1"', outline: OUTLINE_NOW });
+    }
+    expect(asked).toHaveLength(answers.length);
+    expect(store.keep).not.toHaveBeenCalled();
   });
 });
 
@@ -883,7 +930,26 @@ describe("a document page's loops", () => {
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
     await done;
     expect(page.state).toBeNull();
-    expect(store.keep).toHaveBeenCalledTimes(1);
+    // Nothing kept after the page left: the device holds only what it held.
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(page.epoch).toBe(0);
+  });
+
+  it("read nothing again once the page left before a 304 naming no cursor", async () => {
+    const asked = serverOf();
+    const store = deviceOf({
+      [`document:${PATH} ${OUTLINE}`]: { value: OUTLINE_NOW, etag: '"o1"', saved: 1_000 },
+    });
+    const page = pageOf();
+    const left = new AbortController();
+    const done = documentLive(page, left.signal);
+    await askedFor(asked, 1);
+    expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
+    left.abort();
+    asked[0]?.answer(answered(304, null));
+    await done;
+    expect(asked).toHaveLength(1);
+    expect(store.keep).not.toHaveBeenCalled();
     expect(page.epoch).toBe(0);
   });
 });
