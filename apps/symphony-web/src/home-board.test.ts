@@ -304,6 +304,31 @@ describe("the owner told more cards wait", () => {
     expect(() => notify({ title: "t", body: "b" })).not.toThrow();
   });
 
+  it("is nothing where the browser refuses to make one, and the event is applied all the same", () => {
+    // Chrome on Android: permission granted, but the constructor throws (a service worker shows one).
+    let tried = 0;
+    vi.stubGlobal(
+      "Notification",
+      Object.assign(
+        class {
+          constructor() {
+            tried += 1;
+            throw new TypeError("Illegal constructor");
+          }
+        },
+        { permission: "granted" },
+      ),
+    );
+    vi.stubGlobal("document", { hidden: true });
+    expect(() => notify({ title: "t", body: "b" })).not.toThrow();
+    const before = board(emptyBoard);
+    const counts = { ...before.counts, waiting: 3 };
+    const after = heard(before, { version: 2, changes: [{ region: "counts", data: counts }] });
+    expect(after?.version).toBe(2);
+    expect(after?.counts.waiting).toBe(3);
+    expect(tried).toBe(2);
+  });
+
   it("follows each event the board hears, which is none for one it cannot read", () => {
     const shown = page("granted", true);
     const before = board(emptyBoard);

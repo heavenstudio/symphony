@@ -234,10 +234,17 @@ export function heard(board: Board, delta: unknown): Board | null {
 /**
  * Tell the owner of `notice` with a system notification, only once they have allowed them and
  * only while the tab is hidden: a page in front of them already shows it. One tag for every
- * notice, so two open tabs, or two events in a row, leave one notification, the latest.
+ * notice, so two open tabs, or two events in a row, leave one notification, the latest. A
+ * browser whose constructor refuses (Chrome on Android, which shows one only through a service
+ * worker) shows none, and the event is applied all the same, as the Dioxus client ignored the
+ * error.
  */
 export function notify(notice: Notice): void {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   if (!document.hidden) return;
-  new Notification(notice.title, { body: notice.body, tag: "review-waiting" });
+  try {
+    new Notification(notice.title, { body: notice.body, tag: "review-waiting" });
+  } catch {
+    // No notification here: the page shows the change once it is in front.
+  }
 }

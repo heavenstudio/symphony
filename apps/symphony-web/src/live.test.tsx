@@ -1,12 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boardItem } from "./cache";
+import { BOARD, boardItem, FRESH, type Freshness } from "./cache";
 import {
   BoardPage,
   type BoardRun,
+  drawKept,
   FEED_NOTICE,
   flushReload,
   followClient,
+  hearBoard,
   keepBoard,
   noticeGeometry,
   type PageBoard,
@@ -84,6 +86,139 @@ describe("a page that follows the board", () => {
     expect(markup).toContain('<main data-ready="loading" data-feed="live">');
     expect(markup).toContain("Loading the board…");
     expect(markup).not.toContain("<p>page</p>");
+  });
+});
+
+describe("a feed event a board page hears", () => {
+  /** A board a page draws whole: its version and a count the events change. */
+  type Counted = PageBoard & { waiting: number };
+  const counted = (version: number, waiting: number): Counted => ({
+    version,
+    ping_ms: 15_000,
+    build: "/b.js",
+    waiting,
+  });
+  /** Each event a number of cards: the board after it, or none for any other event. */
+  const apply = (board: Counted, delta: unknown): Counted | null =>
+    typeof delta === "number" ? { ...board, waiting: delta } : null;
+
+  /** What a page did on hearing `delta`: what it said, what it showed, how often it read again. */
+  const hearing = (
+    delta: unknown,
+    board: Counted | null,
+    given: { apply?: typeof apply; moves?: (delta: unknown) => boolean },
+  ) => {
+    const shown: Counted[] = [];
+    let refreshed = 0;
+    const said = hearBoard(
+      delta,
+      { current: board },
+      (next) => shown.push(next),
+      given.apply,
+      given.moves,
+      () => {
+        refreshed += 1;
+      },
+    );
+    return { said, shown, refreshed };
+  };
+
+  it("shows the board after it where the page draws the board", () => {
+    expect(hearing(4, counted(2, 3), { apply })).toEqual({
+      said: true,
+      shown: [counted(2, 4)],
+      refreshed: 0,
+    });
+  });
+
+  it("loses the stream on an event the page cannot read, showing and reading nothing", () => {
+    const moves = vi.fn(() => true);
+    expect(hearing("unread", counted(2, 3), { apply, moves })).toEqual({
+      said: false,
+      shown: [],
+      refreshed: 0,
+    });
+    expect(moves).not.toHaveBeenCalled();
+  });
+
+  it("applies nothing before the page has a board, and hears the event all the same", () => {
+    expect(hearing("unread", null, { apply })).toEqual({ said: true, shown: [], refreshed: 0 });
+  });
+
+  it("reads the page under it again only for an event that moves it", () => {
+    const moves = (delta: unknown) => delta === 5;
+    expect(hearing(5, counted(2, 3), { apply, moves })).toEqual({
+      said: true,
+      shown: [counted(2, 5)],
+      refreshed: 1,
+    });
+    expect(hearing(6, counted(2, 3), { apply, moves }).refreshed).toBe(0);
+  });
+
+  it("is the queue's with no apply: nothing shown, every event heard", () => {
+    expect(hearing("any", counted(2, 3), { moves: () => true })).toEqual({
+      said: true,
+      shown: [],
+      refreshed: 1,
+    });
+    expect(hearing("any", counted(2, 3), {})).toEqual({ said: true, shown: [], refreshed: 0 });
+  });
+});
+
+describe("the board a page draws from this device", () => {
+  const kept = { value: CASES.samples.board, etag: '"b1"', saved: 1_000 };
+  /** What a page did with what the store kept for its board: what it showed, and said of it. */
+  const drawing = async (stored: unknown, drew: PageBoard | null = null, gone = false) => {
+    const store = { read: vi.fn(async () => stored), forget: vi.fn(async () => {}) };
+    vi.stubGlobal("symphonyCache", store);
+    const page = new AbortController();
+    if (gone) page.abort();
+    const shown: PageBoard[] = [];
+    let freshness: Freshness = FRESH;
+    await drawKept(
+      boardItem(""),
+      readPageBoard,
+      { current: drew },
+      (board) => shown.push(board),
+      (change) => {
+        freshness = change(freshness);
+      },
+      page.signal,
+    );
+    return { store, shown, freshness };
+  };
+
+  it("is drawn while the board is read, saying when it was kept", async () => {
+    const { store, shown, freshness } = await drawing(kept);
+    expect(store.read).toHaveBeenCalledWith(CACHE_FORMAT, "", "board:", BOARD);
+    expect(shown).toEqual([readPageBoard(CASES.samples.board)]);
+    expect(freshness).toEqual({ ...FRESH, saved: 1_000, unanswered: [BOARD] });
+  });
+
+  it("is never drawn over the board the page drew first", async () => {
+    const { shown, freshness } = await drawing(kept, readPageBoard(CASES.samples.board));
+    expect(shown).toEqual([]);
+    expect(freshness).toEqual(FRESH);
+  });
+
+  it("is never drawn once the page is gone", async () => {
+    const { shown, freshness } = await drawing(kept, null, true);
+    expect(shown).toEqual([]);
+    expect(freshness).toEqual(FRESH);
+  });
+
+  it("is forgotten, and nothing drawn, where the page cannot read it", async () => {
+    const { store, shown, freshness } = await drawing({ ...kept, value: { version: "seven" } });
+    expect(shown).toEqual([]);
+    expect(freshness).toEqual(FRESH);
+    expect(store.forget).toHaveBeenCalledWith(CACHE_FORMAT, "", "board:");
+  });
+
+  it("is nothing where the device kept none", async () => {
+    const { store, shown, freshness } = await drawing(null);
+    expect(shown).toEqual([]);
+    expect(freshness).toEqual(FRESH);
+    expect(store.forget).not.toHaveBeenCalled();
   });
 });
 

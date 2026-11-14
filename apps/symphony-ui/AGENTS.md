@@ -683,6 +683,13 @@ never the whole target, which the release run runs.
   hot-patch parser cannot read wasm-bindgen 0.2.129's exception tags. Updating
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
+  The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
+  `/reports`) are no part of it, and at their routes it draws its frame over "Page unavailable".
+  Such a page is tried on the built distribution, with no hot reload: once a whole
+  `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
+  web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
+  them with `SYMPHONY_UI_DIST` naming `build/symphony-ui/public`, until the board's
+  `app/client-moves-to-react/dev-server` gives the web client Vite's dev server.
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
   of the machine's one server share its origin, so every key the browser

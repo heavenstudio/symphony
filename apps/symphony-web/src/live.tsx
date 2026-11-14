@@ -210,6 +210,49 @@ export interface BoardPageProps<B extends PageBoard = PageBoard> {
 }
 
 /**
+ * One feed event as a board page hears it: applied to the board it draws by `apply`, when the page
+ * draws the whole board and has it, the board after it shown; then the page under it read again
+ * (`refresh`) when `moves` says the event moves what it shows. `false` when `apply` cannot read the
+ * event, which loses the stream, with nothing shown or read again.
+ */
+export function hearBoard<B extends PageBoard>(
+  delta: unknown,
+  board: { current: B | null },
+  show: (board: B) => void,
+  apply: ((board: B, delta: unknown) => B | null) | undefined,
+  moves: ((delta: unknown) => boolean) | undefined,
+  refresh: () => void,
+): boolean {
+  if (apply && board.current) {
+    const next = apply(board.current, delta);
+    if (next === null) return false;
+    show(next);
+  }
+  if (moves?.(delta)) refresh();
+  return true;
+}
+
+/**
+ * The board this device kept for `item`, as the page reads it, drawn while the server's is read:
+ * never over a board the page drew by then, nor once the page is gone. `freshen` says it is drawn
+ * from this device, and since when.
+ */
+export async function drawKept<B extends PageBoard>(
+  item: Item,
+  read: (value: unknown) => B | null,
+  board: { current: B | null },
+  show: (board: B) => void,
+  freshen: (change: (f: Freshness) => Freshness) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const copy = await readKept(item, BOARD, read);
+  if (copy && !board.current && !signal.aborted) {
+    show(copy.value);
+    freshen((f) => drawn(f, BOARD, copy.saved));
+  }
+}
+
+/**
  * A page that follows the board: it draws what this device kept, reads the board, follows its
  * feed, and shows what it heard in `children`, under its notices.
  */
@@ -245,26 +288,15 @@ export function BoardPage<B extends PageBoard = PageBoard>({
     };
     if (item) {
       visitLater(item);
-      void readKept(item, BOARD, readRef.current).then((copy) => {
-        if (copy && !board.current && !signal.aborted) {
-          show(copy.value);
-          setFreshness((f) => drawn(f, BOARD, copy.saved));
-        }
-      });
+      void drawKept(item, readRef.current, board, show, setFreshness, signal);
     }
     const views: Views = {
       freshen: (change) => setFreshness(change),
       read: () => setRefreshed((count) => count + 1),
-      heard: (delta) => {
-        const applied = applyRef.current;
-        if (applied && board.current) {
-          const next = applied(board.current, delta);
-          if (next === null) return false;
-          show(next);
-        }
-        if (movesRef.current?.(delta)) setRefreshed((count) => count + 1);
-        return true;
-      },
+      heard: (delta) =>
+        hearBoard(delta, board, show, applyRef.current, movesRef.current, () =>
+          setRefreshed((count) => count + 1),
+        ),
       frame,
     };
     const run = { board, show, setStale, setTrouble, retry, views, read: readRef.current };
