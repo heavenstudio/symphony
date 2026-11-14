@@ -216,6 +216,7 @@ fn reusing() -> Machine {
         processes: Box::new(|_| panic!("reuse must not inspect processes")),
         mode: "auto".into(),
         board_env: Vec::new(),
+        bounds: None,
     }
 }
 
@@ -357,6 +358,7 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
             processes: Box::new(|_| panic!("reuse must not inspect processes")),
             mode: "auto".into(),
             board_env: Vec::new(),
+            bounds: None,
         };
         let agent = idle("amber-heron", "worker", "fixture-reuse");
         let hc = ReusedTerminal::answering(outcome);
@@ -412,6 +414,7 @@ fn a_failed_staff_review_dispatch_cancels_its_instruction_on_the_store() {
         processes: Box::new(|_| panic!("failed checkout must not inspect processes")),
         mode: "auto".into(),
         board_env: Vec::new(),
+        bounds: None,
     };
     let task = f.store.get("sim/jump").unwrap();
     let error = dispatch(

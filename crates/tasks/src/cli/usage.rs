@@ -315,7 +315,8 @@ in-process subagent has no channel of its own: it reads `just tasks inbox`.
 
 positional arguments:
   address               uds:/absolute/socket or codex:THREAD-UUID (default:
-                        detected)
+                        detected); through just tasks, a codex: one only
+                        this session's own (CODEX_THREAD_ID)
 
 options:
   -h, --help            show this help message and exit

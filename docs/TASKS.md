@@ -318,10 +318,35 @@ repository's own, marks what it runs (`SYMPHONY_UNASKED`): under the mark
 linked worktree its repository lists, the main checkout's artifacts folder, never
 into a git folder, with the path's links and `..` resolved, and replaces only an
 earlier snapshot; it refuses any other place, or a file of the project's own,
-with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). The
-reply recipes keep their writes to the same places (AGENTS.md, "Agent
-integration"). The binary run by itself, which no rule allows, writes wherever it
-is told. The mark is the one command's: no child the board starts keeps it
+with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
+agent the board starts under the mark stays in the project the same way
+(`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
+launch makes and the one a restore makes again and starts in, an older record's
+too, lead only into those places or under the project's worktree base (`<repo>-wt/`,
+or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
+line naming the folder and starts nothing. A launch takes no `--prompt` there: an
+agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
+alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
+rest goes on the task's thread, which the skill reads. A restore
+resumes the conversation its record names. Under the mark `tasks api`'s
+`record_launch` records neither a worktree outside those places nor a conversation
+id; no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, and
+`just tasks beat` binds nothing: a heartbeat binding is the hook's, which runs
+`tasks beat` itself on the session's own tool calls); and `just tasks callback`
+registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`, which it
+detects with no address), which the board writes into the handle's open Codex
+record. So a record's conversation is one the board's launcher recorded (the id it
+chose at a launch, or one it read from the agent's terminal, the hook's binding or
+a callback) or the Codex thread an agent registered from its own process. Three
+limits stay: `--as` names any handle, so an agent may give another handle its own
+conversation (the hook binds the session to the handle its board command names,
+and a callback registers its thread for it), whose restore then resumes that
+agent's conversation; a record an older build wrote is not told apart; and a
+folder is checked before the agent starts in it, so a folder on its path replaced
+by a link in between still leads out. The
+reply recipes keep their writes to the same places
+(AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,
+writes and starts agents wherever it is told. The mark is the one command's: no child the board starts keeps it
 (`sys::MARKS`), so the review command, a land's `on_land` and the regenerator write
 where the project says.
 `launch`, `restore`, `cleanup`, `close` and `reap` are its own, hc's terminals and all
@@ -508,7 +533,8 @@ no allow rule passes a command with an env prefix, so
 `TASKS_SESSION=HANDLE just tasks …` stops at a prompt, while a session launched
 with the variable already set needs neither. Then run `just tasks callback --as HANDLE`: it detects
 the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket` or
-`codex:THREAD-UUID` works too. A session with no channel is listed as such and
+`codex:THREAD-UUID` works too; through `just tasks` a `codex:` one only as the
+session's own thread ([Where it lives](#where-it-lives)). A session with no channel is listed as such and
 keeps the inbox fallback. hc terminals are for inspection, never delivery.
 
 `just agent-send HANDLE "text"` addresses an agent without a task. The sender
@@ -703,7 +729,8 @@ its foreground: a job it runs in front, or one it became by `exec`, is work. Whe
 tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`) the
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
-worktree, in a new terminal. A record from before hc names a herdr pane (`w1:p…`): that
+worktree, in a new terminal; through `just tasks`, only a worktree in the project
+([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
 terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
@@ -729,7 +756,11 @@ the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 goes to an idle reviewer only when the board would take its verdict, by the rule the
 verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
 reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled, and the reviewer's role a reuse took for it let go.
+cancelled, and the reviewer's role a reuse took for it let go. Through `just tasks` a pass
+launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
+worktree, one continuing a branch checked out in the main checkout (its
+`.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
+is refused.
 
 `reap` also recovers missing agents with addressed work left unanswered for thirty
 minutes, even when staffing is disabled. It resumes a recorded conversation once
@@ -966,7 +997,8 @@ for sessions with no native channel. Tool calls are still the heartbeat.
 
 A **subagent** has no monitor; its own tool calls are its heartbeat. The
 project's `PreToolUse` (Bash) and `PostToolUse` hooks
-(`.target/bin/symphony hook tasks-beat`, `just tasks beat`) see the Claude Code agent id
+(`.target/bin/symphony hook tasks-beat`, which runs the board binary's `tasks beat`
+directly, not through `just`, so unmarked) see the Claude Code agent id
 on each of its tool calls. A `just tasks …` command the subagent runs binds it
 to the handle that command acts as, and so does one naming a justfile or a
 folder before `tasks` (`--justfile PATH`, `-f PATH`, `--working-directory DIR`

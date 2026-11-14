@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: cd380e90b38a7061 files=SKILL.md -->
+<!-- symphony-stamp: 334bf5c0d978f8bb files=SKILL.md -->
 
 # Work from the task board
 
@@ -22,8 +22,9 @@ to register your native channel so messages can start a turn directly.
 
 2. **Register the callback** with `just tasks callback --as <handle>`. It detects
    the Claude inbox socket or Codex thread. An explicit `uds:/absolute/socket`
-   or `codex:THREAD-UUID` is accepted too. The agents API shows each channel;
-   hc terminals are for inspection, never message delivery. Without a native
+   is accepted too, and a `codex:THREAD-UUID` only as your own thread. The
+   agents API shows each channel; hc terminals are for inspection, never message
+   delivery. Without a native
    channel, use the inbox or legacy attach fallback and say so on the thread.
    Callback registration lasts until changed or the session leaves. Tool calls
    remain the heartbeat; registration does not pretend an absent agent is alive.
@@ -241,7 +242,9 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    Its first `just tasks …` command run as its handle (that command's own
    `--as <handle>`) binds it,
    and from then on each of its tool calls is its heartbeat (the project hooks,
-   `just tasks beat`): an agent coding or running tests reads live.
+   `.target/bin/symphony hook tasks-beat`, which runs the board binary's
+   `tasks beat` directly, not through `just`): an agent coding or running tests
+   reads live.
    A handle only mentioned in a command binds nothing, and a session with its
    legacy monitor is never bound to a subagent. Native callback sessions bind
    their own tool-call heartbeat normally.
@@ -259,10 +262,16 @@ Owner, 2026-10-06: every session connected to a task, every task knowing its
 session id and worktree, so any of them can be restored; finished tasks cleansed.
 
 - `just tasks launch SLUG [--model M] [--kind codex|claude] [--role executor|reviewer]
-  [--branch B | --detached] [--worktree DIR] [--tab STREAM] [--prompt TEXT]`:
+  [--branch B | --detached] [--worktree DIR] [--tab STREAM]`:
   registers a handle (your child), makes the worktree under `<repo>-wt/` unless
   given (an executor on its task's own branch; an instruction or reviewer detached at main).
-  A given checkout with a live or stale executor is refused. The agent appears
+  A given DIR must lead into the checkout you run it from or below the worktree
+  base (`<repo>-wt/`, or `SYMPHONY_WT_DIR`), or from a linked worktree into the
+  main checkout's artifacts folder, never into a git folder; any other is
+  refused. A given checkout with a live or stale executor is refused. Its first
+  message is `/work SLUG HANDLE` alone (a reviewer's `/review-task SLUG HANDLE`,
+  each with `$` for Codex): put anything else on the task's thread, which the
+  agent reads. The agent appears
   in an hc terminal of its own that outlives you, in its stream's tab of the
   configured multiplexer's project space. Explicit flags and the destination
   project's launch configuration select the agent, model and effort: its
@@ -277,7 +286,9 @@ session id and worktree, so any of them can be restored; finished tasks cleansed
   launch policy calls for one; otherwise use its supported in-process or
   headless launch method.
 - `just tasks restore SLUG [HANDLE]`: a new terminal in the recorded worktree, resuming
-  its recorded Codex or Claude conversation, for every closed session or the one named.
+  its recorded Codex or Claude conversation, for every closed session or the one named;
+  a recorded worktree a given DIR could not be is refused, neither made again nor
+  started in.
 - `just tasks show SLUG` has a `Sessions:` block: handle, role, session id,
   worktree, branch, terminal, open or closed.
 - `just tasks cleanup [--dry-run]`: closes idle terminals (an idle agent with no
