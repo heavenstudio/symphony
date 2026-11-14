@@ -578,7 +578,10 @@ never the whole target, which the release run runs.
   are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
   kind's own follow it: a first visit asks for them once, and every kind caches
   the same file. The task timeline's few styles do not narrow it: it is drawn only
-  in a task page, which has the shared file already.
+  in a task page, which has the shared file already. The server's own pages inline
+  `board.css`'s tokens and `frame.css` from copies in its package
+  (`apps/symphony-server/src/`), which it carries to crates.io: a change to either
+  is copied there too, and `crates/symphony/tests/packages.rs` fails until it is.
 - **Routes**, when a slice pays for them: `#[derive(Routable, Clone,
   PartialEq)] enum Route { #[route("/")] Front {} }` and `rsx! {
   Router::<Route> {} }`, one component per variant, named as it is.

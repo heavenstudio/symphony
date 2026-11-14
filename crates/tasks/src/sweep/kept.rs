@@ -7,11 +7,10 @@
 //! common dir, [`Record`]): where each folder there came from, by the tasks tied to its worktree
 //! when it was set aside, and the largest with each task's stage as the sweep read it. Past the cap
 //! the measure also says, for each of the largest, what still references it, so a check by hand
-//! keeps it (the owner, 2026-11-12: "if there's something that still actively references the
-//! artifact, then it should be kept until space used becomes a problems requiring it to be
-//! remove"): a task tied to its worktree that is not done or cancelled, a post on an open task's
-//! thread or a document of `docs/` on the default branch naming a path under it ([`Measured::look_up`],
-//! read once for that measure). Those are marked in use; the rest, no reference found, are the ones
+//! keeps it (an artifact something still actively references is kept until the space it uses
+//! becomes a problem that requires removing it): a task tied to its worktree that is not done or
+//! cancelled, a post on an open task's thread or a document of `docs/` on the default branch
+//! naming a path under it ([`Measured::look_up`], read once for that measure). Those are marked in use; the rest, no reference found, are the ones
 //! suggested, and none is removed. The sweep's own lines say the folder past its cap (a dry run
 //! says it under it too), and `tasks status` warns of it from the record while it stays past it,
 //! without a board read, saying that the warning stands until a sweep measures it again (a check by
@@ -26,8 +25,7 @@ use std::path::{Path, PathBuf};
 pub const RECORD: &str = "swept.json";
 /// The `[board]` key of the project file naming the cap, in gigabytes.
 pub const CAP_KEY: &str = "swept_cap_gb";
-/// The cap when the project names none, in gigabytes: the owner's figure ("Maybe 5 GB limit?",
-/// 2026-11-12).
+/// The cap when the project names none, in gigabytes.
 pub const CAP_GB: f64 = 5.0;
 /// A gigabyte, as the cap counts it.
 const GB: f64 = 1e9;

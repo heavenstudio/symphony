@@ -6,29 +6,29 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-pub use chrome_devtools::{Request, find};
+pub use symphony_chrome::{Request, find};
 
 /// The driver's failures, as this suite's assertion: the case fails naming what went wrong.
 trait Asserted<T> {
     fn asserted(self) -> T;
 }
 
-impl<T> Asserted<T> for chrome_devtools::Result<T> {
+impl<T> Asserted<T> for symphony_chrome::Result<T> {
     #[track_caller]
     fn asserted(self) -> T {
         self.unwrap_or_else(|error| panic!("{error}"))
     }
 }
 
-pub struct Chrome(chrome_devtools::Chrome);
+pub struct Chrome(symphony_chrome::Chrome);
 
 impl Chrome {
     pub fn launch(binary: &str) -> Chrome {
-        let leash = chrome_devtools::Leash::new(
+        let leash = symphony_chrome::Leash::new(
             std::env::current_exe().unwrap(),
             &["--exact", "chrome::browser_leash", "--nocapture"],
         );
-        let chrome = chrome_devtools::Chrome::launch(binary, &leash).asserted();
+        let chrome = symphony_chrome::Chrome::launch(binary, &leash).asserted();
         eprintln!(
             "Chrome launch leash={} profile={}",
             chrome.leash_id(),
@@ -109,7 +109,7 @@ impl Chrome {
 /// the suite: the driver's leash, ending this process with its code.
 #[test]
 fn browser_leash() {
-    if let Some(code) = chrome_devtools::leash_main() {
+    if let Some(code) = symphony_chrome::leash_main() {
         std::process::exit(code);
     }
 }

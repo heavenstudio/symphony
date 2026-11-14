@@ -12,8 +12,10 @@ A consuming project owns its landing policy and shared-service safeguards.
 `Cargo.toml` and `Cargo.lock` belong to this workspace. Members inherit its package
 settings and dependency versions. The containing project's thin host and board-only
 packages consume these libraries through an immutable Git dependency pin. The plugin kit, the
-helpers and the app's wire types (`symphony-api`) are made to be published on crates.io as well,
-each by its version, and every other member keeps the workspace's `publish = false`
+helpers and the product (the library as `symphony-app`, its library still `symphony`, the board,
+the server, the Chrome driver as `symphony-chrome` and the app's wire types, `symphony-api`) are
+made to be published on crates.io as well, each by its version, and the client's sources and the
+tests' time keep the workspace's `publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
@@ -224,11 +226,13 @@ the schema of the pin its main locks, after a snapshot. The shared server takes 
 reload once the main
 checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/reload.rs`, which
 builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
-refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
-lands `symphony/RELEASE` through its own landing, and a main checkout off its default branch or with
-tracked edits is its owner's to put right; then an orchestrator reruns `just release --refresh`
-without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
-that need their own word. A pin moved by hand to a commit of main waits until `just tasks
+refresh waits for that, bounded. What stays by hand is the project's to finish, never a red here
+and filed nowhere: a consumer whose gate refuses the move meets that itself, one whose hooks refuse
+the fast-forward lands `symphony/RELEASE` through its own landing, and a main checkout off its
+default branch or with tracked edits is its owner's to put right; then an orchestrator reruns `just
+release --refresh` without asking. Only the refresh's own work that fails is red, filed here.
+Pushing a consumer's branch and restarting the shared server stay separate acts that need their
+own word. A pin moved by hand to a commit of main waits until `just tasks
 regenerate --status --wait` exits 0 and takes the commit it names, so it never carries a client
 older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a release run waits for the
 regenerator and releases only a main its own `just client-check` (in `just verify`) passes, so a
@@ -388,7 +392,7 @@ rest. It only reads the page, so the live board
 reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
 folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
 The shot leashes Chrome by running its own program again, so a host binary that calls
-`symphony::cli` runs `chrome_devtools::leash_main()` first, as
+`symphony::cli` runs `symphony_chrome::leash_main()` first, as
 `crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
 before DevTools readiness".
 

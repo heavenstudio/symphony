@@ -17,7 +17,7 @@ use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{Child, Command, Stdio};
 
-#[path = "../../../../tools/test-support/scratch.rs"]
+#[path = "../../../../crates/chrome-devtools/src/scratch.rs"]
 mod scratch;
 
 #[path = "../../../../tools/test-support/machine_copy.rs"]

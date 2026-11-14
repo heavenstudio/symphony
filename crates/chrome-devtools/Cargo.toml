@@ -1,11 +1,21 @@
+# The package is `symphony-chrome` on crates.io, where `chrome-devtools` is another project's, and
+# so is its library, `symphony_chrome`. The folder keeps its name.
 [package]
-name = "chrome-devtools"
+name = "symphony-chrome"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Headless Chrome on a private profile, driven over its DevTools protocol and leashed to the process that launched it: what `symphony shot` and Symphony's browser tests drive."
+readme = "README.md"
+keywords = ["symphony", "chrome", "devtools", "headless", "screenshot"]
+categories = ["development-tools::testing", "web-programming"]
+# What crates.io gets: the sources (the descriptor closing script among them), the readme and the
+# licence; never tests/ or fixtures.
+include = ["src/**", "README.md", "LICENSE"]
 
 # Headless Chrome on a private profile, driven over its DevTools protocol, leashed to the process
 # that launched it. The client's browser tests (apps/symphony-ui/tests/browser) and `symphony shot`
@@ -17,9 +27,9 @@ data-encoding = "2"
 libc.workspace = true
 serde_json.workspace = true
 # The feed's keep-alive event name, so a request counts the pings its stream delivered.
-symphony-api = { path = "../symphony-api" }
+symphony-api = { path = "../symphony-api", version = "=0.1.0" }
 # The Chrome and the leash's variable by their own names, the old ones still read.
-symphony-env = { path = "../symphony-env" }
+symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
