@@ -9,9 +9,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use chrome_devtools::{Chrome, Leash, Request};
 use serde_json::{Value, json};
 use symphony_args::{Flag, parse};
+use symphony_chrome::{Chrome, Leash, Request};
 
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
 [--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--click CSS] [--type CSS=TEXT] \
@@ -239,7 +239,7 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         }
         Err(problem) => return crate::cli::refuse(err, USAGE, "shot", &problem),
     };
-    let Some(binary) = chrome_devtools::find() else {
+    let Some(binary) = symphony_chrome::find() else {
         let _ = writeln!(
             err,
             "symphony shot: no Chrome on this machine: name its executable with SYMPHONY_CHROME"
@@ -523,7 +523,7 @@ impl Wait {
 /// A driver failure as the shot says it: `late()` once the wait has run out, else what failed,
 /// after `after`.
 fn said<T>(
-    result: chrome_devtools::Result<T>,
+    result: symphony_chrome::Result<T>,
     after: &str,
     late: impl FnOnce() -> String,
 ) -> Result<T, String> {
@@ -1201,7 +1201,7 @@ impl Hit {
 /// each such node, once for each, paid only for a press through a label. Each moves the walk up
 /// the flat tree, so it ends by the document's root, however deep the node, or, on a page that
 /// keeps moving its nodes, at the step's wait, as every call of the step does.
-fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> chrome_devtools::Result<Hit> {
+fn confirm(chrome: &mut Chrome, css: &str, (x, y): (f64, f64)) -> symphony_chrome::Result<Hit> {
     let found = chrome.call(
         "DOM.getNodeForLocation",
         json!({"x": pixel(x), "y": pixel(y)}),
@@ -1280,7 +1280,7 @@ fn assigned(described: &Value) -> Option<Value> {
 /// own hit test stops at the host. Two calls, paid only where no report of a move reached the page
 /// and nothing the page sees there is hovered or a frame ([`Arrival::unseen`]). A hit the protocol
 /// cannot make (no node there) finds none.
-fn frame_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<bool> {
+fn frame_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> symphony_chrome::Result<bool> {
     let found = chrome.call(
         "DOM.getNodeForLocation",
         json!({"x": pixel(x), "y": pixel(y)}),
@@ -1853,7 +1853,7 @@ fn aim(chrome: &mut Chrome, css: &str, wait: Wait, flag: &str) -> Result<Press, 
 }
 
 /// Move the mouse to `point` on the screen ([`Press`]).
-fn move_to(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<()> {
+fn move_to(chrome: &mut Chrome, (x, y): (f64, f64)) -> symphony_chrome::Result<()> {
     chrome.call(
         "Input.dispatchMouseEvent",
         json!({"type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0}),
@@ -1862,7 +1862,7 @@ fn move_to(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<(
 }
 
 /// Press the left button at `point` on the screen and release it there: a click.
-fn press_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<()> {
+fn press_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> symphony_chrome::Result<()> {
     for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
         chrome.call(
             "Input.dispatchMouseEvent",
@@ -1872,7 +1872,7 @@ fn press_at(chrome: &mut Chrome, (x, y): (f64, f64)) -> chrome_devtools::Result<
     Ok(())
 }
 
-fn press(chrome: &mut Chrome, key: &Key) -> chrome_devtools::Result<()> {
+fn press(chrome: &mut Chrome, key: &Key) -> symphony_chrome::Result<()> {
     let mut down = json!({
         "type": if key.text.is_some() { "keyDown" } else { "rawKeyDown" },
         "key": key.key,

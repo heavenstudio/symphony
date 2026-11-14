@@ -5,47 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Documents
-
-- [ ] **guides-keep-owner-quotes** — The documents under `docs/` no longer quote your words or say who decided what and when: that lives in this register and on task threads, and a document links the card where the reason matters. The guides agents read first, `AGENTS.md`, `RULES.md` and the packages' `AGENTS.md`, still quote you, dated, as the basis of their rules: 23 quoted passages in 19 places. Should the guides keep those quotes? A: yes, each rule keeps the words it rests on. B: no, each guide states its rules in plain words, and the quotes move word for word to a record under `docs/history/`, so none is lost. Recommended: B. Approve and say A or B in the note, or comment. [[REVIEW#Slugs in prose]]
-  [2026-11-13 19:55] agent — Posted for the board task `docs/documents-carry-no-ledger`, from your comment on the consumer contract analysis, which names docs and not the guides.
-
-    **Where the quotes are:** `RULES.md` 14 in 11 rules; `AGENTS.md` 6 in 4 places (the land's push, the land with no prompt, the release cadence and its refresh); `apps/symphony-ui/AGENTS.md` 2, and one dated attribution (the move to Dioxus, the first-visit budget); `crates/tasks/AGENTS.md` 1 (idle sessions closed within the hour). The root `README.md` and the servers' and components' guides quote none.
-
-    **A, keep them.** An agent reading a rule sees the words it rests on beside it. The guides keep a ledger the documents no longer do, and each new rule adds a dated line.
-
-    **B, the rule alone.** Each guide says what to do, as the documents now do. The words are kept word for word in `docs/history/`, beside the review ledger, and the threads keep theirs. One task here makes the move; no rule changes meaning.
-
-    **Why B.** The reason you gave for documents holds for the guides: they are what agents read as current instruction, and `RULES.md` already says guides say how things are now. B loses nothing, since the words move to a record.
-
-    **Earlier verdicts checked.** No card says whether the guides count as documents, so none decides this one.
-
-    This card is the only change.
-
-### Task page, in pictures
-
-- [ ] **task-timeline-as-built** — A task's page now shows what the task went through, built from the approved pictures. It sits under the gates and subtasks and above the brief. On a phone it is a list with a bar per step; on a wide screen it is lanes over the same hours. Where the build differs from the pictures, the lines below say why. Approve to keep it, or comment with what to change. [[analysis/reports-and-monitoring#Pictures]]
-  [2026-11-12 03:49] agent — Base: the approved pictures, on a phone and on a wide screen. ![The approved timeline on a phone](analysis/reports-timeline-phone.svg) ![The approved timeline on a wide screen](analysis/reports-timeline-wide.svg)
-  [2026-11-12 03:49] agent — As built, the pictures' task on a phone and on a wide screen: ![The timeline as built on a phone](analysis/task-timeline-fixture-phone-light.png) ![The timeline as built on a wide screen](analysis/task-timeline-fixture-wide-light.png)
-  [2026-11-12 03:49] agent — Posted for the board task `tools/task-timeline`. The same task in dark mode: ![The timeline as built on a phone, dark](analysis/task-timeline-fixture-phone-dark.png) ![The timeline as built on a wide screen, dark](analysis/task-timeline-fixture-wide-dark.png)
-
-    A week-long task of 50 steps, light and dark: ![A week-long timeline on a phone](analysis/task-timeline-week-phone-light.png) ![A week-long timeline on a wide screen](analysis/task-timeline-week-wide-light.png) ![A week-long timeline on a phone, dark](analysis/task-timeline-week-phone-dark.png) ![A week-long timeline on a wide screen, dark](analysis/task-timeline-week-wide-dark.png)
-
-    **Where it differs from the pictures, and why:**
-    - **It sits in a box with "Show all".** The box is as tall as this browser last drew the task's timeline: at most 460 px on a phone and 480 px wide. A first visit gets that most, so a short timeline leaves room under it, as in the week's wide pictures; the next visit's box fits it. Steps that do not fit fade out, and "Show all N steps" shows them; a phone shows the latest steps. Why: drawn whole, a 50-step task pushed the brief 2,700 to 4,600 px down, and the page moved each time a step came.
-    - **Lane words are drawn only where they fit.** A narrower window shortens a word or leaves it off. Why: the pictures are drawn at one width, and real tasks printed words over each other.
-    - **Runs that overlap each get a row** in the builds and tests lane, at most three. Why: the pictures' runs never overlap; real ones do.
-    - **In light mode, a segment's words use the page's text colour, not their tone.** Why: on their pale fill, the review tone (the theme's question colour) reads about 3.9 to 1 and the done tone (its like colour) about 4.5 to 1, under the 4.5 to 1 that text needs. Dark mode keeps the tones. This is a colour change for you to judge.
-    - **Each gate state has a pattern as well as a colour:** met solid, missing dotted, waived dashed, held double. Why: a state should not be told by colour alone.
-    - **A line under the lanes says what the keyboard is on**, in the same words as the hover. Why: the arrow keys walk the lanes, and a keyboard has no hover.
-    - **On a phone the list keeps 40 px clear on the right.** Why: the page's floating + button covered a duration on every row at 390 px. Long labels are cut short with "…"; the whole label is in the row's hover and is read out in full.
-    - **A note says when early runs are gone.** Why: when the run history no longer reaches back to the task's start, missing runs would otherwise read as no runs.
-
-    Approve to keep it, or comment with what to change.
-  [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -187,6 +146,87 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Documents
+
+- [r] **guides-keep-owner-quotes** — The documents under `docs/` no longer quote your words or say who decided what and when: that lives in this register and on task threads, and a document links the card where the reason matters. The guides agents read first, `AGENTS.md`, `RULES.md` and the packages' `AGENTS.md`, still quote you, dated, as the basis of their rules: 23 quoted passages in 19 places. Should the guides keep those quotes? A: yes, each rule keeps the words it rests on. B: no, each guide states its rules in plain words, and the quotes move word for word to a record under `docs/history/`, so none is lost. Recommended: B. Approve and say A or B in the note, or comment. [[REVIEW#Slugs in prose]]
+  [2026-11-13 19:55] agent — Posted for the board task `docs/documents-carry-no-ledger`, from your comment on the consumer contract analysis, which names docs and not the guides.
+
+    **Where the quotes are:** `RULES.md` 14 in 11 rules; `AGENTS.md` 6 in 4 places (the land's push, the land with no prompt, the release cadence and its refresh); `apps/symphony-ui/AGENTS.md` 2, and one dated attribution (the move to Dioxus, the first-visit budget); `crates/tasks/AGENTS.md` 1 (idle sessions closed within the hour). The root `README.md` and the servers' and components' guides quote none.
+
+    **A, keep them.** An agent reading a rule sees the words it rests on beside it. The guides keep a ledger the documents no longer do, and each new rule adds a dated line.
+
+    **B, the rule alone.** Each guide says what to do, as the documents now do. The words are kept word for word in `docs/history/`, beside the review ledger, and the threads keep theirs. One task here makes the move; no rule changes meaning.
+
+    **Why B.** The reason you gave for documents holds for the guides: they are what agents read as current instruction, and `RULES.md` already says guides say how things are now. B loses nothing, since the words move to a record.
+
+    **Earlier verdicts checked.** No card says whether the guides count as documents, so none decides this one.
+
+    This card is the only change.
+  [2026-11-13 20:05] owner · approved — B
+  [2026-11-14 01:14] agent — B it is. Your approval was saved in the app on 2026-11-13 20:05, but into the worktree of the branch that posted this card, which had already landed, so the register on main never showed it. It is copied here word for word, and that fault is filed as a bug. The move is filed as the board task `docs/guides-state-rules-without-quotes`: each guide states its rules in plain words, and the quotes go word for word to a record under `docs/history/`.
+  [2026-11-14 01:16] agent · resolved
+
+### Task page, in pictures
+
+- [r] **task-timeline-as-built** — A task's page now shows what the task went through, built from the approved pictures. It sits under the gates and subtasks and above the brief. On a phone it is a list with a bar per step; on a wide screen it is lanes over the same hours. Where the build differs from the pictures, the lines below say why. Approve to keep it, or comment with what to change. [[analysis/reports-and-monitoring#Pictures]]
+  [2026-11-12 03:49] agent — Base: the approved pictures, on a phone and on a wide screen. ![The approved timeline on a phone](analysis/reports-timeline-phone.svg) ![The approved timeline on a wide screen](analysis/reports-timeline-wide.svg)
+  [2026-11-12 03:49] agent — As built, the pictures' task on a phone and on a wide screen: ![The timeline as built on a phone](analysis/task-timeline-fixture-phone-light.png) ![The timeline as built on a wide screen](analysis/task-timeline-fixture-wide-light.png)
+  [2026-11-12 03:49] agent — Posted for the board task `tools/task-timeline`. The same task in dark mode: ![The timeline as built on a phone, dark](analysis/task-timeline-fixture-phone-dark.png) ![The timeline as built on a wide screen, dark](analysis/task-timeline-fixture-wide-dark.png)
+
+    A week-long task of 50 steps, light and dark: ![A week-long timeline on a phone](analysis/task-timeline-week-phone-light.png) ![A week-long timeline on a wide screen](analysis/task-timeline-week-wide-light.png) ![A week-long timeline on a phone, dark](analysis/task-timeline-week-phone-dark.png) ![A week-long timeline on a wide screen, dark](analysis/task-timeline-week-wide-dark.png)
+
+    **Where it differs from the pictures, and why:**
+    - **It sits in a box with "Show all".** The box is as tall as this browser last drew the task's timeline: at most 460 px on a phone and 480 px wide. A first visit gets that most, so a short timeline leaves room under it, as in the week's wide pictures; the next visit's box fits it. Steps that do not fit fade out, and "Show all N steps" shows them; a phone shows the latest steps. Why: drawn whole, a 50-step task pushed the brief 2,700 to 4,600 px down, and the page moved each time a step came.
+    - **Lane words are drawn only where they fit.** A narrower window shortens a word or leaves it off. Why: the pictures are drawn at one width, and real tasks printed words over each other.
+    - **Runs that overlap each get a row** in the builds and tests lane, at most three. Why: the pictures' runs never overlap; real ones do.
+    - **In light mode, a segment's words use the page's text colour, not their tone.** Why: on their pale fill, the review tone (the theme's question colour) reads about 3.9 to 1 and the done tone (its like colour) about 4.5 to 1, under the 4.5 to 1 that text needs. Dark mode keeps the tones. This is a colour change for you to judge.
+    - **Each gate state has a pattern as well as a colour:** met solid, missing dotted, waived dashed, held double. Why: a state should not be told by colour alone.
+    - **A line under the lanes says what the keyboard is on**, in the same words as the hover. Why: the arrow keys walk the lanes, and a keyboard has no hover.
+    - **On a phone the list keeps 40 px clear on the right.** Why: the page's floating + button covered a duration on every row at 390 px. Long labels are cut short with "…"; the whole label is in the row's hover and is read out in full.
+    - **A note says when early runs are gone.** Why: when the run history no longer reaches back to the task's start, missing runs would otherwise read as no runs.
+
+    Approve to keep it, or comment with what to change.
+  [2026-11-12 04:54] agent — **What the timeline costs to load, measured by the reviewer.** It is a module of its own, loaded once a task's page has drawn: 201,818 bytes after the first visit, about 150 KB of it the runtime every module carries. The first visit of a task's page, and of `/agents`, which shares its module, grows by only 4,988 bytes, the box; `/` and `/tasks` do not change. Folded into that shared module instead, the timeline would add about 30 KB to every first visit of a task's page and of `/agents`, and save the 201,818 later. It stays separate unless you say otherwise.
+  [2026-11-12 06:33] owner · approved
+  [2026-11-14 01:14] agent — Kept as built. Your approval of 2026-11-12 06:33 was saved into the worktree of the branch that posted this card and never reached main. It is copied here word for word.
+  [2026-11-14 01:16] agent · resolved
+- [r] **task-page-timeline-place** — The timeline pushes a task's brief and thread off the first screen. Its box sits between the gates and the brief: 480 px tall wide, 460 px on a phone. At 1280×800 the brief now starts 214 px below the first screen and the thread 511 px below; before the timeline both were about 540 px higher. The message box is still at the end of the thread, a scroll away. Where should the timeline go? A: as built, open under the gates. B: closed to its line of totals, opened in place with a click. C: open, but at most 240 px tall, the rest behind "Show all". D: under the thread and the message box. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/reports-and-monitoring#Timeline]]
+  [2026-11-12 08:09] agent — Posted for the board task `tests/timeline-pushes-thread-below-fold`. The first screen of one task's page at 1280×800 under each option. A is the page as built; B, C and D are that page edited in the browser to show the option, not built. The task went round review five times, on a scratch board: ![1280×800, A](analysis/task-page-timeline-wide-a.png) ![1280×800, B](analysis/task-page-timeline-wide-b.png) ![1280×800, C](analysis/task-page-timeline-wide-c.png) ![1280×800, D](analysis/task-page-timeline-wide-d.png)
+
+    **How each option looks, at 1280×800 and on a phone:**
+    - **A** opens the page on the gates and the timeline, as in the pictures you approved. The brief starts 214 px below the first screen, 335 px on a phone. On a later visit a short timeline's box shrinks to fit it (322 px wide here, the brief then 56 px below); a long timeline, or any on a phone, keeps the full box.
+    - **B** puts the brief on the first screen and starts the thread 87 px below it, 294 px on a phone. The totals stay in view. The timeline's own code (201,818 bytes) loads only when someone opens it. Seeing the steps takes a click.
+    - **C** just brings the brief onto the first screen and starts the thread 271 px below it, 453 px on a phone. Wide, the lanes are cut off under the reviewer's; on a phone it shows the last few steps.
+    - **D** puts the brief on the first screen and starts the thread at its foot, as before the timeline; on a phone the thread is 146 px below. The timeline is read last, after the whole thread.
+
+    **Why B:** you mostly open a task to read its brief and thread and to answer. The gates already say what it waits on, and the totals say whether the history is worth opening.
+  [2026-11-12 08:09] agent — The same on a phone. The head and the gates fill most of a phone's first screen under every option: ![Phone, A](analysis/task-page-timeline-phone-a.png) ![Phone, B](analysis/task-page-timeline-phone-b.png) ![Phone, C](analysis/task-page-timeline-phone-c.png) ![Phone, D](analysis/task-page-timeline-phone-d.png)
+  [2026-11-12 08:22] owner · approved — C
+  [2026-11-12 08:24] agent — Recorded as C: the timeline stays open under the gates, in a box at most 240 px tall on a phone and wide. Steps that do not fit fade out, and "Show all N steps" opens the rest in place, wide as well as on a phone. A later visit's box still shrinks to fit a shorter timeline. Building it now on the board task `tests/timeline-pushes-thread-below-fold`, with pictures at 1280×800 and on a phone.
+  [2026-11-12 17:59] agent · resolved
+- [r] **reports-task-page-pictures** — A task's page opens on its gates: every stamp or check it needs to land, each met, missing or waived, with who, when and why. Below them, a timeline of what the task went through. The pictures show one task, on a phone and on a wide screen. How do a project's own gates reach the page? A: a typed seam, so Symphony draws every project's gates the same way and can count them. B: a panel of generic blocks the plugin lays out. The timeline is the same under A and B. Recommended: A. Approve and say A or B in the note, or comment. *Replaces:* reports-task-gates-timeline. [[analysis/reports-and-monitoring#Pictures]]
+  [2026-11-11 14:12] agent — The gates on a phone, under A and under B: ![Gates on a phone, option A](analysis/reports-gates-a-phone.svg) ![Gates on a phone, option B](analysis/reports-gates-b-phone.svg)
+  [2026-11-11 14:12] agent — The task is made up in the consuming project's shape: its four stamps, two review rounds, a build and tests. Its times are invented. The pictures follow the app's colours, type and chips, in light and dark.
+
+    **A** is one component for every project. What the task waits on comes first, with who and when, and a gate can link to its run or verdict. Symphony can count these gates across tasks, for example which one waits longest.
+
+    **B** is the plugin's own layout. The consuming project's stamps answer has no times, so its table has none. On a phone, a table wider than the screen scrolls sideways.
+
+    Wide: ![Gates on a wide screen, A](analysis/reports-gates-a-wide.svg) ![Gates on a wide screen, B](analysis/reports-gates-b-wide.svg)
+
+    **The timeline** is the same under A and B. On a phone it is a list with a bar per step; on a wide screen, lanes over time. ![Timeline on a phone](analysis/reports-timeline-phone.svg) ![Timeline on a wide screen](analysis/reports-timeline-wide.svg)
+  [2026-11-11 14:28] owner · approved — A
+  [2026-11-11 14:36] agent — Recorded as A: a typed seam, and Symphony draws every project's gates the same way. [[analysis/reports-and-monitoring#Gates]] now says so, and the A pictures are the look to build to.
+
+    Filed on the board, ready, each quoting your verdict and naming the pictures:
+    - tools/task-gates-seam: the plugin seam and its wire type, with Symphony's own gates when no plugin answers.
+    - tools/task-gates-panel: the gates on the task page, on a phone and wide.
+    - tools/task-timeline: stage segments kept from the replay, served and drawn as a list on a phone and as lanes wide. Runs join once tools/build-test-recorded-generic records them.
+    - the consuming project's gates adapter: a note to copy to that project's board, since the code is there. Its stamps answer gains times and maps to the seam.
+
+    The task-page halves of tools/stage-times and tools/review-as-stamps are replaced by these; both threads say so.
+  [2026-11-11 14:37] agent · resolved
 
 ### Releases
 
@@ -482,45 +522,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-12 12:38] owner · approved — A
   [2026-11-12 12:42] agent — Built as A says, nothing else changed. Before the sweep removes a worktree whose work is finished, it moves what git ignores in that worktree's artifacts/ into the main checkout's artifacts/swept/NAME/, NAME being the worktree's folder (NAME-2, NAME-3 when that name is taken). If git then refuses the removal, everything goes back. Nothing empties artifacts/swept/ by itself. It goes to review with the board task tools/sweep-removes-nothing now.
   [2026-11-12 12:42] agent · resolved
-
-### Task page, in pictures
-
-- [r] **task-page-timeline-place** — The timeline pushes a task's brief and thread off the first screen. Its box sits between the gates and the brief: 480 px tall wide, 460 px on a phone. At 1280×800 the brief now starts 214 px below the first screen and the thread 511 px below; before the timeline both were about 540 px higher. The message box is still at the end of the thread, a scroll away. Where should the timeline go? A: as built, open under the gates. B: closed to its line of totals, opened in place with a click. C: open, but at most 240 px tall, the rest behind "Show all". D: under the thread and the message box. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/reports-and-monitoring#Timeline]]
-  [2026-11-12 08:09] agent — Posted for the board task `tests/timeline-pushes-thread-below-fold`. The first screen of one task's page at 1280×800 under each option. A is the page as built; B, C and D are that page edited in the browser to show the option, not built. The task went round review five times, on a scratch board: ![1280×800, A](analysis/task-page-timeline-wide-a.png) ![1280×800, B](analysis/task-page-timeline-wide-b.png) ![1280×800, C](analysis/task-page-timeline-wide-c.png) ![1280×800, D](analysis/task-page-timeline-wide-d.png)
-
-    **How each option looks, at 1280×800 and on a phone:**
-    - **A** opens the page on the gates and the timeline, as in the pictures you approved. The brief starts 214 px below the first screen, 335 px on a phone. On a later visit a short timeline's box shrinks to fit it (322 px wide here, the brief then 56 px below); a long timeline, or any on a phone, keeps the full box.
-    - **B** puts the brief on the first screen and starts the thread 87 px below it, 294 px on a phone. The totals stay in view. The timeline's own code (201,818 bytes) loads only when someone opens it. Seeing the steps takes a click.
-    - **C** just brings the brief onto the first screen and starts the thread 271 px below it, 453 px on a phone. Wide, the lanes are cut off under the reviewer's; on a phone it shows the last few steps.
-    - **D** puts the brief on the first screen and starts the thread at its foot, as before the timeline; on a phone the thread is 146 px below. The timeline is read last, after the whole thread.
-
-    **Why B:** you mostly open a task to read its brief and thread and to answer. The gates already say what it waits on, and the totals say whether the history is worth opening.
-  [2026-11-12 08:09] agent — The same on a phone. The head and the gates fill most of a phone's first screen under every option: ![Phone, A](analysis/task-page-timeline-phone-a.png) ![Phone, B](analysis/task-page-timeline-phone-b.png) ![Phone, C](analysis/task-page-timeline-phone-c.png) ![Phone, D](analysis/task-page-timeline-phone-d.png)
-  [2026-11-12 08:22] owner · approved — C
-  [2026-11-12 08:24] agent — Recorded as C: the timeline stays open under the gates, in a box at most 240 px tall on a phone and wide. Steps that do not fit fade out, and "Show all N steps" opens the rest in place, wide as well as on a phone. A later visit's box still shrinks to fit a shorter timeline. Building it now on the board task `tests/timeline-pushes-thread-below-fold`, with pictures at 1280×800 and on a phone.
-  [2026-11-12 17:59] agent · resolved
-- [r] **reports-task-page-pictures** — A task's page opens on its gates: every stamp or check it needs to land, each met, missing or waived, with who, when and why. Below them, a timeline of what the task went through. The pictures show one task, on a phone and on a wide screen. How do a project's own gates reach the page? A: a typed seam, so Symphony draws every project's gates the same way and can count them. B: a panel of generic blocks the plugin lays out. The timeline is the same under A and B. Recommended: A. Approve and say A or B in the note, or comment. *Replaces:* reports-task-gates-timeline. [[analysis/reports-and-monitoring#Pictures]]
-  [2026-11-11 14:12] agent — The gates on a phone, under A and under B: ![Gates on a phone, option A](analysis/reports-gates-a-phone.svg) ![Gates on a phone, option B](analysis/reports-gates-b-phone.svg)
-  [2026-11-11 14:12] agent — The task is made up in the consuming project's shape: its four stamps, two review rounds, a build and tests. Its times are invented. The pictures follow the app's colours, type and chips, in light and dark.
-
-    **A** is one component for every project. What the task waits on comes first, with who and when, and a gate can link to its run or verdict. Symphony can count these gates across tasks, for example which one waits longest.
-
-    **B** is the plugin's own layout. The consuming project's stamps answer has no times, so its table has none. On a phone, a table wider than the screen scrolls sideways.
-
-    Wide: ![Gates on a wide screen, A](analysis/reports-gates-a-wide.svg) ![Gates on a wide screen, B](analysis/reports-gates-b-wide.svg)
-
-    **The timeline** is the same under A and B. On a phone it is a list with a bar per step; on a wide screen, lanes over time. ![Timeline on a phone](analysis/reports-timeline-phone.svg) ![Timeline on a wide screen](analysis/reports-timeline-wide.svg)
-  [2026-11-11 14:28] owner · approved — A
-  [2026-11-11 14:36] agent — Recorded as A: a typed seam, and Symphony draws every project's gates the same way. [[analysis/reports-and-monitoring#Gates]] now says so, and the A pictures are the look to build to.
-
-    Filed on the board, ready, each quoting your verdict and naming the pictures:
-    - tools/task-gates-seam: the plugin seam and its wire type, with Symphony's own gates when no plugin answers.
-    - tools/task-gates-panel: the gates on the task page, on a phone and wide.
-    - tools/task-timeline: stage segments kept from the replay, served and drawn as a list on a phone and as lanes wide. Runs join once tools/build-test-recorded-generic records them.
-    - the consuming project's gates adapter: a note to copy to that project's board, since the code is there. Its stamps answer gains times and maps to the seam.
-
-    The task-page halves of tools/stage-times and tools/review-as-stamps are replaced by these; both threads say so.
-  [2026-11-11 14:37] agent · resolved
 
 ### Artifacts
 
