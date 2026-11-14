@@ -108,7 +108,8 @@ impl Renderer for Twin {
 /// The names of the renderers the project using `plugins` has.
 fn names(plugins: &[&str]) -> Result<Vec<&'static str>, String> {
     let plugins: Vec<String> = plugins.iter().map(|name| (*name).to_string()).collect();
-    renderers::of_project(&plugins).map(|has| has.iter().map(|r| r.name).collect())
+    renderers::of_project(&plugins, &Default::default(), &[])
+        .map(|has| has.iter().map(|r| r.name).collect())
 }
 
 #[test]

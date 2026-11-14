@@ -29,6 +29,10 @@
 //! [`LOOPBACK_ONLY`]): a host never sends it on a pipe, as a plugin's command runs as the plugin's
 //! binary, `PROGRAM command NAME ARGS`, with its own streams ([`crate::serve`]).
 //!
+//! **Batches.** `card_kinds.read` is no seam's method ([`BATCHES`]): a host asks a plugin's process
+//! every card of a register read in one request ([`ReadCards`]), each card's answer every kind's
+//! calls ([`KindAnswers`]), so a read costs a round trip and not eight for each card.
+//!
 //! **Any order.** Every object on the wire reads back whatever order its members come in, as JSON
 //! objects are unordered and a writer that sorts keys is free to: the request, its fields, the
 //! answer and every structure in it. The server's `serde_json` keeps numbers exact
@@ -61,7 +65,8 @@
 //! So every struct here is `#[non_exhaustive]`: a field a minor adds is no new major of this crate,
 //! as nothing outside it builds one by its fields. A request is made by its `new` (which takes every
 //! field its call has: a field a later minor adds stays out of it, as `calls!` says), a page, a
-//! card, a task, a file and a problem by their `of` from what the seam borrows, a [`Declaration`]
+//! card, a task, a file and a problem by their `of` from what the seam borrows, a kind's answers
+//! of a card ([`KindAnswers`]) by its `of` from the kind, a [`Declaration`]
 //! and what it lists by its `of` from a plugin (or from `Default`, its fields set after), a
 //! [`Version`] by its `new`, and a line by [`Envelope::asking`], [`Envelope::cancelling`] or
 //! [`Envelope::answering`]. [`Request`] is `#[non_exhaustive]` as well, as a minor adds a call. The
@@ -91,7 +96,7 @@
 //! [`Media`]: crate::vocabulary::Media
 
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -99,8 +104,8 @@ use serde_json::value::RawValue;
 
 use crate::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use crate::{
-    ARTIFACTS, Card, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission, Submitted,
-    TaskRef, Theme, ThreadLine,
+    ARTIFACTS, Card, CardKind, Drawing, FieldKind, File, Page, Plugin, Problem, Reply, Submission,
+    Submitted, TaskRef, Theme, ThreadLine,
 };
 
 /// The protocol's version: a new major breaks what the one before wrote, a new minor only adds.
@@ -112,8 +117,9 @@ pub struct Version {
 }
 
 /// The protocol this build speaks: major 0 while no process speaks it. Minor 2 hands a page its
-/// project's artifacts folder ([`PageData::artifacts`]); its calls are 1's.
-pub const PROTOCOL: Version = Version { major: 0, minor: 2 };
+/// project's artifacts folder ([`PageData::artifacts`]); minor 3 asks a register read's card kinds
+/// in one request ([`ReadCards`]); every other call is 1's.
+pub const PROTOCOL: Version = Version { major: 0, minor: 3 };
 
 /// This build's protocol.
 impl Default for Version {
@@ -515,6 +521,15 @@ calls! {
         kind: String,
         card: CardData,
     }
+    /// Every card kind's calls of each of `cards`, one register read's, in one request: for each
+    /// card in the order sent, what each kind of the plugin says of it ([`KindAnswers`]), in the
+    /// plugin's order, its pictures read in the checkout at `root`. A host sends a read's cards in
+    /// as many of these as keep each line within [`LINE_MAX`], and to a plugin of 0.2 or older
+    /// each card kind's calls of each card instead.
+    ReadCards = "card_kinds.read" since 3 => Vec<Vec<KindAnswers>> {
+        root: PathBuf,
+        cards: Vec<CardData>,
+    }
 
     /// [`Renderer::draw`](crate::Renderer::draw).
     Draw = "renderers.draw" since 1 => Result<Drawing, String> {
@@ -605,6 +620,10 @@ calls! {
     Alive = "transports.alive" since 1 => bool { transport: String, address: String }
 }
 
+/// The calls that carry several of their seam's calls at once, a method of none: a register read's
+/// card kinds ([`ReadCards`]). Only a host speaking to a plugin's process sends one.
+pub const BATCHES: &[&str] = &[ReadCards::TAG];
+
 /// A page as a request names it: the project's root, the document rendered, the render it is part
 /// of, and the project's artifacts folder.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -645,7 +664,7 @@ impl PageData {
 }
 
 /// A [`Card`], owned.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct CardData {
     pub slug: String,
@@ -656,7 +675,7 @@ pub struct CardData {
 }
 
 /// A [`ThreadLine`], owned.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ThreadLineData {
     pub agent: bool,
@@ -701,6 +720,40 @@ impl CardData {
             text: &self.text,
             thread: &thread,
         })
+    }
+}
+
+/// What one card kind says of one card, each of its calls' answer: a register read's answer for
+/// that card and kind ([`ReadCards`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct KindAnswers {
+    /// The kind's name.
+    pub kind: String,
+    pub recognises: bool,
+    pub pictures: Vec<Picture>,
+    pub slot: Option<String>,
+    pub triage_category: Option<String>,
+    pub auto_approvable: bool,
+    pub gates: Option<(usize, String)>,
+    pub approval_needs_agent: bool,
+    pub chosen: Result<Option<String>, String>,
+}
+
+impl KindAnswers {
+    /// What `kind` says of `card`, its pictures read in the checkout at `root`.
+    pub fn of(kind: &dyn CardKind, root: &Path, card: &Card<'_>) -> KindAnswers {
+        KindAnswers {
+            kind: kind.name().into(),
+            recognises: kind.recognises(card),
+            pictures: kind.pictures(root, card),
+            slot: kind.slot(card),
+            triage_category: kind.triage_category(card),
+            auto_approvable: kind.auto_approvable(card),
+            gates: kind.gates(card),
+            approval_needs_agent: kind.approval_needs_agent(card),
+            chosen: kind.chosen(card),
+        }
     }
 }
 
