@@ -28,8 +28,9 @@ pub const LOCK: &str = "sweep.lock";
 pub const LOG: &str = "sweep.log";
 /// How often `inbox` may start one.
 pub const HOURLY_SECONDS: f64 = 3600.0;
-/// The log's size past which it is moved to `sweep.log.1`, the one before it dropped.
-const LOG_LIMIT: u64 = 1 << 20;
+/// The log's size past which it is moved to `sweep.log.1`, the one before it dropped: the bound of
+/// every log [`append_log`] opens.
+pub const LOG_LIMIT: u64 = 1 << 20;
 
 /// The machine's time, in seconds since the epoch.
 pub fn now() -> f64 {
