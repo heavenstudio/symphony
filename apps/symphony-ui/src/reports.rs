@@ -767,11 +767,21 @@ fn recorded(page: &Page) -> bool {
     page.buckets.iter().any(Bucket::recorded)
 }
 
-/// `page` from its first period any source recorded: the periods before it, before the project's
-/// first file of any source, would be all hatching on every chart and count in no figure. A gap
-/// after it stays; a page no source recorded stays whole.
+/// `page` without its leading periods from before the project's roll-up began ([`Page::first`]):
+/// the periods no source recorded that end by its first file's first hour, all hatching on every
+/// chart and in no figure. A period a source recorded stops the trim (agents watched before the
+/// first roll-up), and so does one from the roll-up's time that no file holds: a day the server
+/// did not run or whose file went unread is a gap, shown hatched. With no roll-up yet the page stays
+/// whole: nothing tells a period before it from a gap.
 fn from_first_record(mut page: Page) -> Page {
-    let before = page.buckets.iter().take_while(|b| !b.recorded()).count();
+    let Some(first) = page.first else {
+        return page;
+    };
+    let before = page
+        .buckets
+        .iter()
+        .take_while(|b| !b.recorded() && b.span().1 <= first)
+        .count();
     if before < page.buckets.len() {
         page.buckets.drain(..before);
     }
@@ -859,8 +869,8 @@ fn controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Eleme
     }
 }
 
-/// One window's report, its axis from the first period recorded. The period tapped is the same on
-/// every chart.
+/// One window's report, its axis from the first period recorded or the roll-up's start
+/// ([`from_first_record`]). The period tapped is the same on every chart.
 #[component]
 fn Report(page: Page) -> Element {
     let page = from_first_record(page);
