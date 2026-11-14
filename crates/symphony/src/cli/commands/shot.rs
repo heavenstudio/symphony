@@ -24,8 +24,12 @@ those Chrome runs in a process of their own too, but none of a frame since remov
 document its frame has left, nor a document its frame went on from; a shared worker's own loads
 are not waited for), runs the steps in the order given, and saves a PNG. A dialog the page or a
 frame opens is dismissed as it opens, and the page goes on: an alert closed, a confirm or a prompt
-answered as by its Cancel, a beforeunload let leave; --report names each. It only reads the page:
-no server is started, stopped or changed.
+answered as by its Cancel, a beforeunload let leave; --report names each. A tab the page opens
+(a link, a script) runs behind it as Chrome leaves it: the page is brought back in front as soon
+as Chrome tells of the new one, so Chrome closes that one's dialogs, which --report does not name.
+A window of its own the page opens (window.open with a size, or popup) stays in front and keeps
+its dialog: one of the page's own site shares the page's process, which its dialog holds until
+--timeout fails the step. It only reads the page: no server is started, stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
@@ -602,6 +606,12 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
     // A dialog holds its document until answered: each is dismissed as it opens, and the report
     // names it.
     chrome.dismiss_dialogs();
+    // A tab the page opens runs behind it, as Chrome leaves it, and Chrome closes its dialogs
+    // there. In front, it would leave the page drawing no frames, and one of the page's own site
+    // shares its renderer, which that tab's dialog would hold, and every call on the page with it,
+    // the click that opened it among them. A window of its own stays in front in its own right
+    // and keeps its dialog, so such a call waits until the step's --timeout.
+    said(chrome.keep_in_front(), "keeping the page in front", late)?;
     if let Some(scheme) = &shot.scheme {
         let value = match scheme {
             Scheme::Light => "light",

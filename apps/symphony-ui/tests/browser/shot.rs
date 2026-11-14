@@ -3133,10 +3133,15 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
     // anything: the opened page shows its dialog while it is in front. A dialog shown in front holds
     // the process the two pages share, and every answer of the page's, until another tab is in
     // front: the alerting page's own load left that order to a loaded machine's chance, and the
-    // page never answered. The shot leaves a page it did not open as Chrome leaves it: let start,
-    // and behind the shot's page, where Chrome lets its dialogs go (an alert as by its OK, a
-    // confirm as by its Cancel) and its script goes on. Each click returns, the page goes on with
-    // the window it opened and is shot, and the report has no dialog of the opened page's.
+    // page never answered. One more opens a blank page and writes it a script that alerts at once,
+    // then marks the opener, within the click, so the click itself waits on the process the alert
+    // holds. Each opens a tab. The shot leaves a page it did not open as Chrome leaves it: let
+    // start, and behind the shot's page, brought back in front as soon as Chrome tells of the new
+    // one, where Chrome lets its dialogs go (an alert as by its OK, a confirm as by its Cancel)
+    // and its script goes on. Each click returns, the page goes on with the window it opened and
+    // is shot, and the report has no dialog of the opened page's. (A page opened later, from a
+    // timer, needs the click's user activation, which lapses after five seconds, so no form of it
+    // here is free of the machine's load: the driver's own tests hold that case.)
     let other = site();
     let site = site();
     let away = format!("http://localhost:{}", other.addr.port());
@@ -3176,12 +3181,18 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
     window.opened.document.write("<script>setTimeout(() => {{ confirm('as it opens'); alert('as it opens'); {marking}; }});<\/script>");
     window.opened.document.close();
   }};
+  const openAlerting = () => {{
+    openPage('');
+    window.opened.document.write("<script>alert('within the click'); {marking};<\/script>");
+    window.opened.document.close();
+  }};
 </script>
 <button id="same" type="button" onclick="openPage('/opened.html')">same site</button>
 <button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>
 <button id="alerting" type="button" onclick="openPage('/alerting.html')">alerting</button>
 <button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>
-<button id="asking" type="button" onclick="openAsking()">asking as it opens</button>"#
+<button id="asking" type="button" onclick="openAsking()">asking as it opens</button>
+<button id="written" type="button" onclick="openAlerting()">alerting within the click</button>"#
         )
         .into_bytes(),
         "text/html",
@@ -3193,6 +3204,7 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
         ("#alerting", &marked[..]),
         ("#later", &marked[..]),
         ("#asking", &marked[..]),
+        ("#written", &marked[..]),
     ] {
         let Some(chrome) = chrome::find() else {
             eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");

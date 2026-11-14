@@ -14,7 +14,7 @@ fn all_options_visible(page: &mut crate::Chrome) {
 /// notices, the timeline's, each comes when it comes, after the composer may already show
 /// (`viewport::Settle` lets it out after three seconds whatever is still reading). So the page has
 /// drawn its data and is idle (the shell loads a task's timeline only then, and its answer is
-/// drawn), nothing on it is busy reading or waits for its read, and its feed is live; each look
+/// drawn), nothing on it is busy reading or waits for its read, its feed not stale; each look
 /// scrolls to the bottom again.
 const AT_REST_AT_THE_BOTTOM: &str = "(() => {
     scrollTo(0, document.documentElement.scrollHeight);
@@ -30,7 +30,7 @@ const AT_REST: &str = "({timeline: [window.reviewTimelineReady ?? null, document
     scroll: scrollY, height: innerHeight, page: document.documentElement.scrollHeight})";
 
 fn recipient_at_bottom(page: &mut crate::Chrome, site: &Site) {
-    // No landing offer for the task, as for any task not in review: its answer draws nothing,
+    // No landing offer, as the server answers when nothing offers one: its answer draws nothing,
     // whenever it comes. (Left unset, the stand-in answers it 404, which the page says in its
     // notices at its end, and nothing on the page marks that answer as still to come.)
     site.set_json(
