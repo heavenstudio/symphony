@@ -196,8 +196,9 @@ never the whole target, which the release run runs.
   `assets/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
   another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
   unvisited. A task is its page and its thread's newest page; a document its first part
-  (`/api/document?view=first`: the head and the leading sections whole within
-  `symphony_api::AHEAD_BYTES`), whose bodies a visit draws and keeps as its own
+  (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
+  within `symphony_api::AHEAD_BYTES`; the server does not follow it), whose contents and bodies a
+  visit draws at once, so nothing moves when its outline answers, and keeps as its own
   (`cache::document::split`). Never on save-data or a 3g or slower link, never a link that acts, a
   search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
   API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;

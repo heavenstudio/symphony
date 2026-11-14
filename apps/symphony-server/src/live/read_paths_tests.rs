@@ -1,7 +1,7 @@
 //! What a page's read costs the hub: a document's render holds no lock the board, the feed and the
 //! project list read under, and still publishes what it finds before handing out its version; a
 //! document, folder or agents read reads no board; the task pages' reads share one store of the
-//! board.
+//! board; a document read ahead (`view=first`) is neither followed nor published.
 
 use super::Hub;
 use crate::front::{Shared, router};
@@ -220,6 +220,68 @@ fn a_document_read_that_finds_an_edit_first_publishes_it_then_hands_out_its_vers
             .any(|section| section.html.contains("The later words.")),
         "the page keeps the edited copy"
     );
+}
+
+#[test]
+fn a_documents_read_ahead_follows_nothing_and_publishes_nothing_and_its_visit_follows_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write(
+        "main/docs/AHEAD.md",
+        "# Ahead\n\nRead before it is opened.\n",
+    );
+    tree.write("main/docs/OPEN.md", "# Open\n\nThe first words.\n");
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    let (shared, ask) = served(&root, hub);
+    let hub = shared.api.get().unwrap();
+    let followed = || -> Vec<String> {
+        hub.pages.read().unwrap()[""]
+            .documents
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let published = || hub.pages.read().unwrap()[""].history.len();
+
+    let (status, first) = ask("/api/document?path=docs/AHEAD.md&view=first");
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(
+        first["document"]["sections"]
+            .to_string()
+            .contains("Read before it is opened."),
+        "{first}"
+    );
+    assert_eq!(
+        followed(),
+        Vec::<String>::new(),
+        "a read ahead follows nothing"
+    );
+
+    // A document a visit follows keeps the visit's copy: an edit a read ahead sees is the
+    // watcher's to publish, not the read ahead's.
+    let (status, _) = ask("/api/document?path=docs/OPEN.md&view=outline");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(followed(), ["docs/OPEN.md"]);
+    tree.write("main/docs/OPEN.md", "# Open\n\nThe later words.\n");
+    let before = published();
+    let (status, first) = ask("/api/document?path=docs/OPEN.md&view=first");
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(first.to_string().contains("The later words."), "{first}");
+    assert_eq!(published(), before, "a read ahead publishes nothing");
+    assert!(
+        hub.pages.read().unwrap()[""].documents["docs/OPEN.md"]
+            .sections
+            .iter()
+            .any(|section| section.html.contains("The first words.")),
+        "the followed copy is the visit's"
+    );
+    assert_eq!(followed(), ["docs/OPEN.md"]);
+
+    // Opened, its outline read follows it.
+    let (status, _) = ask("/api/document?path=docs/AHEAD.md&view=outline");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(followed(), ["docs/AHEAD.md", "docs/OPEN.md"]);
 }
 
 #[test]

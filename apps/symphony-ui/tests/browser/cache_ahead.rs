@@ -102,7 +102,8 @@ fn links_page(links: Vec<Value>, below: usize) -> Value {
     page(LINKS, "Links", sections)
 }
 
-/// A document of 60 sections of some 800 characters each, `Part N: …`, well over twice the cap.
+/// A document of 60 sections of some 800 characters each, `Part N: …`, each under a heading of
+/// its own, well over twice the cap.
 fn large() -> Value {
     let sections = (1..=60)
         .map(|n| {
@@ -115,8 +116,16 @@ fn large() -> Value {
             )
         })
         .collect();
-    page("docs/large.md", "Large", sections)
+    let mut large = page("docs/large.md", "Large", sections);
+    large["headings"] = (1..=60)
+        .map(|n| json!({"level": 2, "anchor": format!("part-{n}"), "text": format!("Part {n}")}))
+        .collect();
+    large
 }
+
+/// The document page's contents ("On this page") hold an entry for each of its 60 headings, a
+/// link or, off the screen, its placeholder.
+const CONTENTS_WHOLE: &str = "document.querySelectorAll('main nav.doc-toc .toc-links a, main nav.doc-toc .toc-links .viewport-placeholder').length === 60";
 
 /// The stand-in, serving the fixture task's page and thread for any slug, and no landing offer.
 fn site() -> Site {
@@ -546,6 +555,13 @@ fn a_large_document_is_read_ahead_in_its_first_part_within_the_cap_on_the_wire_a
         DOCUMENT_FROM_THE_DEVICE,
         "the document from this device",
     );
+    // Its contents whole, those past the first part too: they do not appear once the outline
+    // answers and move the body (the cold path reserves their box for the same reason).
+    shows(
+        &mut chrome,
+        CONTENTS_WHOLE,
+        "every heading in the contents, from the device",
+    );
     assert_eq!(
         documents::answered(&site),
         before,
@@ -553,6 +569,11 @@ fn a_large_document_is_read_ahead_in_its_first_part_within_the_cap_on_the_wire_a
     );
     documents::hold(&site, false);
     shows(&mut chrome, documents::LIVE, "the document, once checked");
+    assert_eq!(
+        chrome.eval(CONTENTS_WHOLE),
+        json!(true),
+        "the same contents once checked"
+    );
     documents::draws(&mut chrome, &["Part 60: "]);
     documents::retitled(&mut chrome, &site, "docs/large.md", 4183, "Large, retitled");
     documents::outline_once(&documents::since(&site, &before, "/api/document"), 200);

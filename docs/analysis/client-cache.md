@@ -318,15 +318,20 @@ more of it)." As built (`perf/client-cache/ahead`):
   `Purpose: prefetch` and naming the tag kept for it (`assets/cache.js`, `ahead`), so an item read
   ahead before costs a `304`. A task: its `/api/task-page` and its thread's newest page, the two
   reads its visit keeps. A document: its first part, `/api/document?view=first`.
-- **A document's first part.** The outline's head and, whole, the leading sections that fit with
-  it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its card, its thread and
-  its headings (`DocumentOutline::first`; the server's `crates/symphony/src/docview.rs`, `first`).
-  A small document comes whole. A head alone over the cap answers `413`, and nothing is kept.
-  Measured on this repository's documents, the leading sections within the cap hold 3,300 to
-  8,800 characters of text: `docs/DECISIONS.md` 3,441 in its first 7 sections (12,009 bytes, of a
-  22,322-byte outline), `docs/TASKS.md` 8,023 in its first 11 (14,336 bytes). A phone's screen
-  shows about 1,200 characters of a document and a desktop's about 2,700: the cap is a screen and
-  a bit more on a register of large cards, a few screens of prose.
+- **A document's first part.** The outline's head with all its headings, so a visit draws the
+  contents whole at once and nothing moves when the outline answers, and, whole, the leading
+  sections that fit with it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its
+  card, its thread and its anchors (`DocumentOutline::first`; the server's
+  `crates/symphony/src/docview.rs`, `first`). A small document comes whole. A head alone over the
+  cap answers `413`, and nothing is kept. The server renders it as it renders an outline but does
+  not follow it (`Hub::document_ahead`): it publishes no change and the documents' refresh never
+  renders it again; the visit's own outline read follows it. Measured on this repository's
+  documents (2026-11-13), the headings take 319 to 1,441 bytes and the leading sections within the
+  cap hold 990 to 7,300 characters of text: `docs/TASKS.md` 6,627 in its first 10 sections (13,607
+  bytes, of a 27,415-byte outline), `docs/RELEASES.md` 6,415 in 8, `docs/CHECKS.md` 3,084 in 10,
+  `docs/DECISIONS.md` 990 in 6, its next a 12 KB card. A phone's screen shows about 1,200
+  characters of a document and a desktop's about 2,700: the cap is a screen or less on a register
+  of large cards, a few screens of prose.
 - **Kept.** Unvisited (`keep(…, ahead)`): over a cap an item read ahead goes before any visited
   one, and a read ahead never replaces what a visit kept, nor reads an item a visit kept.
   Opened, a task draws from it as from a visit's copy and checks it with a `304`. A document

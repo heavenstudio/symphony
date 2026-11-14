@@ -70,7 +70,7 @@ fn bytes(part: &DocumentOutline) -> usize {
 }
 
 #[test]
-fn a_part_holds_the_heads_fields_and_its_sections_cards_threads_headings_and_anchors_alone() {
+fn a_part_holds_the_heads_fields_every_heading_and_its_sections_cards_threads_and_anchors_alone() {
     let (document, outline) = document("Lamps.");
     let first = outline
         .first(&document, |part| part.document.sections.len() <= 2)
@@ -110,13 +110,8 @@ fn a_part_holds_the_heads_fields_and_its_sections_cards_threads_headings_and_anc
         BTreeMap::from([("palette".to_string(), "pp".to_string())])
     );
     assert_eq!(
-        first
-            .document
-            .headings
-            .iter()
-            .map(|heading| heading.anchor.as_str())
-            .collect::<Vec<_>>(),
-        ["palette"]
+        first.document.headings, document.headings,
+        "the contents whole, tiles' heading too, so opened it draws them at once and nothing moves"
     );
     assert_eq!(
         first.anchors.keys().collect::<Vec<_>>(),
@@ -156,9 +151,13 @@ fn a_head_alone_over_the_cap_is_no_part_and_a_head_alone_in_it_is_one_with_no_se
         .unwrap();
     assert_eq!(keys(&head), Vec::<&str>::new());
     assert!(head.document.cards.is_empty() && head.document.waiting.is_empty());
-    assert!(head.document.headings.is_empty() && head.document.threads.is_empty());
+    assert!(head.document.threads.is_empty());
     assert!(head.anchors.is_empty() && head.thread_hashes.is_empty());
     assert_eq!(head.document.tasks, document.tasks);
+    assert_eq!(
+        head.document.headings, document.headings,
+        "the headings are the head's, counted in the cap"
+    );
 }
 
 #[test]

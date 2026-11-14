@@ -613,28 +613,27 @@ fn document_response(
         };
     }
     let result = match path {
-        "/api/document" => match hub.document(scope, rel) {
-            // What a page reads ahead of a document it links to: its first part, within the cap,
-            // or nothing when its head alone is over it.
-            Ok(doc) if query(request, "view").as_deref() == Some("first") => {
-                match symphony::docview::first(doc) {
-                    Some(first) => Ok(json!(first)),
-                    None => {
-                        return error(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            "the document's head alone is over the read ahead's cap",
-                        );
-                    }
+        // What a page reads ahead of a document it links to: its first part, within the cap, or
+        // nothing when its head alone is over it. Read ahead, the document is not followed.
+        "/api/document" if query(request, "view").as_deref() == Some("first") => {
+            match hub.document_ahead(scope, rel).map(symphony::docview::first) {
+                Ok(Some(first)) => Ok(json!(first)),
+                Ok(None) => {
+                    return error(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "the document's head alone is over the read ahead's cap",
+                    );
                 }
+                Err(why) => Err(why),
             }
-            read => read.map(|doc| {
-                if query(request, "view").as_deref() == Some("outline") {
-                    json!(symphony::docview::outline(doc))
-                } else {
-                    json!(doc)
-                }
-            }),
-        },
+        }
+        "/api/document" => hub.document(scope, rel).map(|doc| {
+            if query(request, "view").as_deref() == Some("outline") {
+                json!(symphony::docview::outline(doc))
+            } else {
+                json!(doc)
+            }
+        }),
         "/api/folder" => hub.folder(scope, rel).map(|mut folder| {
             if query(request, "view").as_deref() == Some("outline") {
                 folder.intro = folder

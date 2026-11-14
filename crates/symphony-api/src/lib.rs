@@ -662,19 +662,20 @@ pub struct DocumentOutline {
 
 /// The most a page reads ahead of a document it links to, in bytes of the JSON the server answers
 /// (`/api/document?view=first`, [`DocumentOutline::first`]): a screen of the document or a bit more.
-/// Measured on this repository's documents, the leading sections within it hold 3,300 to 8,800
-/// characters of text (`docs/DECISIONS.md` 3,441 in its first 7 sections, `docs/TASKS.md` 8,023 in
-/// 11), where a phone's screen shows about 1,200 and a desktop's about 2,700; their whole
+/// Measured on this repository's documents, the leading sections within it, beside the headings,
+/// hold 990 to 7,300 characters of text (`docs/DECISIONS.md` 990 in its first 6 sections, its next
+/// a 12 KB card, `docs/TASKS.md` 6,627 in 10), where a phone's screen shows about 1,200 and a
+/// desktop's about 2,700; their whole
 /// outlines are 9 to 27 KB, and the consuming project's register's 56 KB.
 pub const AHEAD_BYTES: usize = 16_000;
 
 impl DocumentOutline {
     /// What a page reads ahead of a document it links to (`/api/document?view=first`): this
-    /// outline's head and `document`'s leading sections whole, as many as `fits` takes in turn,
-    /// each card among them with its thread and each with its anchors and headings; the cards,
-    /// waiting slugs, headings, anchors and threads of the sections left out are left out with
-    /// them. Opened, the page draws its top from the device at once and reads the rest then.
-    /// `None` when `fits` takes not even the head with no section.
+    /// outline's head, its headings all among it, and `document`'s leading sections whole, as many
+    /// as `fits` takes in turn, each card among them with its thread and each with its anchors; the
+    /// cards, waiting slugs, anchors and threads of the sections left out are left out with them.
+    /// Opened, the page draws its top and its whole contents from the device at once, so nothing
+    /// moves when it reads the rest. `None` when `fits` takes not even the head with no section.
     pub fn first(
         &self,
         document: &Document,
@@ -684,7 +685,6 @@ impl DocumentOutline {
         part.document.sections.clear();
         part.document.cards.clear();
         part.document.waiting.clear();
-        part.document.headings.clear();
         part.document.threads.clear();
         part.anchors.clear();
         part.thread_hashes.clear();
@@ -694,13 +694,6 @@ impl DocumentOutline {
         for section in &document.sections {
             let mut next = part.clone();
             let ids = self.anchors.get(&section.key).cloned().unwrap_or_default();
-            next.document.headings.extend(
-                self.document
-                    .headings
-                    .iter()
-                    .filter(|heading| ids.contains(&heading.anchor))
-                    .cloned(),
-            );
             next.anchors.insert(section.key.clone(), ids);
             if let Some(slug) = section.key.strip_prefix("card:") {
                 next.document

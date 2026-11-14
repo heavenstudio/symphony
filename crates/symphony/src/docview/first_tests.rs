@@ -1,5 +1,5 @@
 //! What a page reads ahead of a document (`/api/document?view=first`, [`first`]): its leading
-//! sections whole within the cap, a small document all of it.
+//! sections whole within the cap, a small document all of it, and its contents whole.
 
 use super::{document, first, outline};
 use crate::render::Render;
@@ -51,6 +51,11 @@ fn a_large_documents_first_part_is_its_leading_sections_within_the_cap_and_a_sma
         part.document.sections,
         large.sections[..taken],
         "the leading sections, whole"
+    );
+    assert_eq!(large.headings.len(), 60, "a heading for each part");
+    assert_eq!(
+        part.document.headings, large.headings,
+        "the contents whole, those past the first part too, within the cap"
     );
     let mut more = part.clone();
     more.document.sections.push(large.sections[taken].clone());
