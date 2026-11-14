@@ -69,10 +69,26 @@ fn the_contents_list_the_second_and_third_level_headings_in_order() {
 }
 
 #[test]
-fn a_heading_in_a_register_lists_only_the_groups_that_wait_on_the_owner() {
-    let text = "<!-- register:start -->\n## Needs your decision\n\n### Topic one\n\n- [ ] **a** — x\n\n## Resolved\n\n### Old topic\n\n- [r] **b** — y\n<!-- register:end -->\n\n## After\n";
-    let found: Vec<String> = headings(text).into_iter().map(|h| h.text).collect();
-    assert_eq!(found, ["Needs your decision", "Topic one", "After"]);
+fn a_register_lists_every_group_and_the_topics_only_of_the_groups_that_wait_on_the_owner() {
+    let text = "<!-- register:start -->\n## Needs your decision\n\n### Topic one\n\n- [ ] **a** — x\n\n## Auto-approved: spot-check\n\n### Releases\n\n- [a] **c** — z\n\n## Rejected and replaced\n\n### Page loading\n\n- [x] **d** — w\n\n## Resolved\n\n### Old topic\n\n- [r] **b** — y\n\n### Releases\n\n- [r] **e** — v\n<!-- register:end -->\n\n## After\n\n### Its part\n";
+    let found: Vec<(u8, String)> = headings(text)
+        .into_iter()
+        .map(|h| (h.level, h.text))
+        .collect();
+    let want = |level: u8, text: &str| (level, text.to_string());
+    assert_eq!(
+        found,
+        [
+            want(2, "Needs your decision"),
+            want(3, "Topic one"),
+            want(2, "Auto-approved: spot-check"),
+            want(3, "Releases"),
+            want(2, "Rejected and replaced"),
+            want(2, "Resolved"),
+            want(2, "After"),
+            want(3, "Its part"),
+        ]
+    );
 }
 
 #[test]

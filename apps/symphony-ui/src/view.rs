@@ -16,11 +16,6 @@ const HERO_PICTURES: usize = 6;
 #[component(lazy)]
 pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectView) -> Element {
     let counts = &board.counts;
-    let register = if project.register.is_empty() {
-        "docs/DECISIONS.md".to_string()
-    } else {
-        project.register.clone()
-    };
     rsx! {
         div { class: "dash",
             div { class: "dash-head page-head",
@@ -34,8 +29,11 @@ pub fn BoardView(board: Board, now: Moment, #[props(default)] project: ProjectVi
                     for item in project.nav.iter() {
                         a { key: "{item.href}", class: "pill", href: crate::project::href(&item.href), "{item.title}" }
                     }
-                    a { class: "pill", href: crate::project::href(&format!("/{register}")), "Decision register" }
-                    // The guide's route is the project's: a project without one has no link.
+                    // The register and the guide are the project's: a project without either file
+                    // (a new one) has no link to it, nor a read ahead of it.
+                    if !project.register.is_empty() {
+                        a { class: "pill", href: crate::project::href(&format!("/{}", project.register)), "Decision register" }
+                    }
                     if !project.guide.is_empty() {
                         a { class: "pill", href: crate::project::href(&format!("/{}", project.guide)), "How review works" }
                     }
@@ -189,7 +187,8 @@ fn Tiles(counts: Counts) -> Element {
             Tile { href: "/queue#you", value: counts.waiting.to_string(), label: "waiting on you", tone: "you", hint: waiting_hint }
             Tile { href: "/queue#spot", value: counts.spot_check.to_string(), label: "auto-approved to spot-check", tone: "auto", hint: "your verdict overrides" }
             ActivityTile { value: counts.answered_today.to_string() }
-            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "on the board" }
+            // The status's count: the board's In progress column leaves out its Build and Test.
+            Tile { href: "/tasks", value: tasks, label: "tasks in progress · in review", tone: "tasks", hint: "in progress includes Build and Test" }
             Tile { href: "/agents", value: live, label: "agents live", tone: "agents", hint: "working now" }
         }
     }

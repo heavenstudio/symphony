@@ -1204,13 +1204,12 @@ fn filtered_document_event(json: &str, filter: &(String, Vec<String>)) -> String
                         card["key"].as_str().unwrap_or_default()
                     )) && let Some(value) = card["value"].as_object_mut()
                     {
-                        let summary = value
-                            .get("text")
-                            .and_then(|text| text.as_str())
-                            .unwrap_or_default()
-                            .chars()
-                            .take(140)
-                            .collect::<String>();
+                        let summary = symphony::docview::card_line(
+                            value
+                                .get("text")
+                                .and_then(|text| text.as_str())
+                                .unwrap_or_default(),
+                        );
                         value.insert("text".into(), json!(summary));
                     }
                 }

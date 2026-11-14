@@ -82,12 +82,28 @@ planner, test selection, certificate or shared slot pool. The toolchain
 pin is `rust-toolchain.toml`. The containing project keeps its own source launcher,
 slot wrapper and gates, which compile and test its own consumers.
 
-`tools/rs-bin.sh NAME` builds a declared workspace binary with Cargo before every
-run and runs `rs-bin/NAME` in the target folder, a hard link renewed only when Cargo
-relinked, so a no-op build costs no new executable's first run. `--build NAME` prints
-that path, `--where NAME` names Cargo's own copy without building or attesting
-freshness, and `--link NAME` builds and points `.target/bin/NAME` at it; that build
-is never recorded. A board
+`tools/rs-bin.sh NAME` runs a declared workspace binary as `rs-bin/NAME` in the target
+folder, a hard link to Cargo's copy renewed only when Cargo relinked, so a no-op build
+costs no new executable's first run. A run asks Cargo to build first unless nothing
+Cargo would read changed since the last build the launcher asked it for began, as a
+stamp beside the link says (`rs-bin/.NAME.fresh`, holding the second that build began
+and the identity of the build it vouches for, so one linked in its place since asks too):
+each file Cargo's own `debug/NAME.d` names, everything under a folder it names (one a
+build script watches) and the manifest above each; the workspace's manifest and lock,
+the launcher and `tools/cargo.sh`; every Cargo configuration and toolchain pin from the
+root up and in Cargo's and rustup's homes; and the variables Cargo, rustc and rustup
+read, those the target's build scripts declared and those its sources read as rustc
+recorded them (`# env-dep:` in each unit's dep-info). A file counts as changed when its
+status changed (its ctime, which a write, a move, a copy keeping times or a touch sets
+to now) in that second or after, so the stamp's own file times count for nothing; an
+account it cannot read or a stamp from the future asks Cargo. It does not see a
+variable whose name bash cannot read (a target triple's hyphens; the underscore twin a
+build script declares with it is seen) or a toolchain a channel pin names updated in
+place (this workspace pins a version), and a clock set back past the stamp's second
+fools it as it fools Cargo.
+`--build NAME` builds and prints that path, `--where NAME` names Cargo's own copy
+without building or attesting freshness, and `--link NAME` builds and points
+`.target/bin/NAME` at it; no build of the launcher's is recorded. A board
 binary run from a linked worktree against the live board runs the main checkout's
 launcher instead ([the board guide](crates/tasks/AGENTS.md)), and the board itself
 moves its live schema forward only for a build of the schema source the main checkout
@@ -190,10 +206,9 @@ way, in `[limits]`.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
 HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
-last step, without asking each time (the owner, 2026-11-11: "just land should do the push"; before
-it, "do push it yes"). The push fetches first, merges what `origin/main` gained, never forces,
-and pushes no other branch and no tag; one that fails leaves the landing done here and names the
-command to retry. A land here takes seconds: it runs no generator and, with `[land] check =
+last step, without asking each time: the push is part of the land. The push fetches first,
+merges what `origin/main` gained, never forces, and pushes no other branch and no tag; one that
+fails leaves the landing done here and names the command to retry. A land here takes seconds: it runs no generator and, with `[land] check =
 false` in `symphony.toml`, no check, the docs audit being evidence at the tip and part of the
 release run's `just verify`. It keeps main's side of the client distribution a branch changed, and
 the regenerator it starts detached rebuilds that from main's newest tip and lands it after
@@ -203,16 +218,14 @@ only a fresh reviewer's approve naming the tip, or the orchestrator's on a fast 
 create --fast-fix WHY`); any other approve, a conflict or a red goes back on the thread
 ([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator lands an approved
 task without asking the owner, and `just land` runs with no permission prompt: the fresh
-reviewer's approve is what decides it (the owner, 2026-11-12: "asks to lands should be auto
-approved by orchestrators"). A decision the owner must make goes through the decision docs, a
-card in [DECISIONS](docs/DECISIONS.md), not a question in chat. The one thing that pushes a tag
-is the release run (`just release`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
+reviewer's approve is what decides it, never a question to the owner. A decision the owner must
+make goes through the decision docs, a card in [DECISIONS](docs/DECISIONS.md), not a question in
+chat. The one thing that pushes a tag is the release run (`just release`, [RELEASES](docs/RELEASES.md#who-runs-it)), the release that run
 cut; running it or `--commit` by hand and installing its schedule are the owner's call, and an
-orchestrator does either only on the owner's word. The owner, 2026-11-12: "It would be nice to
-release a new version every given number of tasks done, say 20 and refresh server/clients", then
-"yes, a green release should refresh". So a land also starts a release run once 20 tasks have landed
-since the last release or the last run that checked something (`[releases] every_landings`, run by
-`[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link that any
+orchestrator does either only on the owner's word. A new version comes out every given number of
+tasks done, 20, and a green one refreshes the server and its clients: a land also starts a release
+run once 20 tasks have landed since the last release or the last run that checked something
+(`[releases] every_landings`, run by `[board] on_land` as the linked `.target/bin/symphony-build release --due`, a link that any
 `just release` in the main checkout makes or renews, which counts with git and builds nothing
 short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
@@ -270,8 +283,10 @@ stamped line, only where there is none, and adds `/.target/` and the artifacts f
 line. Each recipe runs
 the project's build linked at `.target/bin/NAME`, else the main checkout's link from a
 linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`, which the
-Symphony's board clients share). Stamped copies are kept current; an unstamped
-project copy wins. Project-specific skills and taste data stay in the project.
+Symphony's board clients share). Stamped copies are kept current; one that differs from
+its stamp, an edit since, is written over all the same, its line saying so and where the
+project's own goes (a recipe in its justfile); an unstamped project copy wins.
+Project-specific skills and taste data stay in the project.
 Retirement removes managed files and links, retaining project data. It writes no
 permission rule but the allow rules. A rule carries no stamp, so init removes only one a
 landed init wrote and it no longer does: an allow rule (`RETIRED`: the env-prefixed
@@ -285,8 +300,8 @@ recipes: `just symphony` starts, replaces or stops the machine's shared server a
 `just symphony-cli` reaches `serve` and `init`, so an agent is asked first.
 `just land` needs no prompt: what the default land lands is decided by its approval check, a
 fresh reviewer's approve standing on the tip ([TASKS](docs/TASKS.md#the-default-landing)), and
-a prompt would add only a wait on the owner (the owner, 2026-11-12: "should not require
-permission from me"). A project whose own `land` recipe replaces the default gets the same
+a prompt would add only a wait on the owner, whose permission a land does not need. A project
+whose own `land` recipe replaces the default gets the same
 allow rule, and its own landing policy decides what lands. The `land` recipe sets
 `SYMPHONY_LAND`, without which `tasks land` refuses, so `just tasks land` run by itself, an
 option such as `--as H` before `land` or not, never lands: a guard against accident, not the
@@ -329,12 +344,15 @@ themselves, which no rule allows, write where they are told: the owner's way to 
 project's own `tasks` or `symphony-*` recipe, which the allow rule still passes, gets the guard
 only by setting the marker itself (starting with `{{ _symphony_unasked }}`, as the comment above
 it in `symphony.just` says).
-Init refuses a `--root` that is not a folder, making nothing. It ends by printing what is
-left (`Next:`): the project file, its document folders, the justfile's import, the links
-to the project's builds the recipes and hooks find nowhere (with the `ln -s` for those
-beside the running `symphony`, and the `cargo build` in a Symphony checkout for the
-rest), `just` when it is not on PATH, the board's SurrealDB (the line that fetches the
-pinned tarball and checks its SHA-256) and the machine's registration; then that Claude
+Init refuses a `--root` that is not a folder or is in no git checkout (a bare repository or a
+`.git` folder is none), making nothing. It ends by printing what is left (`Next:`): the
+project file, naming its reference ([PROJECT_FILE](docs/PROJECT_FILE.md)) by its address in
+this repository, its document folders, the justfile's import, the links to the project's
+builds the recipes and hooks find nowhere (with the `ln -s` for those beside the running
+`symphony`, and the `cargo build` in a Symphony checkout for the rest), `just` when it is not
+on PATH, the board's SurrealDB (the line that fetches the pinned tarball and checks its
+SHA-256), the board's making while it is not made (`just tasks list`: the Symphony only reads
+a board) and the machine's registration; then that Claude
 Code counts the allow rules only once the folder is trusted. It warns on stderr while
 the heartbeat has no build of `symphony` or `tasks` to run. Every `just NAME` in
 the shipped skills, the docs, the guides and the binaries' strings is an installed recipe or

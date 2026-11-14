@@ -13,7 +13,8 @@ pub struct ProjectView {
     /// The name its theme package shows in the header and the tab: the project's own by default.
     pub name: String,
     /// The decision register as a link names it: its route when an entrypoint holds it
-    /// (`docs/DECISIONS.md`), whatever the folder is called, else its project-relative path.
+    /// (`docs/DECISIONS.md`), whatever the folder is called, else its project-relative path; empty
+    /// when the project has no such file yet, and the home then offers no link to one.
     pub register: String,
     /// The review guide as a link names it, by its route (`docs/REVIEW.md`); empty when the
     /// project has none, and the home then offers no link to one.

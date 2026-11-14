@@ -43,11 +43,7 @@ impl Renderer for RemoteRenderer {
         &self.content_type
     }
     fn draw(&self, page: &Page<'_>, file: &File<'_>) -> Result<Drawing, String> {
-        let asked = Draw {
-            renderer: self.name.clone(),
-            page: PageData::of(page),
-            file: FileData::of(file),
-        };
+        let asked = Draw::new(self.name.clone(), PageData::of(page), FileData::of(file));
         match self.remote.ask(&self.name, asked) {
             Ok(drawn) => drawn,
             // Required of every renderer, so in every minor.
@@ -71,11 +67,7 @@ impl Route for RemoteRoute {
         &self.path
     }
     fn serve(&self, root: &Path, rest: &str) -> Option<Reply> {
-        let asked = Serve {
-            route: self.path.clone(),
-            root: root.to_path_buf(),
-            rest: rest.into(),
-        };
+        let asked = Serve::new(self.path.clone(), root.to_path_buf(), rest.into());
         // No answer is not found: why is in the plugin's log.
         self.remote.ask(&self.path, asked).ok().flatten()
     }
@@ -92,10 +84,7 @@ impl HomeRegion for RemoteRegion {
         &self.id
     }
     fn region(&self, root: &Path) -> Option<Region> {
-        let asked = ShowRegion {
-            region: self.id.clone(),
-            root: root.to_path_buf(),
-        };
+        let asked = ShowRegion::new(self.id.clone(), root.to_path_buf());
         // No answer shows nothing: why is in the plugin's log.
         self.remote.ask(&self.id, asked).ok().flatten()
     }
@@ -114,10 +103,7 @@ impl DocCheck for RemoteCheck {
         &self.name
     }
     fn components(&self, docs: &Docs) -> Vec<String> {
-        let asked = DocComponents {
-            check: self.name.clone(),
-            root: docs.root().to_path_buf(),
-        };
+        let asked = DocComponents::new(self.name.clone(), docs.root().to_path_buf());
         // None named: a component only it names reads unknown, so the gap is seen.
         self.remote.ask(&self.name, asked).unwrap_or_default()
     }
@@ -125,10 +111,7 @@ impl DocCheck for RemoteCheck {
         self.inputs.clone()
     }
     fn check(&self, docs: &Docs) -> Vec<Problem> {
-        let asked = CheckDocs {
-            check: self.name.clone(),
-            root: docs.root().to_path_buf(),
-        };
+        let asked = CheckDocs::new(self.name.clone(), docs.root().to_path_buf());
         match self.remote.ask(&self.name, asked) {
             Ok(problems) => problems.into_iter().map(ProblemData::problem).collect(),
             Err(Failure::Newer(_)) => Vec::new(),
@@ -170,11 +153,11 @@ impl BoardAction for RemoteAction {
         &self.name
     }
     fn offer(&self, root: &Path, task: &TaskRef<'_>) -> Result<TaskOffer, String> {
-        self.ask(Offer {
-            action: self.name.clone(),
-            root: root.to_path_buf(),
-            task: TaskData::of(task),
-        })
+        self.ask(Offer::new(
+            self.name.clone(),
+            root.to_path_buf(),
+            TaskData::of(task),
+        ))
     }
     fn submit(
         &self,
@@ -182,12 +165,12 @@ impl BoardAction for RemoteAction {
         task: &TaskRef<'_>,
         submission: &Submission,
     ) -> Result<Submitted, String> {
-        self.ask(Submit {
-            action: self.name.clone(),
-            root: root.to_path_buf(),
-            task: TaskData::of(task),
-            submission: submission.clone(),
-        })
+        self.ask(Submit::new(
+            self.name.clone(),
+            root.to_path_buf(),
+            TaskData::of(task),
+            submission.clone(),
+        ))
     }
 }
 
@@ -210,10 +193,7 @@ impl Watch for RemoteWatch {
         self.paths.clone()
     }
     fn changed(&self, root: &Path) -> Option<String> {
-        let asked = Changed {
-            watch: self.index,
-            root: root.to_path_buf(),
-        };
+        let asked = Changed::new(self.index, root.to_path_buf());
         match self.remote.ask(&self.named(), asked) {
             Ok(said) => said,
             Err(Failure::Newer(_)) => None,
@@ -225,10 +205,7 @@ impl Watch for RemoteWatch {
         }
     }
     fn forget(&self, root: &Path) {
-        let asked = Forget {
-            watch: self.index,
-            root: root.to_path_buf(),
-        };
+        let asked = Forget::new(self.index, root.to_path_buf());
         // Nothing to show: a failure is in the plugin's log, and a process that ends forgets all
         // it kept.
         let _ = self.remote.ask(&self.named(), asked);

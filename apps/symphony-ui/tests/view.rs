@@ -146,6 +146,10 @@ fn the_counts_link_to_where_their_detail_lives() {
         let tile = format!(r#"href="{href}"><b>{value}</b><span>{label}</span>"#);
         assert!(html.contains(&tile), "{tile}\nin {html}");
     }
+    // The tasks tile counts the status, which the board splits into In progress, Build and Test,
+    // and says so.
+    let tasks = r#"<span>tasks in progress · in review</span><small>in progress includes Build and Test</small>"#;
+    assert!(html.contains(tasks), "{tasks}\nin {html}");
     // Today's replies have no page: their tile is a button that opens the activity panel.
     let replies = r#"<button type="button" class="tile card tone-answered" aria-controls="activity-panel"><b>6</b><span>answered by agents today</span>"#;
     assert!(html.contains(replies), "{replies}\nin {html}");
@@ -342,12 +346,27 @@ fn the_home_links_the_projects_own_pages_and_its_register() {
         !links.contains("/lamps"),
         "a plain project adds no page: {links}"
     );
-    assert!(links.contains(r#"href="/docs/DECISIONS.md""#), "{links}");
+    assert!(
+        !links.contains("Decision register") && !links.contains("DECISIONS.md"),
+        "a project without a register (a new one) links to none: {links}"
+    );
     assert!(
         !links.contains("How review works"),
         "a project without a review guide links to none: {links}"
     );
     let now = Moment::parse("2026-10-08 10:12").unwrap();
+    let registered = symphony_api::ProjectView {
+        register: "docs/DECISIONS.md".into(),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(
+        rsx! { BoardView { board: board("board.json"), now, project: registered } },
+    );
+    assert!(
+        self::links(&html)
+            .contains(r#"<a class="pill" href="/docs/DECISIONS.md">Decision register</a>"#),
+        "{html}"
+    );
     let project = symphony_api::ProjectView {
         name: "Orbit".into(),
         register: "notes/register.md".into(),

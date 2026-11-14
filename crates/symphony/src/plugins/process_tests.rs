@@ -327,16 +327,15 @@ fn tiny_declaring(id: u64) -> String {
 
 /// A declaration of the plugin `old` in `protocol`: a component and a card kind, both `old`.
 fn old_declared(protocol: Version) -> Declaration {
-    Declaration {
-        protocol,
-        name: "old".into(),
-        components: vec!["old".into()],
-        card_kinds: vec![DeclaredKind {
-            name: "old".into(),
-            markers: vec!["Slot".into()],
-        }],
-        ..Declaration::default()
-    }
+    let mut kind = DeclaredKind::default();
+    kind.name = "old".into();
+    kind.markers = vec!["Slot".into()];
+    let mut declared = Declaration::default();
+    declared.protocol = protocol;
+    declared.name = "old".into();
+    declared.components = vec!["old".into()];
+    declared.card_kinds = vec![kind];
+    declared
 }
 
 /// The answer of a render, written: a paragraph saying `text`.
@@ -535,7 +534,7 @@ fn a_call_newer_than_the_minor_agreed_is_not_sent_and_the_seams_own_default_answ
     let tree = Tree::new();
     let seen = Seen::default();
     let respond: Respond = Arc::new(|_, request| panic!("{request} was sent"));
-    let older = Version { major: 0, minor: 0 };
+    let older = Version::new(0, 0);
     let remote = Remote::leaked(
         "old",
         process_in(&tree, "old"),
@@ -603,10 +602,7 @@ fn a_plugin_of_the_previous_minor_is_served_and_reads_a_page_of_this_one_as_its_
         );
         Said::Lines(vec![answering(id, &rendered(&said))])
     });
-    let previous = Version {
-        major: PROTOCOL.major,
-        minor: PROTOCOL.minor - 1,
-    };
+    let previous = Version::new(PROTOCOL.major, PROTOCOL.minor - 1);
     let remote = Remote::leaked(
         "old",
         process_in(&tree, "old"),
@@ -640,7 +636,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let seen = Seen::default();
     let starts = Arc::new(AtomicUsize::new(0));
     let refusing = hand_made(
-        old_declared(Version { major: 1, minor: 0 }),
+        old_declared(Version::new(1, 0)),
         Arc::new(|_, request| panic!("{request} was sent")),
         seen.clone(),
         "exited with code 0",
@@ -701,13 +697,11 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
          names; it is not started again until its program or the project's settings change"
     );
     // A seam a process answers beside one it does not: refused, naming only the one.
-    let wider = Declaration {
-        routes: vec!["/x".into()],
-        gates: vec!["landing".into()],
-        prose_rules: vec!["plain".into()],
-        theme: Some(symphony_plugin::Theme::default()),
-        ..tiny_declared()
-    };
+    let mut wider = tiny_declared();
+    wider.routes = vec!["/x".into()];
+    wider.gates = vec!["landing".into()];
+    wider.prose_rules = vec!["plain".into()];
+    wider.theme = Some(symphony_plugin::Theme::default());
     assert_eq!(
         refused(wider),
         "its process is refused: it declares gates, prose rules, which a plugin's process does \
@@ -718,39 +712,30 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
 
 #[test]
 fn the_seams_a_process_does_not_answer_are_each_named() {
-    use symphony_plugin::protocol::{
-        DeclaredCheck, DeclaredField, DeclaredGenerator, DeclaredRenderer,
-    };
+    use symphony_plugin::protocol::{DeclaredCheck, DeclaredGenerator, DeclaredRenderer};
     assert!(unanswered(&tiny_declared()).is_empty());
-    let every = Declaration {
-        renderers: vec![DeclaredRenderer::default()],
-        routes: vec!["/r".into()],
-        nav: vec![symphony_plugin::vocabulary::NavItem {
-            label: "n".into(),
-            title: "N".into(),
-            href: "/n".into(),
-            document: "docs/N.md".into(),
-        }],
-        home_regions: vec!["h".into()],
-        board_actions: vec!["a".into()],
-        board_fields: vec![DeclaredField {
-            name: "f".into(),
-            kind: symphony_plugin::FieldKind::Text,
-            required: false,
-        }],
-        gates: vec!["g".into()],
-        watches: vec![vec!["w".into()]],
-        doc_checks: vec![DeclaredCheck::default()],
-        prose_rules: vec!["p".into()],
-        generators: vec![DeclaredGenerator::default()],
-        commands: vec![DeclaredCommand {
-            name: "c".into(),
-            summary: "c".into(),
-        }],
-        transports: vec!["t".into()],
-        theme: Some(symphony_plugin::Theme::default()),
-        ..tiny_declared()
-    };
+    let mut every = tiny_declared();
+    every.renderers = vec![DeclaredRenderer::default()];
+    every.routes = vec!["/r".into()];
+    every.nav = vec![symphony_plugin::vocabulary::NavItem {
+        label: "n".into(),
+        title: "N".into(),
+        href: "/n".into(),
+        document: "docs/N.md".into(),
+    }];
+    every.home_regions = vec!["h".into()];
+    every.board_actions = vec!["a".into()];
+    // A board field as a process declares it, on the wire.
+    every.board_fields =
+        vec![serde_json::from_str(r#"{"name":"f","kind":"Text","required":false}"#).unwrap()];
+    every.gates = vec!["g".into()];
+    every.watches = vec![vec!["w".into()]];
+    every.doc_checks = vec![DeclaredCheck::default()];
+    every.prose_rules = vec!["p".into()];
+    every.generators = vec![DeclaredGenerator::default()];
+    every.commands = vec![DeclaredCommand::default()];
+    every.transports = vec!["t".into()];
+    every.theme = Some(symphony_plugin::Theme::default());
     assert_eq!(
         unanswered(&every),
         [
@@ -767,36 +752,35 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
 /// and card kinds, with its navigation and theme.
 fn wide_declared() -> Declaration {
     use symphony_plugin::protocol::{DeclaredCheck, DeclaredRenderer};
-    Declaration {
-        renderers: vec![DeclaredRenderer {
-            name: "model".into(),
-            extensions: vec!["stl".into(), "obj".into()],
-            content_type: "model/stl".into(),
-        }],
-        routes: vec!["shelf".into()],
-        nav: vec![symphony_plugin::vocabulary::NavItem {
-            label: "shelf".into(),
-            title: "Shelf".into(),
-            href: "/x/shelf".into(),
-            document: "docs/SHELF.md".into(),
-        }],
-        home_regions: vec!["progress".into()],
-        board_actions: vec!["land".into()],
-        watches: vec![
-            vec!["data".into()],
-            vec!["models".into(), "pictures".into()],
-        ],
-        doc_checks: vec![DeclaredCheck {
-            name: "links".into(),
-            inputs: vec!["data/links.json".into()],
-        }],
-        theme: Some(symphony_plugin::Theme {
-            package: "tiny".into(),
-            name: "Tiny".into(),
-            ..symphony_plugin::Theme::default()
-        }),
-        ..tiny_declared()
-    }
+    let mut renderer = DeclaredRenderer::default();
+    renderer.name = "model".into();
+    renderer.extensions = vec!["stl".into(), "obj".into()];
+    renderer.content_type = "model/stl".into();
+    let mut check = DeclaredCheck::default();
+    check.name = "links".into();
+    check.inputs = vec!["data/links.json".into()];
+    let mut declared = tiny_declared();
+    declared.renderers = vec![renderer];
+    declared.routes = vec!["shelf".into()];
+    declared.nav = vec![symphony_plugin::vocabulary::NavItem {
+        label: "shelf".into(),
+        title: "Shelf".into(),
+        href: "/x/shelf".into(),
+        document: "docs/SHELF.md".into(),
+    }];
+    declared.home_regions = vec!["progress".into()];
+    declared.board_actions = vec!["land".into()];
+    declared.watches = vec![
+        vec!["data".into()],
+        vec!["models".into(), "pictures".into()],
+    ];
+    declared.doc_checks = vec![check];
+    declared.theme = Some(symphony_plugin::Theme {
+        package: "tiny".into(),
+        name: "Tiny".into(),
+        ..symphony_plugin::Theme::default()
+    });
+    declared
 }
 
 #[test]
@@ -1689,12 +1673,12 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
     assert_eq!(connection.closed(), first);
     assert_eq!(remote.down().as_deref(), Some(first));
     // A request that reaches it after, or a line queued for its closed stdin, is told the same.
-    let request = Render {
-        component: "tiny".into(),
-        page: PageData::of(&Page::new(&tree.root, "docs/A.md")),
-        argument: "a".into(),
-        option: None,
-    };
+    let request = Render::new(
+        "tiny".into(),
+        PageData::of(&Page::new(&tree.root, "docs/A.md")),
+        "a".into(),
+        None,
+    );
     let sent = remote.sent_within(&connection, request.into(), WAIT, &mut |_| Ok(()));
     assert_eq!(sent.err().as_deref(), Some(first));
     assert_eq!(
@@ -1732,9 +1716,10 @@ fn a_declaration_changed_at_a_restart_is_noted_and_the_first_stands() {
         "exited with code 0",
     );
     let changed = hand_made(
-        Declaration {
-            components: vec!["tiny".into(), "another".into()],
-            ..tiny_declared()
+        {
+            let mut declared = tiny_declared();
+            declared.components = vec!["tiny".into(), "another".into()];
+            declared
         },
         Arc::new(|_, _| Said::End),
         Seen::default(),
@@ -1848,10 +1833,7 @@ fn a_call_with_no_answer_is_recorded_with_why_and_without_the_plugins_time() {
         limits(PATIENT, Duration::ZERO),
     );
     remote.record_into(Some(Record::at(&record)));
-    let request = Recognises {
-        kind: "tiny".into(),
-        card: with_card("", CardData::of),
-    };
+    let request = Recognises::new("tiny".into(), with_card("", CardData::of));
     assert_eq!(
         remote.ask("tiny", request),
         Err(Failure::Down(
@@ -1881,10 +1863,7 @@ fn the_loopbacks_own_call_is_not_asked_of_a_process() {
         peer(&TINY, starts.clone()),
         patient(),
     );
-    let request = symphony_plugin::protocol::RunCommand {
-        command: "every".into(),
-        args: Vec::new(),
-    };
+    let request = symphony_plugin::protocol::RunCommand::new("every".into(), Vec::new());
     assert_eq!(
         remote.ask("every", request),
         Err(Failure::Down(
@@ -2191,11 +2170,9 @@ fn long_cards(count: usize) -> Vec<CardData> {
     (1..=count)
         .map(|n| {
             let text = format!("Pick tiny {n}. {}", "Its long story. ".repeat(40));
-            let card = with_card(&text, CardData::of);
-            CardData {
-                slug: format!("pick-{n}"),
-                ..card
-            }
+            let mut card = with_card(&text, CardData::of);
+            card.slug = format!("pick-{n}");
+            card
         })
         .collect()
 }
@@ -2221,11 +2198,7 @@ fn a_register_read_asks_its_cards_in_as_few_requests_as_fit_a_line_and_answers_e
     // A line that holds three of them as the host counts one, its id the longest an id is.
     let three = serde_json::to_vec(&Envelope::<Request, ()>::asking(
         u64::MAX,
-        ReadCards {
-            root: tree.root.clone(),
-            cards: cards[..3].to_vec(),
-        }
-        .into(),
+        ReadCards::new(tree.root.clone(), cards[..3].to_vec()).into(),
     ))
     .unwrap()
     .len();
@@ -2283,11 +2256,7 @@ fn a_card_too_long_for_a_line_alone_is_left_to_its_own_calls_and_the_others_read
     let mut cards = long_cards(3);
     let one = serde_json::to_vec(&Envelope::<Request, ()>::asking(
         u64::MAX,
-        ReadCards {
-            root: tree.root.clone(),
-            cards: cards[..1].to_vec(),
-        }
-        .into(),
+        ReadCards::new(tree.root.clone(), cards[..1].to_vec()).into(),
     ))
     .unwrap()
     .len();
@@ -2419,18 +2388,16 @@ fn a_read_of_the_registers_is_one_request_and_answers_every_card_as_linked() {
 fn a_plugin_of_the_previous_minor_is_asked_a_reads_cards_one_by_one_and_answers_the_same() {
     let tree = Tree::new();
     let seen = Seen::default();
-    let previous = Version {
-        major: PROTOCOL.major,
-        minor: ReadCards::SINCE - 1,
-    };
+    let previous = Version::new(PROTOCOL.major, ReadCards::SINCE - 1);
     let remote = Remote::leaked(
         "tiny",
         process_in(&tree, "tiny"),
         serving_as(
             &TINY,
-            Declaration {
-                protocol: previous,
-                ..tiny_declared()
+            {
+                let mut declared = tiny_declared();
+                declared.protocol = previous;
+                declared
             },
             seen.clone(),
         ),
