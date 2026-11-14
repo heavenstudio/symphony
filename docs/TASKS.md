@@ -1877,8 +1877,8 @@ built the next is main's newest tip: a build in progress is never cancelled but 
 finish, and there is no queue, so some merges are never built on their own. A land that
 closed its task starts
 `tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
-build, its output appended to `symphony/tasks/land/regenerate.log`, and waits for nothing it
-does.
+build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
+`regenerate.log.1` past 1 MiB by a start, never while one runs), and waits for nothing it does.
 
 - **One build of main at a time.** It holds `symphony/tasks/land/regenerate.lock`, taken
   without waiting and naming its process and that process's start, as the land's lock

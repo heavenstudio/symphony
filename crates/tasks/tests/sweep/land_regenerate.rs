@@ -7,6 +7,7 @@ use super::*;
 use symphony_board::land::regenerate::{
     self, CHECKED, Checked, LOCK as REGENERATING, RED, RED_CHECK, State,
 };
+use symphony_board::sweep::trigger::LOG_LIMIT;
 
 /// The regenerator run from the main checkout, as a land starts it: what it said, and its last
 /// line or why it stopped.
@@ -1201,6 +1202,47 @@ fn two_triggers_at_once_start_one_build() {
     assert_eq!(
         git(&r.root, &["log", "--format=%s", &format!("{tip}..main")]),
         format!("Regenerate the index for main at {}", &tip[..7])
+    );
+}
+
+/// Its log past the sweep's bound is set aside as `regenerate.log.1`, the one before dropped, by a
+/// start that starts one; a start that finds one running leaves it where it is, as that one writes
+/// on into it.
+#[test]
+fn a_start_sets_its_log_aside_past_its_bound_and_never_under_one_that_runs() {
+    let r = Repo::new();
+    generating(&r, &[&index(&r)]);
+    fs::create_dir_all(lands(&r)).unwrap();
+    let log = lands(&r).join("regenerate.log");
+    let aside = lands(&r).join("regenerate.log.1");
+    let full = format!("{}\n", "x".repeat(LOG_LIMIT as usize));
+    fs::write(&log, &full).unwrap();
+    fs::write(&aside, "the one before\n").unwrap();
+    let held = fs::File::create(lands(&r).join(REGENERATING)).unwrap();
+    held.lock().unwrap();
+    assert_eq!(
+        trigger(&r),
+        "another regenerator: it makes main's newest tip once it ends; nothing started"
+    );
+    assert_eq!(fs::read_to_string(&log).unwrap(), full);
+    assert_eq!(fs::read_to_string(&aside).unwrap(), "the one before\n");
+    // Let go as the regenerator lets go of its own (`a_second_regenerator_ends_at_once_while_one_runs`).
+    held.unlock().unwrap();
+    drop(held);
+    let tip = head(&r.root, "main");
+    let started = trigger(&r);
+    assert!(
+        started.starts_with("the regenerator makes the index in the background"),
+        "{started}"
+    );
+    let landed = format!("Regenerate the index for main at {}: landed", &tip[..7]);
+    wait_for(|| logged(&r).lines().any(|l| l.starts_with(&landed)) && lock_free(&r));
+    assert_eq!(fs::read_to_string(&aside).unwrap(), full);
+    let fresh = logged(&r);
+    assert!(!fresh.contains(&"x".repeat(64)), "{fresh}");
+    assert!(
+        fresh.contains("regenerate: making the index for main at "),
+        "{fresh}"
     );
 }
 
