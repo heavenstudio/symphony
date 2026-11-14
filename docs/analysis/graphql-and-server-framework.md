@@ -60,25 +60,32 @@ a query on Axum 0.8 in the probe, speak subscriptions over WebSocket, and derive
 Rust types with derives of their own, so the wire types would each take a second derive in
 `symphony-api`, behind a feature as the TypeScript one is.
 
-**Recommended: A, Juniper.** The reasons ([The library](#the-rust-graphql-library)):
+**Recommended: A, Juniper, by a narrow margin.** The reasons ([The library](#the-rust-graphql-library)):
 
-- **It is the one being released.** Juniper 0.18.0 and its Axum integration came out on
-  2026-10-30, and its last commit is from 2026-11-09. async-graphql's newest stable, 7.2.1, is
-  from 2026-01-20; nothing has been pushed to it since 2026-04-21, its 8.0 has been a release
-  candidate for ten months, and an open issue asks whether it is still maintained, answered in
-  December 2025 by a second maintainer it took on.
 - **It is the lighter.** Measured in a minimal Axum server against a plain JSON one, compiled
   from nothing for release: Juniper 54 s more CPU and 0.8 MiB more binary, async-graphql 158 s
   and 1.5 MiB. The server's size budget has about 0.6 MiB of room, so either needs its line
   raised, Juniper by less.
+- **It is the one released lately.** Juniper 0.18.0 and its Axum integration came out on
+  2026-10-30, and its last commit is from 2026-11-09. async-graphql's newest stable, 7.2.1, is
+  from 2026-01-20; nothing has been pushed to it since 2026-04-21, and its 8.0 has been a release
+  candidate for ten months. It is not abandoned: asked in November 2025 whether it was still
+  maintained ([#1762](https://github.com/async-graphql/async-graphql/issues/1762)), it took on a
+  second maintainer, who answered in December 2025 and made most of its commits since; but that
+  maintainer's work stops in April too.
 - **Speed is level:** 74 µs a query on Juniper, 62 µs on async-graphql, for the board and 30
   tasks; both nothing beside a read's own work.
 
+With the maintenance question answered by a maintainer, the release record leans to Juniper by
+less than a stall would suggest: seven quiet months against a release two weeks old. What
+decides it is mostly the measured weight, compile time and binary, which grows with each of the
+wire's 158 types derived (inferred).
+
 **Its weakest point.** async-graphql has about thirteen times the users (4.4 million downloads in
-90 days against 0.35 million) and more conveniences: it takes any serde type whole as a JSON value
-(`Json<T>`), which the blocks and the plugins' fields would need, where Juniper needs a scalar of
-the Symphony's own for it. Juniper is a 0.x line whose minors break (0.17.2 and 0.18.0 two days
-apart), with seven committers in the year.
+90 days against 0.35 million), two maintainers, and more conveniences: it takes any serde type
+whole as a JSON value (`Json<T>`), which the blocks and the plugins' fields would need, where
+Juniper needs a scalar of the Symphony's own for it. Juniper is a 0.x line whose minors break
+(0.17.2 and 0.18.0 two days apart), with seven people committing in the year.
 
 ### Which server framework
 
@@ -99,8 +106,10 @@ apart), with seven committers in the year.
 
 **Its weakest point.** Actix Web has scored above Axum in published benchmarks, and is released
 more often. At this load that buys nothing measurable, and the move would touch 14 of the
-server's source files and 25 of its test files. Axum's next version, 0.9, changes the listener
-seam the server implements, so staying costs one change there when it comes.
+server's source files and 25 of its test files. Staying costs one change when Axum's next
+version comes: it changes `axum::serve`, which the server calls in one place, and applies a
+30-second limit on reading a request's head that the server's listener does not have today
+([Is anything about Axum failing](#is-anything-about-axum-failing)).
 
 ### What it changes in the port
 
@@ -418,8 +427,9 @@ The foundation's three modules, as the React port's orchestrator asked (read in 
 ## The Rust GraphQL library
 
 The two that are maintained, looked up on 2026-11-14 on crates.io (its API: versions, dates,
-downloads) and GitHub (`gh api`: commits since 2025-11-14 on the default branch, bots aside, and
-the open issues and pull requests); the probe's rows measured as [below](#the-probe). A search of
+downloads) and GitHub (`gh api`: commits since 2025-11-14 on the default branch without those
+whose author's account GitHub marks as a bot, Dependabot's chiefly, and the people who made
+them; and the open issues and pull requests); the probe's rows measured as [below](#the-probe). A search of
 crates.io found no other maintained, general-purpose Rust GraphQL server: seaography and
 dynamic-graphql are built on async-graphql, juniper-from-schema was last released in 2020, and
 cynic, graphql_client and apollo-rs are clients or compilers.
@@ -428,7 +438,7 @@ cynic, graphql_client and apollo-rs are clients or compilers.
 |---|---|---|
 | newest | 0.18.0, 2026-10-30 | 7.2.1, 2026-01-20; 8.0.0-rc.5, 2026-04-21 |
 | before it | 0.17.2 (2026-10-28), 0.17.1 (2026-01-26), 0.17.0 (2025-09-08), 0.16.2 (2025-06-25) | 7.2.0 (2026-01-16), 7.1.0 (2026-01-02), 7.0.19 (2026-01-01), 7.0.17 (2025-05-24): none from May 2025 to January 2026 |
-| who | the graphql-rust organization: 71 commits by 7 people in the year | the async-graphql organization, its author and, since December 2025, a second maintainer ([#1762](https://github.com/async-graphql/async-graphql/issues/1762), "Is this library still being maintained?"): 87 commits by 24 people in the year, 54 of them that maintainer's |
+| who | the graphql-rust organization: 53 commits by 7 people in the year (71 with bots') | the async-graphql organization, its author and, since December 2025, a second maintainer, taken on after [#1762](https://github.com/async-graphql/async-graphql/issues/1762) ("Is this library still being maintained?", opened 2025-11-03, answered by that maintainer on 2025-12-24 and closed on 2025-12-26): 87 commits by 24 people in the year, none of them bots', 54 of them that maintainer's |
 | last commit | 2026-11-09 | 2026-04-21, and nothing pushed since |
 | open issues, pull requests | 48, 13 | 228, 31 |
 | downloads, all and the last 90 days | 3.7 million, 0.35 million | 34.8 million, 4.4 million |
@@ -509,17 +519,18 @@ the server's own), give a middleware seam and streaming bodies, and compress.
 ### The candidates
 
 Looked up on 2026-11-14 as the libraries were ([crates.io](https://crates.io), their repositories
-and docs.rs at each version named).
+and docs.rs at each version named), the commits counted without bots' the same way; Hyper's,
+Poem's, Warp's and ntex's had none.
 
 | | newest | who, and the last year | runtime | SSE | WebSocket | compression | an inherited listener | tower |
 |---|---|---|---|---|---|---|---|---|
-| **Axum** | 0.8.9, 2026-04-14; last commit 2026-11-13 | tokio-rs: 259 commits by 83 people | tokio | `response::sse` | `ws` feature | `tower-http` | `serve` over any `Listener`: the server's own today | its own |
-| **Actix Web** | 4.19.0, 2026-11-09; six releases since 2026-10-12 | the actix organization: 504 commits by 27 people | `actix-rt`, a single-threaded tokio runtime per worker | in `actix-web-lab` | `actix-ws` | built in (`Compress`) | `HttpServer::listen`, a `std::net::TcpListener` as it is | no: its own service trait |
+| **Axum** | 0.8.9, 2026-04-14; last commit 2026-11-13 | tokio-rs: 233 commits by 83 people (259 with bots') | tokio | `response::sse` | `ws` feature | `tower-http` | `serve` over any `Listener`: the server's own today | its own |
+| **Actix Web** | 4.19.0, 2026-11-09; six releases since 2026-10-12 | the actix organization: 295 commits by 27 people (504 with Dependabot's) | `actix-rt`, a single-threaded tokio runtime per worker | in `actix-web-lab` | `actix-ws` | built in (`Compress`) | `HttpServer::listen`, a `std::net::TcpListener` as it is | no: its own service trait |
 | **Rocket** | 0.5.2, 2026-10-23, 29 months after 0.5.1; its main line 4 commits in the year | rwf2 | tokio | `EventStream` | `rocket_ws` 0.1.1, 2024-05-23 | none built in | none in 0.5.2 (`launch_on` is on its unreleased main line) | no: fairings |
 | **Warp** | 0.4.4, 2026-11-13 | its author's own account: 11 commits by 7 people; 179 open issues | tokio | a filter | a filter (feature) | a filter | `Server::incoming`, over a tokio listener | `warp::service` |
 | **Hyper** (bare, with `hyper-util`) | 1.12.0, 2026-10-06 (`hyper-util` 0.1.21) | hyperium: 137 commits by 62 people | tokio, through `hyper-util` | none | the upgrade alone | none | any socket the server accepts | through `hyper-util` |
 | **Poem** | 3.1.12, 2025-07-28: no release in 15 months, a 4.0 unreleased | poem-web: 62 commits by 18 people | tokio, Hyper 1 | feature | feature | feature | `TcpAcceptor::from_std` | `tower-compat` |
-| **Salvo** | 1.1.2, 2026-11-10 | salvo-rs: 679 commits, 602 of them one person's | tokio, Hyper 1 | feature | feature | feature | `TcpAcceptor` from a tokio listener | `tower-compat` |
+| **Salvo** | 1.1.2, 2026-11-10 | salvo-rs: 651 commits, 602 of them one person's (679 with bots') | tokio, Hyper 1 | feature | feature | feature | `TcpAcceptor` from a tokio listener | `tower-compat` |
 
 Beside them, ntex (4.8.0, 2026-11-12) runs on a runtime of its own by default, one person wrote
 680 of its 866 commits in the year, and no Server-Sent Events module was found in it; loco is a
@@ -579,10 +590,28 @@ end to end (inferred).
 No. Its one limit seen here, HTTP/1.1 alone, is the server's choice of features, and would hold
 on any framework: no browser speaks HTTP/2 without TLS
 ([HTTP/2's FAQ](https://http2.github.io/faq/#does-http2-require-encryption)), and the server
-serves plain HTTP on loopback and the tailnet. The one cost of staying is ahead: Axum's next
-version, 0.9, changes the `Listener` seam the server implements
-([its changelog, unreleased](https://github.com/tokio-rs/axum/blob/main/axum/CHANGELOG.md)), so
-`front/connections.rs` changes when 0.9 is taken.
+serves plain HTTP on loopback and the tailnet. The one cost of staying is ahead, in Axum's
+next version, 0.9, whose breaking changes are to `axum::serve`, not to the `Listener` trait the
+server implements, which is the same on Axum's main line as in 0.8.9
+([its changelog, unreleased](https://github.com/tokio-rs/axum/blob/main/axum/CHANGELOG.md)):
+
+- **Its future's output** is no longer an `io::Result`, and **it takes a generic for the
+  response body**. The server calls it once (`front/connections.rs`, `Connections::serve`) and
+  discards the output, so these are a compile fix in that file (inferred).
+- **It applies hyper's default `header_read_timeout`,** 30 seconds (hyper's
+  `http1::Builder::header_read_timeout`; Axum 0.8.9's `serve/mod.rs` sets no timer, so none
+  applies today). hyper
+  starts that clock whenever it begins reading a request's head, and closes the connection when
+  no complete head has come within it (read in hyper 1.12.0's `proto/h1/conn.rs`). That is a
+  change of behaviour for this listener, which admits each connection before its first read and
+  answers the sockets Hyper drops on a drain with a `503`: a connection that sends nothing for 30
+  s, a browser's idle kept-alive one among them, would be closed where today it is kept, and the
+  listener's tests that hold idle peers would show what that does to the drain (inferred, not
+  tried). Axum added it so that a graceful shutdown cannot hang on a request stuck in its head
+  ([#3478](https://github.com/tokio-rs/axum/pull/3478)), which this listener already prevents
+  by cancelling unadmitted reads; `axum::serve` on the main line offers no setting for it (read
+  in its `serve/mod.rs`), so taking 0.9 means keeping the limit, those paths checked, or serving
+  through `hyper-util` directly.
 
 ## The probe
 
