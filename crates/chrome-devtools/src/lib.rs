@@ -1101,13 +1101,15 @@ impl Chrome {
     /// tells of that this driver did not open itself (`Target.targetCreated`: a page the page
     /// opened, by a link or a script; `Target.targetInfoChanged`: its document committed, or its
     /// title) has the page brought back in front at once, unwaited, as its event is read, in any
-    /// call or wait: the browser does it without asking the page. A page behind another draws no
-    /// frames, and Chrome closes the dialog of a page that is not in front. A page of the page's
-    /// own site opened with its opener runs in the page's renderer, and a dialog it shows in front
-    /// holds that renderer, and every call and wait on the page with it, until it is answered: it
-    /// is closed as the page comes back in front, or as it opens once that page is behind. Such a
-    /// page is only told of (`Target.setDiscoverTargets`), never attached or held: it runs as
-    /// Chrome leaves it, and its dialogs are not among [`Chrome::events`].
+    /// call or wait: the browser does it without asking the page. A page behind another tab draws
+    /// no frames, and Chrome closes the dialog of a tab behind another. A page of the page's own
+    /// site opened with its opener runs in the page's renderer, and a dialog it shows in front
+    /// holds that renderer, and every call and wait on the page with it, until it is answered:
+    /// opened as a tab, its dialog is closed as the page comes back in front, or as it opens once
+    /// that tab is behind. A window of its own (`window.open` with window features) stays in front
+    /// in its own right whatever the page does, and keeps its dialog. Such a page is only told of
+    /// (`Target.setDiscoverTargets`), never attached or held: it runs as Chrome leaves it, and its
+    /// dialogs are not among [`Chrome::events`].
     pub fn keep_in_front(&mut self) -> Result<()> {
         self.fronting = true;
         self.discover()
