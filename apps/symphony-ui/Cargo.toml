@@ -32,9 +32,6 @@ name = "floor_websys"
 path = "probes/floor_websys.rs"
 required-features = ["size-probe"]
 
-[[example]]
-name = "ssr_size"
-
 [dependencies]
 # Dioxus is the owner's choice (2026-10-08: "I want to experiment more with dioxus, so let's switch to
 # it"), pinned to one version: dx (apps/symphony-ui/tools.sh) is built at the same one. Only the parts
@@ -117,9 +114,8 @@ web-sys = { version = "0.3", features = [
 # One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
 # its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
 [features]
-default = ["web", "page-board", "page-tasks", "overlays"]
+default = ["web", "page-tasks", "overlays"]
 web = ["dioxus/web"]
-page-board = []
 page-tasks = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
@@ -132,7 +128,7 @@ page-timeline = []
 page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-panel", "page-overlay", "page-timeline"]
+devtools = ["dioxus/devtools", "page-tasks", "page-panel", "page-overlay", "page-timeline"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

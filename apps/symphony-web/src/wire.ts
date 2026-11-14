@@ -326,6 +326,145 @@ export type ReportMark = {
   subject: string;
 };
 
+export type TaskListing = {
+  machine_work: MachineWork;
+  tasks: Array<Task>;
+  statuses: Array<string>;
+  signoff: Array<string>;
+  counts: Array<[string, number]>;
+  /**
+   * Complete filtered/windowed lifecycle totals, used when the client's feed is lost.
+   */
+  lifecycle_counts: Array<[string, number]>;
+  next: string | null;
+};
+
+export type Task = {
+  slug: string;
+  title: string;
+  body: string;
+  status: string;
+  priority: number;
+  parent: string | null;
+  created_by: string;
+  created: number;
+  updated: number;
+  links: Array<string>;
+  depends: Array<string>;
+  roles: Array<Role>;
+  instruction: boolean;
+  /**
+   * The plugins' board fields: plugin name, then field name, then its value. With the feature
+   * `skip-board-fields` a task is read without them, whatever the wire holds, and the map stays
+   * empty, so a task written back carries none: the browser's client turns it on, as it draws
+   * no field, and so leaves out the reader of the two maps and of their values (a number's text
+   * parser among it), about 18 KB gzipped of the board's first visit.
+   */
+  fields?: { [key in string]: { [key in string]: FieldValue } };
+};
+
+export type Role = {
+  handle: string;
+  role: string;
+  since: number;
+  expires: number | null;
+  health: string;
+};
+
+export type FieldValue = number | string;
+
+export type TaskChange = { key: string; fields: TaskFields };
+
+export type TaskFields = {
+  title?: string | null;
+  body?: string | null;
+  status?: string | null;
+  priority?: number | null;
+  /**
+   * Present only when parent changes. Empty string clears the parent.
+   */
+  parent?: string | null;
+  updated?: number | null;
+  links?: Array<string> | null;
+  depends?: Array<string> | null;
+  roles?: Array<Role> | null;
+  instruction?: boolean | null;
+};
+
+export type MachineWork = {
+  freshness: WorkFreshness;
+  machines: Array<MachineObservation>;
+  unassigned: Array<WorkOperation>;
+  /**
+   * Project-configured advisory targets by stable machine id. Never admission limits.
+   */
+  guidance: { [key in string]: WorkGuidance };
+};
+
+export type MachineObservation = {
+  machine_id: string;
+  label: string;
+  producer_id: string;
+  sequence: number;
+  age_ms: number | null;
+  freshness: WorkFreshness;
+  complete: boolean;
+  reason: string;
+  /**
+   * None is unknown occupancy, never free capacity. Counts exclude reservations/commands.
+   */
+  counts: WorkCounts | null;
+  operations: Array<WorkOperation>;
+};
+
+export type WorkOperation = {
+  machine_id: string | null;
+  /**
+   * None when legacy evidence has no operation nonce.
+   */
+  operation_id: string | null;
+  parent_id: string | null;
+  handle: string | null;
+  task: string | null;
+  checkout: string;
+  recipe: string;
+  kind: WorkKind;
+  state: WorkState;
+  resource: string;
+  reason: string;
+  /**
+   * Producer time for display only. Freshness uses receiver-assigned evidence.
+   */
+  phase_since: number | null;
+  /**
+   * The tasks `task` is under on the board, nearest first, as the Symphony read the board
+   * ([`MachineWork::place_under`]): a run for a subtask is its parents' work too. `task` stays
+   * the recorder's binding.
+   */
+  under?: Array<string>;
+};
+
+export type WorkCounts = {
+  running_builds: number;
+  queued_builds: number;
+  running_tests: number;
+  queued_tests: number;
+};
+
+export type WorkGuidance = { build: number | null; test: number | null };
+
+export type WorkFreshness =
+  | "unknown"
+  | "fresh"
+  | "stale"
+  | "disconnected"
+  | "incomplete"
+  | "conflict";
+
+export type WorkKind = "build" | "test" | "command" | "setup" | "reservation";
+
+export type WorkState = "queued" | "running";
+
 export type Block =
   | { type: "heading"; level: number; anchor: string; spans: Array<Span> }
   | { type: "paragraph"; spans: Array<Span> }

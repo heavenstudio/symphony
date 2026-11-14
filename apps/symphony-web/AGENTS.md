@@ -4,9 +4,11 @@ The Symphony's web client in React and TypeScript, built by Vite. It takes the p
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
 review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
-(`/`, the kind `review`) the third and the documents (`/docs/`, each document, folder and HTML
-document an entrypoint serves, the kind `docs`) the fourth; every other page is still the Dioxus
-client's. Like that
+(`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
+document an entrypoint serves, the kind `docs`) the fourth and the task board (`/tasks`, `/task/`
+being the Dioxus program's) the fifth; every other page is still the Dioxus client's, the program's.
+The board's task card is a component of its own (`src/taskcard.tsx`), which the agents page and the
+task page draw once they move. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -159,7 +161,9 @@ class names this client's markup uses, and the kind's own sheet, imported by its
 (`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
 `apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's task
 pages load as well, is the media layer's, imported by `media-layer.ts`, so home and the documents
-take it as one file under the layer's name. A component drawn by a Dioxus component library keeps its markup and class
+take it as one file under the layer's name. The task board has no sheet of its own: its rules are
+the shared sheet's (`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's
+cards use too. A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React

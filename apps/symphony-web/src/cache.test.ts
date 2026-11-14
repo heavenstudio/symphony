@@ -3,11 +3,15 @@ import {
   answered,
   BOARD,
   boardItem,
+  COUNTS,
+  column,
+  columns,
   drawn,
   FRESH,
   failed,
   forget,
   keepLater,
+  keptView,
   left,
   lost,
   opened,
@@ -15,6 +19,7 @@ import {
   readKept,
   shown,
   visitLater,
+  WORK,
   waits,
 } from "./cache";
 import { CACHE_FORMAT } from "./wire";
@@ -24,6 +29,31 @@ describe("a board's item", () => {
     expect(boardItem("")).toEqual({ kind: "board", id: "board:", pinned: false });
     expect(boardItem("proposal~x").id).toBe("board:@proposal~x/");
     expect(BOARD).not.toBe(QUEUE);
+  });
+});
+
+describe("the task board's kept reads", () => {
+  it("are the counts, the machines' work and each column's first page", () => {
+    expect(new Set([BOARD, QUEUE, COUNTS, WORK, column("ready")]).size).toBe(5);
+    expect(column("in_progress")).toBe("column:in_progress");
+  });
+
+  it("are the default view's alone", () => {
+    expect(keptView("", 1, 1)).toBe(true);
+    expect(keptView("lamp", 1, 1)).toBe(false);
+    expect(keptView("", 7, 1)).toBe(false);
+    expect(keptView("", 1, 0)).toBe(false);
+  });
+
+  it("are a column for each status, the machines' two and the owner's sign-off, once each", () => {
+    expect(columns(["ready", "build", "review"], [["done", 1]])).toEqual([
+      "ready",
+      "build",
+      "review",
+      "test",
+      "signoff",
+    ]);
+    expect(columns([], [["done", 1]])).toEqual(["done", "build", "test", "signoff"]);
   });
 });
 
@@ -62,6 +92,16 @@ describe("what a page shows from this device", () => {
     expect(shown(f)).toEqual([9, true]);
     expect(lost(f)).toBe(f);
     expect(shown(answered(opened(f), QUEUE))).toBeNull();
+  });
+
+  it("of a search that replaced the board's columns drops them, answered or not", () => {
+    let f = failed(drawn(drawn(FRESH, COUNTS, 4), column("ready"), 2), column("ready"));
+    f = left(f, [column("ready")]);
+    expect(f.unanswered).toEqual([COUNTS]);
+    expect(f.failing).toEqual([]);
+    // The counts drawn from the device are still shown, under the oldest copy's time.
+    expect(shown(f)).toEqual([2, false]);
+    expect(shown(left(opened(f), [COUNTS]))).toBeNull();
   });
 
   it("of a route the page left is no longer shown or asked for", () => {

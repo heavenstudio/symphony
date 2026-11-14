@@ -299,8 +299,9 @@ pub fn clip_to(screen: [f64; 4], clip: [f64; 4]) -> [f64; 4] {
 }
 
 /// The longest a keep for the next visit's ghost watches what is near the screen draw, in ms
-/// ([`remember_drawn`], the board's column keep): only a bound on its work, as on a loaded
-/// machine or a slow phone a region near the screen draws many seconds after its data.
+/// ([`remember_drawn`], as the web client's task board keeps its columns'): only a bound on its
+/// work, as on a loaded machine or a slow phone a region near the screen draws many seconds after
+/// its data.
 pub const KEEP_MS: f64 = 30_000.0;
 
 /// Whether a region inside `root` still waits for its read within [`REACH`] of the screen: the

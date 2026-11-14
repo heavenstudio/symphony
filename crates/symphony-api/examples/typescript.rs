@@ -65,78 +65,7 @@ fn main() {
 
 /// apps/symphony-web/src/wire.ts, before Biome formats it.
 fn types() -> String {
-    // JSON numbers are read by the browser as doubles whatever their Rust width.
-    let cfg = Config::new().with_large_int("number");
-    // The types the client reads, in the file's order.
-    let types = [
-        declared::<api::ProjectView>(&cfg),
-        declared::<api::NavItem>(&cfg),
-        declared::<api::Board>(&cfg),
-        declared::<api::Card>(&cfg),
-        declared::<api::Picture>(&cfg),
-        declared::<api::Counts>(&cfg),
-        declared::<api::TaskCounts>(&cfg),
-        declared::<api::Progress>(&cfg),
-        declared::<api::Region>(&cfg),
-        declared::<api::ProgressBar>(&cfg),
-        declared::<api::Delta>(&cfg),
-        declared::<api::Change>(&cfg),
-        declared::<api::Queue>(&cfg),
-        declared::<api::QueueItem>(&cfg),
-        declared::<api::Activity>(&cfg),
-        declared::<api::ActivityItem>(&cfg),
-        declared::<api::Pending>(&cfg),
-        declared::<api::PendingItem>(&cfg),
-        declared::<api::Grain>(&cfg),
-        declared::<api::report_page::ReportMark>(&cfg),
-        // The blocks a plugin renders to, and what they hold.
-        declared::<api::Block>(&cfg),
-        declared::<api::Span>(&cfg),
-        declared::<api::LinkTarget>(&cfg),
-        declared::<api::Presentation>(&cfg),
-        declared::<api::Image>(&cfg),
-        declared::<api::Cell>(&cfg),
-        declared::<api::Verdict>(&cfg),
-        declared::<api::ThreadEntry>(&cfg),
-        declared::<api::CardState>(&cfg),
-        declared::<api::CardGroup>(&cfg),
-        declared::<api::ThreadAuthor>(&cfg),
-        declared::<api::CalloutKind>(&cfg),
-        declared::<api::FigureSize>(&cfg),
-        declared::<api::ContainerKind>(&cfg),
-        declared::<api::InlineKind>(&cfg),
-        declared::<api::VectorShape>(&cfg),
-        declared::<api::VectorKind>(&cfg),
-        declared::<api::Media>(&cfg),
-        declared::<api::GalleryItem>(&cfg),
-        declared::<api::Viewer>(&cfg),
-        declared::<api::View>(&cfg),
-        // A document's and a folder's pages: their reads, the feed's changes and the asks.
-        declared::<api::Document>(&cfg),
-        declared::<api::DocumentComparison>(&cfg),
-        declared::<api::DocumentOutline>(&cfg),
-        declared::<api::DocumentSections>(&cfg),
-        declared::<api::Crumb>(&cfg),
-        declared::<api::Heading>(&cfg),
-        declared::<api::Fragment>(&cfg),
-        declared::<api::Section>(&cfg),
-        declared::<api::Difference>(&cfg),
-        declared::<api::SectionComparison>(&cfg),
-        declared::<api::DocumentCard>(&cfg),
-        declared::<api::DocumentTask>(&cfg),
-        declared::<api::Folder>(&cfg),
-        declared::<api::FolderEntry>(&cfg),
-        declared::<api::DocumentChange>(&cfg),
-        declared::<api::SectionPosition>(&cfg),
-        declared::<api::ItemChange<api::DocumentCard>>(&cfg),
-        declared::<api::Version>(&cfg),
-        declared::<api::DocumentDiff>(&cfg),
-        declared::<api::Ask>(&cfg),
-        declared::<api::AskAnswer>(&cfg),
-        declared::<api::AskMessage>(&cfg),
-        // A file attached to a post.
-        declared::<api::Upload>(&cfg),
-    ];
+    let types = declarations();
     let names: BTreeSet<&str> = types.iter().map(|one| one.name.as_str()).collect();
     for one in &types {
         for named in &one.names {
@@ -199,6 +128,97 @@ fn constants() -> String {
     });
     let _ = writeln!(out, "export const PAGE_NAMES = {pages} as const;");
     out
+}
+
+/// The types the client reads, in wire.ts's order.
+fn declarations() -> Vec<Declared> {
+    // JSON numbers are read by the browser as doubles whatever their Rust width.
+    let cfg = Config::new().with_large_int("number");
+    vec![
+        declared::<api::ProjectView>(&cfg),
+        declared::<api::NavItem>(&cfg),
+        declared::<api::Board>(&cfg),
+        declared::<api::Card>(&cfg),
+        declared::<api::Picture>(&cfg),
+        declared::<api::Counts>(&cfg),
+        declared::<api::TaskCounts>(&cfg),
+        declared::<api::Progress>(&cfg),
+        declared::<api::Region>(&cfg),
+        declared::<api::ProgressBar>(&cfg),
+        declared::<api::Delta>(&cfg),
+        declared::<api::Change>(&cfg),
+        declared::<api::Queue>(&cfg),
+        declared::<api::QueueItem>(&cfg),
+        declared::<api::Activity>(&cfg),
+        declared::<api::ActivityItem>(&cfg),
+        declared::<api::Pending>(&cfg),
+        declared::<api::PendingItem>(&cfg),
+        // Reports'.
+        declared::<api::Grain>(&cfg),
+        declared::<api::report_page::ReportMark>(&cfg),
+        // The task board's, its tasks and the machines' work.
+        declared::<api::TaskListing>(&cfg),
+        declared::<api::Task>(&cfg),
+        declared::<api::Role>(&cfg),
+        declared::<api::FieldValue>(&cfg),
+        declared::<api::TaskChange>(&cfg),
+        declared::<api::TaskFields>(&cfg),
+        declared::<api::MachineWork>(&cfg),
+        declared::<api::MachineObservation>(&cfg),
+        declared::<api::WorkOperation>(&cfg),
+        declared::<api::WorkCounts>(&cfg),
+        declared::<api::WorkGuidance>(&cfg),
+        declared::<api::WorkFreshness>(&cfg),
+        declared::<api::WorkKind>(&cfg),
+        declared::<api::WorkState>(&cfg),
+        // The blocks a plugin renders to, and what they hold.
+        declared::<api::Block>(&cfg),
+        declared::<api::Span>(&cfg),
+        declared::<api::LinkTarget>(&cfg),
+        declared::<api::Presentation>(&cfg),
+        declared::<api::Image>(&cfg),
+        declared::<api::Cell>(&cfg),
+        declared::<api::Verdict>(&cfg),
+        declared::<api::ThreadEntry>(&cfg),
+        declared::<api::CardState>(&cfg),
+        declared::<api::CardGroup>(&cfg),
+        declared::<api::ThreadAuthor>(&cfg),
+        declared::<api::CalloutKind>(&cfg),
+        declared::<api::FigureSize>(&cfg),
+        declared::<api::ContainerKind>(&cfg),
+        declared::<api::InlineKind>(&cfg),
+        declared::<api::VectorShape>(&cfg),
+        declared::<api::VectorKind>(&cfg),
+        declared::<api::Media>(&cfg),
+        declared::<api::GalleryItem>(&cfg),
+        declared::<api::Viewer>(&cfg),
+        declared::<api::View>(&cfg),
+        // A document's and a folder's pages: their reads, the feed's changes and the asks.
+        declared::<api::Document>(&cfg),
+        declared::<api::DocumentComparison>(&cfg),
+        declared::<api::DocumentOutline>(&cfg),
+        declared::<api::DocumentSections>(&cfg),
+        declared::<api::Crumb>(&cfg),
+        declared::<api::Heading>(&cfg),
+        declared::<api::Fragment>(&cfg),
+        declared::<api::Section>(&cfg),
+        declared::<api::Difference>(&cfg),
+        declared::<api::SectionComparison>(&cfg),
+        declared::<api::DocumentCard>(&cfg),
+        declared::<api::DocumentTask>(&cfg),
+        declared::<api::Folder>(&cfg),
+        declared::<api::FolderEntry>(&cfg),
+        declared::<api::DocumentChange>(&cfg),
+        declared::<api::SectionPosition>(&cfg),
+        declared::<api::ItemChange<api::DocumentCard>>(&cfg),
+        declared::<api::Version>(&cfg),
+        declared::<api::DocumentDiff>(&cfg),
+        declared::<api::Ask>(&cfg),
+        declared::<api::AskAnswer>(&cfg),
+        declared::<api::AskMessage>(&cfg),
+        // A file attached to a post.
+        declared::<api::Upload>(&cfg),
+    ]
 }
 
 /// The project views the cases read routes under: the plain project, one under the one server's
@@ -316,6 +336,8 @@ fn cases() -> Result<Value, String> {
     cases["queueCategory"] = categories.into();
     cases["answersVerdicts"] = verdicts.into();
     cases["isHtml"] = html.into();
+    cases["slugOrder"] = slug_orders();
+    cases["stages"] = stages();
     cases["grains"] = grains.into();
     cases["fileAddress"] = addresses.into();
     cases["elementHtml"] = elements();
@@ -456,6 +478,15 @@ const CARRIED: &[(&str, &str, &str)] = &[
         "answers_verdicts",
         "answersVerdicts, src/document.ts",
     ),
+    (API_TASK_QUERIES, "slug_order", "slugOrder, src/task.ts"),
+    (API_TASK_QUERIES, "kind", "isTask, src/task.ts"),
+    (API_TASK_QUERIES, "is_task", "isTask, src/task.ts"),
+    (API_TASK_QUERIES, "has_status", "taskStage, src/work.ts"),
+    (API_MACHINE_WORK, "is_for", "isFor, src/work.ts"),
+    (API_TASK_STAGE, "task_stage", "taskStage, src/work.ts"),
+    (API_TASK_STAGE, "places_alike", "placesAlike, src/work.ts"),
+    (API_TASK_STAGE, "can_place", "canPlace, src/work.ts"),
+    (API_TASK_STAGE, "conflicts", "conflicts, src/work.ts"),
     (BLOCKS_MEDIA, "element_html", "elementHtml, src/media.tsx"),
     (BLOCKS_MEDIA, "encoded", "encoded, src/media.tsx"),
     (BLOCKS_MEDIA, "decode", "decode, src/media.tsx"),
@@ -473,6 +504,9 @@ const CARRIED: &[(&str, &str, &str)] = &[
 /// The files [`CARRIED`] names, by their path in the repository.
 const API_PROJECT: &str = "crates/symphony-api/src/project.rs";
 const API_LIB: &str = "crates/symphony-api/src/lib.rs";
+const API_TASK_QUERIES: &str = "crates/symphony-api/src/task_queries.rs";
+const API_MACHINE_WORK: &str = "crates/symphony-api/src/machine_work.rs";
+const API_TASK_STAGE: &str = "crates/symphony-api/src/task_stage.rs";
 const API_REPORT_PAGE: &str = "crates/symphony-api/src/report_page.rs";
 const BLOCKS_MEDIA: &str = "crates/symphony-blocks/src/media.rs";
 
@@ -483,6 +517,9 @@ fn carried() -> Result<Value, String> {
         .map(|(file, name, ts)| {
             let text = match *file {
                 API_PROJECT => include_str!("../src/project.rs"),
+                API_TASK_QUERIES => include_str!("../src/task_queries.rs"),
+                API_MACHINE_WORK => include_str!("../src/machine_work.rs"),
+                API_TASK_STAGE => include_str!("../src/task_stage.rs"),
                 API_REPORT_PAGE => include_str!("../src/report_page.rs"),
                 BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
                 _ => include_str!("../src/lib.rs"),
@@ -536,6 +573,296 @@ fn declares(line: &str, name: &str) -> bool {
         && ["(", "<"]
             .iter()
             .any(|after| line.contains(&format!("fn {name}{after}")))
+}
+
+/// How `slug_order` orders each pair of a set of slugs: -1, 0 or 1, as `a` comes before, with or
+/// after `b`. Runs of digits by their number, leading zeros apart, text and bytes past ASCII.
+fn slug_orders() -> Value {
+    let slugs = [
+        "",
+        "0",
+        "00",
+        "01",
+        "1",
+        "9",
+        "10",
+        "ready-3",
+        "ready-30",
+        "ready-03",
+        "ready-3a",
+        "ready-3-1",
+        "a2b9",
+        "a2b10",
+        "a10b1",
+        "ready",
+        "ready-",
+        "ready-#",
+        "ready-a",
+        "ready-é",
+        "é01",
+        "a/2",
+        "a/10",
+        "A1",
+        "a 1",
+        "\u{ffff}",
+        "\u{10000}",
+    ];
+    let pairs: Vec<Value> = slugs
+        .iter()
+        .flat_map(|a| {
+            slugs.iter().map(move |b| {
+                let order = match api::slug_order(a, b) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                };
+                json!([a, b, order])
+            })
+        })
+        .collect();
+    pairs.into()
+}
+
+/// An operation of a machine's work: `kind` (`build`, `test`, `command`) and `state` (`queued`,
+/// `running`) of the task `task`, as the machine `machine` reports it by the id `id`.
+fn operation(machine: &str, id: &str, task: &str, kind: &str, state: &str) -> api::WorkOperation {
+    let kind = match kind {
+        "build" => api::WorkKind::Build,
+        "test" => api::WorkKind::Test,
+        _ => api::WorkKind::Command,
+    };
+    let state = if state == "running" {
+        api::WorkState::Running
+    } else {
+        api::WorkState::Queued
+    };
+    api::WorkOperation {
+        machine_id: (!machine.is_empty()).then(|| machine.into()),
+        operation_id: Some(id.into()),
+        parent_id: None,
+        handle: Some("amber".into()),
+        task: Some(task.into()),
+        checkout: "/opaque".into(),
+        recipe: "fixture".into(),
+        kind,
+        state,
+        resource: "run_slot".into(),
+        reason: String::new(),
+        phase_since: None,
+        under: Vec::new(),
+    }
+}
+
+/// A machine `id` reporting `operations`, as `freshness` and `complete` say it.
+fn machine(
+    id: &str,
+    freshness: api::WorkFreshness,
+    complete: bool,
+    operations: Vec<api::WorkOperation>,
+) -> api::MachineObservation {
+    api::MachineObservation {
+        machine_id: id.into(),
+        label: id.into(),
+        producer_id: "fixture".into(),
+        sequence: 1,
+        age_ms: Some(0),
+        freshness,
+        complete,
+        reason: String::new(),
+        counts: None,
+        operations,
+    }
+}
+
+/// The work of one machine `alpha`, fresh and complete, reporting `operations`.
+fn work(operations: Vec<api::WorkOperation>) -> api::MachineWork {
+    api::MachineWork {
+        freshness: api::WorkFreshness::Fresh,
+        machines: vec![machine(
+            "alpha",
+            api::WorkFreshness::Fresh,
+            true,
+            operations,
+        )],
+        ..api::MachineWork::default()
+    }
+}
+
+/// A task `slug` in `status`, under `parent` when one is given.
+fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
+    api::Task {
+        slug: slug.into(),
+        title: "A task".into(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: parent.map(Into::into),
+        created_by: "owner".into(),
+        created: 1.0,
+        updated: 2.0,
+        links: vec!["docs/A.md".into()],
+        depends: Vec::new(),
+        roles: vec![api::Role {
+            handle: "amber".into(),
+            role: "executor".into(),
+            since: 1.0,
+            expires: None,
+            health: "live".into(),
+        }],
+        instruction: false,
+        fields: std::collections::BTreeMap::new(),
+    }
+}
+
+/// The works the stage cases place tasks by: each what it shows, by its name.
+fn works() -> Vec<(&'static str, api::MachineWork)> {
+    let op = operation;
+    let mut under = op("alpha", "u", "w/a/1", "build", "running");
+    under.under = vec!["w/a".into(), "w".into()];
+    let mut no_id = op("alpha", "n", "w/a", "test", "running");
+    no_id.operation_id = None;
+    let mut empty_id = op("alpha", "e", "w/a", "test", "running");
+    empty_id.operation_id = Some(String::new());
+    let mut contradicted = work(vec![op("alpha", "c", "w/a", "build", "running")]);
+    contradicted.machines.push(machine(
+        "beta",
+        api::WorkFreshness::Fresh,
+        true,
+        vec![op("alpha", "c", "w/a", "build", "queued")],
+    ));
+    let mut stale = work(vec![op("alpha", "s", "w/a", "test", "running")]);
+    stale.machines[0].freshness = api::WorkFreshness::Stale;
+    let mut partial = work(vec![op("alpha", "p", "w/a", "test", "queued")]);
+    partial.machines[0].freshness = api::WorkFreshness::Incomplete;
+    partial.machines[0].complete = false;
+    let unassigned = api::MachineWork {
+        unassigned: vec![op("alpha", "x", "w/a", "build", "running")],
+        ..api::MachineWork::default()
+    };
+    vec![
+        ("none", api::MachineWork::default()),
+        (
+            "queued build",
+            work(vec![op("alpha", "b", "w/a", "build", "queued")]),
+        ),
+        (
+            "running build",
+            work(vec![op("alpha", "b", "w/a", "build", "running")]),
+        ),
+        (
+            "queued test",
+            work(vec![op("alpha", "t", "w/a", "test", "queued")]),
+        ),
+        (
+            "running build, queued test",
+            work(vec![
+                op("alpha", "b", "w/a", "build", "running"),
+                op("alpha", "t", "w/a", "test", "queued"),
+            ]),
+        ),
+        (
+            "queued test, running test",
+            work(vec![
+                op("alpha", "t", "w/a", "test", "queued"),
+                op("alpha", "r", "w/a", "test", "running"),
+            ]),
+        ),
+        (
+            "another task's",
+            work(vec![op("alpha", "o", "w/b", "test", "running")]),
+        ),
+        (
+            "a command",
+            work(vec![op("alpha", "c", "w/a", "command", "running")]),
+        ),
+        (
+            "another machine's id",
+            work(vec![op("beta", "m", "w/a", "build", "running")]),
+        ),
+        (
+            "no machine id",
+            work(vec![op("", "m", "w/a", "build", "running")]),
+        ),
+        ("no operation id", work(vec![no_id])),
+        ("an empty operation id", work(vec![empty_id])),
+        ("a subtask's", work(vec![under])),
+        ("contradicted", contradicted),
+        ("stale", stale),
+        ("partial", partial),
+        ("unassigned", unassigned),
+    ]
+}
+
+/// The stage each work puts each task in, connected and not, and whether each two works place
+/// alike (`places_alike`), the same works told apart by a heartbeat and by the order of their
+/// operations.
+fn stages() -> Value {
+    let works = works();
+    let tasks = [
+        task("w/a", "in_progress", None),
+        task("w/a", "review", None),
+        task("w", "in_progress", None),
+        task("w/a/1", "in_progress", Some("w/a")),
+        task("w/b", "in_progress", None),
+    ];
+    let placed: Vec<Value> = works
+        .iter()
+        .flat_map(|(name, work)| {
+            tasks.iter().enumerate().flat_map(move |(at, task)| {
+                [true, false].map(|connected| {
+                    json!([
+                        name,
+                        at,
+                        connected,
+                        work.task_stage(task, connected).as_str()
+                    ])
+                })
+            })
+        })
+        .collect();
+    // Two operations, a running build and a queued test of `w/a`, told apart from this work by
+    // what places nothing (a heartbeat, a command) and by their order.
+    let both = || {
+        work(vec![
+            operation("alpha", "b", "w/a", "build", "running"),
+            operation("alpha", "t", "w/a", "test", "queued"),
+        ])
+    };
+    let mut beat = both();
+    for machine in &mut beat.machines {
+        machine.sequence = 9;
+        machine.age_ms = Some(900);
+    }
+    let mut swapped = both();
+    for machine in &mut swapped.machines {
+        machine.operations.reverse();
+    }
+    let mut others = both();
+    for machine in &mut others.machines {
+        machine
+            .operations
+            .push(operation("alpha", "x", "w/c", "command", "running"));
+    }
+    let mut compared: Vec<(&str, api::MachineWork)> = works.clone();
+    compared.extend([
+        ("a heartbeat later", beat),
+        ("swapped", swapped),
+        ("with a command", others),
+    ]);
+    let alike: Vec<Value> = compared
+        .iter()
+        .flat_map(|(a, one)| {
+            compared
+                .iter()
+                .map(move |(b, other)| json!([a, b, one.places_alike(other)]))
+        })
+        .collect();
+    let works: serde_json::Map<String, Value> = compared
+        .iter()
+        .map(|(name, work)| ((*name).to_string(), json!(work)))
+        .collect();
+    let tasks: Vec<Value> = tasks.iter().map(|task| json!(task)).collect();
+    json!({ "works": works, "tasks": tasks, "placed": placed, "alike": alike })
 }
 
 /// `here` and `strip` under no base and one, each for a set of paths.
@@ -695,18 +1022,101 @@ fn samples() -> Value {
         counts: api::Counts::default(),
         progress: api::Progress::default(),
     };
-    let mut samples = json!({
-        "queue": queue,
-        "emptyQueue": api::Queue::default(),
-        "board": board,
-        "reports": reports(),
-        "emptyReports": api::ReportsPage::default(),
-        "blocks": blocks(),
-    });
-    for (name, sample) in documents() {
-        samples[name] = sample;
-    }
-    samples
+    let mut samples = serde_json::Map::new();
+    samples.insert("queue".into(), json!(queue));
+    samples.insert("emptyQueue".into(), json!(api::Queue::default()));
+    samples.insert("board".into(), json!(board));
+    samples.extend(task_board_samples());
+    samples.insert("reports".into(), json!(reports()));
+    samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.insert("blocks".into(), json!(blocks()));
+    samples.extend(
+        documents()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value)),
+    );
+    Value::Object(samples)
+}
+
+/// The task board's reads, as [`samples`] holds them: its listings, the machines' work and the
+/// feed's changes of a task.
+fn task_board_samples() -> Vec<(String, Value)> {
+    let mut idle = task("w/b", "ready", None);
+    idle.links.clear();
+    idle.roles.clear();
+    let mut fielded = task("w/a/1", "in_progress", Some("w/a"));
+    fielded.fields.insert(
+        "game".into(),
+        [
+            ("effort".to_string(), api::FieldValue::Number(3.0)),
+            ("risk".to_string(), api::FieldValue::Text("high".into())),
+        ]
+        .into(),
+    );
+    let mut guided = work(vec![operation("alpha", "b", "w/a", "build", "running")]);
+    guided.guidance.insert(
+        "alpha".into(),
+        api::WorkGuidance {
+            build: Some(2),
+            test: None,
+        },
+    );
+    guided.unassigned = vec![operation("", "x", "w/b", "test", "queued")];
+    let listing = api::TaskListing {
+        machine_work: guided.clone(),
+        tasks: vec![task("w/a", "in_progress", None), fielded, idle],
+        statuses: vec!["ready".into(), "in_progress".into()],
+        signoff: vec!["w/a".into()],
+        counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
+        lifecycle_counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
+        next: Some("w/b".into()),
+    };
+    let empty = api::TaskListing {
+        machine_work: api::MachineWork::default(),
+        tasks: Vec::new(),
+        statuses: Vec::new(),
+        signoff: Vec::new(),
+        counts: Vec::new(),
+        lifecycle_counts: Vec::new(),
+        next: None,
+    };
+    let change = api::TaskChange {
+        key: "w/a".into(),
+        fields: api::TaskFields {
+            status: Some("review".into()),
+            priority: Some(1),
+            parent: Some(String::new()),
+            roles: Some(Vec::new()),
+            ..api::TaskFields::default()
+        },
+    };
+    let added = api::ItemChange {
+        key: "w/a".into(),
+        value: Some(task("w/a", "ready", None)),
+        removed: false,
+    };
+    let removed = api::ItemChange::<api::Task> {
+        key: "w/a".into(),
+        value: None,
+        removed: true,
+    };
+    let bare = api::TaskChange {
+        key: "w/b".into(),
+        fields: api::TaskFields::default(),
+    };
+    [
+        ("listing", json!(listing)),
+        ("emptyListing", json!(empty)),
+        ("work", json!(guided)),
+        ("emptyWork", json!(api::MachineWork::default())),
+        ("taskChange", json!(change)),
+        ("bareTaskChange", json!(bare)),
+        ("taskAdded", json!(added)),
+        ("taskRemoved", json!(removed)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
 }
 
 /// A value of each read a document's or a folder's page checks, as the server writes it: every

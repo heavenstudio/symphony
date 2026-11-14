@@ -138,6 +138,8 @@ pub fn scroll_anchor() {
     }
 }
 
+/// Whether the reader is busy on the page (a field, an open form or list): a new build waits.
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 pub(crate) fn engaged() -> bool {
     web_sys::window()
         .and_then(|w| w.document())

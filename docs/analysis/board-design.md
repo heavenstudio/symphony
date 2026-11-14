@@ -215,8 +215,9 @@ Filed on the board in `design`, each waiting on its card, each brief complete:
    (`kind`, `who`, `why`, `since`), with `from` for a blocked task and the board's orchestrators with
    their health for the banner. The age is tools/stage-times' `in_status_since`.
 2. **app/board-at-a-glance**, after tools/task-waits-on, app/build-test-columns and
-   app/skeleton-loading: the card, the banner and the chosen layout in `apps/symphony-ui`
-   (`tasks.rs`, `board_live.rs`, `board.css`).
+   app/skeleton-loading: the card, the banner and the chosen layout in the React client, where the
+   board moved (`apps/symphony-web/src/board.tsx`, `boardlive.tsx`, `taskcard.tsx`, and
+   `apps/symphony-ui/assets/board.css`).
 3. **app/projects-health**: the dot and line on the Projects page.
 
 Built on, not repeated: tools/stage-times (the age), tools/review-as-stamps (review rounds as marks),

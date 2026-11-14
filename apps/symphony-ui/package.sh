@@ -61,9 +61,9 @@ custom_only() {
     done
     [ "$at" = "${#bytes[@]}" ]
 }
-# The program last: its styles are placed by what the other kinds load. The web client's kinds
-# (apps/symphony-web) are placed after the shared stylesheet, below.
-for module_kind in board program; do
+# The program, the one kind dx builds since every other moved to the web client. The web client's
+# kinds (apps/symphony-web) are placed after the shared stylesheet, below.
+for module_kind in program; do
     module="$out/.modules/$module_kind"
     # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
     # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
@@ -121,21 +121,19 @@ for module_kind in board program; do
     mv "$stage/module-$module_kind.js" "$stage/assets/$module_kind-$script_hash.js"
     rm -f "$stage/assets/$original"
     styles="$(find "$module/public/assets" -name '*.css' -exec basename {} \; | sort | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s .)"
-    # The summary board has no media nodes. The persistent panel loads these styles when
-    # opened; home and the documents have their own copy (apps/symphony-web, their media layer's).
-    if [ "$module_kind" = board ]; then
-        styles="$(jq 'map(select(contains("/media-") | not))' <<< "$styles")"
-    fi
     if [ "$module_kind" != program ]; then
         manifest="$(jq --arg kind "$module_kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
         continue
     fi
-    # Each program kind's styles, of the program's: those another kind loads too (the frame's), the
-    # pictures' (`media-`), which each of them shows and no other Dioxus kind loads since the
-    # documents moved to the web client, then its own: the timeline's by its name, the shared
-    # controls' (`style-`, components/) for the chat and the menus. A style none of these places is
-    # refused.
-    others="$(jq -c '[.[].styles[]] | unique' <<< "$manifest")"
+    # Each program kind's styles, of the program's: those its page links in its head (dx's static
+    # head: the frame's, the board's and the controls every page draws, as no other Dioxus kind is
+    # left to load them too), but the timeline's, which only a task page's box draws; the pictures'
+    # (`media-`), which each of them shows; then its own: the timeline's by its name, the shared
+    # controls' (`style-`, components/: the CSS modules the chat and the menus put in the page as
+    # they draw) for the chat and the menus. A style none of these places is refused.
+    others="$({ grep -o '<link rel="stylesheet" href="[^"]*"' "$module/public/index.html" || true; } \
+        | sed 's#.*/##; s#"$##' | jq -R --arg prefix "$prefix/assets/" '$prefix + .' \
+        | jq -s -c 'map(select(contains("/task-timeline-") | not))')"
     for kind in "${program_kinds[@]}"; do
         own="$(jq -c --arg kind "$kind" --argjson others "$others" '
             ((({timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) + ["media-"]) as $names
@@ -154,8 +152,11 @@ done
 # one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
 # The task timeline's module only ever draws inside a task page, whose styles are in already: the
 # shared file is the pages' (its own few styles do not narrow it), and it names that file too, so
-# it loads only what the page has not.
-shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style))))' <<< "$manifest")"
+# it loads only what the page has not. The pictures' styles (`media-`) stay out of it, though every
+# program kind loads them: the web client's kinds take the shared file and their own, home and the
+# documents with their own copy of them (their media layer's), and the queue, Reports and the task
+# board, which show no picture, with none.
+shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
         cat "$stage/assets/$name"
@@ -227,4 +228,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the board as a module of its own, the web client's kinds (home, the queue, Reports, the documents) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the documents) as its own build, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

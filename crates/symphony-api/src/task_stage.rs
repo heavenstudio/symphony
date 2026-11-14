@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Compact task board: briefs are fetched only when the owner opens a task.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskListing {
     #[serde(default)]
     pub machine_work: MachineWork,

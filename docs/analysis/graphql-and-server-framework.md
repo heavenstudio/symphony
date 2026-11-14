@@ -143,7 +143,8 @@ page and its data the rest (measured by the port's budget tests at `a8b379be`, r
 thread).
 
 **The chains.** What waits on what, from the same runs (read in the timings, and in the client's
-code, `apps/symphony-ui/src/live.rs`, `keep_live`; `board_live.rs`, `column`):
+code, `apps/symphony-ui/src/live.rs`, `keep_live`; `board_live.rs`, `column`, now the React
+client's `apps/symphony-web/src/boardlive.tsx`, `LiveBoard.column`):
 
 - **The board:** `/api/board` (78 to 80 ms), then the header's `/api/activity` and
   `/api/pending`, then the counts and the machine's work (170 to 177 ms), then each column near
@@ -194,7 +195,8 @@ The same saving is open without GraphQL:
   task page asks for the task and the board together: one step fewer on every task page (read in
   code: `apps/symphony-server/src/api/validated.rs`, `without_cursor`).
 - The board's counts and its first columns can be asked for with `/api/board`, not after it; the
-  250 ms wait before a column's first read is the client's choice (`board_live.rs`, `column`).
+  250 ms wait before a column's first read is the client's choice
+  (`apps/symphony-web/src/boardlive.tsx`, `LiveBoard.column`).
 
 Either is a change to two or three reads and the pages that make them, not a new layer (inferred;
 not built). The number of parallel reads matters a little more here than elsewhere: the server

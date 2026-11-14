@@ -41,7 +41,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .app-nav { padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:20px; }
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
-.board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px)); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
+/* The board's scroller fits the window under what the page draws above it (the header, the
+   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock while the
+   dock shows (frame.css), so its own horizontal scrollbar, at its foot, is never under the
+   prev/next bar. Its ghost is as tall. */
+:root:has(.frame-pending) { --board-dock:var(--dock); }
+.board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
 /* The pipeline clips its rows' 600 px look-ahead below its longest column, which would otherwise
@@ -75,7 +80,7 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column ul, .agents, .history, .facts { list-style:none; padding:0; }
 .column h2 .count { font-size:var(--fs-xs); font-weight:600; color:var(--muted-foreground); background:var(--muted); border-radius:var(--r-pill); padding:0 8px; letter-spacing:0; }
 .count { color:var(--muted-foreground); font-size:.8em; }
-/* src/tasks/card_height.rs repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
+/* apps/symphony-web/src/cardheight.ts repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
 .taskcard, .ghost-card { padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); margin:0 0 8px; background:var(--card); overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(0,0,0,.04); font-size:var(--fs-sm); line-height:1.45; transition:box-shadow .12s ease; }
 .taskcard:hover { box-shadow:var(--shadow-2); }
 .taskcard > .taskcard-slug { background:none; padding:0; color:var(--muted-foreground); font-size:.82em; }
@@ -159,7 +164,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .ghost-heading { font-size:var(--fs-xl); line-height:1.25; margin:1.6em 0 .8em; }
 .ghost-meta { font-size:var(--fs-sm); margin:0 0 12px; }
 .ghost-card { box-sizing:border-box; overflow:hidden; } .ghost-card > div { margin-top:2px; } .ghost-card > .bone:first-child { --w:55%; font-size:.75em; } .ghost-card > .ghost-pill { display:block; width:fit-content; margin-top:4px; line-height:1.45; } .ghost-card > div + .ghost-pill { margin-top:6px; }
-.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px)); }
+.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); }
 /* A heading's line is as tall as its count's. */
 .ghost-column > div:first-child { font-size:.72rem; line-height:1.25; min-height:calc(var(--fs-xs) * 1.25); margin:2px 2px 10px; }
 [data-for=build-test] > div:first-child { min-height:0; } [data-for=build-test] > .skeleton { margin:0 2px 8px; }
@@ -331,7 +336,7 @@ a.bar:hover { background:var(--background); }
 }
 @media (max-width: 760px) {
   .pipeline > .column, .ghost-pipeline > .ghost-column:not([data-for=build-test]) { flex-basis:280px; width:280px; }
-  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 400px)); }
+  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 420px - var(--board-dock,0px))); }
   main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
   .page-head h1, .task-head h1, .trouble h1, .ghost-title { font-size:var(--fs-2xl); }
   .ghost-title > .bone + .bone { display:inline-block; }

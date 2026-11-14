@@ -1,5 +1,5 @@
 //! Small DOM event attributes for controls that need no rich event data. Dioxus still owns
-//! listener updates, dispatch and teardown. Inputs read their own node during dispatch.
+//! listener updates, dispatch and teardown.
 
 use dioxus::core::AttributeValue;
 use dioxus::prelude::*;
@@ -27,48 +27,6 @@ pub(crate) fn marker() -> String {
         // Their counters must not select each other's controls or visibility sentinels.
         format!("{}-{id}", crate::module::kind())
     })
-}
-
-/// The callback reads the input synchronously, so fast edits cannot collapse into the last
-/// value while a task waits. A stable, per-control marker avoids active-element assumptions.
-pub(crate) fn use_value(
-    event: &'static str,
-    mut handler: impl FnMut(String) + 'static,
-) -> Vec<Attribute> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let id = use_hook(marker);
-        let selector = format!("[data-entry-input='{id}']");
-        vec![
-            Attribute::new("data-entry-input", id, None, false),
-            Attribute::new(
-                event,
-                AttributeValue::listener(move |_: Event<dioxus::html::PlatformEventData>| {
-                    if let Some(element) = web_sys::window()
-                        .and_then(|w| w.document())
-                        .and_then(|d| d.query_selector(&selector).ok().flatten())
-                        && let Ok(value) = js_sys::Reflect::get(&element, &"value".into())
-                        && let Some(value) = value.as_string()
-                    {
-                        handler(value);
-                    }
-                }),
-                None,
-                false,
-            ),
-        ]
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        vec![Attribute::new(
-            event,
-            AttributeValue::listener(move |event: Event<dioxus::html::PlatformEventData>| {
-                handler(FormData::from(event.data().as_ref()).value());
-            }),
-            None,
-            false,
-        )]
-    }
 }
 
 #[cfg(target_arch = "wasm32")]

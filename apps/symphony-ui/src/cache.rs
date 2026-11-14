@@ -77,38 +77,15 @@ pub mod board {
     /// `/api/queue`, which the web client's queue keeps (apps/symphony-web/src/cache.ts): named
     /// here so that no other part takes its name.
     pub const QUEUE: &str = "queue";
-    /// The task board's counts (`/api/task-board?counts=1`).
+    /// The task board's counts (`/api/task-board?counts=1`), its machine work
+    /// (`/api/machine-work`) and each column's first page, which the web client's task board keeps
+    /// (apps/symphony-web/src/cache.ts): named here so that no other part takes their names.
     pub const COUNTS: &str = "counts";
-    /// The machine's work (`/api/machine-work`), which places the task board's tasks.
     pub const WORK: &str = "work";
 
     /// A task board column's first page.
     pub fn column(status: &str) -> String {
         format!("column:{status}")
-    }
-
-    /// Whether a read of the task board's listing is the default view's, the one kept: no
-    /// search, finished tasks of the last 24 hours, stages by the machine's activity.
-    pub fn kept_view(query: &str, days: u8, activity: u8) -> bool {
-        query.is_empty() && days == 1 && activity == 1
-    }
-
-    /// The columns a task board with these counts may have kept: each status its listing names
-    /// (its counts' when it names none), the machine's two stages and the owner's sign-off, once
-    /// each, in that order.
-    pub fn columns(statuses: &[String], counts: &[(String, usize)]) -> Vec<String> {
-        let named: Vec<&str> = if statuses.is_empty() {
-            counts.iter().map(|(status, _)| status.as_str()).collect()
-        } else {
-            statuses.iter().map(String::as_str).collect()
-        };
-        let mut columns: Vec<String> = Vec::new();
-        for status in named.into_iter().chain(["build", "test", "signoff"]) {
-            if !columns.iter().any(|column| column == status) {
-                columns.push(status.to_string());
-            }
-        }
-        columns
     }
 }
 

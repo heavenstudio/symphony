@@ -5,7 +5,19 @@
 
 import { isValidElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
-import type { Block, ProjectView, View, Viewer } from "./wire";
+import type {
+  Block,
+  MachineObservation,
+  MachineWork,
+  ProjectView,
+  Role,
+  Task,
+  View,
+  Viewer,
+  WorkKind,
+  WorkOperation,
+  WorkState,
+} from "./wire";
 import cases from "./wire.cases.json";
 
 export interface ViewCase {
@@ -41,6 +53,16 @@ export const CASES = cases as unknown as {
   /** A task's slug, and whether it is one the Symphony filed for the owner's verdicts. */
   answersVerdicts: [string, boolean][];
   isHtml: [string, boolean][];
+  /** Every pair of slugs, and how the first orders against the second: -1, 0 or 1. */
+  slugOrder: [string, string, number][];
+  stages: {
+    works: Record<string, MachineWork>;
+    tasks: Task[];
+    /** The work by its name, the task by its place, whether the feed is open, and its stage. */
+    placed: [string, number, boolean, string][];
+    /** Two works by their names, and whether they place every task alike. */
+    alike: [string, string, boolean][];
+  };
   /** A word, the grain it names, and that grain's default and longest windows in days. */
   grains: [string, string | null, number | null, number | null][];
   fileAddress: [string, string][];
@@ -54,6 +76,14 @@ export const CASES = cases as unknown as {
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;
+    listing: unknown;
+    emptyListing: unknown;
+    work: unknown;
+    emptyWork: unknown;
+    taskChange: unknown;
+    bareTaskChange: unknown;
+    taskAdded: unknown;
+    taskRemoved: unknown;
     reports: unknown;
     emptyReports: unknown;
     blocks: Block[];
@@ -61,6 +91,86 @@ export const CASES = cases as unknown as {
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];
 };
+
+/** A task as the server lists one: ready, of priority 2, linking and held by nothing; `fields`
+ * say otherwise. */
+export function aTask(slug: string, fields: Partial<Task> = {}): Task {
+  return {
+    slug,
+    title: slug,
+    body: "",
+    status: "ready",
+    priority: 2,
+    parent: null,
+    created_by: "owner",
+    created: 0,
+    updated: 0,
+    links: [],
+    depends: [],
+    roles: [],
+    instruction: false,
+    ...fields,
+  };
+}
+
+/** A role `handle` holds, live unless `health` says otherwise. */
+export function aRole(role: string, handle: string, health = "live"): Role {
+  return { handle, role, since: 0, expires: null, health };
+}
+
+/** An operation `machine` reports as `id`, for the task `sim/a` unless `fields` say otherwise. */
+export function anOperation(
+  machine: string | null,
+  id: string | null,
+  kind: WorkKind,
+  state: WorkState,
+  fields: Partial<WorkOperation> = {},
+): WorkOperation {
+  return {
+    machine_id: machine,
+    operation_id: id,
+    parent_id: null,
+    handle: "worker-a",
+    task: "sim/a",
+    checkout: "/opaque/checkout",
+    recipe: "fixture",
+    kind,
+    state,
+    resource: "run_slot",
+    reason: "",
+    phase_since: null,
+    ...fields,
+  };
+}
+
+/** A fresh machine `id` with a complete inventory of `operations`. */
+export function aMachine(
+  id: string,
+  operations: WorkOperation[],
+  fields: Partial<MachineObservation> = {},
+): MachineObservation {
+  return {
+    machine_id: id,
+    label: id,
+    producer_id: "fixture",
+    sequence: 1,
+    age_ms: 0,
+    freshness: "fresh",
+    complete: true,
+    reason: "",
+    counts: { running_builds: 0, queued_builds: 0, running_tests: 0, queued_tests: 0 },
+    operations,
+    ...fields,
+  };
+}
+
+/** The work of `machines`, and of nothing no machine vouches for unless `fields` say so. */
+export function aWork(
+  machines: MachineObservation[],
+  fields: Partial<MachineWork> = {},
+): MachineWork {
+  return { freshness: "fresh", machines, unassigned: [], guidance: {}, ...fields };
+}
 
 /** A `Storage` held in memory; `refuse` makes each of its calls throw, as a private window's may. */
 export function memoryStorage(refuse = false): Storage {

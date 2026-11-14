@@ -97,8 +97,6 @@ pub(crate) fn kind() -> &'static str {
         "overlay"
     } else if cfg!(feature = "page-timeline") {
         "timeline"
-    } else if cfg!(feature = "page-board") {
-        "board"
     } else if cfg!(feature = "page-tasks") {
         "tasks"
     } else {

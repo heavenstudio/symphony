@@ -94,6 +94,95 @@ fn the_boards_role_chips_take_their_holders_health_from_its_session() {
     every_chip_says(&mut page, count, "live");
 }
 
+/// A page script that hears each commit of the page's React tree as React DevTools does (its
+/// global hook), and keeps in `window.__commits` what each drew again: every component that ran,
+/// named by the first element it draws (a card by its slug, a column by its status, else the
+/// element's id or tag and class). A component that bailed out, and what is under it, is not named.
+const RENDERS: &str = r#"(() => {
+  const commits = [];
+  window.__commits = commits;
+  const first = (fiber) => {
+    for (let node = fiber.child; node !== null; node = node.sibling) {
+      if (node.tag === 5) return node.stateNode;
+      const found = first(node);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  const name = (element) => {
+    if (element === null) return "";
+    if (element.dataset.slug) return `card ${element.dataset.slug}`;
+    if (element.dataset.status) return `column ${element.dataset.status}`;
+    if (element.id) return `#${element.id}`;
+    return `${element.localName}.${element.className}`;
+  };
+  const drawn = (fiber, out) => {
+    for (let node = fiber.child; node !== null; node = node.sibling) {
+      const before = node.alternate;
+      // A function component's or a memo's that ran (PerformedWork), or one mounted.
+      if ([0, 11, 15].includes(node.tag) && (before === null || (node.flags & 1) !== 0)) {
+        out.push(name(first(node)));
+      }
+      // Children React left as they were were not drawn again.
+      if (before === null || node.child !== before.child) drawn(node, out);
+    }
+  };
+  let renderers = 0;
+  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+    supportsFiber: true,
+    isDisabled: false,
+    renderers: new Map(),
+    inject(renderer) { renderers += 1; this.renderers.set(renderers, renderer); return renderers; },
+    checkDCE() {},
+    onScheduleFiberRoot() {},
+    onCommitFiberUnmount() {},
+    onPostCommitFiberRoot() {},
+    setStrictMode() {},
+    onCommitFiberRoot(_id, root) {
+      const out = [];
+      drawn(root.current, out);
+      commits.push(out);
+    },
+  };
+})()"#;
+
+/// A live update to one card of the board draws that card again and its column (its count), and
+/// nothing else of the board: the other cards, their rows and the other columns stay as they were.
+#[test]
+fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": RENDERS }),
+    );
+    let count = opened(&mut page, &site, "/tasks");
+    assert!(count > 1, "{:?}", chips(&mut page));
+    assert!(
+        page.wait_for("window.__commits.length > 0", SHOWN),
+        "the page's React tree was never heard"
+    );
+    let from = page.eval("window.__commits.length");
+    push_fields(
+        &site,
+        4183,
+        "visual/ready",
+        &json!({"title": "Example ready renamed"}),
+    );
+    let renamed = "document.querySelector('[data-slug=\"visual/ready\"] .taskcard-title')?.textContent === 'Example ready renamed'";
+    assert!(page.wait_for(renamed, SHOWN), "the update was never drawn");
+    // The commit that drew the new title, by what it drew of the board.
+    let drawn = page.eval(&format!(
+        "[...new Set(window.__commits.slice({from}).find(names => names.includes('card visual/ready')).filter(name => /^(card |column |#row-)/.test(name)))].sort()"
+    ));
+    assert_eq!(
+        drawn,
+        json!(["#row-visual/ready", "card visual/ready", "column ready"]),
+        "{:?}",
+        page.eval(&format!("window.__commits.slice({from})"))
+    );
+}
+
 #[test]
 fn a_task_pages_role_chips_take_their_holders_health_from_its_session() {
     let site = site();
