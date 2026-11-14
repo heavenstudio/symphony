@@ -45,6 +45,27 @@ node fixture/make.mjs big500 FOLDER    # 500 tasks
 node fixture/make.mjs big2000 FOLDER   # 2,000 tasks
 ```
 
+## A project's own block
+
+The document page also draws a block of a project's own, for the comparison's section on plugins:
+a fenced code block in the language `custom`, whose text is `{"kind", "module", "data"}`, drawn by
+the project's module (`src/custom.jsx`). It is drawn in a sandboxed frame by default
+(`src/custom-frame.jsx`), or imported into the page with `?blocks=page` (`src/custom-page.jsx`).
+The `plugins` fixture holds two such blocks: `docs/PLUGINS.md`, a chart drawn by
+`fixture/blocks/chart.js`, and `docs/PROBE.md`, whose module (`fixture/blocks/probe.js`) tries
+what it can reach, posting an owner's approve on a card of the register when drawn in the page.
+Run it on a scratch board only. Each block's times, height and what its module returned are kept
+in `window.customBlocks`:
+
+```sh
+node fixture/make.mjs plugins FOLDER      # 12 tasks, the documents and the two blocks
+SYMPHONY_UI_DIST=$PWD/dist/preact just symphony --port 0 --root FOLDER
+just symphony-cli shot URL/docs/PLUGINS.md --out FRAME.png --wait-for '.custom-block[data-drawn]' --eval 'JSON.stringify(window.customBlocks)'
+just symphony-cli shot 'URL/docs/PROBE.md?blocks=page' --out PAGE.png --wait-for '.custom-block[data-drawn]' --eval 'JSON.stringify(window.customBlocks)'
+```
+
+The server is started with the fixture's `SYMPHONY_MACHINE_DIR` and `SYMPHONY_SURREAL`.
+
 ## Measure
 
 `bench/` is a Rust program over the workspace's headless Chrome driver
