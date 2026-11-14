@@ -129,10 +129,12 @@ or on its draft, is written **into that worktree's file**, uncommitted, where th
 a land refuses while a worktree of the branch holds an owner line no commit has
 ([TASKS](TASKS.md#the-default-landing)). Until then
 the owner's own lines there count at once, laid on the posted card. A line on a card main holds is main's when
-the branch's page draws main's card for it: the branch did not post the card (its copy is the one it forked
-with, or main's), the branch is in main already (landed), or the page's worktree is gone. It is saved in main's
+the branch did not post the card (its copy is the one it forked with, or main's), the branch is in main already
+(landed), or the page's worktree is gone: in each, the branch's page draws main's card. A card the branch posted
+stays its own, even once main closed its copy and the page draws that one. A line that is main's is saved in main's
 file and committed there like a line given on main's page, so `just symphony-status` counts it at once; from a
-gone worktree's page, a line on a card main lacks has nowhere to go and is refused. A line left in a worktree
+gone worktree's page, a line on a card main lacks has nowhere to go and is refused. While git cannot list the
+worktrees, nothing says a worktree is gone: a branch page's line is refused, never taken to main. A line left in a worktree
 whose branch reached main another way (merged by hand, or saved while it landed) still joins main's copy of the
 card on the terms above, or stands as the branch page's card when main has none. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed

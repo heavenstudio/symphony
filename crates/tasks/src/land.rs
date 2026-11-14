@@ -2747,7 +2747,8 @@ impl Landing<'_> {
             }
             let files = owner_lines_left(&entry.path);
             if !files.is_empty() {
-                held = format!("{held}{} ({}) ", entry.path.display(), files.join(", "));
+                let and = if held.is_empty() { "" } else { ", " };
+                held = format!("{held}{and}{} ({})", entry.path.display(), files.join(", "));
             }
         }
         if held.is_empty() {
@@ -2755,7 +2756,7 @@ impl Landing<'_> {
         }
         Err(Refusal::to(
             format!(
-                "{slug}'s worktree {held}holds the owner's answer no commit has, which a land of \
+                "{slug}'s worktree {held} holds the owner's answer no commit has, which a land of \
                  its commits would leave behind"
             ),
             "@executor",

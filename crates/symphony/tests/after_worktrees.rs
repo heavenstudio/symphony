@@ -178,6 +178,11 @@ fn executable(tree: &Tree, rel: &str, text: &str) {
 /// Environment-dependent public APIs run in an owned copy of this test process. No test changes
 /// the suite's PATH/board configuration, and no read or background filer can reach the shared board.
 fn isolated(name: &str, body: impl FnOnce(&Tree)) {
+    isolated_with(name, &[], body);
+}
+
+/// [`isolated`], the child given `vars` as well (a `PATH` whose `git` the test wrote).
+fn isolated_with(name: &str, vars: &[(&str, std::ffi::OsString)], body: impl FnOnce(&Tree)) {
     if std::env::var(CHILD).as_deref() == Ok(name) {
         body(&Tree::new());
         return;
@@ -186,6 +191,7 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
     let done = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
+            .envs(vars.iter().map(|(name, value)| (*name, value)))
             .env(CHILD, name)
             .env("TASKS_SERVER", "127.0.0.1:1")
             .env("SYMPHONY_TASKS_CLI", "/usr/bin/false")
@@ -396,6 +402,11 @@ fn a_line_on_mains_card_from_a_live_branchs_page_is_saved_on_main_and_its_own_ca
 #[test]
 fn a_verdict_from_a_gone_worktrees_page_is_saved_on_main_when_main_holds_the_card() {
     landed::a_verdict_from_a_gone_worktrees_page_is_mains();
+}
+
+#[test]
+fn a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages_and_main_takes_nothing() {
+    landed::a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages();
 }
 
 #[test]

@@ -990,6 +990,28 @@ fn an_owner_answer_no_commit_has_in_the_branchs_worktree_is_refused_until_commit
     assert_eq!(fs::read_to_string(r.root.join(DOC)).unwrap(), answered);
 }
 
+/// An agent's own edit of the branch's documents, uncommitted, holds no owner line: the land is
+/// not refused for it.
+#[test]
+fn an_agents_uncommitted_docs_edit_without_an_owner_line_lands() {
+    const DOC: &str = "docs/DECISIONS.md";
+    let r = Repo::new();
+    manifest(&r, "");
+    let register = "# Decisions\n\n<!-- register:start -->\n- [ ] **card-b** — B.\n  \
+                    [2026-11-14 01:00] agent — Posted.\n<!-- register:end -->\n";
+    let wt = branch(&r, SLUG, DOC, register);
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip} is good"));
+    let edited = register.replace(
+        "<!-- register:end",
+        "  [2026-11-14 01:52] agent — A note no commit has.\n<!-- register:end",
+    );
+    write(&wt, DOC, &edited);
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(fs::read_to_string(r.root.join(DOC)).unwrap(), register);
+}
+
 /// The refusal of a task in `status` with no approve standing: who approves it, and by what.
 fn unapproved(slug: &str, status: &str) -> String {
     let approve = format!(

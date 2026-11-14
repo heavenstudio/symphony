@@ -874,11 +874,12 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
 
 /// Whether the owner's line on the card `slug` of the document `rel`, saved from the page of the
 /// worktree at `tree`, is main's to keep: main's copy of the document (in the checkout at
-/// `main_root`) holds the card, and the branch's page draws main's card for it ([`page_cards`]).
-/// That is so when the worktree is gone (`None`), when its branch is in main already (landed, or
-/// with no commit of its own), and when its HEAD's copy of the card is the one it forked with or
-/// main's (it did not post the card, as [`tree_scan`] reads it). A card the branch posted, a draft
-/// only its worktree holds and a card main's copy lacks are the branch's.
+/// `main_root`) holds the card, and the worktree is gone (`None`), its branch is in main already
+/// (landed, or with no commit of its own), or its HEAD's copy of the card is the one it forked
+/// with or main's (it did not post the card, as [`tree_scan`] reads it); for each, the branch's
+/// page draws main's card ([`page_cards`]). A card the branch posted, a draft only its worktree
+/// holds and a card main's copy lacks are the branch's: so is a card it posted that main closed
+/// since, though its page then draws main's closed card.
 pub fn mains_card(main_root: &Path, tree: Option<&Path>, rel: &str, slug: &str) -> bool {
     let project = Project::of(main_root);
     let card = |text: &str| cards(text).into_iter().find(|card| card.slug == slug);

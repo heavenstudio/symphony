@@ -193,6 +193,59 @@ pub(super) fn a_line_on_mains_card_from_a_live_branchs_page_is_mains() {
     );
 }
 
+/// The variable naming the file whose presence makes the test's `git` refuse to list worktrees.
+const NO_LISTING: &str = "SYMPHONY_TEST_NO_LISTING";
+
+/// A `git` that runs the real one, but fails `git worktree list` while the file [`NO_LISTING`]
+/// names exists: a listing that could not be made, as a spawn failure under load or a git error.
+const FAILING_LISTING: &str = r#"#!/bin/sh
+case " $* " in
+    *" worktree list "*) [ -f "$SYMPHONY_TEST_NO_LISTING" ] && exit 128 ;;
+esac
+exec /usr/bin/git "$@"
+"#;
+
+pub(super) fn a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages() {
+    let name =
+        "a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages_and_main_takes_nothing";
+    let bin = super::common::Tree::new();
+    super::executable(&bin, "bin/git", FAILING_LISTING);
+    let path = std::env::join_paths(
+        std::iter::once(bin.path("bin"))
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let flag = bin.path("no-listing").into_os_string();
+    super::isolated_with(name, &[("PATH", path), (NO_LISTING, flag)], |_| {
+        let tree = committing();
+        tree.write(DOC, &register(&card("old-card", ' ', "")));
+        commit(&tree.root, "base", 1);
+        // The branch posts its own revision of main's card: a decision of its own.
+        let live = branch(&tree, "feat/live", "live");
+        let revised = card("old-card", ' ', "").replace("Proposal old-card.", "Revised old-card.");
+        write(&live, &revised);
+        commit(&live, "revise old-card", 2);
+        std::fs::write(std::env::var_os(NO_LISTING).unwrap(), "").unwrap();
+        let saves = symphony::save::Saves::start(&tree.root);
+        let failure = saves
+            .post(
+                "feat~live",
+                "/api/decision",
+                &json!({"path":DOC, "slug":"old-card", "state":"approved", "note":""}),
+            )
+            .unwrap_err();
+        saves.close();
+        // The owner sees the failure; main's card, the other decision, is never answered.
+        assert_eq!(
+            (failure.status, failure.error.as_str()),
+            (404, "no such worktree")
+        );
+        assert_eq!(main_states(&tree.root), states(&[("old-card", "pending")]));
+        assert!(!tree.read(DOC).contains("owner"), "{}", tree.read(DOC));
+        assert_eq!(changes(&live), "");
+    });
+}
+
 pub(super) fn a_verdict_from_a_gone_worktrees_page_is_mains() {
     isolated(
         "a_verdict_from_a_gone_worktrees_page_is_saved_on_main_when_main_holds_the_card",
