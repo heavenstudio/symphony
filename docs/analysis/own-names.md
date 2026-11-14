@@ -1,16 +1,15 @@
 # Symphony's own names
 
-**Decided: B, at once** (the owner, 2026-11-11: "just remove the bandaid quickly. Break things
-then fix them ASAP"). Every old name goes in one pass, with no bridge. Every repository this
-machine serves keeps its state in the `symphony/` folder of its git common dir. No build reads an
+**Decided: B, at once**: the old names go quickly, and what that breaks is fixed as soon as
+possible. Every old name goes in one pass, with no bridge. Every repository this machine serves
+keeps its state in the `symphony/` folder of its git common dir. No build reads an
 old folder or refuses on one, and nothing in the tree moves state out of one. The old-name reads
 and the bridge slices this page plans are void. The board database's namespace stays `sf`.
 
-The rest of this page is the inventory and plan as they stood before the verdict, except that the
-owner then asked, on 2026-11-11, for every direct reference to the consuming project to be removed
-from Symphony's app folder (the owner's exact words: board post #2869). So this page names that
-project only as the consuming project, its tools by what they do, and each old name by the thing
-it named and its new name.
+The rest of this page is the inventory and plan as they stood before the verdict, except that
+every direct reference to the consuming project is removed from Symphony's app folder. So this
+page names that project only as the consuming project, its tools by what they do, and each old name
+by the thing it named and its new name.
 
 Symphony grew inside the consuming project and still carries its names: variables, state folders,
 the names of that project's own tools, and documents that name it. This is the inventory behind the
