@@ -776,7 +776,7 @@ script at run time is not something a JSX client makes possible: both clients ca
 Preact or React component that the client mounts in its own tree, sharing its runtime, contexts and
 state. It could also replace one of the client's own components by name: this is the form in which
 a project overrides the client's functions. For that, the page hands the module its framework (an
-import map naming the client's own Preact chunk, or the framework passed in), and the project builds
+import map naming the client's own Preact or React chunk, or the framework passed in), and the project builds
 against the client's major version. The Dioxus client cannot take a component at run time: each
 separately built wasm module carries its own runtime (the program's chunks share one only because
 they are one build, [Moving parts](#code-and-build)). So a project's Dioxus component would be
@@ -990,7 +990,7 @@ repair step), not taken away.
 | The development front door | the server's `dx` front door (`apps/symphony-server/src/development.rs`, 654 lines) and `just symphony-ui-dev` | Vite's dev server proxying the API, or the same front door over it |
 | The size probes | `examples/wasm_size.rs` (674 lines), `probes/` (5 files, 512 lines) | retired; a bundle analyser for the chunks |
 | The block kinds' check | the compiler refuses a client that does not draw every block, span and media kind | a test that draws every kind, or TypeScript's exhaustive `switch` over generated types |
-| A project's own browser code | a viewer's script loaded into the page and a mockup in a scripts-only sandbox, with no project code in the client; a project's own component only by compiling it into the client | the same two forms, as they are DOM and not the framework's, a sandboxed frame with data in and height out about 90 lines on either client; a project's component at run time becomes possible, and the client's Preact and each component a project may replace then become an interface consumers build against ([Plugins and front-end extension](#plugins-and-front-end-extension)) |
+| A project's own browser code | a viewer's script loaded into the page and a mockup in a scripts-only sandbox, with no project code in the client; a project's own component only by compiling it into the client | the same two forms, as they are DOM and not the framework's, a sandboxed frame with data in and height out about 90 lines on either client; a project's component at run time becomes possible, and the client's library (Preact or React) and each component a project may replace then become an interface consumers build against ([Plugins and front-end extension](#plugins-and-front-end-extension)) |
 | A byte-for-byte `client-check` | `rust-toolchain.toml` pins Rust; `dx` and `wasm-bindgen` are pinned and built per machine | Node and npm pinned the same way, with the lockfile; this experiment's build came out byte for byte the same twice on one machine, but across machines and Node versions was not tried |
 | The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too, which reach the shell's Rust through a channel of their own ([The desktop app](#the-desktop-app)) |
 | The distribution | committed, three builds kept: 20.0 MB, 24 wasm files, a size line of 20,750,000 bytes; 106 commits regenerated it in the week to this run, each about 6.3 MB of new wasm | about 0.4 MB a build on React, 0.2 MB on Preact, the style sheets included; the regenerator, `client-check` and `publish-client` stay, needing Node where they run |
@@ -1077,7 +1077,9 @@ tracker, or by a build here; "works" is said only where one of those says it.
 | **Motion** 14.14, **react-spring** 10.1, **auto-animate** 0.10: animation | supported | Motion: "We don't explicitly support Preact no" ([#332](https://github.com/motiondivision/motion/issues/332), 2019); react-spring: two reports on Preact's tracker ([#1795](https://github.com/preactjs/preact/issues/1795), 2019; [#2662](https://github.com/preactjs/preact/issues/2662), 2020) closed by a Preact maintainer in July 2026 "as unreproducible/stale", and no open issue on its own tracker names Preact; auto-animate: "Preact users can use the hook `useAutoAnimate` by importing it from `@formkit/auto-animate/preact`" ([its docs](https://auto-animate.formkit.com/)) | none needed: the client animates with CSS |
 
 The plugin blocks need no library on either side: the client draws each block kind with a
-component of its own, as `blocks.jsx` does here.
+component of its own, as `blocks.jsx` does here. A project's own component mounted in the
+client's runtime ([Plugins and front-end extension](#plugins-and-front-end-extension)) would run
+on the client's library, so on Preact it too would go through compat.
 
 ### The probe
 
