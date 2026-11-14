@@ -109,6 +109,25 @@ pub(crate) fn machine(title: &str, crumb: &str, notice: &str, body: &str) -> Str
 /// draw (the switch to the project list on the one server, then the Symphony's own pages and the
 /// plugins'), `notice` in the notice region. Its title is `title` before the project's name.
 pub(crate) fn project(root: &Path, base: &str, title: &str, crumb: &str, notice: &str) -> String {
+    project_page(root, base, title, crumb, notice, "")
+}
+
+/// A Markdown file of the project at `root` that no entrypoint serves, opened as a page
+/// ([`crate::media_files`]): `html`, its text drawn, under the project's header, named `file`.
+pub(crate) fn file(root: &Path, base: &str, file: &str, html: &str) -> String {
+    let body = format!("<article class=\"file-page\">{html}</article>");
+    project_page(root, base, file, file, "", &body)
+}
+
+/// [`project`] with `body` after the notice region.
+fn project_page(
+    root: &Path,
+    base: &str,
+    title: &str,
+    crumb: &str,
+    notice: &str,
+    body: &str,
+) -> String {
     let mut view = crate::api::project_view(root);
     view.base = base.to_string();
     let mut links = String::new();
@@ -129,7 +148,7 @@ pub(crate) fn project(root: &Path, base: &str, title: &str, crumb: &str, notice:
         .map(|(href, name)| (view.here(&href), name))
         .collect();
     links.push_str(&pages(all, None));
-    let shell = frame("", &links, crumb, "", "");
+    let shell = frame("", &links, crumb, "", body);
     let page = crate::shell::page(&shell, root, base, notice);
     iconed(page.replacen("<title>", &format!("<title>{} · ", escape(title)), 1))
 }
