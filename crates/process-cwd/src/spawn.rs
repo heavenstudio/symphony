@@ -172,9 +172,17 @@ pub struct Command {
 }
 
 impl Command {
+    // Each generic method hands its text to one that is not, so the code that builds or changes the
+    // command is compiled once, here, rather than again in every crate and for every type it is
+    // called with.
+
     pub fn new(program: impl AsRef<OsStr>) -> Self {
+        Self::named(program.as_ref())
+    }
+
+    fn named(program: &OsStr) -> Self {
         Self {
-            program: program.as_ref().to_owned(),
+            program: program.to_owned(),
             args: Vec::new(),
             cwd: None,
             cleared: false,
@@ -191,7 +199,11 @@ impl Command {
     }
 
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
-        self.args.push(arg.as_ref().to_owned());
+        self.push_arg(arg.as_ref())
+    }
+
+    fn push_arg(&mut self, arg: &OsStr) -> &mut Self {
+        self.args.push(arg.to_owned());
         self
     }
 
@@ -203,8 +215,11 @@ impl Command {
     }
 
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
-        self.vars
-            .insert(key.as_ref().to_owned(), Some(value.as_ref().to_owned()));
+        self.set_var(key.as_ref(), value.as_ref())
+    }
+
+    fn set_var(&mut self, key: &OsStr, value: &OsStr) -> &mut Self {
+        self.vars.insert(key.to_owned(), Some(value.to_owned()));
         self
     }
 
@@ -220,7 +235,11 @@ impl Command {
 
     /// `key` left out of the child's environment, as std's `env_remove` leaves it out.
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
-        let key = key.as_ref().to_owned();
+        self.remove_var(key.as_ref())
+    }
+
+    fn remove_var(&mut self, key: &OsStr) -> &mut Self {
+        let key = key.to_owned();
         if self.cleared {
             self.vars.remove(&key);
         } else {
@@ -237,7 +256,11 @@ impl Command {
     }
 
     pub fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut Self {
-        self.cwd = Some(dir.as_ref().to_owned());
+        self.set_dir(dir.as_ref())
+    }
+
+    fn set_dir(&mut self, dir: &Path) -> &mut Self {
+        self.cwd = Some(dir.to_owned());
         self
     }
 

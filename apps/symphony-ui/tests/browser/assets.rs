@@ -4,12 +4,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// One module's files, as the shell's manifest names them.
+/// One module's files, as the shell's manifest names them: a program kind's (src/split.rs) are the
+/// program's script and main module, which its kinds share, and its own chunk.
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct Module {
     pub script: String,
     pub wasm: String,
     pub styles: Vec<String>,
+    #[serde(default)]
+    pub chunk: Option<String>,
+}
+
+impl Module {
+    /// A program kind's chunk.
+    pub fn chunk(&self) -> &String {
+        self.chunk.as_ref().expect("a program kind's chunk")
+    }
 }
 
 /// The files of the module `kind` (`panel`, `overlay`, `board`…) in `dist`'s shell.

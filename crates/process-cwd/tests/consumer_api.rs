@@ -19,11 +19,19 @@ use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::sync::MutexGuard;
 
+use process_cwd::session::{self, MARKS, SESSION_VARS};
 use process_cwd::spawn::{self, Child, Spawning, Stdio};
 use process_cwd::{Command, close_on_fork, occupied, open_file_pids, process_cwds};
 
 #[test]
 fn the_names_consumers_call_keep_their_shapes() {
+    // A plugin's process starts its children as the board does, without the session or the marks
+    // (2026-11-13: the consuming project's plugin, moving off the library's `children::command`).
+    let _: [&str; 5] = SESSION_VARS;
+    let _: [&str; 2] = MARKS;
+    let _: fn(&mut Command) -> &mut Command = session::sessionless;
+    let _: fn(&mut Command) -> &mut Command = session::unmarked;
+
     let _: fn() -> Option<Vec<PathBuf>> = process_cwds;
     let _: fn(&Path) -> Option<bool> = occupied;
     let _: fn(&mut Command) -> Option<Vec<i64>> = open_file_pids;

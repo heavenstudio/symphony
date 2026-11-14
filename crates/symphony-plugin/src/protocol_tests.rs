@@ -118,6 +118,7 @@ fn page() -> PageData {
         root: "/r/ünï code".into(),
         doc_path: "docs/A.md".into(),
         render: 7,
+        artifacts: "out/ä".into(),
     }
 }
 
@@ -572,7 +573,7 @@ fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_
     );
     assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
     assert_eq!(Version::default(), PROTOCOL);
-    assert_eq!(PROTOCOL.to_string(), "0.1");
+    assert_eq!(PROTOCOL.to_string(), "0.2");
 }
 
 #[test]
@@ -753,17 +754,72 @@ fn an_owned_card_task_file_and_page_lend_what_they_were_made_of() {
     };
     assert_eq!(FileData::of(&file.file()), file);
     let root = Path::new("/r/ünï code");
-    let named = Page::new(root, "docs/A.md");
+    let named = Page::new(root, "docs/A.md").in_artifacts("out/ä");
     // A page names its render: the same for each request it makes, another for another page.
     let render = PageData::of(&named).render;
     assert_ne!(render, 0);
     assert_eq!(PageData::of(&named), PageData { render, ..page() });
     assert_ne!(PageData::of(&Page::new(root, "docs/A.md")).render, render);
     assert!(page().names(&named));
-    assert!(!page().names(&Page::new(root, "docs/B.md")));
-    assert!(!page().names(&Page::new(Path::new("/r"), "docs/A.md")));
+    assert!(!page().names(&Page::new(root, "docs/B.md").in_artifacts("out/ä")));
+    assert!(!page().names(&Page::new(Path::new("/r"), "docs/A.md").in_artifacts("out/ä")));
+    // Nor is a page of another project's artifacts folder the same page.
+    assert!(!page().names(&Page::new(root, "docs/A.md")));
     let problem = Problem::new("docs/A.md", 3, "no anchor".into());
     assert_eq!(ProblemData::of(&problem).problem(), problem);
+}
+
+#[test]
+fn a_page_holds_its_projects_artifacts_folder_the_default_unless_one_is_named() {
+    let root = Path::new("/r");
+    let page = Page::new(root, "docs/A.md");
+    assert_eq!(page.artifacts, ARTIFACTS);
+    assert_eq!(page.artifact("screens"), "artifacts/screens");
+    let named = Page::new(root, "docs/A.md").in_artifacts("build/out");
+    assert_eq!(named.artifact("screens"), "build/out/screens");
+    // The same render, its folder named or not.
+    let render = PageData::of(&page).render;
+    let again = page.in_artifacts("x");
+    assert_eq!(PageData::of(&again).render, render);
+    assert_eq!(PageData::of(&again).artifacts, "x");
+}
+
+#[test]
+fn a_page_names_its_artifacts_folder_since_0_2_and_a_peer_of_0_1_reads_without_it() {
+    // A host of 0.1 writes no folder: the page reads as the projects' default.
+    let written = serde_json::json!({"root": "/r", "doc_path": "docs/A.md", "render": 3});
+    let read: PageData = serde_json::from_value(written).unwrap();
+    assert_eq!(read.artifacts, ARTIFACTS);
+    assert_eq!(read.render, 3);
+    // A plugin of 0.1 reads a page of 0.2 as the page it knows, the folder unread.
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct PageOf01 {
+        root: PathBuf,
+        doc_path: String,
+        #[serde(default)]
+        render: u64,
+    }
+    let read: PageOf01 = serde_json::from_str(&serde_json::to_string(&page()).unwrap()).unwrap();
+    assert_eq!(
+        read,
+        PageOf01 {
+            root: page().root,
+            doc_path: page().doc_path,
+            render: 7,
+        }
+    );
+    // And a call's page goes on the wire with its folder, which reads back the same.
+    let (asked, read, _) = wire(Render {
+        component: "every".into(),
+        page: page(),
+        argument: "a".into(),
+        option: None,
+    });
+    assert_eq!(read, asked);
+    let Request::Render(read) = read else {
+        panic!("a render reads back as a render");
+    };
+    assert_eq!(read.page.artifacts, "out/ä");
 }
 
 /// A plugin that declares something at every seam.

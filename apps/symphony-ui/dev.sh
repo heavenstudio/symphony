@@ -7,7 +7,7 @@ target="${CARGO_TARGET_DIR:?dev.sh needs CARGO_TARGET_DIR from the workspace Car
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
 SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh"
-# The tools' folder, as tools.sh finds it: symphony/tools, or an older build's until the move.
+# The tools' folder, as tools.sh finds it: symphony/tools in the common dir.
 tools="$(SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh" --folder)"
 export DX_HOME="$tools/dx-home"
 dx="$tools/dx-0.7.10/bin/dx"

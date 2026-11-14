@@ -455,7 +455,7 @@ fn far_page<R>(named: &PageData, page: &Page<'_>, run: impl FnOnce(&Page<'_>) ->
     if named.names(page) {
         run(page)
     } else {
-        run(&Page::new(&named.root, &named.doc_path))
+        run(&Page::new(&named.root, &named.doc_path).in_artifacts(&named.artifacts))
     }
 }
 

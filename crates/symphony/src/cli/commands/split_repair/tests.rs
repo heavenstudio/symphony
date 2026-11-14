@@ -120,6 +120,11 @@ const SYMBOLS: [(&str, u32, u32); 4] = [
 /// repair reads past: a function symbol, a section symbol, an undefined data symbol and the
 /// linker's absolute `__heap_base`, whose offset is an address past every segment's end.
 fn linking(symbols: &[(&str, u32, u32)]) -> Built {
+    linking_with(symbols, 0)
+}
+
+/// [`linking`], its absolute `__heap_base` naming `heap` bytes at its address.
+fn linking_with(symbols: &[(&str, u32, u32)], heap: u8) -> Built {
     let mut table = Vec::new();
     write_u32(&mut table, symbols.len() as u32 + 4);
     table.extend([0, 0x00, 0]);
@@ -129,7 +134,7 @@ fn linking(symbols: &[(&str, u32, u32)]) -> Built {
     name(&mut table, "elsewhere");
     table.extend([1, 0x84, 0x04]);
     name(&mut table, "__heap_base");
-    table.extend([0, 0x80, 0x80, 0x04, 0]);
+    table.extend([0, 0x80, 0x80, 0x04, heap]);
     for (called, offset, size) in symbols {
         table.extend([1, 0x00]);
         name(&mut table, called);
@@ -368,6 +373,134 @@ fn a_main_module_with_a_passive_data_segment_is_not_read() {
     );
 }
 
+/// A data segment active in memory `memory` at `i32.const address`, in the form that names it.
+fn active_in(memory: u32, address: i32, bytes: &[u8]) -> Vec<u8> {
+    let mut out = vec![2];
+    write_u32(&mut out, memory);
+    out.extend(at(address));
+    write_u32(&mut out, bytes.len() as u32);
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// A data segment active in memory 0 at `i64.const address`, as a 64-bit memory places it.
+fn active_wide(address: i64, bytes: &[u8]) -> Vec<u8> {
+    let mut out = vec![0, 0x42];
+    // Signed LEB128 of `address`.
+    let mut value = address;
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if (value == 0 && byte & 0x40 == 0) || (value == -1 && byte & 0x40 != 0) {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+    out.push(0x0b);
+    write_u32(&mut out, bytes.len() as u32);
+    out.extend_from_slice(bytes);
+    out
+}
+
+#[test]
+fn a_main_module_with_data_in_another_memory_is_not_read() {
+    // The same bytes at the same address, but in memory 1: not what the repair reads or writes.
+    let main = module(&[
+        memory(),
+        (
+            11,
+            vector(&[active(BASE, b"ok"), active_in(1, BASE + 5, b"/{}")]),
+        ),
+    ]);
+    assert_eq!(
+        input_why(constants::repair(&linked(), &main)),
+        "the main module's data segment 1 is not placed at a constant address of memory 0, which \
+         the repair does not read"
+    );
+    // Memory 0 named by the form that names its memory is read as the short form is.
+    let named = module(&[
+        memory(),
+        (
+            11,
+            vector(&[active_in(0, BASE, b"ok"), active(BASE + 5, b"/{}")]),
+        ),
+    ]);
+    let repaired = constants::repair(&linked(), &named).unwrap();
+    assert_eq!((repaired.runs, repaired.written), (0, 0));
+    assert_eq!(repaired.bytes, named);
+}
+
+#[test]
+fn a_segment_placed_by_an_i64_constant_has_no_address_the_repair_reads() {
+    let body = vector(&[active_wide(0x400, b"ok"), active(0x500, b"next")]);
+    let segments = wasm::data_segments(&body).unwrap();
+    // Its whole constant read past, so the segment after it is read in place.
+    assert_eq!(
+        segments[0].mode,
+        wasm::Mode::Active {
+            index: 0,
+            offset: None
+        }
+    );
+    assert!(matches!(segments[0].fill, wasm::Fill::Bytes(b"ok")));
+    assert_eq!(
+        segments[1].mode,
+        wasm::Mode::Active {
+            index: 0,
+            offset: Some(0x500)
+        }
+    );
+    assert!(matches!(segments[1].fill, wasm::Fill::Bytes(b"next")));
+    // Neither the program, the main module nor a chunk is read past it.
+    let wide = module(&[
+        memory(),
+        (11, vector(&[active_wide(BASE.into(), DATA)])),
+        linking(&SYMBOLS),
+    ]);
+    assert_eq!(
+        constants::Program::read(&wide).err(),
+        Some("its data segment 0 is not placed at a constant address of memory 0".into())
+    );
+    let main = module(&[memory(), (11, vector(&[active_wide(BASE.into(), b"ok")]))]);
+    assert_eq!(
+        input_why(constants::repair(&linked(), &main)),
+        "the main module's data segment 0 is not placed at a constant address of memory 0, which \
+         the repair does not read"
+    );
+    assert_eq!(
+        unsafe_why(order::order(&chunk(
+            &[active(0x500, b"b"), active_wide(0x400, b"a")],
+            &[]
+        ))),
+        "its data segment 1 has no constant address: whether its order matters cannot be told"
+    );
+}
+
+#[test]
+fn an_absolute_symbol_names_no_segment_s_bytes_whatever_its_size() {
+    // The linker's `__heap_base`, here of four bytes at an address past every segment's end: were
+    // it read as a symbol of segment 0, it would run past that segment's end.
+    let program = module(&[
+        memory(),
+        (11, vector(&[active(BASE, DATA)])),
+        linking_with(&SYMBOLS, 4),
+    ]);
+    let module = wasm::Module::read(&program).unwrap();
+    let symbols: Vec<(String, u32, u32)> = wasm::data_symbols(&module)
+        .unwrap()
+        .into_iter()
+        .map(|symbol| (symbol.name, symbol.offset, symbol.size))
+        .collect();
+    assert_eq!(
+        symbols,
+        SYMBOLS.map(|(called, offset, size)| (called.to_string(), offset, size))
+    );
+    let linked = constants::Program::read(&program).expect("the program");
+    let repaired = constants::repair(&linked, &split_main()).unwrap();
+    assert_eq!(memory_of(&repaired.bytes), b"ok\0\0\0/{}\0");
+}
+
 // The chunks' order.
 
 /// A chunk: its data segments, then its element segments, each as encoded, in this order.
@@ -466,15 +599,116 @@ fn a_passive_segment_keeps_its_index_while_the_active_ones_take_their_order() {
     );
 }
 
+/// What a chunk's active segments put in each place once its segments are written in order: of a
+/// memory (`wasm::DATA`), a byte; of a table, a function index as encoded.
+fn places(chunk: &[u8], id: u8) -> std::collections::BTreeMap<(u32, u32), Vec<u8>> {
+    let mut places = std::collections::BTreeMap::new();
+    let module = wasm::Module::read(chunk).unwrap();
+    let Some(section) = module.section(id) else {
+        return places;
+    };
+    let segments = if id == wasm::DATA {
+        wasm::data_segments(section.body())
+    } else {
+        wasm::element_segments(section.body())
+    };
+    for segment in segments.unwrap() {
+        let wasm::Mode::Active {
+            index,
+            offset: Some(start),
+        } = segment.mode
+        else {
+            continue;
+        };
+        let slots: Vec<Vec<u8>> = match segment.fill {
+            wasm::Fill::Bytes(bytes) => bytes.iter().map(|byte| vec![*byte]).collect(),
+            wasm::Fill::Items(items) => items.iter().map(|item| item.to_vec()).collect(),
+        };
+        for (at, slot) in slots.into_iter().enumerate() {
+            places.insert((index, start as u32 + at as u32), slot);
+        }
+    }
+    places
+}
+
+/// The count a chunk's data count section holds.
+fn data_count(chunk: &[u8]) -> u32 {
+    let module = wasm::Module::read(chunk).unwrap();
+    let body = module.section(wasm::DATA_COUNT).unwrap().body();
+    wasm::Reader::new(body).u32().unwrap()
+}
+
 #[test]
-fn segments_that_fill_one_place_alike_are_ordered_and_otherwise_refused() {
-    // Two symbols the linker merged, each written whole by the chunk: the same bytes where they meet.
-    let alike = [active(0x405, b"/{}"), active(0x402, b"@{}/{}")];
-    let ordered = order::order(&chunk(&alike, &[])).unwrap();
+fn segments_that_touch_or_overlap_are_joined_into_one_that_fills_the_same_places() {
+    // As the splitter writes a chunk: a segment a symbol, side by side or one over another, and a
+    // table entry a function, in slots that follow one another.
+    let data = [
+        active(0x405, b"/{}"),
+        active(0x410, b"far"),
+        active(0x400, b"ok"),
+        active(0x402, b"@{}/{}"),
+        active(0x408, b""),
+    ];
+    let elements = [entries(5, &[2, 3]), entries(9, &[4]), entries(4, &[1])];
+    let split = chunk(&data, &elements);
+    let ordered = order::order(&split).unwrap();
     assert_eq!(
         segments_of(&ordered.bytes, wasm::DATA),
-        [alike[1].clone(), alike[0].clone()]
+        [active(0x400, b"ok@{}/{}"), active(0x410, b"far")]
     );
+    assert_eq!(
+        segments_of(&ordered.bytes, wasm::ELEMENT),
+        [entries(4, &[1, 2, 3]), entries(9, &[4])]
+    );
+    assert_eq!(data_count(&ordered.bytes), 2);
+    assert_eq!((ordered.segments, ordered.joined), (8, 4));
+    for id in [wasm::DATA, wasm::ELEMENT] {
+        assert_eq!(places(&ordered.bytes, id), places(&split, id));
+    }
+    assert!(ordered.bytes.len() < split.len());
+    // Joined once, nothing is left to join or move.
+    let again = order::order(&ordered.bytes).unwrap();
+    assert_eq!((again.moved, again.joined), (0, 0));
+    assert_eq!(again.bytes, ordered.bytes);
+}
+
+#[test]
+fn segments_are_joined_only_where_every_one_of_the_section_is_active_in_the_short_form() {
+    // A passive segment, which an instruction names by its index: the others keep theirs.
+    let with_passive = [active(0x401, b"b"), passive(b"later"), active(0x400, b"a")];
+    let ordered = order::order(&chunk(&with_passive, &[])).unwrap();
+    assert_eq!(
+        segments_of(&ordered.bytes, wasm::DATA),
+        [
+            with_passive[2].clone(),
+            with_passive[1].clone(),
+            with_passive[0].clone()
+        ]
+    );
+    assert_eq!((ordered.joined, data_count(&ordered.bytes)), (0, 3));
+    // Touching segments of memory 1, or of memory 0 with one in the long form, are ordered and left
+    // apart.
+    for data in [
+        [active_in(1, 0x401, b"b"), active_in(1, 0x400, b"a")],
+        [active_in(0, 0x401, b"b"), active(0x400, b"a")],
+    ] {
+        let ordered = order::order(&chunk(&data, &[])).unwrap();
+        assert_eq!((ordered.moved, ordered.joined), (2, 0));
+        assert_eq!(
+            segments_of(&ordered.bytes, wasm::DATA),
+            [data[1].clone(), data[0].clone()]
+        );
+    }
+}
+
+#[test]
+fn segments_that_fill_one_place_alike_are_ordered_and_otherwise_refused() {
+    // Two symbols the linker merged, each written whole by the chunk: the same bytes where they meet,
+    // so one segment of the outer one writes both.
+    let alike = [active(0x405, b"/{}"), active(0x402, b"@{}/{}")];
+    let ordered = order::order(&chunk(&alike, &[])).unwrap();
+    assert_eq!(segments_of(&ordered.bytes, wasm::DATA), [alike[1].clone()]);
+    assert_eq!((ordered.moved, ordered.joined), (2, 1));
     let unlike = [active(0x405, b"/{}"), active(0x402, b"@{}/()")];
     assert_eq!(
         unsafe_why(order::order(&chunk(&unlike, &[]))),
@@ -517,6 +751,37 @@ fn a_chunk_whose_name_section_names_its_segments_is_refused_once_they_move() {
         unsafe_why(order::order(&named)),
         "its name section names its segments, which a new order of them would leave naming others"
     );
+}
+
+#[test]
+fn a_chunk_still_carrying_its_linking_or_relocations_is_refused_once_its_segments_move() {
+    let with = |section: Built| {
+        let mut bytes = chunk(&chunk_data(), &chunk_entries());
+        bytes.extend(module(&[section])[8..].iter());
+        bytes
+    };
+    for (section, called) in [
+        (linking(&SYMBOLS), "linking"),
+        (custom("reloc.DATA", &[0, 0]), "reloc.DATA"),
+        (custom("reloc.CODE", &[3, 0]), "reloc.CODE"),
+    ] {
+        assert_eq!(
+            unsafe_why(order::order(&with(section))),
+            format!(
+                "its {called} section names its segments by index, which a new order of them \
+                 would leave naming others"
+            )
+        );
+    }
+    // In order already, nothing moves and nothing it names changes: kept as it is.
+    let ordered = order::order(&chunk(&chunk_data(), &chunk_entries()))
+        .unwrap()
+        .bytes;
+    let mut kept = ordered.clone();
+    kept.extend(module(&[custom("reloc.DATA", &[0, 0])])[8..].iter());
+    assert_eq!(order::order(&kept).unwrap().bytes, kept);
+    // Another custom section is no reason to refuse.
+    assert!(order::order(&with(custom("producers", b"\0"))).is_ok());
 }
 
 // The output folder.
@@ -662,8 +927,9 @@ fn two_builds_differing_in_chunk_order_and_dx_s_names_are_the_same_files_once_re
         report,
         format!(
             "main module symphony-ui_bg-dxh1a2b.wasm -> {}: 1 merged constants written back, 3 \
-             bytes\nchunk chunk_0_split-dxhc0.wasm -> {}: 0 of its 0 segments put in order\n\
-             chunk module_0_TasksKind-dxhaa11.wasm -> {}: 5 of its 6 segments put in order\n\
+             bytes\nchunk chunk_0_split-dxhc0.wasm -> {}: 0 of its 0 segments put in order, 0 \
+             joined to the one before\nchunk module_0_TasksKind-dxhaa11.wasm -> {}: 5 of its 6 \
+             segments put in order, 0 joined to the one before\n\
              script symphony-ui-dxhaa11.js -> {}\n",
             short(main),
             short(empty),
@@ -688,8 +954,8 @@ fn a_second_run_changes_nothing() {
         report,
         format!(
             "main module {}: 0 merged constants written back, 0 bytes\n\
-             chunk {}: 0 of its 0 segments put in order\n\
-             chunk {}: 0 of its 6 segments put in order\n",
+             chunk {}: 0 of its 0 segments put in order, 0 joined to the one before\n\
+             chunk {}: 0 of its 6 segments put in order, 0 joined to the one before\n",
             short("symphony-ui_bg-"),
             short("chunk_0_split-"),
             short("module_0_TasksKind-")
@@ -759,6 +1025,39 @@ fn a_module_no_script_names_is_refused() {
     assert!(
         err.starts_with("symphony-build split-repair: symphony-ui_bg-dxh1a2b.wasm: no script in "),
         "{err}"
+    );
+}
+
+#[test]
+fn a_module_the_page_names_is_renamed_there_too() {
+    let tree = Tree::new();
+    let program = two_builds(&tree);
+    // A page that preloads the main module beside its script.
+    tree.write(
+        "one/index.html",
+        "<link rel=\"preload\" as=\"fetch\" href=\"/./assets/symphony-ui_bg-dxh1a2b.wasm\">\
+         <script type=\"module\" src=\"/./assets/symphony-ui-dxhaa11.js\"></script>",
+    );
+    let (code, _, err) = run(&[&program, tree.path("one").to_str().unwrap()]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    let repaired = files(&tree, "one");
+    let (main, script) = (
+        file(&repaired, "symphony-ui_bg-"),
+        file(&repaired, "symphony-ui-"),
+    );
+    assert!(!main.0.contains("dxh") && !script.0.contains("dxh"));
+    let page = String::from_utf8(repaired.last().unwrap().1.clone()).unwrap();
+    assert_eq!(
+        page,
+        format!(
+            "<link rel=\"preload\" as=\"fetch\" href=\"/./{}\">\
+             <script type=\"module\" src=\"/./{}\"></script>",
+            main.0, script.0
+        )
+    );
+    assert!(
+        !tree.path("one/assets/symphony-ui_bg-dxh1a2b.wasm").exists(),
+        "the old name is gone"
     );
 }
 

@@ -558,6 +558,35 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: (&str, &str) = (syntax::REGION_START, syntax::REGION_END);
     let _: Option<&ThreadLine<'_>> = None;
 
+    // Where a plugin built on the kit and the helpers alone finds what it took from the library
+    // (2026-11-13): the library's names above re-export these.
+    let _: &str = symphony_docs::text::S;
+    let _: fn(&str) -> Vec<&str> = symphony_docs::text::splitlines;
+    let _: fn(&str) -> &str = symphony_docs::text::strip;
+    let _: fn(char) -> bool = symphony_docs::text::is_word;
+    let _: fn(&Path) -> std::io::Result<String> = symphony_docs::text::read_text;
+    let _: fn(&Path, &str) -> std::io::Result<()> = symphony_docs::text::write_whole;
+    let _: fn(&str) -> String = symphony_docs::markup::escape;
+    let _: fn(&str) -> String = symphony_docs::markup::unescape;
+    let _: fn(&str, &str) -> String = symphony_docs::markup::quote;
+    let _: fn(&std::io::Error, &Path) -> String = symphony_schema::text::os_error;
+    let _: fn(&mut dyn Write, &str, &str, &str) -> i32 = symphony_args::refuse;
+    let _: fn(&str) -> Block = symphony_plugin::error;
+    let _: &str = symphony_plugin::ARTIFACTS;
+    let _ = |page: &Page<'_>, rel: &str| -> String { page.artifact(rel) };
+    let _ = |page: Page<'static>| page.in_artifacts("out");
+    // Its tests ask its components and card kinds as a host does.
+    let _ = |plugin: &'static dyn Plugin, page: &Page<'_>, card: &Card<'_>| {
+        let host = symphony_plugin::testing::Host::new(plugin);
+        let page = symphony_plugin::protocol::PageData::of(page);
+        let _: Vec<Block> = host.render(&page, "component", "argument", None);
+        let _: Result<symphony_plugin::protocol::Declaration, String> = host.declaration();
+        let _: Result<bool, String> = host.ask(symphony_plugin::protocol::Recognises {
+            kind: "kind".into(),
+            card: symphony_plugin::protocol::CardData::of(card),
+        });
+    };
+
     // A consumer's plugin, below, is one the Symphony takes.
     static PLUGIN: Consumer = Consumer;
     let _: &'static dyn Plugin = &PLUGIN;

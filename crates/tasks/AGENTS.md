@@ -746,7 +746,11 @@ Each child is the project's command or the board's own work, never the one
 command an agent handed a path to, nor the land that recipe asked for. So what
 a land's `on_land` starts, a release run among them, checks and writes where the
 project says, its tests in their own temporary folders. The regenerator alone
-sets `SYMPHONY_LAND` back, by which it lands what it makes.
+sets `SYMPHONY_LAND` back, by which it lands what it makes. The two lists and
+their removers (`sessionless`, `unmarked`) live in the leaf's
+`process_cwd::session`, which `sys` re-exports, so a plugin's process starts its
+own children without them and without linking the board; a `sys` test holds
+`MARKS` equal to `confine::MARKER` and `land::RECIPE`.
 A test of a command that reads a mark runs it in an environment of its own
 (`symphony::cli::main_in`, the board's `Env`), never this process's, so a test
 run under a recipe or a land is not red or green by the marks it inherits.

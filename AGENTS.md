@@ -100,7 +100,8 @@ the commands only this repository's own build and release run use: `publish-clie
 it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
 links them ([CHECKS](docs/CHECKS.md#size-budgets)).
 
-`just client-update` builds all eight real client modules and publishes their bundle
+`just client-update` builds the client's four page modules and its program (the pages that
+share one runtime, `apps/symphony-ui/src/split.rs`) and publishes their bundle
 under `apps/symphony-server/client/public/`. A branch commits no distribution, whatever
 it changed: the regenerator a land starts rebuilds it from main's newest tip and lands it
 as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)), so a task builds the
@@ -115,9 +116,10 @@ configuration patches and lock accounting affect only those private copies.
 A snapshot holds only what the client's build reads (`symphony-build release-inputs`,
 `crates/symphony/src/cli/commands/release_inputs.rs`): the client's package and the local
 packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
-pin and the server's notice styles, and the other members' manifests over empty
-targets. Its path, and so the asset names, follow those bytes alone: a change
-anywhere else needs no new distribution. dx runs from one path in every checkout and common
+pin and the server's notice styles, the sources of the split repair the program's build
+runs (`symphony-build split-repair`), and the other members' manifests over empty targets. Its
+path, and so the asset names, follow those bytes alone: a change anywhere else needs no new
+distribution. dx runs from one path in every checkout and common
 dir as well (`apps/symphony-ui/dx-path.sh`), since Cargo mixes its path, as the workspace's
 rustc wrapper, into every byte of the client's wasm.
 The server package embeds those bytes at build time, so an

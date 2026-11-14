@@ -45,8 +45,11 @@ fn selection_keeps_install_override_and_local_build_failures_authoritative() {
     );
 }
 
+/// The shipped distribution is the regenerator's, made after a land from main's sources (a branch
+/// commits none): every page kind it names has its script, its wasm and, for a kind of the program
+/// (apps/symphony-ui/src/split.rs), its chunk.
 #[test]
-fn shipped_shell_references_all_eight_real_modules_and_valid_wasm() {
+fn shipped_shell_references_its_real_modules_and_valid_wasm() {
     let shell =
         std::str::from_utf8(super::asset("index.html").expect("shipped release index")).unwrap();
     let script = shell
@@ -73,17 +76,19 @@ fn shipped_shell_references_all_eight_real_modules_and_valid_wasm() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    assert_eq!(
-        keys,
-        [
-            "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline"
-        ]
-    );
+    for kind in [
+        "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline",
+    ] {
+        assert!(keys.contains(&kind), "no {kind} in {keys:?}");
+    }
     for module in manifest.as_object().unwrap().values() {
-        for key in ["script", "wasm"] {
-            let path = module[key].as_str().unwrap().trim_start_matches('/');
+        for key in ["script", "wasm", "chunk"] {
+            let Some(path) = module.get(key) else {
+                continue;
+            };
+            let path = path.as_str().unwrap().trim_start_matches('/');
             let bytes = super::asset(path).unwrap();
-            if key == "wasm" {
+            if key != "script" {
                 assert!(bytes.starts_with(b"\0asm"), "{path}");
             } else {
                 assert!(

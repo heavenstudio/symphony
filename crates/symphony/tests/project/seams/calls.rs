@@ -202,7 +202,8 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
     tree.write("docs/A.md", "# A\n\nevery word\n");
     tree.write("docs/B.md", "# B\n");
     let root = tree.root.as_path();
-    let page = || Page::new(root, "docs/ünï code.md");
+    // An artifacts folder of its own, so one lost on the wire reads otherwise.
+    let page = || Page::new(root, "docs/ünï code.md").in_artifacts("out/ä");
     for (argument, option) in [("lantern", Some("wide")), ("", None), ("bad", None)] {
         both.same("render", |p| p.render(&page(), "every", argument, option));
         both.same("resolve", |p| {

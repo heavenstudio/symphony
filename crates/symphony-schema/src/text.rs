@@ -1,6 +1,9 @@
-//! Quote and escape schema diagnostic strings with the Python-compatible representation.
+//! Quote and escape diagnostic strings as Python writes them: a string's representation, and an OS
+//! error naming its path by it.
 
 use std::fmt::Write as _;
+use std::io;
+use std::path::Path;
 
 /// Not printable by Python's `str.isprintable`: controls, separators other than a space, format
 /// characters and private use. (Unassigned code points, also unprintable to Python, print as is.)
@@ -52,9 +55,47 @@ pub fn repr(s: &str) -> String {
     out
 }
 
+/// An OS error as Python prints one: `[Errno 2] No such file or directory: 'x.md'`.
+pub fn os_error(error: &io::Error, path: &Path) -> String {
+    match error.raw_os_error() {
+        Some(code) => {
+            let said = error.to_string();
+            let detail = said
+                .strip_suffix(&format!(" (os error {code})"))
+                .unwrap_or(&said);
+            format!("[Errno {code}] {detail}: {}", repr(&path.to_string_lossy()))
+        }
+        None => error.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::repr;
+    use std::path::Path;
+
+    use super::{os_error, repr};
+
+    #[test]
+    fn an_os_error_reads_as_python_prints_it() {
+        let path = Path::new("/nonexistent/x.md");
+        let error = std::fs::read(path).unwrap_err();
+        assert_eq!(
+            os_error(&error, path),
+            "[Errno 2] No such file or directory: '/nonexistent/x.md'"
+        );
+        let quoted = Path::new("/nonexistent/it's.md");
+        let error = std::fs::read(quoted).unwrap_err();
+        assert_eq!(
+            os_error(&error, quoted),
+            "[Errno 2] No such file or directory: \"/nonexistent/it's.md\""
+        );
+    }
+
+    #[test]
+    fn an_error_of_no_os_code_reads_as_itself() {
+        let error = std::io::Error::other("no landing input");
+        assert_eq!(os_error(&error, Path::new("x.md")), "no landing input");
+    }
 
     #[test]
     fn repr_quotes_and_escapes_like_python() {

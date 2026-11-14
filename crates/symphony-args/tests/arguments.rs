@@ -183,3 +183,19 @@ fn nearest_names_the_words_a_mistyping_is_fewest_edits_from() {
     }
     assert_eq!(symphony_args::nearest("p", ["q"]), ["q"]);
 }
+
+#[test]
+fn a_refusal_writes_the_usage_then_the_error_and_exits_two() {
+    let mut err = Vec::new();
+    let code = symphony_args::refuse(
+        &mut err,
+        "usage: symphony screens [--root ROOT]",
+        "screens",
+        "unrecognized arguments: x",
+    );
+    assert_eq!(code, 2);
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        "usage: symphony screens [--root ROOT]\nsymphony screens: error: unrecognized arguments: x\n"
+    );
+}

@@ -18,8 +18,8 @@ set -euo pipefail
 
 out="${1:?usage: bundle.sh OUT}"
 case "${2:-all}" in
-    all) kinds=(board tasks docs review queue panel overlay timeline) ;;
-    board|tasks|docs|review|queue|panel|overlay|timeline) kinds=("$2") ;;
+    all) kinds=(board docs review queue program) ;;
+    board|docs|review|queue|program) kinds=("$2") ;;
     *) echo "symphony-ui: unknown page kind $2" >&2; exit 2 ;;
 esac
 case "${3:-z}" in
@@ -42,7 +42,7 @@ fi
 target="${CARGO_TARGET_DIR:?bundle.sh runs under the workspace Cargo entrypoint, which names the build folder}"
 # The common dir: SYMPHONY_GIT_COMMON_DIR, else git's.
 common="${SYMPHONY_GIT_COMMON_DIR:-$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)}"
-# The tools' folder, as tools.sh finds it: symphony/tools, or an older build's until the move.
+# The tools' folder, as tools.sh finds it: symphony/tools in the common dir.
 tools="$(SYMPHONY_GIT_COMMON_DIR="$common" bash "$here/tools.sh" --folder)"
 dx="$tools/dx-0.7.10/bin/dx"
 export DX_HOME="$tools/dx-home"
@@ -115,17 +115,28 @@ rm -rf "$target/dx/symphony-ui/release/web"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
-# Dioxus's splitter keeps shared wasm-bindgen exports in the initial module. Compile each page
-# kind independently: a board visit must not pay for document and thread decoders. The chat/task
-# panel has its own module, loaded on opening and kept alive across page kinds. All assets are content hashed;
-# identical files from separate kinds share one URL and one browser-cache entry.
+# Home, the board, the documents and the queue are each compiled on their own: a first visit of
+# home or the board must not pay for the task pages' code, which a shared main module would hold
+# (docs/analysis/client-shared-runtime.md). The program, the task pages with Reports, the chat, the
+# menus and the task timeline, is one program that dx's splitter cuts into a main module and a
+# chunk for each (src/split.rs), and `symphony-build split-repair` makes that output safe and
+# repeatable, from the program dx linked, before anything is packaged; a failed repair fails the
+# build. All assets are content hashed; identical files from separate kinds share one URL and one
+# browser-cache entry.
 for kind in "${kinds[@]}"; do
     rm -rf "$target/dx/symphony-ui/release/web"
     module="$out/.modules/$kind"
     rm -rf "$module/public"
-    features="page-$kind"
     # --debug-symbols defaults to true in dx 0.7, release or not: wasm-opt would keep the DWARF.
-    "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features --features "$features" \
-        --debug-symbols false --out-dir "$module" >&2
+    flags=(--features "page-$kind" --debug-symbols false)
+    if [ "$kind" = program ]; then
+        flags+=(--wasm-split)
+    fi
+    "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features "${flags[@]}" \
+        --out-dir "$module" >&2
+    if [ "$kind" = program ]; then
+        "$publisher" split-repair "$target/wasm32-unknown-unknown/wasm-release/symphony-ui.wasm" \
+            "$module/public" >&2
+    fi
 done
 exec bash "$here/package.sh" "$out" "$publisher"

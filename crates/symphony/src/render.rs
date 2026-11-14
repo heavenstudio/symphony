@@ -258,6 +258,8 @@ fn hash(html: &str, media: &[Media]) -> String {
 /// Renders documents of the project at `root`.
 pub struct Render {
     root: PathBuf,
+    /// The project's artifacts folder, relative to its root: what a component's page names.
+    artifacts: String,
     plugins: crate::plugins::Plugins,
     /// Each document's last rendering and the version of its file it was made from.
     cache: Mutex<HashMap<String, (String, Arc<Document>)>>,
@@ -268,14 +270,16 @@ pub struct Render {
 
 impl Render {
     pub(crate) fn component_version(&self) -> Option<String> {
-        self.plugins
-            .cache_version(&symphony_plugin::Page::new(&self.root, ""))
+        self.plugins.cache_version(
+            &symphony_plugin::Page::new(&self.root, "").in_artifacts(&self.artifacts),
+        )
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Render {
         let root = root.into();
         Render {
             plugins: crate::plugins::Plugins::of(&root),
+            artifacts: crate::project::Project::of(&root).artifacts.clone(),
             root,
             cache: Mutex::new(HashMap::new()),
             card_cache: Mutex::new(None),
@@ -326,7 +330,7 @@ impl Render {
             root: &self.root,
             doc_path,
             plugins: &self.plugins,
-            page: symphony_plugin::Page::new(&self.root, doc_path),
+            page: symphony_plugin::Page::new(&self.root, doc_path).in_artifacts(&self.artifacts),
             paths: OnceCell::new(),
             cards: OnceCell::new(),
             shared: &self.card_cache,
