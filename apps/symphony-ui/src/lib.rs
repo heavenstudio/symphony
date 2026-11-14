@@ -40,6 +40,8 @@ pub(crate) mod entry_events;
 /// An HTML document's page: the file in a sandboxed frame, in the documents' kind.
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-docs"))]
 pub mod html_page;
+/// The machines' build and test work, as the agents page and the task page draw it.
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub(crate) mod machine_work;
 pub mod media;
 pub mod platform;
@@ -66,8 +68,6 @@ pub mod viewer;
 pub mod viewport;
 pub mod words;
 
-#[cfg(target_arch = "wasm32")]
-pub mod board_live;
 #[cfg(all(target_arch = "wasm32", feature = "page-docs"))]
 pub mod docs_live;
 #[cfg(target_arch = "wasm32")]

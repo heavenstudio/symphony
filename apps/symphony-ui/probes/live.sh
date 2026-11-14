@@ -1,13 +1,12 @@
 #!/bin/bash
-# The replies a first visit of `/` and `/tasks` reads from a running Symphony server, saved for
-# examples/ssr_size.rs, each printed with its gzip -6 bytes. Read-only GETs, the requests the
+# The replies a first visit of `/` and `/tasks` reads from a running Symphony server, `/`'s saved
+# for examples/ssr_size.rs, each printed with its gzip -6 bytes. Read-only GETs, the requests the
 # client makes with its defaults (the last day, no search, the first page of each column).
 #
 #     bash apps/symphony-ui/probes/live.sh BASE OUT
 #
 # BASE is the server's address as `just symphony` prints it (http://127.0.0.1:8765 for the shared one).
-# Then: cargo run -p symphony-ui --example ssr_size -- OUT/board.json OUT/counts.json OUT/ready.json
-# OUT/in_progress.json OUT/review.json OUT/blocked.json OUT/done.json
+# Then: cargo run -p symphony-ui --example ssr_size -- OUT/board.json
 set -euo pipefail
 
 usage="usage: live.sh BASE OUT"

@@ -20,16 +20,17 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The three page kinds built alone; and the program's kinds (src/split.rs), one build of it.
-const KINDS: [&str; 3] = ["board", "docs", "review"];
+/// The two page kinds built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 2] = ["docs", "review"];
 const PROGRAM: [&str; 5] = ["tasks", "reports", "panel", "overlay", "timeline"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
 const CHUNKS: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
-/// The web client's kinds, one Vite build of them all.
-const WEB: [&str; 1] = ["queue"];
+/// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
+/// own (the task board's styles are the Dioxus kinds' board.css).
+const WEB: [(&str, bool); 2] = [("board", false), ("queue", true)];
 
-/// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
+/// The stand-in dx: the first bundle's docs build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
 const DX: &str = r#"#!/bin/bash
 set -euo pipefail
@@ -43,7 +44,7 @@ done
 work="$CARGO_TARGET_DIR/dx/symphony-ui/release/web"
 mkdir -p "$work/public/assets"
 printf '%s' "$BUNDLE_ID-$kind" > "$work/owner"
-if [ "$BUNDLE_ID-$kind" = first-board ]; then
+if [ "$BUNDLE_ID-$kind" = first-docs ]; then
     echo 'fixture: first DX holds its intermediate files' >&2
     read -r release
     [ "$release" = release ]
@@ -68,17 +69,19 @@ cp -R "$work/public" "$out/"
 "#;
 
 /// The stand-in web client's build, which bundle.sh runs as `bash apps/symphony-web/npm.sh run
-/// --silent build -- --outDir OUT --emptyOutDir`: each kind's script and style sheet, and Vite's
-/// manifest naming them.
+/// --silent build -- --outDir OUT --emptyOutDir`: each kind's script and the queue's style sheet,
+/// and Vite's manifest naming them.
 const WEB_BUILD: &str = r#"#!/bin/bash
 set -euo pipefail
 [ "$*" = "run --silent build -- --outDir $6 --emptyOutDir" ]
 out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
-printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.js"
+for kind in board queue; do
+    printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
+done
 printf '/*%s-queue*/body{}' "$BUNDLE_ID" > "$out/assets/queue-$BUNDLE_ID.css"
-printf '{"src/kinds/queue.tsx":{"file":"assets/queue-%s.js","name":"queue","src":"src/kinds/queue.tsx","isEntry":true,"css":["assets/queue-%s.css"]}}\n' "$BUNDLE_ID" "$BUNDLE_ID" > "$out/.vite/manifest.json"
+printf '{"src/kinds/board.tsx":{"file":"assets/board-%s.js","name":"board","src":"src/kinds/board.tsx","isEntry":true},"src/kinds/queue.tsx":{"file":"assets/queue-%s.js","name":"queue","src":"src/kinds/queue.tsx","isEntry":true,"css":["assets/queue-%s.css"]}}\n' "$BUNDLE_ID" "$BUNDLE_ID" "$BUNDLE_ID" > "$out/.vite/manifest.json"
 "#;
 
 struct Fixture(PathBuf);
@@ -209,10 +212,11 @@ impl Fixture {
         files.sort();
         // Each kind's script, wasm and style sheet; the program's script and main module, a chunk
         // for each of its kinds and the media layer's, and its three own style sheets; each web
-        // kind's script and style sheet; and the shell.
+        // kind's script and the style sheets of its own; and the shell.
+        let styled = WEB.iter().filter(|(_, styled)| *styled).count();
         assert_eq!(
             files.len(),
-            3 * KINDS.len() + 2 + CHUNKS.len() + 3 + 2 * WEB.len() + 1,
+            3 * KINDS.len() + 2 + CHUNKS.len() + 3 + WEB.len() + styled + 1,
             "{files:?}"
         );
         let media: Vec<_> = files
@@ -261,7 +265,7 @@ impl Fixture {
             fs::read(public.join(url.as_str().unwrap().trim_start_matches('/'))).unwrap()
         };
         // A web kind is its script and its styles, this bundle's: no wasm.
-        for kind in WEB {
+        for (kind, styled) in WEB {
             let entry = &manifest[kind];
             assert_eq!(
                 read_asset(&entry["script"]),
@@ -274,7 +278,8 @@ impl Fixture {
                 .iter()
                 .map(read_asset)
                 .collect();
-            assert_eq!(styles, [format!("/*{id}-{kind}*/body{{}}").into_bytes()]);
+            let own = styled.then(|| format!("/*{id}-{kind}*/body{{}}").into_bytes());
+            assert_eq!(styles, own.into_iter().collect::<Vec<_>>(), "{kind}");
         }
         for (at, kind) in CHUNKS
             .iter()

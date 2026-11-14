@@ -1,7 +1,6 @@
 //! One build/test presentation for task cards and agents; uncertainty never means free capacity.
 
 use dioxus::prelude::*;
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 use symphony_api::MachineObservation;
 use symphony_api::{MachineWork, WorkFreshness, WorkKind, WorkOperation, WorkState};
 
@@ -31,11 +30,8 @@ impl PartialEq for SharedWork {
 
 pub(crate) enum Scope<'a> {
     Task(&'a str),
-    #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
     Agent(&'a str),
-    #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
     Machine(&'a str),
-    #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
     Unassigned,
 }
 
@@ -50,24 +46,14 @@ impl Scope<'_> {
     fn contains(&self, operation: &WorkOperation) -> bool {
         match self {
             Self::Task(slug) => operation.is_for(slug),
-            #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
             Self::Agent(handle) => operation.handle.as_deref() == Some(*handle),
-            #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
             Self::Machine(id) => operation.machine_id.as_deref() == Some(*id),
-            #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
             Self::Unassigned => true,
         }
     }
 
     fn unassigned(&self) -> bool {
-        #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
-        {
-            matches!(self, Self::Unassigned)
-        }
-        #[cfg(all(target_arch = "wasm32", not(feature = "page-tasks")))]
-        {
-            false
-        }
+        matches!(self, Self::Unassigned)
     }
 }
 
@@ -187,15 +173,6 @@ fn shown_phases<'a>(work: &'a MachineWork, scope: &Scope<'_>, connected: bool) -
     rows
 }
 
-/// What the phase chips on `slug`'s card read, in their order: the board reserves the card's
-/// height from them before it draws (`tasks::card_height`).
-pub(crate) fn phase_labels(work: &MachineWork, slug: &str, connected: bool) -> Vec<String> {
-    shown_phases(work, &Scope::Task(slug), connected)
-        .iter()
-        .map(phase_label)
-        .collect()
-}
-
 /// Task and agent views share the same ownership, kind and uncertainty rules.
 pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool) -> Element {
     let rows = shown_phases(work, scope, connected);
@@ -215,7 +192,6 @@ pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool
     }
 }
 
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 fn occupancy(machine: &MachineObservation) -> String {
     if machine.complete
         && machine.freshness == WorkFreshness::Fresh
@@ -236,7 +212,6 @@ fn occupancy(machine: &MachineObservation) -> String {
 }
 
 /// Machine occupancy is independent from task lifecycle and is never an admission rule.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub(crate) fn machines_view(work: &MachineWork, connected: bool) -> Element {
     rsx! {
         details { id: "machine-context", class: "machine-work", aria_label: "Machine build and test work",
@@ -270,7 +245,6 @@ pub(crate) fn machines_view(work: &MachineWork, connected: bool) -> Element {
     }
 }
 
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 fn guidance(id: &str, guidance: Option<&symphony_api::WorkGuidance>) -> Element {
     let target =
         |value: Option<u32>| value.map_or_else(|| "unknown".into(), |value| value.to_string());
@@ -280,22 +254,6 @@ fn guidance(id: &str, guidance: Option<&symphony_api::WorkGuidance>) -> Element 
         summary { "Advisory targets · builds {target(build)} · tests {target(test)}" }
         p { class: "muted", "Orchestrators decide when to start work. These targets do not enforce admission." }
         p { class: "muted", "Machine ID: " code { "{id}" } }
-    } }
-}
-
-/// Keep the board's entry module focused on task cards. The existing Agents page owns the
-/// complete machine inventory and advisory targets, behind its secondary disclosure.
-pub(crate) fn board_context(work: &MachineWork, connected: bool) -> Element {
-    rsx! { details { class: "machine-work", aria_label: "Machine observations",
-        summary { "Machine context" }
-        if !connected {
-            p { "Disconnected · capacity unknown" }
-        } else if work.machines.is_empty() {
-            p { "No identified machine observations · capacity unknown" }
-        } else {
-            p { "Observation status · {freshness(&work.freshness)}" }
-        }
-        a { href: crate::project::href("/agents#machine-context"), "Machine details and advisory targets" }
     } }
 }
 

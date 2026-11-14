@@ -20,11 +20,13 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: three page kinds, and the program.
-const KINDS: [&str; 4] = ["board", "docs", "review", "program"];
+/// What bundle.sh builds, each with its own dx run: two page kinds, and the program.
+const KINDS: [&str; 3] = ["docs", "review", "program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
-/// kind is its script, with no wasm, and its styles.
-const WEB: [&str; 1] = ["queue"];
+/// kind is its script, with no wasm, and its styles, the shared stylesheet and then as many of its
+/// own as given here. The task board has none: its styles (assets/board.css) are every Dioxus
+/// kind's, in the shared file.
+const WEB: [(&str, usize); 2] = [("board", 0), ("queue", 1)];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
@@ -318,7 +320,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The three kinds built alone, each of the program's (the media layer is none) and the web
+    // The two kinds built alone, each of the program's (the media layer is none) and the web
     // client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
@@ -340,7 +342,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the rest of the shell is the client cache's store (assets/cache.js), then \
          assets/shell.js, through the minifier: {body}"
     );
-    let shared = manifest["board"]["styles"][0].as_str().unwrap();
+    let shared = manifest["docs"]["styles"][0].as_str().unwrap();
     assert!(
         shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
         "{shared}"
@@ -354,7 +356,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..3] {
+    for kind in &KINDS[..2] {
         for key in ["script", "wasm"] {
             file(manifest[kind][key].as_str().unwrap());
         }
@@ -367,7 +369,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     }
     // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
     // and the shared stylesheet before the CSS its entry imports.
-    for kind in WEB {
+    for (kind, owns) in WEB {
         let script = manifest[kind]["script"].as_str().unwrap();
         assert!(
             script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
@@ -385,7 +387,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         let own = styles[1..].iter().map(|style| style.as_str().unwrap());
         assert_eq!(
             own.clone().count(),
-            1,
+            owns,
             "{kind} loads the shared stylesheet, then its own: {styles:?}"
         );
         for style in own {

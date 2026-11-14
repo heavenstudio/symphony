@@ -25,7 +25,10 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::Event;
 
+// The kinds that follow the feed: the program's (its task pages), home and the documents.
+#[cfg(any(feature = "page-tasks", feature = "page-review", feature = "page-docs"))]
 mod feed;
+#[cfg(any(feature = "page-tasks", feature = "page-review", feature = "page-docs"))]
 pub(crate) use feed::{Feed, back};
 
 pub(crate) const FEED_NOTICE: &str = "Reconnecting: the board may be out of date";
@@ -40,6 +43,12 @@ use {
     },
 };
 
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-docs",
+    feature = "page-panel"
+))]
 use crate::state::reload_for;
 #[cfg(feature = "page-tasks")]
 use crate::task_live::Data;
@@ -68,19 +77,26 @@ const STYLE: Asset = asset!(
 #[cfg(any(feature = "page-tasks", feature = "page-review"))]
 const READY_MARK: &str = "board-ready";
 /// Where the tab keeps the build it last loaded the page again for ([`reload_for`]).
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-docs",
+    feature = "page-panel"
+))]
 const RELOADED_FOR: &str = "symphony-ui-reloaded-for";
 
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-docs",
+    feature = "page-panel"
+))]
 thread_local! { static DEFERRED_BUILD: RefCell<Option<String>> = const { RefCell::new(None) }; }
 
 pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::new);
 
 /// `ms` since the epoch as the wall clock where the owner is.
-#[cfg(any(
-    feature = "page-board",
-    feature = "page-tasks",
-    feature = "page-docs",
-    feature = "page-review"
-))]
+#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-review"))]
 pub(crate) fn local_moment(ms: f64) -> Option<crate::words::Moment> {
     let date = js_sys::Date::new(&JsValue::from_f64(ms));
     crate::words::Moment::from_parts(
@@ -100,8 +116,6 @@ pub fn App() -> Element {
     let task_route = use_memo(move || format!("/{}", route().path));
     let current = route();
     let page = match current.path.as_str() {
-        #[cfg(feature = "page-board")]
-        "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
         #[cfg(all(feature = "page-tasks", not(feature = "page-program")))]
         "reports" => rsx! { crate::reports::ReportsRoute { key: "{current.scope}" } },
         // The program's pages are in their chunks (src/split.rs).
@@ -185,12 +199,7 @@ pub(crate) fn PageNotices(
         }
     });
     // Only the kinds that draw from this device say so.
-    #[cfg(any(
-        feature = "page-board",
-        feature = "page-tasks",
-        feature = "page-docs",
-        feature = "page-review"
-    ))]
+    #[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-review"))]
     let device = device.map(|(saved, unreachable)| {
         let saved = local_moment(saved)
             .zip(local_moment(js_sys::Date::now()))
@@ -198,12 +207,7 @@ pub(crate) fn PageNotices(
             .unwrap_or_default();
         crate::words::device_notice(&saved, unreachable)
     });
-    #[cfg(not(any(
-        feature = "page-board",
-        feature = "page-tasks",
-        feature = "page-docs",
-        feature = "page-review"
-    )))]
+    #[cfg(not(any(feature = "page-tasks", feature = "page-docs", feature = "page-review")))]
     let device = device.and(None::<String>);
     let checking = reconnecting || device.is_some();
     let held = use_hook(|| Rc::new(Cell::new(false)));
@@ -587,6 +591,7 @@ fn freshen(views: PageViews, change: impl Fn(&mut Freshness)) {
 }
 
 /// What the feed's stream said.
+#[cfg(any(feature = "page-tasks", feature = "page-review", feature = "page-docs"))]
 pub(crate) enum Heard {
     /// The stream is open: the board is fresh.
     Open,
@@ -719,6 +724,12 @@ async fn follow(
 /// Load the page again when the server serves another client build than this page's own (the
 /// shell's module script), once per build ([`reload_for`]); without the tab's storage to remember
 /// it in, never.
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-docs",
+    feature = "page-panel"
+))]
 pub(crate) fn reload_if_redeployed(served: &str) {
     // DX owns dev build identity. The API's release hash describes a different build entirely.
     if cfg!(feature = "devtools") {
@@ -751,6 +762,12 @@ pub(crate) fn reload_if_redeployed(served: &str) {
     }
 }
 
+#[cfg(any(
+    feature = "page-tasks",
+    feature = "page-review",
+    feature = "page-docs",
+    feature = "page-panel"
+))]
 pub(crate) fn flush_reload() {
     if !crate::navigation::engaged()
         && let Some(build) = DEFERRED_BUILD.with(|pending| pending.borrow_mut().take())
@@ -800,6 +817,8 @@ pub(crate) fn mark(name: &str) {
     }
 }
 
+/// The first task card drawn: the agents page's (`tasks::TaskRow`).
+#[cfg(feature = "page-tasks")]
 pub(crate) fn mark_tasks_ready() {
     thread_local! { static MARKED: Cell<bool> = const { Cell::new(false) }; }
     MARKED.with(|marked| {

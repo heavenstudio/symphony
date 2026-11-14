@@ -4,35 +4,6 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn board_context_keeps_uncertainty_compact_and_routes_inventory_to_agents() {
-    for connected in [true, false] {
-        let html = dioxus_ssr::render_element(board_context(&MachineWork::default(), connected));
-        assert!(html.contains("<details"), "{html}");
-        assert!(html.contains("capacity unknown"), "{html}");
-        assert!(html.contains("/agents#machine-context"), "{html}");
-        assert!(!html.contains("machine-work card"), "{html}");
-        assert_eq!(html.contains("Disconnected"), !connected, "{html}");
-    }
-    let mut partial = machine(
-        "alpha",
-        vec![operation("alpha", "build", "build", "running")],
-    );
-    partial.freshness = WorkFreshness::Incomplete;
-    let work = MachineWork {
-        freshness: WorkFreshness::Incomplete,
-        machines: vec![partial],
-        unassigned: vec![operation("", "legacy", "test", "queued")],
-        ..MachineWork::default()
-    };
-    let html = dioxus_ssr::render_element(board_context(&work, true));
-    assert!(
-        html.contains("Observation status · partial inventory"),
-        "{html}"
-    );
-    assert!(!html.contains("Builds: 0 running"), "{html}");
-}
-
-#[test]
 fn advisory_targets_are_machine_specific_and_never_turn_unknown_observations_into_free_capacity() {
     let mut work = MachineWork {
         machines: vec![machine(
@@ -350,10 +321,10 @@ fn feed_loss_suppresses_capacity_and_retains_the_exact_last_observed_phase() {
     );
 }
 
-/// The labels a card's height is reserved from are the ones its phase chips show, in their
-/// order, read as disconnected while the feed is, and none for a task with no work.
+/// A card's phase chips, in their order, read as disconnected while the feed is; a task with no
+/// work has none.
 #[test]
-fn a_cards_phase_labels_read_as_its_phase_chips_do() {
+fn a_cards_phase_chips_read_as_disconnected_while_the_feed_is() {
     let work = MachineWork {
         machines: vec![machine(
             "alpha",
@@ -364,26 +335,24 @@ fn a_cards_phase_labels_read_as_its_phase_chips_do() {
         )],
         ..MachineWork::default()
     };
-    for connected in [true, false] {
-        let labels = phase_labels(&work, "sim/a", connected);
-        let html = dioxus_ssr::render_element(phases_view(&work, &Scope::Task("sim/a"), connected));
-        let chips: Vec<_> = html
-            .split("data-work-kind")
+    let chips = |slug: &str, connected: bool| {
+        let html = dioxus_ssr::render_element(phases_view(&work, &Scope::Task(slug), connected));
+        html.split("data-work-kind")
             .skip(1)
             .map(|chip| chip.split('>').nth(1).unwrap().split('<').next().unwrap())
-            .collect();
-        assert_eq!(labels, chips, "{html}");
-    }
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        phase_labels(&work, "sim/a", true),
+        chips("sim/a", true),
         ["Build running · alpha", "Test queued · alpha"]
     );
     assert_eq!(
-        phase_labels(&work, "sim/a", false),
+        chips("sim/a", false),
         [
             "Observed Build running · alpha · disconnected",
             "Observed Test queued · alpha · disconnected"
         ]
     );
-    assert!(phase_labels(&work, "sim/b", true).is_empty());
+    assert!(chips("sim/b", true).is_empty());
 }

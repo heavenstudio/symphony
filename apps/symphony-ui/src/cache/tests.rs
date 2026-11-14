@@ -324,14 +324,7 @@ fn a_part_the_page_dropped_is_no_longer_shown_and_says_nothing_of_the_server() {
 }
 
 #[test]
-fn the_task_board_keeps_its_default_view_only() {
-    assert!(board::kept_view("", 1, 1));
-    for (query, days, activity) in [("x", 1, 1), ("", 7, 1), ("", 1, 0), (" ", 1, 1)] {
-        assert!(
-            !board::kept_view(query, days, activity),
-            "{query:?} {days} {activity}"
-        );
-    }
+fn the_boards_parts_are_each_one_part() {
     assert_eq!(board::column("ready"), "column:ready");
     let columns = [board::column("board"), board::column("")];
     let parts = [
@@ -345,36 +338,6 @@ fn the_task_board_keeps_its_default_view_only() {
     for (at, part) in parts.iter().enumerate() {
         assert!(!parts[at + 1..].contains(part), "{part} is one part");
     }
-}
-
-#[test]
-fn the_task_boards_kept_columns_are_its_statuses_and_the_stages_it_adds() {
-    let named = |names: &[&str]| {
-        names
-            .iter()
-            .map(|name| name.to_string())
-            .collect::<Vec<_>>()
-    };
-    let counts = vec![("ready".to_string(), 2), ("done".to_string(), 0)];
-    assert_eq!(
-        board::columns(&named(&["ready", "build", "review"]), &counts),
-        named(&["ready", "build", "review", "test", "signoff"]),
-        "the listing's statuses, not its counts"
-    );
-    assert_eq!(
-        board::columns(&[], &counts),
-        named(&["ready", "done", "build", "test", "signoff"]),
-        "a listing that names none: its counts'"
-    );
-    assert_eq!(
-        board::columns(&named(&["ready", "ready", "signoff"]), &[]),
-        named(&["ready", "signoff", "build", "test"]),
-        "once each"
-    );
-    assert_eq!(
-        board::columns(&[], &[]),
-        named(&["build", "test", "signoff"])
-    );
 }
 
 /// A message of the thread, `id`, saying `text`.
