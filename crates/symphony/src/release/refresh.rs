@@ -1952,7 +1952,7 @@ mod tests {
     fn only_a_hook_refusing_the_commit_is_its_gates_and_the_rest_is_red() {
         let tree = Tree::new();
         let root = tree.path("project");
-        let (_, made) = moving(&root);
+        let (tip, made) = moving(&root);
         authored(&root, &["config", "user.name", "t"]);
         authored(&root, &["config", "user.email", "t@example.com"]);
         let consumer = project(&root);
@@ -1990,16 +1990,15 @@ mod tests {
                  --refresh` makes the move again"
             )))
         );
-        // The run's time up, the commit never runs: no exit, the refresh's red, never the gate's.
+        // The run's time up: red, whether the commit was cut off or its hook refused first, never
+        // saying what finishes it, and nothing committed.
         let stopped = against(&root, &logs, &made, Instant::now());
-        assert_eq!(
-            gate(&root, &message, &consumer, &stopped, &mut log),
-            Err(Short::Red(format!(
-                "the commit of the move to release-2026-11-12 failed in the refresh's worktree \
-                 ({committing} did not end within 0 s, the refresh's time, and was stopped), \
-                 {nothing}"
-            )))
-        );
+        let failed = gate(&root, &message, &consumer, &stopped, &mut log);
+        let Err(Short::Red(why)) = failed else {
+            panic!("a commit failed once the run's time is up is red: {failed:?}");
+        };
+        assert!(!why.contains("`just release --refresh`"), "{why}");
+        assert_eq!(authored(&root, &["rev-parse", "HEAD"]), tip);
         fs::remove_file(root.join("hooks/pre-commit")).unwrap();
 
         // Git's own failure (its index locked) exits 128: the refresh's, red, never the gate's.
@@ -2092,16 +2091,13 @@ mod tests {
                 )),
             "{why}"
         );
-        // The run's time up, the ask fails unrun: red ([`Against::refusal`]), its landing unsaid.
+        // The run's time up: red ([`Against::refusal`]), whether the ask was cut off or its hook
+        // refused first, its landing unsaid and its main where it was.
         let stopped = against(&root, &logs, &made, Instant::now());
         let Err(Short::Red(why)) = ask(&consumer, &tip, &made, landing, &stopped, &mut log) else {
             panic!("an ask failed once the run's time is up is red");
         };
-        assert!(
-            why.contains("did not end within 0 s, the refresh's time, and was stopped")
-                && !why.contains(landing),
-            "{why}"
-        );
+        assert!(!why.contains(landing), "{why}");
         assert_eq!(main(), tip);
         fs::remove_file(root.join("hooks/reference-transaction")).unwrap();
 

@@ -738,9 +738,9 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
 }
 
 /// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
-/// it and when, and how many of its steps are left to their projects, then each line it said (a project's pin and board, the shared server), each red
-/// step with how it ended and each step that is its project's to finish, then what finishes those
-/// ([`BY_HAND`]).
+/// it and when, and how many of its steps are left to their projects, then each line it said (a
+/// project's pin and board, the shared server), each red step with how it ended and each step that
+/// is its project's to finish, then what finishes those ([`BY_HAND`]).
 pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     let Some((run, refresh)) =
         (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
