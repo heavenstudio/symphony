@@ -230,13 +230,13 @@ never the whole target, which the release run runs.
   462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
   unchanged, its page and thread each a `304` of 82) and a document at 464,410. Documents
   drawn from the device, an entrypoint's page kept and the reads ahead
-  (`perf/client-cache/documents` and `/ahead`, against main's build at 19f0287) cost every page
+  (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
   about 0.9 KB of the shell and the documents' kind about 30.4 KB (`wasm_size` on the named
   copies: `docs_live`'s draw from the device, reads and keeping 9.0 KB, the cache's bindings
   3.5 KB, and the maps it adds with their trees and sorts about 9.8 KB of `alloc` and
-  `core::slice`, a stable sort compiled for each `collect` into a map): `/tasks` takes 296,793 bytes
-  (3,207 under the cap, from 295,823), `/` 237,307 (from 236,391) and `/docs/` 505,307 (from
-  474,924); a document's return takes 1,633 (from 2,371), the budget's stand-in naming no cursor
+  `core::slice`, a stable sort compiled for each `collect` into a map): `/tasks` takes 296,924 bytes
+  (3,076 under the cap, from 295,902), `/` 237,202 (from 236,322) and `/docs/` 505,402 (from
+  474,965); a document's return takes 1,633 (from 2,371), the budget's stand-in naming no cursor
   on its document reads, so its outline's `304` is read again whole. The reads ahead start only
   once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
   budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
