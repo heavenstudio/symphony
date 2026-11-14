@@ -60,7 +60,12 @@ long document at full speed, the JSX pages have one or two frames over 50 ms whe
 has six to nine, in 13 rounds of 15; a card's move is the reverse, quicker on Dioxus, as above.
 Memory is a wash: one run, and the wasm module's reserved memory is not a live heap. With the CPU
 slowed the JSX return visits are quicker, but that is most likely the cost of the device cache's
-own draw, which the JSX pages leave out and B would port, so it counts for neither side. Code size
+own draw, which the JSX pages leave out and B would port, so it counts for neither side. Plugins
+are about level too: today's render to blocks on the server, which either client draws, and a
+project's own script costs about the same on either, in the page or in a sandboxed frame; only JSX
+could take a project's component into the client's own runtime, a small point for B at most, as
+that form reaches the whole origin and can post as the owner
+([Plugins and front-end extension](#plugins-and-front-end-extension)). Code size
 is about level like for like: the one closely matched pair, the blocks, is 815 lines of JSX
 against 962 of Rust (0.85), and the JSX is untyped where a port would be TypeScript
 ([Responsiveness](#responsiveness), [Code and build](#code-and-build)).
@@ -678,6 +683,178 @@ with a DOM library); the browser tests drive the DOM, not the code, so they can 
 as this experiment's measurements drive both. The experiment itself has no tests: it is a
 measurement, not a client.
 
+## Plugins and front-end extension
+
+What a project's plugin is on each client, and what a project's own code in the browser would take
+and reach on each. A small prototype in the experiment answers the last part
+([below](#the-prototype)).
+
+**Today's plugins draw nothing in the browser.** A plugin is the project's Rust, linked into the
+host or answering from a process of its own ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)). It renders
+to the block vocabulary (`crates/symphony-blocks`), never HTML, and the client draws each kind with
+one component. So a JSX client changes nothing for a plugin: the experiment's `blocks.jsx` draws
+every block, span and media kind from the same JSON. What it loses is the compiler's check that
+every kind is drawn ([Types across the wire](#code-and-build)).
+
+**A project's own browser code already has two ways in, on the Dioxus client, and neither belongs
+to the framework.**
+
+- *In the page.* A `Media::Viewer` names a custom element and the module script that defines it,
+  a project file. `media_live::load_viewer` adds that script to the page once, as
+  `<script type="module">`, and the client draws the element from the viewer's data alone. The
+  script runs as the page does. The element's attributes are strings, so a JSON value can ride
+  one: a plugin's component could put a project's chart in a document today with no change to the
+  client.
+- *In a sandbox.* A `Media::Mockup` draws a project's `.html` file in an iframe whose sandbox
+  allows scripts only, and the server sends every project file with `Content-Security-Policy:
+  sandbox allow-scripts` (`apps/symphony-server/src/media_files.rs`). It takes no data in and
+  sends no height out: it is 1280 by 800, scaled to its card.
+
+A custom element and a frame are DOM, drawn alike from Dioxus or from JSX. So loading a project's
+script at run time is not something a JSX client makes possible: both clients can.
+
+**What JSX adds is extension inside the client's own framework.** A project's module could export a
+Preact or React component that the client mounts in its own tree, sharing its runtime, contexts and
+state. It could also replace one of the client's own components by name: this is the form in which
+a project overrides the client's functions. For that, the page hands the module its framework (an
+import map naming the client's own Preact chunk, or the framework passed in), and the project builds
+against the client's major version. The Dioxus client cannot take a component at run time: each
+separately built wasm module carries its own runtime (the program's chunks share one only because
+they are one build, [Moving parts](#code-and-build)). So a project's Dioxus component would be
+compiled into the client. Either the one client this repository ships, and the server embeds,
+holds every consumer's components, or each project gets a client of its own: built with `dx`, a
+minute or more a build, and served per project by a server that serves one client to every
+project today. The prototype does not build this form. Its module is a plain `draw(element, data)`,
+which either client can host. A component form differs from it in what it shares with the page,
+not in what it can reach.
+
+### The prototype
+
+`experiments/client-jsx` draws one block of a project's own, plain JSON
+`{"kind", "module", "data"}`: the data, and the address of the project's module that draws it
+(`src/custom.jsx`). The vocabulary has no such kind, and none was added, so the experiment reads a
+fenced code block in the language `custom` as one. The sample module, `fixture/blocks/chart.js`,
+draws a bar chart of this document's first-visit figures with DOM calls only, so a label is always
+text. It is drawn in two forms by the same module, and the README names the commands:
+
+- **Sandboxed** (`src/custom-frame.jsx`, the default). The block is an iframe whose sandbox allows
+  scripts and nothing else. With no `allow-same-origin` its origin is opaque, and it gets no
+  navigation of the page. Its page is written as its `srcdoc`, with a policy of its own:
+  `default-src 'none'`, scripts only inline or from a blob it makes. The page fetches the module's
+  text and sends it in by `postMessage`, with the data, the page's theme tokens and its colour
+  scheme. The frame imports the module from a blob, draws, and sends its height out whenever it
+  changes. The page listens only to its own frame, sends to it once, and holds the frame's height
+  between 40 and 4,000 px.
+- **In the page** (`src/custom-page.jsx`, with `?blocks=page`). The module is imported, registered
+  by its kind, and its `draw` is called with an element of the page.
+
+### What the module reached
+
+A probe module (`fixture/blocks/probe.js`) tried each of these from where it was drawn, on a
+private server with a scratch board, in headless Chrome 157:
+
+| what the module tried | in the page | in the sandboxed frame |
+|---|---|---|
+| read the page around it | yes: its title and text | no: a `SecurityError`, as the frame's origin is opaque |
+| replace one of the page's functions (`fetch`) | yes | no: a `SecurityError` |
+| read the API (`/api/board`) | yes, 200 | no: refused by the frame's policy (`connect-src`) |
+| post an owner's approve on a card (`/api/decision`) | yes, 200: the card took the approve as the owner's, and the register was committed | no: refused by the frame's policy |
+| localStorage, IndexedDB, cookies | yes, each | no: a `SecurityError` each, as the frame has no storage of its own |
+| navigate the page | not tried, as it would leave the page | no: a `SecurityError`, as the sandbox lets the frame navigate nothing but itself |
+
+**The approve is what matters.** A plugin's server half already runs as the owner's own code, as the
+host's user ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md#turning-it-on)). So the sandbox does not
+protect against the module's author: they could do the same another way. What it protects is the
+data the module draws, which comes from documents and a board that agents write. A slip in the
+module, such as an `innerHTML` over a label, turns that text into script in the owner's page. A
+same-origin request passes the writes' origin check (`apps/symphony-server/src/write.rs`), so that
+script can approve a card as the owner. In the frame, the same slip reaches nothing. The machine's
+one server serves every project on the same origin (`/<id>/`), so a module drawn in the page
+reaches every project's API and stored state, not just its own. The Dioxus client's viewers are
+the in-page form today.
+
+The frame does not stop everything. It may navigate itself, which no policy forbids, so the data
+handed to it could leave that way, though the page then sends it nothing more.
+
+### What the sandbox costs
+
+The same chart, a cold first visit to its document, in both forms on both builds: 10 rounds each,
+the two forms in turn within a round, at a one-minute load of 141 to 181 on 16 cores. The time runs
+from the block's latch opening to the module's drawing, by the prototype's own marks. Bytes are on
+the wire, head and gzip body. Lines are non-blank, comments included.
+
+| | sandboxed frame | in the page |
+|---|---:|---:|
+| the form's chunk, Preact (React) | 1,747 B (1,778) | 640 B (662) |
+| the project's module, either build | 1,630 B | 1,630 B |
+| the whole first visit, Preact (React) | 55.0 kB (115.5) | 53.9 kB (114.4) |
+| the latch to the chart drawn, Preact: median (range) | 41 ms (33–71) | 29 ms (22–47) |
+| the same, React | 45 ms (28–97) | 13 ms (8–225) |
+| lines | 88 | 30 |
+
+The frame was later than the page form in 9 rounds of 10 on each build, by a median of 10 ms on
+Preact and 32 ms on React in the same round. Reading the block, which both forms share
+(`src/custom.jsx`, 87 lines with the measurement's log), adds 0.7 kB of gzip to every page that
+draws blocks: the blocks chunk goes from 5.20 to 5.92 kB on Preact and 5.34 to 6.07 kB on React, at
+gzip's best level. The meter moves with the work: a module that spends 100 ms before drawing read
+139 and 231 ms framed and 112 and 115 ms in the page, against 37 to 39 and 11 to 57 for the chart in
+the same runs, on React. All of these times were taken on a busy machine: only the ratios between
+the forms carry.
+
+So the sandbox costs about a kilobyte and 10 to 30 ms at the median. The prototype also showed what
+it asks of the page and of the module:
+
+- **The theme goes in by message.** The frame cannot read the page's style sheets, so the page hands
+  it its tokens and its colour scheme. Without the scheme, a dark page drew the frame on an opaque
+  white backdrop, as Chrome does for a frame whose scheme is not its page's. Pictures of both are
+  kept with the task's evidence.
+- **The height comes out by message**, and the frame takes it. Until then the block holds a
+  reserved height.
+- **The module is one file.** Imported from a blob, it cannot import another file: a module whose
+  first line imports `/docs/blocks/chart.js` failed in the frame ("Failed to resolve module
+  specifier") and drew in the page. A project bundles its module.
+- **No styles cross the frame's edge, either way.** In the page, the probe's table took the
+  document's table style. In the frame, it kept its own.
+
+### Each form on each client
+
+| | the Dioxus client | a JSX client |
+|---|---|---|
+| a project's module in the page, by kind | there today as `Media::Viewer`: a custom element whose script `media_live` adds once; a JSON block would ride an attribute, with no client change | the prototype's page form, 30 lines; or the viewer ported, which `blocks.jsx` draws without loading its script |
+| a sandboxed frame, data in and height out | `MockupFrame` draws the frame and `media_live` scales it already; the data and height would be a `srcdoc` and a message listener there, through web-sys, with the same frame script as a string, of the order of the prototype's 88 lines | the prototype's frame form, 88 lines |
+| a project's component in the client's own framework, or one replacing a client component | compiled in: every consumer's components in the client this repository ships, or a client built and served per project | a module importing the client's Preact through an import map, built against its major version; each component a project may replace becomes an interface the client keeps |
+| what the drawn data reaches | in the page: the origin, so every project's API and storage and the owner's writes; in a frame: nothing | the same: it depends on the form, not on the framework |
+
+**For the choice.** For today's plugins, nothing changes beyond the lost check that every block
+kind is drawn, which the cost of a switch already counts. A project's own browser code, in the
+page or in a sandboxed frame, costs about the same on either client, because those two forms are
+DOM and messages, not framework. JSX makes one thing cheap that Dioxus makes a rebuild: a project's
+component inside the client, sharing its runtime or replacing its parts. That form also reaches the
+most: it runs as the page does, on the origin every project shares, and can post as the owner, and
+every part it may replace becomes an interface the client has to keep. It counts for B only if
+projects should extend the client from inside, and even then the question of whom to trust stays
+open. It is a small point for B, not a reason.
+
+### Verified and inferred, for this section
+
+**Measured or run here.** The prototype in both forms on both builds; the probe's results; the
+owner's approve it posted and the register's commit; the bytes, times and lines in the tables; the
+frame's white backdrop without the page's colour scheme; a module's import failing in the frame
+and drawing in the page; that `blocks.jsx` draws every kind.
+
+**Read in code, not run.** That the Dioxus client loads a viewer's script into the page
+(`media_live.rs`) and draws a mockup in a scripts-only sandbox (`media.rs`); that a viewer's
+attribute could carry a JSON block with no change to the client; that every project file is served
+in a sandbox (`media_files.rs`); that a same-origin write passes the origin check (`write.rs`,
+which the probe's 200 bears out); that a plugin's server half runs as the owner's code.
+
+**Inferred, not tried.** That a module drawn in the page reaches other projects' API and storage on
+the machine's one server: the probe ran on a private server that serves one project, and the
+inference rests on the shared origin. Also inferred: that a frame can carry the data handed to it
+away by navigating itself; what a sandboxed frame would take in the Dioxus client; that a project's
+Dioxus component has to be compiled in; and what a component form, or a component that replaces a
+client's own, would take on a JSX client.
+
 ## What a switch would cost
 
 What depends on the client being Rust, with its size at the baseline or on main where a row says
@@ -697,6 +874,7 @@ repair step), not taken away.
 | The development front door | the server's `dx` front door (`apps/symphony-server/src/development.rs`, 654 lines) and `just symphony-ui-dev` | Vite's dev server proxying the API, or the same front door over it |
 | The size probes | `examples/wasm_size.rs` (674 lines), `probes/` (5 files, 512 lines) | retired; a bundle analyser for the chunks |
 | The block kinds' check | the compiler refuses a client that does not draw every block, span and media kind | a test that draws every kind, or TypeScript's exhaustive `switch` over generated types |
+| A project's own browser code | a viewer's script loaded into the page and a mockup in a scripts-only sandbox, with no project code in the client; a project's own component only by compiling it into the client | the same two forms, as they are DOM and not the framework's, a sandboxed frame with data in and height out about 90 lines on either client; a project's component at run time becomes possible, and the client's Preact and each component a project may replace then become an interface consumers build against ([Plugins and front-end extension](#plugins-and-front-end-extension)) |
 | A byte-for-byte `client-check` | `rust-toolchain.toml` pins Rust; `dx` and `wasm-bindgen` are pinned and built per machine | Node and npm pinned the same way, with the lockfile; this experiment's build came out byte for byte the same twice on one machine, but across machines and Node versions was not tried |
 | The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too |
 | The distribution | committed, three builds kept: 20.0 MB, 24 wasm files, a size line of 20,750,000 bytes; 106 commits regenerated it in the week to this run, each about 6.3 MB of new wasm | about 0.4 MB a build on React, 0.2 MB on Preact, the style sheets included; the regenerator, `client-check` and `publish-client` stay, needing Node where they run |
