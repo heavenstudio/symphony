@@ -4,8 +4,8 @@ The Symphony's web client in React and TypeScript, built by Vite. It takes the p
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
 review queue (`/queue`) is the first kind it serves and Reports (`/reports`) the second; every
-other page is still the Dioxus client's. Like that client it reads the server's JSON API and never runs server code or inserts
-server-rendered HTML.
+other page is still the Dioxus client's. Like that client it reads the server's JSON API and never
+runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
 look or behaviour) is built on its page once that page's kind has moved here, in this package,
@@ -55,10 +55,12 @@ the constants it names (the feed's path and events, the Symphony's routes, the c
 that crate's `typescript` example prints them through ts-rs (the derives sit behind the crate's
 `typescript` feature, which no build of the server or the Dioxus client turns on). It is never
 edited by hand: `just client-wire` writes it, and `just client-lint` fails when the committed file
-is not what the Rust types print. `src/wire.cases.json` comes from the same example: what the
-crate's functions the client carries in TypeScript answer for a set of inputs (`here`, `strip`,
-the routes of a project's view, an HTML page's name, a card's topic), with a sample of each read
-the client checks at run time, so the unit tests hold the TypeScript to the Rust. The cases only
+is not what the Rust types print (`crates/symphony-blocks`' block types too, behind its own
+`typescript` feature). `src/wire.cases.json` comes from the same example: what the functions of
+both crates the client carries in TypeScript answer for a set of inputs (`here`, `strip`, the
+routes of a project's view, an HTML page's name, a card's topic, a viewer's element), with a
+sample of each read the client checks at run time (the blocks' holding every kind, which
+`blocks.test.tsx` draws), so the unit tests hold the TypeScript to the Rust. The cases only
 check the inputs they list, so the file holds the source of each function the client carries as
 well (`carried`, from the example's `CARRIED`, each naming the TypeScript that carries it): a
 change to one fails `just client-lint` even where no case's input shows it. The change is then
@@ -72,9 +74,9 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`): a guard checks the fields
-the page draws, each of its type, and nothing else, so a field a newer server adds, or one it
-drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`): a guard checks
+the fields the page draws, each of its type, and nothing else, so a field a newer server adds, or
+one it drops that the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
 `skip-board-fields` is the Dioxus client's: it leaves fields out of its wasm's reader to save

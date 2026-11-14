@@ -5,7 +5,7 @@
 
 import { isValidElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
-import type { ProjectView } from "./wire";
+import type { Block, ProjectView, View, Viewer } from "./wire";
 import cases from "./wire.cases.json";
 
 export interface ViewCase {
@@ -24,12 +24,18 @@ export const CASES = cases as unknown as {
   isHtml: [string, boolean][];
   /** A word, the grain it names, and that grain's default and longest windows in days. */
   grains: [string, string | null, number | null, number | null][];
+  fileAddress: [string, string][];
+  /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
+  elementHtml: [Viewer, string, string, string | null, string | null][];
+  encoded: [View, string][];
+  /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
     queue: unknown;
     emptyQueue: unknown;
     board: unknown;
     reports: unknown;
     emptyReports: unknown;
+    blocks: Block[];
   };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];

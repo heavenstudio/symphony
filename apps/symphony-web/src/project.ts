@@ -8,6 +8,7 @@
 // fails `just client-lint` until it is ported here, with its cases.
 
 import {
+  FILE_QUERY,
   type NavItem,
   PAGE_NAMES,
   PROJECT_ELEMENT,
@@ -72,6 +73,26 @@ function isPage(name: string): boolean {
 export function isHtml(name: string): boolean {
   const found = extension(name);
   return found !== null && htmlExtension(found);
+}
+
+/** Whether `query`, a URL's query without its `?`, asks for the file: it holds FILE_QUERY. */
+export function asksForFile(query: string): boolean {
+  return query.split("&").some((pair) => pair.split("=")[0] === FILE_QUERY);
+}
+
+/**
+ * `src`, an HTML document's address (its route, or a path of the site), asking for the file:
+ * FILE_QUERY added to its query, before its fragment, unless it asks already. A document's frame
+ * and a mockup's frame load it: without it the route is the app's page.
+ */
+export function fileAddress(src: string): string {
+  const hash = src.indexOf("#");
+  const at = hash < 0 ? src.length : hash;
+  const [address, fragment] = [src.slice(0, at), src.slice(at)];
+  const question = address.indexOf("?");
+  if (question < 0) return `${address}?${FILE_QUERY}${fragment}`;
+  if (asksForFile(address.slice(question + 1))) return src;
+  return `${address}&${FILE_QUERY}${fragment}`;
 }
 
 /**
