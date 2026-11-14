@@ -9,19 +9,46 @@ fn all_options_visible(page: &mut crate::Chrome) {
     assert_eq!(page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].every(option=>{const r=option.getBoundingClientRect();return r.width>0 && r.height>0 && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('[role=option]')===option;})"), json!(true), "every option must be inside the viewport and clickable: {}", page.eval("[...document.querySelectorAll('[role=listbox],[role=option]')].map(e=>({text:e.textContent,box:e.getBoundingClientRect().toJSON()}))"));
 }
 
+/// A script true once the task page has nothing left to draw and is scrolled to its true bottom.
+/// Its end moves until then: the gates' answer, the thread's, a read's failure in the page's
+/// notices, the timeline's, each comes when it comes, after the composer may already show
+/// (`viewport::Settle` lets it out after three seconds whatever is still reading). So the page has
+/// drawn its data and is idle (the shell loads a task's timeline only then, and its answer is
+/// drawn), nothing on it is busy reading or waits for its read, and its feed is live; each look
+/// scrolls to the bottom again.
+const AT_REST_AT_THE_BOTTOM: &str = "(() => {
+    scrollTo(0, document.documentElement.scrollHeight);
+    return window.reviewTimelineReady === true && document.querySelector('#timeline .tl-drawn') !== null
+        && document.querySelector('[aria-busy=true], [data-pending=true], main[data-feed=stale]') === null
+        && scrollY + innerHeight >= document.documentElement.scrollHeight - 1;
+})()";
+
+/// What [`AT_REST_AT_THE_BOTTOM`] reads, for a failure to say.
+const AT_REST: &str = "({timeline: [window.reviewTimelineReady ?? null, document.querySelector('#timeline .tl-drawn') !== null],
+    busy: [...document.querySelectorAll('[aria-busy=true], [data-pending=true]')].map(e => e.id || e.className || e.tagName),
+    feed: document.querySelector('main')?.dataset.feed ?? null,
+    scroll: scrollY, height: innerHeight, page: document.documentElement.scrollHeight})";
+
 fn recipient_at_bottom(page: &mut crate::Chrome, site: &Site) {
+    // No landing offer for the task, as for any task not in review: its answer draws nothing,
+    // whenever it comes. (Left unset, the stand-in answers it 404, which the page says in its
+    // notices at its end, and nothing on the page marks that answer as still to come.)
+    site.set_json(
+        "/api/task-offer",
+        &json!({"action":"","label":"","branch":"","payload":null}),
+    );
     page.open(&site.url("/task/visual/in-progress"));
     assert!(page.wait_for("document.querySelector('article.task') !== null", SHOWN));
+    // The thread and the composer under it read once they near the screen.
     page.eval("scrollTo(0,document.documentElement.scrollHeight)");
     assert!(page.wait_for(
         &crate::visible("#task-send button[aria-label=\"Message recipient\"]"),
         SHOWN
     ));
-    page.eval("scrollTo(0,document.documentElement.scrollHeight)");
-    assert_eq!(
-        page.eval("scrollY+innerHeight>=document.documentElement.scrollHeight-1"),
-        json!(true),
-        "exercise the true page bottom"
+    assert!(
+        page.wait_for(AT_REST_AT_THE_BOTTOM, SHOWN),
+        "exercise the true page bottom, once the page has nothing left to draw: {}",
+        page.eval(AT_REST)
     );
     page.eval("document.querySelector('#task-send button[aria-haspopup=listbox]').focus()");
     key(page, "Enter", "Enter", 13);
