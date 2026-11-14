@@ -363,9 +363,8 @@ pub struct Request {
     /// document), and so does a frame's document still arriving when the frame went on to another
     /// document, one a followed frame's document ([`Chrome::follow_frames`]) made, still open when
     /// the frame left that document's process, one a followed worker made, still open when it
-    /// ended, and the script of a worker no one follows (a shared worker's), whose answer goes to
-    /// the worker; never a frame's own document as it moves between processes, which it goes on
-    /// loading.
+    /// ended, and a shared worker's script, whose answer goes to the worker; never a frame's own
+    /// document as it moves between processes, which it goes on loading.
     pub canceled: bool,
     /// The frame it was made for, when that is not the page's own: the address of the document it
     /// was made for, a frame's own document request naming its own address (`about:srcdoc` for a
@@ -1078,11 +1077,19 @@ impl Chrome {
     /// else the page starts that way is let run as it is. What starts while nothing is asked of the
     /// browser waits for the next call or [`Chrome::pump`], which reads of it and lets it run.
     /// Only the page's own auto-attach is set, never the browser's: a page it opens (a popup) or a
-    /// shared worker, which the browser runs, is left as Chrome leaves it.
+    /// shared worker, which the browser runs, is left as Chrome leaves it. A shared worker is only
+    /// discovered (`Target.targetCreated`), so that its script, whose answer goes to the worker,
+    /// is given up ([`Chrome::requests`]) and what it loads is not followed.
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
-        Ok(())
+        // Shared workers, which the browser runs, are only told of: discovery attaches to and
+        // holds nothing. A Chrome that refuses it tells of none.
+        let shared = json!({"discover": true, "filter": [{"type": SHARED_WORKER}]});
+        match self.browser_call("Target.setDiscoverTargets", shared) {
+            Err(error) if error.past_deadline() => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// From now on, each frame followed ([`Chrome::follow_frames`]) that starts turns on `domains`
@@ -1390,13 +1397,17 @@ const DOCUMENT_GONE: &str = "its document went with the process its frame left";
 /// Why a request a followed worker made, still open when the worker's session ended, never ends.
 const WORKER_ENDED: &str = "its worker ended";
 
-/// Why a worker's script that no followed worker answers (a shared worker's, which the browser
-/// runs) never ends where it is seen to start: its answer goes to the worker.
-const WORKER_UNFOLLOWED: &str = "its worker is not followed";
+/// Why a shared worker's script never ends where it is seen to start: its answer goes to the
+/// worker, which the browser runs and nothing follows.
+const SHARED_WORKER_SCRIPT: &str = "its shared worker is not followed";
 
 /// The kind of target that is a worker a page starts, which [`Chrome::follow_frames`] follows: a
 /// dedicated worker, of the page, a frame or a worker.
 const WORKER: &str = "worker";
+
+/// The kind of target that is a shared worker, which the browser runs: only discovered
+/// ([`Chrome::follow_frames`]), never followed.
+const SHARED_WORKER: &str = "shared_worker";
 
 /// The auto-attach that follows a page's, a followed frame's or a followed worker's frames in
 /// processes of their own and workers ([`Chrome::follow_frames`]): each held as it starts, on a
@@ -1470,9 +1481,11 @@ impl Navigated {
 ///
 /// A worker followed is known by its session and by its target, whose id names the request for its
 /// script: what is told of on its session, and its script, are its requests ([`Request::worker`]),
-/// not a frame's. A worker's script (a request with no loader whose document is itself) that no
-/// worker followed answers, a shared worker's, is given up while open ([`WORKER_UNFOLLOWED`]): its
-/// answer goes to the worker, and what the worker loads is told of nowhere followed.
+/// not a frame's. A shared worker discovered (`Target.targetCreated`) names its script's request
+/// by its target too: that request is given up while open ([`SHARED_WORKER_SCRIPT`]), as its
+/// answer goes to the worker, and what the worker loads is told of nowhere followed. A worker's
+/// script no target names yet is waited for: a dedicated worker attaches only once its script's
+/// answer starts.
 fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut requests: HashMap<String, Request> = HashMap::new();
     // The sessions each request was told of on, and the frame each was made for.
@@ -1483,14 +1496,23 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut removed: Vec<String> = Vec::new();
     let mut navigations: Vec<Navigated> = Vec::new();
     // The workers followed, each one's script's address, by its session and by its target, and the
-    // requests for a worker's script, followed or not.
+    // shared workers discovered, by their target.
     let mut workers: HashMap<String, String> = HashMap::new();
     let mut scripts: HashMap<String, String> = HashMap::new();
-    let mut started: Vec<String> = Vec::new();
+    let mut shared: Vec<String> = Vec::new();
     let mut order = Vec::new();
     for event in events {
         let params = &event["params"];
         match event["method"].as_str().unwrap_or("") {
+            "Target.targetCreated" => {
+                let target = &params["targetInfo"];
+                if let (true, Some(id)) =
+                    (target["type"] == SHARED_WORKER, target["targetId"].as_str())
+                {
+                    shared.push(id.to_string());
+                }
+                continue;
+            }
             "Target.attachedToTarget" => {
                 let target = &params["targetInfo"];
                 if let (Some(session), Some(id), true) = (
@@ -1580,13 +1602,6 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             "Network.requestWillBeSent" => {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                 request.kind = params["type"].as_str().unwrap_or("").to_string();
-                // A worker's script: loaded for no document of the page's, its document itself.
-                if params["loaderId"].as_str().unwrap_or("").is_empty()
-                    && request.kind != "Document"
-                    && params["documentURL"] == params["request"]["url"]
-                {
-                    started.push(id.to_string());
-                }
                 request.prefetch |= prefetch(&params["request"]["headers"]);
                 if let Some(frame) = params["frameId"].as_str() {
                     made_for.insert(id.to_string(), frame.to_string());
@@ -1671,8 +1686,8 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
         if request.finished || request.failed.is_some() {
             continue;
         }
-        if started.contains(id) && !scripts.contains_key(id) {
-            request.failed = Some(WORKER_UNFOLLOWED.to_string());
+        if shared.contains(id) {
+            request.failed = Some(SHARED_WORKER_SCRIPT.to_string());
             request.canceled = true;
             continue;
         }

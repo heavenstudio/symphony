@@ -2356,9 +2356,14 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
 /// waited for, each part once: they come in the order each began, which a page's frames leave to
 /// the machine.
 fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
+    waiting_within(output, url, PATIENT)
+}
+
+/// [`still_waiting`], for a shot given `timeout` seconds.
+fn waiting_within(output: &Output, url: &str, timeout: &str) -> BTreeSet<String> {
     assert_eq!(output.status.code(), Some(1), "{}", said(output));
     let prefix = format!(
-        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
+        "symphony shot: {url}: the page was not drawn within {timeout}s: still waiting for "
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     let parts = stderr
@@ -2944,6 +2949,127 @@ fn a_page_with_workers_is_shot_once_they_have_answered_never_waiting_on_a_shared
         })]
     );
     assert!(Picture::read(&out).width > 0);
+}
+
+#[test]
+fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_says_is_drawn() {
+    // A dedicated worker whose script the stand-in holds, its answer not begun, for a second and
+    // more after it is asked for: Chrome attaches the worker only once that answer starts, so until
+    // then its script is a request of the page's in flight, and the shot waits for it. Answered,
+    // the worker fetches what it posts back and the page paints a box green with it, as the
+    // picture shows.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file("/late-worker.js", fetching("/late-data"), "text/javascript");
+    site.hold_route("/late-worker.js", true);
+    site.set_file("/late-data", b"from the late worker".to_vec(), "text/plain");
+    site.set_file(
+        "/late.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<style>body {{ margin: 0; }} #answer {{ width: 200px; height: 200px; }}</style>
+<div id="answer"></div>
+<script>
+  new Worker('/late-worker.js').onmessage = event => {{
+    if (event.data === 'started') return;
+    const answer = document.getElementById('answer');
+    answer.dataset.said = event.data;
+    answer.style.background = 'rgb(0, 160, 0)';
+  }};
+</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("late-worker");
+    let out = scratch.join("late.png");
+    let mut running = shot(
+        &chrome,
+        &[
+            &site.url("/late.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--eval",
+            "document.getElementById('answer').dataset.said ?? null",
+        ],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let ended = |running: std::process::Child, when: &str| -> ! {
+        let output = running.wait_with_output().unwrap();
+        panic!("the shot ended {when}: {}", said(&output));
+    };
+    while !site.requests().iter().any(|path| path == "/late-worker.js") {
+        if running.try_wait().unwrap().is_some() {
+            ended(running, "before its worker's script was asked for");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // A second on, the shot still waits: a loaded machine only slows it, and it ends only once the
+    // script is answered.
+    std::thread::sleep(Duration::from_secs(1));
+    if running.try_wait().unwrap().is_some() {
+        ended(running, "with its worker's script still unanswered");
+    }
+    site.hold_route("/late-worker.js", false);
+    let output = running.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(printed(&output), vec![json!("from the late worker")]);
+    // Painted the green a framed document paints itself.
+    assert_eq!(
+        middle_of(&Picture::read(&out), [0.0, 0.0, 200.0, 200.0]),
+        FRAMED_GREEN,
+        "the worker's answer is not drawn"
+    );
+}
+
+#[test]
+fn a_dedicated_workers_script_never_answered_fails_the_shot_within_its_timeout_naming_it() {
+    // A dedicated worker whose script the stand-in never answers: Chrome attaches no worker, so the
+    // script stays a request of the page's in flight, and the shot, given five seconds, fails at
+    // them naming it, never as a frame or a worker of its own. The page has nothing else to load,
+    // so the script is all it waits for however busy the machine. No picture is left.
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.hold_route("/unanswered-worker.js", true);
+    site.set_file(
+        "/unanswered.html",
+        format!(
+            r#"<!doctype html>{NO_ICON}<p>a worker never started</p>
+<script>new Worker('/unanswered-worker.js');</script>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    let scratch = Scratch::new("unanswered-worker");
+    let out = scratch.join("unanswered.png");
+    let url = site.url("/unanswered.html");
+    let output = shot(
+        &chrome,
+        &[&url, "--out", out.to_str().unwrap(), "--timeout", "5"],
+    )
+    .output()
+    .unwrap();
+    assert_eq!(
+        waiting_within(&output, &url, "5"),
+        BTreeSet::from([format!(
+            "1 request(s) in flight: {}",
+            site.url("/unanswered-worker.js")
+        )]),
+        "{}",
+        said(&output)
+    );
+    assert!(!out.exists(), "a failed shot left a picture");
 }
 
 #[test]

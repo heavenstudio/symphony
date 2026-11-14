@@ -1926,6 +1926,29 @@ fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
     assert!(peer.join().unwrap());
 }
 
+#[test]
+fn a_chrome_that_refuses_to_tell_of_shared_workers_still_has_frames_followed() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut refused = false;
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+            } else if command["method"] == "Target.setDiscoverTargets" {
+                // Asked of the browser's own session, and refused there.
+                refused = command["sessionId"].is_null();
+                peer.send(json!({"id": command["id"], "error": {"message": "refused fixture"}}));
+            } else {
+                peer.reply(&command, json!({}));
+            }
+        }
+        refused
+    });
+    chrome.follow_frames().unwrap();
+    assert!(chrome.following);
+    drop(chrome);
+    assert!(peer.join().unwrap());
+}
+
 /// `Target.attachedToTarget` for a target of `kind` on `session`, held there (`waiting`) or not.
 fn attached(session: &str, kind: &str, waiting: bool) -> Value {
     json!({"sessionId": "page", "method": "Target.attachedToTarget", "params": {
@@ -1962,6 +1985,7 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
                     peer.send(attached("service", "service_worker", true));
                     peer.reply(&command, json!({}));
                 }
+                (Some("Target.setDiscoverTargets"), None) => peer.reply(&command, json!({})),
                 _ => {}
             }
         }
@@ -2010,8 +2034,14 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
             command("running", "Runtime.enable", &none),
             command("running", "Log.enable", &none),
             command("running", "Target.setAutoAttach", &follow),
-            // Any other target is only let run. Nothing is asked of the browser's own session.
+            // Any other target is only let run.
             command("service", "Runtime.runIfWaitingForDebugger", &none),
+            // Of the browser's own session, only to tell of shared workers: nothing attached.
+            command(
+                "",
+                "Target.setDiscoverTargets",
+                &json!({"discover": true, "filter": [{"type": "shared_worker"}]}),
+            ),
         ]
     );
 }
@@ -3245,12 +3275,20 @@ fn started(on: &str, session: &str, target: &str, kind: &str, url: &str) -> Valu
         "targetInfo": {"targetId": target, "type": kind, "url": url}}})
 }
 
+/// `Target.targetCreated` on the browser's own session for target `target` of `kind`, its address
+/// `url`: told of by discovery, attached to nothing.
+fn created(target: &str, kind: &str, url: &str) -> Value {
+    json!({"method": "Target.targetCreated", "params": {
+        "targetInfo": {"targetId": target, "type": kind, "url": url, "attached": false}}})
+}
+
 #[test]
-fn a_followed_workers_requests_are_its_own_by_its_script_and_an_unfollowed_workers_script_is_given_up()
+fn a_followed_workers_requests_are_its_own_by_its_script_and_a_discovered_shared_workers_script_is_given_up()
  {
-    let [dedicated, framed, shared, service] = [
+    let [dedicated, framed, late, shared, service] = [
         "http://a/w.js",
         "http://b/v.js",
+        "http://a/late.js",
         "http://a/shared.js",
         "http://a/sw.js",
     ];
@@ -3275,8 +3313,14 @@ fn a_followed_workers_requests_are_its_own_by_its_script_and_an_unfollowed_worke
         // worker's, never the frame named by the worker's script.
         sent("fs", "V", "Script", Some("inner"), framed, framed),
         started("fs", "vs", "V", "worker", framed),
-        // A shared worker, which the browser runs and nothing follows: its script starts on the
-        // page's session, and its answer goes to the worker.
+        // A dedicated worker whose script's answer has not started: no target names it yet (it
+        // attaches only then), and a target of another kind told of by its id names nothing.
+        sent("page", "L", "Script", Some("top"), late, late),
+        created("L", "worker", late),
+        // A shared worker, which the browser runs and nothing follows: discovered, by the target
+        // its script's request is named by, its script starts on the page's session, and its
+        // answer goes to the worker.
+        created("S", "shared_worker", shared),
         sent("page", "S", "Script", Some("top"), shared, shared),
         itself,
         // A service worker, not followed: its requests are its page's, as before.
@@ -3311,9 +3355,11 @@ fn a_followed_workers_requests_are_its_own_by_its_script_and_an_unfollowed_worke
         )
     );
     assert_eq!(whose(framed), (Some(framed), None, false, None, false));
+    // Still open: waited for.
+    assert_eq!(whose(late), (None, None, false, None, false));
     assert_eq!(
         whose(shared),
-        (None, None, false, Some(crate::WORKER_UNFOLLOWED), true)
+        (None, None, false, Some(crate::SHARED_WORKER_SCRIPT), true)
     );
     assert_eq!(whose("http://a/"), (None, None, false, None, false));
     assert_eq!(whose("http://a/cached"), (None, None, false, None, false));
