@@ -123,12 +123,20 @@ main's, or one main changed after the branch forked, is skipped.
   branch card's.
 
 The card's page and every page its links reach are served from that worktree, under
-`/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that
-worktree's file**, uncommitted, where the agent's `just symphony-status --open` reads it exactly as before; it is
-never committed onto main (the branch carries it when the agent commits and lands). Until then the owner's own
-lines there count at once, laid on the posted card; on a card the branch did not post (its copy is the one it
-forked with, or main's), and in a finished branch's worktree, they join main's copy of the card, on the same
-terms, or stand as the branch page's card when main has none. No second app is needed,
+`/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict on a card the branch posted,
+or on its draft, is written **into that worktree's file**, uncommitted, where the agent's
+`just symphony-status --open` reads it exactly as before; the branch carries it once the agent commits it, and
+a land refuses while a worktree of the branch holds an owner line no commit has
+([TASKS](TASKS.md#the-default-landing)). Until then
+the owner's own lines there count at once, laid on the posted card. A line on a card main holds is main's when
+the branch did not post the card (its copy is the one it forked with, or main's), the branch is in main already
+(landed), or the page's worktree is gone: in each, the branch's page draws main's card. A card the branch posted
+stays its own, even once main closed its copy and the page draws that one. A line that is main's is saved in main's
+file and committed there like a line given on main's page, so `just symphony-status` counts it at once; from a
+gone worktree's page, a line on a card main lacks has nowhere to go and is refused. While git cannot list the
+worktrees, nothing says a worktree is gone: a branch page's line is refused, never taken to main. A line left in a worktree
+whose branch reached main another way (merged by hand, or saved while it landed) still joins main's copy of the
+card on the terms above, or stands as the branch page's card when main has none. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed
 and changed blocks in place against main, with the previous content available beside a changed block
 and a line linking the task those differences belong to. Identical documents have no comparison marks.

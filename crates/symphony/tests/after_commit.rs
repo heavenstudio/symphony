@@ -2236,10 +2236,20 @@ fn worktree_saves_persist_locally_without_committing_to_main() {
                     branch.to_str().unwrap(),
                 ],
             );
+            // The branch posts a card of its own: a card main holds as the branch shows it is
+            // main's to answer (after_worktrees' `landed` cases).
+            write(
+                &branch.join("docs/a.md"),
+                &DOC.replace(
+                    "<!-- register:end -->",
+                    "- [ ] **two** — the branch's proposal.\n<!-- register:end -->",
+                ),
+            );
+            git(&branch, &["commit", "-qam", "post two"]);
             let tip = git(&root, &["rev-parse", "main"]);
             let branch_tip = git(&branch, &["rev-parse", "HEAD"]);
             let saves = ClosingSaves::start(&root);
-            saves.post("work~proposal", "/api/decision", json!({"path":"docs/a.md", "slug":"one", "state":"approved", "note":"branch choice"}));
+            saves.post("work~proposal", "/api/decision", json!({"path":"docs/a.md", "slug":"two", "state":"approved", "note":"branch choice"}));
             saves.0.close();
             assert!(
                 std::fs::read_to_string(branch.join("docs/a.md"))

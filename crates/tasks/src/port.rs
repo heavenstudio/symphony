@@ -70,31 +70,56 @@ pub fn in_use(output: &str) -> bool {
         || output.contains("AddrInUse")
 }
 
+/// Where [`listens`] runs `lsof` when none is found by name: macOS keeps it in `/usr/sbin`, which the
+/// `PATH` of a launchd job, a cron line or a stripped agent environment may lack.
+pub const LSOF_AT: &str = "/usr/sbin/lsof";
+
 /// Whether the process `pid` itself has a TCP socket listening on `addr`: what makes an answer
 /// there that process's. `lsof` is asked about that one process's listening sockets on that address
-/// (`-a -p PID -iTCP@ADDR -sTCP:LISTEN`); it exits 1 with nothing to say when there are none. An
-/// `lsof` that cannot run, or that fails saying why, is the error. `run` runs it and reads what it
-/// printed to its end: `crate::sys::output`, which no child another thread starts meanwhile can
-/// hold open, or std's `Command::output` in a crate that does not link the board.
+/// (`-a -p PID -iTCP@ADDR -sTCP:LISTEN`); it exits 1 with nothing to say when there are none. It is
+/// run by name, and at [`LSOF_AT`] when none is found by name. An `lsof` that cannot run, or that
+/// fails saying why, is the error: no answer, which a caller takes as unknown, never as no listener.
+/// `run` runs it and reads what it printed to its end: `crate::sys::output`, which no child another
+/// thread starts meanwhile can hold open, or std's `Command::output` in a crate that does not link
+/// the board.
 pub fn listens<C: Lsof>(
     pid: u32,
     addr: SocketAddr,
-    run: impl FnOnce(&mut C) -> std::io::Result<Output>,
+    mut run: impl FnMut(&mut C) -> std::io::Result<Output>,
 ) -> std::io::Result<bool> {
     let host = match addr {
         SocketAddr::V4(v4) => v4.ip().to_string(),
         SocketAddr::V6(v6) => format!("[{}]", v6.ip()),
     };
-    let out = run(&mut C::lsof(&[
+    let process = pid.to_string();
+    let on = format!("-iTCP@{host}:{}", addr.port());
+    let args = [
         "-nP",
         "-w",
         "-a",
         "-p",
-        &pid.to_string(),
-        &format!("-iTCP@{host}:{}", addr.port()),
+        &process,
+        &on,
         "-sTCP:LISTEN",
         "-Fp",
-    ]))?;
+    ];
+    let not_run = |problem: std::io::Error, why: String| std::io::Error::new(problem.kind(), why);
+    let out = match run(&mut C::lsof("lsof", &args)) {
+        Ok(out) => out,
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
+            run(&mut C::lsof(LSOF_AT, &args)).map_err(|problem| {
+                let why = format!(
+                    "lsof could not run: none is found on PATH, and {LSOF_AT} could not run \
+                     either ({problem})"
+                );
+                not_run(problem, why)
+            })?
+        }
+        Err(problem) => {
+            let why = format!("lsof could not run: {problem}");
+            return Err(not_run(problem, why));
+        }
+    };
     let mine = format!("p{pid}");
     if String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -115,8 +140,8 @@ pub fn listens<C: Lsof>(
 /// The command [`listens`] runs `lsof` as: the board's own (`crate::sys::Command`), which starts it
 /// without a fork or the starter's session, or std's, which a crate that takes this file gives.
 pub trait Lsof {
-    /// `lsof` with `args`.
-    fn lsof(args: &[&str]) -> Self;
+    /// `program`, `lsof` by name or [`LSOF_AT`], with `args`.
+    fn lsof(program: &str, args: &[&str]) -> Self;
 }
 
 /// A loopback address nothing was bound to as it was picked, on none of the ports in `avoid`.
