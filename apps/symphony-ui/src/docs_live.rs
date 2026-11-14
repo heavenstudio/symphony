@@ -1120,7 +1120,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
                 div { class: "doc-head",
                     p { class: "eyebrow", {folder.path.trim_start_matches(&format!("@{scope}/"))} "/" }
                     h1 { "{folder.title}" }
-                    p { class: "doc-meta", span { class: "pill", if folder.docs == 1 { "1 doc" } else { "{folder.docs} docs" } } }
+                    p { class: "doc-meta", span { class: "pill", {docs::folder_pill(&folder)} } }
                 }
                 if let Some(intro) = folder.intro { DocumentPage { key: "{intro.path}", path: intro.path, scope: scope.clone(), embedded: true } }
                 // The page counts its documents once, in the pill above: the entries' heading
