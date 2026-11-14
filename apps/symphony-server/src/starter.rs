@@ -228,7 +228,7 @@ fn successor(
     (front.pid != running.pid
         && ours.plugins.iter().all(|name| front.plugins.contains(name))
         && recorded.is_some_and(|recorded| recorded.pid == front.pid))
-    .then(|| Running {
+    .then_some(Running {
         port: running.port,
         pid: front.pid,
         root: front.root,
@@ -367,6 +367,9 @@ mod tests {
         );
         assert_eq!(successor(&old, &ours, None, new()), None);
         // Recorded and answering, but without a plugin this build holds: not this build's.
-        assert_eq!(successor(&old, &ours, Some(answering(20, &[])), new()), None);
+        assert_eq!(
+            successor(&old, &ours, Some(answering(20, &[])), new()),
+            None
+        );
     }
 }
