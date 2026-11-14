@@ -108,6 +108,12 @@ fn constants() -> String {
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
         ("UPLOAD_ACCEPT", text(api::UPLOAD_ACCEPT)),
+        ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
+        ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
+        ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),
+        ("TIMELINE_EVERY", api::timeline::TIMELINE_EVERY.to_string()),
+        ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
+        ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -218,6 +224,32 @@ fn declarations() -> Vec<Declared> {
         declared::<api::AskMessage>(&cfg),
         // A file attached to a post.
         declared::<api::Upload>(&cfg),
+        // A task's page: its brief, thread, landing offer, gates and its holders' sessions.
+        declared::<api::TaskPage>(&cfg),
+        declared::<api::TaskEntry>(&cfg),
+        declared::<api::Message>(&cfg),
+        declared::<api::TaskHistory>(&cfg),
+        declared::<api::TaskBrief>(&cfg),
+        declared::<api::TaskOffer>(&cfg),
+        declared::<api::SessionGo>(&cfg),
+        declared::<api::AgentFocus>(&cfg),
+        declared::<api::AgentScreen>(&cfg),
+        declared::<api::TaskGates>(&cfg),
+        declared::<api::Gate>(&cfg),
+        declared::<api::GatePast>(&cfg),
+        declared::<api::GateState>(&cfg),
+        declared::<api::GatesSeen>(&cfg),
+        // Its timeline.
+        declared::<api::TaskTimeline>(&cfg),
+        declared::<api::timeline::Offset>(&cfg),
+        declared::<api::timeline::Stage>(&cfg),
+        declared::<api::timeline::Claim>(&cfg),
+        declared::<api::timeline::Round>(&cfg),
+        declared::<api::timeline::Verdict>(&cfg),
+        declared::<api::timeline::Run>(&cfg),
+        declared::<api::timeline::RunResult>(&cfg),
+        declared::<api::timeline::GateLane>(&cfg),
+        declared::<api::timeline::GateSpan>(&cfg),
     ]
 }
 

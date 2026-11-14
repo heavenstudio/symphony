@@ -519,6 +519,7 @@ pub struct Tasks {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Message {
     pub id: i64,
     pub slug: String,
@@ -532,6 +533,7 @@ pub struct Message {
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately
 /// when the owner reaches their controls.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskPage {
     #[serde(default)]
     pub machine_work: MachineWork,
@@ -567,6 +569,7 @@ pub struct TaskPage {
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
 /// revision of the brief it was cut from.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskBrief {
     pub blocks: Vec<Block>,
     pub next: usize,
@@ -580,6 +583,7 @@ pub struct TaskBrief {
 pub const TASK_ACTION_ROUTE: &str = "/api/task-action";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskEntry {
     pub message: Message,
     pub stamp: String,
@@ -587,6 +591,7 @@ pub struct TaskEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskHistory {
     pub entries: Vec<TaskEntry>,
     pub before: Option<i64>,

@@ -18,6 +18,12 @@ export const UPLOAD_PATH = "/api/upload";
 export const UPLOAD_MAX_BYTES = 10485760;
 export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
+export const TASK_ACTION_ROUTE = "/api/task-action";
+export const TASK_GATES_PATH = "/api/task-gates";
+export const TASK_TIMELINE_PATH = "/api/task-timeline";
+export const TIMELINE_EVERY = 60;
+export const AGENT_FOCUS_PATH = "/api/agent-focus";
+export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -822,4 +828,349 @@ export type Upload = {
    * The one line a post carries to keep the file: `![name](url)` or `[name](url)`.
    */
   markup: string;
+};
+
+export type TaskPage = {
+  machine_work: MachineWork;
+  task: Task;
+  blocks: Array<Block>;
+  children: Array<Task>;
+  children_count: number;
+  /**
+   * Bytes of the brief the page left out; `/api/task-brief` has all of it.
+   */
+  brief_omitted: number;
+  /**
+   * Where the shown part of the brief ends; ask `/api/task-brief` from there.
+   */
+  brief_next: number;
+  /**
+   * The revision of the whole brief, which moves whenever its text does: what was read of one
+   * revision is never shown after the part another revision's page sent.
+   */
+  brief_revision: string;
+  /**
+   * Where each of the task's role holders' Go to session controls go, by handle: a holder with
+   * none known is left out ([`SessionGo`]).
+   */
+  sessions: { [key in string]: SessionGo };
+  /**
+   * The page was asked from the server's own machine, where a pane is focused rather than its
+   * screen shown ([`SessionGo::control`]).
+   */
+  local: boolean;
+  /**
+   * How many gates the last answer the server gave for the task had, and how many it waited on:
+   * the room the page holds for its gates while it reads them. `None` while the server has given
+   * none since it started.
+   */
+  gates?: GatesSeen | null;
+};
+
+export type TaskEntry = { message: Message; stamp: string; blocks: Array<Block> };
+
+export type Message = {
+  id: number;
+  slug: string;
+  sender: string;
+  recipient: string | null;
+  kind: string;
+  text: string;
+  ts: number;
+};
+
+export type TaskHistory = {
+  entries: Array<TaskEntry>;
+  before: number | null;
+  after: number | null;
+};
+
+export type TaskBrief = { blocks: Array<Block>; next: number; omitted: number; revision: string };
+
+export type TaskOffer = {
+  /**
+   * The board action's name.
+   */
+  action: string;
+  label: string;
+  branch: string;
+  payload: string | null;
+};
+
+export type SessionGo = {
+  /**
+   * Whose session it reaches: the agent's own, or for a subagent with no way in of its own,
+   * the parent session that runs it.
+   */
+  handle: string;
+  /**
+   * That session's web address: the control links to it.
+   */
+  url: string | null;
+  /**
+   * The hc terminal that shows that session on the server's machine, offered only when the
+   * project addresses its panes (`[agents] panes = "hc"`).
+   */
+  pane: string | null;
+};
+
+export type AgentFocus = { said: string };
+
+export type AgentScreen = {
+  /**
+   * Whose session it shows: the agent's own, or its parent's.
+   */
+  handle: string;
+  pane: string;
+  text: string;
+  /**
+   * When it was read, in seconds since the epoch.
+   */
+  read_at: number;
+};
+
+export type TaskGates = {
+  slug: string;
+  /**
+   * The branch the gates were answered for: the task's recorded branch.
+   */
+  branch: string;
+  /**
+   * The branch's tip, a full commit id; `None` when the project's repository has no such branch.
+   */
+  tip?: string | null;
+  /**
+   * In [`GateState::rank`] order. Empty when nothing gates the task.
+   */
+  gates: Array<Gate>;
+};
+
+export type Gate = {
+  /**
+   * Its name, unique among a task's gates (`review`, `certificate`).
+   */
+  name: string;
+  state: GateState;
+  /**
+   * Who met, waived or holds it, or whose run or verdict it reads: a handle, `owner`, or a
+   * pipeline (`nightly`).
+   */
+  by?: string | null;
+  /**
+   * When it took this state; for a run still going, when the run started.
+   */
+  at?: number | null;
+  /**
+   * The commit it holds for, a full or short id.
+   */
+  commit?: string | null;
+  /**
+   * Why, for a waiver or a hold.
+   */
+  why?: string | null;
+  /**
+   * One line saying what it is in this state.
+   */
+  detail: string;
+  /**
+   * Where its evidence is: an app path (`/task/SLUG#message-ID`, `/docs/X.md#card`) or an
+   * `http(s)` URL. Any other (`symphony_api::linkable`) is dropped before a page sees it.
+   */
+  link?: string | null;
+  /**
+   * The states it took before this one, oldest first, for the timeline's gates lane; empty
+   * when its answerer keeps none. Each lasted until the next began, the last one until `at`.
+   */
+  past?: Array<GatePast>;
+};
+
+export type GatePast = {
+  state: GateState;
+  /**
+   * When it took that state.
+   */
+  at: number;
+  by?: string | null;
+  commit?: string | null;
+  detail: string;
+};
+
+export type GateState = "missing" | "held" | "waived" | "met" | "unknown";
+
+export type GatesSeen = { count: number; waiting: number; unsigned: number };
+
+export type TaskTimeline = {
+  slug: string;
+  /**
+   * When the server answered: where whatever still goes on ends. The answer's validator leaves
+   * it out, so a read that finds nothing else changed answers `304`: a client that keeps the
+   * answer counts on from this by its own clock.
+   */
+  now: number;
+  /**
+   * The server's local clock over the timeline's hours: its offset from UTC at `created`, then
+   * each change of it (summer time), oldest first.
+   */
+  zone: Array<Offset>;
+  /**
+   * How often, in seconds, a client reads the timeline again while the task is open;
+   * [`TIMELINE_EVERY`] when the answer does not say.
+   */
+  every?: number;
+  /**
+   * The oldest run the board's recorder still keeps, where the task began before it: the task's
+   * runs before then may have fallen out of the recorder's history.
+   */
+  runs_from?: number | null;
+  /**
+   * When the task was made.
+   */
+  created: number;
+  /**
+   * When it closed, done or cancelled; none while it is open.
+   */
+  closed?: number | null;
+  /**
+   * When an executor first claimed it; the time before it, in ready, is time unclaimed.
+   */
+  first_claimed?: number | null;
+  /**
+   * How often review sent it back to in progress.
+   */
+  bounces: number;
+  /**
+   * Each stretch in one status, oldest first, one after another from `created`.
+   */
+  stages: Array<Stage>;
+  /**
+   * Who held the executor role while it was in progress, oldest first.
+   */
+  claims: Array<Claim>;
+  /**
+   * Each review round, oldest first.
+   */
+  rounds: Array<Round>;
+  /**
+   * Its builds and tests, by when they were queued. Empty until the board's recorder keeps one
+   * for the task: then a client shows no builds or tests at all, never a zero.
+   */
+  runs: Array<Run>;
+  /**
+   * Each gate's states, by the gate's name; empty when the task has none, or its gates could
+   * not be read.
+   */
+  gates: Array<GateLane>;
+};
+
+export type Offset = { from: number; seconds: number };
+
+export type Stage = {
+  /**
+   * A board status: `ready`, `in_progress`, `review`, `blocked`, `done`…
+   */
+  status: string;
+  from: number;
+  /**
+   * When it left it; none for the status it holds.
+   */
+  to?: number | null;
+  /**
+   * Who moved it there, where its line says.
+   */
+  by?: string | null;
+  /**
+   * For a stretch in review, its round, from 1; 0 otherwise.
+   */
+  round?: number;
+  /**
+   * A stretch in review after its round was approved: the task waits to land.
+   */
+  approved?: boolean;
+};
+
+export type Claim = {
+  by: string;
+  from: number;
+  /**
+   * When it let go, or the task left in progress; none while it works on it.
+   */
+  to?: number | null;
+};
+
+export type Round = {
+  /**
+   * Its number, from 1 (`round` on the wire).
+   */
+  round: number;
+  /**
+   * When the task went to review.
+   */
+  from: number;
+  /**
+   * When a reviewer took it up; the time before is the wait for one. Its start when a reviewer
+   * already held the role; none while nobody has.
+   */
+  taken?: number | null;
+  /**
+   * Its verdict's time, or when the task left review without one; none while it goes on.
+   */
+  to?: number | null;
+  /**
+   * The reviewer.
+   */
+  by?: string | null;
+  /**
+   * None while it goes on, or when it ended without one.
+   */
+  verdict?: RoundVerdict | null;
+};
+
+export type RoundVerdict = "approved" | "changes" | "other";
+
+export type Run = {
+  /**
+   * `build` or `test`.
+   */
+  phase: string;
+  /**
+   * The recipe or command line (`just test-rs -p symphony-board`).
+   */
+  label: string;
+  /**
+   * Who ran it.
+   */
+  by?: string | null;
+  /**
+   * The commit it ran at.
+   */
+  commit?: string | null;
+  /**
+   * The machine it ran on.
+   */
+  host?: string;
+  queued: number;
+  started?: number | null;
+  ended?: number | null;
+  result: RunResult;
+};
+
+export type RunResult = "queued" | "running" | "green" | "red" | "unknown";
+
+export type GateLane = {
+  name: string;
+  /**
+   * Oldest first, each lasting until the next began, the last one until the timeline's end.
+   */
+  states: Array<GateSpan>;
+};
+
+export type GateSpan = {
+  state: GateState;
+  /**
+   * When it took it; a state taken before the task was made, or at a time its answerer does not
+   * keep, from the task's creation.
+   */
+  from: number;
+  by?: string | null;
+  detail: string;
 };
