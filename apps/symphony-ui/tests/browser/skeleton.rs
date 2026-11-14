@@ -2,7 +2,8 @@
 //! of text in it; it stays over the page until the regions on its first screen have their
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
 //! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
-//! a row leaves what the owner reads or types in where it is once they have scrolled, shows at
+//! a row leaves what the owner reads or types in where it is once they have scrolled, however
+//! many frames the row takes to draw, shows at
 //! the top what lands there while they have not, and never scrolls against the owner's own
 //! scroll; the chat's form stays at the foot of its sheet.
 use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
@@ -767,8 +768,62 @@ const WATCH_SIZES: &str = "window.__sizes = []; window.__sized = true;
 const SIZES: &str = "(() => { window.__sized = false; const page = document.documentElement;
     return [...window.__sizes, [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY]]; })()";
 
+/// A page script under which, once the test sets `window.__late` to a count of frames, every
+/// `IntersectionObserver` callback comes that many frames late, as on a slow phone: a region the
+/// page reserves draws that many frames after it comes near the screen.
+const LATE_DRAWS: &str = r#"window.__late = 0;
+const Observer = window.IntersectionObserver;
+window.IntersectionObserver = class extends Observer {
+    constructor(callback, options) {
+        super((entries, observer) => {
+            let left = window.__late;
+            (function wait() { if (left-- > 0) requestAnimationFrame(wait); else callback(entries, observer); })();
+        }, options);
+    }
+};"#;
+
+/// Counting frames from now (`window.__drawn`): the first in which the message `#message-7` holds
+/// the box it reserves, and the first in which its own box has taken that box's place.
+const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
+(function frame(at) {
+    const slot = document.getElementById('message-7'), waiting = slot?.querySelector('[data-pending=true]');
+    if (waiting && __drawn.reserved === null) __drawn.reserved = at;
+    if (slot && !waiting) __drawn.drawn = at; else requestAnimationFrame(() => frame(at + 1));
+})(0)";
+
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
+    // A busy machine's frames: the message's box gives way to it frames after it is drawn.
+    message_lands_above_the_composer(
+        6,
+        0,
+        &[
+            "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread.",
+        ],
+    );
+}
+
+#[test]
+fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
+    // A slow phone: the message's own box, far taller than the one it reserves, comes ninety frames
+    // after that box: the hold lasts until it is drawn, however many frames that takes.
+    message_lands_above_the_composer(
+        1,
+        90,
+        &[
+            "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
+            "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
+            "A third, so the message stands far taller than the box the thread kept for it.",
+            "And a fourth, the last of them.",
+        ],
+    );
+}
+
+/// The task's page on a phone, scrolled down to its composer with a reply typed in it, as a message
+/// of `paragraphs` lands above it from the feed on a machine `throttle` times slower, the message's
+/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]): the composer keeps its
+/// place, the focus and the reply.
+fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str]) {
     let site = site();
     // A thread long enough to put the composer below the first screen.
     let entries: Vec<Value> = (1..=6)
@@ -780,9 +835,10 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "/api/task-history",
         &json!({"entries": entries, "before": null, "after": 6}),
     );
-    let Some(mut browser) = open(&site, TASK, 390, 844) else {
+    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS]) else {
         return;
     };
+    browser.open(&site.url(TASK));
     assert!(
         browser.wait_for(
             "document.querySelector('.settle[data-settled=true] .history') !== null && document.querySelector('[id^=composer-]') !== null",
@@ -811,17 +867,30 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "Input.insertText",
         json!({"text": "A reply the owner is typing"}),
     );
+    // The way down brought the thread's last messages near the screen, each drawn in place of the
+    // box it reserved, and the thread's region, once none waits, laid out again: the composer's
+    // place is read once those have drawn, as no live update is there to hold it while they do.
+    still(&mut browser, composer);
     let (before, scrolled) = place(&mut browser, composer);
     browser.eval(WATCH_SIZES);
     assert!(
         scrolled > 0.0,
         "the composer must sit below the first screen for the page to have room to hold it"
     );
-    // A busy machine's frames: the message's box gives way to it frames after it is drawn.
-    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
+    if throttle > 1 {
+        browser.call(
+            "Emulation.setCPUThrottlingRate",
+            json!({ "rate": throttle }),
+        );
+    }
+    browser.eval(&format!("window.__late = {late}"));
+    browser.eval(WATCH_DRAWN);
+    let blocks: Vec<Value> = paragraphs
+        .iter()
+        .map(|text| json!({"type": "paragraph", "spans": [{"type": "text", "text": text}]}))
+        .collect();
     let message = json!({"id": 7, "slug": "visual/in-progress", "sender": "agent", "recipient": null,
-        "kind": "message", "text": "", "ts": 2.0, "stamp": "2026-11-11",
-        "blocks": [{"type": "paragraph", "spans": [{"type": "text", "text": "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread."}]}]});
+        "kind": "message", "text": "", "ts": 2.0, "stamp": "2026-11-11", "blocks": blocks});
     site.push(
         4183,
         &json!({"version": 4183, "changes": [{"region": "message", "data": message}]}).to_string(),
@@ -834,15 +903,24 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the message never landed: {}",
         browser.eval(PAGE)
     );
-    // The shell holds the composer in place frame by frame until four pass with nothing moved
-    // (`reviewHoldPlace`): a loaded machine's frames can still be in that hold three frames after
-    // the message lands, so the composer is read once the page stands still around it.
+    // The shell holds the composer in place frame by frame until four pass with nothing moved and
+    // no box near the screen waiting to draw (`reviewHoldPlace`): a loaded machine's frames can
+    // still be in that hold three frames after the message lands, so the composer is read once the
+    // page stands still around it.
     still(&mut browser, composer);
     let (after, _) = place(&mut browser, composer);
     let sizes = browser.eval(SIZES);
+    let drawn = browser.eval("window.__drawn");
     eprintln!(
-        "skeleton: the composer at {before} then {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+        "skeleton: the composer at {before} then {after}; the message's box reserved and drawn at frames {drawn}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
+    if late > 0 {
+        let frames = drawn["drawn"].as_u64().zip(drawn["reserved"].as_u64());
+        assert!(
+            frames.is_some_and(|(drawn, reserved)| drawn >= reserved + u64::from(late)),
+            "the message's own box must come {late} frames after the box it reserves, at frames {drawn}"
+        );
+    }
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const field = document.querySelector({}); return {{focused: document.activeElement === field, text: field.value}}; }})()",
@@ -852,7 +930,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     );
     assert!(
         (after - before).abs() < 1.0,
-        "the composer moved from {before} to {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+        "the composer moved from {before} to {after}; the message's box reserved and drawn at frames {drawn}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
 }
 
