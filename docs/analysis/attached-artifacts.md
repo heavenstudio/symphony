@@ -3,13 +3,12 @@
 Where a task's pictures and other evidence live once they leave the worktree that made them, how a
 card, a thread post or a document names one so the link works where it is read, and how long each
 is kept. This is a design: of its tasks, the second is built (the committed half), and the rest are
-not yet. The owner chose F, the split, on its card in
-[DECISIONS](../DECISIONS.md), 2026-11-12: "agreed with F". The tasks that build it are on the
+not yet. F, the split, is chosen on its card in [DECISIONS](../DECISIONS.md). The tasks that
+build it are on the
 board, in the order of [The implementation tasks](#the-implementation-tasks).
 
-- **The requirement: a clone shows what the documents show.** The owner: "A git clone should be
-  able to see the images, specially the ones that are referenced in the docs and including for
-  previous decisions as well."
+- **The requirement: a clone shows what the documents show.** A git clone shows the images,
+  above all those the documents reference, those of past decisions included.
 - **Which options a plain `git clone` passes.** A plain `git clone` shows a picture only when the
   picture is committed:
   - **Committing it** beside the document, as card pictures are today, passes with no extra command.
@@ -19,7 +18,7 @@ board, in the order of [The implementation tasks](#the-implementation-tasks).
   - **A and E** never put a picture in a clone, so they are excluded.
   - **C and D** are excluded too. Their files sit outside every branch: a clone skips them, and
     even a fetch by name never puts them where a document's link points.
-- **Chosen: F, a split.** Recommended here, and the owner's choice on 2026-11-12: "agreed with F".
+- **Chosen: F, a split.** Recommended here, and chosen.
   - **What the documents show is committed.** A picture that a document or a decision card shows is
     committed beside it, as card pictures are now.
   - **Working evidence stays local.** Evidence that no document shows stays out of git, in the
@@ -53,18 +52,14 @@ board, in the order of [The implementation tasks](#the-implementation-tasks).
   Past the cap (`[board] swept_cap_gb`, 5 GB unless the project sets its own), an agent removes
   what nothing references, closed tasks' files first. Nothing is removed on a timer.
 
-The owner, 2026-11-12, on where a swept worktree's artifacts go: "images should be kept, build
-should not. Images and other artifacts can be pushed into a main tree. However there should be a cap
-to the size of the folder, after which it should ask/warn agents to manually check and remove stale
-images and artifacts not in use. Maybe 5 GB limit?". Then: "Instead of directly commiting,
-artifacts could be attached some with some different process. Either nodes, or git files? Forgot the
-name but I think there was something for this type of challenge in particular. But if there's
-something that still actively references the artifact, then it should be kept until space used
-becomes a problems requiring it to be remove." And on the card, later the same day: "A git clone
-should be able to see the images, specially the ones that are referenced in the docs and including
-for previous decisions as well. I believe this excludes E and A correct? Assuming the above, what is
-the recommmendation? If B, can you not push override objects to delete them? I doubt there is no way
-to remove them?"
+The ask, on where a swept worktree's artifacts go: images are kept, build output is not. Images
+and other artifacts can go into a main tree, with a cap on the folder's size (5 GB, say), past which
+agents are asked to check by hand and remove stale images and artifacts no longer in use. Rather
+than committed directly, artifacts could be attached by some other process made for this kind of
+problem. What something still actively references is kept until the space used becomes a problem
+that requires removing it. Then, on the card: a git clone shows the images, above all those the
+documents reference, those of past decisions included, which excludes E and A; which option is
+recommended; and, if B, whether pushed objects can be overwritten to delete them.
 
 How facts are marked:
 - A fact about the code names the file it was read in.
@@ -549,8 +544,8 @@ where a project's documents show a great deal, as the consuming project's do.
 
 ## Removing what reaches GitHub
 
-The owner asked: "If B, can you not push override objects to delete them? I doubt there is no way
-to remove them?" What can and cannot be removed once it is pushed:
+If B, can pushed objects be overwritten to delete them? What can and cannot be removed once it is
+pushed:
 
 - **An LFS object on GitHub cannot be deleted by a push.**
   - **Only two ways out are documented:** "To remove Git LFS objects from a repository, delete and
@@ -612,9 +607,8 @@ This is the local half's: what is committed stays.
 
 ### The rule
 
-The sweep's rule, which lands first, is the owner's: "if there's something that still actively
-references the artifact, then it should be kept until space used becomes a problems requiring it to
-be remove". Under every option it reads:
+The sweep's rule, which lands first: an artifact something still actively references is kept
+until the space used becomes a problem that requires removing it. Under every option it reads:
 
 - **What keeps a file.** "Actively references" means one of these:
   - a task not done or cancelled, for what it attached, what its own worktree set aside, and what
@@ -678,8 +672,8 @@ and nothing is removed automatically.
 - **If what is referenced alone passes the cap,** the check says so and names the largest referenced
   files and what names them. What to drop is then the owner's question, on a card. Under this rule
   only open work can do that.
-- **Scratch data is not evidence.** The sweep's rule for leftovers applies to it (the owner: "build
-  should not"), and nothing here attaches it.
+- **Scratch data is not evidence.** The sweep's rule for leftovers applies to it (build output is not
+  kept), and nothing here attaches it.
 
 ### The consuming project on day one
 
@@ -766,13 +760,13 @@ F is the one option that meets the requirement without committing all evidence.
   off, so only that goes there. Committing everything would cost about 125 MiB a day of evidence,
   for good.
 - **What the owner asked for already holds for the rest.** The working evidence stays where the
-  sweep and the owner's rule already put it: out of git, kept while actively referenced, and
+  sweep and its rule already put it: out of git, kept while actively referenced, and
   removed by an agent's check past the cap.
 - **Its local half fixes the broken links.** It is E's store, so a thread's picture keeps its link
   for as long as the file is kept.
-- **It commits the documents' pictures directly,** which the owner first asked to avoid ("Instead
-  of directly commiting"). The reason: nothing that reaches GitHub comes back off, by LFS or by a
-  plain commit, so LFS buys no way back, and a plain commit needs no tool and no quota.
+- **It commits the documents' pictures directly,** which the ask first hoped to avoid, attaching
+  them by another process instead. The reason: nothing that reaches GitHub comes back off, by LFS
+  or by a plain commit, so LFS buys no way back, and a plain commit needs no tool and no quota.
 - **Its cost is plain:** the documents' pictures in every clone and every checkout, worktrees and
   consumers' pinned checkouts included, for good, and working evidence on one disk with no backup.
 
@@ -785,8 +779,8 @@ The other options:
 ## The implementation tasks
 
 The sweep that sets aside a finished worktree's artifacts has landed, with its rule, its cap
-(`[board] swept_cap_gb`) and its record (`crates/tasks/src/sweep/kept.rs`). The owner chose F on
-2026-11-12 ("agreed with F"), and the four tasks below are filed on the board, ready, each landing
+(`[board] swept_cap_gb`) and its record (`crates/tasks/src/sweep/kept.rs`). F is chosen, and the
+four tasks below are filed on the board, ready, each landing
 before the next reads it. Tasks 1 and 2 are first: they make a clone show the documents' pictures
 and keep a thread's evidence reachable.
 
@@ -837,7 +831,7 @@ and keep a thread's evidence reachable.
 5. **A note for the consuming project's board.** It is not filed from here, and nothing in the
    consuming project is changed from here. It is for its own board, to decide its own calls:
 
-   > Symphony's owner chose F on 2026-11-12: a picture a document or a decision card shows is
+   > Symphony has chosen F: a picture a document or a decision card shows is
    > committed beside it, and working evidence stays in the main checkout's store under the sweep's
    > cap. Your documents show 1,340 pictures from your ignored artifacts folder: 1,310 on disk
    > (2.47 GiB, mostly from September) and 30 already lost. Your calls:

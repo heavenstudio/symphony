@@ -24,8 +24,8 @@ for every task, and the tests most closely tied to a change are the ones that te
 works: its executor proves that the work it did works, and once that evidence is good enough the
 full verification is left to a later, scheduled run. Every task, parent or slice, feature or fix,
 runs the tests closest to what it changed and `just lint-rs` (and the client built for a client
-change, its distribution never committed: the regenerator a land starts makes main's), and posts the
-exact commands and results with the evidence its kind of change asks for,
+change, its distribution never committed: the regenerator a land starts makes main's), and posts
+the exact commands and results with the evidence its kind of change asks for,
 such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
 the suite, judges whether the evidence is good enough for the change's risk, and its approve is
 the task's stamp (the task `tools/review-as-stamps` records it on the task). A slice's evidence is
@@ -245,8 +245,8 @@ register for the owner to spot-check, and any verdict of theirs overrides it.
 An approved card is never reopened by a question on it, and nothing an earlier verdict decides is
 put to the owner: what an approved card decided, and what follows from it, is never asked again,
 a card already posted for it is auto-approved, and a new question is a card of its own, never one
-put back on the approved card. A consequence of an approved choice is whatever follows from it while the option
-chosen stays the one the card described, a cost or a trade the card did not state included: it is
+put back on the approved card. A consequence of an approved choice is whatever follows from it
+while the option chosen stays the one the card described, a cost or a trade the card did not state included: it is
 a plain agent line on that card, quoting the owner's words it rests on and answering any owner note
 still open there, and the card stays resolved, where the owner can reopen it with a comment. A
 material change is only one that would make the option chosen another than the one described: it
@@ -289,11 +289,15 @@ pointer.
 
 ### `docs/no-ledger-in-documents`
 
-A document under `docs/` describes intent, behaviour and options. The owner's exact words and the
-dated history of who decided what, and when, live in the decision register (`docs/DECISIONS.md`,
-each card's dated lines) and on task threads; a document whose reason matters links its card,
-`[its card](DECISIONS.md#SLUG)` ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and
-`docs/history/` are the records that keep them.
+A document under `docs/` describes intent, behaviour and options, and a guide (`AGENTS.md`,
+`RULES.md`, a package's `AGENTS.md` or `README.md`) states each rule and its reason in plain words.
+The owner's exact words and the dated history of who decided what, and when, live in the decision
+register (`docs/DECISIONS.md`, each card's dated lines) and on task threads; a document whose
+reason matters links its card, `[its card](DECISIONS.md#SLUG)`
+([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and `docs/history/` are the records that
+keep them: the words the guides and documents once quoted are in
+[owner-words](docs/history/owner-words.md). `crates/symphony/tests/hooks/owner_words.rs` fails on
+a rule given as the owner's words, dated or quoted, in a guide or a document.
 
 ### `docs/one-topic-per-doc`
 
@@ -305,8 +309,8 @@ One topic per document, linked to the others, never merged into one file.
 
 No commit, merge, tag, pull request, file header, licence line or anything else names Claude,
 Claude Code, Codex or any other AI agent as author, co-author or generator: no `Co-Authored-By`
-trailer, no "Generated with" line. The author and owner of this repository is Stefano Benatti, and its licence is MIT (`LICENSE`).
-An agent's handle belongs on the board thread, never in the commit.
+trailer, no "Generated with" line. The author and owner of this repository is Stefano Benatti,
+and its licence is MIT (`LICENSE`). An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
 

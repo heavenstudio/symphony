@@ -62,8 +62,8 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
   (`crates/tasks/src/rows.rs`, `SessionRow`). Live, stale and lost are worked out on each read;
   no count of them is kept, and of tool calls only the last one's time.
 - **Tokens.** None on the board. `tools/board-token-usage` (option B of `process-token-recording`: the
-  beat hook adds each call's usage) is ready, not built. Read 2026-11-11: a Claude Code transcript, a subagent's too, carries on each reply the
-  model and its input, output, cache-read and cache-write tokens; a Codex session log carries
+  beat hook adds each call's usage) is ready, not built. Read 2026-11-11: a Claude Code
+  transcript, a subagent's too, carries on each reply the model and its input, output, cache-read and cache-write tokens; a Codex session log carries
   `token_count` events (input, cached, cache-write, output and reasoning tokens). **Neither carries
   a price, and Symphony keeps none: a cost in money cannot be shown today.**
 

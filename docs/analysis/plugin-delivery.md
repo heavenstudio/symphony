@@ -786,8 +786,8 @@ project's pin.
 ## The chosen path: B, measured first
 
 B is chosen, measured first: its results are measured against the current approach, for a
-comparison after the change. B keeps every capability the consuming project's plugin has, needs no rewrite of it (its plugin crate
-becomes a process with a one-line `main`), takes Symphony out of every project's compile, isolates
+comparison after the change. B keeps every capability the consuming project's plugin has, needs
+no rewrite of it (its plugin crate becomes a process with a one-line `main`), takes Symphony out of every project's compile, isolates
 a failing plugin from the server every project shares, and lets two projects with plugins share
 one machine. Its costs are real: the pipe and its workers, a cold cache after every kill, a
 two-pass page render, a card cache keyed by tree, debugging through a log and a replay, and about

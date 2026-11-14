@@ -4,7 +4,8 @@ The workspace, the cargo wrapper and the toolchain pin: [the Rust section of
 the root guide](../../AGENTS.md#rust).
 
 `apps/symphony-ui` is one Dioxus app, the framework the owner chose to experiment
-further with, the browser now and the desktop window later, from the same code. It reads the server's JSON API, whose wire types are
+further with, the browser now and the desktop window later, from the same code.
+It reads the server's JSON API, whose wire types are
 `crates/symphony-api` (tested against its `fixtures/`), and never runs server
 code: no fullstack server functions. Dioxus is pinned `=0.7.10` and built by
 dx 0.7.10.

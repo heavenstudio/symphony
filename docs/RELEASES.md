@@ -599,8 +599,8 @@ A step moves what it can and nothing more:
   A package renamed here is a move the refresh does not make: it rewrites each line's tag and not
   the package the line names, so `cargo update` finds no package of the old name at the new tag,
   and the step is red for that project until its own manifest names the new one. The first
-  release that holds the library as `symphony-app` (the owner's names, 2026-11-13; [the
-  packages](#packages-on-cratesio)) is one: the consuming project's workspace manifest changes its
+  release that holds the library as `symphony-app` ([the packages](#packages-on-cratesio)) is
+  one: the consuming project's workspace manifest changes its
   one line for the library from
 
   ```toml
