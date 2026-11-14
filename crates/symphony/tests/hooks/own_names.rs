@@ -1,10 +1,9 @@
 //! Symphony names only its own things, never a consuming project's. Two checks over this tree's
 //! tracked files:
 //!
-//! - The old state and tool names an older build carried (`sf-`, `sf_`, `sf.`, any case) are only
-//!   in the move that renames those folders into `symphony/` and in what refuses, reads or clears
-//!   them before it, each file a fence below with why it stays, pinned by its count of matching
-//!   lines, so a new old name anywhere fails here.
+//! - The old state and tool names an older build carried (`sf-`, `sf_`, `sf.`, any case) are in no
+//!   file but the fences below, each with why it stays, pinned by its count of matching lines, so a
+//!   new old name anywhere fails here.
 //! - The first consuming project's name is in no file's text or path: in any case, its two words
 //!   joined by nothing, a space, `-`, `_` or `.`, or parted at a line's end (a comment's or a
 //!   quote's marks before the second), and inside any identifier built from it.
@@ -21,43 +20,11 @@ const OLD: &str = "sf[-_.]";
 const HERE: &str = "crates/symphony/tests/hooks/own_names.rs";
 
 /// Each file that may still name an old name, how many of its lines do, and why.
-const FENCES: [(&str, usize, &str); 7] = [
-    (
-        "tools/move-state.sh",
-        49,
-        "the move command: the old folders it renames into symphony/",
-    ),
-    (
-        "crates/tasks/tests/launcher/move_state.rs",
-        187,
-        "the move command's tests: the old folders it moves, as fixtures and expected output",
-    ),
-    (
-        "crates/tasks/src/unmoved.rs",
-        9,
-        "the refusal a build gives before the move: the old folders it finds still holding state",
-    ),
-    (
-        "tools/rs-bin.sh",
-        1,
-        "the launcher: the record an older build's live board keeps in its old folder until the move",
-    ),
-    (
-        "apps/symphony-ui/tools.sh",
-        2,
-        "the client's tools script: an older build's copies of them, run where they stand until the move",
-    ),
-    (
-        "apps/symphony-ui/tests/tools.rs",
-        9,
-        "the tools script's tests: those copies, as fixtures and expected output",
-    ),
-    (
-        "docs/history/board-went-back-2026-11-12.md",
-        1,
-        "a past incident on the consuming project's board: the old folder it happened in",
-    ),
-];
+const FENCES: [(&str, usize, &str); 1] = [(
+    "docs/history/board-went-back-2026-11-12.md",
+    1,
+    "a past incident on the consuming project's board: the old folder it happened in",
+)];
 
 /// The consuming project's name, its two words each spelled backwards so that this file names it
 /// nowhere.

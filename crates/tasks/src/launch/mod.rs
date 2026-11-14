@@ -6,7 +6,8 @@
 //! project's `[agents] launch` on the model `[agents.models]` names for its role ([`defaults`]:
 //! Codex on its board model when the project names none), in an hc terminal of its own (`hc run`),
 //! then gives it its first message (`$work SLUG
-//! HANDLE`; Claude: `/work`) once it is ready. The terminal outlives whoever launched it
+//! HANDLE`, a reviewer's `$review-task SLUG HANDLE`; Claude: `/work`, `/review-task`) once it is
+//! ready. The terminal outlives whoever launched it
 //! (`--outlive-parent`), is kept (`--keep`), and shows in the stream tab of its role (`code` for an
 //! executor, `review` for a reviewer, or `--tab`; at most four terminals, then `code-2`) of the
 //! project's space in the Herdr app, found by name and made when missing (the labels `herdr.space`
@@ -227,7 +228,7 @@ pub struct Started {
 }
 
 /// Start a session for `ask.slug`: handle, worktree, terminal with its agent and `/work SLUG
-/// HANDLE`, and the record on the task.
+/// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task.
 pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Started, Error> {
     let (slug, role) = (ask.slug.as_str(), ask.role.as_str());
     if role != "executor" && role != "reviewer" {
@@ -358,7 +359,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 agent,
                 resumed_codex: false,
                 args,
-                text: &prompt_text(slug, &handle, &ask.prompt, agent),
+                text: &prompt_text(slug, &handle, &ask.prompt, agent, role),
             },
         )?;
         let claude_session = if agent == "codex" {
@@ -430,10 +431,31 @@ fn live_executor_in(store: &Store, path: &Path) -> Result<Option<String>, Error>
     Ok(None)
 }
 
-/// `/work SLUG HANDLE`, then the prompt given, if any. That is the whole prompt (the work skill's
-/// rule): the skill carries the rest, subagents and forks forbidden among it.
-pub(super) fn prompt_text(slug: &str, handle: &str, prompt: &str, agent: &str) -> String {
-    let work = if agent == "codex" { "$work" } else { "/work" };
+/// The skill a session of `role` works by: a reviewer's is the review column's own, never `work`.
+pub(super) fn skill(role: &str) -> &'static str {
+    if role == "reviewer" {
+        "review-task"
+    } else {
+        "work"
+    }
+}
+
+/// `/work SLUG HANDLE` (a reviewer's `/review-task SLUG HANDLE`), then the prompt given, if any.
+/// That is the whole prompt (the skill's rule): the skill carries the rest, subagents and forks
+/// forbidden among it.
+pub(super) fn prompt_text(
+    slug: &str,
+    handle: &str,
+    prompt: &str,
+    agent: &str,
+    role: &str,
+) -> String {
+    let skill = skill(role);
+    let work = if agent == "codex" {
+        format!("${skill}")
+    } else {
+        format!("/{skill}")
+    };
     match prompt.trim() {
         "" => format!("{work} {slug} {handle}"),
         more => format!("{work} {slug} {handle} {more}"),
@@ -454,7 +476,7 @@ fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
     } else if let Some(parent) = task.parent.as_deref().filter(|_| task.instruction) {
-        // A review subtask: its reviewer works it as an executor (`/work` claims it) and judges the
+        // A review subtask: its reviewer claims it (`/review-task` does) and judges the
         // task it reviews, so the reviewer role goes on the parent, never on the subtask it must claim.
         store.reserve(slug, handle, RESERVE_SECONDS)?;
         match store.take_role(parent, handle, "reviewer") {

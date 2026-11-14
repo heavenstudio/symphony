@@ -5,6 +5,7 @@ use crate::{Case, env, run};
 use serde_json::{Value, json};
 
 mod assessment;
+mod contract;
 mod red;
 
 fn answer(env: &symphony_board::cli::Env, call: Value) -> Value {
