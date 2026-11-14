@@ -32,7 +32,12 @@ impl Project {
 
     /// As `new`, its board made by `make`, which opens it to write.
     fn made_by(tree: &Tree, id: &str, make: impl FnOnce(&Path) -> Store) -> Project {
-        let root = repository_at(tree, id);
+        Project::made_in(tree, id, id, make)
+    }
+
+    /// As `made_by`, its checkout in the folder `folder` of `tree`.
+    fn made_in(tree: &Tree, folder: &str, id: &str, make: impl FnOnce(&Path) -> Store) -> Project {
+        let root = repository_at(tree, folder);
         std::fs::write(
             root.join("symphony.toml"),
             format!("[project]\nid = \"{id}\"\n"),
@@ -329,4 +334,122 @@ fn a_hub_never_moves_a_board_behind_its_build_forward_and_reads_it_once_its_comm
     );
     gamma.reads(&["gamma/one"]);
     assert_eq!(gamma.version(), Some(this));
+}
+
+/// A board's server, stopped when the case ends: one a hub that should start none started all the
+/// same.
+struct Stopped(Home);
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        let _ = self.0.stop();
+    }
+}
+
+/// A project in its own repository under another checkout's artifacts, as a test's scratch
+/// projects are, removed under its hub, or left without its `.git`, once its board's server has
+/// stopped (the case that ended it stopped it): the hub says once that its folder is gone and
+/// reads nothing more, as a project with no board, so the server's maintenance of it waits. It
+/// starts no board's server, the outer checkout's least of all, whose board is made and down, and
+/// so would be started by a lookup that walked up to it.
+#[test]
+fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_above_it() {
+    type Remove = fn(&Path) -> std::io::Result<()>;
+    for (case, remove) in [
+        (
+            "its folder removed",
+            (|root: &Path| std::fs::remove_dir_all(root)) as Remove,
+        ),
+        ("its .git removed", |root: &Path| {
+            std::fs::remove_dir_all(root.join(".git"))
+        }),
+    ] {
+        let tree = Tree::new();
+        let outer = repository_at(&tree, "outer");
+        std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+        writer(&outer)
+            .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+            .unwrap();
+        let outer_board = Stopped(Home::in_common(&outer.join(".git"), Some(&surreal())));
+        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+        let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+        inner.reads(&["inner/one"]);
+        assert!(inner.hub.holds_its_project(), "{case}");
+        inner.home().stop().unwrap();
+        remove(&inner.root).unwrap();
+
+        let why = inner.refused("the project's folder");
+        assert_eq!(why, inner.hub.gone(), "{case}");
+        assert!(
+            why.ends_with(symphony_board::project::GONE),
+            "{case}: {why}"
+        );
+        assert_eq!(inner.hub.has_board(), Some(false), "{case}");
+        assert_eq!(
+            inner.hub.reader().err().as_ref(),
+            Some(&why),
+            "{case}: a page's read reaches no board either"
+        );
+        assert_eq!(
+            outer_board.0.recorded(),
+            None,
+            "{case}: the outer board started"
+        );
+        assert_eq!(
+            inner.home().recorded(),
+            None,
+            "{case}: its own board started"
+        );
+    }
+}
+
+/// What a hub holds its folder to: there, and leading the board's lookup where it led when the hub
+/// was made. A folder removed, emptied, or left without its `.git` leads that lookup up into the
+/// checkout that holds it, and is held no more; a project's folder whose project file went is
+/// held, its `.git` still stopping the lookup there; so is a folder below a checkout's top, whose
+/// lookup always led up to it, and a folder no repository holds, while it is there.
+#[test]
+fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_stops_where_it_did() {
+    let tree = Tree::new();
+    let outer = repository_at(&tree, "outer");
+    let hub = |root: &Path| Hub::new(root, &root.join("build/client"));
+    let project = |name: &str| {
+        let root = repository_at(&tree, &format!("outer/artifacts/{name}"));
+        std::fs::write(root.join("symphony.toml"), "[project]\nid = \"inner\"\n").unwrap();
+        (hub(&root), root)
+    };
+
+    let (unfiled, root) = project("unfiled");
+    std::fs::remove_file(root.join("symphony.toml")).unwrap();
+    assert!(unfiled.holds_its_project(), "its .git stops the lookup");
+    std::fs::remove_dir_all(root.join(".git")).unwrap();
+    assert!(!unfiled.holds_its_project(), "no .git");
+
+    let (emptied, root) = project("emptied");
+    for entry in std::fs::read_dir(&root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        } else {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+    assert!(root.is_dir());
+    assert!(!emptied.holds_its_project(), "emptied");
+
+    let (removed, root) = project("removed");
+    assert!(removed.holds_its_project());
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(!removed.holds_its_project(), "removed");
+
+    let below = outer.join("docs");
+    std::fs::create_dir_all(&below).unwrap();
+    assert!(hub(&below).holds_its_project(), "below the checkout's top");
+
+    let plain = tree.path("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let plain_hub = hub(&plain);
+    assert!(plain_hub.holds_its_project(), "in no repository");
+    std::fs::remove_dir_all(&plain).unwrap();
+    assert!(!plain_hub.holds_its_project(), "in no repository, removed");
 }

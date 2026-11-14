@@ -154,6 +154,10 @@ pub(crate) struct Hub {
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
     common: Option<PathBuf>,
+    /// Where the board's lookup from `root` stopped when the hub was made, and the repository it
+    /// found there ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`]
+    /// holds the folder to. None for a folder no repository held.
+    place: Option<(PathBuf, PathBuf)>,
     signoff_pending: Mutex<Option<Pending>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -305,6 +309,8 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
+            place: symphony_board::project::locate_quick(root)
+                .map(|place| (place.root, place.common)),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),
@@ -424,6 +430,9 @@ impl Hub {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(store) = &*kept {
             return Ok(Arc::clone(store));
+        }
+        if !self.holds_its_project() {
+            return Err(self.gone());
         }
         let store = Arc::new((self.connect_reader)(&self.root)?);
         *kept = Some(Arc::clone(&store));
@@ -1628,6 +1637,11 @@ fn run(
         // other document and worktree changes come from watcher events and the backstop's sweep.
         if last_board.elapsed() >= BOARD_INTERVAL {
             last_board = Instant::now();
+            // A project removed under the server: nothing more is read or recorded for it.
+            if !hub.holds_its_project() {
+                hub.lose();
+                break;
+            }
             expiry.tick(&hub.root, symphony::postpone::now(), || {
                 hub.refresh_order("")
             });
