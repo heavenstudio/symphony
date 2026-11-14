@@ -329,13 +329,17 @@ agent's first message reads as its person's own word, so it is `/work SLUG HANDL
 alone, and the rest goes on the task's thread, which `/work` reads. A restore
 resumes the conversation its record names. Under the mark `tasks api`'s
 `record_launch` records neither a worktree outside those places nor a conversation
-id, and `just tasks callback` registers a Codex thread only as the caller's own
-(`CODEX_THREAD_ID`, which it detects with no address), which the board writes into
-the handle's open Codex record. So a record's conversation is one the board's
-launcher recorded (the id it chose at a launch, or one it read from the agent's
-terminal, heartbeat binding or callback) or the Codex thread an agent registered
-from its own process. Two limits stay: `--as` names any handle, so an agent may
-register its own thread for another handle, whose restore then resumes that
+id; no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, and
+`just tasks beat` binds nothing: a heartbeat binding is the hook's, which runs
+`tasks beat` itself on the session's own tool calls); and `just tasks callback`
+registers a Codex thread only as the caller's own (`CODEX_THREAD_ID`, which it
+detects with no address), which the board writes into the handle's open Codex
+record. So a record's conversation is one the board's launcher recorded (the id it
+chose at a launch, or one it read from the agent's terminal, the hook's binding or
+a callback) or the Codex thread an agent registered from its own process. Two
+limits stay: `--as` names any handle, so an agent may give another handle its own
+conversation (the hook binds the session to the handle its board command names,
+and a callback registers its thread for it), whose restore then resumes that
 agent's conversation; and a record an older build wrote is not told apart. The
 reply recipes keep their writes to the same places
 (AGENTS.md, "Agent integration"). The binary run by itself, which no rule allows,

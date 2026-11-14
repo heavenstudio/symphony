@@ -11,15 +11,19 @@
 //! else the launcher has to say goes on the task's thread, which `/work` reads, as board text.
 //!
 //! The conversation a restore resumes is the one the record names. Under the mark `tasks api`'s
-//! `record_launch` writes no record a restore would start elsewhere, nor one naming a conversation,
-//! and `callback` registers a Codex thread only as its caller's own (`CODEX_THREAD_ID`,
-//! [`own_thread`]), which the board writes into the handle's open Codex record (`codex:`). So a
-//! conversation a record names was recorded by the board's own launcher (the id it chose at a
-//! launch, or one it read from the agent's terminal, heartbeat binding or callback), or is the
-//! Codex thread an agent registered from its own process. Two limits stay: `--as` names any
-//! handle, so an agent may register its own thread for another handle, whose restore then resumes
-//! that agent's conversation; and a record an older build wrote is not told apart. The binary run
-//! by itself, which no rule allows, starts an agent anywhere and records any conversation.
+//! `record_launch` writes no record a restore would start elsewhere, nor one naming a conversation;
+//! no agent id is bound to a handle (`tasks api`'s `bind_agent` is refused, [`may_bind`], and
+//! `tasks beat` binds nothing: a heartbeat binding is the hook's, which runs the binary itself on
+//! the session's own tool events); and `callback` registers a Codex thread only as its caller's own
+//! (`CODEX_THREAD_ID`, [`own_thread`]), which the board writes into the handle's open Codex record
+//! (`codex:`). So a conversation a record names was recorded by the board's own launcher (the id it
+//! chose at a launch, or one it read from the agent's terminal, the hook's binding or a callback),
+//! or is the Codex thread an agent registered from its own process. Two limits stay: `--as` names
+//! any handle, so an agent may give another handle its own conversation (the hook binds the
+//! session to the handle its board command names, and a callback registers its thread for it),
+//! whose restore then resumes that agent's conversation; and a record an older build wrote is not
+//! told apart. The binary run by itself, which no rule allows, starts an agent anywhere, records
+//! any conversation and binds any agent.
 
 use crate::NewLaunch;
 use crate::cli::Env;
@@ -154,6 +158,28 @@ pub fn own_thread(env: &Env, address: &str) -> Result<(), String> {
     ))
 }
 
+/// Whether `tasks api`'s `bind_agent`, run in `env`, may bind an agent id to a handle: not under the
+/// mark, since the id a handle is bound to is the conversation the agents listing gives it where its
+/// record and terminal name none, which staffing then records for a restore to resume. Nothing of
+/// the board's calls it: the heartbeat binds in `tasks beat`, which the hook runs as the binary
+/// itself, and under the mark binds nothing either.
+///
+/// # Errors
+///
+/// One line saying where a binding comes from instead.
+pub fn may_bind(env: &Env) -> Result<(), String> {
+    if env.var(confine::MARKER).is_none() {
+        return Ok(());
+    }
+    Err(
+        "no bind_agent through a recipe an agent runs unasked: the agent id a handle is bound to \
+         is a conversation staffing may record for it, for a restore to resume; a session's own \
+         heartbeat binds it (the hook runs tasks beat as the binary itself), and the binary run \
+         by itself binds any"
+            .into(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +208,18 @@ mod tests {
         // Without the mark, or with an empty one, any.
         for unmarked in [env(&[]), env(&[(confine::MARKER, "")])] {
             assert_eq!(own_thread(&unmarked, "codex:dead-beef"), Ok(()));
+        }
+    }
+
+    #[test]
+    fn under_the_mark_the_api_binds_no_agent() {
+        assert!(
+            may_bind(&env(&[(confine::MARKER, "1")]))
+                .unwrap_err()
+                .starts_with("no bind_agent through a recipe an agent runs unasked: ")
+        );
+        for unmarked in [env(&[]), env(&[(confine::MARKER, "")])] {
+            assert_eq!(may_bind(&unmarked), Ok(()));
         }
     }
 }

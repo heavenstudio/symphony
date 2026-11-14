@@ -59,7 +59,7 @@ pub mod staff;
 mod startup;
 mod uuid;
 
-pub use bounds::{Bounds, own_thread};
+pub use bounds::{Bounds, may_bind, own_thread};
 pub use cleanup::{Closure, cleanup, cleanup_as, finish};
 pub use close::close;
 pub use defaults::{Defaults, Resolved};

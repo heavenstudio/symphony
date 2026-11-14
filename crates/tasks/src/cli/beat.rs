@@ -207,12 +207,15 @@ fn truthy(value: Option<&Value>) -> bool {
 /// binding, the checkout the call runs in (the event's `cwd`), and when it came there, by the board's
 /// clock and by `boot`, the clock since boot as the hook read it: where the agents view looks for
 /// what it left running once it goes quiet, and which of what runs there began while it was there.
+/// Only with `bind` does a board command in the call bind its key: not for a beat run through `just
+/// tasks`, whose event an agent wrote, not its own tool call ([`crate::launch::may_bind`]).
 /// The key, and whether a full session is bound by it now (None for a subagent's, or an event with
 /// no key).
 pub fn beat_event(
     store: &Store,
     event: &Map<String, Value>,
     boot: Option<&Boottime>,
+    bind: bool,
 ) -> Result<Option<(String, bool)>, Error> {
     let by_agent = truthy(event.get("agent_id"));
     let key = if by_agent {
@@ -251,7 +254,7 @@ pub fn beat_event(
         )?));
     }
     let command = tool.get("command").and_then(Value::as_str).unwrap_or("");
-    if let Some(named) = named_handle(command) {
+    if let Some(named) = named_handle(command).filter(|_| bind) {
         store.bind_agent(agent, &named, !by_agent)?;
     }
     let call = event
@@ -344,7 +347,8 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
         };
         let store = super::open_beating(reached, &super::Clock::of(env).ok()?).ok()?;
         let boot = super::boot_clock(env);
-        let (key, bound) = beat_event(&store, event, boot.as_ref()).ok()??;
+        let bind = env.var(crate::confine::MARKER).is_none();
+        let (key, bound) = beat_event(&store, event, boot.as_ref(), bind).ok()??;
         mark(&keys_folder(env, &cwd)?, &key, bound);
         Some(())
     })();

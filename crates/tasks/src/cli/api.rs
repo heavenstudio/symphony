@@ -278,6 +278,11 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "bind_agent" => {
             args!(agent: need, handle: actor, session: or(false));
             let (agent, handle): (String, String) = (agent, handle);
+            // Through `just tasks`, which an agent runs unasked: no binding, whose id staffing may
+            // record as the handle's conversation ([`crate::launch::may_bind`]).
+            if let Some(env) = &board.context {
+                crate::launch::may_bind(env).map_err(Fail::Refused)?;
+            }
             Py::Bool(board.get()?.bind_agent(&agent, &handle, session)?)
         }
         "agent_beat" => {
