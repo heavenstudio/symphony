@@ -218,7 +218,7 @@ pub fn route() -> String {
 }
 
 pub fn url(path: &str) -> String {
-    crate::docs::scoped(&crate::navigation::Route::current().scope, path)
+    crate::project::scoped(&crate::navigation::Route::current().scope, path)
 }
 
 pub async fn get<T: DeserializeOwned>(path: &str) -> Result<T, String> {

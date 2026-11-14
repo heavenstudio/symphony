@@ -4,6 +4,7 @@
 // server's notice).
 
 import { useEffect, useReducer, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 
 type Shared = Record<string, unknown>;
 
@@ -32,13 +33,20 @@ export function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? (value as Shared)[key] : undefined;
 }
 
-/** Draw again each time the window says one of `events`. */
+/**
+ * Draw again each time the window says one of `events`, at once, within the event, as the Dioxus
+ * frame did. React would leave an update from a window event to its scheduler, a later task that
+ * can come after the next frame, where the shell gives the focus back to `+` after Escape on a
+ * loading sheet (`assets/shell.js`): `+` would still be hidden then, and the focus would fall to
+ * the body.
+ */
 export function useWindowEvents(events: readonly string[]): void {
   const [, heard] = useReducer((count: number) => count + 1, 0);
   useEffect(() => {
-    for (const event of events) addEventListener(event, heard);
+    const draw = () => flushSync(heard);
+    for (const event of events) addEventListener(event, draw);
     return () => {
-      for (const event of events) removeEventListener(event, heard);
+      for (const event of events) removeEventListener(event, draw);
     };
   }, [events]);
 }

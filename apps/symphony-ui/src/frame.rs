@@ -6,7 +6,7 @@ use futures_channel::mpsc::unbounded;
 use futures_util::StreamExt;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 
-use crate::{docs, navigation::Route, platform, request::field};
+use crate::{navigation::Route, platform, project::scoped, request::field};
 
 #[cfg(feature = "page-panel")]
 #[path = "frame_panel.rs"]
@@ -69,7 +69,7 @@ fn asks_moved(moved: &JsValue) {
 }
 
 /// `review:asks`'s news read: `true`, or the region's data.
-#[cfg(any(feature = "page-panel", feature = "page-docs"))]
+#[cfg(feature = "page-panel")]
 fn asks_news(moved: &JsValue) -> crate::state::AsksNews {
     crate::state::AsksNews {
         everything: moved.as_bool() == Some(true),
@@ -89,7 +89,7 @@ fn asks_news(moved: &JsValue) -> crate::state::AsksNews {
 
 /// A count of the `review:asks` news that `concerns` accepts: what a thread's reader reads
 /// again on, instead of a timer. The browser listener only forwards; the count moves in a task.
-#[cfg(any(feature = "page-panel", feature = "page-docs"))]
+#[cfg(feature = "page-panel")]
 pub(crate) fn use_asks_heard(
     concerns: impl Fn(&crate::state::AsksNews) -> bool + 'static,
 ) -> Signal<u64> {
@@ -350,7 +350,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                 // are that branch's.
                 nav { class: "app-pages", "aria-label": "Pages",
                     for link in links {
-                        a { href: crate::project::href(&if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/reports" | "/agents") { link.href.clone() } else { docs::scoped(&route.scope, &link.href) }),
+                        a { href: crate::project::href(&if matches!(link.href.as_str(), "/" | "/queue" | "/tasks" | "/reports" | "/agents") { link.href.clone() } else { scoped(&route.scope, &link.href) }),
                             class: if link.active { "active" } else { "" }, "aria-current": if link.active { "page" }, "{link.label}" }
                     }
                 }
@@ -359,7 +359,7 @@ pub fn Frame(route: Route, children: Element) -> Element {
                         for (index, crumb) in crumbs.iter().enumerate() {
                             if index > 0 { " / " }
                             if index + 1 < crumbs.len() {
-                                a { href: crate::project::href(&docs::scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/")))), "{crumb}" }
+                                a { href: crate::project::href(&scoped(&route.scope, &format!("/{}/", crumbs[..=index].join("/")))), "{crumb}" }
                             } else { span { "{crumb}" } }
                         }
                     }

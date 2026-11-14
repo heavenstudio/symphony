@@ -3,9 +3,9 @@
 use super::{Draft, save_draft};
 use crate::{
     block_view::BlocksView,
-    docs,
     live::sleep,
     navigation::Route,
+    project::scoped,
     request::{field, get, post},
 };
 use dioxus::core::Task;
@@ -75,11 +75,8 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
         }
         running.set(Some(spawn(async move {
             loop {
-                match get::<AskReply>(&docs::scoped(
-                    &scope,
-                    &format!("/api/ask?format=blocks&id={id}"),
-                ))
-                .await
+                match get::<AskReply>(&scoped(&scope, &format!("/api/ask?format=blocks&id={id}")))
+                    .await
                 {
                     Ok(got) => {
                         thread.set(Some(got));
@@ -155,14 +152,14 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     let hash = web_sys::window()
                         .and_then(|w| w.location().hash().ok())
                         .unwrap_or_default();
-                    docs::scoped(&route.scope, &format!("/{}{hash}", route.path))
+                    scoped(&route.scope, &format!("/{}{hash}", route.path))
                 } else {
                     page
                 };
                 draft.write().request_page.clone_from(&page);
                 // A reload must retain the same identity and page before this request can run.
                 save_draft(&draft());
-                let url = docs::scoped(&d.request_scope, "/api/quick-task");
+                let url = scoped(&d.request_scope, "/api/quick-task");
                 let fields = [
                     ("request", d.request.into()),
                     ("title", d.title.into()),
@@ -184,7 +181,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                 }
             } else if d.ask > 0 {
                 post(
-                    &docs::scoped(&d.ask_scope, "/api/ask-reply"),
+                    &scoped(&d.ask_scope, "/api/ask-reply"),
                     &[
                         ("id", (d.ask as f64).into()),
                         ("text", attach.compose(&d.text).into()),
@@ -210,7 +207,7 @@ pub(super) fn QuickPanel(route: Route, mut draft: Signal<Draft>) -> Element {
                     .map(String::from)
                     .unwrap_or_default();
                 post(
-                    &docs::scoped(&route.scope, "/api/ask"),
+                    &scoped(&route.scope, "/api/ask"),
                     &[
                         ("path", path.into()),
                         ("question", question.into()),

@@ -104,7 +104,10 @@ export function change(state: DocumentState, delta: DocumentChange): DocumentSta
 const sameList = <T>(a: readonly T[], b: readonly T[]): boolean =>
   a.length === b.length && a.every((item, at) => item === b[at]);
 
-/** Whether `a` and `b` hold the same values, field by field: what a page draws them from. */
+/**
+ * Whether `a` and `b` hold the same objects, field by field, compared by identity, not by value: a
+ * copy rebuilt from equal values is another one, and a page draws again from it.
+ */
 function sameDocument(a: Document, b: Document): boolean {
   const threads = Object.keys(a.threads);
   return (
@@ -127,7 +130,8 @@ function sameDocument(a: Document, b: Document): boolean {
  * Show the latest copy but the sections `busy` holds, which keep their shown markup, card and
  * thread, at their latest place in the source. While any is held, the shown order stays, so a
  * section the owner is in never moves under their pointer when the register regroups. A shown copy
- * that would not change stays the same value.
+ * whose fields would all be the same objects (`sameDocument`, by identity) stays the same object,
+ * so the page draws nothing again.
  */
 export function refresh(state: DocumentState, busy: ReadonlySet<string>): DocumentState {
   const { shown, latest } = state;

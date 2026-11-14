@@ -99,8 +99,6 @@ pub(crate) fn kind() -> &'static str {
         "timeline"
     } else if cfg!(feature = "page-tasks") {
         "tasks"
-    } else if cfg!(feature = "page-docs") {
-        "docs"
     } else {
         "review"
     }

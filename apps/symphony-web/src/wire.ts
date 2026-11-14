@@ -14,6 +14,10 @@ export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
 export const VERSION_HEADER = "symphony-version";
 export const VERDICT_TASKS = "verdicts/";
+export const UPLOAD_PATH = "/api/upload";
+export const UPLOAD_MAX_BYTES = 10485760;
+export const UPLOAD_ACCEPT =
+  "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -798,4 +802,24 @@ export type AskMessage = {
   text: string;
   at: number;
   blocks?: Array<Block>;
+};
+
+export type Upload = {
+  /**
+   * The file's address, `/artifacts/uploads/<sha256>.<ext>`, the same on every branch's pages.
+   */
+  url: string;
+  /**
+   * The owner's file name, made safe for one Markdown line.
+   */
+  name: string;
+  /**
+   * A picture the page draws inline; any other file is a link.
+   */
+  picture: boolean;
+  bytes: number;
+  /**
+   * The one line a post carries to keep the file: `![name](url)` or `[name](url)`.
+   */
+  markup: string;
 };

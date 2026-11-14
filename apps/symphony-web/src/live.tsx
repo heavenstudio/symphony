@@ -106,7 +106,11 @@ function mark(name: string): void {
 }
 
 /** Waits `ms` before a read is tried again, or less once the reader presses Retry. */
-async function pause(ms: number, retry: { current: number }, signal: AbortSignal): Promise<void> {
+export async function pause(
+  ms: number,
+  retry: { current: number },
+  signal: AbortSignal,
+): Promise<void> {
   const asked = retry.current;
   let left = ms;
   while (left > 0 && retry.current === asked && !signal.aborted) {

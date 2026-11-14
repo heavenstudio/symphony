@@ -78,38 +78,10 @@ pub async fn get_if_found(url: &str, etag: &str) -> Result<Option<Answer>, Strin
     }
 }
 
-/// [`get_if_found`] of a document read, with the feed's cursor it was read at, as the server names
-/// it in a header on its `200` and its `304` alike ([`symphony_api::VERSION_HEADER`]): a page that
-/// draws the copy it kept on a `304`, which has no body, opens the feed from it. `None` from a
-/// server that names none.
-#[cfg(feature = "page-docs")]
-pub async fn get_document(url: &str, etag: &str) -> Result<Option<(Answer, Option<u64>)>, String> {
-    match exchange(url, None, Some(etag)).await {
-        // `read` set it as it ended, and nothing else ran since.
-        Ok(answer) => Ok(Some((answer, CURSOR.take()))),
-        Err(Failure::Missing(_)) => Ok(None),
-        Err(failure) => Err(failure.into_text()),
-    }
-}
-
-#[cfg(feature = "page-docs")]
-thread_local! {
-    /// The cursor the last response named ([`get_document`]): `read` sets it after its last wait,
-    /// and its caller takes it in the same turn, before any other task runs.
-    static CURSOR: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
 pub async fn post(url: &str, fields: &[(&str, JsValue)]) -> Result<JsValue, String> {
     send(url, Some(object(fields)))
         .await
         .map_err(Failure::into_text)
-}
-
-/// A post that fails as [`Failure`] says, so a page can tell a refusal, which wrote nothing, from a
-/// save no reply answered, which the server may have written.
-#[cfg(feature = "page-docs")]
-pub(crate) async fn save(url: &str, fields: &[(&str, JsValue)]) -> Result<JsValue, Failure> {
-    send(url, Some(object(fields))).await
 }
 
 #[cfg(feature = "page-panel")]
@@ -241,7 +213,7 @@ async fn exchange(
     let (ended, how) = match in_time(JsFuture::from(fetch), sleep(ANSWER_MS)).await {
         Some(Ok(response)) => {
             marks.mark("fetched");
-            read(response.unchecked_into(), reading, &marks).await
+            answer(response.unchecked_into(), reading, &marks).await
         }
         Some(Err(error)) => (
             Err(Failure::uncertain(if reading {
@@ -269,30 +241,7 @@ async fn exchange(
 /// without JSON is still missing. A read's refusal says what the page shows in place of what it
 /// could not ([`crate::trouble::answered`]), a post's the server's words. With how it ended, for the
 /// marks: `ok`, `refused` (any status not ok), `failed` (a body that is not JSON) or `no-answer` (a
-/// body that did not come in time; a refusal is still one). The documents' module also takes the
-/// cursor a document read names ([`get_document`]); every other module reads the answer alone.
-#[cfg(feature = "page-docs")]
-async fn read(
-    response: Response,
-    reading: bool,
-    marks: &Marks,
-) -> (Result<Answer, Failure>, &'static str) {
-    let cursor = response
-        .headers()
-        .get(symphony_api::VERSION_HEADER)
-        .ok()
-        .flatten()
-        .and_then(|cursor| cursor.parse::<u64>().ok());
-    let answered = answer(response, reading, marks).await;
-    // After the body's wait, so no other read's answer comes between this and its caller.
-    CURSOR.set(cursor);
-    answered
-}
-
-#[cfg(not(feature = "page-docs"))]
-use self::answer as read;
-
-/// [`read`]'s answer, its body read.
+/// body that did not come in time; a refusal is still one).
 async fn answer(
     response: Response,
     reading: bool,

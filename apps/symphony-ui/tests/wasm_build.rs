@@ -20,13 +20,21 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: the documents' kind, and the program.
-const KINDS: [&str; 2] = ["docs", "program"];
+/// What bundle.sh builds with dx: the program, the one kind it builds since every other moved to
+/// the web client.
+const KINDS: [&str; 1] = ["program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
-/// kind is its script, with no wasm, and its styles, the shared stylesheet and then as many of its
-/// own as given here. The task board has none: its styles (assets/board.css) are every Dioxus
-/// kind's, in the shared file.
-const WEB: [(&str, usize); 4] = [("board", 0), ("queue", 1), ("reports", 1), ("review", 1)];
+/// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
+/// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
+/// media sheet, for the two kinds that show media), then its entry's own. The task board has none:
+/// its styles (assets/board.css) are the program's, in the shared file.
+const WEB: [(&str, &[&str]); 5] = [
+    ("board", &[]),
+    ("docs", &["media-layer", "docs"]),
+    ("queue", &["queue"]),
+    ("reports", &["reports"]),
+    ("review", &["media-layer"]),
+];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
@@ -221,9 +229,16 @@ if [ "$kind" = program ]; then
     } > "$assets/symphony-ui-dxh2.js"
     printf '\0\12\11producers' >> "$assets/chunk_0_split-dxh1.wasm"
     if [ -n "${PROGRAM_SHARED:-}" ]; then printf '\1\1\0' >> "$assets/chunk_0_split-dxh1.wasm"; fi
-    printf '<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n' > "$out/public/index.html"
-    # Styles the other kinds load too, and the program kinds' own; and PROGRAM_STYLE, one no kind
-    # takes, when a case asks for it.
+    # The page links its static-head styles, as dx's does: the two every kind takes and the
+    # timeline's, never a CSS module's (`style-`) or PROGRAM_STYLE, one no kind takes, when a case
+    # asks for it.
+    {
+        printf '<head>'
+        for style in a-shared z-shared task-timeline-program; do
+            printf '<link rel="stylesheet" href="/./assets/%s.css" type="text/css">' "$style"
+        done
+        printf '</head>\n<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n'
+    } > "$out/public/index.html"
     printf '.a{}' > "$assets/a-shared.css"
     printf '.z{}\n' > "$assets/z-shared.css"
     for own in task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
@@ -320,10 +335,10 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The kind built alone, each of the program's (the media layer is none) and the web client's.
+    // Each of the program's kinds (the media layer is none) and the web client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
-        KINDS.len() - 1 + PROGRAM.len() - 1 + WEB.len()
+        PROGRAM.len() - 1 + WEB.len()
     );
     assert!(manifest.get(MEDIA).is_none(), "{manifest}");
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
@@ -341,7 +356,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the rest of the shell is the client cache's store (assets/cache.js), then \
          assets/shell.js, through the minifier: {body}"
     );
-    let shared = manifest["docs"]["styles"][0].as_str().unwrap();
+    let shared = manifest["tasks"]["styles"][0].as_str().unwrap();
     assert!(
         shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
         "{shared}"
@@ -355,20 +370,9 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..1] {
-        for key in ["script", "wasm"] {
-            file(manifest[kind][key].as_str().unwrap());
-        }
-        assert_eq!(
-            manifest[kind]["styles"],
-            serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
-            "{kind} loads the shared stylesheet, then its own"
-        );
-        assert!(manifest[kind].get("chunk").is_none(), "{kind}");
-    }
     // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
-    // and the shared stylesheet before the CSS its entry imports.
-    for (kind, owns) in WEB {
+    // and the shared stylesheet before the CSS its chunks and its entry import.
+    for (kind, sheets) in WEB {
         let script = manifest[kind]["script"].as_str().unwrap();
         assert!(
             script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
@@ -383,14 +387,20 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
         let styles = manifest[kind]["styles"].as_array().unwrap();
         assert_eq!(styles[0], shared, "{kind}");
-        let own = styles[1..].iter().map(|style| style.as_str().unwrap());
+        let own: Vec<_> = styles[1..]
+            .iter()
+            .map(|style| style.as_str().unwrap())
+            .collect();
         assert_eq!(
-            own.clone().count(),
-            owns,
+            own.len(),
+            sheets.len(),
             "{kind} loads the shared stylesheet, then its own: {styles:?}"
         );
-        for style in own {
-            assert!(style.starts_with(&format!("/assets/{kind}-")), "{style}");
+        for (style, sheet) in own.into_iter().zip(sheets) {
+            assert!(
+                style.starts_with(&format!("/assets/{sheet}-")),
+                "{kind}: {style}"
+            );
             assert!(!file(style).is_empty(), "{style}");
         }
     }
@@ -447,7 +457,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         }
         assert_eq!(manifest[kind]["script"], script, "{kind}");
         assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
-        // Every program kind takes the styles the other kinds load too, then its own.
+        // Every program kind takes the styles its page links in its head but the timeline's, then
+        // its own.
         let own = match *kind {
             "timeline" => vec!["/assets/task-timeline-program.css"],
             "panel" | "overlay" => vec!["/assets/style-program.css"],
@@ -549,10 +560,10 @@ fn calls(said: &Path) -> Vec<String> {
         .collect()
 }
 
-/// A probe and a page kind, each bundled as the release bundles it, then named: the linked module
+/// Two probes, each bundled as the release bundles a page kind, then named: the linked module
 /// without DWARF, through the release's wasm-bindgen and wasm-opt keeping the names.
 #[test]
-fn cargo_symphony_ui_size_bundles_a_probe_and_a_kind_and_names_their_linked_modules() {
+fn cargo_symphony_ui_size_bundles_two_probes_and_names_their_linked_modules() {
     let scratch = Scratch::new("wasm-build-size");
     let common = scratch.0.join("common");
     let target = common.join("symphony/tools/target");
@@ -609,7 +620,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     );
     let linked = target.join(WASM32).join("wasm-release");
     fs::create_dir_all(&linked).unwrap();
-    for stem in ["floor_dioxus", "symphony-ui"] {
+    for stem in ["floor_dioxus", "floor_websys"] {
         fs::write(linked.join(format!("{stem}.wasm")), stem).unwrap();
     }
     let size = |names: &[&str]| {
@@ -621,14 +632,14 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             .output()
             .expect("run cargo-symphony-ui")
     };
-    let done = size(&["floor_dioxus", "docs"]);
+    let done = size(&["floor_dioxus", "floor_websys"]);
     succeeded(&done, "cargo symphony-ui size");
     let out = scratch.0.join("sizes").canonicalize().unwrap();
 
-    // bundle.sh's arguments for a page kind (the dist test's), the probe's with its own bin.
+    // bundle.sh's arguments for a page kind (the dist test's), with each probe's own bin.
     for (name, bin, features) in [
         ("floor_dioxus", "floor_dioxus", "web,size-probe"),
-        ("docs", "symphony-ui", "page-docs"),
+        ("floor_websys", "floor_websys", "web,size-probe"),
     ] {
         let dx = fs::read_to_string(dx_said.join(name)).expect("dx never bundled it");
         assert_eq!(
@@ -657,22 +668,18 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
         .collect();
     assert_eq!(
         stripped,
-        ["floor_dioxus", "symphony-ui"].map(|stem| format!(
+        ["floor_dioxus", "floor_websys"].map(|stem| format!(
             "run --quiet --locked -p symphony-ui --example wasm_size -- --strip-dwarf {} {}",
             linked.join(format!("{stem}.wasm")).display(),
-            out.join(format!(
-                "{}-nodwarf.wasm",
-                if stem == "symphony-ui" { "docs" } else { stem }
-            ))
-            .display()
+            out.join(format!("{stem}-nodwarf.wasm")).display()
         ))
     );
     let bindgen = calls(&bindgen_said);
     assert_eq!(bindgen.len(), 2);
-    for (call, (name, stem)) in bindgen
-        .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
-    {
+    for (call, (name, stem)) in bindgen.iter().zip([
+        ("floor_dioxus", "floor_dioxus"),
+        ("floor_websys", "floor_websys"),
+    ]) {
         assert_eq!(
             *call,
             format!(
@@ -684,10 +691,10 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     }
     let opt = calls(&opt_said);
     assert_eq!(opt.len(), 2);
-    for (call, (name, stem)) in opt
-        .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
-    {
+    for (call, (name, stem)) in opt.iter().zip([
+        ("floor_dioxus", "floor_dioxus"),
+        ("floor_websys", "floor_websys"),
+    ]) {
         assert_eq!(
             *call,
             format!(
@@ -708,7 +715,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let stdout = String::from_utf8(done.stdout).unwrap();
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{stdout}");
-    for (line, name) in lines.iter().zip(["floor_dioxus", "docs"]) {
+    for (line, name) in lines.iter().zip(["floor_dioxus", "floor_websys"]) {
         let numbers: Vec<usize> = line
             .split(|c: char| !c.is_ascii_digit())
             .filter(|word| !word.is_empty())
@@ -727,8 +734,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let refused = size(&["floor_dioxus", "nonsense"]);
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr)
-            .contains("nonsense is neither a page kind nor a probe"),
+        String::from_utf8_lossy(&refused.stderr).contains("nonsense is no probe"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );

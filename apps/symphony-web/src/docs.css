@@ -1,0 +1,1472 @@
+/* biome-ignore-all lint/style/noDescendingSpecificity: the documents' sheet came from the Dioxus
+ * client as it was, its rules in their order, which its pages' parity pictures hold. */
+/* The reader shares the review theme. */
+.document-page {
+  min-width: 0;
+}
+.document-content {
+  min-width: 0;
+}
+.doc-tasks {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.doc-tasks h2 {
+  font-size: var(--fs-lg);
+  margin: 0 0 12px;
+}
+.doc-tasks ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.doc-tasks li + li {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.doc-tasks a {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.doc-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+}
+.doc-task-meta > .doc-task-slug {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 1em;
+  color: inherit;
+}
+.doc-tasks-finished {
+  margin-top: 12px;
+}
+.doc-tasks-open + .doc-tasks-finished {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+/* The whole row opens the count: a tap beside its words on a phone opens it too. */
+.doc-tasks-finished > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+}
+.doc-tasks-finished[open] > summary {
+  margin-bottom: 10px;
+}
+/* Every document kind uses this content/panel layout, including embedded folder prose. */
+@media (min-width: 1101px) {
+  .document-content-layout:has(> .doc-tasks) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 24px;
+    align-items: start;
+  }
+  /* Sticky panels keep the fixed page controls clear below their scrollable list. */
+  .document-content-layout > .doc-tasks {
+    position: sticky;
+    top: 76px;
+    max-height: calc(100vh - 76px - 128px);
+    overflow: auto;
+    box-sizing: border-box;
+  }
+}
+.doc-head {
+  margin: 8px 0 24px;
+}
+.doc-head .eyebrow {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+.doc-head h1 {
+  font-size: var(--fs-3xl);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0.2em 0 0.15em;
+}
+.doc-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+}
+.doc-tools {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: var(--fs-sm);
+}
+.doc-layout {
+  display: block;
+}
+.doc-layout:has(> .doc-toc details[open]) {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  column-gap: 32px;
+  align-items: start;
+}
+.doc-layout > .doc-head,
+.doc-layout > .doc-body {
+  grid-column: 2;
+}
+/* The body's cover wrapper (viewport::Settle) takes the body's place in the grid. */
+.doc-layout > .settle {
+  grid-column: 2;
+  min-width: 0;
+}
+.doc-layout > .doc-toc {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.doc-toc {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+}
+.doc-toc summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  padding: 4px 0;
+}
+.doc-toc summary::after {
+  content: " ▾";
+}
+.doc-toc details:not([open]) > summary {
+  font-size: var(--fs-sm);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 5px 14px;
+  box-shadow: var(--shadow-2);
+}
+.doc-toc details:not([open]) > summary::after {
+  content: "";
+}
+/* Folded, the contents are a pill in the dock (frame.css), centred on its 40px row; on a phone, where
+ * the dock has no room beside the pending bar, a pill in the page under the title. With no list to
+ * scroll, the box clips nothing, so the pill's shadow is drawn whole rather than as a square. */
+.doc-toc:has(details:not([open])) {
+  position: fixed;
+  left: 16px;
+  bottom: calc(var(--dock-lift) + 3px);
+  top: auto;
+  z-index: 5;
+  overflow: visible;
+}
+.toc-links {
+  border-left: 1px solid var(--border);
+  margin-top: 8px;
+}
+.doc-toc a {
+  display: block;
+  padding: 3px 10px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+.doc-toc a:hover,
+.doc-toc a:focus-visible {
+  color: var(--primary);
+}
+.doc-toc .level-3 {
+  padding-left: 22px;
+  font-size: 0.82rem;
+}
+.doc-body {
+  line-height: 1.65;
+  min-width: 0;
+}
+.doc-body:only-child {
+  grid-column: 1 / -1;
+}
+.doc-part {
+  padding: 0 32px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--card);
+}
+.doc-part-start {
+  border-top: 1px solid var(--border);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  padding-top: 8px;
+}
+.doc-part-end {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+.doc-part-start.doc-part-end {
+  border-radius: var(--r-lg);
+}
+/* Parts meet at fractional heights, and each contains its own paint (a slot's content-visibility),
+ * so the browser can leave the pixel row between two unpainted: a band of the page across the
+ * card. Each part after a card's first reaches 1 px over the one above, its content where it was. */
+.doc-part:not(.doc-part-start) {
+  margin-top: -1px;
+  padding-top: 1px;
+}
+.doc-section {
+  position: relative;
+  padding-right: 36px;
+  max-width: var(--measure);
+}
+.doc-section:has(
+  table,
+  .compare,
+  .pair,
+  .figure-strip,
+  pre,
+  .entry img,
+  a.figure-large,
+  .excerpt-box,
+  .gallery-grid
+) {
+  max-width: none;
+}
+.doc-part:first-child .doc-section:has(> .section-prose > h1):not(:has(.section-prose > :not(h1))) {
+  display: none;
+}
+.doc-section:target,
+.decision:target {
+  outline: 2px solid var(--primary);
+}
+.doc-section > .section-prose {
+  max-width: var(--measure);
+}
+.doc-section:has(
+    table,
+    .compare,
+    .pair,
+    .figure-strip,
+    pre,
+    .entry img,
+    a.figure-large,
+    .excerpt-box,
+    .gallery-grid
+  )
+  > .section-prose {
+  max-width: none;
+}
+/* A callout is as wide as a card (.doc-card), and the prose beside it keeps the measure. */
+.doc-section:where(:has(> .section-prose > .callout)) {
+  box-sizing: border-box;
+  max-width: calc(var(--measure) + 12ch);
+  padding-right: 0;
+}
+.doc-section:where(:has(> .section-prose > .callout)) > .section-prose {
+  max-width: none;
+}
+.doc-section:where(:has(> .section-prose > .callout))
+  > .section-prose
+  > :is(p, ul, ol, h2, h3, h4, blockquote) {
+  max-width: var(--measure);
+}
+/* The section's "+ comment" (.add) sits over its first callout's top right corner: that callout's
+ * title stops its first line short of the button, with room for its longer "Close comment". */
+.doc-section:where(:has(> .section-prose > .callout))
+  > .section-prose
+  > .callout:first-child
+  > .callout-title::before {
+  content: "";
+  float: right;
+  width: calc(13ch + 26px);
+  height: 1px;
+  font-size: 12px;
+}
+.doc-body h1 {
+  font-size: var(--fs-3xl);
+  letter-spacing: -0.02em;
+  margin: 0.3em 0 0.4em;
+}
+.doc-body h2 {
+  font-size: var(--fs-xl);
+  margin: 1em 0 0.6em;
+}
+.doc-part-start .section-prose > h2:first-child {
+  margin-top: 12px;
+}
+.doc-body h3 {
+  font-size: var(--fs-lg);
+  margin: 1.6em 0 0.5em;
+}
+.doc-body h4 {
+  font-size: var(--fs-md);
+  margin: 1.4em 0 0.4em;
+}
+/* Adjacent lazy slots cannot collapse prose margins as sections in the original card did. */
+.doc-part:not(:has(form.comment:not([hidden]))):has(
+    > .doc-card,
+    > .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child
+  )
+  + .doc-part:not(.doc-part-start)
+  > .doc-section
+  > .section-prose
+  > :is(p, ul, ol, table, .callout):first-child,
+.doc-part:not(:has(form.comment:not([hidden]))):has(
+    > .doc-card,
+    > .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child
+  )
+  + .doc-part:not(.doc-part-start)
+  > .doc-card {
+  margin-top: 0;
+}
+.doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
+    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child
+  )
+  .section-prose
+  > :is(h2, h3, h4, table, .callout):last-child,
+.doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
+    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child
+  )
+  > .doc-card {
+  margin-bottom: 16px;
+}
+.doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
+    + .doc-part:not(.doc-part-start) > .doc-card,
+    + .doc-part:not(.doc-part-start)
+      > .doc-section
+      > .section-prose
+      > :is(table, .callout):first-child
+  )
+  .section-prose
+  > :is(h3, h4):last-child {
+  margin-bottom: 12px;
+}
+.doc-body li {
+  margin: 0.2em 0;
+}
+/* A first item's margin must not escape a list whose block gap is compensated above. */
+.doc-part:not(.doc-part-start)
+  > .doc-section
+  > .section-prose
+  > :is(ul, ol):first-child
+  > li:first-child {
+  margin-top: 0;
+}
+.doc-body table {
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+.doc-body td {
+  min-width: 4ch;
+}
+.doc-body pre {
+  max-width: 100%;
+  overflow: auto;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+.doc-body blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0;
+  padding: 0 14px;
+  color: var(--muted-foreground);
+}
+.doc-section > .add {
+  position: absolute;
+  right: 0;
+  top: 4px;
+  opacity: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  padding: 1px 8px;
+  box-shadow: var(--shadow-1);
+}
+.doc-section > .add.dx-button {
+  transition: none;
+}
+.doc-section:hover > .add,
+.doc-section:focus-within > .add {
+  opacity: 1;
+}
+.doc-section > .add:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.doc-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.doc-actions button {
+  font-size: 0.75rem;
+}
+/* One column as wide as the form, never as wide as its widest control: a phone's card holds it. */
+form.comment,
+form.verdict {
+  border: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: var(--r-md);
+  padding: 12px;
+  margin: 12px 0 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  cursor: auto;
+}
+.editor form.comment {
+  margin-bottom: 0;
+}
+.editor form.verdict > .row {
+  margin-top: 0;
+}
+/* Approve, Reject, Question and Later are equal tracks, on one row wherever four fit. */
+.verdict-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.1em), 1fr));
+  grid-auto-rows: 1fr;
+  gap: 8px;
+  max-width: 28rem;
+  font-size: var(--fs-sm);
+}
+.verdict-choices > .postpone-controls > .dx-button {
+  flex: 1;
+}
+/* Reset and Discard draft are quiet, and Discard draft sits at the end of its row. */
+.editor form .row > .discard {
+  margin-left: auto;
+}
+.editor form :is(.reset, .discard).dx-button {
+  color: var(--muted-foreground);
+}
+.editor form .discard.dx-button:not(:disabled):hover {
+  color: var(--dislike);
+}
+.editor form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 76px;
+  resize: vertical;
+}
+.editor [role="alert"] {
+  color: var(--dislike);
+}
+.editor [role="status"] {
+  color: var(--like);
+}
+/* Open, the versions take a row of their own under the page's links, never wider than it: each
+ * version's date and subject wrap inside its button, and a diff's long lines scroll in its box. */
+.doc-tools > .versions[open] {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.versions ul {
+  max-height: 220px;
+  overflow: auto;
+}
+.versions li .dx-button {
+  height: auto;
+  min-height: 2.25rem;
+  max-width: 100%;
+  padding-block: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  justify-content: flex-start;
+}
+.diff {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+  font-size: 0.8em;
+}
+.folder-entries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.folder-entry {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  box-sizing: border-box;
+  text-decoration: none;
+  color: var(--foreground);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.tree-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.tree-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tree-pills:empty {
+  display: none;
+}
+.document-page > .section-title {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 32px 0 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.folder-entry:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+  color: var(--primary);
+}
+.folder-entry p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--muted-foreground);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tree-folder {
+  border-top: 3px solid var(--primary);
+  background: linear-gradient(135deg, var(--accent), transparent 60%), var(--card);
+}
+.tree-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--primary);
+  font-size: 12px;
+}
+.section-loading {
+  min-height: 160px;
+  color: var(--muted-foreground);
+}
+/* ---- Callouts: soft cards tinted by their kind. ---- */
+.callout {
+  --c: var(--muted-foreground);
+  border: 1px solid color-mix(in srgb, var(--c) 28%, var(--border));
+  border-left: 4px solid var(--c);
+  background: color-mix(in srgb, var(--c) 6%, var(--card));
+  border-radius: var(--r-md);
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+.callout .callout {
+  margin: 10px 0 2px;
+}
+.callout > p:last-child {
+  margin-bottom: 0.2em;
+}
+.callout-done {
+  opacity: 0.7;
+}
+.callout-done > summary {
+  cursor: pointer;
+  margin: 0;
+}
+.callout-done[open] {
+  opacity: 1;
+}
+.callout-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+/* A badge's text is the page's background: light on the light scheme's deep tones, dark on the
+   * dark scheme's pale ones, so it reads in both. */
+.callout-kind {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  color: var(--background);
+  background: var(--c);
+  vertical-align: 2px;
+  margin-right: 4px;
+}
+/* A comment is the owner's voice, in the owner's colour of a card's history. */
+.callout-comment {
+  --c: var(--primary);
+}
+.callout-like {
+  --c: var(--like);
+}
+.callout-dislike {
+  --c: var(--dislike);
+}
+.callout-question {
+  --c: var(--question);
+}
+.callout-decision {
+  --c: var(--decision);
+}
+.callout-resolved {
+  --c: var(--resolved);
+}
+
+/* ---- Decision cards: the state as the left edge and a pill; the thread as a timeline. ---- */
+.decision {
+  --edge: var(--pending);
+  --ring: var(--card);
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--edge);
+  border-radius: var(--r-md);
+  padding: 14px 18px;
+  margin: 12px 0;
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.decision:hover {
+  box-shadow: var(--shadow-2);
+}
+.decision[data-state="pending"] {
+  --edge: var(--primary);
+}
+.decision[data-state="approved"] {
+  --edge: var(--like);
+}
+.decision[data-state="rejected"] {
+  --edge: var(--dislike);
+}
+.decision[data-state="question"] {
+  --edge: var(--question);
+}
+.decision[data-state="resolved"] {
+  --edge: var(--resolved);
+  opacity: 0.85;
+}
+.decision[data-state="dismissed"] {
+  --edge: var(--resolved);
+  opacity: 0.7;
+}
+.decision[data-state="auto-approved"] {
+  --edge: var(--auto);
+  border-left-style: dashed;
+}
+.decision[data-group="decide"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent),
+    var(--shadow-1);
+}
+.decision[data-group="confirm"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--question) 45%, transparent),
+    var(--shadow-1);
+}
+.decision.editing {
+  cursor: auto;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--edge) 40%, transparent),
+    var(--shadow-2);
+}
+.decision-text {
+  line-height: 1.6;
+}
+/* A card's paragraphs run on from its slug and time. An excerpt opened in that line keeps its
+   * own paragraphs as blocks (a list item's, a quote's, a copied card's history), as it does
+   * outside a card; a copied card's own text runs on as on the card. */
+.decision-text p:not(:where(.excerpt-box *)),
+.excerpt-box .decision-text p {
+  display: inline;
+  margin: 0;
+}
+.decision-text > code:first-child {
+  color: var(--muted-foreground);
+  font-size: 0.78em;
+}
+.decision .state {
+  display: inline-flex;
+  margin-left: 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 8px;
+  line-height: 1.7;
+  border-radius: var(--r-pill);
+  color: var(--edge);
+  background: color-mix(in srgb, var(--edge) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--edge) 35%, transparent);
+  vertical-align: 2px;
+}
+.decision[data-state="auto-approved"] .state {
+  background: var(--auto);
+  color: var(--primary-foreground);
+}
+.decision-text time.posted {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-right: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.decision .verdict {
+  display: none;
+}
+.decision.editing .verdict {
+  display: grid;
+}
+form.verdict button[class*="v-"] {
+  color: var(--c);
+  border-color: color-mix(in srgb, var(--c) 40%, var(--border));
+  font-weight: 600;
+}
+form.verdict button[class*="v-"]:hover {
+  background: color-mix(in srgb, var(--c) 10%, var(--card));
+}
+form.verdict button[class*="v-"].primary {
+  background: var(--c);
+  border-color: var(--c);
+  color: var(--card);
+}
+/* The card's own verdict is marked, never promoted. */
+form.verdict button[class*="v-"][aria-current="true"]:not(.primary) {
+  background: color-mix(in srgb, var(--c) 14%, var(--card));
+}
+.v-approved {
+  --c: var(--like);
+}
+.v-rejected {
+  --c: var(--dislike);
+}
+.v-question {
+  --c: var(--question);
+}
+.v-dismissed {
+  --c: var(--resolved);
+}
+details.settled {
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--card);
+  padding: 6px 12px;
+}
+details.settled > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+  list-style-position: inside;
+}
+details.settled[open] > summary {
+  color: var(--foreground);
+}
+details.settled > .decision {
+  margin: 8px 0 4px;
+  box-shadow: none;
+}
+.settled-state {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  vertical-align: 1px;
+}
+/* a picture card's choice, side by side: the base it was drawn from, then A, B, C */
+.compare {
+  display: flex;
+  gap: 12px;
+  margin: 12px 0;
+  align-items: flex-start;
+}
+.compare figure {
+  margin: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+}
+.compare img {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: var(--r-md);
+  display: block;
+  background: #000;
+}
+.compare .mockup {
+  margin: 0;
+}
+.compare figcaption {
+  display: inline-block;
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  margin-top: 6px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--muted);
+  border: 1px solid var(--border);
+}
+.compare figure:first-child:has(img[alt="Base"]) {
+  outline: 2px dashed var(--border);
+  outline-offset: 3px;
+  border-radius: var(--r-md);
+}
+.decision:has(.compare) .history img {
+  max-height: 72px;
+  width: auto;
+}
+.kind {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  color: var(--background);
+  background: var(--muted-foreground);
+}
+.kind-comment {
+  background: var(--decision);
+}
+.kind-like {
+  background: var(--like);
+}
+.kind-dislike {
+  background: var(--dislike);
+}
+.kind-question {
+  background: var(--question);
+}
+.kind-decision {
+  background: var(--decision);
+}
+.kind-rejected {
+  background: var(--dislike);
+}
+ul.open li {
+  margin: 4px 0;
+}
+.show-link {
+  font-size: 0.75em;
+  padding: 0 8px;
+  margin-left: 4px;
+}
+.excerpt-box {
+  position: relative;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px 14px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--muted);
+  font-size: 0.95em;
+  cursor: auto;
+}
+.excerpt-box.full {
+  max-height: none;
+}
+.excerpt-box > .excerpt-title {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+}
+.excerpt-box .grow {
+  position: sticky;
+  top: 4px;
+  float: right;
+  font-size: 0.75em;
+  padding: 0 8px;
+}
+
+/* The live section owns the card edge, thread and editor as one surface. */
+.doc-card {
+  --edge: var(--pending);
+  --ring: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--edge);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+  padding: 14px 18px;
+  margin: 12px 0;
+  box-sizing: border-box;
+  max-width: calc(var(--measure) + 12ch);
+}
+.doc-card[data-state="pending"] {
+  --edge: var(--primary);
+}
+.doc-card .decision {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+}
+.doc-card[data-state="approved"] {
+  --edge: var(--like);
+}
+.doc-card[data-state="rejected"] {
+  --edge: var(--dislike);
+}
+.doc-card[data-state="question"] {
+  --edge: var(--question);
+}
+.doc-card[data-state="resolved"],
+.doc-card[data-state="dismissed"] {
+  --edge: var(--resolved);
+}
+.doc-card[data-state="auto-approved"] {
+  --edge: var(--auto);
+  border-left-style: dashed;
+}
+.doc-card[data-busy="true"] {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--edge) 40%, transparent),
+    var(--shadow-2);
+}
+.doc-card .section-prose {
+  max-width: none;
+}
+/* An entry's first paragraph runs on from its time and verdict; the paragraphs after it stay
+ * paragraphs. */
+.document-page .history .entry-text {
+  display: inline;
+}
+.document-page .history .entry-text > * {
+  margin: 0;
+}
+.document-page .history .entry-text > p:first-child {
+  display: inline;
+}
+.document-page .history .entry-text > * + * {
+  margin-top: 0.6em;
+}
+.document-page .history .entry-text ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.document-page .history .entry-text ul {
+  list-style: disc;
+  padding-left: 1.4em;
+}
+.doc-card:has(.compare) .history img {
+  max-height: 72px;
+  width: auto;
+}
+.folded-slot {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: none;
+}
+.folded-slot > .settled > .viewport-slot .doc-section {
+  border: 0;
+  margin: 0;
+  padding: 12px 0;
+  box-shadow: none;
+}
+.folded-slot summary {
+  overflow-wrap: anywhere;
+}
+.unknown-block {
+  border: 2px solid var(--dislike);
+  border-radius: var(--r-md);
+  padding: 12px;
+  margin: 12px 0;
+}
+@media (max-width: 1100px) {
+  .doc-layout:has(> .doc-toc details[open]) {
+    display: block;
+  }
+  .doc-toc {
+    position: relative;
+    top: auto;
+    max-height: 40vh;
+    margin-bottom: 16px;
+  }
+}
+@media (max-width: 760px) {
+  .doc-toc:has(details:not([open])) {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    z-index: auto;
+    width: fit-content;
+  }
+  .doc-part {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .doc-part-start {
+    padding-top: 4px;
+  }
+  .doc-part-end {
+    padding-bottom: 12px;
+  }
+  .doc-section {
+    padding-right: 0;
+  }
+  .doc-card {
+    padding: 12px 14px;
+  }
+  .doc-section > .add {
+    right: 4px;
+  }
+}
+/* Existing live document components, scoped to the reader. */
+.document-page .pair {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0;
+  align-items: flex-start;
+}
+.document-page .pair figure {
+  margin: 0;
+  flex: 1.5 1 0;
+  min-width: 0;
+}
+.document-page .pair img {
+  width: 100%;
+  border-radius: var(--r-sm);
+  display: block;
+}
+.document-page .pair figure:only-child {
+  max-width: min(100%, 640px);
+}
+.document-page .pair figcaption {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.document-page .pair .missing {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+}
+.document-page a.figure {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+  vertical-align: top;
+  margin: 2px 4px 2px 0;
+}
+.document-page a.figure img {
+  display: block;
+  border-radius: var(--r-sm);
+  background: #0b0b10;
+  object-fit: contain;
+}
+.document-page a.figure-row img,
+.document-page a.figure-row .figure-badge {
+  width: 96px;
+  height: 96px;
+}
+.document-page a.figure-large img,
+.document-page a.figure-large .figure-badge {
+  width: 320px;
+  height: 320px;
+}
+.document-page a.figure-small {
+  flex-direction: row;
+  vertical-align: middle;
+  gap: 4px;
+}
+.document-page a.figure-small img,
+.document-page a.figure-small .figure-badge {
+  width: 28px;
+  height: 28px;
+}
+.document-page a.figure .figure-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+}
+.document-page a.figure-small .figure-badge {
+  font-size: 0;
+}
+.document-page a.figure-small .figure-badge::after {
+  content: "?";
+  font-size: 12px;
+}
+.document-page a.figure .figure-caption {
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  max-width: 120px;
+}
+.document-page a.figure-large .figure-caption {
+  max-width: 320px;
+  font-size: 13px;
+}
+.document-page a.figure .figure-caption small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.document-page a.figure-small .figure-caption {
+  max-width: none;
+  text-align: left;
+}
+.document-page a.figure-small .figure-caption small {
+  display: none;
+}
+.document-page a.figure:hover .figure-caption {
+  color: var(--primary);
+}
+.document-page figure.figure-wide {
+  margin: 12px 0;
+  max-width: 640px;
+}
+.document-page figure.figure-wide img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  display: block;
+}
+.document-page figure.figure-wide figcaption {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 4px;
+}
+.document-page figure.figure-wide.missing {
+  padding: 36px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+}
+.document-page figure.figure-wide.missing figcaption {
+  font-size: inherit;
+  margin: 0;
+}
+.document-page .figure-strip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+  vertical-align: top;
+}
+.document-page table.matrix td {
+  line-height: 1.4;
+  min-width: 0;
+}
+.document-page table.matrix th[scope="row"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--muted);
+  vertical-align: top;
+  white-space: nowrap;
+}
+.document-page table.matrix th[scope="row"] small {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.document-page table.matrix figure.figure-cell {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.document-page table.matrix .figure-cell img {
+  border-radius: var(--r-sm);
+  margin-bottom: 4px;
+}
+.document-page table.matrix .figure-cell figcaption a {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.document-page table.matrix .figure-cell figcaption a:hover {
+  text-decoration: underline;
+}
+.document-page table.matrix .figure-cell small {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.document-page table.shape-matrix th[scope="row"] {
+  white-space: normal;
+  width: 170px;
+  min-width: 150px;
+  max-width: 190px;
+  font-size: var(--fs-sm);
+}
+.document-page table.shape-matrix .family-reads {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 400;
+}
+.document-page table.shape-matrix td {
+  vertical-align: top;
+}
+.document-page table.shape-matrix td:last-child {
+  font-size: 12px;
+  line-height: 1.35;
+  min-width: 150px;
+}
+.document-page table.shape-matrix td > p {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: top;
+  margin: 0 6px 6px 0;
+}
+.document-page table.shape-matrix td > p > small {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.document-page a.figure-tile {
+  margin: 0;
+  gap: 2px;
+}
+.document-page a.figure-tile img,
+.document-page a.figure-tile .figure-badge {
+  width: 64px;
+  height: 64px;
+}
+.document-page a.figure-tile .figure-caption {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+}
+.document-page .icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: -3px;
+  color: var(--primary);
+  cursor: help;
+}
+.document-page .icon svg {
+  pointer-events: none;
+  flex: none;
+  max-width: none;
+}
+.document-page .icon-name {
+  color: inherit;
+  font-size: 0.95em;
+}
+.document-page .component-error {
+  color: var(--dislike);
+  border: 1px solid var(--dislike);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 0.9em;
+}
+figcaption p {
+  margin: 0;
+}
+.matrix.relationships {
+  font-size: 0.92em;
+}
+.document-comparison {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.document-comparison a {
+  margin-inline-end: 0.35rem;
+}
+.section-difference {
+  border-inline-start: 3px solid;
+  padding-inline-start: 0.8rem;
+}
+.difference-added {
+  border-color: var(--like);
+}
+.difference-changed {
+  border-color: var(--pending);
+}
+.difference-removed {
+  border-color: var(--dislike);
+}
+.difference-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0.4rem 0;
+}
+.difference-before {
+  margin-block: 0.5rem;
+  opacity: 0.85;
+}
+.postpone-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.postponed {
+  color: var(--muted-foreground);
+}
+/* A document's ghost (docs_live::GhostDocument) draws the boxes of .doc-head, .doc-toc and a
+   .doc-part; a card section still loading draws a card's box. */
+.ghost-doc-head {
+  margin: 8px 0 24px;
+}
+.ghost-doc-head > div:first-child {
+  font-size: var(--fs-xs);
+  margin: 0 0 6px;
+}
+.ghost-doc-head > .ghost-title {
+  font-size: var(--fs-3xl);
+  margin: 0.2em 0 0.15em;
+}
+.ghost-doc-head > .ghost-meta {
+  margin: 0;
+}
+.ghost-doc-body {
+  padding: 8px 32px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  line-height: 1.65;
+}
+.ghost-doc-body > * {
+  max-width: var(--measure);
+}
+.ghost-doc-body > .ghost-heading:first-child {
+  margin-top: 12px;
+}
+.ghost-toc {
+  display: none;
+}
+.ghost-toc > div {
+  padding: 3px 10px;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+.ghost-toc > div:first-child {
+  padding: 4px 0 12px;
+  font-size: 0.72em;
+}
+.ghost-toc > div:nth-child(3n) {
+  --w: 72%;
+  padding-left: 22px;
+}
+.ghost-box {
+  padding: 14px 18px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--r-md);
+  max-width: calc(var(--measure) + 12ch);
+}
+@media (min-width: 1101px) {
+  .ghost-doc:has(> .ghost-toc) {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    column-gap: 32px;
+    align-items: start;
+  }
+  .ghost-doc > :not(.ghost-toc) {
+    grid-column: 2;
+  }
+  .ghost-toc {
+    display: block;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+}
+@media (max-width: 760px) {
+  .ghost-doc-body {
+    padding: 4px 12px 12px;
+  }
+  /* The outline's closed On this page button, in the page's flow on a phone. */
+  .ghost-toc {
+    display: block;
+    width: fit-content;
+    margin-bottom: 16px;
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+    font-size: var(--fs-sm);
+  }
+  .ghost-toc > div:first-child {
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
+  .ghost-toc > div + div {
+    display: none;
+  }
+}
+/* An HTML document (html_page.rs): its path, then its frame at the page's full width, as tall as the
+   window below the header and scrolling inside itself; the framed page draws its own look. */
+.html-document .eyebrow {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  margin: 8px 0 10px;
+  overflow-wrap: anywhere;
+}
+.html-frame {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: calc(100dvh - 128px);
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+/* A phone's header scrolls away: the frame then fills the screen but its path line. */
+@media (max-width: 760px) {
+  .html-frame {
+    height: calc(100dvh - 48px);
+  }
+}

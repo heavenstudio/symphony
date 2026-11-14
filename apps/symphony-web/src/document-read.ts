@@ -30,6 +30,7 @@ import type {
   DocumentOutline,
   DocumentSections,
   Folder,
+  Fragment,
   Version,
 } from "./wire";
 
@@ -118,6 +119,12 @@ const read =
 export const readOutline = read<DocumentOutline>(
   shaped({ document: isDocument, anchors: mapOf(isTexts), thread_hashes: absentOr(mapOf(isText)) }),
 );
+
+/** `/api/section?anchor=`: the section an anchor names, as a link's excerpt draws it. */
+export const readFragment = read<Fragment>(isFragment);
+
+/** The ids each section holds, by its key, as an outline and a feed's change name them. */
+export const readAnchors = read<Record<string, string[]>>(mapOf(isTexts));
 
 /** `/api/section`: the sections asked for, as a change at the document's version. */
 export const readSections = read<DocumentSections>(shaped({ version: isCount, change: isChange }));

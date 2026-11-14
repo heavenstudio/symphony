@@ -24,10 +24,10 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::Event;
 
-// The kinds that follow the feed: the program's (its task pages) and the documents.
-#[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+// The kind that follows the feed: the program's (its task pages).
+#[cfg(feature = "page-tasks")]
 mod feed;
-#[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+#[cfg(feature = "page-tasks")]
 pub(crate) use feed::{Feed, back};
 
 pub(crate) const FEED_NOTICE: &str = "Reconnecting: the board may be out of date";
@@ -42,7 +42,7 @@ use {
     },
 };
 
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 use crate::state::reload_for;
 #[cfg(feature = "page-tasks")]
 use crate::task_live::Data;
@@ -65,16 +65,16 @@ const STYLE: Asset = asset!(
 #[cfg(feature = "page-tasks")]
 const READY_MARK: &str = "board-ready";
 /// Where the tab keeps the build it last loaded the page again for ([`reload_for`]).
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 const RELOADED_FOR: &str = "symphony-ui-reloaded-for";
 
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 thread_local! { static DEFERRED_BUILD: RefCell<Option<String>> = const { RefCell::new(None) }; }
 
 pub(crate) static SERVER_NOTICE: GlobalSignal<String> = Signal::global(String::new);
 
 /// `ms` since the epoch as the wall clock where the owner is.
-#[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+#[cfg(feature = "page-tasks")]
 pub(crate) fn local_moment(ms: f64) -> Option<crate::words::Moment> {
     let date = js_sys::Date::new(&JsValue::from_f64(ms));
     crate::words::Moment::from_parts(
@@ -99,21 +99,6 @@ pub fn App() -> Element {
         _ => {
             rsx! { crate::split::TasksPart { key: "{current.scope}", route: task_route, scope: current.scope.clone() } }
         }
-        #[cfg(feature = "page-docs")]
-        _ if current.document => {
-            rsx! { main {
-                // A document's route named `.html` or `.htm` is an HTML page
-                // (`symphony_api::ProjectView::is_html_route`): decided here, in the documents'
-                // kind, so no other kind carries the check.
-                if !current.folder && symphony_api::is_html(&current.path) {
-                    crate::html_page::HtmlPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
-                } else if !current.folder {
-                    crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
-                } else {
-                    crate::docs_live::FolderPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
-                }
-            } }
-        }
         #[cfg(all(feature = "page-tasks", not(feature = "page-program")))]
         _ => {
             rsx! { BoardPage { key: "{current.scope}", route: task_route, scope: current.scope.clone() } }
@@ -133,7 +118,7 @@ pub fn App() -> Element {
 
 #[component]
 fn MediaLayer() -> Element {
-    #[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+    #[cfg(feature = "page-tasks")]
     {
         // The activation signal belongs to this component so it lives as long as its runtime.
         let needed = crate::media_live::use_activation();
@@ -143,7 +128,7 @@ fn MediaLayer() -> Element {
         #[cfg(not(feature = "page-program"))]
         rsx! { if needed() { crate::media_live::MediaRuntime {} } }
     }
-    #[cfg(not(any(feature = "page-tasks", feature = "page-docs")))]
+    #[cfg(not(feature = "page-tasks"))]
     rsx! {}
 }
 
@@ -170,7 +155,7 @@ pub(crate) fn PageNotices(
         }
     });
     // Only the kinds that draw from this device say so.
-    #[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+    #[cfg(feature = "page-tasks")]
     let device = device.map(|(saved, unreachable)| {
         let saved = local_moment(saved)
             .zip(local_moment(js_sys::Date::now()))
@@ -178,7 +163,7 @@ pub(crate) fn PageNotices(
             .unwrap_or_default();
         crate::words::device_notice(&saved, unreachable)
     });
-    #[cfg(not(any(feature = "page-tasks", feature = "page-docs")))]
+    #[cfg(not(feature = "page-tasks"))]
     let device = device.and(None::<String>);
     let checking = reconnecting || device.is_some();
     let held = use_hook(|| Rc::new(Cell::new(false)));
@@ -466,7 +451,7 @@ fn freshen(views: PageViews, change: impl Fn(&mut Freshness)) {
 }
 
 /// What the feed's stream said.
-#[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+#[cfg(feature = "page-tasks")]
 pub(crate) enum Heard {
     /// The stream is open: the board is fresh.
     Open,
@@ -568,7 +553,7 @@ async fn follow(
 /// Load the page again when the server serves another client build than this page's own (the
 /// shell's module script), once per build ([`reload_for`]); without the tab's storage to remember
 /// it in, never.
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 pub(crate) fn reload_if_redeployed(served: &str) {
     // DX owns dev build identity. The API's release hash describes a different build entirely.
     if cfg!(feature = "devtools") {
@@ -601,7 +586,7 @@ pub(crate) fn reload_if_redeployed(served: &str) {
     }
 }
 
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 pub(crate) fn flush_reload() {
     if !crate::navigation::engaged()
         && let Some(build) = DEFERRED_BUILD.with(|pending| pending.borrow_mut().take())
@@ -621,7 +606,7 @@ pub(crate) async fn sleep(ms: i32) {
 
 /// Waits `ms` before a read is tried again, or less once the reader presses Retry (`retry`
 /// counts the presses).
-#[cfg(any(feature = "page-tasks", feature = "page-docs"))]
+#[cfg(feature = "page-tasks")]
 pub(crate) async fn pause(ms: i32, retry: Signal<u64>) {
     let asked = *retry.peek();
     let mut left = ms;

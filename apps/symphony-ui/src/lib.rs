@@ -20,25 +20,19 @@ mod split;
 #[cfg(any(
     not(target_arch = "wasm32"),
     feature = "page-tasks",
-    feature = "page-docs",
     feature = "page-panel"
 ))]
 pub mod attach;
 #[cfg(any(
     not(target_arch = "wasm32"),
     feature = "page-tasks",
-    feature = "page-docs",
     feature = "page-panel"
 ))]
 pub mod block_view;
 pub mod cache;
 pub mod components;
 pub mod doc_components;
-pub mod docs;
 pub(crate) mod entry_events;
-/// An HTML document's page: the file in a sandboxed frame, in the documents' kind.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-docs"))]
-pub mod html_page;
 /// The machines' build and test work, as the agents page and the task page draw it.
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub(crate) mod machine_work;
@@ -65,12 +59,8 @@ pub mod viewer;
 pub mod viewport;
 pub mod words;
 
-#[cfg(all(target_arch = "wasm32", feature = "page-docs"))]
-pub mod docs_live;
 #[cfg(target_arch = "wasm32")]
 pub mod navigation;
-#[cfg(all(target_arch = "wasm32", feature = "page-docs"))]
-pub mod postpone_live;
 #[cfg(target_arch = "wasm32")]
 pub mod request;
 #[cfg(target_arch = "wasm32")]
@@ -83,9 +73,6 @@ pub mod module;
 
 #[cfg(target_arch = "wasm32")]
 pub mod media_live;
-
-#[cfg(all(target_arch = "wasm32", feature = "page-docs"))]
-pub mod asks;
 
 #[cfg(target_arch = "wasm32")]
 pub mod frame;

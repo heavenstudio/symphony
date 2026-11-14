@@ -105,6 +105,9 @@ fn constants() -> String {
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
+        ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
+        ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
+        ("UPLOAD_ACCEPT", text(api::UPLOAD_ACCEPT)),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -213,6 +216,8 @@ fn declarations() -> Vec<Declared> {
         declared::<api::Ask>(&cfg),
         declared::<api::AskAnswer>(&cfg),
         declared::<api::AskMessage>(&cfg),
+        // A file attached to a post.
+        declared::<api::Upload>(&cfg),
     ]
 }
 

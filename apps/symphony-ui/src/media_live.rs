@@ -1,5 +1,5 @@
 //! Browser adapters for already mounted media: native-size frames, orbit controls and the
-//! picture dialog. The shared visibility latch owns activation in media.rs and asks.rs.
+//! picture dialog. The shared visibility latch owns activation in media.rs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,12 +12,6 @@ use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Element as DomElement, Event, MutationObserver, ResizeObserver};
 
 use crate::media::{WAITING, local_asset};
-
-// The request helpers serve the document page's asks alone.
-#[cfg(feature = "page-docs")]
-mod requests;
-#[cfg(feature = "page-docs")]
-pub(crate) use requests::{fetch, field, post, sleep};
 
 const STYLE: Asset = asset!(
     "/assets/media.css",
@@ -37,13 +31,12 @@ enum Action {
 }
 
 /// The active page owns the media adapter, including media in the persistent conversation.
-/// Documents also need its table observer without a picture to activate it. Elsewhere visibility
-/// activates it once; a page-kind switch removes its observers before the replacement mounts.
+/// Visibility activates it once; a page-kind switch removes its observers before the replacement mounts.
 /// Visible conversation media is picked up again on that mount. The program's layer, a chunk of
 /// its own, sets it back when that chunk does not load, so the next media shown asks again
 /// (`split::MediaPart`).
 pub fn use_activation() -> Signal<bool> {
-    let mut needed = use_signal(|| cfg!(feature = "page-docs"));
+    let mut needed = use_signal(|| false);
     let listener = use_hook(move || {
         let (send, mut recv) = unbounded();
         spawn(async move {
@@ -269,15 +262,6 @@ fn scan(resize: &ResizeObserver, targets: &RefCell<Vec<DomElement>>) {
         }
     });
     if let Some(root) = root() {
-        #[cfg(feature = "page-docs")]
-        {
-            each(&root, ".doc-body table:not([data-toc-observed])", |table| {
-                let _ = table.set_attribute("data-toc-observed", "true");
-                targets.borrow_mut().push(table.clone());
-                resize.observe(&table);
-            });
-            fold_contents(&root);
-        }
         each(&root, ".mockup-frame:not([data-media-observed])", |stage| {
             let _ = stage.set_attribute("data-media-observed", "true");
             targets.borrow_mut().push(stage.clone());
@@ -356,42 +340,10 @@ fn photo(image: &DomElement) -> Option<Photo> {
     })
 }
 
-/// Bodies and image dimensions arrive lazily. Fold once when an actual table needs the width;
-/// a click on the contents summary takes ownership away from this automatic adjustment.
-#[cfg(feature = "page-docs")]
-fn fold_contents(root: &DomElement) {
-    each(root, ".doc-toc details:not([data-toc-chosen])", |toc| {
-        let Some(layout) = toc.closest(".doc-layout").ok().flatten() else {
-            return;
-        };
-        let Ok(tables) = layout.query_selector_all(".doc-body table") else {
-            return;
-        };
-        let cramped = (0..tables.length()).any(|index| {
-            tables
-                .item(index)
-                .and_then(|node| node.dyn_into::<DomElement>().ok())
-                .is_some_and(|table| {
-                    table.client_width() > 0 && table.scroll_width() > table.client_width() + 2
-                })
-        });
-        if cramped && let Ok(details) = toc.dyn_into::<web_sys::HtmlDetailsElement>() {
-            let _ = details.set_attribute("data-toc-chosen", "automatic");
-            details.set_open(false);
-        }
-    });
-}
-
 fn click(event: &Event, sender: &UnboundedSender<Action>) {
     let Some(target) = event.target().and_then(|t| t.dyn_into::<DomElement>().ok()) else {
         return;
     };
-    #[cfg(feature = "page-docs")]
-    if let Ok(Some(summary)) = target.closest(".doc-toc summary")
-        && let Some(details) = summary.parent_element()
-    {
-        let _ = details.set_attribute("data-toc-chosen", "manual");
-    }
     if target.id() == "media-lightbox" {
         let _ = sender.unbounded_send(Action::Close);
         return;
@@ -474,8 +426,6 @@ struct Controller {
     click: Closure<dyn FnMut(Event)>,
     keys: Closure<dyn FnMut(web_sys::KeyboardEvent)>,
     toggle: Closure<dyn FnMut(Event)>,
-    #[cfg(feature = "page-docs")]
-    scroll: Closure<dyn FnMut(Event)>,
 }
 
 impl Controller {
@@ -486,10 +436,6 @@ impl Controller {
                 .filter_map(|e| e.dyn_into::<web_sys::ResizeObserverEntry>().ok())
             {
                 scale_frame(&entry.target());
-            }
-            #[cfg(feature = "page-docs")]
-            if let Some(root) = root() {
-                fold_contents(&root);
             }
         });
         let resize = ResizeObserver::new(resized.as_ref().unchecked_ref()).ok()?;
@@ -550,15 +496,6 @@ impl Controller {
             true,
         )
         .ok()?;
-        #[cfg(feature = "page-docs")]
-        let scroll = Closure::new(move |_event: Event| {
-            if let Some(root) = self::root() {
-                fold_contents(&root);
-            }
-        });
-        #[cfg(feature = "page-docs")]
-        doc.add_event_listener_with_callback("scroll", scroll.as_ref().unchecked_ref())
-            .ok()?;
         scan(&resize, &targets);
         Some(Self {
             resize,
@@ -568,8 +505,6 @@ impl Controller {
             click,
             keys,
             toggle,
-            #[cfg(feature = "page-docs")]
-            scroll,
         })
     }
 }
@@ -579,11 +514,6 @@ impl Drop for Controller {
         self.resize.disconnect();
         self.mutation.disconnect();
         if let Some(doc) = document() {
-            #[cfg(feature = "page-docs")]
-            let _ = doc.remove_event_listener_with_callback(
-                "scroll",
-                self.scroll.as_ref().unchecked_ref(),
-            );
             let _ = doc
                 .remove_event_listener_with_callback("click", self.click.as_ref().unchecked_ref());
             let _ = doc

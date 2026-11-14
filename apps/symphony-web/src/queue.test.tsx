@@ -9,8 +9,6 @@ import {
   chosenTopic,
   counts,
   keepRows,
-  PostponeControls,
-  postpone,
   QueuePage,
   queueCategory,
   readQueue,
@@ -18,7 +16,6 @@ import {
   visible,
   WaitingQueue,
 } from "./queue";
-import { STALE } from "./shared";
 import { TaskTag } from "./task-tag";
 import { asking, CASES, memoryStorage, reply, server } from "./testing";
 import type { Card } from "./wire";
@@ -245,89 +242,6 @@ describe("a card's task", () => {
     );
     expect(renderToStaticMarkup(<TaskTag task={null} />)).toBe("");
     expect(renderToStaticMarkup(<TaskTag />)).toBe("");
-  });
-});
-
-describe("a card's Later", () => {
-  afterEach(() => STALE.set(false));
-  const controls = (postponed: boolean) =>
-    renderToStaticMarkup(<PostponeControls path="docs/A.md" slug="s" postponed={postponed} />);
-
-  it("is Later, or Undo Later on a postponed card, which says so", () => {
-    expect(controls(false)).toContain(">Later</button>");
-    expect(controls(false)).not.toContain("postponed");
-    expect(controls(true)).toContain('<small class="postponed">postponed</small>');
-    expect(controls(true)).toContain(">Undo Later</button>");
-  });
-
-  it("waits, saying so, while the page may show what is out of date", () => {
-    STALE.set(true);
-    expect(controls(false)).toMatch(/disabled="".*>Checking…<\/button>/);
-  });
-});
-
-describe("Later and its Undo", () => {
-  afterEach(() => vi.unstubAllGlobals());
-  const frame = () => ({ refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() });
-
-  it("post the card, read the frame again, and after Later go to the card named next", async () => {
-    const asked = server();
-    const refreshed = frame();
-    const go = vi.fn();
-    const card = { path: "docs/A.md", slug: "s", postponed: false };
-    const done = postpone(card, new AbortController().signal, refreshed, go);
-    await asking(asked, 1);
-    expect(asked[0]?.url).toBe("/api/postpone");
-    expect(asked[0]?.body).toEqual({ path: "docs/A.md", slug: "s", action: "later" });
-    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
-    expect(await done).toBeNull();
-    expect(refreshed.refresh).toHaveBeenCalledTimes(1);
-    expect(go).toHaveBeenCalledWith("/docs/B.md#t");
-  });
-
-  it("stay on the page after Undo, and say what failed", async () => {
-    const asked = server();
-    const go = vi.fn();
-    const undo = postpone(
-      { path: "docs/A.md", slug: "s", postponed: true },
-      new AbortController().signal,
-      frame(),
-      go,
-    );
-    await asking(asked, 1);
-    expect(asked[0]?.body).toMatchObject({ action: "undo" });
-    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
-    expect(await undo).toBeNull();
-    const refused = postpone(
-      { path: "docs/A.md", slug: "s", postponed: false },
-      new AbortController().signal,
-      frame(),
-      go,
-    );
-    await asking(asked, 2);
-    asked[1]?.answer(reply(409, { error: "The card moved." }));
-    expect(await refused).toBe("The card moved.");
-    expect(go).not.toHaveBeenCalled();
-  });
-
-  it("do nothing more once the page is gone before the server answers", async () => {
-    const asked = server();
-    const refreshed = frame();
-    const go = vi.fn();
-    const mount = new AbortController();
-    const done = postpone(
-      { path: "docs/A.md", slug: "s", postponed: false },
-      mount.signal,
-      refreshed,
-      go,
-    );
-    await asking(asked, 1);
-    // The reader leaves the queue: the shell stops its kind, which aborts its mount.
-    mount.abort();
-    asked[0]?.answer(reply(200, { next: "/docs/B.md#t" }));
-    expect(await done).toBeNull();
-    expect(go).not.toHaveBeenCalled();
-    expect(refreshed.refresh).not.toHaveBeenCalled();
   });
 });
 

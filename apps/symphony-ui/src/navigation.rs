@@ -106,47 +106,6 @@ pub fn use_navigation() -> Signal<Route> {
     route
 }
 
-/// Card-to-card navigation can change only the fragment, without remounting the document.
-pub fn use_anchor() -> Signal<String> {
-    fn anchor() -> String {
-        web_sys::window()
-            .and_then(|w| w.location().hash().ok())
-            .and_then(|hash| js_sys::decode_uri_component(hash.trim_start_matches('#')).ok())
-            .map(String::from)
-            .unwrap_or_default()
-    }
-    let mut current = use_signal(anchor);
-    let listener = use_hook(move || {
-        let (send, mut recv) = unbounded();
-        spawn(async move {
-            while let Some(next) = recv.next().await {
-                current.set(next);
-            }
-        });
-        let handler = Closure::<dyn FnMut(Event)>::new(move |_| {
-            let _ = send.unbounded_send(anchor());
-        });
-        if let Some(window) = web_sys::window() {
-            for name in ["hashchange", "review:navigate"] {
-                let _ =
-                    window.add_event_listener_with_callback(name, handler.as_ref().unchecked_ref());
-            }
-        }
-        std::rc::Rc::new(handler)
-    });
-    use_drop(move || {
-        if let Some(window) = web_sys::window() {
-            for name in ["hashchange", "review:navigate"] {
-                let _ = window.remove_event_listener_with_callback(
-                    name,
-                    listener.as_ref().as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
-    current
-}
-
 pub fn scroll_anchor() {
     let Some(window) = web_sys::window() else {
         return;
@@ -180,7 +139,7 @@ pub fn scroll_anchor() {
 }
 
 /// Whether the reader is busy on the page (a field, an open form or list): a new build waits.
-#[cfg(any(feature = "page-tasks", feature = "page-docs", feature = "page-panel"))]
+#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
 pub(crate) fn engaged() -> bool {
     web_sys::window()
         .and_then(|w| w.document())

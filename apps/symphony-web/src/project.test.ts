@@ -129,6 +129,16 @@ describe("the crumbs", () => {
 
   it("are a task's slug alone", () => {
     expect(crumbs(PLAIN, "task/app/x")).toEqual(["app/x"]);
+    // No crumb names a part of the slug as a task of its own, a trailing slash none either.
+    expect(crumbs(PLAIN, "task/product/polish-sweep/client-source")).toEqual([
+      "product/polish-sweep/client-source",
+    ]);
+    expect(crumbs(PLAIN, "task/solo/")).toEqual(["solo"]);
+  });
+
+  it("make a slug only under the task route's own prefix", () => {
+    expect(crumbs(PLAIN, "taskforce/notes.md")).toEqual(["taskforce", "notes.md"]);
+    expect(crumbs(PLAIN, "docs/workflow/REVIEW.md")).toEqual(["docs", "workflow", "REVIEW.md"]);
   });
 
   it("are none on a header link's own page or a plugin's", () => {

@@ -6,20 +6,18 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "./button";
 import { answered, boardItem, drawn, failed, keepLater, QUEUE, readKept } from "./cache";
 import { sleep } from "./feed";
-import { type FrameRefresh, useFrame } from "./frame";
 import { useFreshen } from "./live";
-import { useMount } from "./mount";
-import { here, href, project, scoped } from "./project";
-import { getIf, post, said } from "./request";
+import { PostponeControls } from "./postpone";
+import { href, scoped } from "./project";
+import { getIf, said } from "./request";
 import { scrollAnchor } from "./route";
-import { field, list, STALE, useStore } from "./shared";
+import { field, list } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 import { TaskTag } from "./task-tag";
 import { ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
 import type { Card, Queue, QueueItem } from "./wire";
-import { CHECKING } from "./words";
 
 /** The feed's regions that move the queue: its items and their order, in each of its groups. */
 const REGIONS = [
@@ -148,76 +146,6 @@ const GROUPS: [string, number][] = [
 /** What the page says under its heading: what its groups hold, and the order of the first. */
 const LEAD =
   "The cards waiting on you, oldest first, the document folders taken in turn; then those to spot-check and those waiting on an agent.";
-
-/** A card waiting on the owner, as Later and its Undo name it. */
-export interface Postponed {
-  path: string;
-  slug: string;
-  postponed: boolean;
-}
-
-/**
- * Later, or its Undo, on `card`: once the server takes it, the frame reads again and, after Later,
- * the reader goes (`go`) to the card the server names next. Nothing of that once `mount` is
- * aborted, the page gone while the server answered. What failed, said; none when it went well.
- */
-export async function postpone(
-  card: Postponed,
-  mount: AbortSignal,
-  frame: FrameRefresh,
-  go: (address: string) => void,
-): Promise<string | null> {
-  try {
-    const reply = await post("/api/postpone", {
-      path: card.path,
-      slug: card.slug,
-      action: card.postponed ? "undo" : "later",
-    });
-    if (mount.aborted) return null;
-    frame.refresh();
-    const next = field(reply, "next");
-    if (!card.postponed && typeof next === "string") go(here(project(), next));
-    return null;
-  } catch (failure) {
-    return said(failure);
-  }
-}
-
-/** The Later and Undo controls of a card waiting on the owner. */
-export function PostponeControls({ path, slug, postponed }: Postponed) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const frame = useFrame();
-  const mount = useMount();
-  // While the page may show what is out of date, the card may have moved since: wait for it.
-  const checking = useStore(STALE);
-  const label = pending ? "Saving…" : checking ? CHECKING : postponed ? "Undo Later" : "Later";
-  const act = async () => {
-    if (pending || STALE.get()) return;
-    setPending(true);
-    setError(null);
-    const failure = await postpone({ path, slug, postponed }, mount, frame, (address) => {
-      location.href = address;
-    });
-    if (mount.aborted) return;
-    setError(failure);
-    setPending(false);
-  };
-  return (
-    <span className="postpone-controls">
-      {postponed && <small className="postponed">postponed</small>}
-      <Button
-        type="button"
-        disabled={pending || checking}
-        title="Return after the rest of this group, or in 3 days"
-        onClick={() => void act()}
-      >
-        {label}
-      </Button>
-      {error !== null && <span role="alert">{error}</span>}
-    </span>
-  );
-}
 
 /** A row of the queue while it loads; a card waiting on the owner has its rank and Later too. */
 function GhostRow({ ranked = false }: { ranked?: boolean }) {

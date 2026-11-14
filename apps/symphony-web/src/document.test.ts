@@ -798,7 +798,12 @@ describe("a folder's pill", () => {
 });
 
 describe("a document's related tasks", () => {
-  const task = (slug: string, status: string): DocumentTask => ({ slug, title: slug, status });
+  /** A task whose title is never its slug, so only a test of the slug tells a verdicts' task. */
+  const task = (slug: string, status: string, title = "Answer the owner on lamp-a-pic") => ({
+    slug,
+    title,
+    status,
+  });
 
   it("answer verdicts as crates/symphony-api tells them", () => {
     for (const [slug, answers] of CASES.answersVerdicts) {
@@ -819,6 +824,22 @@ describe("a document's related tasks", () => {
       finished: [task("app/a", "done"), task("app/c", "cancelled")],
     });
     expect(related([])).toEqual({ open: [], finished: [] });
+  });
+
+  it("are told from a verdicts' task by its slug's area, never by its title", () => {
+    const tasks: DocumentTask[] = [
+      task("verdicts/2026-11-11-1244", "done", "The cache"),
+      task("perf/client-cache", "ready"),
+      task("verdicts/2026-11-11-1742", "ready"),
+      task("verdict/x", "ready", "verdicts/x"),
+      task("app/verdicts/x", "ready"),
+    ];
+    expect(related(tasks).open.map((one) => one.slug)).toEqual([
+      "perf/client-cache",
+      "verdict/x",
+      "app/verdicts/x",
+    ]);
+    expect(related(tasks).finished).toEqual([]);
   });
 });
 
