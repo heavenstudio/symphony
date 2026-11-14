@@ -75,7 +75,7 @@ fn states(cards: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 /// A repository on main whose own identity the verdict committer commits main's saves as.
-fn committing() -> super::common::Tree {
+pub(super) fn committing() -> super::common::Tree {
     let tree = repository();
     for (key, value) in [
         ("user.name", "Test fixture"),
