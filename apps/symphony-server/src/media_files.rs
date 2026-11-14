@@ -2,7 +2,7 @@
 //! SVG/XML and mockups opened full size) keep the frame's opaque-origin sandbox in their response.
 //! A Markdown file no entrypoint serves (a guide such as `AGENTS.md`) opened as a page is drawn
 //! read-only in the project's look instead, its headings' ids a document's, so `#anchor` lands, in
-//! the same sandbox. A fetch of it gets the file.
+//! that sandbox with no script run ([`PAGE_POLICY`]). A fetch of it gets the file.
 
 use std::path::{Component, Path};
 
@@ -85,6 +85,11 @@ fn served_type(drawn: Option<&'static str>, path: &str) -> &'static str {
 /// The sandbox every project file is served in, the frame's: its scripts run in an opaque origin,
 /// with no reach into the app's.
 const FILE_POLICY: &str = "sandbox allow-scripts";
+
+/// The sandbox a Markdown file drawn as a page is served in: the raw HTML its text may hold (a
+/// `<script>`, an `onerror`, a `javascript:` link) runs nothing, as the file served as text ran
+/// nothing. The page needs no script of its own; its data block is read, never run.
+const PAGE_POLICY: &str = "sandbox allow-scripts; script-src 'none'";
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
 /// script, plugin, form or navigation, nothing loaded but itself.
@@ -227,7 +232,7 @@ pub(crate) async fn contained(
             crate::pages::file(root, &shared.base, &name, &html),
         );
         for (name, value) in [
-            (header::CONTENT_SECURITY_POLICY, FILE_POLICY),
+            (header::CONTENT_SECURITY_POLICY, PAGE_POLICY),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ] {
             page.headers_mut()
@@ -269,13 +274,23 @@ mod tests {
     use axum::http::{Request, header};
 
     /// A Markdown file no entrypoint serves, opened as a page, is drawn under the project's header
-    /// with its headings' anchors, in the sandbox every project file has; fetched, it is the file,
-    /// as any other file is however it is asked for.
+    /// with its headings' anchors, its raw HTML as written under a policy that runs no script of it
+    /// (a `<script>`, an `onerror`, a `javascript:` link); fetched, it is the file, as any other
+    /// file is however it is asked for.
     #[tokio::test]
     async fn a_markdown_file_opened_as_a_page_is_drawn_and_fetched_is_the_file() {
         let tree = Tree::new();
         let root = crate::testing::repository(&tree);
-        let guide = "# Guide\n\n## Command ownership\n\nSee [docs](docs/TOPIC.md).\n\n<script>x()</script>\n";
+        let live = [
+            "<script>x()</script>",
+            "<img src=\"x\" onerror=\"y()\" />",
+            "<a href=\"javascript:z()\">go</a>",
+        ];
+        let guide = format!(
+            "# Guide\n\n## Command ownership\n\nSee [docs](docs/TOPIC.md).\n\n{}\n\n\
+             <img src=\"x\" onerror=\"y()\" />\n\n[go](javascript:z())\n",
+            live[0]
+        );
         std::fs::write(root.join("GUIDE.md"), guide).unwrap();
         std::fs::write(root.join("notes.txt"), "plain notes").unwrap();
         let gate = crate::gate::Gate::new(
@@ -316,8 +331,12 @@ mod tests {
             let (kind, policy, page) = ask("/GUIDE.md", headers).await;
             assert_eq!(
                 (kind.as_str(), policy.as_str()),
-                ("text/html; charset=utf-8", super::FILE_POLICY)
+                ("text/html; charset=utf-8", super::PAGE_POLICY)
             );
+            // The file's own script comes out as written; the policy is what runs none of it.
+            for written in live {
+                assert!(page.contains(written), "{written} in {page}");
+            }
             for drawn in [
                 "<title>GUIDE.md · ",
                 "<a href=\"/alpha/\">Home</a>",
@@ -328,6 +347,12 @@ mod tests {
                 assert!(page.contains(drawn), "{drawn} in {page}");
             }
         }
+        let directives: Vec<&str> = super::PAGE_POLICY.split(';').map(str::trim).collect();
+        assert!(
+            directives.contains(&"sandbox allow-scripts")
+                && directives.contains(&"script-src 'none'"),
+            "an opaque origin, and no script, inline, handler or javascript: URL, runs: {directives:?}"
+        );
         let fetched = [
             (
                 "/GUIDE.md",
