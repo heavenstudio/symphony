@@ -1,6 +1,11 @@
 //! The Symphony's wire types: the JSON the server (`apps/symphony-server`) sends and the client
 //! (`apps/symphony-ui`) reads. Serde only, so one definition builds for the server and for wasm32.
 //!
+//! One feature, off by default, changes what a reader keeps: `skip-board-fields` leaves a task's
+//! plugins' board fields out of a [`Task`] it reads ([`Task::fields`] reads as empty, so a task
+//! written back carries none). The browser's client turns it on in its wasm32 dependencies, as it
+//! reads no task's fields; a crate that reads them leaves it off.
+//!
 //! The board view, the front page `/`:
 //!
 //! - `GET` [`BOARD_PATH`] answers a [`Board`]: the next card and the four after it, the counts and
@@ -433,7 +438,8 @@ pub struct ActivityItem {
     pub answered: bool,
 }
 
-/// The task board's read records. These stay serde-only so native and wasm clients share them.
+/// The task board's read records. These stay serde-only so native and wasm clients share them;
+/// a build with the feature `skip-board-fields` reads a task without its [`Task::fields`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub slug: String,
@@ -449,8 +455,13 @@ pub struct Task {
     pub depends: Vec<String>,
     pub roles: Vec<Role>,
     pub instruction: bool,
-    /// The plugins' board fields: plugin name, then field name, then its value.
+    /// The plugins' board fields: plugin name, then field name, then its value. With the feature
+    /// `skip-board-fields` a task is read without them, whatever the wire holds, and the map stays
+    /// empty, so a task written back carries none: the browser's client turns it on, as it draws
+    /// no field, and so leaves out the reader of the two maps and of their values (a number's text
+    /// parser among it), about 18 KB gzipped of the board's first visit.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[cfg_attr(feature = "skip-board-fields", serde(skip_deserializing))]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
 }
 

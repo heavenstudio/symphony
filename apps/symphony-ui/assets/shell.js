@@ -75,17 +75,9 @@ async function gone() {
     return true;
 }
 
-// The program's media layer is a chunk of its own, loaded once a page shows media (src/split.rs
-// `MediaPart`), which no kind is: a load that fails leaves the page as it is, and the layer calls
-// the first of these. A gone build loads the page again, as for a kind; otherwise the alert's
-// retry shows the media again, which asks for the chunk again, and the layer calls the second
-// once it is in, which takes the alert down.
-window.reviewMediaFailed = async error => {
-    if (await gone()) return;
-    console.error("Media could not be loaded", error);
-    alarm("media-error", "Media could not be loaded. ", "Retry loading media", () => dispatchEvent(new Event("review:media")));
-};
-window.reviewMediaLoaded = () => document.getElementById("media-error")?.remove();
+// The two the program's chunk loader (assets/chunks.js) says a failed load of its media layer with:
+// what the shell's own failures use, so every page's first visit carries none of the program's.
+window.reviewShell = { gone, alarm };
 
 async function initialize(kind) {
     const spec = modules[kind];

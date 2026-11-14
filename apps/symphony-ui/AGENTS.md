@@ -285,7 +285,15 @@ never the whole target, which the release run runs.
   a build. The keyboard's key names, `document::eval` with serde_json, and float formatting stay
   in the main module: dioxus-web makes at launch the event converter and the document that
   reach them, and the splitter keeps there every function of a table the main module reaches
-  ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). Each
+  ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). The
+  client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it does
+  not draw: `symphony-api`'s feature `skip-board-fields`, which `Cargo.toml` turns on for the
+  wasm32 build alone) and the media layer's notice moving to the program's script
+  (`perf/tasks-first-visit-gets-room`, against main's build at 029d581) take `/tasks` to
+  281,222 bytes (from 299,662: the board's WASM 247,735 from 266,112, the shell 7,880 from
+  7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task
+  pages' chunk 18 KB less) and `/reports` to 298,951 (from 298,790), the program's script now
+  holding the notice; every other page stays within 50 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -666,8 +674,9 @@ never the whole target, which the release run runs.
   chat on the board and Reports fetch it only when media first shows. A chunk that does not load
   leaves the page as it is and is asked for again by the next media shown: the shell loads the
   page again when its build is gone, and otherwise puts up `#media-error` with a retry that
-  shows the media again, taken down once the chunk is in (`reviewMediaFailed` and
-  `reviewMediaLoaded`, `assets/shell.js`). Mockups stay at 1280x800,
+  shows the media again, taken down once the chunk is in or the page moves on
+  (`reviewMediaFailed` and `reviewMediaLoaded` in the program's `assets/chunks.js`, over the
+  shell's `reviewShell`, so no other page's first visit carries them). Mockups stay at 1280x800,
   scaled by their card's width, with only `allow-scripts` in their sandbox. Never add
   `allow-same-origin`.
   A file a plugin's renderer draws in a viewer is a `Media::Viewer`, drawn by
