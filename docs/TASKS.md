@@ -2204,8 +2204,9 @@ landing](#the-default-landing)).
   task and again each time the task moves to review, before it staffs any reviewer, and staffs
   one only where the needs name `review`. Its whole prompt is `/assess-task SLUG HANDLE`
   (`.agents/skills/assess-task/SKILL.md`), the skill all it is told: it reads `just tasks stamps
-  SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data, keeps a
-  stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
+  SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data but for
+  the owner's own posts (sender `owner`, which it follows and reads for `owner`'s applies), keeps
+  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
 
 ## Subtasks
 

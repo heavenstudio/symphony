@@ -189,6 +189,63 @@ fn a_task_needing_no_review_lands_from_review_once_its_stamps_stand_at_its_tip()
     }
 }
 
+/// A land of a task that needs no review, stopped after it moved main, run again: it finishes by
+/// its record, nothing merged again, closes the task from review with no verdict, and its line
+/// names the tip its stamps stood on.
+#[test]
+fn an_interrupted_land_of_a_task_needing_no_review_finishes_naming_the_tip_its_stamps_stood_on() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let slug = "docs/finish";
+    let (staff, tip) = in_review(&r, slug, &[("docs/finish.md", "# Finished\n")]);
+    assess(&r, slug, &staff.assessor, &[], &tip);
+    // A land stopped after it moved main: its merge there, and its record of it.
+    let message = format!("Merge branch '{slug}'");
+    git(&r.root, &["merge", "-q", "--no-ff", "-m", &message, slug]);
+    let merge = head(&r.root, "main");
+    let folder = r.root.join(".git/symphony/tasks/land");
+    fs::create_dir_all(&folder).unwrap();
+    symphony_board::land::Record {
+        slug: slug.into(),
+        tip: tip.clone(),
+        merge: merge.clone(),
+        checked: merge.clone(),
+        regenerated: Vec::new(),
+    }
+    .write(&folder)
+    .unwrap();
+    assert_eq!(r.board.store.get(slug).unwrap().status, "review");
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    let line = result.unwrap();
+    assert_eq!(
+        line,
+        format!(
+            "landed {slug} on main at {}; its needs (none) stood at {tip}, finishing a land \
+             interrupted after its merge; not pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    assert!(
+        said.contains(&format!(
+            "land {slug}: its tip {} is on main already, by this land's merge {}",
+            &tip[..7],
+            &merge[..7]
+        )),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main"), merge, "nothing merged again");
+    assert_eq!(r.board.store.get(slug).unwrap().status, "done");
+    assert_eq!(last(&r, slug), line);
+    let verdicts = (r.board.store.thread(slug).unwrap().into_iter())
+        .filter(|post| post.kind == "verdict")
+        .count();
+    assert_eq!(verdicts, 1, "the landing's line alone: no review round");
+    assert_eq!(
+        symphony_board::land::needs::stood_at(&line),
+        Some(tip.as_str())
+    );
+}
+
 /// The rows that need a reviewer: a red's fix changing its test, a board command reworded, a row
 /// added to a page. Each lands on a fresh reviewer's approve of its tip once its other stamps
 /// stand there, and is refused, named stamp by stamp, while one does not.

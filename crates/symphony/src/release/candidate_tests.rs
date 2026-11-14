@@ -443,10 +443,16 @@ fn a_landing_by_its_needed_stamps_names_the_tip_they_stood_on() {
         "landed tests/release-red-verify on main at 0123456789ab; its needs (tests) stood at {tip}; \
          pushed to origin"
     );
+    // Only the land's own line counts: a verdict or a note that quotes one names nothing.
+    let other = "7c0ffee1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let quoted =
+        format!("landed tests/x on main at 0123456789ab; its needs (tests) stood at {other}");
     let messages = vec![
         serde_json::json!({"kind": "verdict", "text": landed}),
         serde_json::json!({"kind": "verdict", "text": "landed tests/x on main at 0123456789ab"}),
         serde_json::json!({"kind": "message", "text": format!("its needs (tests) stood at {tip}")}),
+        serde_json::json!({"kind": "verdict", "text": format!("changes: the land said `{quoted}`")}),
+        serde_json::json!({"kind": "verdict", "text": format!("covered by tests/y; {quoted}")}),
     ];
     assert_eq!(approving(&messages), vec![tip.to_string()]);
 }

@@ -712,8 +712,9 @@ fn covering(messages: &[serde_json::Value]) -> Option<Covered> {
 
 /// The texts naming the commits that vouch for a land among a thread's `messages`, as the board
 /// shapes them: a verdict whose text is `approve`, or `approve:` and why; and, of a task that
-/// needed no review, the tip its landing's line says its needed stamps stood on
-/// ([`symphony_board::land::needs::stood_at`]), which no approve names.
+/// needed no review, the tip its landing's line (a verdict starting `landed `, never another that
+/// quotes one) says its needed stamps stood on ([`symphony_board::land::needs::stood_at`]), which
+/// no approve names.
 fn approving(messages: &[serde_json::Value]) -> Vec<String> {
     (messages.iter())
         .filter(|message| message["kind"] == "verdict")
@@ -724,8 +725,10 @@ fn approving(messages: &[serde_json::Value]) -> Vec<String> {
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'));
             if approve {
                 Some(text)
-            } else {
+            } else if text.starts_with("landed ") {
                 symphony_board::land::needs::stood_at(text)
+            } else {
+                None
             }
         })
         .map(str::to_string)
