@@ -94,6 +94,17 @@ a measurement before and after.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
+- **The kit's or a helper's public items** (what a project links at the version it names,
+  [RELEASES](RELEASES.md#packages-on-cratesio)): the package's own tests, and the packages test
+  (`crates/symphony/tests/packages.rs`), which fails a kit package that builds with a member
+  outside the kit and a helper that builds with one outside the helpers. The reviewer reads what no
+  test holds: that no public item shows a type of a member outside the package's line (rustc's lint
+  for a private dependency's type is unstable), that a struct added to `symphony_plugin::protocol`
+  comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
+  `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
+  unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
+  removed or changed, or a field or variant added to a seam type or the vocabulary, is a new major
+  of the package's line.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
