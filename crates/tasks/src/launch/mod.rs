@@ -116,8 +116,8 @@ pub type Processes = dyn Fn(i64) -> Result<Vec<String>, LaunchError>;
 /// worktrees beside it, the session ids, the waits, the process table and the board a launched
 /// agent is to reach.
 pub struct Machine {
-    /// The main checkout, whichever worktree the command runs in. Its folder's name is the Herdr
-    /// app space's.
+    /// The main checkout, whichever worktree the command runs in ([`root_of`]). Its folder's name
+    /// is the Herdr app space's.
     pub root: PathBuf,
     /// Where new worktrees go: `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
     pub wt_base: PathBuf,
@@ -163,10 +163,20 @@ impl Machine {
     }
 }
 
-/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is;
-/// the working directory itself outside a repository.
+/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is:
+/// the folder holding the common dir when that is a `.git` folder. A repository with none (a
+/// submodule, a `--separate-git-dir` checkout, a bare repository's worktree), whose common dir's
+/// folder is no checkout of it, has the checkout the command runs in, from which git reaches the
+/// same repository; the working directory itself outside a repository. The launcher's git commands
+/// run there, so a worktree it makes is of this repository, never the common dir's neighbour's.
 pub fn root_of(env: &Env) -> PathBuf {
-    probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone())
+    let Ok(common) = crate::git::common_dir(&env.cwd) else {
+        return env.cwd.clone();
+    };
+    match crate::sweep::trigger::main_checkout(&common) {
+        Some(main) => main.to_path_buf(),
+        None => crate::git::checkout(&env.cwd).map_or_else(|| env.cwd.clone(), |(top, _)| top),
+    }
 }
 
 /// The caller's `TASKS_DATABASE` and `TASKS_SERVER`, those it has: what a launched agent needs to

@@ -19,7 +19,11 @@
 //   drawn; nothing sizes a mounted frame (the media runtime's adapter);
 // - Dioxus's `SuspenseBoundary` around each block list ("Loading content…") has no counterpart:
 //   the blocks render at once.
+//
+// Added for the plugins section of the comparison, with no Dioxus counterpart: a fenced code block
+// whose language is `custom` is drawn as a project's own block (custom.jsx).
 import { createContext, memo, useContext, useState } from "react";
+import { CustomBlock } from "./custom.jsx";
 import { Near, useVisible } from "./near.jsx";
 import { href } from "./project.js";
 
@@ -96,6 +100,8 @@ const Block = memo(function Block({ block }) {
     case "table":
       return <Table head={block.head} rows={block.rows} presentation={block.presentation} />;
     case "code":
+      // The experiment's stand-in for a project's own block kind (custom.jsx).
+      if (block.language === "custom") return <CustomBlock text={block.text} fallback={<Code language={block.language} text={block.text} block />} />;
       return <Code language={block.language} text={block.text} block />;
     case "quote":
       return (
