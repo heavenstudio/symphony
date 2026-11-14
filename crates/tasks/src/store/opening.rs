@@ -1,7 +1,9 @@
 //! How a store opens its board, by the schema rule ([`crate::schema`]): one read of the board's
-//! version, then the board taken as it is, migrated forward once, or refused before any write.
+//! version, then the board taken as it is, migrated forward once, or refused before any write. A
+//! writer keeps its line in the board's writers as it opens ([`super::writers`]).
 
 use super::transaction::Run;
+use super::writers::{self, Line, Program};
 use super::{Clock, Error, Failure, Probe, STALE, Store, now, sessions};
 use crate::live::{self, Live};
 use crate::rpc::{Client, DbError};
@@ -22,9 +24,15 @@ pub struct Opening {
     /// Opened by `tasks migrate` in the live board's main checkout: what alone moves a live board
     /// whose default branch commits no board source ([`crate::live::may_move`]).
     pub migrating: bool,
+    /// Whether a migrate moves the board though writers seen in the last week are behind the schema
+    /// it moves it to ([`Store::writers_behind`]): `tasks migrate --leave-behind`.
+    pub leave_behind: bool,
     /// How a refusal names a scratch board, in the words the program opening it takes: its
     /// environment's [`live::SCRATCH_VARIABLE`] unless it says otherwise ([`Opening::scratch`]).
     pub scratch: &'static str,
+    /// The program opening it, which a writer's line and its refusals name: this process's unless
+    /// it says otherwise ([`Opening::by`]).
+    pub program: Program,
 }
 
 impl Opening {
@@ -36,7 +44,22 @@ impl Opening {
             project: None,
             live: None,
             migrating: false,
+            leave_behind: false,
             scratch: live::SCRATCH_VARIABLE,
+            program: Program::this(),
+        }
+    }
+
+    /// The board opened by `program` instead of this process's.
+    pub fn by(self, program: Program) -> Opening {
+        Opening { program, ..self }
+    }
+
+    /// The board opened by a migrate that moves it though writers seen in the last week are behind.
+    pub fn leave_behind(self) -> Opening {
+        Opening {
+            leave_behind: true,
+            ..self
         }
     }
 
@@ -125,6 +148,12 @@ impl Store {
     /// the version found, and the one a migration moved it to, go in that record. The live board is
     /// [`Opening::live`]; a store opened with none named is checked only when it would move the
     /// board, by the board its client's address names.
+    ///
+    /// A writer keeps its line in the board's writers ([`super::writers`]), read in that one read
+    /// and written when it is due: as it opens a board at its version, once it migrated one, and
+    /// when it is refused a board behind it, but never when the board is ahead of it. A migrate
+    /// ([`Opening::migrating`]) that would leave behind a writer seen in the last week is refused
+    /// before it moves anything, naming each, unless it is told to ([`Opening::leave_behind`]).
     pub fn opening(
         client: Client,
         clock: Clock,
@@ -139,17 +168,25 @@ impl Store {
         }
         let store = Store::unchecked_as(client, clock, pid_alive, host, how);
         let own = how.schema.version();
+        let record = |line: &Line| {
+            store.record_writer(&how.program, &how.schema, how.access, line);
+        };
         store.retrying(|| {
-            let (found, defined) = store.board_schema()?;
+            let (found, defined, line) = store.board_opening(&how.program)?;
             if let Some(live) = &how.live {
                 went_back(live, found)?;
             }
-            let decided = schema::decide(found, own, how.access, how.project.as_deref());
+            let decided =
+                schema::decide(found, own, how.access, how.project.as_deref(), &how.program);
             if let (Some(live), Some(found)) = (&how.live, found) {
                 live::seen::record(live, found, store.now());
             }
             match decided {
-                Opened::Current | Opened::Ahead => Ok(()),
+                Opened::Current => {
+                    record(&line);
+                    Ok(())
+                }
+                Opened::Ahead => Ok(()),
                 Opened::Refused(why) => Err(Failure::Stop(Error::Refused(why))),
                 Opened::Migrate => {
                     let board = how
@@ -160,17 +197,44 @@ impl Store {
                         if how.live.is_none() {
                             went_back(board, found)?;
                         }
-                        store.may_move(how, board, found)?;
+                        if let Err(refused) = store.may_move(how, board, found) {
+                            record(&line);
+                            return Err(refused);
+                        }
+                    }
+                    if how.migrating && !how.leave_behind {
+                        store.none_left_behind(how, found)?;
                     }
                     store.migrate(&how.schema, found, defined)?;
                     if let Some(board) = &board {
                         live::seen::record(board, own, store.now());
                     }
+                    record(&Line::Held(None));
                     Ok(())
                 }
             }
         })?;
         Ok(store)
+    }
+
+    /// Refused, naming each, when a writer seen in the last week is behind the schema `how` moves
+    /// this board, found at `found`, to; a board not made yet has none.
+    fn none_left_behind(&self, how: &Opening, found: Option<i64>) -> Result<(), Failure> {
+        if found.is_none() {
+            return Ok(());
+        }
+        let target = how.schema.version();
+        let behind = self.writers_behind(target, &how.program)?;
+        if behind.is_empty() {
+            return Ok(());
+        }
+        let board = schema::Named::of(how.project.as_deref()).board;
+        Err(Failure::Stop(Error::Refused(writers::left_behind(
+            &board,
+            target,
+            &behind,
+            self.now(),
+        ))))
     }
 
     /// Whether this store, opened by `how`, may move `board`, a project's live board found at
@@ -215,7 +279,11 @@ impl Store {
             pid_alive,
             host: host.into(),
             schema: how.schema.version(),
-            refusal: schema::Refusal::of(how.project.as_deref(), how.schema.version()),
+            refusal: schema::Refusal::of(
+                how.project.as_deref(),
+                how.schema.version(),
+                &how.program,
+            ),
             pick: Mutex::new(Box::new(sessions::Random::seeded())),
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
@@ -226,6 +294,22 @@ impl Store {
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,
+        }
+    }
+
+    /// As [`Store::board_schema`], with `program`'s line in the board's writers on this host, in the
+    /// same one read ([`writers::OPENING`]).
+    fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line), Failure> {
+        let vars = writers::opening_vars(program, &self.host);
+        match self.client.query(writers::OPENING, vars) {
+            Ok(answer) => {
+                let (found, line) = writers::opened(&answer);
+                Ok((found, true, line))
+            }
+            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
+                Ok((None, false, Line::NoTable))
+            }
+            Err(other) => Err(other.into()),
         }
     }
 
@@ -311,9 +395,14 @@ mod tests {
         }
     }
 
-    /// The open's check of the version is a read, so a late answer to it goes once more.
+    /// The open's check of the version, with its writer's line, is a read, so a late answer to it
+    /// goes once more.
     #[test]
     fn the_schema_version_check_is_a_read() {
         assert_eq!(crate::rpc::Kind::of(BOARD_SCHEMA), crate::rpc::Kind::Read);
+        assert_eq!(
+            crate::rpc::Kind::of(super::writers::OPENING),
+            crate::rpc::Kind::Read
+        );
     }
 }

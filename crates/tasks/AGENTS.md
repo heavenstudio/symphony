@@ -66,7 +66,9 @@ read of `meta:schema`. A writer opens only a board at its own version. A newer
 one migrates an older board, or one not made yet, forward once: its additive
 steps and the new version in one transaction, before any other write, which
 one of several openers commits while the others find it done. An older writer
-is refused before any write, naming the project and `just symphony`. A reader
+is refused before any write, naming the project, itself as the program to
+rebuild (`Opening::program`, this process's executable unless `Opening::by`
+names another) and `just symphony`. A reader
 (the Symphony's `taskview::connect_in`) one version behind reads; more than
 one behind, it is refused before it reads. A reader never moves a board
 forward or makes one: a board behind it, or not made yet, it refuses after
@@ -77,6 +79,25 @@ Every write transaction
 starts with the schema guard, which refuses a write to a board at another version in the
 same transaction, so a reader's writes and those of a store opened before a
 newer build migrated are refused there, the same way.
+
+Who writes a board (`src/store/writers.rs`, schema 18): a writer's opening reads
+its own line, `writer:[host, path]`, in that same one read (`writers::OPENING`,
+a read by `rpc::Kind::of`), and writes it, one `UPSERT` with no schema guard,
+only when it is missing, names another schema, or is `EVERY` (an hour) old, so
+a board command sends no request for it most of the time; a line that fails to write
+leaves the opening as it was. It writes it as it opens a board at its version,
+once it migrated one, and when `live::may_move` refuses it a board behind it (so
+a rebuilt writer counts once it has run), never when the board is ahead of it
+or when it reads. A build below `writers::SINCE` writes none, as `Schema::before`
+shows in the tests: its steps are this build's, the writers' table among them.
+The table is schemaless with no event, since builds of other schemas write it
+and a line must move no marker; keep it so. An opening with `migrating` (`tasks
+migrate`) whose move would leave behind a writer seen in the last week
+(`RECENT`), its own line aside, is refused before it moves anything, naming each
+(`writers::left_behind`); `Opening::leave_behind` (`--leave-behind`) moves it
+all the same. Only the migrate asks, so main's build still moves this
+repository's board at its first command. `Store::writers` lists the lines.
+The dump and the copy carry no line.
 
 Which writer moves a project's live board forward (`src/live.rs`): the live
 board is the `tasks` database on a repository's board server, the one on the

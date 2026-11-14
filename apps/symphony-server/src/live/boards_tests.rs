@@ -12,7 +12,7 @@ use std::time::Duration;
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{NewTask, Opening, Program, Schema, Store};
 
 /// The wall-clock backstop of a wait here on the hub's read: only a stall reaches it (RULES.md
 /// `tests/no-test-fails-on-load`).
@@ -164,9 +164,10 @@ fn older_writer(root: &Path) -> Store {
     .unwrap()
 }
 
-/// The board of `root`'s project, moved forward to `schema` by a newer build as its `tasks migrate`
-/// in the project's main checkout moves it, which alone moves the live board of a project that
-/// commits no board source: reached as that command reaches it, and opened to migrate.
+/// The board of `root`'s project, moved forward to `schema` by a newer build as its `tasks migrate
+/// --leave-behind` in the project's main checkout moves it, which alone moves the live board of a
+/// project that commits no board source: reached as that command reaches it, and opened to migrate,
+/// leaving this build's writers behind.
 fn newer_migrate(root: &Path, schema: Schema) -> Store {
     let reached = symphony_board::cli::board(&env(root)).unwrap();
     Store::opening(
@@ -178,7 +179,8 @@ fn newer_migrate(root: &Path, schema: Schema) -> Store {
             .at(schema)
             .of(reached.project.as_deref())
             .live(reached.live)
-            .migrating(),
+            .migrating()
+            .leave_behind(),
     )
     .unwrap()
 }
@@ -239,14 +241,17 @@ fn a_hub_reads_on_when_a_newer_build_migrates_its_board_and_its_writes_there_are
         .say("beta/one", "owner", "from the Symphony", None)
         .unwrap_err()
         .to_string();
+    let program = Program::this();
     assert_eq!(
         why,
         format!(
             "the beta board is at schema {}, and this build writes only a board at its own \
-             schema, {}: nothing was written; `just symphony` in beta brings its Symphony to the \
-             board's schema",
+             schema, {}: nothing was written; rebuild {} ({}) at the board's schema, and `just \
+             symphony` in beta brings its Symphony to it",
             newer.version(),
-            Schema::this_build().version()
+            Schema::this_build().version(),
+            program.name,
+            program.path
         )
     );
     assert_eq!(migrated.thread("beta/one").unwrap().len(), 1);

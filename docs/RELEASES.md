@@ -578,7 +578,10 @@ A step moves what it can and nothing more:
   left, whatever release is newest. The store is snapshotted first, as it runs
   (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
   5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
-  one command that moves a project's board, and the schema is read again. A board whose database
+  one command that moves a project's board, and the schema is read again. A writer seen there in
+  the last week that the move would leave behind stops it: the migrate names each and moves
+  nothing ([who writes a board](TASKS.md#who-writes-a-board)), and the step is red until each is
+  rebuilt and run once. A board whose database
   is not running is refused, since nothing here starts, signals or stops a database. So is one
   running an older SurrealDB than the pin names, which the move would replace, and one whose
   versions cannot be read, the pin's or the database's: the guard fails closed. A project with no
