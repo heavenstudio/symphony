@@ -503,12 +503,28 @@ fn samples() -> Value {
 /// can have and none at zero, a settings change and a file not read: each member the Reports page
 /// reads a period by is written in it.
 fn reports() -> api::ReportsPage {
-    use api::agent_activity::{Gauge, Level, RoleLevel};
-    use api::report_page::{
-        BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, ReportMark,
-    };
-    use api::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
     const MONDAY: f64 = 1_794_182_400.0;
+    api::ReportsPage {
+        grain: api::Grain::Day,
+        days: 1,
+        from: MONDAY,
+        to: MONDAY + 86_400.0,
+        buckets: vec![report_bucket(MONDAY)],
+        first: Some(MONDAY),
+        marks: vec![api::report_page::ReportMark {
+            at: MONDAY + 3_600.0,
+            commit: "4f1c0a9b2d3e".into(),
+            subject: "settings: land without the check".into(),
+        }],
+        unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
+    }
+}
+
+/// The one day of [`reports`], from `start`, every source recorded whole.
+fn report_bucket(start: f64) -> api::ReportBucket {
+    use api::agent_activity::{Gauge, Level, RoleLevel};
+    use api::report_page::{BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits};
+    use api::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
     fn all<T: Copy>(n: T) -> ByStatus<T> {
         ByStatus {
             backlog: n,
@@ -532,9 +548,9 @@ fn reports() -> api::ReportsPage {
         peak: 2,
         mean: 1.5,
     };
-    let bucket = api::ReportBucket {
-        start: MONDAY,
-        end: MONDAY + 86_400.0,
+    api::ReportBucket {
+        start,
+        end: start + 86_400.0,
         rolled: 24,
         flow: Some(BucketFlow {
             held: all(1),
@@ -595,20 +611,6 @@ fn reports() -> api::ReportsPage {
             unanswered: 1,
             ..BucketHealth::default()
         }),
-    };
-    api::ReportsPage {
-        grain: api::Grain::Day,
-        days: 1,
-        from: MONDAY,
-        to: MONDAY + 86_400.0,
-        buckets: vec![bucket],
-        first: Some(MONDAY),
-        marks: vec![ReportMark {
-            at: MONDAY + 3_600.0,
-            commit: "4f1c0a9b2d3e".into(),
-            subject: "settings: land without the check".into(),
-        }],
-        unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
     }
 }
 
