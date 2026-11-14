@@ -66,7 +66,8 @@ pub const LOCK: &str = "regenerate.lock";
 pub const STATE: &str = "regenerate.json";
 /// The keys and outputs each generator passed on ([`Passed`]), in the lands' folder.
 pub const PASSED: &str = "regenerated.json";
-/// Its log, in the lands' folder.
+/// Its log, in the lands' folder: set aside as `regenerate.log.1` by a start that finds it past the
+/// sweep's bound ([`trigger::LOG_LIMIT`]), the one before dropped.
 pub const LOG: &str = "regenerate.log";
 /// The file naming the group a round runs while it runs, in the lands' folder: its own, so a land
 /// never takes a regenerator's build for a group an earlier land left.
@@ -310,12 +311,10 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
             .or_else(|| std::env::current_exe().ok())
             .or_else(|| crate::builds::of_main(main, "tasks", env.var("PATH").map(OsStr::new)))
             .ok_or_else(|| crate::builds::missing(main, "tasks"))?;
+        // Set aside past its bound as the sweep's log is, only here: no regenerator runs, so none
+        // writes on into the file set aside.
         let path = folder.join(LOG);
-        let log = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&path)
-            .map_err(|e| at(&path, &e))?;
+        let log = trigger::append_log(&folder, LOG).map_err(|e| at(&path, &e))?;
         let mut command = sys::command_with(&binary, &env.vars);
         sys::sessionless(&mut command).env_remove("TASKS_TASK");
         for name in GIT_VARS {
