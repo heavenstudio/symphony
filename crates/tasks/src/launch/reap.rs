@@ -1,11 +1,10 @@
 //! Close the hc terminals of agents that sit idle with their board work finished, or that have sat
 //! idle at their prompt an hour, and remove the terminals whose program ended: the periodic sweep.
 //!
-//! Owner, 2026-10-07: "there seems to be a ton of claude sessions doing nothing. Kill them if the work
-//! has finished (and this should happen periodically, not something that needs a reminder)"; and
-//! 2026-11-08: "Sessions that are done and aren't needed soon should be closed then resumed. Only
-//! sessions doing active work or that will soon (less than one hour) have active work should be
-//! kept open". A task that becomes done or cancelled closes its own sessions at once
+//! A session doing nothing is closed once its work has finished, by a periodic sweep that needs no
+//! reminder. A session that is done and not needed soon is closed, then resumed when it is: only
+//! sessions doing active work, or that will have active work soon (within the hour), are kept
+//! open. A task that becomes done or cancelled closes its own sessions at once
 //! ([`super::finish`], from `just tasks move/verdict/done`); this sweep catches the rest. `just
 //! tasks reap` is one sweep; Symphony (`just symphony`) runs it every [`REAP_SECONDS`]; `just tasks clean`
 //! runs cleanup and one sweep at once.
@@ -94,7 +93,7 @@ use std::path::PathBuf;
 /// long: 5 to 10 minutes.
 pub const REAP_SECONDS: f64 = 300.0;
 /// How long a terminal whose agent holds a role on open work must have sat idle at its prompt
-/// before a sweep closes it: the owner's hour ("less than one hour", 2026-11-08).
+/// before a sweep closes it: an hour, as only work due within the hour keeps a session open.
 pub const IDLE_HOUR: f64 = 3600.0;
 const READY: [&str; 2] = ["idle", "done"];
 const TRUST_PROMPT: &str = "trust this folder";

@@ -1008,7 +1008,7 @@ pub(super) fn by_call(path: &Path, key: &str) -> std::collections::BTreeMap<Stri
 /// What each call of the test plugin costs, timed alone and through the loopback: a measurement,
 /// not a check. Run alone, it prints for each call the median of its calls' `us` timed alone, and
 /// through the loopback its `us`, its `round_trip_us` and the JSON's bytes, best in a release build:
-/// `just test-rs --release -p symphony --test project the_cost_of_each -- --ignored --nocapture`.
+/// `just test-rs --release -p symphony-app --test project the_cost_of_each -- --ignored --nocapture`.
 #[test]
 #[ignore = "a measurement, not a check: run it alone with --ignored --nocapture"]
 fn the_cost_of_each_call_timed_and_through_the_loopback() {

@@ -257,8 +257,8 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
 
 ## Launch, restore, clean up (hc)
 
-Owner, 2026-10-06: every session connected to a task, every task knowing its
-session id and worktree, so any of them can be restored; finished tasks cleansed.
+Every session is connected to a task, and every task knows its session id and
+worktree, so any of them can be restored; finished tasks are cleaned up.
 
 - `just tasks launch SLUG [--model M] [--kind codex|claude] [--role executor|reviewer]
   [--branch B | --detached] [--worktree DIR] [--tab STREAM]`:

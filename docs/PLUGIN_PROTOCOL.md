@@ -305,8 +305,8 @@ build, twice, with the load average before and after each run:
 
 ```sh
 uptime
-just test-rs --release -p symphony --test project the_cost_of -- --ignored --nocapture --test-threads=1
+just test-rs --release -p symphony-app --test project the_cost_of -- --ignored --nocapture --test-threads=1
 uptime
-just test-rs --release -p symphony --test project the_cost_of -- --ignored --nocapture --test-threads=1
+just test-rs --release -p symphony-app --test project the_cost_of -- --ignored --nocapture --test-threads=1
 uptime
 ```

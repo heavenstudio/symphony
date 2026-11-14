@@ -177,7 +177,7 @@ best taken in a release build on a machine nothing else loads, with its load ave
 
 ```sh
 uptime
-tools/cargo.sh test --locked --release -p symphony --test project the_cost_of_each -- --ignored --nocapture
+tools/cargo.sh test --locked --release -p symphony-app --test project the_cost_of_each -- --ignored --nocapture
 ```
 
 The same for a component's and a card kind's calls linked, through the loopback and from the

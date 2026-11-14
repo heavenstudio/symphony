@@ -575,8 +575,10 @@ fn chrome_args(profile: &Path) -> Vec<String> {
 }
 
 /// The fixtures' descriptor closing (tools/fixture_process.sh), run before the leash starts: the
-/// leash and its browser keep no pipe or socket their launcher's own parent handed it.
-const CLOSE_FDS: &str = include_str!("../../../tools/fixture_process.sh");
+/// leash and its browser keep no pipe or socket their launcher's own parent handed it. A copy in
+/// this package, so the package crates.io gets builds alone; crates/symphony/tests/packages.rs
+/// holds it equal to the script the fixtures run.
+const CLOSE_FDS: &str = include_str!("fixture_process.sh");
 
 struct Owner {
     leash: Child,

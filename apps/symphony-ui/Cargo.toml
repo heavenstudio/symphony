@@ -150,7 +150,7 @@ size-probe = []
 
 [dev-dependencies]
 # Headless Chrome for tests/browser/, shared with `symphony shot`.
-chrome-devtools = { path = "../../crates/chrome-devtools" }
+symphony-chrome = { path = "../../crates/chrome-devtools" }
 # The variables the tests read (the SurrealDB, a client build), by their own names first.
 symphony-env = { path = "../../crates/symphony-env" }
 dioxus-ssr = "=0.7.10"
