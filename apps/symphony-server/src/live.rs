@@ -154,10 +154,10 @@ pub(crate) struct Hub {
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
     common: Option<PathBuf>,
-    /// Where the board's lookup from `root` stopped when the hub was made, and the repository it
-    /// found there ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`]
-    /// holds the folder to. None for a folder no repository held.
-    place: Option<(PathBuf, PathBuf)>,
+    /// The repository (its common dir) the board's lookup from `root` found when the hub was made
+    /// ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`] holds the
+    /// folder to. None for a folder no repository held.
+    repository: Option<PathBuf>,
     signoff_pending: Mutex<Option<Pending>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -309,8 +309,7 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
-            place: symphony_board::project::locate_quick(root)
-                .map(|place| (place.root, place.common)),
+            repository: symphony_board::project::locate_quick(root).map(|place| place.common),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),

@@ -5,14 +5,22 @@
 //! hub's build it never moves forward: it says why it reads nothing until the board's command has.
 
 use super::Hub;
+use crate::front::{Shared, router};
+use crate::gate::Gate;
 use crate::testing::{Tree, board::surreal, git, repository_at};
+use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
+use axum::http::Request;
+use serde_json::{Value, json};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Schema, Store};
+use tower::ServiceExt;
 
 /// The wall-clock backstop of a wait here on the hub's read: only a stall reaches it (RULES.md
 /// `tests/no-test-fails-on-load`).
@@ -403,13 +411,144 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
     }
 }
 
-/// What a hub holds its folder to: there, and leading the board's lookup where it led when the hub
-/// was made. A folder removed, emptied, or left without its `.git` leads that lookup up into the
-/// checkout that holds it, and is held no more; a project's folder whose project file went is
-/// held, its `.git` still stopping the lookup there; so is a folder below a checkout's top, whose
-/// lookup always led up to it, and a folder no repository holds, while it is there.
+/// A page on this machine asking `method` at `uri`, with `body` as its JSON.
+fn asked(method: &str, uri: &str, body: Option<&Value>) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Host", "localhost:1234")
+        .header("Content-Type", "application/json")
+        .extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()))
+        .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
+        .unwrap()
+}
+
+/// What the project's routes answer `request`: the status, and the JSON said, or else the text.
+fn answer(shared: &Arc<Shared>, request: Request<Body>) -> (u16, Value) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let response = router(shared.clone()).oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        let said = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+        (status, said)
+    })
+}
+
+/// A project in its own repository under another checkout's artifacts, emptied under its server or
+/// left without its `.git`, once its board's server has stopped: a page's save on it and its read
+/// of the task board's search, each of which reaches a board for itself, are refused before any
+/// route runs, saying its folder no longer holds it. Neither starts the outer checkout's board,
+/// whose pinned `surreal` is in its common dir as a live board's is, nor writes there: a lookup
+/// from the folder that walks up to the outer checkout would do both.
 #[test]
-fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_stops_where_it_did() {
+fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_above_it() {
+    type Empty = fn(&Path) -> std::io::Result<()>;
+    let emptied = (|root: &Path| {
+        for entry in std::fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path)?;
+            } else {
+                std::fs::remove_file(&path)?;
+            }
+        }
+        Ok(())
+    }) as Empty;
+    let gitless = |root: &Path| std::fs::remove_dir_all(root.join(".git"));
+    for (case, empty) in [("emptied", emptied), ("its .git removed", gitless)] {
+        let tree = Tree::new();
+        let outer = repository_at(&tree, "outer");
+        std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+        let priority = || writer(&outer).get("outer/one").unwrap().priority;
+        writer(&outer)
+            .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+            .unwrap();
+        let before = priority();
+        // Its board served by the `surreal` pinned in its common dir, which a reach with no
+        // `SYMPHONY_SURREAL` (a route's, in this process) starts it on.
+        let outer_board = Stopped(Home::in_common(&outer.join(".git"), None));
+        let pinned = outer_board.0.surreal();
+        std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(surreal(), pinned).unwrap();
+        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+
+        let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+        inner.reads(&["inner/one"]);
+        let shared = Shared::new(
+            1,
+            1234,
+            &inner.root,
+            None,
+            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        );
+        assert!(shared.api.set(inner.hub.clone()).is_ok());
+        let save = |slug: &str| json!({ "slug": slug, "priority": (before + 1) % 5 });
+        let save = |slug: &str| asked("POST", "/api/task-priority", Some(&save(slug)));
+        let read = |words: &str| asked("GET", &format!("/api/task-board?q={words}"), None);
+        assert_eq!(
+            answer(&shared, save("inner/one")),
+            (200, json!({ "ok": true })),
+            "{case}: its own board saved to while its folder holds it"
+        );
+        assert_eq!(
+            answer(&shared, read("made")).0,
+            200,
+            "{case}: its own board read while its folder holds it"
+        );
+        inner.home().stop().unwrap();
+        empty(&inner.root).unwrap();
+        assert_eq!(
+            symphony_board::project::locate_quick(&inner.root).map(|place| place.common),
+            Some(outer.canonicalize().unwrap().join(".git")),
+            "{case}: a reach from the folder now finds the outer checkout's repository"
+        );
+
+        let refused = json!({ "error": inner.hub.gone() });
+        assert_eq!(
+            answer(&shared, save("outer/one")),
+            (503, refused.clone()),
+            "{case}: the save"
+        );
+        assert_eq!(
+            answer(&shared, read("one")),
+            (503, refused),
+            "{case}: the read"
+        );
+        // A browser loading one of its pages is told the same, as a page.
+        let mut page = asked("GET", "/tasks", None);
+        page.headers_mut()
+            .insert("sec-fetch-mode", "navigate".parse().unwrap());
+        let (status, said) = answer(&shared, page);
+        let said = said.as_str().unwrap_or_default().to_string();
+        assert_eq!(status, 503, "{case}: {said}");
+        assert!(
+            said.contains("does not serve this project now")
+                && said.contains(&symphony::markup::escape(&inner.hub.gone())),
+            "{case}: {said}"
+        );
+        assert_eq!(
+            outer_board.0.recorded(),
+            None,
+            "{case}: the outer board started"
+        );
+        assert_eq!(priority(), before, "{case}: the save wrote the outer board");
+        assert!(outer_board.0.stop().unwrap().is_some(), "{case}");
+    }
+}
+
+/// What a hub holds its folder to: there, and leading the board's lookup to the repository it led
+/// to when the hub was made. A folder removed, emptied, or left without its `.git` leads that
+/// lookup up into the checkout that holds it, and is held no more; a project's folder whose project
+/// file went is held, its `.git` still stopping the lookup there; so is a folder below a checkout's
+/// top, whose lookup always led up to it, the more so once it has a project file of its own, and a
+/// folder no repository holds, while it is there.
+#[test]
+fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_finds_its_repository() {
     let tree = Tree::new();
     let outer = repository_at(&tree, "outer");
     let hub = |root: &Path| Hub::new(root, &root.join("build/client"));
@@ -444,7 +583,13 @@ fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_stops_where_it_did() {
 
     let below = outer.join("docs");
     std::fs::create_dir_all(&below).unwrap();
-    assert!(hub(&below).holds_its_project(), "below the checkout's top");
+    let below_hub = hub(&below);
+    assert!(below_hub.holds_its_project(), "below the checkout's top");
+    std::fs::write(below.join("symphony.toml"), "[project]\nid = \"docs\"\n").unwrap();
+    assert!(
+        below_hub.holds_its_project(),
+        "below the checkout's top, with a project file of its own: the same repository"
+    );
 
     let plain = tree.path("plain");
     std::fs::create_dir_all(&plain).unwrap();

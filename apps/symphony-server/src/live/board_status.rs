@@ -83,15 +83,15 @@ impl Hub {
     }
 
     /// Whether the folder this hub reads still holds its project: it is there, and the board's
-    /// lookup from it, on the files alone ([`symphony_board::project::locate_quick`]), stops where
-    /// it stopped when the hub was made, in the same repository. A folder removed, emptied or left
-    /// without its `.git` leads that lookup up to whatever checkout holds it, whose board is
-    /// another repository's. A folder no repository held then is held while it is there.
+    /// lookup from it, on the files alone ([`symphony_board::project::locate_quick`]), finds the
+    /// repository it found when the hub was made, whose board is the project's. A folder removed,
+    /// emptied or left without its `.git` leads that lookup up to whatever checkout holds it, whose
+    /// board is another repository's. A folder no repository held then is held while it is there.
     pub(crate) fn holds_its_project(&self) -> bool {
         self.root.is_dir()
-            && self.place.as_ref().is_none_or(|(root, common)| {
+            && self.repository.as_ref().is_none_or(|repository| {
                 symphony_board::project::locate_quick(&self.root)
-                    .is_some_and(|now| &now.root == root && &now.common == common)
+                    .is_some_and(|now| &now.common == repository)
             })
     }
 
