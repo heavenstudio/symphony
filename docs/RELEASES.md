@@ -70,8 +70,8 @@ one, so the install line strips the symbol table itself, as the shipped binaries
 assume ([CHECKS](CHECKS.md#size-budgets)); no member carries a profile of its own, which Cargo
 would ignore with a warning on every build here. The server embeds its client at build time from
 its package's `client/public`, so an installed server serves it with no build of the client; its
-package carries every build that folder keeps, as it stands (8.0 MiB compressed today, of the
-10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
+package carries every build that folder keeps, as it stands (7.6 to 8.0 MiB compressed in
+November 2026, of the 10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
 to the newest build: no include list can name it, as the server's `Cargo.toml` is a release input,
 so a list that followed each build would move the next build's asset names.
 
