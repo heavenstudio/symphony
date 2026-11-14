@@ -583,7 +583,11 @@ fn a_plugin_command_is_measured_as_the_project_it_runs_in_says() {
     assert_eq!(run_line["call"], "run");
     assert_eq!(run_line["name"], "every");
     assert!(run_line.get("lost").is_none());
-    assert!(symphony::plugins::command("nobody", Some(&tree.root)).is_none());
+    // No plugin adds it, and none failed to say what it adds.
+    assert_eq!(
+        symphony::plugins::command("nobody", Some(&tree.root)).err(),
+        Some(Vec::new())
+    );
 }
 
 /// The environment variable naming the project the child of
@@ -668,6 +672,40 @@ fn the_two_settings_are_read_alone_and_any_file_they_cannot_be_read_from_turns_n
     assert!(std::ptr::addr_eq(command, own));
     let unmeasured = Plugins::new(vec![&EVERY]).measured(off, &tree.path("never.jsonl"));
     assert!(std::ptr::addr_eq(unmeasured.list()[0], &EVERY));
+}
+
+#[test]
+fn a_plugins_process_is_named_by_any_entry_of_its_table_and_a_file_it_cannot_be_read_from_names_none()
+ {
+    let tree = Tree::new();
+    let named = |file: &str| {
+        tree.write(symphony::project::FILE, file);
+        symphony::project::PluginProcess::named_at(&tree.root)
+    };
+    let none: Vec<String> = Vec::new();
+    assert_eq!(
+        symphony::project::PluginProcess::named_at(&tree.root),
+        none,
+        "no file"
+    );
+    assert_eq!(named(""), none);
+    assert_eq!(named("[plugins]\ntiming = true\n"), none);
+    assert_eq!(named("[plugins.process]\n"), none, "an empty table");
+    // Whatever an entry holds: the project reads and checks it, not this.
+    assert_eq!(
+        named("[project]\nlost = 1\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n"),
+        ["every"]
+    );
+    assert_eq!(
+        named("[plugins.process]\nevery = 3\nother = { a = [1, \"b\"] }\n"),
+        ["every", "other"]
+    );
+    assert_eq!(
+        named("[plugins.process\nevery = [\"p\"]\n"),
+        none,
+        "no parse"
+    );
+    assert_eq!(named("[plugins]\nprocess = 3\n"), none, "not a table");
 }
 
 /// Each `pub trait` of `source` and the methods it declares.
@@ -857,7 +895,10 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
             ),
         }
     }
-    // And every call of the protocol is a seam's method, and asked of the test plugin.
+    // And every call of the protocol is a seam's method, and asked of the test plugin; a batch
+    // carries its seam's calls, and only a host speaking to a process sends one.
+    let batches: BTreeSet<&str> = symphony_plugin::protocol::BATCHES.iter().copied().collect();
+    let calls: BTreeSet<&str> = calls.difference(&batches).copied().collect();
     for tag in &calls {
         let (seam, method) = tag.split_once('.').unwrap();
         if seam == "plugin" {

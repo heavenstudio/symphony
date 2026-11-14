@@ -751,19 +751,17 @@ fn ask_response(
     let rendered = threads
         .into_iter()
         .map(|thread| {
-            let mut ask: symphony_api::Ask =
-                serde_json::from_value(json!(thread)).expect("ask wire shape");
+            let mut ask = symphony_api::Ask::from(thread);
             for message in &mut ask.messages {
                 // An answer is an agent's Markdown; the owner's words stay literal but for the
                 // lines naming the files they attached.
-                let mut fragment: symphony_api::Fragment =
-                    serde_json::from_value(json!(match (message.kind == "answer", typed) {
+                let mut fragment =
+                    symphony_api::Fragment::from(match (message.kind == "answer", typed) {
                         (true, true) => render.typed_reply(&message.text, &ask.path),
                         (true, false) => render.reply(&message.text, &ask.path),
                         (false, true) => render.typed_owner(&message.text, &ask.path),
                         (false, false) => render.owner(&message.text, &ask.path),
-                    }))
-                    .expect("fragment wire shape");
+                    });
                 symphony::docview::prepare_fragment(
                     &mut fragment.html,
                     &mut fragment.media,

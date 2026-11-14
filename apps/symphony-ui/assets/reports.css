@@ -45,7 +45,12 @@
 .chart figcaption h3 { margin:0; font-size:var(--fs-md); }
 .chart-note { margin:2px 0 0; font-size:var(--fs-xs); color:var(--muted-foreground); }
 .chart-instead { margin:var(--sp-4) 0 0; font-size:var(--fs-sm); color:var(--muted-foreground); }
-.chart-legend { display:flex; flex-wrap:wrap; gap:2px 12px; margin:8px 0 0; padding:0; list-style:none; font-size:var(--fs-xs); color:var(--muted-foreground); }
+.chart-legend { display:flex; flex-wrap:wrap; gap:0 12px; margin:4px 0 0; padding:0; list-style:none; font-size:var(--fs-xs); color:var(--muted-foreground); }
+/* A legend's entry hides its series or shows it again: a hidden one struck through, its swatch faint. */
+.chart-key { display:inline-flex; align-items:center; min-height:24px; padding:0; border:0; background:none; color:inherit; font:inherit; cursor:pointer; border-radius:var(--r-sm); }
+.chart-key:hover { color:var(--foreground); }
+.chart-key[aria-pressed="false"] { text-decoration:line-through; }
+.chart-key[aria-pressed="false"] .swatch { opacity:.25; }
 .swatch { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:3px; background:var(--c); vertical-align:-1px; }
 .swatch.line { height:3px; width:14px; border-radius:2px; vertical-align:2px; }
 .chart-readout { min-height:3.1em; margin:8px 0 6px; font-size:var(--fs-xs); line-height:1.5; }

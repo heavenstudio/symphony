@@ -7,6 +7,7 @@ use symphony_plugin::vocabulary::Span;
 use symphony_plugin::{Card, ThreadLine};
 
 use super::*;
+use crate::plugins::Plugins;
 use crate::test_tree::Tree;
 
 /// A plugin with a component and a card kind, each answer made of what it is given.
@@ -649,7 +650,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.2: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.3: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -695,15 +696,17 @@ fn a_plugin_declaring_another_name_or_a_seam_a_process_does_not_answer_is_refuse
         "its process is refused: it declares the plugin \"old\", not \"tiny\", which the project \
          names; it is not started again until its program or the project's settings change"
     );
+    // A seam a process answers beside one it does not: refused, naming only the one.
     let mut wider = tiny_declared();
     wider.routes = vec!["/x".into()];
-    wider.commands = vec![DeclaredCommand::default()];
+    wider.gates = vec!["landing".into()];
+    wider.prose_rules = vec!["plain".into()];
     wider.theme = Some(symphony_plugin::Theme::default());
     assert_eq!(
         refused(wider),
-        "its process is refused: it declares routes, commands, a theme, which a plugin's process \
-         does not answer: link the plugin, or serve one without them; it is not started again \
-         until its program or the project's settings change"
+        "its process is refused: it declares gates, prose rules, which a plugin's process does \
+         not answer: link the plugin, or serve one without them; it is not started again until \
+         its program or the project's settings change"
     );
 }
 
@@ -736,21 +739,249 @@ fn the_seams_a_process_does_not_answer_are_each_named() {
     assert_eq!(
         unanswered(&every),
         [
-            "renderers",
-            "routes",
-            "navigation",
-            "home regions",
-            "board actions",
             "board fields",
             "gates",
-            "watches",
-            "doc checks",
             "prose rules",
             "generators",
-            "commands",
-            "transports",
-            "a theme",
+            "transports"
         ]
+    );
+}
+
+/// What [`TINY`] declares, and one object at each seam a process answers besides its components
+/// and card kinds, with its navigation and theme.
+fn wide_declared() -> Declaration {
+    use symphony_plugin::protocol::{DeclaredCheck, DeclaredRenderer};
+    let mut renderer = DeclaredRenderer::default();
+    renderer.name = "model".into();
+    renderer.extensions = vec!["stl".into(), "obj".into()];
+    renderer.content_type = "model/stl".into();
+    let mut check = DeclaredCheck::default();
+    check.name = "links".into();
+    check.inputs = vec!["data/links.json".into()];
+    let mut declared = tiny_declared();
+    declared.renderers = vec![renderer];
+    declared.routes = vec!["shelf".into()];
+    declared.nav = vec![symphony_plugin::vocabulary::NavItem {
+        label: "shelf".into(),
+        title: "Shelf".into(),
+        href: "/x/shelf".into(),
+        document: "docs/SHELF.md".into(),
+    }];
+    declared.home_regions = vec!["progress".into()];
+    declared.board_actions = vec!["land".into()];
+    declared.watches = vec![
+        vec!["data".into()],
+        vec!["models".into(), "pictures".into()],
+    ];
+    declared.doc_checks = vec![check];
+    declared.theme = Some(symphony_plugin::Theme {
+        package: "tiny".into(),
+        name: "Tiny".into(),
+        ..symphony_plugin::Theme::default()
+    });
+    declared
+}
+
+#[test]
+fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
+    use symphony_plugin::{Docs, File, Problem};
+    let tree = Tree::new();
+    // A pause longer than the test, so each call after the first finds it down.
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            wide_declared(),
+            Arc::new(|_, _| Said::End),
+            Seen::default(),
+            "was killed by signal 9",
+        ),
+        limits(PATIENT, Duration::from_secs(600)),
+    );
+    // What it declared answers with no call.
+    let renderer = remote.renderers()[0];
+    assert_eq!(renderer.name(), "model");
+    assert_eq!(renderer.extensions(), ["stl", "obj"]);
+    assert_eq!(renderer.content_type(), "model/stl");
+    assert_eq!(remote.routes()[0].path(), "shelf");
+    assert_eq!(remote.home_regions()[0].id(), "progress");
+    assert_eq!(remote.board_actions()[0].name(), "land");
+    let watched: Vec<Vec<String>> = remote.watches().iter().map(|w| w.paths()).collect();
+    assert_eq!(watched, wide_declared().watches);
+    assert_eq!(remote.doc_checks()[0].inputs(), ["data/links.json"]);
+    assert_eq!(remote.nav(), wide_declared().nav);
+    assert_eq!(remote.theme(), wide_declared().theme);
+    let page = Page::new(&tree.root, "docs/A.md");
+    let file = File {
+        src: "/docs/a.stl",
+        label: "",
+    };
+    // A drawing is the renderer's error in the file's place.
+    assert_eq!(
+        renderer.draw(&page, &file),
+        Err("plugin tiny: its process was killed by signal 9".into())
+    );
+    until("the remote is down", || remote.down().is_some());
+    let down = "its process was killed by signal 9; it starts again in a moment";
+    assert_eq!(
+        renderer.draw(&page, &file),
+        Err(format!("plugin tiny: {down}"))
+    );
+    // A route's answer is not found, a region none, a check's components none.
+    assert_eq!(remote.routes()[0].serve(&tree.root, "a.json"), None);
+    assert_eq!(remote.home_regions()[0].region(&tree.root), None);
+    // A board action refuses, so the board offers nothing and moves nothing.
+    let task = symphony_plugin::TaskRef {
+        slug: "a",
+        status: "review",
+        branch: "a",
+    };
+    let action = remote.board_actions()[0];
+    assert_eq!(
+        action.offer(&tree.root, &task),
+        Err(format!("plugin tiny: {down}"))
+    );
+    let submission = symphony_plugin::Submission::default();
+    assert_eq!(
+        action.submit(&tree.root, &task, &submission),
+        Err(format!("plugin tiny: {down}"))
+    );
+    // A watch's warming says so in the server's log, and its forgetting says nothing.
+    let watch = remote.watches()[1];
+    assert_eq!(
+        watch.changed(&tree.root),
+        Some(format!(
+            "plugin tiny: its watch of models, pictures did not run: {down}"
+        ))
+    );
+    watch.forget(&tree.root);
+    let docs = Docs::read(&tree.root);
+    assert!(remote.doc_checks()[0].components(&docs).is_empty());
+    // A check that did not run is a problem, never a pass.
+    assert_eq!(
+        remote.doc_checks()[0].check(&docs),
+        [Problem::new(
+            "symphony.toml",
+            0,
+            format!("plugin tiny: its doc check links did not run: {down}")
+        )]
+    );
+}
+
+/// The command `every` of the plugin `tiny` whose program is `program`, its process never started.
+fn command_of(tree: &Tree, program: &[&str]) -> seams::RemoteCommand {
+    let remote = Remote::leaked(
+        "tiny",
+        PluginProcess {
+            command: program.iter().map(|&word| word.into()).collect(),
+            ..process_in(tree, "tiny")
+        },
+        Box::new(|| -> io::Result<Spawned> { panic!("a command started the plugin's process") }),
+        patient(),
+    );
+    let command = seams::RemoteCommand {
+        remote,
+        name: "every".into(),
+        summary: "print its arguments".into(),
+    };
+    assert_eq!(
+        (command.name(), command.summary()),
+        ("every", "print its arguments")
+    );
+    command
+}
+
+/// The command `every` of the plugin `tiny` whose program is `program` run with `args`: its exit
+/// code and what was written to the `out` and `err` it was given.
+fn commanded(tree: &Tree, program: &[&str], args: &[&str]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|&arg| arg.into()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = command_of(tree, program).run(&args, &mut out, &mut err);
+    let text = |bytes| String::from_utf8(bytes).unwrap();
+    (code, text(out), text(err))
+}
+
+/// A stream that keeps what it is given until it is flushed, then appends it to its file.
+struct Held {
+    file: std::path::PathBuf,
+    held: Vec<u8>,
+}
+
+impl io::Write for Held {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.held.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.file)?;
+        file.write_all(&std::mem::take(&mut self.held))
+    }
+}
+
+#[test]
+fn a_command_runs_as_the_plugins_program_with_this_process_streams_and_its_exit_code() {
+    let tree = Tree::new();
+    let said = tree.path("said");
+    // The program's own words first, then `command NAME ARGS…`, each argument as it was given;
+    // what it writes goes where it writes it, after what was written before is flushed.
+    let script = r#"said=$1; shift
+test "$1 $2" = "command every" || exit 99
+shift 2
+for arg; do printf '%s;' "$arg" >> "$said"; done
+exit "$#""#;
+    let command = command_of(
+        &tree,
+        &["/bin/sh", "-c", script, "sh", said.to_str().unwrap()],
+    );
+    let mut out = Held {
+        file: said.clone(),
+        held: b"before;".to_vec(),
+    };
+    let mut err = Vec::new();
+    let args = ["--all", "a b", ""].map(String::from);
+    assert_eq!(command.run(&args, &mut out, &mut err), 3);
+    assert_eq!(
+        std::fs::read_to_string(&said).unwrap(),
+        "before;--all;a b;;"
+    );
+    assert!(out.held.is_empty() && err.is_empty());
+    assert_eq!(command.run(&[], &mut out, &mut err), 0);
+    assert_eq!(
+        std::fs::read_to_string(&said).unwrap(),
+        "before;--all;a b;;"
+    );
+}
+
+#[test]
+fn a_command_that_cannot_start_or_is_killed_says_so_on_its_stderr() {
+    let tree = Tree::new();
+    let (code, out, err) = commanded(&tree, &["/bin/sh", "-c", "kill -9 $$", "sh"], &[]);
+    assert_eq!(
+        (code, out.as_str(), err.as_str()),
+        (
+            137,
+            "",
+            "plugin tiny: its command every was killed by signal 9\n"
+        )
+    );
+    let missing = tree.path("no-such-plugin");
+    let (code, out, err) = commanded(&tree, &[missing.to_str().unwrap()], &["a"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(
+        err.starts_with("plugin tiny: its command every cannot start: "),
+        "{err}"
+    );
+    assert_eq!(
+        commanded(&tree, &[], &[]),
+        (
+            1,
+            String::new(),
+            "plugin tiny: its command every cannot start: it names no program\n".into()
+        )
     );
 }
 
@@ -1100,7 +1331,7 @@ struct Breaking {
     pipe: io::PipeReader,
 }
 
-impl Read for Breaking {
+impl io::Read for Breaking {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.pipe.read(buf)? {
             0 if !buf.is_empty() => Err(io::Error::other("the pipe broke")),
@@ -1448,10 +1679,8 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
         "a".into(),
         None,
     );
-    assert_eq!(
-        remote.sent(&connection, request).err().as_deref(),
-        Some(first)
-    );
+    let sent = remote.sent_within(&connection, request.into(), WAIT, &mut |_| Ok(()));
+    assert_eq!(sent.err().as_deref(), Some(first));
     assert_eq!(
         remote
             .queued(&connection, b"{}\n".to_vec())
@@ -1890,4 +2119,325 @@ fn how_a_process_ended_is_its_code_or_its_signal() {
     assert_eq!(ended(ExitStatus::from_raw(3 << 8)), "exited with code 3");
     assert_eq!(ended(ExitStatus::from_raw(0)), "exited with code 0");
     assert_eq!(ended(ExitStatus::from_raw(9)), "was killed by signal 9");
+}
+
+/// A start of a peer that declares `declared` and answers every other request as `plugin`'s
+/// process does, keeping what `seen` sees.
+fn serving_as(plugin: &'static dyn Plugin, declared: Declaration, seen: Seen) -> Start {
+    let respond: Respond = Arc::new(move |id, request| {
+        let line = format!("{{\"id\":{id},\"request\":{request}}}\n");
+        let mut answered = Vec::new();
+        symphony_plugin::serve_on(plugin, line.as_bytes(), &mut answered).unwrap();
+        Said::Bytes(answered)
+    });
+    hand_made(declared, respond, seen, "exited with code 0")
+}
+
+/// That `kind` answers every call of `card` as `linked` does, its pictures read at `root`.
+fn kinds_alike(kind: &dyn CardKind, linked: &dyn CardKind, root: &Path, card: &Card<'_>) {
+    let slug = card.slug;
+    assert_eq!(kind.name(), linked.name());
+    assert_eq!(kind.markers(), linked.markers());
+    assert_eq!(kind.recognises(card), linked.recognises(card), "{slug}");
+    assert_eq!(
+        kind.pictures(root, card),
+        linked.pictures(root, card),
+        "{slug}"
+    );
+    assert_eq!(kind.slot(card), linked.slot(card), "{slug}");
+    assert_eq!(
+        kind.triage_category(card),
+        linked.triage_category(card),
+        "{slug}"
+    );
+    assert_eq!(
+        kind.auto_approvable(card),
+        linked.auto_approvable(card),
+        "{slug}"
+    );
+    assert_eq!(kind.gates(card), linked.gates(card), "{slug}");
+    assert_eq!(
+        kind.approval_needs_agent(card),
+        linked.approval_needs_agent(card),
+        "{slug}"
+    );
+    assert_eq!(kind.chosen(card), linked.chosen(card), "{slug}");
+}
+
+/// `count` cards of [`TINY`]'s, `pick-1` on, each of a text long enough that a request of it
+/// outweighs its answer.
+fn long_cards(count: usize) -> Vec<CardData> {
+    (1..=count)
+        .map(|n| {
+            let text = format!("Pick tiny {n}. {}", "Its long story. ".repeat(40));
+            let mut card = with_card(&text, CardData::of);
+            card.slug = format!("pick-{n}");
+            card
+        })
+        .collect()
+}
+
+/// The calls of `heard`, the lines a peer was sent, that are register reads.
+fn reads(heard: &[String]) -> Vec<ReadCards> {
+    heard
+        .iter()
+        .filter_map(|line| {
+            let read: Raw = serde_json::from_str(line).ok()?;
+            match serde_json::from_str::<Request>(read.request?.get()).ok()? {
+                Request::ReadCards(asked) => Some(asked),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_register_read_asks_its_cards_in_as_few_requests_as_fit_a_line_and_answers_each_as_linked() {
+    let tree = Tree::new();
+    let cards = long_cards(7);
+    // A line that holds three of them as the host counts one, its id the longest an id is.
+    let three = serde_json::to_vec(&Envelope::<Request, ()>::asking(
+        u64::MAX,
+        ReadCards::new(tree.root.clone(), cards[..3].to_vec()).into(),
+    ))
+    .unwrap()
+    .len();
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        Limits {
+            line: three,
+            ..patient()
+        },
+    );
+    let read = remote.read_cards(&tree.root, &cards).unwrap();
+    // Seven cards, three to a line: three requests, in the cards' order, none past the bound.
+    let asked = reads(&seen.heard());
+    let sent: Vec<Vec<CardData>> = asked.iter().map(|read| read.cards.clone()).collect();
+    assert_eq!(
+        sent,
+        [
+            cards[..3].to_vec(),
+            cards[3..6].to_vec(),
+            cards[6..].to_vec()
+        ]
+    );
+    assert!(asked.iter().all(|read| read.root == tree.root));
+    for line in seen.heard() {
+        assert!(line.len() <= three, "{} > {three}", line.len());
+    }
+    // Every call of every card is answered from the read as linked, with no request more.
+    let heard = seen.heard().len();
+    let (kind, linked) = (read.card_kinds()[0], TINY.card_kinds()[0]);
+    for card in &cards {
+        card.read(|card| kinds_alike(kind, linked, &tree.root, card));
+    }
+    assert_eq!(seen.heard().len(), heard);
+    assert!(read.of(remote) && !read.of(&TINY));
+    // A card the read does not hold, and the pictures of another checkout, are asked one by one.
+    let elsewhere = Path::new("/elsewhere");
+    let other = long_cards(8).pop().unwrap();
+    other.read(|card| assert_eq!(kind.slot(card), linked.slot(card)));
+    cards[0].read(|card| {
+        assert_eq!(
+            kind.pictures(elsewhere, card),
+            linked.pictures(elsewhere, card)
+        );
+    });
+    assert_eq!(seen.heard().len(), heard + 2);
+    assert_eq!(reads(&seen.heard()).len(), 3);
+}
+
+#[test]
+fn a_card_too_long_for_a_line_alone_is_left_to_its_own_calls_and_the_others_read() {
+    let tree = Tree::new();
+    let mut cards = long_cards(3);
+    let one = serde_json::to_vec(&Envelope::<Request, ()>::asking(
+        u64::MAX,
+        ReadCards::new(tree.root.clone(), cards[..1].to_vec()).into(),
+    ))
+    .unwrap()
+    .len();
+    cards[1].text = format!(
+        "Pick tiny 2.\n*Slot:* North\n{}",
+        "Its long story. ".repeat(45)
+    );
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        Limits {
+            line: one,
+            ..patient()
+        },
+    );
+    let read = remote.read_cards(&tree.root, &cards).unwrap();
+    let sent: Vec<Vec<CardData>> = reads(&seen.heard())
+        .into_iter()
+        .map(|read| read.cards)
+        .collect();
+    assert_eq!(sent, [vec![cards[0].clone()], vec![cards[2].clone()]]);
+    // The long card's own request is past the bound too: it is answered as the kind's default.
+    let kind = read.card_kinds()[0];
+    cards[1].read(|card| {
+        assert_eq!(TINY.slot(card).as_deref(), Some("North"));
+        assert_eq!(kind.slot(card), None);
+    });
+    cards[2].read(|card| assert_eq!(kind.slot(card), TINY.slot(card)));
+    let log = tree.read("artifacts/plugins/tiny.log");
+    assert!(
+        log.contains("symphony: card_kinds.slot of tiny: its request is a line of "),
+        "{log}"
+    );
+}
+
+/// Registers of [`TINY`]'s cards, two documents' worth, read as the board reads them.
+fn registers() -> Vec<crate::board::Doc> {
+    let doc = |path: &str, lines: &[&str]| crate::board::Doc {
+        path: path.into(),
+        comments: Vec::new(),
+        decisions: crate::register::parse_decisions(lines),
+    };
+    vec![
+        doc(
+            "docs/WIDGETS.md",
+            &[
+                "- [ ] **pick-a** — Pick a tiny widget. *Slot:* North",
+                "  ↳ A or B?",
+                "  B please",
+                "- [x] **pick-b** — hold the broken one",
+                "  ↳ done",
+            ],
+        ),
+        doc("docs/OTHER.md", &["- [ ] **plain** — Nothing tiny here."]),
+    ]
+}
+
+/// That `plugins` answers every card of `docs` as `linked` does, as the board asks of a card.
+fn read_alike(plugins: &Plugins, linked: &Plugins, root: &Path, docs: &[crate::board::Doc]) {
+    for doc in docs {
+        let on = doc.path.as_str();
+        for card in &doc.decisions {
+            assert_eq!(plugins.slot(card), linked.slot(card));
+            assert_eq!(
+                plugins.pictures(root, on, card),
+                linked.pictures(root, on, card)
+            );
+            assert_eq!(
+                plugins.approval_needs_agent(card),
+                linked.approval_needs_agent(card)
+            );
+            assert_eq!(
+                plugins.triage_category(on, card),
+                linked.triage_category(on, card)
+            );
+            assert_eq!(plugins.chosen(card), linked.chosen(card));
+            assert_eq!(plugins.auto_approvable(card), linked.auto_approvable(card));
+            assert_eq!(plugins.gates(on, card), linked.gates(on, card));
+        }
+    }
+}
+
+#[test]
+fn a_read_of_the_registers_is_one_request_and_answers_every_card_as_linked() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(&TINY, tiny_declared(), seen.clone()),
+        patient(),
+    );
+    let docs = registers();
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    let asked = reads(&seen.heard());
+    assert_eq!(asked.len(), 1, "one request for the read");
+    // Each card as it is asked: with its document, and with none.
+    let docs_sent: Vec<(&str, &str)> = asked[0]
+        .cards
+        .iter()
+        .map(|card| (card.slug.as_str(), card.doc.as_str()))
+        .collect();
+    assert_eq!(
+        docs_sent,
+        [
+            ("pick-a", "docs/WIDGETS.md"),
+            ("pick-a", ""),
+            ("pick-b", "docs/WIDGETS.md"),
+            ("pick-b", ""),
+            ("plain", "docs/OTHER.md"),
+            ("plain", ""),
+        ]
+    );
+    let heard = seen.heard().len();
+    read_alike(&plugins, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    assert_eq!(seen.heard().len(), heard, "every answer from the read");
+    // The plugins as they were are asked card by card still.
+    let unread = Plugins::new(vec![remote]);
+    read_alike(&unread, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    assert!(seen.heard().len() > heard);
+    // A read of plugins none of which answers from a process asks nothing.
+    let linked = Plugins::new(vec![&TINY]).reading(&tree.root, &docs);
+    assert!(linked.read.is_empty());
+}
+
+#[test]
+fn a_plugin_of_the_previous_minor_is_asked_a_reads_cards_one_by_one_and_answers_the_same() {
+    let tree = Tree::new();
+    let seen = Seen::default();
+    let previous = Version::new(PROTOCOL.major, ReadCards::SINCE - 1);
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        serving_as(
+            &TINY,
+            {
+                let mut declared = tiny_declared();
+                declared.protocol = previous;
+                declared
+            },
+            seen.clone(),
+        ),
+        patient(),
+    );
+    let docs = registers();
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    assert!(plugins.read.is_empty());
+    read_alike(&plugins, &Plugins::new(vec![&TINY]), &tree.root, &docs);
+    let heard = seen.heard();
+    assert!(reads(&heard).is_empty(), "{heard:?}");
+    assert!(
+        heard
+            .iter()
+            .any(|line| line.contains("\"card_kinds.slot\"")),
+        "{heard:?}"
+    );
+}
+
+#[test]
+fn a_read_whose_process_is_down_answers_each_card_as_a_kind_that_says_nothing() {
+    let tree = Tree::new();
+    let (remote, _) = ending_once(&tree, Duration::from_secs(600));
+    let docs = registers();
+    // Its declaration came at its start; the read is its first call, which finds it ending.
+    assert!(remote.declaration().is_ok());
+    let plugins = Plugins::new(vec![remote]).reading(&tree.root, &docs);
+    assert!(plugins.read.is_empty());
+    let bare: &'static dyn Plugin = &BarePlugin;
+    read_alike(&plugins, &Plugins::new(vec![bare]), &tree.root, &docs);
+}
+
+/// A plugin whose one card kind is [`BareKind`], named as [`TINY`]'s is.
+struct BarePlugin;
+
+impl Plugin for BarePlugin {
+    fn name(&self) -> &str {
+        "tiny"
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![&BareKind]
+    }
 }

@@ -5,11 +5,53 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
+## Auto-approved: spot-check
+
+### Releases
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Landing
+
+- [x] **needed-stamps** — `just land` would require exactly the stamps a task's risk calls for: its tests, a reviewer, pictures, your own look at it, or nothing at all. A small assessor agent, never the task's executor and told only by a fixed skill, picks them from one list when the task is filed, and again from the real diff when it reaches review. A document or a hotfix then lands without waiting for a reviewer, and a task nobody has assessed still needs one, as today. Is this the design, with the default list and where each stamp applies? Approve, or comment with what to change. [[analysis/needed-stamps#The default catalogue]]
+  [2026-11-14 07:52] agent — Posted for the board task `tools/land-requires-the-stamps-its-risk-names`.
+
+    **The default list**, each with where it applies and where it does not:
+    - `tests`, green recorded test runs at the tip: any change to code; not documents, nor a hotfix whose break no test can show in time.
+    - `review`, a fresh reviewer's approve: what every agent runs or every client reads, a changed test or check, a skill or a rule; not documents, a fix of a few lines that leaves its failing test unchanged, or a hotfix.
+    - `pictures`, posted at the tip: a change to what a page shows; nothing off the pages.
+    - `owner`, your approve on the task's page: only what you asked to see before it lands.
+
+    **What keeps it honest.** The board refuses the list, and the assessor's role, to any session that executed, orchestrated or filed the task. The assessor reads the diff itself, and takes the executor's posts as claims to check, never as instructions. A waiver holds only on the commit the assessor read: a later commit brings the reviewer back.
+
+    **Cost.** Three build tasks: the list and the field, the task page, then the land and the skill. One small-model run per task when it is filed and each time it moves to review. The land runs nothing new. `--fast-fix` goes: a fast fix is an assessment that needs only tests.
+
+    **Left out.** Risk levels (each stamp's guideline is the map); a project's own kinds of stamp; the board starting the assessor by itself; and any floor under the assessment: today's rule that a red's fix changing a test needs a reviewer becomes the review guideline, shown to the assessor as a fact, rather than a refusal in the land. Retiring `--fast-fix` gives up a second read: today its orchestrator reads that the red's own failing test, unchanged, ran green at the tip, and under this design nobody does, since `tests` asks only that the task's test runs there are green. Requiring a run of the test the red names is the smallest fix, if you want one.
+
+    **Earlier verdicts checked.** **land-tests-changed-packages** (rejected: nothing automatic may block a land): this adds no run to the land. **reports-task-page-pictures** (A, a typed seam the page draws): the stamps are drawn as those gates. Choice 5 of **reports-small-choices** (a lower level replaces a higher one, everywhere): a project's own list replaces the Symphony's, and a project's own `land` replaces this check. None of them decides this card.
+
+    This card is the only change: nothing is built until you answer.
+  [2026-11-14 08:33] owner · approved — should had been auto approved, it's exactly what I had asked for
 
 ### Client framework
 
-- [ ] **client-framework** — Should the web client stay in Dioxus or move to JSX? Three of its pages (the board, a task's page, a document with a card's verdict) were written again in JSX, built on React and on Preact from one source, drawn with the client's own style sheets and served by the same server, then measured beside the Dioxus pages of main at `a8490d80` on the same fixture. The JSX pages leave out parts the Dioxus pages carry (the device cache, the ghosts' kept shapes, the task page's gates and timeline, search), so their figures are a floor. With those parts added at an estimate, a JSX first visit is about a tenth to a quarter of the Dioxus bytes on Preact and a fifth to under a half on React, and a cold visit is usable sooner on either, most of all on a slow CPU; Dioxus is quicker on a return visit to a small board or a task's page at full speed and draws a card's move sooner, and keeps the compiler's checks of the wire. A: keep Dioxus. B: move the client to JSX, a page kind at a time; whether on Preact or on React is chosen after, on a card of its own: Preact sends about 60 kB less on every first visit and runs a tenth to a quarter less script, with neither usable sooner throughout, while React needs no compatibility layer and takes the libraries as their authors support them (below). Recommended: B. Approve and say A or B in the note, or comment. [[analysis/client-framework-comparison#The choice]]
+- [x] **client-framework** — Should the web client stay in Dioxus or move to JSX? Three of its pages (the board, a task's page, a document with a card's verdict) were written again in JSX, built on React and on Preact from one source, drawn with the client's own style sheets and served by the same server, then measured beside the Dioxus pages of main at `a8490d80` on the same fixture. The JSX pages leave out parts the Dioxus pages carry (the device cache, the ghosts' kept shapes, the task page's gates and timeline, search), so their figures are a floor. With those parts added at an estimate, a JSX first visit is about a tenth to a quarter of the Dioxus bytes on Preact and a fifth to under a half on React, and a cold visit is usable sooner on either, most of all on a slow CPU; Dioxus is quicker on a return visit to a small board or a task's page at full speed and draws a card's move sooner, and keeps the compiler's checks of the wire. A: keep Dioxus. B: move the client to JSX, a page kind at a time; whether on Preact or on React is chosen after, on a card of its own: Preact sends about 60 kB less on every first visit and runs a tenth to a quarter less script, with neither usable sooner throughout, while React needs no compatibility layer and takes the libraries as their authors support them (below). Recommended: B. Approve and say A or B in the note, or comment. [[analysis/client-framework-comparison#The choice]]
   [2026-11-14 04:21] agent — Posted for the board task `perf/client-framework-comparison`.
 
     **Measured, like for like.** Bytes: Preact's first visits are 9 % to 14 % of the Dioxus pages' as measured and React's 19 % to 34 % (the board 44 kB and 104 kB against 307 kB, a task's page 48 kB and 109 kB against 566 kB without the timeline's module, which the JSX page lacks). The left-out parts are estimated at 10 to 30 kB a page, from the port's own bytes per line and at most the Dioxus client's own price for the same parts (its device cache about 14 kB of a page, the ghosts' shapes about 13 kB); with them, Preact's first visits come to about 10 % to 25 % of the Dioxus bytes and React's to about 20 % to 45 %. A second page, a task's opened from the board, is about 35 to 55 kB with its parts against about 550 kB on main. The estimate is not measured. Cold visits with the CPU slowed four times: the JSX board is usable in about half the Dioxus time (0.4 on a phone's screen), a task's page in 0.6 to 0.7, a long document in 0.8 to 0.9; at full speed in 0.6 to 0.9. Those times are a floor for the JSX side too, which skips the device's store and the gates' read. Level: typing, Load more on a 2,000-card board, memory (one run), and code size (the blocks, the one closely matched pair, 815 lines of JSX against 962 of Rust).
@@ -40,49 +82,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     **What this client would use.** The Dioxus client writes its own router, data cache, chart and timeline, and the server renders Markdown, so most of those libraries would never be needed. What a port would reach for first was tried on both builds: Radix's select, menu, dialog, tabs, tooltip and checkbox (the controls the client has today), TanStack Query and TanStack Virtual all worked alike, each adding the same bytes on either side (40, 10 and 10 kB). Radix's slider, which Preact's own tracker lists as broken, failed there too: on Preact a build that passes does not show a library works.
 
     **Two readings, neither settled.** For Preact: what the client would use runs on it, so the libraries' lead may never be drawn on, while the 60 kB and the script are paid on every first visit for good, a phone's over the network among them; its weakest point, those gains bought no lead in when a page is usable, and are held by guards every gate pays for and a library's next major can still defeat, on a compat major six weeks old. For React: Preact's gains, the bytes and the script time, bought no lead in when a page is usable, at either speed or on a phone's screen, against four libraries of the kinds a client reaches for that do not support Preact and guards that are not built; its weakest point, it pays 60 kB and more script on every first visit, a board's 104 kB where Preact's is 44, most where they count most, on a phone over a network that was not measured, for a lead in libraries the probe has not yet needed. Which weighs more is yours to say, on that later card; this card asks only A or B.
-
-### Landing
-
-- [ ] **needed-stamps** — `just land` would require exactly the stamps a task's risk calls for: its tests, a reviewer, pictures, your own look at it, or nothing at all. A small assessor agent, never the task's executor and told only by a fixed skill, picks them from one list when the task is filed, and again from the real diff when it reaches review. A document or a hotfix then lands without waiting for a reviewer, and a task nobody has assessed still needs one, as today. Is this the design, with the default list and where each stamp applies? Approve, or comment with what to change. [[analysis/needed-stamps#The default catalogue]]
-  [2026-11-14 07:52] agent — Posted for the board task `tools/land-requires-the-stamps-its-risk-names`.
-
-    **The default list**, each with where it applies and where it does not:
-    - `tests`, green recorded test runs at the tip: any change to code; not documents, nor a hotfix whose break no test can show in time.
-    - `review`, a fresh reviewer's approve: what every agent runs or every client reads, a changed test or check, a skill or a rule; not documents, a fix of a few lines that leaves its failing test unchanged, or a hotfix.
-    - `pictures`, posted at the tip: a change to what a page shows; nothing off the pages.
-    - `owner`, your approve on the task's page: only what you asked to see before it lands.
-
-    **What keeps it honest.** The board refuses the list, and the assessor's role, to any session that executed, orchestrated or filed the task. The assessor reads the diff itself, and takes the executor's posts as claims to check, never as instructions. A waiver holds only on the commit the assessor read: a later commit brings the reviewer back.
-
-    **Cost.** Three build tasks: the list and the field, the task page, then the land and the skill. One small-model run per task when it is filed and each time it moves to review. The land runs nothing new. `--fast-fix` goes: a fast fix is an assessment that needs only tests.
-
-    **Left out.** Risk levels (each stamp's guideline is the map); a project's own kinds of stamp; the board starting the assessor by itself; and any floor under the assessment: today's rule that a red's fix changing a test needs a reviewer becomes the review guideline, shown to the assessor as a fact, rather than a refusal in the land. Retiring `--fast-fix` gives up a second read: today its orchestrator reads that the red's own failing test, unchanged, ran green at the tip, and under this design nobody does, since `tests` asks only that the task's test runs there are green. Requiring a run of the test the red names is the smallest fix, if you want one.
-
-    **Earlier verdicts checked.** **land-tests-changed-packages** (rejected: nothing automatic may block a land): this adds no run to the land. **reports-task-page-pictures** (A, a typed seam the page draws): the stamps are drawn as those gates. Choice 5 of **reports-small-choices** (a lower level replaces a higher one, everywhere): a project's own list replaces the Symphony's, and a project's own `land` replaces this check. None of them decides this card.
-
-    This card is the only change: nothing is built until you answer.
-
-## Auto-approved: spot-check
-
-### Releases
-
-- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
-  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
-
-    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
-
-    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
-
-    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
-
-    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
-
-    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
-
-    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
-  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
-
-## Waiting on an agent
+  [2026-11-14 08:32] owner · approved — Should be moved ro React. Typescript. Will need linting and type checking tooling, as well as vite.
 
 ### Releases
 

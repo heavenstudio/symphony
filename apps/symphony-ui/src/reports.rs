@@ -17,7 +17,7 @@ use symphony_api::report_page::{Grain, ReportMark};
 mod chart;
 pub use chart::{
     Axis, ChartCard, ChartData, Mark, Scale, Segment, SeriesData, Unit, coverage, ghost_chart,
-    runs, segments, shown,
+    runs, segments, series_key, shown,
 };
 use chart::{float, short};
 
@@ -490,8 +490,9 @@ const SECTIONS: [(&str, &[Spec]); 5] = [
     ),
 ];
 
-/// Every section's heading and its charts, ready to draw, out of `page`.
-pub fn charts(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
+/// Every section's heading and its charts, ready to draw, out of `page`, each series `hidden` names
+/// by its key ([`series_key`]) hidden on its own chart alone.
+pub fn charts(page: &Page, hidden: &[String]) -> Vec<(&'static str, Vec<ChartData>)> {
     let per = page.grain.word();
     SECTIONS
         .iter()
@@ -510,6 +511,7 @@ pub fn charts(page: &Page) -> Vec<(&'static str, Vec<ChartData>)> {
                             name: series.name,
                             mark: series.mark,
                             values: page.buckets.iter().map(|b| series.pick.of(b)).collect(),
+                            hidden: hidden.contains(&series_key(spec.id, series.name)),
                         })
                         .collect(),
                     cover: page
@@ -799,14 +801,18 @@ pub fn first_roll_up(page: &Page) -> String {
 }
 
 /// The page under its header: the window's controls, its four figures, the settings changes and
-/// the charts, or the ghost of them while the first answer is on its way.
+/// the charts, or the ghost of them while the first answer is on its way. `hidden` names the
+/// series hidden by their keys ([`series_key`]), and `ontoggle` takes the key of the one a legend's
+/// button hides or shows again.
 #[component]
 pub fn ReportsView(
     grain: Grain,
     days: u32,
     page: Option<Page>,
     #[props(default)] error: Option<String>,
+    #[props(default)] hidden: Vec<String>,
     onask: EventHandler<(Grain, u32)>,
+    #[props(default)] ontoggle: EventHandler<String>,
 ) -> Element {
     std::hint::black_box(&STYLE);
     let busy = page
@@ -834,7 +840,7 @@ pub fn ReportsView(
             match page {
                 None => ghost_reports(),
                 // A new window is a new axis: the period tapped on the last one means nothing on it.
-                Some(page) => rsx! { Report { key: "{page.grain.word()}-{page.days}-{page.from}", page } },
+                Some(page) => rsx! { Report { key: "{page.grain.word()}-{page.days}-{page.from}", page, hidden, ontoggle } },
             }
         }
     }
@@ -870,15 +876,16 @@ fn controls(grain: Grain, days: u32, onask: EventHandler<(Grain, u32)>) -> Eleme
 }
 
 /// One window's report, its axis from the first period recorded or the roll-up's start
-/// ([`from_first_record`]). The period tapped is the same on every chart.
+/// ([`from_first_record`]). The period tapped is the same on every chart; the series `hidden`
+/// names are hidden on theirs.
 #[component]
-fn Report(page: Page) -> Element {
+fn Report(page: Page, hidden: Vec<String>, ontoggle: EventHandler<String>) -> Element {
     let page = from_first_record(page);
     let mut tapped = use_signal(|| None::<usize>);
     let selected = tapped();
     let figures = figures(&page);
     let axis = axis(&page);
-    let charts = charts(&page);
+    let charts = charts(&page, &hidden);
     let drawn = recorded(&page);
     let unread = page.unread.len();
     let files = crate::words::plural(u32::try_from(unread).unwrap_or(u32::MAX), "file");
@@ -917,7 +924,7 @@ fn Report(page: Page) -> Element {
                     div { class: "reports-charts",
                         for chart in section {
                             crate::viewport::NearViewport { key: "{chart.id}", height: 330, class: "chart-slot", ghost: ghost_chart(),
-                                ChartCard { chart, axis: axis.clone(), selected, onselect: move |at| tapped.set(Some(at)) }
+                                ChartCard { chart, axis: axis.clone(), selected, onselect: move |at| tapped.set(Some(at)), ontoggle }
                             }
                         }
                     }
@@ -947,11 +954,19 @@ fn ghost_reports() -> Element {
     }
 }
 
-/// The page's grain and window as this browser last chose them, else a fortnight by the day.
+/// The window the page opens on while this browser has chosen none: the last 24 hours, by the hour.
+pub const FIRST_WINDOW: (Grain, u32) = (Grain::Hour, 1);
+
+/// Where this browser keeps the series it hid, a key ([`series_key`]) a line, beside the window
+/// (`reports-grain`, `reports-days`), each under the page's project ([`crate::project::stored`]).
+pub const HIDDEN: &str = "reports-hidden";
+
+/// The page's grain and window as this browser last chose them, else [`FIRST_WINDOW`]; a window
+/// the grain does not offer is its grain's default.
 pub fn chosen(load: impl Fn(&str) -> Option<String>) -> (Grain, u32) {
-    let grain = load("reports-grain")
-        .and_then(|word| Grain::parse(&word))
-        .unwrap_or_default();
+    let Some(grain) = load("reports-grain").and_then(|word| Grain::parse(&word)) else {
+        return FIRST_WINDOW;
+    };
     let days = load("reports-days")
         .and_then(|days| days.parse().ok())
         .filter(|days| ranges(grain).contains(days))
@@ -959,15 +974,40 @@ pub fn chosen(load: impl Fn(&str) -> Option<String>) -> (Grain, u32) {
     (grain, days)
 }
 
+/// The series this browser hid, by their keys, as [`HIDDEN`] keeps them; none where it keeps none.
+pub fn hidden_series(load: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    load(HIDDEN)
+        .map(|kept| {
+            kept.lines()
+                .filter(|key| !key.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `hidden` with the series `key` shown again where it was hidden, else hidden.
+pub fn toggle(mut hidden: Vec<String>, key: String) -> Vec<String> {
+    match hidden.iter().position(|kept| *kept == key) {
+        Some(at) => {
+            hidden.remove(at);
+        }
+        None => hidden.push(key),
+    }
+    hidden
+}
+
 /// The page, its read and its window: the window this browser last chose, read at once, again
 /// whenever another is chosen, and every five minutes while the page is open, naming the copy
 /// shown so an hour no file changed in answers `304`. A read that fails keeps what is shown and
-/// says why.
+/// says why. The series this browser hid stay hidden in every window, and each hidden or shown
+/// again is kept at once.
 #[cfg(all(target_arch = "wasm32", feature = "page-tasks"))]
 #[component]
 pub fn ReportsRoute() -> Element {
     use crate::request::{self, Answer};
     let mut window = use_signal(|| chosen(|key| crate::platform::current().load(key)));
+    let mut hidden = use_signal(|| hidden_series(|key| crate::platform::current().load(key)));
     let mut page = use_signal(|| None::<Page>);
     let mut error = use_signal(|| None::<String>);
     let mut etag = use_signal(String::new);
@@ -1012,13 +1052,18 @@ pub fn ReportsRoute() -> Element {
     let (grain, days) = window();
     rsx! {
         main { class: "reports-page",
-            ReportsView { grain, days, page: page(), error: error(),
+            ReportsView { grain, days, page: page(), error: error(), hidden: hidden(),
                 onask: move |(grain, days): (Grain, u32)| {
                     let platform = crate::platform::current();
                     platform.save("reports-grain", grain.word());
                     platform.save("reports-days", &days.to_string());
                     etag.set(String::new());
                     window.set((grain, days));
+                },
+                ontoggle: move |key: String| {
+                    let next = toggle(hidden(), key);
+                    crate::platform::current().save(HIDDEN, &next.join("\n"));
+                    hidden.set(next);
                 }
             }
         }

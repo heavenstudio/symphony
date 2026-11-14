@@ -75,10 +75,8 @@ checkout's file names no command for the plugin, the branch's page has the linke
 none linked, none. A command a branch writes in its own `[plugins.process]` takes effect once it
 lands.
 
-Card kinds from a process cost about eight round trips per card for each read of the register (one
-for each call a card kind answers of a card), until the register's reads are batched into one request
-a read. No consumer turns `[plugins.process]` on for a plugin with card kinds before then;
-components cost one round trip each.
+A component's call costs one round trip, and a register read one request for all its cards
+([below](#card-kinds-in-one-request)), not a round trip for each call of each card.
 
 A plugin's binary is its `main` calling the SDK with the plugin it links:
 
@@ -88,16 +86,29 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-What answers from a process here is a plugin's components and its card kinds. Its other seams
-(renderers, routes, home regions, board actions and fields, gates, watches, doc checks, prose rules,
-generators, commands, transports, navigation and theme) are not asked of a process: a plugin that
-declares any of them is refused under `[plugins.process]`, naming them, rather than losing them
-without a word, and stays a linked plugin's to answer. So is a plugin that declares another name
-than the one `[plugins.process]` gives it.
+What answers from a process here is a plugin's components, card kinds, renderers, routes, home
+regions, board actions, watches and doc checks, each call a request on the pipe; its commands, each
+run as its program ([below](#its-commands)); and its navigation and theme, which its declaration
+holds and which cost no call. A project that loads starts its plugins' processes for their
+declarations, as its navigation is among the routes an entrypoint's files must not meet. An
+entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
+type only a process could handle, and whose process cannot say its renderers, is refused, naming
+why and the plugin's log. A server serves a project refused with the defaults, and every page of it
+says so and why until it loads. While that refusal is a process that has not declared (its program
+missing, or slow to declare when the server starts), the project is read again a second after each
+read that failed (the process's pause), one read at a time on a thread of its own: every reader
+keeps the defaults meanwhile, and none waits on the process. Once the process declares, the project
+is served as its file says, with no change to the file. A command of such a project says why it is
+not known ([below](#its-commands)). Its other seams (board fields, gates, prose rules, generators
+and transports) are not asked of a process: a plugin that declares any of them is refused under
+`[plugins.process]`, naming them, rather than losing them without a word, and stays a linked
+plugin's to answer. Each is answered from a process once a plugin first declares it from one. So is
+a plugin refused that declares another name than the one `[plugins.process]` gives it.
 
 ## Its process
 
-The host starts a plugin's process at the first call made of it: in the project's checkout, without
+The host starts a plugin's process when it first needs what the plugin declared (a project's load
+reads its navigation) or a call of it: in the project's checkout, without
 the session that started the host, its stdin and stdout the protocol's, each line of its stderr
 appended to its log, `plugins/NAME.log` in the project's artifacts folder (`artifacts/` unless
 `[project] artifacts` names another); a stderr line longer than 4096 bytes goes in pieces. The host
@@ -135,14 +146,68 @@ its first start stands for it until the host ends: a declaration that changed is
 
 A call that has no answer (the process down or restarting, no answer in time, a refusal, an answer
 that does not read) is shown where its answer would go: a component's in its place on the page, as
-`⚠ plugin NAME: its process 4242 was killed by signal 9; it starts again in a moment`, and a card
-kind's as the kind's default, as if the plugin said nothing of the card.
+`⚠ plugin NAME: its process 4242 was killed by signal 9; it starts again in a moment`, a
+renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
+the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
+in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
+action's error is shown, and a submission refused moves nothing. A watch that did not warm says so
+in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A doc
+check that did not run is a problem of the project file naming the plugin and the check, so
+`symphony status --lint` fails rather than passes, and names no component. A call that had no
+answer fails alone: the calls after it start the process again once its pause is over.
 
-A plugin's commands do not go on the pipe, and the host does not run them: `symphony NAME ARGS…`
-runs a linked plugin's command alone, so a plugin with commands is refused under
-`[plugins.process]`. The SDK's binary still runs one for whoever starts it as `PROGRAM command NAME
-ARGS…`, with streams of its own and the command's exit code as its own (its low byte, as an exit
-status holds it). `commands.run` is the loopback's alone.
+## Its commands
+
+A plugin's commands do not go on the pipe. `symphony NAME ARGS…`, run in a project whose plugin
+answers from a process and declared the command `NAME`, runs the plugin's program alone as `PROGRAM
+… command NAME ARGS…`, the words `[plugins.process]` gives it first: in the folder `symphony` runs
+in, without the session, with `symphony`'s own stdin, stdout and stderr, which the program writes to
+itself once what `symphony` wrote before is flushed, and its exit code `symphony`'s, which the SDK's
+`serve` gives as the command's (its low byte, as an exit status holds it). A program killed exits
+128 and the signal's number, and one that no longer starts (its file gone since it declared) exits
+1, each saying so on stderr (`plugin NAME: its command C was killed by signal 9`). Running the
+command is no call: it waits on no process of the pipe's, copies no stream and is not measured.
+`symphony help` lists the commands the project's processes declared, each once, before those of the
+plugins linked in the binary; a linked plugin that the project's file gives a process adds none,
+even while that process does not start, so a copy built into the binary never stands in for the
+project's own. The project is found and its plugins started only when its file names a
+`[plugins.process]`, read alone and quietly first; in a project with none, `symphony NAME` runs a
+linked plugin's command with no project loaded or checked. `commands.run` is the loopback's alone.
+
+A command is known by the plugin's declaration, so `symphony NAME` and `symphony help` start each
+process of the project for it. While one cannot start or declare, its commands are not known:
+`symphony NAME` of a name nothing else adds says on stderr which plugin's process failed, why and
+where its log is, then that the command is unknown, and exits 1 (2 when no process failed):
+
+```text
+symphony: the plugin shelf's process failed, so its commands are not known: /p/bin/shelf-plugin cannot start: No such file or directory (os error 2) (its log: /p/artifacts/plugins/shelf.log)
+symphony: unknown command "render-models" (`just symphony-cli help` lists them)
+```
+
+`symphony help` lists the commands there are and then the same line for each such plugin, and
+`symphony help NAME` refuses such a name as `symphony NAME` does. A project that does not load
+because of such a process (an entrypoint whose renderer it was to declare) has the defaults and so
+no plugin: its first line is `the project does not load, so its plugins' commands are not known:`
+and why, its log named, and a linked copy of a plugin its `[plugins.process]` names still answers
+for none of its commands.
+
+## Card kinds in one request
+
+A card kind answers eight calls of a card, and a read of the registers asks them of every card: the
+board's snapshot, `symphony status`, triage and the postponed queue. From a process, a read asks
+them in one request, `card_kinds.read` (0.3): the read's cards, each as the read asks it (with its
+document, and with none, as a card's slot, choice and thread are asked), and the answer, for each
+card, each kind's eight answers in the plugin's order (`KindAnswers`), the pictures read in the
+checkout the request names. The cards go in as many requests as keep each line within the 16 MiB
+bound, a card too long for a line alone asked card by card. The read's answers stand for that read
+alone: a card it did not hold, a request that had no answer, an answer that does not hold one entry
+for each card, and a plugin of 0.2, which has no batch, are asked card by card. A panic in any
+kind's call refuses the request whole, and its cards are asked card by card.
+
+What it saves, counted: card by card, a read asks each of the eight calls of each card as a round
+trip of its own; in one request, a register of 500 cards is one request of 1,000 entries (each card
+with its document and with none), 206 KB asked and 410 KB answered, well within a line. What the
+three reads cost in time is the second test of [Measured](#measured), taken as that section says.
 
 ## The line
 
@@ -186,19 +251,20 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":2}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":3}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.2.
+process is killed and not started again until its program changes. The protocol is 0.3.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
 as for a plugin that does not implement that method, and a call the seam requires (a component's
-`render`) is shown failed, naming the protocol the plugin speaks. Every call is 0.1's. 0.2 hands a
-page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts` unless
-`[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads as
-`artifacts` from a host of 0.1.
+`render`) is shown failed, naming the protocol the plugin speaks. Every call but one is 0.1's. 0.2
+hands a page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts`
+unless `[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads
+as `artifacts` from a host of 0.1. 0.3 adds `card_kinds.read`, a register read's card kinds in one
+request: a plugin of 0.2 is asked them card by card, and answers the same.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
@@ -206,9 +272,10 @@ page its project's artifacts folder (`artifacts` in its page, the checkout's `ar
   `views`, a page's `render` or `artifacts`). A new field comes with a default, or with a new major.
   So that such a field is a new minor of the kit's crates too, every struct of
   `symphony_plugin::protocol` is `#[non_exhaustive]` and is made by its constructors, never by its
-  fields: a request by its `new`; a page, a card, a task, a file or a problem by its `of`; a
-  declaration, and what it lists, by its `of` from a plugin (or from its `Default`, its fields set
-  after); a version by its `new`; a line by `Envelope::asking`, `cancelling` or `answering`. A
+  fields: a request by its `new`; a page, a card, a task, a file or a problem by its `of`; a kind's
+  answers of a card (`KindAnswers`) by its `of` from the kind; a declaration, and what it lists, by
+  its `of` from a plugin (or from its `Default`, its fields set after); a version by its `new`; a
+  line by `Envelope::asking`, `cancelling` or `answering`. A
   request's `new` takes every field its call has, so a field added to a call's own changes it: no
   call has a field a later minor added yet, and the first gives `calls!` a group of fields after
   the call's own that `new` leaves out and fills with their defaults, set on the request after.
@@ -257,18 +324,21 @@ Under `[plugins] timing` or `loopback` ([PLUGIN_CALLS](PLUGIN_CALLS.md)) each ca
 process writes its line to the project's record, `path` `process`: `us` the plugin's own time as it
 says it (its JSON both ways and the call), `round_trip_us` the host's whole wait (its line built
 and written, the answer read back), the two lines' bytes, and `failed` with why when the call had
-no answer. The declaration is the start's and is not recorded.
+no answer. A register read's batch is one line for each request, `card_kinds` `read`, its `name`
+the kinds' names. The declaration is the start's and is not recorded.
 
 In a Symphony checkout, what a call costs linked, through the loopback and from a process, for its
 test plugin's components and card kind, as the median of a thousand interleaved rounds: each call's
 row, components.render among them, and the range of what a call costs from the process more than
 linked over them all. A call of a known time (the test plugin's `slow`, spending 500 µs in the
 plugin) shows each meter moves by it, and the test fails if one does not. Then a card's eight
-card-kind calls summed, from which a register read is an extrapolation and not a measured read, and
-a page of ten components drawn whole, linked and from a process, neither page recorded. It is a
-measurement, not a check: a process call waits on two wake-ups across threads and processes and a
-linked one on none, so a loaded machine inflates the difference by an amount nobody knows. Take it on
-a quiet machine, in a release build, twice, with the load average before and after each run:
+card-kind calls summed, and a page of ten components drawn whole, linked and from a process, neither
+page recorded. A second test reads registers of 50 and 500 cards linked, from a process card by
+card and from a process in one request, each read checked against the linked one, and prints the
+batch's lines ([above](#card-kinds-in-one-request)). Each is a measurement, not a check: a process
+call waits on two wake-ups across threads and processes and a linked one on none, so a loaded
+machine inflates the difference by an amount nobody knows. Take it on a quiet machine, in a release
+build, twice, with the load average before and after each run:
 
 ```sh
 uptime

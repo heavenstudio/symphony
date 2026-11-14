@@ -288,7 +288,7 @@ impl Meter {
         let start = Instant::now();
         let answer = linked();
         let took = start.elapsed();
-        self.write::<A>(name, took, None, None, None, None);
+        self.write(A::names(), name, took, None, None, None, None);
         answer
     }
 
@@ -315,7 +315,8 @@ impl Meter {
                 self.record.path.display()
             );
         }
-        self.write::<A>(
+        self.write(
+            A::names(),
             name,
             trip.call,
             trip.round_trip,
@@ -337,8 +338,16 @@ impl Meter {
         );
     }
 
-    fn write<A: Ask>(
+    /// The line of a call on `name`, its seam and call `names` ([`Ask::names`]): one body for every
+    /// call, as only its names are the call's own.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a line's fields, each its caller's, handed on as they are"
+    )]
+    #[inline(never)]
+    fn write(
         &self,
+        names: (&str, &str),
         name: &str,
         call: Duration,
         round_trip: Option<Duration>,
@@ -346,7 +355,7 @@ impl Meter {
         answer_bytes: Option<usize>,
         lost: Option<String>,
     ) {
-        let (seam, call_name) = A::names();
+        let (seam, call_name) = names;
         self.record.write(&Line {
             at_ms: now_ms(),
             pid: std::process::id(),
@@ -374,14 +383,8 @@ fn round_trip<A: Ask>(
     far: impl FnOnce(A) -> A::Answer,
 ) -> Trip<A::Answer> {
     let start = Instant::now();
-    let request: Request = ask().into();
-    let written = serde_json::to_string(&request);
-    let read = written
-        .as_deref()
-        .map_err(ToString::to_string)
-        .and_then(|text| serde_json::from_str::<Request>(text).map_err(|e| e.to_string()));
+    let (request, read, request_bytes) = read_back(ask().into());
     let asking = start.elapsed();
-    let request_bytes = written.as_ref().map(String::len).ok();
     let read = match read {
         Ok(read) => read,
         Err(why) => return linked_trip(linked, format!("the request: {why}")),
@@ -424,6 +427,19 @@ fn round_trip<A: Ask>(
         answer_bytes,
         lost,
     }
+}
+
+/// `request` written and read back, as every call's request is ([`round_trip`]): the request, what
+/// read back or why nothing did, and the written line's bytes.
+#[inline(never)]
+fn read_back(request: Request) -> (Request, Result<Request, String>, Option<usize>) {
+    let written = serde_json::to_string(&request);
+    let read = written
+        .as_deref()
+        .map_err(ToString::to_string)
+        .and_then(|text| serde_json::from_str::<Request>(text).map_err(|e| e.to_string()));
+    let request_bytes = written.as_ref().map(String::len).ok();
+    (request, read, request_bytes)
 }
 
 /// `what` did not survive JSON, said after what `lost` already says: both are said when the request
