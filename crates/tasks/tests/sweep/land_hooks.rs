@@ -194,6 +194,50 @@ fn hooks_that_pass_run_on_the_merge_and_the_land_reads_as_before() {
 }
 
 #[test]
+fn a_hook_refusing_the_merge_of_what_origin_gained_leaves_the_landing_here_unpushed() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let bare = remote(&r);
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, &format!("{}: good", head(&wt, "HEAD")));
+    let gained = pushed_elsewhere(&r, &bare, "sim/other.gd", "extends Node\n");
+    // The task's merge passes; the merge of what origin gained does not.
+    hook(
+        &r.root.join(".git/hooks"),
+        "commit-msg",
+        "grep -q '^Merge remote-tracking' \"$1\" && echo 'not from origin' >&2 && exit 1; exit 0",
+    );
+    let line = landed(&r, SLUG, &people.orch).1.unwrap();
+    let merge = head(&r.root, "main");
+    assert_eq!(head(&r.root, "main^2"), head(&wt, "HEAD"), "landed here");
+    let refused = format!(
+        "the project's git hook commit-msg refused the merge of origin/main into main at {}; its \
+         output is in {}",
+        &merge[..7],
+        log(&r).display()
+    );
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}; NOT PUSHED, landed here only: {refused}. Push it with: \
+             git fetch origin && git merge origin/main (in the main checkout), then git push \
+             origin main",
+            &merge[..12]
+        )
+    );
+    assert_eq!(head(&bare, "main"), gained, "nothing pushed");
+    // The orchestrator hears why, and the task is closed: it landed here.
+    assert!(
+        r.board
+            .said(SLUG)
+            .contains(&format!("land of {SLUG} not pushed: {refused}")),
+        "{:?}",
+        r.board.said(SLUG)
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+}
+
+#[test]
 fn a_commit_that_fails_with_no_hook_is_named_as_git_commits() {
     let r = Repo::new();
     manifest(&r, "");
