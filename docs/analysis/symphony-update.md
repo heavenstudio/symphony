@@ -6,9 +6,9 @@ and function it was read in. "Read 2026-11-11" marks the state of this machine t
 
 ## Releases
 
-The owner, 2026-11-11: "B. There will be other projects using it. New releases can be pushed for
-urgent bugfixes, but generally should be generated based on nightly builds that would do a full
-verification cycle and conciliation."
+**Decided: B**, since other projects will use Symphony: releases are generally made from nightly
+builds that run a full verification cycle and the conciliation, and an urgent fix can be released
+out of cycle.
 
 - Projects follow Symphony's release tags, never main.
 - A nightly on main's tip, in its own worktree, runs the full verification and the conciliation.

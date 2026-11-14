@@ -4,24 +4,23 @@ How a red found by the full run gets fixed so that a release comes, and what the
 command are called. This is a design: built are the refresh's rule that a pin moves only
 forward, which any candidate needs (A, below), the rename to `just release`
 ([below](#the-names)) and A's held candidate (`crates/symphony/src/release/candidate.rs`,
-[RELEASES](../RELEASES.md#the-release-candidate)). The owner chose A on its card in
-[DECISIONS](../DECISIONS.md), 2026-11-12 19:05. This page is A as its review corrected it; the
-corrections follow from A and stand with it, auto-approved on its card at 20:35 the same day, and
-the three choices A leaves open are cards of their own there.
+[RELEASES](../RELEASES.md#the-release-candidate)). A is chosen on its card in
+[DECISIONS](../DECISIONS.md). This page is A as its review corrected it; the corrections follow
+from A and stand with it, auto-approved on its card, and the three choices A leaves open are cards
+of their own there.
 
-The owner, 2026-11-12, in the order the board records them (the express-path task, filed at 18:05,
-quotes the first; its scope note at 18:08 says the release candidate question came next):
+The asks, in the order the board records them (the express-path task holds the first; its scope
+note says the release candidate question came next):
 
-- "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning
-  express path line followed up by another run. Nightly can also use the stamp based approach for
-  things that did not change so it's faster"
-- "release candidate branch process? bugfix - rerun failures then release once green. Then update
-  main with bugfixed changes. Open to suggestions on how"
-- "A test that fail when machine is under load should be rewritten to account for cpu wall clock
-  time usage - not total time spent or be removed from nightly"
-- “we can also move from calling this "nightly" to release candidate”
-- "just release ? (would do tests and release, if fails then won't do release and agents has to
-  fix?)"
+- The run's reds are fixed first, as bug fixes are, since they block releases: the express path,
+  followed by another run. The run can use the stamps for what did not change, so it is faster.
+- A release candidate branch: fix, rerun the failures, release once green, then bring the fixes to
+  main. How is open to suggestions.
+- A test that fails when the machine is loaded is rewritten to count the CPU time it used rather
+  than the total time spent, or leaves the run.
+- The run could be called the release candidate rather than the nightly.
+- A command named `release`, which would test and release, releasing nothing on a failure, which
+  agents then fix.
 
 The second and the last are proposals, not rulings: the owner asked for suggestions on how, and put
 the command's name as a question. They are designed around here.
@@ -100,7 +99,7 @@ What it taught, under every option:
 
 - **A run must name every red step, not stop at the first.** An hour's run said nothing of the
   tests, and each fix would cost another whole run to find the next red. `tools/verify-runs-every-step`
-  (in progress) makes `just verify` run every step and name each red. "Rerun failures" then has
+  (in progress) makes `just verify` run every step and name each red. Rerunning the failures then has
   steps to rerun; the stamps task records them and reuses the green of those whose inputs did not
   change.
 - **A conciliation red is fixed on this side.** A release's refresh moves a consumer's pin in one
@@ -163,9 +162,10 @@ The owner chose A.
    before.
 
    A red that passes when run alone is load- or order-dependent (RULES
-   `tests/rerun-the-failure-alone`). By the owner's rule its fix is the test "rewritten to account
-   for cpu wall clock time usage - not total time spent", or "removed from nightly", so it is
-   answered by a fix like any other, never by a rerun that happens to pass.
+   `tests/rerun-the-failure-alone`). By the rule on load (RULES `tests/no-test-fails-on-load`) its
+   fix is the test rewritten to count the CPU time it used rather than the total time spent, or
+   taken out of the run, so it is answered by a fix like any other, never by a rerun that happens
+   to pass.
 5. **Bounds.** The candidate is dropped, and the next run judges main's tip at once, when:
    - three reruns came back red;
    - it is 24 hours old;
@@ -241,9 +241,9 @@ descends from it.
   since the candidate.
 - **Once stamps land, the commit tagged is not run in full.** The rerun runs the steps that were
   red, that did not run and that a fix reaches; every other step keeps its green from the
-  candidate's first commit, whose inputs for that step are the same. That is the owner's "Nightly
-  can also use the stamp based approach for things that did not change so it's faster", set
-  against the earlier "runs all tests and publishes when green". It is the stamps' trade under
+  candidate's first commit, whose inputs for that step are the same. That is the stamps
+  used for what did not change, so that the run is faster, set against the earlier rule that a run
+  tests everything and releases only when green. It is the stamps' trade under
   every option, D's runs of main included. How old a carried green may be is the stamps task's own
   card to put; a candidate's is at most its 24 hours. Before stamps, the rerun is the whole
   verification.
@@ -288,8 +288,8 @@ the candidate (a cherry-pick) and reruns.
 
 ### C. The fix on the candidate only, merged into main after the release
 
-The owner's words read literally: "bugfix - rerun failures then release once green. Then update
-main with bugfixed changes". The candidate is a task's branch started at the commit judged; each
+The ask read literally: fix, rerun the failures, release once green, then bring the fixes to
+main. The candidate is a task's branch started at the commit judged; each
 red's fix is a slice committed on it; the rerun judges its tip; green tags it; then the branch
 lands on main.
 
@@ -351,12 +351,12 @@ lands during its review.
 
 | the owner's earlier ruling | A | B | C | D |
 |---|---|---|---|---|
-| No lock or queue on a land (2026-11-12, 06:42: "A solution like a lock or queue would directly bottleneck the pipeline which isn’t acceptable either.") | met: the land is unchanged | met | met | met |
-| A release only after a full run that is green (2026-11-12, 06:42: "a nightly or more often run that then runs all tests and publishes when green is the only acceptable choice I can think of.") | met as the owner's stamps line allows ("Nightly can also use the stamp based approach for things that did not change"): each step red, unrun or reached by a fix runs on the tree released, and every other keeps the green of a commit whose inputs for it are the same; before stamps, every step runs on it | as A | as A | as A, against the last run |
-| Releases built from full runs, urgent fixes out of cycle (2026-11-11: "New releases can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that would do a full verification cycle and conciliation.") | met | met | met | met |
-| Fixes to reds first (2026-11-12: "Meaning express path line followed up by another run.") | met: the express path for the fix, and the candidate's rerun is the run that follows it | met | met | met, as written |
+| No lock or queue on a land, which would bottleneck the pipeline | met: the land is unchanged | met | met | met |
+| A release only after a full run that is green, nightly or more often, which tests everything and releases only when green | met as the stamps allow for what did not change: each step red, unrun or reached by a fix runs on the tree released, and every other keeps the green of a commit whose inputs for it are the same; before stamps, every step runs on it | as A | as A | as A, against the last run |
+| Releases built from full runs of verification and conciliation, urgent fixes out of cycle | met | met | met | met |
+| Fixes to reds first, on the express path, another run following | met: the express path for the fix, and the candidate's rerun is the run that follows it | met | met | met, as written |
 
-Two more are the repository's rules rather than the owner's words: nothing is force-pushed
+Two more are the repository's rules rather than the owner's rulings: nothing is force-pushed
 (AGENTS: "never forces"), and only the run pushes a tag ([RELEASES](../RELEASES.md#who-runs-it)).
 Every option meets both: nothing is rewritten, and B's and C's candidate commits reach `origin`
 with the tag that names them (tried: a clone and a fetch of the tag alone both get a commit no
@@ -380,9 +380,8 @@ branch holds).
 - It is the only option in which the tree judged changes only by the fixes, so a release comes
   however fast main moves, while each red's fix has an approve on a commit from before any merge of
   main; and the tree released is a tree a reviewer approved.
-- Main never waits for the release, and nothing is merged back: "update main with bugfixed
-  changes" happens at each fix's land, earlier than the owner's "Then", which the owner left open
-  ("Open to suggestions on how").
+- Main never waits for the release, and nothing is merged back: main gets the fixes at each
+  fix's land, earlier than the ask's after the release, which left how open.
 - No rule about what a release is changes, and `just land` does not change. The refresh gains the
   one rule any candidate needs: a pin moves only forward.
 - It works before the stamps land (the rerun is then the whole verification of the tip) and gets
@@ -427,8 +426,8 @@ The command is `just release`, as the owner proposed: it verifies and releases o
 on red releases nothing and files the reds for agents to fix. "Release candidate" is the commit it
 holds while they are fixed.
 
-The owner's "we can also move from calling this "nightly" to release candidate", read literally,
-names the run. This design gives the words to the commit the run holds, and calls the run a release
+The ask to call this the release candidate rather than the nightly, read literally, names the
+run. This design gives the words to the commit the run holds, and calls the run a release
 run, which the command already names. Which one they name is the owner's, on a card; the table is
 the default, and every other name in it stands unless the owner says otherwise.
 
@@ -463,8 +462,8 @@ release-inputs` (the files the client's release build reads), which keeps its na
 
 ### What keeps working during the change
 
-Everything moves at once, as the owner chose for the last rename (2026-11-11, on the consuming
-project's names: "B - just remove the bandaid quickly. Break things then fix them ASAP"). Five
+Everything moves at once, as for the last rename, of the consuming project's names: quickly,
+whatever breaks fixed as soon as possible. Five
 things need care:
 
 - **The old recipe.** `just nightly` answers one line, "`just nightly` is now `just release`", and

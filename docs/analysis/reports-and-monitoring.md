@@ -7,16 +7,15 @@ that day. The consuming project's files were only read; nothing there was change
 
 ## The ask
 
-The owner, 2026-11-11, on the board task `product/reports-and-monitoring`:
+The ask, on the board task `product/reports-and-monitoring`:
 
 - A report and monitoring bucket is missing from Symphony entirely: things like the cumulative
-  report view and information on build costs. The owner first said it was missing from the
-  consuming project, then corrected that to Symphony (the owner's exact words of 2026-11-11, both
-  of them: board post #2869). It is a Symphony feature, for every project it serves.
-- "considering how symphony now behaves like CI/CD, then info on the CI/CD aspects is what I mean
-  is missing." The runs come first; pipeline flow, agents and board health second.
-- "As well as general pipeline and defect pipeline information. We don't have stamp info in the UI
-  for tasks, no 'graph' of the steps that tasks did and how much time each took, etc".
+  report view and information on build costs. It is a Symphony feature, for every project it
+  serves.
+- Symphony now behaves like CI/CD, so what is missing is information on its CI/CD side. The runs
+  come first; pipeline flow, agents and board health second.
+- General pipeline and defect pipeline information too: the UI shows no stamp information for a
+  task, and no graph of the steps a task went through and how long each took.
 
 Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-page) and
 [Pipeline and defects](#pipeline-and-defects).
@@ -62,10 +61,9 @@ Three cards, each approvable alone: [Runs](#runs), [The task page](#the-task-pag
 - **Agents.** A session row keeps `connected`, `last_seen`, `left_at`, `kind` and `model`
   (`crates/tasks/src/rows.rs`, `SessionRow`). Live, stale and lost are worked out on each read;
   no count of them is kept, and of tool calls only the last one's time.
-- **Tokens.** None on the board. `tools/board-token-usage` (the owner approved option B of
-  `process-token-recording` on 2026-11-08: the beat hook adds each call's usage) is ready, not
-  built. Read 2026-11-11: a Claude Code transcript, a subagent's too, carries on each reply the
-  model and its input, output, cache-read and cache-write tokens; a Codex session log carries
+- **Tokens.** None on the board. `tools/board-token-usage` (option B of `process-token-recording`: the
+  beat hook adds each call's usage) is ready, not built. Read 2026-11-11: a Claude Code
+  transcript, a subagent's too, carries on each reply the model and its input, output, cache-read and cache-write tokens; a Codex session log carries
   `token_count` events (input, cached, cache-write, output and reasoning tokens). **Neither carries
   a price, and Symphony keeps none: a cost in money cannot be shown today.**
 
@@ -141,7 +139,7 @@ Runs · symphony                    2 running · 1 queued
 
 ### Where runs are kept
 
-**Decided: A, run files in the common dir, a core page** (the owner, 2026-11-11), with the send of
+**Decided: A, run files in the common dir, a core page**, with the send of
 [Several machines, one board](#several-machines-one-board). The recorder appends one line per
 finished run and per step to a file for the UTC day, `symphony/runs/DAY.jsonl` in the git common
 dir beside `symphony/tasks/`, and keeps each run's log in `symphony/runs/logs/`. The server reads
@@ -230,7 +228,7 @@ So per suite (binary) the counts and the time are known, and per test the result
 test's time. The slowest *suites* can be shown; the slowest *tests* need nightly libtest or
 cargo-nextest.
 
-**Decided: cargo-nextest** (the owner, 2026-11-11: "can absolutely adopt cargo nextest"). This
+**Decided: cargo-nextest.** This
 workspace's tests run through it at a pinned version (`tools/nextest`), and its report gives each
 test's time. Doc-tests, which nextest does not run, keep libtest's plain output above. The run line
 keeps per-suite counts and the failed tests, so it stays small with several thousand tests; each
@@ -242,8 +240,8 @@ page counts each test's flaky and red runs over 14 days.
 
 **Queue wait** is the time from queued to started. The consuming project's slots queue work, and
 its summaries keep each check's wait. This workspace has no pool (`tools/cargo.sh` supplies none), so
-its runs wait only on Cargo's build-directory lock, which Cargo announces on stderr. Decided (the
-owner, 2026-11-11): where nothing queues work, no queue wait is shown, and the lock's wait is not
+its runs wait only on Cargo's build-directory lock, which Cargo announces on stderr. Decided: where
+nothing queues work, no queue wait is shown, and the lock's wait is not
 counted.
 
 ### Kept, and for how long
@@ -286,14 +284,14 @@ A project's gates come from its plugin. The consuming project's are its stamps: 
 nightly, dependency, review, adversarial, owner and holds. A plugin's gate with the same name as
 Symphony's takes its place. Its review stamp, for example, is the approval its landing counts.
 
-**The rule: the more specific level's answer replaces the general one's** (the owner, 2026-11-11:
-"lower level replaces higher level. Should replace it everywhere for itself."). A project's gate
+**The rule: the more specific level's answer replaces the general one's**, everywhere, for the
+level that gives it. A project's gate
 replaces Symphony's same-named gate for that project everywhere the board judges it: the task page,
 the sign-off lane, the PULL digest orchestrators get, the move to blocked and the default land
 command. A project with no answer keeps Symphony's gates. The page's part is
 `tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
 
-**Decided: A, a typed gates seam** (the owner, 2026-11-11, after the pictures below).
+**Decided: A, a typed gates seam**, as the pictures below draw it.
 - A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
   and past states. That is a new wire type, which the client draws with one component, the same
   for every project.
@@ -418,10 +416,9 @@ Second in line: sessions started by kind and model; tokens per task, role and re
 does not keep (the token rows, one per call, give them); stale and lost counts and the time spent
 so, which the server counts as its clock says them.
 
-**Agents at work per hour**, beside the tasks done and in progress (the owner, 2026-11-12: "Agents
-per hour is absolutely something we need. [...] adding to that number of agents, orchestrators,
-reviewers (possibly two charts?) so that it becomes easier to understand how healthy a pipeline
-is"). An hour holds, by role (executor, reviewer, orchestrator) and model, the most at once and the
+**Agents at work per hour**, beside the tasks done and in progress, with orchestrators and
+reviewers counted beside the executors, so that how healthy a pipeline is reads at a glance. An
+hour holds, by role (executor, reviewer, orchestrator) and model, the most at once and the
 mean of the sessions **running**, live and holding that role on a task in progress or in review,
 and of those **holding** it, live, stale or unknown: an agent waiting on a long build reads stale
 and leaves running, but still holds its work. Beside them are the **live** sessions by kind, which
@@ -435,9 +432,9 @@ session's health, and an hour's line with the sessions started, gone stale and g
 time stale and lost, the running, holding and live counts and the load, in day files kept 90 days
 ([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)).
 
-**Money, estimated at API prices** (the owner, 2026-11-11: "tokens are hard to measure, since
-cache vs non cache hits counts differently. This should be counted "as if we were paying API costs"
-for it. Best assumption/guess on pricing actual cost"). Cost is input, output, cache writes and
+**Money, estimated at API prices**: tokens alone are hard to weigh, as cache hits and misses
+count differently, so they are priced as if API costs were paid, at a best guess of the actual
+price. Cost is input, output, cache writes and
 cache reads, each priced apart per model from a dated price table in the repository, taken from
 the providers' published prices, and always labelled an estimate. A model the table lacks takes its
 family's newest price, marked as a guess; one with no family is shown unpriced and named. The work
@@ -452,7 +449,7 @@ board request. Kept 90 days ([TASKS](../TASKS.md#board-health)).
 
 ### How the figures are computed
 
-**Decided: A, an hourly roll-up into files** (the owner, 2026-11-11). Each hour, and once after
+**Decided: A, an hourly roll-up into files.** Each hour, and once after
 midnight for the day that ended, the shared server reads each project's window once and writes the
 day's figures to a file in that project's git common dir. The stats read takes 0.3 to 2.5 s on the
 consuming project's board. The page reads the files. A figure is up to an hour old. The cost is
@@ -640,8 +637,8 @@ The chart block is a wire change, so it reaches main in a task of its own first 
 `workflow/shared-data-lands-first`).
 
 The core pages are decided (Runs and Reports, both A) and the gates seam is filed. The
-report-section seam and the chart block wait until a project asks for its own section (the owner,
-2026-11-11); the core pages draw their own charts.
+report-section seam and the chart block wait until a project asks for its own section; the core
+pages draw their own charts.
 
 ## One machine or several
 
@@ -731,7 +728,7 @@ gets its end within the run's own timeout reads "lost contact", never "running".
 `refs/…/runs/<machine>`. That needs a shared remote, and pushes contend with each other. Lines would
 arrive minutes late, and logs would grow history.
 
-**Decided: A, with the send** (the owner approved A after this answer, 2026-11-11). It changes
+**Decided: A, with the send.** It changes
 nothing on one machine. It adds one endpoint on the server and a send in the recorder: filed as
 `tools/run-send`.
 
@@ -790,23 +787,23 @@ Once approved, as board tasks, the shared data first:
 
 ## Open questions
 
-None is open. The owner answered questions 2, 3, 5, 6 and 7, and whether to build a project's own
-report section now, on 2026-11-11 (16:22).
+None is open: questions 2, 3, 5, 6 and 7 are answered, and so is whether to build a project's own
+report section now.
 
 1. Settled by the approval of `reports-ci-runs`: runs 90 days, logs 14 (a red's 30, at most 2 GB a
    project), roll-ups for good.
 2. The slowest tests need each test's time, which stable cargo does not print. Adopt cargo-nextest
-   (a new tool), or show suites only? **Answered:** "can absolutely adopt cargo nextest"
+   (a new tool), or show suites only? **Answered:** adopt cargo-nextest
    (`tools/nextest`).
 3. A cost in money needs a price per model from the owner, and on a subscription per-token money
-   is not what is paid. Show tokens only? **Answered:** "nope", money as if paying API prices, a
+   is not what is paid. Show tokens only? **Answered:** no: money as if paying API prices, a
    best guess where a price is unknown ([Agents](#agents), `tools/agent-cost-estimate`).
 4. Settled by the approval: a red names the commits it came between (`tools/red-landing-origin`).
    A consuming project's landing and nightly passing them is that project's change, on its own
    board.
 5. Symphony has no land command: its merges to main are made by hand. Count each merge commit on
-   main as a landing run? **Answered:** "add a land command, should be offered by default on init.
-   Remember -> convention over configuration approach" (`tools/land-command`). Landings are counted
+   main as a landing run? **Answered:** a land command, offered by default on init, convention
+   over configuration (`tools/land-command`). Landings are counted
    from its runs, not from merge commits.
 6. Queue wait where no pool queues work: show none, or count the time Cargo waits on its build lock?
    **Answered:** none.

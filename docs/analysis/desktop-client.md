@@ -5,12 +5,12 @@ more than one server, as proposed on the desktop-client card in [DECISIONS](../D
 fact about the code names the file and function it was read in. "Read 2026-11-11" marks the state
 of this machine that day.
 
-The owner, 2026-11-11: "I also want to push for a desktop client app. Would likely help improve the
-experience even more. Specially if it can connect to different servers".
+The ask: a desktop client app, to improve the experience further, above all by connecting to
+different servers.
 
-**Decided: A, a thin native shell** (the owner, 2026-11-11). Its windows show each server's own
-pages, and its own few screens are Dioxus. The owner's answers to the open questions are applied
-throughout. The first release is two tasks, [The first slice](#the-first-slice).
+**Decided: A, a thin native shell.** Its windows show each server's own pages, and its own few
+screens are Dioxus. The answers to the open questions are applied throughout. The first release
+is two tasks, [The first slice](#the-first-slice).
 
 ## What the app gives
 
@@ -22,7 +22,7 @@ Ranked by what the owner gains, against a browser tab on the same Mac:
 | 2 | **A count of what waits on you** in the dock and the menu bar, summed over every server and project | Each project's home shows its own count; the project list at a server's `/` shows each project's | yes |
 | 3 | **Stays connected with its window closed**: the menu-bar item keeps following each project's feed | Nothing follows once the tab is closed | yes: 1 and 2 rest on it |
 | 4 | **No address or port to remember**: this Mac's server is found by itself, others are saved by name | A bookmark per server | yes |
-| 5 | **A global shortcut** that brings the app forward at the next card | None | skipped for now (the owner) |
+| 5 | **A global shortcut** that brings the app forward at the next card | None | skipped for now |
 | 6 | **Focus a local agent's pane** | Planned, not built: `tools/go-to-agent-session` (ready) has the server focus the pane on its own machine when the request comes from that machine, in the browser too | when that task lands, in both |
 | 7 | **Open a file in the editor** | None | proposed here, later: done by the server on its own machine, the way 6 plans for panes |
 
@@ -41,8 +41,8 @@ count is the owner's whole queue (`crates/symphony/src/dashboard.rs`, `snapshot`
 - a card where an agent answered your comment or question, waiting for you to approve again or
   comment.
 
-Also in the first release (the owner, 2026-11-11: "Yes. We should also have different users in the
-future, so that asks / notifications could be targetted to specific people."):
+Also in the first release, as there will be different users later, so that asks and
+notifications can be aimed at specific people:
 
 - **A question an agent asks you on a task** (`just tasks say SLUG "…" --to owner`). It joins the
   badge and notifies, until its recipient posts on that task's thread after it, the rule the
@@ -92,7 +92,7 @@ A native Mac app whose windows show the pages each server already serves, one we
   the first slice). The shell defines one that always reports notifications as denied, so the page's
   own notice (`platform::Browser::notify`) stays quiet and never notifies twice.
 - **The app's own screens** (the server list, adding a server, "this server does not answer") are a
-  few small pages, in Dioxus (the owner, 2026-11-11: "Yeah, why not dioxus."): a Dioxus desktop
+  few small pages, in Dioxus: a Dioxus desktop
   app around the server's web view. The first slice tries whether Dioxus desktop 0.7.10 can host a
   second web view in its window; plain wry draws them if not.
 - **What the server adds.** One read, `GET /api/projects`: each project's id, name, cards waiting,
@@ -174,7 +174,7 @@ later on a wire that would by then have to stand still.
 
 ### Why A
 
-**Decided: A** (the owner, 2026-11-11); B and C were not chosen. A gives every item of the first
+**Decided: A**; B and C were not chosen. A gives every item of the first
 release with the least new code, and keeps the client and the wire free to change every release
 (but for the few fields the app reads), which they do several times a day. What B adds, offline reading and a client that never comes from a server, matters for
 a server someone else runs, which does not exist yet, and even there its viewers and mockups would
@@ -189,10 +189,9 @@ run that server's scripts.
 - **Its identity** is the server's installation id (`crates/symphony/src/machine/identity.rs`,
   `installation_id`), which `/api/projects` carries, so the same server reached by loopback and by
   its tailnet name is listed once.
-- **Two servers, one project.** Two boards for now (the owner, 2026-11-11: "For now I think the
-  model should be indeed two separate boards. Albeit we will soon move to a "central board" with
-  "multiple machines connected""). Each server's board is listed and counted apart. Counting a
-  project once across servers comes with the central board.
+- **Two servers, one project.** Two separate boards for now, until the move, coming soon, to a
+  central board with several machines connected. Each server's board is listed and counted apart.
+  Counting a project once across servers comes with the central board.
 - **Adding.** This Mac's server is found by itself, from the machine folder's `server.json` (its
   port). Others are added by pasting a URL: the app reads `/api/projects` and saves the server only
   if it answers as a Symphony.
@@ -252,7 +251,7 @@ run that server's scripts.
   linker. An app built and installed on the Mac that runs it carries no quarantine flag and opens
   without notarisation. That is the first release: `just desktop-install` builds it from a
   checkout at a release tag and copies it to `~/Applications`. A developer account waits until the
-  app runs on a second machine (the owner, 2026-11-11: "once it does."). Whether the Mac's notification centre
+  app runs on a second machine. Whether the Mac's notification centre
   accepts an ad-hoc signed app is the first thing the first slice tries. Read 2026-11-11: this Mac
   has no code-signing identity. Notarisation needs a Developer ID (the Apple Developer Program,
   $99 a year) and is needed only once the app is downloaded onto another machine.
@@ -315,27 +314,27 @@ servers (with the central board).
 
 ## Open questions
 
-None is open. The owner answered all five on 2026-11-11 (15:26), quoted after each, and the body
-above follows the answers. The owner also asked how an iPhone app would shape the choice, answered
-on the card and under [Packaging and delivery](#packaging-and-delivery), then approved A (16:24).
+None is open. All five are answered, each answer after its question, and the body above follows
+the answers. How an iPhone app would shape the choice is answered on the card and under
+[Packaging and delivery](#packaging-and-delivery), and A is approved.
 
 1. Should the badge and notifications also cover questions agents ask you on tasks (`--to owner`),
    or reviewers' verdicts on tasks? Each needs one more count on the wire. Until answered, cards
    only ([What notifies](#what-notifies)).
-   **Answered:** "Yes. We should also have different users in the future, so that asks /
-   notifications could be targetted to specific people."
+   **Answered:** yes, both: there will be different users later, so that asks and notifications
+   can be aimed at specific people.
 2. When two servers serve the same project's board (several machines on one board), should the
    app count it once? Until answered it lists and counts each server's own.
-   **Answered:** "For now I think the model should be indeed two separate boards. Albeit we will
-   soon move to a "central board" with "multiple machines connected"".
+   **Answered:** two separate boards for now, each counted apart, until the move, coming soon, to
+   a central board with several machines connected.
 3. Should the shell's own screens be Dioxus, if the first slice shows Dioxus desktop can host the
    server's web view, or plain pages? Until answered, Dioxus if it can.
-   **Answered:** "Yeah, why not dioxus." This settles the shell's own screens, not A, B or C.
+   **Answered:** Dioxus. This settles the shell's own screens, not A, B or C.
 4. Is an Apple developer account (signing, notarisation, a self-updating app) wanted now, or once
    the app runs on a second machine? Until answered, once it does.
-   **Answered:** "once it does."
+   **Answered:** once it does.
 5. Should the global shortcut be in the first release? Until answered, the second.
-   **Answered:** "can be skipped for now."
+   **Answered:** skipped for now.
 
 ## Verified and inferred
 
