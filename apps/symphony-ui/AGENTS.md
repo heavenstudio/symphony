@@ -351,7 +351,14 @@ never the whole target, which the release run runs.
   and the queue's transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
-  a week switch and older paging. Thread history, subtasks, hierarchy groups
+  a week switch and older paging. A feed event that changes what a view lists (a task, a message
+  while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
+  work does only when it puts a task in another stage (`MachineWork::places_alike`), not at each
+  heartbeat. An answer is dropped only for another view (search, window, connection, board
+  version, `board_live::BoardData::view`) or a newer read of the same part, never for an event
+  that came while it was read: the events since are replayed onto it, and the refresh reads again
+  (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
+  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history, subtasks, hierarchy groups
   and agents page separately. A reconnect catches up a loaded thread by
   message id before following the feed again. Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
