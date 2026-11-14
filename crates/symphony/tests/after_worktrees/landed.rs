@@ -12,6 +12,7 @@ use serde_json::json;
 use symphony::{docview, render::Render};
 
 use super::posted::{RESOLVED, card, register, shown, write};
+use super::saving::branch_page;
 use super::{DOC, branch, command, commit, isolated, post, repository};
 
 /// Each card of main's register by slug, with its state: as `symphony status` reads main's file,
@@ -190,8 +191,45 @@ pub(super) fn a_line_on_mains_card_from_a_live_branchs_page_is_mains() {
             assert!(!saved.contains("Still wanted?"), "{saved}");
             assert!(saved.contains("- [ ] **old-card**"), "{saved}");
             status_and_page(&tree.root);
+
+            // The branch's page draws main's answered card in the group its answer puts it in, as
+            // main's page does, though the worktree's file keeps it under the owner's group; its
+            // place is still the file's lines, where a save from the page lands.
+            let page = branch_page(&tree.root, &live, "feat~live");
+            assert_eq!(
+                under(&page, "old-card"),
+                Some(symphony::Group::Agent.title())
+            );
+            assert_eq!(under(&page, "card-b"), Some(symphony::Group::Agent.title()));
+            let old = page
+                .sections
+                .iter()
+                .find(|section| section.key == "card:old-card")
+                .unwrap();
+            let line = saved
+                .lines()
+                .position(|line| line.starts_with("- [ ] **old-card**"))
+                .unwrap()
+                + 1;
+            assert_eq!(old.start, line, "the worktree file's line of old-card");
+            let card = page.cards.iter().find(|c| c.slug == "old-card").unwrap();
+            assert_eq!(card.state, "approved");
         },
     );
+}
+
+/// The register group heading the page `page` draws above the card `slug`.
+fn under(page: &symphony_api::Document, slug: &str) -> Option<&'static str> {
+    let at = page
+        .sections
+        .iter()
+        .position(|section| section.key == format!("card:{slug}"))?;
+    page.sections[..at].iter().rev().find_map(|section| {
+        symphony::Group::ALL
+            .iter()
+            .map(|group| group.title())
+            .find(|title| section.html.contains(&format!(">{title} (")))
+    })
 }
 
 /// The variable naming the file that, while it exists, names the words of the git command the
