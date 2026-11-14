@@ -180,11 +180,18 @@ the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
 move one key after another (`OrderChange`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
-`session` and `agent`. `task-fields` merges changed mutable fields into an
-existing task, avoiding its unchanged brief. `message` appends one structured
-thread message by id, with its typed `blocks` and display `stamp`. `task-summary` upserts
-one brief-free record so a task entering a paged view appears without a board
-refetch; `task-counts` and `task-signoff` update the column totals and owner queue.
+`session` and `agent`. A `task` upsert is a new task; an existing task that
+changed is sent once, as `task-fields`, its changed mutable fields alone,
+never its unchanged brief or record again: a view that does not hold the task
+(a column page, a task page's subtasks, `/agents`) reads it again when the
+change brings it in. A role's holder's health is no task's change: it is sent
+once, as that holder's `session` change, and the client sets each role of that
+handle from it (`lost` when the session is gone, as the board reads a role of
+no session). A `session` or `agent` change is sent only when something a page
+shows changed, never for a heartbeat or a tool call alone (`last_seen`,
+`last_tool`, `last_tool_call`), and carries the record as it is now. `message`
+appends one structured thread message by id, with its typed `blocks` and display
+`stamp`; `task-counts` and `task-signoff` update the column totals and owner queue.
 `docs` replaces navigation order; `agent-probes` reports
 probe availability; `tasks-status` reports board availability, and of a board
 that went whether it is `slow` (it took the read and answered late) or
