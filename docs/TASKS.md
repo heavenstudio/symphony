@@ -869,7 +869,9 @@ naming it, as `just land SLUG` run again finishes an interrupted land from that 
 branch, in a worktree of its own; and its task done by an approve no landing has closed, as what
 keeps such a task from going back to review once it is on main is its branch's tip.
 Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has. No live work holds it when no
+build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
+whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
 worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
 with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
@@ -1644,12 +1646,24 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   each commit made before the verdict and before the task last went to review; the
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
-- **No owner's answer left behind.** A worktree on the branch whose documents hold an owner
-  line no commit has (the owner's answer on a card only the branch holds, which the Symphony
-  saves into that worktree's register: [REVIEW](REVIEW.md#one-app-every-worktree)) refuses
-  the land, naming the worktree and its files: a land of the branch's commits would leave the
-  answer behind. It is said to `@executor`, which commits it on the branch and has the new tip
-  approved, as for a conflict below.
+- **No owner's answer left behind.** A worktree at a commit the land brings (on the branch,
+  on another branch or detached at one of its commits) whose documents hold an owner's dated
+  line under a card that no commit has (the owner's answer on a card only the branch holds,
+  which the Symphony saves into that worktree's register:
+  [REVIEW](REVIEW.md#one-app-every-worktree)) refuses the land, naming the worktree, its
+  branch or commit, and its files: a land of the branch's commits would leave the answer
+  behind. The documents are those in the folders the project file's `[[entrypoints]]` serve
+  them from (`docs/` with none written), and a line counts per card against the copies the
+  worktree's HEAD and the tip hold of the documents it changed, so a line a regroup only
+  moved is none. It is said to `@executor`, which commits it on the branch (from a worktree
+  not on it, copying the line onto its card there) and has the new tip approved, as for a
+  conflict below. A worktree git cannot read refuses the land to the one landing alone, as
+  it may hold the answer; the land runs again once git reads it. The answers are asked again
+  once the merge is checked, before the default branch moves, so one saved meanwhile refuses
+  as well. One saved while the default branch moves is said to `@orchestrator` once it moved
+  (`land SLUG: PATH holds the owner's answer on CARD saved while SLUG landed, which main does
+  not hold`), to copy onto that card on the default branch and commit there; the sweep keeps
+  that worktree meanwhile.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
   `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
@@ -2606,16 +2620,17 @@ so each time reads on the server's local clock as it then stood, the thread's.
   answer that cannot be read leaves the lanes out, never the timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, at most 240 px on a phone and wide (the
-owner's choice, so the brief and the thread start near the page's top), with
-placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out on a phone (the latest
-steps in view), and wide the lanes ending under the last that fits whole, the box kept
-for the next visit as tall as the lanes a 240 px box holds whole, so it grows back as the
-task gains lanes. "Show all" lets it grow, naming what it shows: the steps on a phone,
-the lanes wide; it sits on the legend's line, and the whole of the lanes' part the focus is
-on (a click focuses one too) is said in the legend's place while one has it, so the lanes
-never lose room to it.
+this browser last drew the task's timeline, with placeholder rows in it, so nothing on
+the page moves when the timeline comes. On a phone the box is at most 240 px (the
+owner's choice, so the brief and the thread start near the page's top), and a read that
+adds a step moves nothing either: the steps fit the box, what does not fit fading out
+(the latest steps in view), and "Show all N steps", on the legend's line, lets it grow.
+From 900 px wide, where the lanes replace the list, the timeline is shown whole, with no
+"Show all" (the owner's choice: a collapse there saves little room and hides the lanes):
+the box grows to hold every lane and keeps that height for the next visit, a task never
+drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
+focus is on (a click focuses one too) is said in the legend's place while one has it, so
+the box does not grow for it.
 The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
 the page kind `timeline`), which the shell loads once the page has drawn and is idle,
 so the page's first visit does not wait for it. On a phone it is a list: a row per

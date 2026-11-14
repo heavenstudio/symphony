@@ -39,8 +39,10 @@
 //!   tied to the worktree, at least one, is done or cancelled ([`Index::agent_finished`]). A lock
 //!   the board cannot answer for keeps it: an agent it knows nothing of, a land that runs, the
 //!   release run's checkout, any other reason, a start that cannot be read;
-//! * it holds no owner verdict that no commit has (an owner line the Symphony wrote into a docs/
-//!   file, the one place the owner's answer to a card on this branch lives until the agent commits it);
+//! * it holds no owner verdict that no commit has (an owner line the Symphony wrote under a card of
+//!   a document, in a folder the main checkout's project file serves documents from, the one place
+//!   the owner's answer to a card on this branch lives until the agent commits it: [`git::answers`]);
+//!   a worktree whose documents git cannot read for them is kept, saying so;
 //! * no process has its working directory inside it (`lsof`; when that cannot be read or lists
 //!   nothing, nothing is removed);
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
@@ -778,7 +780,12 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let mut ancestry = BTreeMap::new();
     // What this pass set aside, by its folder's name: the tasks tied to its worktree.
     let mut set_aside_from: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref());
+    // Where the owner's answers are written, as the main checkout's project file names its
+    // documents: every folder when there is no checkout to read it from.
+    let documents = checkout
+        .as_deref()
+        .map_or_else(|| vec![String::new()], crate::project::documents_at);
+    let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref(), documents);
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
             continue;

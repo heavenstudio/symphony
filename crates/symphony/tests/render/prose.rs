@@ -131,6 +131,20 @@ fn reply_html_renders_an_agent_answer_like_a_card_reply() {
 }
 
 #[test]
+fn a_fragment_goes_on_the_wire_with_its_markup_and_media_and_no_blocks() {
+    let (_tree, render) = bare();
+    let fragment = render.reply("A mockup: ![A](/docs/pictures/mockups/a.html)", "docs/D.md");
+    assert_eq!(fragment.media.len(), 1, "{fragment:?}");
+    let read: symphony_api::Fragment = serde_json::from_value(serde_json::json!(fragment)).unwrap();
+    let wire = symphony_api::Fragment::from(fragment.clone());
+    assert_eq!(wire, read, "as the fragment's JSON reads");
+    assert_eq!(
+        (wire.html, wire.media, wire.blocks),
+        (fragment.html, fragment.media, Vec::new())
+    );
+}
+
+#[test]
 fn relative_links_are_left_for_the_browser() {
     let html = super::page_at(
         "![a](../../artifacts/x.png) and [b](LAMP_CATALOGUE.md)\n",

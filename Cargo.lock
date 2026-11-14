@@ -5228,6 +5228,7 @@ dependencies = [
  "sha2",
  "symphony-api",
  "symphony-args",
+ "symphony-docs",
  "symphony-env",
  "test-time",
  "tokenizers",

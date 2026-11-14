@@ -92,15 +92,117 @@ pub fn commands() -> Vec<&'static dyn Command> {
         .collect()
 }
 
-/// The command `name` of the first plugin this process holds that adds one, measured as the
-/// project at `root` says when there is one ([`Plugins::at`]). Its two settings are read alone and
-/// quietly first ([`PluginCalls::read`]): with both off, the command runs as it did before either
-/// setting existed, the project neither loaded nor checked and nothing said of its file.
-pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> {
-    let plugin = compiled()
+/// The commands `symphony` runs in a project, and why those of a plugin answering from a process
+/// that did not declare are not among them.
+pub struct Commands {
+    /// Each command, as [`commands_of`] lists them.
+    pub listed: Vec<&'static dyn Command>,
+    /// For each plugin of the project whose process did not declare, so whose commands are not
+    /// known: a line naming it, why and its log.
+    pub failed: Vec<String>,
+}
+
+/// Every command `symphony` runs in the project at `root` ([`command`]): the commands of its
+/// plugins answering from a process, then those of the plugins this process holds that none of its
+/// processes answers for, each name once; and the plugins whose process did not declare.
+pub fn commands_of(root: Option<&Path>) -> Commands {
+    let piped = piped(root);
+    let linked = compiled()
+        .iter()
+        .filter(|plugin| !piped.answers(plugin.name()))
+        .flat_map(|plugin| plugin.commands());
+    let mut found: Vec<&'static dyn Command> = Vec::new();
+    for command in piped.commands.iter().copied().chain(linked) {
+        if !found.iter().any(|held| held.name() == command.name()) {
+            found.push(command);
+        }
+    }
+    Commands {
+        listed: found,
+        failed: piped.failed,
+    }
+}
+
+/// What a project has of plugins answering from a process, for its commands: their commands, run
+/// as their programs ([`process`]), the names of the plugins its file gives a process, and a line
+/// for each of those whose process did not declare ([`Commands::failed`]).
+#[derive(Default)]
+struct Piped {
+    commands: Vec<&'static dyn Command>,
+    names: Vec<String>,
+    failed: Vec<String>,
+}
+
+impl Piped {
+    /// Whether the plugin `name` answers from its process here, so a plugin of that name this
+    /// process holds does not.
+    fn answers(&self, name: &str) -> bool {
+        self.names.iter().any(|piped| piped == name)
+    }
+}
+
+/// The plugins answering from a process of the project at `root` ([`Piped`]): none without a root
+/// or when its file names no `[plugins.process]`, whose names are read alone and quietly first
+/// ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at)), so they hold even while
+/// the project does not load. A project that does not load, as when a process it needs for a
+/// renderer did not declare, has no plugin's command: why is among the failed lines.
+fn piped(root: Option<&Path>) -> Piped {
+    let Some(root) = root else {
+        return Piped::default();
+    };
+    let names = crate::project::PluginProcess::named_at(root);
+    if names.is_empty() {
+        return Piped::default();
+    }
+    let project = Project::of(root);
+    let mut piped = Piped {
+        names,
+        failed: Project::problem(root)
+            .map(|why| {
+                format!("the project does not load, so its plugins' commands are not known: {why}")
+            })
+            .into_iter()
+            .collect(),
+        ..Piped::default()
+    };
+    for plugin in Plugins::for_project(&project).list() {
+        let Some(remote) = process::remote(*plugin) else {
+            continue;
+        };
+        match remote.declaration() {
+            Ok(_) => piped.commands.extend(plugin.commands()),
+            Err(why) => piped.failed.push(format!(
+                "the plugin {}'s process failed, so its commands are not known: {why} (its log: \
+                 {})",
+                plugin.name(),
+                remote.process().log.display()
+            )),
+        }
+    }
+    piped
+}
+
+/// The command `name` `symphony` runs in the project at `root`: one of a plugin of the project
+/// answering from its process, run as its program; else that of the first plugin this process
+/// holds that adds one, measured as the project at `root` says when there is one
+/// ([`Plugins::at`]). Whether the project names a plugin's process, and its two settings, are read
+/// alone and quietly first ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at),
+/// [`PluginCalls::read`]): with none of them, the command runs as it would with neither setting,
+/// the project neither loaded nor checked and nothing said of its file. None found is
+/// [`Commands::failed`]'s lines, empty when no plugin's process failed.
+pub fn command(name: &str, root: Option<&Path>) -> Result<&'static dyn Command, Vec<String>> {
+    let piped = piped(root);
+    if let Some(found) = piped.commands.iter().copied().find(|c| c.name() == name) {
+        return Ok(found);
+    }
+    let Some(plugin) = compiled()
         .iter()
         .copied()
-        .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))?;
+        .filter(|plugin| !piped.answers(plugin.name()))
+        .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))
+    else {
+        return Err(piped.failed);
+    };
     let plugin = match root {
         Some(root) if PluginCalls::read(root).recorded() => {
             let project = Project::of(root);
@@ -114,6 +216,7 @@ pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> 
         .commands()
         .into_iter()
         .find(|command| command.name() == name)
+        .ok_or_else(Vec::new)
 }
 
 /// The record of `project`'s plugin calls, its checkout at `root`.
@@ -123,11 +226,60 @@ pub fn record(project: &Project, root: &Path) -> std::path::PathBuf {
 
 /// A project's plugins.
 #[derive(Clone, Default)]
-pub struct Plugins(Arc<Vec<&'static dyn Plugin>>);
+pub struct Plugins {
+    list: Arc<Vec<&'static dyn Plugin>>,
+    /// What one register read had of the plugins answering from a process, every card kind of
+    /// every card in one go ([`Plugins::reading`]): their card kinds answer from it.
+    read: Arc<Vec<process::Read>>,
+}
 
 impl Plugins {
     pub fn new(plugins: Vec<&'static dyn Plugin>) -> Self {
-        Self(Arc::new(plugins))
+        Self {
+            list: Arc::new(plugins),
+            read: Arc::default(),
+        }
+    }
+
+    /// These plugins for one read of the registers `docs`, in the checkout at `root`: each plugin
+    /// answering from a process is asked every card kind's answers of every card of `docs` in one
+    /// request, or as many as keep each line within the protocol's bound, and its card kinds answer
+    /// those cards from it (a register read costs a request, not a round trip for each call of each
+    /// card). Each card is sent as the read asks it: with its document, and with none, as the
+    /// card's slot, choice and thread are asked. Any other card is asked card by card. A linked
+    /// plugin, or one whose process speaks a minor before the batch, is asked as it is.
+    #[must_use]
+    pub fn reading(&self, root: &Path, docs: &[crate::board::Doc]) -> Plugins {
+        let remotes: Vec<&'static process::Remote> = self
+            .list
+            .iter()
+            .filter_map(|plugin| process::remote(*plugin))
+            .collect();
+        if remotes.is_empty() {
+            return self.clone();
+        }
+        // A card twice (two alike in one document) is asked twice and answered alike.
+        let mut cards = Vec::new();
+        for doc in docs {
+            for decision in &doc.decisions {
+                for on in [doc.path.as_str(), ""] {
+                    cards.push(with_card(
+                        decision,
+                        on,
+                        symphony_plugin::protocol::CardData::of,
+                    ));
+                }
+            }
+        }
+        Plugins {
+            list: self.list.clone(),
+            read: Arc::new(
+                remotes
+                    .into_iter()
+                    .filter_map(|remote| remote.read_cards(root, &cards))
+                    .collect(),
+            ),
+        }
     }
 
     /// The plugins `project` names, in its order, as they are: for what they declare (a seam
@@ -194,7 +346,7 @@ impl Plugins {
             return self;
         }
         Self::new(
-            self.0
+            self.list
                 .iter()
                 .map(|plugin| match process::remote(*plugin) {
                     Some(_) => *plugin,
@@ -205,7 +357,7 @@ impl Plugins {
     }
 
     pub fn list(&self) -> &[&'static dyn Plugin] {
-        &self.0
+        &self.list
     }
 
     /// The component called `name`: the built-in `task`, else the first plugin's that has one.
@@ -213,7 +365,7 @@ impl Plugins {
         if name == TASK.name() {
             return Some(&TASK);
         }
-        self.0
+        self.list
             .iter()
             .flat_map(|plugin| plugin.components())
             .find(|component| component.name() == name)
@@ -223,7 +375,7 @@ impl Plugins {
     pub fn component_names(&self) -> Vec<String> {
         std::iter::once(TASK.name().to_string())
             .chain(
-                self.0
+                self.list
                     .iter()
                     .flat_map(|plugin| plugin.components())
                     .map(|component| component.name().to_string()),
@@ -232,31 +384,39 @@ impl Plugins {
     }
 
     pub fn card_kinds(&self) -> Vec<&dyn CardKind> {
-        self.0.iter().flat_map(|p| p.card_kinds()).collect()
+        self.list
+            .iter()
+            .flat_map(
+                |plugin| match self.read.iter().find(|read| read.of(*plugin)) {
+                    Some(read) => read.card_kinds(),
+                    None => plugin.card_kinds(),
+                },
+            )
+            .collect()
     }
 
     pub fn route(&self, path: &str) -> Option<&dyn Route> {
-        self.0
+        self.list
             .iter()
             .flat_map(|p| p.routes())
             .find(|route| route.path() == path)
     }
 
     pub fn nav(&self) -> Vec<NavItem> {
-        self.0.iter().flat_map(|p| p.nav()).collect()
+        self.list.iter().flat_map(|p| p.nav()).collect()
     }
 
     pub fn home_regions(&self) -> Vec<&dyn HomeRegion> {
-        self.0.iter().flat_map(|p| p.home_regions()).collect()
+        self.list.iter().flat_map(|p| p.home_regions()).collect()
     }
 
     pub fn board_actions(&self) -> Vec<&dyn BoardAction> {
-        self.0.iter().flat_map(|p| p.board_actions()).collect()
+        self.list.iter().flat_map(|p| p.board_actions()).collect()
     }
 
     /// The field `name` of the plugin `plugin`.
     pub fn board_field(&self, plugin: &str, name: &str) -> Option<&dyn BoardField> {
-        self.0
+        self.list
             .iter()
             .find(|p| p.name() == plugin)?
             .board_fields()
@@ -265,24 +425,24 @@ impl Plugins {
     }
 
     pub fn watches(&self) -> Vec<&dyn Watch> {
-        self.0.iter().flat_map(|p| p.watches()).collect()
+        self.list.iter().flat_map(|p| p.watches()).collect()
     }
 
     pub fn doc_checks(&self) -> Vec<&dyn DocCheck> {
-        self.0.iter().flat_map(|p| p.doc_checks()).collect()
+        self.list.iter().flat_map(|p| p.doc_checks()).collect()
     }
 
     pub fn prose_rules(&self) -> Vec<&dyn ProseRule> {
-        self.0.iter().flat_map(|p| p.prose_rules()).collect()
+        self.list.iter().flat_map(|p| p.prose_rules()).collect()
     }
 
     pub fn generators(&self) -> Vec<&dyn Generator> {
-        self.0.iter().flat_map(|p| p.generators()).collect()
+        self.list.iter().flat_map(|p| p.generators()).collect()
     }
 
     /// The theme package called `package`: the first plugin's that provides one by that name.
     pub fn theme(&self, package: &str) -> Option<symphony_plugin::Theme> {
-        self.0
+        self.list
             .iter()
             .filter_map(|p| p.theme())
             .find(|theme| theme.package == package)
@@ -308,7 +468,7 @@ impl Plugins {
     /// document is rendered afresh on every read.
     pub fn cache_version(&self, page: &Page<'_>) -> Option<String> {
         let mut version = String::new();
-        for component in self.0.iter().flat_map(|plugin| plugin.components()) {
+        for component in self.list.iter().flat_map(|plugin| plugin.components()) {
             version.push_str(component.name());
             version.push('=');
             version.push_str(&component.cache_version(page)?);
