@@ -46,6 +46,7 @@ pub const USAGE: &str = "\
 usage: symphony-server [--open] [--if-up] [--shared] [--host H]... [--root DIR] [--port N | PORT]
        symphony-server --stop
        symphony-server project add [DIR]
+       symphony-server --version
 
 The Symphony (`just symphony`): one server per machine, under a lock in the machine folder, serving
 every registered project at `/<id>/` and each of its worktrees at `/<id>/@<tree id>/`. A start
@@ -222,6 +223,14 @@ fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
 
 /// The whole of `symphony-server`: the exit code.
 pub fn main(args: &[String]) -> i32 {
+    if symphony::cli::version(
+        args,
+        "symphony-server",
+        env!("CARGO_PKG_VERSION"),
+        &mut std::io::stdout(),
+    ) {
+        return 0;
+    }
     // Keep scratch runs explicit and self-contained without mutating the process environment
     // after threads exist. The child serves normally against its own board and asks file.
     if args.first().is_some_and(|arg| arg == "--scratch") {

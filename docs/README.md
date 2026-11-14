@@ -1,5 +1,7 @@
 # Symphony documentation
 
+- [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
+  with its default.
 - [Decision register](DECISIONS.md) — Symphony's own product and engineering decisions, one card
   each; the evidence behind a card is under [Analysis](analysis/).
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.

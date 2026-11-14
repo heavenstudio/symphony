@@ -447,6 +447,60 @@ fn the_first_eight_links_on_the_screen_are_read_once_after_the_pages_own_reads_a
     assert_eq!(items.get("document:docs/near.md"), Some(&json!(true)));
 }
 
+/// A link to a document the project lacks is read ahead, refused `404` with the server's error as
+/// the server refuses it, and that read is read to its end before the next link's: Chrome ends a
+/// read only once the page reads its body, and one left unread stayed in flight for as long as the
+/// page was open, which held `symphony shot` until its timeout (a new project's home linking a
+/// register it has no file of yet). Nothing is kept of it.
+#[test]
+fn a_read_ahead_the_server_refuses_ends_read_to_its_end_and_the_next_link_is_read_after_it() {
+    const GONE: &str = "/api/document?path=docs%2Fgone.md&view=first";
+    const NEAR: &str = "/api/document?path=docs%2Fnear.md&view=first";
+    let site = site();
+    site.set_document(&documents::document("docs/near.md", "Near", 4182));
+    site.miss_route(GONE, Some("not found: docs/gone.md"));
+    site.set_document(&links_page(
+        vec![link("/docs/gone.md", "gone"), link("/docs/near.md", "near")],
+        0,
+    ));
+    let Some(mut chrome) = crate::chrome() else {
+        return;
+    };
+    visit_links(&mut chrome, &site);
+    keeps(&mut chrome, &["document:docs/near.md outline"]);
+    let answered: Vec<(String, u16)> = site
+        .read_ahead()
+        .into_iter()
+        .map(|answer| (answer.target, answer.status))
+        .collect();
+    assert_eq!(
+        answered,
+        [(GONE.to_string(), 404), (NEAR.to_string(), 200)],
+        "the missing document's read first, then the next link's"
+    );
+    let ended = test_time::until("the refused read ahead ended", crate::STALL, || {
+        chrome
+            .requests()
+            .into_iter()
+            .find(|request| request.url.ends_with(GONE))
+            .filter(|request| request.finished || request.failed.is_some())
+    })
+    .unwrap_or_else(|stall| panic!("{stall}: {:#?}", chrome.requests()));
+    assert!(
+        ended.finished && ended.failed.is_none() && ended.status == 404,
+        "answered 404 and read to its end, not given up: {ended:#?}"
+    );
+    let sent = sent(&mut chrome);
+    let ahead = ahead(&sent);
+    assert!(
+        ahead[0].ended.is_some_and(|ended| ended <= ahead[1].at),
+        "the refused read ended before the next one was sent: {ahead:#?}"
+    );
+    let items = records(&mut chrome, "items", "visited");
+    assert_eq!(items.get("document:docs/gone.md"), None, "{items:#?}");
+    assert_eq!(items.get("document:docs/near.md"), Some(&json!(false)));
+}
+
 #[test]
 fn a_link_that_acts_a_search_the_page_itself_a_folder_and_a_link_off_the_screen_are_never_read_ahead()
  {
