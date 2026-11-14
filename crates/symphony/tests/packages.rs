@@ -87,6 +87,93 @@ fn text<'a>(package: &'a Value, field: &str) -> &'a str {
     package[field].as_str().unwrap_or_default()
 }
 
+/// The helpers, each on a version line of its own (docs/RELEASES.md): with the [`KIT`], what a
+/// project may link at the version it names.
+const HELPERS: [&str; 5] = [
+    "process-cwd",
+    "repository-read",
+    "symphony-args",
+    "symphony-env",
+    "symphony-schema",
+];
+
+/// The workspace members (`members`, by name) that `package`, the kit's or a helper, builds with
+/// and its promise leaves out: a kit package may build with the kit alone, a helper with the
+/// helpers alone. A type of any other member shown in its public items would move its version with
+/// that member's, and the kit's major with the app's; its tests' dependencies (`dev`) are not
+/// published, and so not counted. That no public item of the kit shows a helper's type is read in
+/// review, as rustc's lint for it is unstable (docs/CHECKS.md).
+fn leaked<'a>(package: &'a Value, members: &BTreeSet<&str>) -> Vec<&'a str> {
+    let line: &[&str] = if KIT.contains(&name(package)) {
+        &KIT
+    } else {
+        &HELPERS
+    };
+    package["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
+        .filter_map(|dependency| dependency["name"].as_str())
+        .filter(|dep| members.contains(dep) && !line.contains(dep))
+        .collect()
+}
+
+#[test]
+fn the_kit_and_the_helpers_build_with_no_member_their_promise_leaves_out() {
+    let names: BTreeSet<&str> = members().iter().map(name).collect();
+    for promised in KIT.iter().chain(&HELPERS) {
+        assert!(
+            PUBLISHED.contains(promised) && names.contains(promised),
+            "{promised} is promised, so a published member"
+        );
+    }
+    let wrong: Vec<String> = members()
+        .iter()
+        .filter(|package| KIT.contains(&name(package)) || HELPERS.contains(&name(package)))
+        .flat_map(|package| {
+            leaked(package, &names)
+                .into_iter()
+                .map(|dep| format!("{} builds with {dep}", name(package)))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    // As it reads them: a kit package on the library or the wire types, or a helper on the kit,
+    // builds with what its promise leaves out; a helper on a helper, a crate from crates.io and a
+    // test's own dependency do not.
+    let package = |name: &str, dependencies: &[(&str, Option<&str>)]| {
+        let dependencies: Vec<Value> = dependencies
+            .iter()
+            .map(|(dep, kind)| serde_json::json!({"name": dep, "kind": kind}))
+            .collect();
+        serde_json::json!({"name": name, "dependencies": dependencies})
+    };
+    let library = members()
+        .iter()
+        .find(|package| folder(package).ends_with("crates/symphony"))
+        .map(name)
+        .unwrap();
+    let kit = package(
+        "symphony-plugin",
+        &[
+            (library, None),
+            ("symphony-api", None),
+            ("symphony-blocks", None),
+            ("serde", None),
+        ],
+    );
+    assert_eq!(leaked(&kit, &names), [library, "symphony-api"]);
+    let helper = package(
+        "repository-read",
+        &[
+            ("symphony-docs", Some("build")),
+            ("symphony-env", None),
+            ("test-time", Some("dev")),
+        ],
+    );
+    assert_eq!(leaked(&helper, &names), ["symphony-docs"]);
+}
+
 /// What a published package's manifest lacks of what crates.io shows and needs, each as a line.
 fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     let mut lacks = Vec::new();
