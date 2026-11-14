@@ -2264,7 +2264,8 @@ impl Landing<'_> {
             return Err(Refusal::here(self.halted(signal, None)));
         }
         if ran != Ran::Passed {
-            let (by, did) = match commit_hooks(&path).as_slice() {
+            let hooks = commit_hooks(&path);
+            let (by, did) = match hooks.as_slice() {
                 [] => ("git commit".to_string(), "failed on"),
                 [hook] => (format!("the project's git hook {hook}"), "refused"),
                 hooks => (
@@ -2286,7 +2287,13 @@ impl Landing<'_> {
                 short(base),
                 self.log.display()
             );
-            return Err(self.red(merging, again, line));
+            // A hook's refusal is the branch's to answer, as a red check is; git's own failure with
+            // no hook (a signature, an identity, the disk) is no branch's, said to the lander alone.
+            return Err(if hooks.is_empty() {
+                Refusal::here(line)
+            } else {
+                self.red(merging, again, line)
+            });
         }
         let merge = rev(&path, "HEAD").ok_or("the merge left no HEAD")?;
         if !self.settings.check.is_empty() {

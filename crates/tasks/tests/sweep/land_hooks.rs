@@ -251,6 +251,16 @@ fn a_commit_that_fails_with_no_hook_is_named_as_git_commits() {
     let line = refused_by(&r, "git commit", "failed on", &before);
     assert_refused(&r, &result, &line, &before);
     assert!(runs(&r).is_empty());
+    // No branch change fixes it: said to the lander alone, nothing to the executor on the thread.
+    let thread = r.board.store.thread(SLUG).unwrap();
+    assert!(
+        !thread
+            .iter()
+            .any(|m| m.text.starts_with("land refused")
+                || m.recipient.as_deref() == Some("@executor")),
+        "{thread:?}"
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
 }
 
 #[test]
