@@ -27,8 +27,8 @@ runs the tests closest to what it changed and `just lint-rs` (and the client bui
 change, its distribution never committed: the regenerator a land starts makes main's), and posts
 the exact commands and results with the evidence its kind of change asks for,
 such as before and after screenshots of a changed page. Its reviewer runs the same tests, never
-the suite, judges whether the evidence is good enough for the change's risk, and its approve is
-the task's stamp (the task `tools/review-as-stamps` records it on the task). A slice's evidence is
+the suite, judges whether the evidence is good enough for the change's risk, and its approve, a
+verdict on the task itself and never a review subtask, is the task's stamp. A slice's evidence is
 judged in its parent's review, and a fix whose recorded risk calls for no reviewer
 (`workflow/fast-bugfixes`) is landed on its posted evidence by its orchestrator, with no stamp.
 Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
