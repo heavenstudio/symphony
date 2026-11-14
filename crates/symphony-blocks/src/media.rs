@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Media {
     Mockup {
@@ -33,6 +34,7 @@ pub enum Media {
 
 /// One file of a gallery. The poster URL already names a small copy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct GalleryItem {
     pub name: String,
     pub src: String,
@@ -41,6 +43,7 @@ pub struct GalleryItem {
 
 /// A custom element that draws a file, and what the client needs to show it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Viewer {
     /// The element's tag (`orbit-view`): a custom element's name, lower case with a hyphen.
     pub element: String,
@@ -65,6 +68,7 @@ pub struct Viewer {
 /// A button under a viewer: pressing it sets attributes on the element, then calls one of its
 /// methods.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct View {
     pub label: String,
     /// The button's tooltip.
