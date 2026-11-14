@@ -9,8 +9,11 @@ import {
   NearViewport,
   onScreen,
   recallHeight,
+  Settle,
   Skeleton,
+  unsettled,
   useVisibility,
+  waitsNear,
   watchUntilShown,
 } from "./viewport";
 
@@ -92,6 +95,39 @@ describe("a region on the screen", () => {
   });
 });
 
+describe("what waits near the screen", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const box = (top: number, bottom: number, left = 0, right = 100) => ({
+    getBoundingClientRect: () => ({ top, bottom, left, right }),
+  });
+  /** A part of the page, in `scroller` when it is in one, holding `waiting` regions. */
+  const part = (scroller: unknown, ...waiting: unknown[]) =>
+    ({ closest: () => scroller, querySelectorAll: () => waiting }) as unknown as Element;
+
+  it("is a region waiting within the sentinel's reach of the window", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 400);
+    expect(waitsNear(part(null, box(1300, 1350)))).toBe(true);
+    expect(waitsNear(part(null, box(1500, 1550)))).toBe(false);
+    expect(waitsNear(part(null))).toBe(false);
+  });
+
+  it("is cut to the box of the scroller it sits in", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 400);
+    // The scroller ends 300 px down: its reach ends 600 px below that.
+    expect(waitsNear(part(box(0, 300), box(1300, 1350)), ".board-scroll")).toBe(false);
+    expect(waitsNear(part(box(0, 300), box(850, 900)), ".board-scroll")).toBe(true);
+    // A column scrolled out of the scroller's sides never shows, however near it is.
+    expect(waitsNear(part(box(0, 800, 0, 200), box(100, 200, 250, 300)), ".board-scroll")).toBe(
+      false,
+    );
+    // Outside any scroller, the window's reach.
+    expect(waitsNear(part(null, box(1300, 1350)), ".board-scroll")).toBe(true);
+  });
+});
+
 describe("a paragraph waiting for its read", () => {
   it("is a bar per line, and its label for a reader of the page's text", () => {
     expect(renderToStaticMarkup(<Skeleton lines={2} label="Loading…" />)).toBe(
@@ -115,6 +151,15 @@ describe("content near the screen", () => {
     expect(markup).toContain("contain-intrinsic-size:auto 64px;min-height:64px");
     expect(markup).toContain('data-pending="true"><span id="a"></span><i>ghost</i>');
     expect(markup).not.toContain("content");
+  });
+
+  it("is a list's item where it stands in a list", () => {
+    const markup = renderToStaticMarkup(
+      <NearViewport id="tree-a" height={40} listItem>
+        <b>content</b>
+      </NearViewport>,
+    );
+    expect(markup).toMatch(/^<li id="tree-a" style="[^"]*" class="viewport-slot ">/);
   });
 
   it("is lines of text without a ghost", () => {
@@ -195,5 +240,52 @@ describe("a part that keeps its box until it comes into view", () => {
     expect(shown).toEqual(["row"]);
     stop();
     expect(watched?.log).toEqual(["observe row", "disconnect", "takeRecords"]);
+  });
+});
+
+describe("a page's first screen", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("is drawn hidden under its cover until it settles", () => {
+    const markup = renderToStaticMarkup(
+      <Settle cover={<i>ghost</i>}>
+        <b>page</b>
+      </Settle>,
+    );
+    expect(markup).toMatch(
+      /^<div class="settle" data-settle="web-\d+" data-settled="false" aria-busy="true"><div class="settle-cover"><i>ghost<\/i><\/div><b>page<\/b><\/div>$/,
+    );
+  });
+
+  it("is drawn at once when its read failed, with no cover over it", () => {
+    const markup = renderToStaticMarkup(
+      <Settle cover={<i>ghost</i>} failed>
+        <b>page</b>
+      </Settle>,
+    );
+    expect(markup).toContain('data-settled="true" aria-busy="false"><b>page</b></div>');
+    expect(markup).not.toContain("ghost");
+  });
+
+  /** A page's root holding `count` elements, each region of `waiting` still waiting for its read. */
+  const root = (count: number, waiting: number[][]) =>
+    ({
+      childElementCount: count,
+      getBoundingClientRect: () => ({ left: 0, right: 400 }),
+      querySelectorAll: () =>
+        waiting.map(([top = 0, bottom = 0, left = 0, right = 0]) => ({
+          getBoundingClientRect: () => ({ top, bottom, left, right }),
+        })),
+    }) as unknown as Element;
+
+  it("waits while only its cover is in, or a region on the screen waits for its read", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 1000);
+    expect(unsettled(root(1, []))).toBe(true);
+    expect(unsettled(root(2, [[100, 200, 0, 300]]))).toBe(true);
+    // Below the screen, or beside the page's own width, a region waits for no one yet.
+    expect(unsettled(root(2, [[900, 1000, 0, 300]]))).toBe(false);
+    expect(unsettled(root(2, [[100, 200, 500, 600]]))).toBe(false);
+    expect(unsettled(root(2, []))).toBe(false);
   });
 });

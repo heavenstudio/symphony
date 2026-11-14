@@ -67,9 +67,15 @@ function marker(post: boolean, url: string): (phase: string) => void {
 
 /**
  * One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). Its
- * answer, and the headers it came with.
+ * answer, and the headers it came with. The request is given up once `signal` ends, as when no
+ * answer comes in time.
  */
-async function exchange(url: string, payload?: unknown, etag?: string): Promise<[Answer, Headers]> {
+async function exchange(
+  url: string,
+  payload?: unknown,
+  etag?: string,
+  signal?: AbortSignal,
+): Promise<[Answer, Headers]> {
   const reading = payload === undefined;
   const mark = marker(!reading, url);
   const init: RequestInit = {};
@@ -86,6 +92,24 @@ async function exchange(url: string, payload?: unknown, etag?: string): Promise<
   }
   const controller = new AbortController();
   init.signal = controller.signal;
+  const giveUp = () => controller.abort();
+  if (signal?.aborted) giveUp();
+  signal?.addEventListener("abort", giveUp, { once: true });
+  try {
+    return await exchanged(url, init, reading, controller, mark);
+  } finally {
+    signal?.removeEventListener("abort", giveUp);
+  }
+}
+
+/** `exchange`'s request sent with `init`, which `controller` gives up. */
+async function exchanged(
+  url: string,
+  init: RequestInit,
+  reading: boolean,
+  controller: AbortController,
+  mark: (phase: string) => void,
+): Promise<[Answer, Headers]> {
   mark("start");
   const fetched = fetch(here(project(), url), init);
   fetched.then(
@@ -154,9 +178,9 @@ async function answer(
   return { same: false, value: body.value, etag };
 }
 
-/** A read: its body as the browser parsed it. */
-export async function getJson(url: string): Promise<unknown> {
-  const [answered] = await exchange(url);
+/** A read: its body as the browser parsed it. Given up, its request with it, once `signal` ends. */
+export async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
+  const [answered] = await exchange(url, undefined, undefined, signal);
   if (answered.same) throw new Failure("uncertain", "The server answered 304 to a plain read");
   return answered.value;
 }

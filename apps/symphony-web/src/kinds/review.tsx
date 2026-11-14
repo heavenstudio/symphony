@@ -2,9 +2,9 @@
 // mounts it in its root (`#review-root-review`, which the shell made and shows), and `stop` aborts
 // its mount's signal and unmounts it, its reads, its feed and its media layer with it, before the
 // shell shows another kind. A move within the kind is the shell's `review:navigate`, which the page
-// follows without mounting again. Its pictures' and frames' styles are the Dioxus client's.
+// follows without mounting again. Its pictures' and frames' styles are the Dioxus client's, which
+// its media layer brings.
 
-import "../../../symphony-ui/assets/media.css";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { Frame } from "../frame";

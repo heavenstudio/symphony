@@ -12,6 +12,8 @@ import {
   MediaView,
   MockupFrame,
   PictureView,
+  pictureRef,
+  styleRefs,
   WAITING,
   writtenStyle,
 } from "./media";
@@ -397,6 +399,50 @@ describe("a style", () => {
     expect(writtenStyle("color: red")).toBe(writtenStyle("color: red"));
     expect(writtenStyle("color: red")).not.toBe(writtenStyle("color: blue"));
     expect(writtenStyle("color: red")(null)).toBeUndefined();
+  });
+
+  it("keeps its ref while an element holds it, and lets it go once none does", () => {
+    const before = styleRefs();
+    const ref = writtenStyle("width: 7px");
+    const [first, second] = [element(), element()];
+    const undoFirst = ref(first.node);
+    const undoSecond = ref(second.node);
+    expect(writtenStyle("width: 7px")).toBe(ref);
+    undoFirst?.();
+    // The second element holds it still: drawn again, it is let be.
+    expect(writtenStyle("width: 7px")).toBe(ref);
+    undoSecond?.();
+    expect(styleRefs()).toBe(before);
+    // A style drawn again later takes a ref of its own; the one let go, held again, is kept again.
+    expect(writtenStyle("width: 7px")).not.toBe(ref);
+    const again = ref(first.node);
+    expect(writtenStyle("width: 7px")).toBe(ref);
+    again?.();
+    expect(styleRefs()).toBe(before);
+  });
+
+  it("is written with the picture's watch by its one ref, and both undone together", () => {
+    const watched: (Element | null)[] = [];
+    let unwatched = 0;
+    const watch = (node: Element | null) => {
+      watched.push(node);
+      return () => {
+        unwatched += 1;
+      };
+    };
+    const { node, attributes } = element();
+    const undo = pictureRef(watch, "color: red !important")(node);
+    expect(watched).toEqual([node]);
+    expect(attributes.get("style")).toBe("color: red !important");
+    undo();
+    expect(unwatched).toBe(1);
+    expect(attributes.has("style")).toBe(false);
+    // A picture with no style is watched alone.
+    const plain = element();
+    pictureRef(watch, undefined)(plain.node)();
+    expect(watched).toEqual([node, plain.node]);
+    expect(unwatched).toBe(2);
+    expect(plain.attributes.has("style")).toBe(false);
   });
 
   it("is no attribute React draws on a document's picture: the ref writes it", () => {

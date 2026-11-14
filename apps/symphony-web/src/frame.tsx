@@ -41,6 +41,14 @@ export function useFrame(): FrameRefresh {
   return useContext(FrameContext);
 }
 
+/** How many times the frame was asked to read its metadata again: a page's reads that follow it. */
+const RefreshedContext = createContext(0);
+
+/** The frame's count of refreshes (`FrameRefresh.refresh`), which a page reads again on. */
+export function useRefreshed(): number {
+  return useContext(RefreshedContext);
+}
+
 /** Tell every module's ask readers what the page's feed heard of the asks. */
 function asksMoved(moved: unknown): void {
   const event = new Event("review:asks") as Event & { moved?: unknown };
@@ -154,8 +162,11 @@ export async function readMetadata(reads: MetadataReads, current: () => boolean)
   return retry;
 }
 
-/** The activity and pending reads, and what they leave on the window for the panel. */
-function useMetadata(): FrameRefresh {
+/**
+ * The activity and pending reads, and what they leave on the window for the panel; with the count
+ * of the refreshes asked.
+ */
+function useMetadata(): [FrameRefresh, number] {
   const [asked, setAsked] = useState(0);
   const reads = useRef(new MetadataReads());
   const generation = useRef(0);
@@ -191,7 +202,7 @@ function useMetadata(): FrameRefresh {
       if (retry) frame.refresh();
     });
   }, [asked, frame, mount]);
-  return frame;
+  return [frame, asked];
 }
 
 function AppearanceIcon() {
@@ -240,7 +251,7 @@ export interface FrameProps {
 
 /** The page's frame: the header, the page, the floating controls' dock, and the `+` button. */
 export function Frame({ route, children }: FrameProps) {
-  const frame = useMetadata();
+  const [frame, refreshed] = useMetadata();
   useWindowEvents(FRAME_EVENTS);
   const open = field(snapshot("reviewQuickDraft"), "open") === true;
   const panel = snapshot("reviewActivityOpen") === true;
@@ -251,105 +262,109 @@ export function Frame({ route, children }: FrameProps) {
   const trail = crumbs(view, route.path);
   return (
     <FrameContext.Provider value={frame}>
-      <div className={open ? "app-frame quick-expanded" : "app-frame"}>
-        <header className="app-header" id="top">
-          {(view.base ?? "") !== "" && (
-            <a href="/" data-native="true" className="project-switch">
-              {PAGE_NAMES.PROJECTS}
-            </a>
-          )}
-          <nav className="app-pages" aria-label="Pages">
-            {links.map((link) => (
-              <a
-                key={link.href}
-                href={href(GLOBAL.includes(link.href) ? link.href : scoped(route.scope, link.href))}
-                className={link.active ? "active" : ""}
-                aria-current={link.active ? "page" : undefined}
-              >
-                {link.label}
+      <RefreshedContext.Provider value={refreshed}>
+        <div className={open ? "app-frame quick-expanded" : "app-frame"}>
+          <header className="app-header" id="top">
+            {(view.base ?? "") !== "" && (
+              <a href="/" data-native="true" className="project-switch">
+                {PAGE_NAMES.PROJECTS}
               </a>
-            ))}
-          </nav>
-          {trail.length > 0 && (
-            <nav className="crumbs" aria-label="Breadcrumbs">
-              {trail.map((crumb, at) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: a crumb is its place in the trail
-                <Fragment key={at}>
-                  {at > 0 && " / "}
-                  {at + 1 < trail.length ? (
-                    <a href={href(scoped(route.scope, `/${trail.slice(0, at + 1).join("/")}/`))}>
-                      {crumb}
-                    </a>
-                  ) : (
-                    <span>{crumb}</span>
+            )}
+            <nav className="app-pages" aria-label="Pages">
+              {links.map((link) => (
+                <a
+                  key={link.href}
+                  href={href(
+                    GLOBAL.includes(link.href) ? link.href : scoped(route.scope, link.href),
                   )}
-                </Fragment>
+                  className={link.active ? "active" : ""}
+                  aria-current={link.active ? "page" : undefined}
+                >
+                  {link.label}
+                </a>
               ))}
             </nav>
-          )}
-          {/* Appearance is a setting of this project on this device: its panel is the persistent
+            {trail.length > 0 && (
+              <nav className="crumbs" aria-label="Breadcrumbs">
+                {trail.map((crumb, at) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: a crumb is its place in the trail
+                  <Fragment key={at}>
+                    {at > 0 && " / "}
+                    {at + 1 < trail.length ? (
+                      <a href={href(scoped(route.scope, `/${trail.slice(0, at + 1).join("/")}/`))}>
+                        {crumb}
+                      </a>
+                    ) : (
+                      <span>{crumb}</span>
+                    )}
+                  </Fragment>
+                ))}
+              </nav>
+            )}
+            {/* Appearance is a setting of this project on this device: its panel is the persistent
               module's, which this button loads, as the bell loads activity's. */}
-          <Button
-            id="appearance"
-            type="button"
-            aria-label="Appearance"
-            title="Appearance"
-            aria-expanded={appearance}
-            aria-controls="appearance-panel"
-            onClick={() => {
-              remember("reviewAppearanceOpen", !appearance);
-              remember("reviewActivityOpen", false);
-              publish("review:activity");
-              publish("review:appearance");
-            }}
-          >
-            <AppearanceIcon />
-          </Button>
-          <Button
-            id="bell"
-            type="button"
-            aria-expanded={panel}
-            aria-controls="activity-panel"
-            onClick={() => {
-              if (panel) {
+            <Button
+              id="appearance"
+              type="button"
+              aria-label="Appearance"
+              title="Appearance"
+              aria-expanded={appearance}
+              aria-controls="appearance-panel"
+              onClick={() => {
+                remember("reviewAppearanceOpen", !appearance);
                 remember("reviewActivityOpen", false);
                 publish("review:activity");
-              } else {
-                openActivity();
-              }
-            }}
+                publish("review:appearance");
+              }}
+            >
+              <AppearanceIcon />
+            </Button>
+            <Button
+              id="bell"
+              type="button"
+              aria-expanded={panel}
+              aria-controls="activity-panel"
+              onClick={() => {
+                if (panel) {
+                  remember("reviewActivityOpen", false);
+                  publish("review:activity");
+                } else {
+                  openActivity();
+                }
+              }}
+            >
+              <BellIcon />
+              {" Activity"}
+              {/* An image role names the dot: a plain span's label is no name a reader gives. */}
+              {unread() && <span className="dot ok" role="img" aria-label="Unread activity" />}
+            </Button>
+          </header>
+          <div className="frame-page">{children}</div>
+          {/* The bar the floating controls sit in (frame.css): the page scrolls clear of it. */}
+          <div className="frame-dock" aria-hidden="true" />
+          {hasPending && snapshot("reviewPanelReady") !== true && (
+            <nav className="pending-nav frame-pending" aria-label="Cards waiting on you">
+              <Button type="button" data-pending-step="prev" title="Previous pending decision ([)">
+                ← prev
+              </Button>
+              <Button type="button" data-pending-step="next" title="Next pending decision (])">
+                next →
+              </Button>
+              <a href="#top">↑ top</a>
+            </nav>
+          )}
+          <Button
+            id="quick-open"
+            type="button"
+            aria-label="Chat or add a task"
+            aria-controls="quick-sheet"
+            aria-expanded={open}
+            onClick={quickOpen}
           >
-            <BellIcon />
-            {" Activity"}
-            {/* An image role names the dot: a plain span's label is no name a reader gives. */}
-            {unread() && <span className="dot ok" role="img" aria-label="Unread activity" />}
+            +
           </Button>
-        </header>
-        <div className="frame-page">{children}</div>
-        {/* The bar the floating controls sit in (frame.css): the page scrolls clear of it. */}
-        <div className="frame-dock" aria-hidden="true" />
-        {hasPending && snapshot("reviewPanelReady") !== true && (
-          <nav className="pending-nav frame-pending" aria-label="Cards waiting on you">
-            <Button type="button" data-pending-step="prev" title="Previous pending decision ([)">
-              ← prev
-            </Button>
-            <Button type="button" data-pending-step="next" title="Next pending decision (])">
-              next →
-            </Button>
-            <a href="#top">↑ top</a>
-          </nav>
-        )}
-        <Button
-          id="quick-open"
-          type="button"
-          aria-label="Chat or add a task"
-          aria-controls="quick-sheet"
-          aria-expanded={open}
-          onClick={quickOpen}
-        >
-          +
-        </Button>
-      </div>
+        </div>
+      </RefreshedContext.Provider>
     </FrameContext.Provider>
   );
 }

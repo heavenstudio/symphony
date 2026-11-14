@@ -164,6 +164,7 @@ text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.p
 
 /// A stored upload, as [`UPLOAD_PATH`] answers it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Upload {
     /// The file's address, `/artifacts/uploads/<sha256>.<ext>`, the same on every branch's pages.
     pub url: String,

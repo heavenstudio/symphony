@@ -57,6 +57,10 @@ export interface NearViewportProps {
   anchors?: string[];
   id?: string;
   className?: string;
+  /** Called once, the first time the content mounts. */
+  onEnter?: () => void;
+  /** Whether the box is a list's item (`li`) rather than a `div`. */
+  listItem?: boolean;
 }
 
 /**
@@ -70,6 +74,8 @@ export function NearViewport({
   anchors = [],
   id = "",
   className = "",
+  onEnter,
+  listItem = false,
 }: NearViewportProps) {
   const [addressed] = useState(() => {
     const target = anchor();
@@ -77,9 +83,12 @@ export function NearViewport({
   });
   const [shown, setShown] = useState(addressed);
   const sentinel = useRef<HTMLDivElement>(null);
+  const entered = useRef(onEnter);
+  entered.current = onEnter;
   useEffect(() => {
     if (shown) {
       if (addressed) scrollAnchor();
+      entered.current?.();
       return;
     }
     const node = sentinel.current;
@@ -102,8 +111,9 @@ export function NearViewport({
     containIntrinsicSize: `auto ${height}px`,
     minHeight: `${shown ? 0 : height}px`,
   };
+  const Box = listItem ? "li" : "div";
   return (
-    <div id={id === "" ? undefined : id} style={style} className={`viewport-slot ${className}`}>
+    <Box id={id === "" ? undefined : id} style={style} className={`viewport-slot ${className}`}>
       {shown ? (
         children
       ) : (
@@ -122,6 +132,76 @@ export function NearViewport({
           </div>
         </>
       )}
+    </Box>
+  );
+}
+
+/** The longest a page stays under its skeleton waiting for its first screen's reads, in ms. */
+export const SETTLE_MS = 3_000;
+
+let settles = 0;
+
+/**
+ * Whether `root` has not drawn its page yet (only its cover is in it), or a region of it on the
+ * screen, the part of the window its page covers, still waits for its read.
+ */
+export function unsettled(root: Element): boolean {
+  if (root.childElementCount < 2) return true;
+  const page = root.getBoundingClientRect();
+  const screen = [0, innerHeight, Math.max(page.left, 0), Math.min(page.right, innerWidth)];
+  return [...root.querySelectorAll("[data-pending=true]")].some((region) => {
+    const box = region.getBoundingClientRect();
+    return onScreen([box.top, box.bottom, box.left, box.right], screen);
+  });
+}
+
+export interface SettleProps {
+  children: ReactNode;
+  /** The outline of the page `children` make, drawn over them until they settle. */
+  cover: ReactNode;
+  failed?: boolean;
+}
+
+/**
+ * Draw `children` hidden under `cover` until no region they reserve on the first screen
+ * (`[data-pending=true]`) waits for its read any longer, until `failed`, or for SETTLE_MS at most:
+ * the reader's first screen arrives whole, and no read that lands moves it. It checks each frame,
+ * from the first its root is drawn in.
+ */
+export function Settle({ children, cover, failed = false }: SettleProps) {
+  const [id] = useState(() => `web-${settles++}`);
+  const [settled, setSettled] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const done = settled || failed;
+  useEffect(() => {
+    if (failed) setSettled(true);
+  }, [failed]);
+  useEffect(() => {
+    if (done) return;
+    let since: number | null = null;
+    let timer = setTimeout(function check() {
+      const node = root.current;
+      if (node) {
+        since ??= Date.now();
+        if (!unsettled(node) || Date.now() - since > SETTLE_MS) {
+          setSettled(true);
+          return;
+        }
+      }
+      timer = setTimeout(check, 16);
+    }, 16);
+    return () => clearTimeout(timer);
+  }, [done]);
+  return (
+    <div
+      className="settle"
+      data-settle={id}
+      data-settled={`${done}`}
+      aria-busy={`${!done}`}
+      ref={root}
+    >
+      {!done && <div className="settle-cover">{cover}</div>}
+      {children}
     </div>
   );
 }
@@ -223,9 +303,25 @@ export function onScreen(region: number[], screen: number[]): boolean {
   );
 }
 
-/** Whether any region still waiting for its read inside `part` is within reach of the screen. */
-function waitsNear(part: Element): boolean {
-  const screen = [-REACH, innerHeight + REACH, 0, innerWidth];
+/**
+ * Whether any region still waiting for its read inside `part` is within reach of the screen: the
+ * window, cut to the box of `part`'s closest ancestor `scroller` names when it sits in one.
+ */
+export function waitsNear(part: Element, scroller?: string): boolean {
+  let view = [0, innerHeight, 0, innerWidth];
+  const clip = scroller === undefined ? null : part.closest(scroller);
+  if (clip) {
+    const box = clip.getBoundingClientRect();
+    const [top = 0, bottom = 0, left = 0, right = 0] = view;
+    view = [
+      Math.max(top, box.top),
+      Math.min(bottom, box.bottom),
+      Math.max(left, box.left),
+      Math.min(right, box.right),
+    ];
+  }
+  const [top = 0, bottom = 0, left = 0, right = 0] = view;
+  const screen = [top - REACH, bottom + REACH, left, right];
   return [...part.querySelectorAll("[data-pending=true]")].some((region) => {
     const box = region.getBoundingClientRect();
     return onScreen([box.top, box.bottom, box.left, box.right], screen);

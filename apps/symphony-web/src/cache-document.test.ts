@@ -12,6 +12,7 @@ import {
   validator,
   validators,
 } from "./cache-document";
+import { bodies as bodiesOf, put } from "./document";
 import type { Document, DocumentChange, DocumentOutline, Section } from "./wire";
 
 /** A section `key` of `hash`, its body one paragraph saying `text` (none drawn when empty). */
@@ -81,6 +82,19 @@ function firstVisit(read: Document, thread: string): Bodies {
   return bodies;
 }
 
+/**
+ * What a page that holds `taken` keeps on this device of `sent`, the document as the server sent
+ * it: each body taken, under its validator.
+ */
+function keptOf(taken: Bodies, sent: Document): Record<string, KeptBody> {
+  const current = taken.current();
+  const kept: Record<string, KeptBody> = {};
+  for (const body of bodiesOf(sent, new Set(current.keys()))) {
+    put(kept, body.section.key, { validator: current.get(body.section.key) ?? "", body });
+  }
+  return kept;
+}
+
 const validated = (kept: Record<string, KeptBody>) =>
   Object.entries(kept).map(([key, one]) => [key, one.validator]);
 
@@ -129,7 +143,7 @@ describe("a section's validator", () => {
 describe("bodies kept on this device", () => {
   it("are drawn when current by the outline kept with them", () => {
     const read = documentOf(DOCUMENT, "Said");
-    const kept = firstVisit(read, "t1").kept(read);
+    const kept = keptOf(firstVisit(read, "t1"), read);
     expect(Object.keys(kept)).toHaveLength(3);
     expect(kept["card:palette"]?.validator).toBe("p1/t1");
     expect(kept["card:palette"]?.body.card?.text).toBe("Palette, whole");
@@ -149,7 +163,7 @@ describe("bodies kept on this device", () => {
 
   it("are kept when the server's outline names them alike, the rest read again", () => {
     const read = documentOf(DOCUMENT, "Said");
-    const kept = firstVisit(read, "t1").kept(read);
+    const kept = keptOf(firstVisit(read, "t1"), read);
     // Since: intro was edited, and the card's thread answered; lamps is as it was.
     const now = documentOf([["intro", "i2", "Intro, edited"], PALETTE, LAMPS], "Said, answered");
     const wanted = keys("intro", "card:palette");
@@ -169,7 +183,7 @@ describe("bodies kept on this device", () => {
     const [again] = device(wanted);
     expect(again.read(wanted, now.sections.slice(0, 2))).toBe(true);
     expect(again.confirmed()).toBe(true);
-    expect(validated(again.kept(now))).toEqual([
+    expect(validated(keptOf(again, now))).toEqual([
       ["intro", "i2"],
       ["card:palette", "p1/t2"],
       ["lamps", "l1"],
@@ -178,7 +192,7 @@ describe("bodies kept on this device", () => {
     expect(again.read(wanted, now.sections.slice(0, 2))).toBe(false);
     // A section asked for and not answered is gone: nothing of it is kept.
     expect(again.read(keys("lamps"), [])).toBe(true);
-    expect(Object.keys(again.kept(now))).toHaveLength(2);
+    expect(Object.keys(keptOf(again, now))).toHaveLength(2);
   });
 
   it("are not kept once the feed changed them, until the next outline names them", () => {
@@ -192,11 +206,11 @@ describe("bodies kept on this device", () => {
     };
     expect(bodies.changed(delta)).toBe(true);
     // Only the body the feed left alone.
-    expect(Object.keys(bodies.kept(read))).toEqual(["intro"]);
+    expect(Object.keys(keptOf(bodies, read))).toEqual(["intro"]);
     // Lamps read again before the next outline: no validator names it, so it is not kept.
     const edited = documentOf([INTRO, PALETTE, ["lamps", "l2", "Lamps, edited"]], "Said");
     expect(bodies.read(keys("lamps"), edited.sections.slice(2))).toBe(false);
-    expect(Object.keys(bodies.kept(edited))).toEqual(["intro"]);
+    expect(Object.keys(keptOf(bodies, edited))).toEqual(["intro"]);
     // A card changed by its card alone, or a section deleted, is as changed.
     const removed: DocumentChange = {
       path: "",
@@ -204,13 +218,13 @@ describe("bodies kept on this device", () => {
       deleted: ["intro"],
     };
     expect(bodies.changed(removed)).toBe(true);
-    expect(bodies.kept(edited)).toEqual({});
+    expect(keptOf(bodies, edited)).toEqual({});
     expect(bodies.changed(removed)).toBe(false);
     expect(bodies.changed({ path: "" })).toBe(false);
     // The next outline names them: read again, they are kept.
     bodies.answered(outlineOf(edited, "t1"), keys());
     expect(bodies.read(ALL, edited.sections)).toBe(true);
-    expect(Object.keys(bodies.kept(edited))).toHaveLength(3);
+    expect(Object.keys(keptOf(bodies, edited))).toHaveLength(3);
   });
 
   it("are given to the device again only once one is taken or let go", () => {
@@ -232,7 +246,7 @@ describe("bodies kept on this device", () => {
 
     // The next visit draws them and the server's outline names them alike: nothing to give.
     const device = new Bodies();
-    device.drawn(outlineOf(read, "t1"), first.kept(read));
+    device.drawn(outlineOf(read, "t1"), keptOf(first, read));
     expect(device.unkept()).toBeNull();
     device.answered(outlineOf(read, "t1"), ALL);
     expect(device.unkept()).toBeNull();
@@ -276,7 +290,7 @@ describe("a document read ahead", () => {
     expect(readAhead(outline)).toBe(false);
     expect(first.document.sections[0]?.blocks).toHaveLength(1);
     expect(outline.document.sections.map((one) => one.key)).toEqual(["intro", "card:palette"]);
-    const visit = firstVisit(read, "t1").kept(read);
+    const visit = keptOf(firstVisit(read, "t1"), read);
     expect(kept).toEqual({ intro: visit.intro, "card:palette": visit["card:palette"] });
 
     // Drawn from the device as a visit's: current by the outline the part was split into.
@@ -320,7 +334,7 @@ describe("a document read ahead", () => {
     const device = new Bodies();
     device.answered(outline, keys());
     expect(device.read(ALL, read.sections)).toBe(true);
-    expect(validated(device.kept(read))).toEqual([
+    expect(validated(keptOf(device, read))).toEqual([
       ["intro", "i1"],
       ["card:palette", "p1/"],
       ["lamps", "l1"],

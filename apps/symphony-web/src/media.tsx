@@ -8,7 +8,7 @@
 // value escaped, as crates/symphony-blocks writes it (`elementHtml`, held to the Rust by the cases
 // it writes), and the client holds no viewer's code.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./button";
 import { fileAddress, href } from "./project";
 import { useVisibility } from "./viewport";
@@ -282,17 +282,7 @@ export function DocumentPicture({ image }: { image: Image }) {
     "aria-hidden": given["aria-hidden"],
     "data-full": full === undefined ? undefined : href(full),
   };
-  const ref = useCallback(
-    (node: Element | null) => {
-      const unwatch = watch(node);
-      const unstyle = style === undefined ? undefined : writtenStyle(style)(node);
-      return () => {
-        unwatch();
-        unstyle?.();
-      };
-    },
-    [watch, style],
-  );
+  const ref = useMemo(() => pictureRef(watch, style), [watch, style]);
   return (
     <img
       src={shown ? href(image.src) : WAITING}
@@ -306,11 +296,39 @@ export function DocumentPicture({ image }: { image: Image }) {
   );
 }
 
+/**
+ * A picture's one ref, which an element that spreads its presentation and needs a ref of its own
+ * takes too: it watches the element until it comes into view (`watch`) and writes its `style` as
+ * given, and what it returns undoes both.
+ */
+export function pictureRef(
+  watch: (node: Element | null) => () => void,
+  style: string | undefined,
+): (node: Element | null) => () => void {
+  return (node) => {
+    const unwatch = watch(node);
+    const unstyle = style === undefined ? undefined : writtenStyle(style)(node);
+    return () => {
+      unwatch();
+      unstyle?.();
+    };
+  };
+}
+
 /** A ref that writes a style attribute as given: one element's, of any kind. */
 export type StyleRef = (node: Element | null) => (() => void) | undefined;
 
-/** Each style's ref, so an element drawn again with the same style keeps its ref and is let be. */
+/**
+ * Each style's ref, so an element drawn again with the same style keeps its ref and is let be. A
+ * ref no element holds any more is let go: the map holds the styles the page draws, not every
+ * style it ever drew.
+ */
 const STYLE_REFS = new Map<string, StyleRef>();
+
+/** How many styles have a ref now (`writtenStyle`): the tests read it. */
+export function styleRefs(): number {
+  return STYLE_REFS.size;
+}
 
 /**
  * A ref that writes `css` as the element's style attribute, as given, as the Dioxus client writes
@@ -320,13 +338,17 @@ const STYLE_REFS = new Map<string, StyleRef>();
  * property the element already had (a centred container's `text-align`, which React set first)
  * and the written style does not set is set again after it. The element drawn without it again,
  * or with another style, has its style as it was before this one was written. One ref per style,
- * the same each time, so an element drawn again with it is let be.
+ * the same each time while an element holds it, so an element drawn again with it is let be.
  */
 export function writtenStyle(css: string): StyleRef {
   let ref = STYLE_REFS.get(css);
   if (ref === undefined) {
-    ref = (node) => {
+    let held = 0;
+    const written: StyleRef = (node) => {
       if (node === null) return undefined;
+      // Held again after it was let go (another element took it as one let it go): kept again.
+      held += 1;
+      STYLE_REFS.set(css, written);
       const before = node.getAttribute("style");
       const { style } = node as HTMLElement;
       const own: [string, string][] = [];
@@ -341,8 +363,11 @@ export function writtenStyle(css: string): StyleRef {
       return () => {
         if (before === null) node.removeAttribute("style");
         else node.setAttribute("style", before);
+        held -= 1;
+        if (held === 0 && STYLE_REFS.get(css) === written) STYLE_REFS.delete(css);
       };
     };
+    ref = written;
     STYLE_REFS.set(css, ref);
   }
   return ref;
