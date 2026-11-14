@@ -3,7 +3,7 @@
 // groups, and the ghost it draws before its first read, in the shape and with the cards it had.
 // What it reads and when is boardlive.tsx's.
 
-import { type CSSProperties, Fragment, useEffect, useRef, useState } from "react";
+import { type CSSProperties, Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
 import { sleep } from "./feed";
@@ -13,7 +13,7 @@ import { getJson, said } from "./request";
 import { SelectField } from "./select";
 import { load, save } from "./storage";
 import { byPriority, byRecent, isTask, readListing } from "./task";
-import { statusWords, TaskCard } from "./taskcard";
+import { sameCard, statusWords, TaskCard } from "./taskcard";
 import { failed } from "./trouble";
 import { KEEP_MS, NearViewport, Skeleton, waitsNear, windowWidth } from "./viewport";
 import type { MachineWork, Task, TaskListing } from "./wire";
@@ -548,6 +548,32 @@ export async function rememberCards(status: string, signal: AbortSignal): Promis
  * search `query` and the window of `days`. */
 export type OnLoad = (status: string, more: boolean, query: string, days: number) => void;
 
+export interface RowProps {
+  task: Task;
+  work: MachineWork;
+  connected: boolean;
+  /** The layout its reserve is worked out for. */
+  layout: Layout;
+}
+
+/**
+ * A row of a column: its card once near the screen, until then as tall as that card will take
+ * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout.
+ */
+export const BoardRow = memo(function BoardRow({ task, work, connected, layout }: RowProps) {
+  const reserve = rowCard(task, work, connected, layout);
+  return (
+    <NearViewport id={`row-${task.slug}`} height={reserve[0]} ghost={<GhostCard card={reserve} />}>
+      <TaskCard task={task} work={work} connected={connected} />
+    </NearViewport>
+  );
+}, sameRow);
+
+/** Whether two rows draw alike. */
+export function sameRow(a: RowProps, b: RowProps): boolean {
+  return a.layout === b.layout && sameCard(a, b);
+}
+
 export interface ColumnProps {
   status: string;
   work: MachineWork;
@@ -560,8 +586,9 @@ export interface ColumnProps {
   refreshed: number;
 }
 
-/** A column of the board: its heading and count, its rows near the screen, and Load more. */
-export function TaskColumn({
+/** A column of the board: its heading and count, its rows near the screen, and Load more. Drawn again
+ * only when what it is given changed: the board keeps an unchanged column's tasks (`byColumn`). */
+export const TaskColumn = memo(function TaskColumn({
   status,
   work,
   connected,
@@ -634,19 +661,9 @@ export function TaskColumn({
           </div>
         )}
         {/* A row waiting to be drawn holds what its own card will take (`rowHeight`). */}
-        {rows.map((task) => {
-          const reserve = rowCard(task, work, connected, layout);
-          return (
-            <NearViewport
-              key={task.slug}
-              id={`row-${task.slug}`}
-              height={reserve[0]}
-              ghost={<GhostCard card={reserve} />}
-            >
-              <TaskCard task={task} work={work} connected={connected} />
-            </NearViewport>
-          );
-        })}
+        {rows.map((task) => (
+          <BoardRow key={task.slug} task={task} work={work} connected={connected} layout={layout} />
+        ))}
         {/* Only once the first page is in: while it is read, there is nothing more to load. */}
         {tasks.length > 0 && count > tasks.length && (
           <Button onClick={() => onLoad(status, true, query, days)}>Load more tasks</Button>
@@ -654,6 +671,39 @@ export function TaskColumn({
       </NearViewport>
     </section>
   );
+});
+
+/** No task: a column with none keeps this one list. */
+const NONE: Task[] = [];
+
+/**
+ * `tasks` by the column each goes in (`place`), in their order. A column whose tasks are the same
+ * objects as in `before` keeps `before`'s list, so it is not drawn again.
+ */
+export function byColumn(
+  tasks: Task[],
+  place: (task: Task) => string,
+  before: Map<string, Task[]>,
+): Map<string, Task[]> {
+  const columns = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const status = place(task);
+    const list = columns.get(status);
+    if (list === undefined) columns.set(status, [task]);
+    else list.push(task);
+  }
+  for (const [status, list] of columns) {
+    const kept = before.get(status);
+    if (kept?.length === list.length && kept.every((task, at) => task === list[at])) {
+      columns.set(status, kept);
+    }
+  }
+  return columns;
+}
+
+/** The window of finished tasks a choice of the Finished tasks field names, in days. */
+export function windowOf(value: string): number {
+  return value === "7" ? 7 : 1;
 }
 
 export interface TaskBoardProps {
@@ -692,20 +742,28 @@ export function TaskBoard({
   const unreported = work.machines.length === 0;
   const machine = (status: string) => status === "build" || status === "test";
   const listed = unreported ? named.filter((status) => !machine(status)) : withMachineStages(named);
-  const filtered = tasks.filter(
-    (task) =>
-      (isTask(task) || search !== "") &&
-      (selected === "" || taskStage(work, task, connected) === selected),
-  );
-  if (search === "") filtered.sort(byPriority);
-  const stage = (task: Task) => taskStage(work, task, connected);
+  // Each column's tasks, placed once: a column whose tasks did not change keeps its list, and is not
+  // drawn again.
+  const kept = useRef(new Map<string, Task[]>());
+  const columns = useMemo(() => {
+    const filtered = tasks.filter(
+      (task) =>
+        (isTask(task) || search !== "") &&
+        (selected === "" || taskStage(work, task, connected) === selected),
+    );
+    if (search === "") filtered.sort(byPriority);
+    const place = (task: Task) =>
+      signoff.includes(task.slug) ? "signoff" : taskStage(work, task, connected);
+    return byColumn(filtered, place, kept.current);
+  }, [tasks, search, selected, work, connected, signoff]);
+  kept.current = columns;
   const column = (status: string) => (
     <TaskColumn
       key={status}
       status={status}
       work={work}
       connected={connected}
-      tasks={filtered.filter((task) => stage(task) === status && !signoff.includes(task.slug))}
+      tasks={columns.get(status) ?? NONE}
       count={counts.find(([one]) => one === status)?.[1] ?? 0}
       query={search}
       days={days}
@@ -754,7 +812,8 @@ export function TaskBoard({
               ["7", "Last week"],
             ]}
             onChange={(value) => {
-              const window = value === "7" ? 7 : 1;
+              // The window already chosen too: the board reads it again.
+              const window = windowOf(value);
               setDays(window);
               onFilter(search, window);
             }}
@@ -767,7 +826,7 @@ export function TaskBoard({
             status="signoff"
             work={work}
             connected={connected}
-            tasks={filtered.filter((task) => signoff.includes(task.slug))}
+            tasks={columns.get("signoff") ?? NONE}
             count={signoff.length}
             query={search}
             days={days}

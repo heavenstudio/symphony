@@ -2,11 +2,11 @@
 // slug and priority, its status, its title (the card's one link to its task), its build and test
 // phases, the task it is a subtask of, the documents it links and who holds its roles.
 
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { linkName } from "./cardheight";
 import { href } from "./project";
 import type { MachineWork, Role, Task } from "./wire";
-import { NO_WORK, phaseLabel, shownPhases } from "./work";
+import { NO_WORK, phaseLabel, samePhases, shownPhases } from "./work";
 
 /** The performance mark set once a task's card is first drawn. */
 const READY_MARK = "tasks-ready";
@@ -86,8 +86,32 @@ export interface TaskCardProps {
   connected?: boolean;
 }
 
-/** A task's card. The title is its one link to the task; the slug above it is text to copy. */
-export function TaskCard({ task, work = NO_WORK, connected = true }: TaskCardProps) {
+/**
+ * Whether `a` and `b` draw the same card: the same task (a page keeps the object of a task that did
+ * not change), the feed alike, and the same build and test phases, worked out only when the
+ * machines' work changed. A list drawn again draws only the cards that changed.
+ */
+export function sameCard(a: TaskCardProps, b: TaskCardProps): boolean {
+  const connected = a.connected ?? true;
+  if (a.task !== b.task || connected !== (b.connected ?? true)) return false;
+  const before = a.work ?? NO_WORK;
+  const after = b.work ?? NO_WORK;
+  return (
+    before === after ||
+    samePhases(
+      shownPhases(before, a.task.slug, connected),
+      shownPhases(after, b.task.slug, connected),
+    )
+  );
+}
+
+/** A task's card. The title is its one link to the task; the slug above it is text to copy. It is
+ * drawn again only when what it shows changed (`sameCard`). */
+export const TaskCard = memo(function TaskCard({
+  task,
+  work = NO_WORK,
+  connected = true,
+}: TaskCardProps) {
   useEffect(markTasksReady);
   return (
     <div className={`taskcard p${task.priority}`} data-slug={task.slug}>
@@ -115,4 +139,4 @@ export function TaskCard({ task, work = NO_WORK, connected = true }: TaskCardPro
       <Roles roles={task.roles} />
     </div>
   );
-}
+}, sameCard);

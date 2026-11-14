@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BoardContext,
+  BoardRow,
   boardShape,
+  byColumn,
   CARDS_MAX,
   type ColumnProps,
   card,
@@ -24,15 +26,17 @@ import {
   recallShape,
   rememberCards,
   rowCard,
+  sameRow,
   statusLabel,
   TaskBoard,
   type TaskBoardProps,
   TaskColumn,
   titleLines,
   UnreadBoard,
+  windowOf,
   withMachineStages,
 } from "./board";
-import { rowHeight } from "./cardheight";
+import { layoutAt, rowHeight } from "./cardheight";
 import {
   aMachine,
   anOperation,
@@ -46,7 +50,7 @@ import {
 } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import { KEEP_MS } from "./viewport";
-import type { MachineWork } from "./wire";
+import type { MachineWork, Task } from "./wire";
 import { NO_WORK, phaseLabels } from "./work";
 
 beforeEach(() => {
@@ -478,6 +482,75 @@ describe("a column", () => {
     expect(column({ status: "in_progress", count: 4 })).toContain(
       '<h2>in progress <span class="count">4</span></h2>',
     );
+  });
+});
+
+describe("a board drawn again", () => {
+  const a = aTask("w/a");
+  const b = aTask("w/b");
+  const c = aTask("w/c", { status: "review" });
+  const place = (task: Task) => task.status;
+
+  it("places each task in its column, in their order", () => {
+    const columns = byColumn([a, c, b], place, new Map());
+    expect([...columns.keys()]).toEqual(["ready", "review"]);
+    expect(columns.get("ready")).toEqual([a, b]);
+    expect(columns.get("review")).toEqual([c]);
+  });
+
+  it("keeps the list of a column whose tasks are the same objects, and only of one", () => {
+    const before = byColumn([a, b, c], place, new Map());
+    const again = byColumn([a, b, c], place, before);
+    expect(again.get("ready")).toBe(before.get("ready"));
+    expect(again.get("review")).toBe(before.get("review"));
+    // One task changed: its column's list is new, the other column's kept.
+    const renamed = { ...b, title: "Renamed" };
+    const changed = byColumn([a, renamed, c], place, before);
+    expect(changed.get("ready")).not.toBe(before.get("ready"));
+    expect(changed.get("ready")).toEqual([a, renamed]);
+    expect(changed.get("review")).toBe(before.get("review"));
+    // A task gone, or the same tasks in another order, is a new list too.
+    expect(byColumn([a, c], place, before).get("ready")).toEqual([a]);
+    expect(byColumn([b, a, c], place, before).get("ready")).not.toBe(before.get("ready"));
+    expect(byColumn([], place, before).size).toBe(0);
+  });
+
+  it("draws a row again only when its card or its layout would change", () => {
+    const layout = layoutAt(1280);
+    const row = { task: a, work: NO_WORK, connected: true, layout };
+    expect(sameRow(row, { ...row })).toBe(true);
+    expect(sameRow(row, { ...row, layout: layoutAt(400) })).toBe(false);
+    expect(sameRow(row, { ...row, task: { ...a } })).toBe(false);
+    expect(sameRow(row, { ...row, connected: false })).toBe(false);
+    // Another machine's work that leaves this card's phases as they were draws nothing again.
+    const elsewhere = aWork([
+      aMachine("alpha", [anOperation("alpha", "b", "build", "running", { task: "w/z" })]),
+    ]);
+    expect(sameRow(row, { ...row, work: elsewhere })).toBe(true);
+    const here = aWork([
+      aMachine("alpha", [anOperation("alpha", "b", "build", "running", { task: "w/a" })]),
+    ]);
+    expect(sameRow(row, { ...row, work: here })).toBe(false);
+  });
+
+  it("is memoized: a row by `sameRow`, a column by what it is given", () => {
+    const memo = Symbol.for("react.memo");
+    const { $$typeof, compare } = BoardRow as unknown as { $$typeof: symbol; compare: unknown };
+    expect([$$typeof, compare]).toEqual([memo, sameRow]);
+    expect((TaskColumn as unknown as { $$typeof: symbol }).$$typeof).toBe(memo);
+    expect(
+      renderToStaticMarkup(
+        <BoardRow {...{ task: a, work: NO_WORK, connected: true, layout: layoutAt(1280) }} />,
+      ),
+    ).toContain('id="row-w/a"');
+  });
+});
+
+describe("the Finished tasks field", () => {
+  it("names a week by its 7, and the last 24 hours by anything else", () => {
+    expect(windowOf("7")).toBe(7);
+    expect(windowOf("1")).toBe(1);
+    expect(windowOf("")).toBe(1);
   });
 });
 

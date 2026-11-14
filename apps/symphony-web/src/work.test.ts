@@ -10,6 +10,7 @@ import {
   phases,
   placesAlike,
   readWork,
+  samePhases,
   shownPhases,
   taskStage,
 } from "./work";
@@ -219,6 +220,32 @@ describe("a card's build and test phases", () => {
     ]);
     expect(shownPhases(work, "sim/a", false)[0]?.freshness).toBe("disconnected");
     expect(phaseLabels(work, "sim/b", true)).toEqual([]);
+  });
+});
+
+describe("two lists of phases", () => {
+  const build = anOperation("alpha", "b", "build", "running");
+  const work = aWork([aMachine("alpha", [build])]);
+
+  it("are alike when they draw the same chips, whatever else their machines say", () => {
+    const later = aWork([aMachine("alpha", [build], { sequence: 9, age_ms: 900 })]);
+    expect(samePhases(phases(work, "sim/a"), phases(later, "sim/a"))).toBe(true);
+    expect(samePhases([], [])).toBe(true);
+  });
+
+  it("differ in a chip's count, words, look or title", () => {
+    const same = (other: MachineWork) => samePhases(phases(work, "sim/a"), phases(other, "sim/a"));
+    expect(same(aWork([]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [build, { ...build, operation_id: "c" }])]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [{ ...build, state: "queued" }])]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [build], { freshness: "stale" })]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [{ ...build, recipe: "other" }])]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [{ ...build, resource: "slot" }])]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [{ ...build, reason: "waits" }])]))).toBe(false);
+    expect(same(aWork([aMachine("alpha", [build], { label: "Alpha" })]))).toBe(false);
+    expect(samePhases(shownPhases(work, "sim/a", true), shownPhases(work, "sim/a", false))).toBe(
+      false,
+    );
   });
 });
 

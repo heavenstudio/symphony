@@ -1,16 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SHAPE } from "./board";
+import { byColumn, SHAPE } from "./board";
 import {
   type BoardHost,
   emptyBoard,
   LiveBoard,
   ReadCursor,
   readChanges,
+  sameTask,
   statusNotice,
   TasksPage,
   TasksView,
   upsert,
+  withListed,
 } from "./boardlive";
 import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
@@ -196,6 +198,53 @@ describe("a task the feed sends", () => {
     expect(upsert([a, b], { key: "w/a", value: renamed })).toEqual([renamed, b]);
     expect(upsert([a, b], { key: "w/a", removed: true })).toEqual([b]);
     expect(upsert([a], { key: "w/a", value: null })).toEqual([a]);
+  });
+
+  it("read again as it stands keeps the tasks as they were, the same objects", () => {
+    const tasks = [a, b];
+    expect(upsert(tasks, { key: "w/a", value: aTask("w/a") })).toBe(tasks);
+    const moved = upsert(tasks, { key: "w/a", value: aTask("w/a", { priority: 0 }) });
+    expect(moved).not.toBe(tasks);
+    expect(moved[1]).toBe(b);
+  });
+});
+
+describe("two reads of a task", () => {
+  it("are the same when they say the same, whatever objects they are", () => {
+    const a = aTask("w/a", { roles: [] });
+    expect(sameTask(a, a)).toBe(true);
+    expect(sameTask(a, aTask("w/a", { roles: [] }))).toBe(true);
+    expect(sameTask(a, aTask("w/a", { title: "Renamed" }))).toBe(false);
+    expect(sameTask(a, aTask("w/b"))).toBe(false);
+  });
+});
+
+describe("a page of tasks put on the board", () => {
+  const a = aTask("w/a");
+  const b = aTask("w/b");
+
+  it("puts each in its place, or last when new, in the page's order", () => {
+    const c = aTask("w/c");
+    const renamed = aTask("w/a", { title: "Renamed" });
+    const placed = withListed([a, b], [c, renamed], new Map());
+    expect(placed).toEqual([renamed, b, c]);
+    expect(placed[1]).toBe(b);
+  });
+
+  it("keeps the object of a task read as the board held it, and only of one", () => {
+    const before = new Map([
+      ["w/a", a],
+      ["w/b", b],
+    ]);
+    const again = [aTask("w/a"), aTask("w/b", { title: "Renamed" })];
+    // The column's own tasks were taken off for its first page: they come back last.
+    const placed = withListed([], again, before);
+    expect(placed[0]).toBe(a);
+    expect(placed[1]).not.toBe(b);
+    expect(placed[1]?.title).toBe("Renamed");
+    const tasks = [a, b];
+    expect(withListed(tasks, [], before)).not.toBe(tasks);
+    expect(withListed(tasks, [], before)).toEqual(tasks);
   });
 });
 
@@ -509,6 +558,20 @@ describe("a column of the live board", () => {
     expect(d.tasks.map((task) => task.slug)).toEqual(["w/b", "w/c"]);
   });
 
+  it("read again as the board held it keeps its tasks, so nothing is drawn again", async () => {
+    const page = listing([aTask("w/a"), aTask("w/b")], [["ready", 2]]);
+    const { board, d } = opened({ [column("ready")]: page });
+    d.tasks = [aTask("w/a"), aTask("w/b"), aTask("w/c", { status: "review" })];
+    const [a, b, c] = d.tasks;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    // The column's first page replaced its tasks, each the object the board held.
+    expect(d.tasks).toHaveLength(3);
+    expect(d.tasks[0]).toBe(c);
+    expect(d.tasks[1]).toBe(a);
+    expect(d.tasks[2]).toBe(b);
+  });
+
   it("is drawn with the feed's events since its read began", async () => {
     const held = later<Response>();
     const { board, d } = live(() => held.promise);
@@ -540,6 +603,54 @@ describe("a search of the live board", () => {
     expect(urls(asked)).toEqual(["/api/task-board?counts=1&q=lamp&days=7&activity=1&work=0"]);
     expect(d.query).toBe("lamp");
     expect(d.days).toBe(7);
+  });
+
+  it("of the window already chosen reads the board again, its columns first", async () => {
+    const { board, d, asked, host } = live(() =>
+      answer(200, listing([aTask("w/a")], [["ready", 1]])),
+    );
+    d.waiting = false;
+    d.tasks = [aTask("w/a")];
+    void board.filter("", 1);
+    expect(d.tasks).toEqual([]);
+    // Each column shown asks for its page again, as a new search or window has it do.
+    expect(host.refresh).toHaveBeenCalledTimes(1);
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    // Both after their 250 ms: the counts' pause for the next key, the column's own.
+    expect(urls(asked).sort()).toEqual([COUNTS_URL, column("ready")]);
+    expect(d.tasks.map((task) => task.slug)).toEqual(["w/a"]);
+  });
+});
+
+describe("what the live board gives its columns", () => {
+  it("is one function for each ask, whatever is drawn again", async () => {
+    const { board, d, asked } = live(() => answer(200, listing([aTask("w/a")], [["ready", 1]])));
+    d.waiting = false;
+    const { load, search } = board;
+    board.apply(event(["task", { key: "w/b", value: aTask("w/b") }]));
+    expect(board.load).toBe(load);
+    expect(board.search).toBe(search);
+    load("ready", false, "", 1);
+    await pass(250);
+    expect(urls(asked)).toEqual([column("ready")]);
+    search("lamp", 7);
+    expect(d.query).toBe("lamp");
+    expect(d.days).toBe(7);
+  });
+
+  it("after one card's update, is the other columns' tasks as they were", () => {
+    const { board, d } = live();
+    d.tasks = [aTask("w/a"), aTask("w/b"), aTask("w/c", { status: "review" })];
+    const place = (task: Task) => task.status;
+    const before = byColumn(d.tasks, place, new Map());
+    board.apply(event(["task-fields", { key: "w/b", fields: { title: "Renamed" } }]));
+    const after = byColumn(d.tasks, place, before);
+    // Only the renamed card's column changed, and in it only that card.
+    expect(after.get("review")).toBe(before.get("review"));
+    expect(after.get("ready")).not.toBe(before.get("ready"));
+    expect(after.get("ready")?.[0]).toBe(before.get("ready")?.[0]);
+    expect(after.get("ready")?.[1]?.title).toBe("Renamed");
   });
 });
 

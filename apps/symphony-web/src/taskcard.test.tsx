@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   markTasksReady,
   Roles,
+  sameCard,
   statusWords,
   TaskCard,
   type TaskCardProps,
@@ -68,6 +69,39 @@ describe("a task's card", () => {
     // A task with none draws no row of them.
     expect(renderToStaticMarkup(<WorkPhases work={work} slug="sim/b" connected />)).toBe("");
     expect(draw({ task: aTask("sim/b"), work })).not.toContain("work-phases");
+  });
+});
+
+describe("a card drawn again", () => {
+  const task = aTask("sim/a");
+  const running = aWork([aMachine("alpha", [anOperation("alpha", "b", "build", "running")])]);
+
+  it("is drawn only for another task object, feed or set of phases", () => {
+    expect(sameCard({ task }, { task })).toBe(true);
+    expect(sameCard({ task }, { task, connected: true, work: running })).toBe(false);
+    expect(sameCard({ task }, { task: { ...task } })).toBe(false);
+    expect(sameCard({ task }, { task, connected: false })).toBe(false);
+    expect(sameCard({ task, work: running }, { task, work: running })).toBe(true);
+  });
+
+  it("is not drawn for the machines' heartbeat, or another task's work", () => {
+    const beat = aWork([
+      aMachine("alpha", [anOperation("alpha", "b", "build", "running")], { sequence: 2 }),
+    ]);
+    expect(sameCard({ task, work: running }, { task, work: beat })).toBe(true);
+    const other = aWork([
+      aMachine("alpha", [anOperation("alpha", "b", "build", "running", { task: "sim/b" })]),
+    ]);
+    expect(sameCard({ task }, { task, work: other })).toBe(true);
+    // Disconnected, a machine's own phase reads so: a heartbeat still draws nothing again.
+    expect(
+      sameCard({ task, work: running, connected: false }, { task, work: beat, connected: false }),
+    ).toBe(true);
+  });
+
+  it("is memoized by `sameCard`", () => {
+    const { $$typeof, compare } = TaskCard as unknown as { $$typeof: symbol; compare: unknown };
+    expect([$$typeof, compare]).toEqual([Symbol.for("react.memo"), sameCard]);
   });
 });
 

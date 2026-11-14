@@ -99,8 +99,8 @@ describe("what a page shows from this device", () => {
     f = left(f, [column("ready")]);
     expect(f.unanswered).toEqual([COUNTS]);
     expect(f.failing).toEqual([]);
-    // The counts drawn from the device are still shown, kept when they were.
-    expect(shown(f)).toEqual([4, false]);
+    // The counts drawn from the device are still shown, under the oldest copy's time.
+    expect(shown(f)).toEqual([2, false]);
     expect(shown(left(opened(f), [COUNTS]))).toBeNull();
   });
 

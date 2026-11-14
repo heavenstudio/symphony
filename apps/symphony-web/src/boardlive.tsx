@@ -9,6 +9,7 @@ import {
   boardShape,
   GhostBoard,
   keepShape,
+  type OnLoad,
   recallShape,
   SHAPE,
   TaskBoard,
@@ -262,15 +263,46 @@ export function readChanges(value: unknown, searching: boolean): Change[] | null
   return read;
 }
 
-/** `tasks` with `change` made: a task removed, replaced or added last. */
+/** `tasks` with `change` made: a task removed, replaced or added last. A task read again as it
+ * stands keeps `tasks` as they are, so nothing is drawn again. */
 export function upsert(tasks: Task[], change: ItemChange<Task>): Task[] {
   if (change.removed) return tasks.filter((task) => task.slug !== change.key);
   const task = change.value;
   if (task === null || task === undefined) return tasks;
   const at = tasks.findIndex((one) => one.slug === change.key);
   if (at < 0) return [...tasks, task];
+  const before = tasks[at] as Task;
+  if (sameTask(before, task)) return tasks;
   const next = [...tasks];
   next[at] = task;
+  return next;
+}
+
+/** Whether two reads of a task say the same. */
+export function sameTask(a: Task, b: Task): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * `tasks` with each of `listed` in its place, or last when new. A task read as `before` held it
+ * keeps that object, so its card is not drawn again.
+ */
+export function withListed(
+  tasks: Task[],
+  listed: Task[],
+  before: ReadonlyMap<string, Task>,
+): Task[] {
+  const next = [...tasks];
+  const at = new Map(next.map((task, index) => [task.slug, index]));
+  for (const task of listed) {
+    const old = before.get(task.slug);
+    const kept = old !== undefined && sameTask(old, task) ? old : task;
+    const index = at.get(task.slug);
+    if (index === undefined) {
+      at.set(task.slug, next.length);
+      next.push(kept);
+    } else next[index] = kept;
+  }
   return next;
 }
 
@@ -305,6 +337,14 @@ export class LiveBoard {
   private pending = false;
   /** How many times the reader pressed Retry, which the board's loop waits on. */
   readonly retry = { current: 0 };
+  /** A column's read, one function for the page's life: a column drawn again for it would be. */
+  readonly load: OnLoad = (status, more, query, days) => {
+    void this.column(status, more, query, days);
+  };
+  /** A search or window chosen, one function for the page's life as `load`. */
+  readonly search = (query: string, days: number): void => {
+    void this.filter(query, days);
+  };
 
   constructor(
     readonly scope: string,
@@ -404,10 +444,9 @@ export class LiveBoard {
     const next = list.next ?? null;
     if (next !== null) d.cursors.set(status, next);
     else d.cursors.delete(status);
+    const before = new Map(d.tasks.map((task) => [task.slug, task]));
     if (!more) d.tasks = d.tasks.filter((task) => taskStage(d.work, task, d.connected) !== status);
-    for (const task of list.tasks) {
-      d.tasks = upsert(d.tasks, { key: task.slug, value: task, removed: false });
-    }
+    d.tasks = withListed(d.tasks, list.tasks, before);
     d.counts = list.counts;
     d.lifecycleCounts = list.lifecycle_counts;
     d.signoff = list.signoff;
@@ -535,8 +574,12 @@ export class LiveBoard {
     }
   }
 
-  /** A new search or window: what the page showed goes, and after a pause for the next key, its
-   * counts are read. A -> B -> A is three searches, even though the first and last are alike. */
+  /**
+   * A new search or window: what the page showed goes, each column shown reads its first page under
+   * it, and after a pause for the next key, its counts are read. A -> B -> A is three searches,
+   * even though the first and last are alike, and the window chosen again is a new one: the page
+   * reads it again rather than leaving its columns empty, as the Dioxus page did.
+   */
   async filter(query: string, days: number): Promise<void> {
     const { d } = this;
     d.query = query;
@@ -553,6 +596,9 @@ export class LiveBoard {
     d.drawn = [];
     const view = d.view;
     this.host.redraw();
+    // A column reads again when its search or window changes, and when the board is refreshed: the
+    // same window chosen again changes neither, and its tasks are gone.
+    this.host.refresh();
     // Typing on: a later key's search reads in its place. A feed event meanwhile does not.
     await sleep(250, this.signal);
     if (!this.signal.aborted && d.view === view) await this.counts();
@@ -1013,8 +1059,8 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           statuses={d.statuses}
           signoff={d.signoff}
           refreshed={refreshed}
-          onFilter={(query, days) => void board.filter(query, days)}
-          onLoad={(status, more, query, days) => void board.column(status, more, query, days)}
+          onFilter={board.search}
+          onLoad={board.load}
         />
       ) : (
         <GhostBoard shape={recallShape(load(SHAPE))} />
