@@ -324,9 +324,11 @@ with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
 agent the board starts under the mark stays in the project the same way
 (`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
 launch makes and the one a restore makes again and starts in, an older record's
-too, lead only into those places or under the project's worktree base (`<repo>-wt/`,
-or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
-line naming the folder and starts nothing. A launch takes no `--prompt` there: an
+too, lead only into those places or under the project's worktree base (`<repo>-wt/`
+beside a main checkout that lists the command's checkout as its own, so a worktree's
+`.git` file rewritten to name another repository has none, or `SYMPHONY_WT_DIR`), never
+into a git folder, or the command refuses with one line naming the folder and starts
+nothing. A launch takes no `--prompt` there: an
 agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
 alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
 rest goes on the task's thread, which the skill reads. A restore
