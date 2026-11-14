@@ -4,8 +4,11 @@
 // runs a view's buttons, and opens a picture in the picture viewer, the overlay module's (reached
 // through the shell's `reviewOverlay`), on a click, Enter or Space; the viewer's arrows and Escape
 // move through and close it. It observes the whole page, the panel's media too, and whatever it
-// added ends with the page's mount, the viewer closed.
+// added ends with the page's mount, the viewer closed. The media's styles are the Dioxus client's
+// media sheet, which comes with the layer: a kind that mounts it (home, the documents) loads them
+// once, in the CSS of the chunk the kinds share it in.
 
+import "../../symphony-ui/assets/media.css";
 import { useEffect } from "react";
 import { decode, localAsset, pathOf, WAITING } from "./media";
 import { useMount } from "./mount";
@@ -321,10 +324,11 @@ export function panelShowsMedia(): boolean {
 
 /**
  * The media layer of the page drawn under it, as `owner`: started the first time the page or the
- * panel shows media, and ended with the page's mount. Drawn before the page, so it hears what the
- * page's first media say.
+ * panel shows media, or at once for a page that needs it from its first frame (`immediate`: a
+ * document's opened folds are busy, which its feed reads), and ended with the page's mount. Drawn
+ * before the page, so it hears what the page's first media say.
  */
-export function MediaLayer({ owner }: { owner: string }) {
+export function MediaLayer({ owner, immediate = false }: { owner: string; immediate?: boolean }) {
   const mount = useMount();
   useEffect(() => {
     const layer = new AbortController();
@@ -335,12 +339,12 @@ export function MediaLayer({ owner }: { owner: string }) {
       startMedia(owner, layer.signal);
     };
     addEventListener("review:media", start);
-    if (panelShowsMedia()) start();
+    if (immediate || panelShowsMedia()) start();
     return () => {
       removeEventListener("review:media", start);
       mount.removeEventListener("abort", end);
       layer.abort();
     };
-  }, [mount, owner]);
+  }, [mount, owner, immediate]);
   return null;
 }

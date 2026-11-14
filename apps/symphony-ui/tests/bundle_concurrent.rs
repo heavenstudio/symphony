@@ -20,14 +20,14 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The two page kinds built alone; and the program's kinds (src/split.rs), one build of it.
-const KINDS: [&str; 2] = ["board", "docs"];
+/// The page kind built alone; and the program's kinds (src/split.rs), one build of it.
+const KINDS: [&str; 1] = ["board"];
 const PROGRAM: [&str; 4] = ["tasks", "panel", "overlay", "timeline"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
 const CHUNKS: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
 /// The web client's kinds, one Vite build of them all.
-const WEB: [&str; 3] = ["queue", "reports", "review"];
+const WEB: [&str; 4] = ["docs", "queue", "reports", "review"];
 
 /// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
@@ -77,7 +77,7 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in queue reports review; do
+for kind in docs queue reports review; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$out/assets/$kind-$BUNDLE_ID.css"
     entries="${entries:+$entries,}$(printf '"src/kinds/%s.tsx":{"file":"assets/%s-%s.js","name":"%s","src":"src/kinds/%s.tsx","isEntry":true,"css":["assets/%s-%s.css"]}' "$kind" "$kind" "$BUNDLE_ID" "$kind" "$kind" "$kind" "$BUNDLE_ID")"

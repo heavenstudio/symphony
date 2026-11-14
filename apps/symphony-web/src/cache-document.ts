@@ -4,7 +4,7 @@
 
 import type { Item } from "./cache";
 import { type Body, bodies, cardSlug, put } from "./document";
-import type { Document, DocumentChange, DocumentOutline, Section } from "./wire";
+import type { DocumentChange, DocumentOutline, Section } from "./wire";
 
 /**
  * A document or folder page by its path as the API names it (`docs/X.md`, or `@tree/docs/X.md` for
@@ -227,15 +227,10 @@ export class Bodies {
   }
 
   /**
-   * What this device keeps of `document`, the page's latest copy, by key: each body it holds that
-   * is taken, under its validator. The page keeps these as they are, the values the server sent.
+   * The validator each body the page holds is taken under, by key: those this device is to keep,
+   * each as the server sent it (`DocumentLive.keepBodies`), never as the page's copy has it since.
    */
-  kept(document: Document): Record<string, KeptBody> {
-    const found: Record<string, KeptBody> = {};
-    for (const body of bodies(document, new Set(this.taken.keys()))) {
-      const valid = this.taken.get(body.section.key);
-      if (valid !== undefined) put(found, body.section.key, { validator: valid, body });
-    }
-    return found;
+  current(): ReadonlyMap<string, string> {
+    return new Map(this.taken);
   }
 }

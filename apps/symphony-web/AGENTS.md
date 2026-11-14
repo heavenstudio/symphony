@@ -3,8 +3,10 @@
 The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
 the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second and home
-(`/`, the kind `review`) the third; every other page is still the Dioxus client's. Like that
+review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
+(`/`, the kind `review`) the third and the documents (`/docs/`, each document, folder and HTML
+document an entrypoint serves, the kind `docs`) the fourth; every other page is still the Dioxus
+client's. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -139,13 +141,25 @@ stay the Dioxus program's kinds, which the shell mounts beside any page. A page 
 mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
 the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
 overlay's picture viewer, which it reaches through the shell's `reviewOverlay` as the Dioxus
-pages do, all of it ending with the kind's mount.
+pages do, all of it ending with the kind's mount: one runtime for both kinds. A document's
+contents watch (`contents.ts`: the outline folded on its own while a drawn table is wider than its
+box, unless the reader chose) is no part of it: it runs from the mount of a body that has the
+outline to its unmount, under the signal of that body's own effect (`DocumentBody`).
+
+A read the page gives up is given up on the wire too: `getJson(url, signal)` and `exchange` take
+the signal of what asked, so a read the feed's news replaces, or one a page left behind, is
+aborted rather than answered into nothing (`getDocument`, the data layer's, takes none, so its
+callers check their signal after each of its waits). A text box (`textarea.tsx`) hears each
+`input` event as its change, as the Dioxus box's `oninput` did: React's `onChange` compares the
+box with the value it last saw, and so misses a value a script set before firing `input`.
 
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
-(`src/queue.css`; home's is the Dioxus client's media sheet, `apps/symphony-ui/assets/media.css`,
-which the shared sheet leaves out). A component drawn by a Dioxus component library keeps its markup and class
+(`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
+`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's task
+pages load as well, is the media layer's, imported by `media-layer.ts`, so home and the documents
+take it as one file under the layer's name. A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
@@ -179,6 +193,23 @@ Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.
+
+## The documents
+
+The kind `docs` (`src/kinds/docs.tsx`) draws every page an entrypoint serves: a document, a
+folder with its intro, and an HTML document in a frame that runs its scripts and nothing else
+(`sandbox="allow-scripts"`, its file's `?raw` address, which the server answers whatever
+fetch-metadata headers a browser sends or leaves out). `src/document-page.tsx` draws them;
+`src/document-live.ts` holds what each page reads and follows, a model its loops change under
+the page's signal: the outline and the bodies drawn on this device kept and drawn again at once
+on a return (`cache-document.ts`), the outline read with its copy's tag, the bodies of the
+sections near the screen read and kept, and the document's feed followed. A section that did
+not change draws nothing again, and typed words live outside the page's markup: a section's
+editor (`editor.tsx`: a card's verdict under its tap, a message, a comment), a question and its
+follow-ups (`asks.tsx`), each draft saved on this device on every input with its files
+(`attach.tsx`, the same rows the Dioxus composers keep). A card's Later is the queue's
+(`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s. Its own
+styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
 
 ## Moving a page kind
 

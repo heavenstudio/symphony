@@ -81,6 +81,39 @@ describe("a read", () => {
     fetched.mockResolvedValue(new Response(null, { status: 304 }));
     await expect(getJson("/api/x")).rejects.toMatchObject({ kind: "uncertain" });
   });
+
+  it("is given up, its fetch aborted, once the signal it was given ends", async () => {
+    let signal: AbortSignal | undefined;
+    fetched.mockImplementation(
+      (_: string, init: RequestInit) =>
+        new Promise((_answer, refuse) => {
+          // As the browser's: a signal ended already refuses at once.
+          signal = init.signal ?? undefined;
+          const aborted = () => refuse(new DOMException("aborted", "AbortError"));
+          if (signal?.aborted) aborted();
+          signal?.addEventListener("abort", aborted);
+        }),
+    );
+    const replaced = new AbortController();
+    const read = getJson("/api/x", replaced.signal);
+    expect(signal?.aborted).toBe(false);
+    replaced.abort();
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    expect(signal?.aborted).toBe(true);
+    const gone = new AbortController();
+    gone.abort();
+    await expect(getJson("/api/x", gone.signal)).rejects.toMatchObject({ kind: "uncertain" });
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("answered before its signal ends leaves the signal as it was", async () => {
+    fetched.mockResolvedValue(answer(200, { n: 1 }));
+    const kept = new AbortController();
+    const listened = vi.spyOn(kept.signal, "removeEventListener");
+    expect(await getJson("/api/x", kept.signal)).toEqual({ n: 1 });
+    expect(listened).toHaveBeenCalledWith("abort", expect.any(Function));
+    kept.abort();
+  });
 });
 
 describe("a read of what this device kept", () => {

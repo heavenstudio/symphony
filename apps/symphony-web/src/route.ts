@@ -77,6 +77,22 @@ export function anchor(): string {
 }
 
 /**
+ * The address's fragment, read again each time it changes (`hashchange`) and each time the shell
+ * says the page moved: a move from card to card changes the fragment alone, and the page stays.
+ */
+export function useAnchor(): string {
+  const [current, setCurrent] = useState(anchor);
+  useEffect(() => {
+    const moved = () => setCurrent(anchor());
+    for (const name of ["hashchange", "review:navigate"]) addEventListener(name, moved);
+    return () => {
+      for (const name of ["hashchange", "review:navigate"]) removeEventListener(name, moved);
+    };
+  }, []);
+  return current;
+}
+
+/**
  * Bring the element the address's fragment names into view, opening every `details` around it.
  * Without a fragment it does nothing: the shell owns the guarded top reset, and a late load must
  * not undo a scroll made since.

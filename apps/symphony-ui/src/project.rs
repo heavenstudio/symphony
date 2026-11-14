@@ -55,13 +55,37 @@ pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<Heade
         .collect()
 }
 
+/// Client pages and API reads and writes keep the selected worktree's scope.
+pub fn scoped(scope: &str, route: &str) -> String {
+    if scope.is_empty() {
+        route.into()
+    } else {
+        format!("/@{scope}{route}")
+    }
+}
+
+/// A route's breadcrumbs, and whether they sit under the tasks page. A document or folder sits
+/// under its folders, each crumb but the page's own a link to its folder; a task's slug is one
+/// name under the tasks page, which its other crumb links to, since the parts of a slug are not
+/// tasks of their own.
+fn trail(path: &str) -> (Vec<&str>, bool) {
+    let path = path.trim_end_matches('/');
+    if let Some(slug) = path.strip_prefix("task/") {
+        (vec!["tasks", slug], true)
+    } else if path.is_empty() {
+        (vec!["board"], false)
+    } else {
+        (path.split('/').collect(), false)
+    }
+}
+
 /// The crumbs after the header's links on the page at `path` (as [`header_links`] reads it):
 /// what the lit link does not already say. A document or folder shows each folder of its route,
-/// the last its page ([`crate::docs::crumbs`]); a task's page, under the lit Board, its slug alone.
+/// the last its page ([`trail`]); a task's page, under the lit Board, its slug alone.
 /// None where the route is a header link's own page (the home, the queue, the board, the reports,
 /// the agents, the documents' folder page, a plugin's page).
 pub fn crumbs<'a>(view: &ProjectView, path: &'a str) -> Vec<&'a str> {
-    let (mut trail, under_tasks) = crate::docs::crumbs(path);
+    let (mut trail, under_tasks) = trail(path);
     if under_tasks {
         trail.remove(0);
         return trail;
@@ -146,6 +170,34 @@ pub fn href(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_task_sits_under_the_tasks_page_and_a_document_under_its_folders() {
+        assert_eq!(
+            trail("task/product/polish-sweep/client-source"),
+            (vec!["tasks", "product/polish-sweep/client-source"], true),
+            "no crumb names a part of the slug as a task of its own"
+        );
+        assert_eq!(trail("task/solo/"), (vec!["tasks", "solo"], true));
+        assert_eq!(
+            trail("docs/workflow/REVIEW.md"),
+            (vec!["docs", "workflow", "REVIEW.md"], false)
+        );
+        assert_eq!(trail("docs/lamps/"), (vec!["docs", "lamps"], false));
+        assert_eq!(trail(""), (vec!["board"], false));
+        assert_eq!(trail("tasks"), (vec!["tasks"], false));
+        assert_eq!(
+            trail("taskforce/notes.md"),
+            (vec!["taskforce", "notes.md"], false),
+            "only the task route's own prefix makes a slug"
+        );
+    }
+
+    #[test]
+    fn a_worktrees_routes_go_under_its_scope() {
+        assert_eq!(scoped("", "/api/asks"), "/api/asks");
+        assert_eq!(scoped("feature-x", "/api/asks"), "/@feature-x/api/asks");
+    }
 
     fn nav() -> Vec<NavItem> {
         vec![

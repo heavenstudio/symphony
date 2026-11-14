@@ -1,112 +1,8 @@
-//! The document reader's semantic components. Their markup comes with the client; the API supplies
-//! content and state. Keeping forms outside these components preserves drafts as prose changes.
+//! The blocks' semantic components, which `block_view` draws the task pages' and the panel's blocks
+//! with (the documents' page is the web client's, apps/symphony-web). Their markup comes with the
+//! client; the API supplies content and state.
 
 use dioxus::prelude::*;
-use symphony_api::DocumentTask;
-
-/// A document's related work as its panel lists it: the open tasks, then the finished ones (done
-/// or cancelled), each in the board's order. The tasks the Symphony files for the owner's verdicts
-/// answer the owner, not the document, and are left out.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Related {
-    pub open: Vec<DocumentTask>,
-    pub finished: Vec<DocumentTask>,
-}
-
-impl Related {
-    pub fn of(tasks: Vec<DocumentTask>) -> Self {
-        let (finished, open) = tasks
-            .into_iter()
-            .filter(|task| !task.answers_verdicts())
-            .partition(|task| matches!(task.status.as_str(), "done" | "cancelled"));
-        Self { open, finished }
-    }
-}
-
-/// Owns the task panel's placement for standalone documents and folder introductions alike.
-/// The reader supplies its content; this component alone places related work beside it. Finished
-/// work folds under its count, so it never crowds the open work above it.
-#[component]
-pub fn DocumentWithTasks(tasks: Vec<DocumentTask>, children: Element) -> Element {
-    let Related { open, finished } = Related::of(tasks);
-    rsx! {
-        div { class: "document-content-layout",
-            div { class: "document-content", {children} }
-            if !open.is_empty() || !finished.is_empty() {
-                aside { class: "doc-tasks", "aria-label": "Related tasks",
-                    h2 { "Related tasks" }
-                    if !open.is_empty() {
-                        ul { class: "doc-tasks-open",
-                            for task in open { RelatedTask { key: "{task.slug}", task } }
-                        }
-                    }
-                    if !finished.is_empty() {
-                        details { class: "doc-tasks-finished",
-                            summary { "{finished.len()} finished" }
-                            ul {
-                                for task in finished { RelatedTask { key: "{task.slug}", task } }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// One row of the panel: the title, then the slug that tells it from a row of the same title, and
-/// the status by its board column's name (`in progress`), as every other view names it.
-#[component]
-fn RelatedTask(task: DocumentTask) -> Element {
-    rsx! {
-        crate::viewport::NearViewport { height: 40, list_item: true,
-            a { href: crate::project::href(&format!("/task/{}", task.slug)), "{task.title}" }
-            span { class: "doc-task-meta",
-                code { class: "doc-task-slug", "{task.slug}" }
-                " · "
-                span { class: "doc-task-status", "{task.status.replace('_', \" \")}" }
-            }
-        }
-    }
-}
-
-#[component]
-pub fn TaskTag(task: Option<String>) -> Element {
-    rsx! { if let Some(task) = task { a { class: "chip", href: crate::project::href(&format!("/task/{task}")), "{task}" } } }
-}
-
-#[component]
-pub fn ComparisonNote(comparison: symphony_api::DocumentComparison) -> Element {
-    rsx! { aside { class: "document-comparison", "Differences from main belong to "
-        a { href: crate::project::href(&format!("/task/{}", comparison.task)), "{comparison.task}" }
-    } }
-}
-
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-docs"))]
-#[component]
-pub fn SectionDifference(
-    comparison: Option<symphony_api::SectionComparison>,
-    children: Element,
-) -> Element {
-    let Some(comparison) = comparison else {
-        return children;
-    };
-    let (kind, label) = match comparison.kind {
-        symphony_api::Difference::Added => ("added", "Added"),
-        symphony_api::Difference::Changed => ("changed", "Changed"),
-        symphony_api::Difference::Removed => ("removed", "Removed"),
-    };
-    rsx! { div { class: "section-difference difference-{kind}", "data-difference": kind,
-        p { class: "difference-label", title: "Compared with main", "{label}" }
-        if !comparison.before.is_empty() {
-            details { class: "difference-before",
-                summary { "Previously on main" }
-                crate::viewport::NearViewport { crate::block_view::HistoricalBlocks { blocks: comparison.before } }
-            }
-        }
-        {children}
-    } }
-}
 
 #[component]
 pub fn Heading(level: u8, anchor: String, children: Element) -> Element {
@@ -159,10 +55,9 @@ pub fn Decision(
     posted: String,
     body: Element,
     comparison: Element,
-    #[props(default = true)] anchor: bool,
 ) -> Element {
     rsx! {
-        div { class: "decision", id: if anchor { Some(slug.clone()) } else { None }, "data-slug": slug.clone(),
+        div { class: "decision", id: slug.clone(), "data-slug": slug.clone(),
             "data-state": state, "data-group": group, "data-open": "{open}", "data-decided": decided,
             div { class: "decision-text",
                 code { "{slug}" }
