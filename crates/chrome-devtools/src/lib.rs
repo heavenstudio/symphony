@@ -1074,16 +1074,23 @@ impl Chrome {
     /// page's and end in [`Chrome::requests`] as the page's own do. Unfollowed, such a frame's
     /// document request, or a worker's script, is seen to start, on the page, and never to end:
     /// its answer goes to the frame's or the worker's own session. Anything else the page starts
-    /// that way is let run as it is. What starts while nothing is asked of the browser waits for
-    /// the next call or [`Chrome::pump`], which reads of it and lets it run. A Chrome that cannot
-    /// attach shared workers alone follows none.
+    /// that way is let run as it is, and so is a page it opens (a popup). What starts while nothing
+    /// is asked of the browser waits for the next call or [`Chrome::pump`], which reads of it and
+    /// lets it run. A Chrome that cannot attach shared workers alone follows none.
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
         let mut shared = auto_attach();
         // The browser's own auto-attach takes every target but those its filter leaves out, the
-        // first entry a target matches deciding: shared workers alone, here.
-        shared["filter"] = json!([{"type": "shared_worker", "exclude": false}, {"exclude": true}]);
+        // first entry a target matches deciding: shared workers, and pages. While it is on, Chrome
+        // holds a page opened with its opener (`window.open`) as it starts, and the opener's
+        // script in that call, whatever the filter: only the new page's own session lets it run,
+        // so it is attached, and let run.
+        shared["filter"] = json!([
+            {"type": "shared_worker", "exclude": false},
+            {"type": "page", "exclude": false},
+            {"exclude": true}
+        ]);
         match self.browser_call("Target.setAutoAttach", shared) {
             Err(error) if error.past_deadline() => Err(error),
             _ => Ok(()),

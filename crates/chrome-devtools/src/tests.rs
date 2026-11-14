@@ -1934,7 +1934,8 @@ fn attached(session: &str, kind: &str, waiting: bool) -> Value {
 }
 
 #[test]
-fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_before_it_runs() {
+fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_a_popup_only_runs()
+{
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
         // Every command but the observer's turns and the page's probes: its session, its method and
         // its parameters.
@@ -1962,11 +1963,18 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
                     peer.send(attached("service", "service_worker", true));
                     peer.reply(&command, json!({}));
                 }
-                // The browser's own: a shared worker, told of on no session.
+                // The browser's own, each told of on no session: the page already open, a shared
+                // worker, and a page the page opened with its opener (a popup), held as it starts.
                 (Some("Target.setAutoAttach"), None) => {
-                    let mut shared = attached("shared", "shared_worker", true);
-                    shared.as_object_mut().unwrap().remove("sessionId");
-                    peer.send(shared);
+                    for (session, kind, waiting) in [
+                        ("open", "page", false),
+                        ("shared", "shared_worker", true),
+                        ("popup", "page", true),
+                    ] {
+                        let mut started = attached(session, kind, waiting);
+                        started.as_object_mut().unwrap().remove("sessionId");
+                        peer.send(started);
+                    }
                     peer.reply(&command, json!({}));
                 }
                 _ => {}
@@ -1992,14 +2000,19 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
             "worker",
             "running",
             "service",
-            "shared"
+            "open",
+            "shared",
+            "popup"
         ]
     );
     drop(chrome);
     let follow = json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true});
-    let mut shared_workers = follow.clone();
-    shared_workers["filter"] =
-        json!([{"type": "shared_worker", "exclude": false}, {"exclude": true}]);
+    let mut browsers = follow.clone();
+    browsers["filter"] = json!([
+        {"type": "shared_worker", "exclude": false},
+        {"type": "page", "exclude": false},
+        {"exclude": true}
+    ]);
     let command = |session: &str, method: &str, params: &Value| {
         (session.to_string(), method.to_string(), params.clone())
     };
@@ -2029,11 +2042,14 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_befo
             command("running", "Target.setAutoAttach", &follow),
             // Any other target is only let run.
             command("service", "Runtime.runIfWaitingForDebugger", &none),
-            // Shared workers, the browser's own, followed through its auto-attach, filtered.
-            command("", "Target.setAutoAttach", &shared_workers),
+            // Shared workers, the browser's own, followed through its auto-attach, filtered, and
+            // pages taken by it too: the one already open is left as it is, and a popup, held as
+            // it starts, is only let run.
+            command("", "Target.setAutoAttach", &browsers),
             command("shared", "Network.enable", &none),
             command("shared", "Target.setAutoAttach", &follow),
             command("shared", "Runtime.runIfWaitingForDebugger", &none),
+            command("popup", "Runtime.runIfWaitingForDebugger", &none),
         ]
     );
 }

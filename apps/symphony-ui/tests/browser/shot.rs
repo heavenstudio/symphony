@@ -2626,6 +2626,65 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
 }
 
 #[test]
+fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
+    // A button that opens a page of the page's own site with `window.open`, keeping its opener,
+    // and one that opens a page of another site (as `localhost`). While the browser's own
+    // auto-attach is on, as it is for shared workers, Chrome holds such a page as it starts, and
+    // the opener's script in that call, until the new page is let run: each click returns, the
+    // page goes on with the window it opened, and it is shot.
+    let other = site();
+    let site = site();
+    let away = format!("http://localhost:{}", other.addr.port());
+    for on in [&site, &other] {
+        on.set_file(
+            "/opened.html",
+            b"<!doctype html><p>opened</p>".to_vec(),
+            "text/html",
+        );
+    }
+    site.set_file(
+        "/opening.html",
+        format!(
+            r#"<!doctype html>
+<meta charset="utf-8">
+{NO_ICON}
+<script>
+  const openPage = address => {{ window.opened = window.open(address); }};
+</script>
+<button id="same" type="button" onclick="openPage('/opened.html')">same site</button>
+<button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>"#
+        )
+        .into_bytes(),
+        "text/html",
+    );
+    for button in ["#same", "#cross"] {
+        let Some(chrome) = chrome::find() else {
+            eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+            return;
+        };
+        let scratch = Scratch::new("opening");
+        let out = scratch.join("opening.png");
+        let output = shot(
+            &chrome,
+            &[
+                &site.url("/opening.html"),
+                "--out",
+                out.to_str().unwrap(),
+                "--click",
+                button,
+                "--eval",
+                "[!!window.opened, window.opened.closed]",
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{button}: {}", said(&output));
+        assert_eq!(printed(&output), vec![json!([true, false])], "{button}");
+        assert!(Picture::read(&out).width > 0);
+    }
+}
+
+#[test]
 fn the_report_names_the_frame_each_console_error_and_failed_request_came_from() {
     // A frame of another site, which Chrome runs in a process of its own, and a frame of the page's
     // own site, each missing a picture and logging an error, on a page that logs one too: the
