@@ -224,6 +224,33 @@ fn a_failure_or_a_hold_names_a_route_or_one_of_its_targets() {
     assert_eq!(held.join().unwrap(), "200");
 }
 
+/// A retired build file answers 404 until it is restored, and only it: the others stay served.
+#[test]
+fn a_retired_build_file_is_gone_until_it_is_restored() {
+    let (chunk, other) = (unique("retired chunk", 10), unique("kept chunk", 10));
+    let dist = Dist::new(
+        "/assets/shell.js",
+        &[("assets/chunk.wasm", &chunk), ("assets/other.wasm", &other)],
+    );
+    let site = Site::start(dist.path(), &board());
+    let status = |path: &str| get(site.addr, path, "").0[9..12].to_string();
+    let (retired, kept) = ("/assets/chunk.wasm", "/assets/other.wasm");
+    assert_eq!(
+        (status(retired), status(kept)),
+        ("200".into(), "200".into())
+    );
+    site.retire(retired);
+    assert_eq!(
+        (status(retired), status(kept)),
+        ("404".into(), "200".into())
+    );
+    site.restore(retired);
+    assert_eq!(
+        (status(retired), status(kept)),
+        ("200".into(), "200".into())
+    );
+}
+
 #[test]
 fn the_shell_and_the_routes_it_answers_for_are_served_from_the_start() {
     let script = unique("shell script", 10);

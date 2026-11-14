@@ -23,6 +23,9 @@ use std::process::{Child, ChildStderr, Command, Stdio};
 /// The four page kinds built alone; and the program's kinds (src/split.rs), one build of it.
 const KINDS: [&str; 4] = ["board", "docs", "review", "queue"];
 const PROGRAM: [&str; 5] = ["tasks", "reports", "panel", "overlay", "timeline"];
+/// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
+/// which is no kind.
+const CHUNKS: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
 
 /// The stand-in dx: the first bundle's board build holds the intermediate folder until released.
 /// The program's build writes its main module, a chunk for each of its kinds and their own styles.
@@ -49,7 +52,7 @@ printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kin
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
 printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
 if [ "$kind" = program ]; then
-    for chunk in 0_overlay 1_panel 2_reports 3_tasks 4_timeline; do
+    for chunk in 0_media 1_overlay 2_panel 3_reports 4_tasks 5_timeline; do
         printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$chunk" > "$work/public/assets/module_$chunk-$kind.wasm"
     done
     for own in reports task-timeline style; do
@@ -187,11 +190,21 @@ impl Fixture {
             .collect();
         files.sort();
         // Each kind's script, wasm and style sheet; the program's script and main module, a chunk
-        // for each of its kinds and its three own style sheets; and the shell.
+        // for each of its kinds and the media layer's, and its three own style sheets; and the
+        // shell.
         assert_eq!(
             files.len(),
-            3 * KINDS.len() + 2 + PROGRAM.len() + 3 + 1,
+            3 * KINDS.len() + 2 + CHUNKS.len() + 3 + 1,
             "{files:?}"
+        );
+        let media: Vec<_> = files
+            .iter()
+            .filter(|name| name.starts_with("module_0_media-"))
+            .collect();
+        assert_eq!(media.len(), 1, "{files:?}");
+        assert_eq!(
+            fs::read(public.join("assets").join(media[0])).unwrap(),
+            format!("\0asm\x01\0\0\0{id}-0_media").as_bytes()
         );
         let builds: serde_json::Value =
             serde_json::from_slice(&fs::read(public.join("builds.json")).unwrap()).unwrap();
@@ -229,9 +242,10 @@ impl Fixture {
         let read_asset = |url: &serde_json::Value| {
             fs::read(public.join(url.as_str().unwrap().trim_start_matches('/'))).unwrap()
         };
-        for (at, kind) in ["overlay", "panel", "reports", "tasks", "timeline"]
+        for (at, kind) in CHUNKS
             .iter()
             .enumerate()
+            .filter(|(_, kind)| PROGRAM.contains(kind))
         {
             let entry = &manifest[kind];
             assert!(

@@ -219,6 +219,9 @@ pub struct Releases {
     /// Whether a green release refreshes the machine: each consuming project's pin and board,
     /// and the shared server through its own reload.
     pub refresh: bool,
+    /// Whether a green release, once pushed, publishes on crates.io each package whose version
+    /// crates.io lacks; off unless the project says, so nothing is published but on its word.
+    pub publish: bool,
     /// How many reruns of a release candidate may come back red before it is dropped and main's
     /// tip is run again; 0 holds no candidate.
     pub candidate_reruns: u32,
@@ -246,6 +249,7 @@ impl Default for Releases {
         Releases {
             every_landings: Releases::EVERY_LANDINGS,
             refresh: true,
+            publish: false,
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
         }
@@ -581,6 +585,7 @@ impl Project {
             releases: Releases {
                 every_landings: file.releases.every_landings,
                 refresh: file.releases.refresh,
+                publish: file.releases.publish,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,
             },

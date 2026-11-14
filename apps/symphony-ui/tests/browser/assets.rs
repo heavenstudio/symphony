@@ -41,6 +41,27 @@ pub(super) fn module(dist: &Path, kind: &str) -> Module {
         .unwrap_or_else(|| panic!("no {kind} module in the shell's manifest"))
 }
 
+/// The program's media layer's chunk in `dist` (src/split.rs `MediaPart`), which no kind is: the
+/// shell's manifest never names it, the program script's map of its chunks does, as the kinds'
+/// chunks are named there (the splitter's own loader, never used, names it `/./assets/…`).
+pub(super) fn media_chunk(dist: &Path) -> String {
+    let program = module(dist, "tasks").script;
+    let script = std::fs::read_to_string(dist.join(program.trim_start_matches('/')))
+        .expect("the program's script");
+    let named = |name: &&str| {
+        name.starts_with("/assets/module_") && name.contains("_media-") && name.ends_with(".wasm")
+    };
+    let mut names = script.split('"').filter(named);
+    let chunk = names
+        .next()
+        .expect("the media layer's chunk in the program's map");
+    assert!(
+        names.all(|other| other == chunk),
+        "the program names two media chunks"
+    );
+    chunk.to_owned()
+}
+
 /// The client's build, made once for this run (or the one `SYMPHONY_UI_DIST` names).
 pub(super) fn dist() -> &'static Path {
     static DIST: OnceLock<PathBuf> = OnceLock::new();

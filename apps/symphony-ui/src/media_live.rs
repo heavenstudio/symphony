@@ -39,7 +39,9 @@ enum Action {
 /// The active page owns the media adapter, including media in the persistent conversation.
 /// Documents also need its table observer without a picture to activate it. Elsewhere visibility
 /// activates it once; a page-kind switch removes its observers before the replacement mounts.
-/// Visible conversation media is picked up again on that mount.
+/// Visible conversation media is picked up again on that mount. The program's layer, a chunk of
+/// its own, sets it back when that chunk does not load, so the next media shown asks again
+/// (`split::MediaPart`).
 pub fn use_activation() -> Signal<bool> {
     let mut needed = use_signal(|| cfg!(feature = "page-docs"));
     let listener = use_hook(move || {

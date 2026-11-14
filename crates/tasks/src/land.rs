@@ -431,12 +431,22 @@ pub struct Approval {
 }
 
 /// The approval standing on `task`, read from its `thread`: it is done, and its last verdict is an
-/// `approve` ([`crate::approved`]). Otherwise the one line saying why there is none.
+/// `approve` ([`crate::approved`]). Otherwise the one line saying why there is none, and, for open
+/// work, who approves it and by which command.
 pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     let slug = &task.slug;
     if task.status != "done" {
+        let approve = format!(
+            "a fresh reviewer, one that did not write it, approves it naming the tip it read: \
+             `just tasks verdict {slug} approve \"FULL_SHA: why\" --as HANDLE`"
+        );
+        let then = match task.status.as_str() {
+            "cancelled" => String::new(),
+            "review" => format!(": {approve}"),
+            _ => format!(": it goes to review (`just tasks move {slug} review`), where {approve}"),
+        };
         return Err(format!(
-            "{slug} is {}, with no approving verdict standing",
+            "{slug} is {}, with no approving verdict standing{then}",
             task.status
         ));
     }
@@ -579,6 +589,65 @@ pub fn named(text: &str) -> Vec<&str> {
                 && word.bytes().any(|b| b.is_ascii_digit())
         })
         .collect()
+}
+
+/// Why the checkout `main` has no branch `slug` to land, and the rename that gives it one: the land
+/// takes the branch named as the task, so work on another is renamed to it. The branch named is
+/// one whose tip is a commit `approval` names, when one is, never the `default` branch; else the
+/// rename is said with `BRANCH`.
+fn no_branch(main: &Path, slug: &str, default: &str, approval: &Approval) -> String {
+    let at: Vec<(String, String)> = named(&approval.text)
+        .into_iter()
+        .filter_map(|word| rev(main, &format!("{word}^{{commit}}")))
+        .flat_map(|sha| {
+            let points = format!("--points-at={sha}");
+            let args = [
+                "for-each-ref",
+                &points,
+                "--format=%(refname:short)",
+                "refs/heads/",
+            ];
+            let names = run_git(main, &args).unwrap_or_default();
+            (names.lines())
+                .filter(|name| *name != default)
+                .map(|name| (name.to_string(), sha.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let lands = format!("the land takes the branch named as the task, {slug}");
+    match at.first() {
+        Some((branch, sha)) => format!(
+            "no branch {slug} to land: {lands}, and the approved tip {} is on {branch}: `git \
+             branch -m {branch} {slug}` renames it, then land again",
+            short(sha)
+        ),
+        None => format!(
+            "no branch {slug} to land: {lands}: rename the branch holding the approved work \
+             (`git branch -m BRANCH {slug}`), then land again"
+        ),
+    }
+}
+
+/// What a verdict that approved `slug` says, run where `env` runs: that it is done on the board but
+/// not on the default branch until it lands, and the line that lands it: `just land SLUG --as
+/// HANDLE`, the Symphony's default landing, or the `land` recipe of the project's own that replaces
+/// it ([`own_land`]). Outside a checkout, or where the justfile cannot be read for it, the default
+/// landing is named.
+pub fn approved(env: &Env, slug: &str) -> String {
+    let main = crate::git::common_dir(&env.cwd)
+        .ok()
+        .and_then(|common| trigger::main_checkout(&common).map(Path::to_path_buf));
+    let default = (main.as_deref())
+        .and_then(|main| Settings::of(main).ok())
+        .map_or_else(|| "the default branch".into(), |s| s.default_branch);
+    let how = match main.and_then(|main| own_land(&main, env).ok().flatten()) {
+        Some(justfile) => format!(
+            "the `land` recipe of the project's own lands it ({}): `just land {slug}`",
+            justfile.display()
+        ),
+        None => format!("`just land {slug} --as HANDLE` lands it"),
+    };
+    format!("{slug} is approved: done on the board, not on {default} until it lands; {how}")
 }
 
 /// How an approval covers the tip.
@@ -1697,8 +1766,10 @@ impl Landing<'_> {
         };
         let scope =
             independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
-        let tip = rev(&self.main, &format!("refs/heads/{slug}"))
-            .ok_or_else(|| self.refuse(Refusal::thread(format!("no branch {slug} to land"))))?;
+        let tip = rev(&self.main, &format!("refs/heads/{slug}")).ok_or_else(|| {
+            let line = no_branch(&self.main, slug, &self.settings.default_branch, &approval);
+            self.refuse(Refusal::thread(line))
+        })?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
         let default = self.settings.default_branch.clone();

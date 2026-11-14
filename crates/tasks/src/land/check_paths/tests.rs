@@ -158,6 +158,8 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
     // The Symphony's own checkers and the gate itself.
     for checker in [
         "crates/symphony/src/cli/commands/size_budget.rs",
+        "crates/symphony/src/cli/commands/crates_check.rs",
+        "crates/symphony/src/release/crates.rs",
         "crates/symphony/src/docs_audit.rs",
         "crates/symphony/src/release.rs",
         "crates/symphony/src/release/checks.rs",
