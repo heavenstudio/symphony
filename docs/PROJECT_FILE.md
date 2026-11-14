@@ -27,7 +27,7 @@ not have.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `name` | the folder's name | the name the pages show |
-| `id` | `name` made a slug (lowercase letters, digits and dashes), `project` when that is empty | the project's segment on the machine's server (`/<id>/`) and its data folder |
+| `id` | `name` made a slug (lowercase letters, digits and dashes), refused when it makes none; with no `name` written, the folder's name made one, `project` when that makes none | the project's segment on the machine's server (`/<id>/`) and its data folder |
 | `register` | `DECISIONS.md` in the first entrypoint's folder | the decision register |
 | `artifacts` | `artifacts` | the folder of served files and the Symphony's private files |
 | `default_branch` | `main` | the branch tasks land on |
@@ -63,7 +63,7 @@ refuses the file, as a misspelt one would change what is served.
 | --- | --- | --- |
 | `package` | the Symphony's own | a theme package a selected plugin brings, by name |
 | `name` | the package's, else the project's | the name in the header and the tab |
-| `icon` | none | the icon of the header and the tab |
+| `icon` | the package's, else none | the icon of the header and the tab |
 | `stylesheet` | none | a stylesheet served after the package's |
 | `tokens` | none | `[theme.tokens]`: the package's tokens set over, by name (`primary = "#a33"`) |
 | `layouts` | none | `[theme.layouts]`: a variant for each region, `header` (`default`, `compact`) and `home` (`default`, `focus`) |

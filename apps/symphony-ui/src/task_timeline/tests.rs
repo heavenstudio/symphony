@@ -1080,3 +1080,62 @@ fn the_next_read_is_the_timelines_own_while_open_a_minute_after_a_failure_none_o
     assert_eq!(next_read(Some(&Err("Failed to fetch".into()))), Some(every));
     assert_eq!(next_read(None), None);
 }
+
+/// Wide lanes that overflow end under the last that fits whole, a pixel's rounding allowed; none
+/// is cut when all fit, and none when not even the first does (the box clips as it can).
+#[test]
+fn lanes_that_overflow_end_under_the_last_that_fits_whole() {
+    // The axis is 22 px, then Stage (to 58), Executor (to 94), Builds & tests (to 182), Gates.
+    let bottoms = [58.0, 94.0, 182.0, 202.0, 222.0];
+    assert_eq!(
+        lane_edge(&bottoms, 90.0),
+        Some(58.0),
+        "Executor cut through"
+    );
+    assert_eq!(lane_edge(&bottoms, 94.0), Some(94.0));
+    assert_eq!(lane_edge(&bottoms, 94.6), Some(94.0));
+    assert_eq!(lane_edge(&bottoms, 95.0), Some(94.0), "a pixel's rounding");
+    assert_eq!(
+        lane_edge(&bottoms, 180.0),
+        Some(94.0),
+        "two pixels short of Builds & tests"
+    );
+    assert_eq!(lane_edge(&bottoms, 220.0), Some(202.0));
+    assert_eq!(
+        lane_edge(&bottoms, 221.0),
+        None,
+        "the last lane a pixel over fits"
+    );
+    assert_eq!(lane_edge(&bottoms, 222.0), None, "every lane fits");
+    assert_eq!(lane_edge(&bottoms, 400.0), None);
+    assert_eq!(
+        lane_edge(&bottoms, 40.0),
+        None,
+        "not even the first lane fits"
+    );
+    assert_eq!(lane_edge(&[], 40.0), None, "no lanes");
+}
+
+/// "Show all" counts what it shows: the steps of the phone's list, the lanes wide, a lane for
+/// each of the timeline's own and one for its gates.
+#[test]
+fn show_all_counts_the_steps_on_a_phone_and_the_lanes_wide() {
+    let timeline = pictures();
+    let drawn = lanes(&timeline);
+    assert!(!drawn.gates.is_empty());
+    assert_eq!(lane_count(&drawn), drawn.lanes.len() + 1);
+    let mut gateless = drawn.clone();
+    gateless.gates.clear();
+    assert_eq!(lane_count(&gateless), drawn.lanes.len());
+    assert_eq!(
+        show_all(rows(&timeline).len(), lane_count(&drawn)),
+        (
+            format!("Show all {} steps", rows(&timeline).len()),
+            format!("Show all {} lanes", drawn.lanes.len() + 1)
+        )
+    );
+    assert_eq!(
+        show_all(1, 1),
+        ("Show all 1 step".to_string(), "Show all 1 lane".to_string())
+    );
+}

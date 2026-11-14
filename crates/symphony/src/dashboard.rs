@@ -79,7 +79,9 @@ pub fn excerpt(text: &str) -> String {
     )
 }
 
-fn cut(text: &str, limit: usize) -> String {
+/// `text` whole when it holds at most `limit` characters; else its words that fit before an
+/// ellipsis, the cut at a word's end and no dangling comma, colon or dash before the `…`.
+pub(crate) fn cut(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
     }

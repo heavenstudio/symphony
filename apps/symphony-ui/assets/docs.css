@@ -49,6 +49,10 @@
 .doc-part-start { border-top:1px solid var(--border); border-radius:var(--r-lg) var(--r-lg) 0 0; padding-top:8px; }
 .doc-part-end { border-bottom:1px solid var(--border); border-radius:0 0 var(--r-lg) var(--r-lg); padding-bottom:16px; margin-bottom:16px; }
 .doc-part-start.doc-part-end { border-radius:var(--r-lg); }
+/* Parts meet at fractional heights, and each contains its own paint (a slot's content-visibility),
+ * so the browser can leave the pixel row between two unpainted: a band of the page across the
+ * card. Each part after a card's first reaches 1 px over the one above, its content where it was. */
+.doc-part:not(.doc-part-start) { margin-top:-1px; padding-top:1px; }
 .doc-section { position:relative; padding-right:36px; max-width:var(--measure); }
 .doc-section:has(table, .compare, .pair, .figure-strip, pre, .entry img, a.figure-large, .excerpt-box, .gallery-grid) { max-width:none; }
 .doc-part:first-child .doc-section:has(> .section-prose > h1):not(:has(.section-prose > :not(h1))) { display:none; }
@@ -100,7 +104,11 @@ form.comment, form.verdict { border:1px solid var(--border); background:var(--mu
 .editor form textarea { width:100%; box-sizing:border-box; min-height:76px; resize:vertical; }
 .editor [role=alert] { color:var(--dislike); }
 .editor [role=status] { color:var(--like); }
+/* Open, the versions take a row of their own under the page's links, never wider than it: each
+ * version's date and subject wrap inside its button, and a diff's long lines scroll in its box. */
+.doc-tools > .versions[open] { flex-basis:100%; min-width:0; }
 .versions ul { max-height:220px; overflow:auto; }
+.versions li .dx-button { height:auto; min-height:2.25rem; max-width:100%; padding-block:6px; white-space:normal; overflow-wrap:anywhere; text-align:left; justify-content:flex-start; }
 .diff { max-height:60vh; overflow:auto; white-space:pre; font-size:.8em; }
 .folder-entries { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr)); gap:16px; margin-bottom:32px; }
 .folder-entry { padding:16px 18px; display:flex; flex-direction:column; gap:8px; height:100%; box-sizing:border-box; text-decoration:none; color:var(--foreground); transition:transform .12s ease,box-shadow .12s ease; }

@@ -3,8 +3,8 @@
 //! confused with another process or with a server on other data.
 
 use crate::common::{
-    Repository, Scratch, command_of, exists, gone, healthy_occupier, parent_of, script, signal,
-    surreal,
+    Repository, Scratch, Told, command_of, exists, gone, healthy_occupier, parent_of, script,
+    signal, surreal,
 };
 use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
@@ -42,8 +42,10 @@ fn session_of(pid: i64) -> i32 {
 #[test]
 fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     let s = Scratch::new("start");
-    let home = s.home();
+    let told = Told::default();
+    let home = s.home().telling(told.sink());
     assert_eq!(home.recorded(), None);
+    assert!(!home.has_store());
     let first = home.ensure().unwrap();
     assert!(first.addr.starts_with("127.0.0.1:"), "{}", first.addr);
     assert!(rpc::healthy(&first.addr));
@@ -51,8 +53,22 @@ fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     assert_eq!(first.version, SURREAL_VERSION);
     assert!(command_of(first.pid).unwrap().contains(&s.data()));
     assert_eq!(home.recorded(), Some(first.clone()));
+    // The start said so, once: it takes seconds, which would otherwise pass in silence.
+    assert_eq!(
+        told.lines(),
+        [format!(
+            "· the board's server is not running: it starts now, on its store at {}, which takes \
+             some seconds",
+            s.dir.join("data").display()
+        )]
+    );
+    // The server makes the store, never the board.
+    assert!(home.has_store());
+    assert_eq!(home.schema("tasks").unwrap(), None);
+    // A server found running is used, saying nothing.
     assert_eq!(home.ensure().unwrap(), first);
-    assert_eq!(s.home().ensure().unwrap(), first);
+    assert_eq!(s.home().telling(told.sink()).ensure().unwrap(), first);
+    assert_eq!(told.lines().len(), 1, "{:?}", told.lines());
 }
 
 #[test]
