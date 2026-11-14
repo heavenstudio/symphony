@@ -65,7 +65,10 @@ are about level too: today's render to blocks on the server, which either client
 project's own script costs about the same on either, in the page or in a sandboxed frame; only JSX
 could take a project's component into the client's own runtime, a small point for B at most, as
 that form reaches the whole origin and can post as the owner
-([Plugins and front-end extension](#plugins-and-front-end-extension)). Code size
+([Plugins and front-end extension](#plugins-and-front-end-extension)). The desktop app as decided
+is level too: its shell shows whichever client each server serves, so the reason Dioxus was chosen
+for, one code for the browser and the desktop window, goes unused, and only its own few screens
+count, as the two UI stacks below ([The desktop app](#the-desktop-app)). Code size
 is about level like for like: the one closely matched pair, the blocks, is 815 lines of JSX
 against 962 of Rust (0.85), and the JSX is untyped where a port would be TypeScript
 ([Responsiveness](#responsiveness), [Code and build](#code-and-build)).
@@ -855,6 +858,63 @@ away by navigating itself; what a sandboxed frame would take in the Dioxus clien
 Dioxus component has to be compiled in; and what a component form, or a component that replaces a
 client's own, would take on a JSX client.
 
+## The desktop app
+
+How the decided desktop app ([the desktop client](desktop-client.md)) meets each client, read from
+that analysis, its card and the code; nothing was built or run for this section. Nothing of the
+app exists to rewrite: its task, `tools/desktop-app`, is on the board, ready and never claimed,
+behind `tools/server-projects-list`, also ready, and the workspace has no `apps/symphony-desktop`.
+
+- **The shell shows each server's pages, whichever client drew them.** The decided design is A: a
+  native shell on tao and wry whose web views load each server's own pages from that server, at
+  its release. The follower, the dock badge, the menu-bar item and the notifications are the
+  shell's own Rust and read the API, never the page. So a JSX client that a server serves works in
+  it as in a browser tab. The two things the shell asks of a page are the browser's, not the
+  framework's: the Notification stub it injects answers whatever asks the web Notification API
+  (the Dioxus client asks through `web_sys::Notification`, `platform.rs`), and a link off the
+  origin or a `window.open` is caught by the web view's rules. *Read in the design and the code;
+  that a JSX page runs unchanged in a wry web view is inferred, as no app exists to try it in, and
+  the experiment's pages neither notify nor open windows: home, which notifies, was not ported.*
+- **The one tie is the app's own few screens.** The server list, adding a server and "this server
+  does not answer" are planned in Dioxus desktop around the server's web view, the owner's answer
+  to that analysis's third question, with plain wry drawing them should Dioxus desktop not host a
+  second web view, which the first slice tries. With a JSX client they either stay Dioxus, so the
+  repository holds two UI stacks (a row of [What a switch would cost](#what-a-switch-would-cost)),
+  or become small local pages in a web view, which is what the plain-wry fallback already is.
+  Pages need one thing Dioxus screens do not: the decisions are Rust in the shell's library, so
+  a page reaches them through a channel from page to shell (wry's IPC handler), which the first
+  release has nowhere else, and which must answer the app's own pages and never a server's.
+  Either way it is three small screens. *The plan read in the design; the channel inferred.*
+- **The rejected B's largest cost was the desktop renderer's, and it goes with either client's web
+  build.** B compiled the client into the app with Dioxus's `desktop` feature, where Dioxus runs
+  the app natively and only draws into a web view, so every file that calls the browser through
+  `web-sys`, `js-sys` or `wasm-bindgen` needed a native or script-bridge version: 31 in that
+  analysis, 38 files of `apps/symphony-ui/src` on this branch, test files left out. A JSX client bundled into
+  the app would run in the web view as script, with the browser's own `fetch`, `EventSource`,
+  observers and storage, so that cost goes. But so would it for today's client: its web build,
+  wasm and shell bundled into the app the same way, runs on the same browser APIs, a form that
+  analysis did not weigh. The rest of B's cost stays on either client: the app's own origin, so CORS
+  for a viewer's module and every write through a native HTTP client, as the save check refuses
+  another origin (`write.rs`, `allowed`); every server's projects in that one origin's storage, so
+  each key takes the server first; what the server inlines in its pages (the project's element,
+  its theme) read over the API; and the whole wire a contract between releases. *B's native half
+  read in that analysis, the files counted here; that either web build would run bundled is
+  inferred, not tried.*
+- **The reason the client is Dioxus goes unused under A.** It was chosen for "the browser now and
+  the desktop window later, from the same code" (`apps/symphony-ui/AGENTS.md`, its `Cargo.toml`),
+  with every platform hook behind `platform::Platform` so that a desktop implementation could join
+  the browser's (`platform.rs`; none has). Under A the client never runs as the desktop
+  window's code: the window shows the web build each server serves, on its `Browser` platform. Only
+  the shell's own screens use Dioxus desktop, and they are new code. The phone keeps it so: Dioxus's
+  mobile target is its desktop renderer, so what carries to iOS is A's shell, not the client. The
+  reason would come back only with B, which was not chosen, and even then either web build would
+  serve, as above. *Read in the code and the design.*
+
+**For the choice.** As decided, the desktop app takes whichever client each server serves, and its
+one tie, its own few screens, is already a row of what a switch would cost. The reason Dioxus was
+chosen for, one code for the browser and the desktop window, is not one the app as decided uses,
+so it no longer counts for A.
+
 ## What a switch would cost
 
 What depends on the client being Rust, with its size at the baseline or on main where a row says
@@ -876,7 +936,7 @@ repair step), not taken away.
 | The block kinds' check | the compiler refuses a client that does not draw every block, span and media kind | a test that draws every kind, or TypeScript's exhaustive `switch` over generated types |
 | A project's own browser code | a viewer's script loaded into the page and a mockup in a scripts-only sandbox, with no project code in the client; a project's own component only by compiling it into the client | the same two forms, as they are DOM and not the framework's, a sandboxed frame with data in and height out about 90 lines on either client; a project's component at run time becomes possible, and the client's Preact and each component a project may replace then become an interface consumers build against ([Plugins and front-end extension](#plugins-and-front-end-extension)) |
 | A byte-for-byte `client-check` | `rust-toolchain.toml` pins Rust; `dx` and `wasm-bindgen` are pinned and built per machine | Node and npm pinned the same way, with the lockfile; this experiment's build came out byte for byte the same twice on one machine, but across machines and Node versions was not tried |
-| The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too |
+| The desktop app's own screens | planned as a few Dioxus screens around the server's web view ([the desktop client](desktop-client.md)) | kept in Dioxus, so the repository holds two UI stacks, or written as pages too, which reach the shell's Rust through a channel of their own ([The desktop app](#the-desktop-app)) |
 | The distribution | committed, three builds kept: 20.0 MB, 24 wasm files, a size line of 20,750,000 bytes; 106 commits regenerated it in the week to this run, each about 6.3 MB of new wasm | about 0.4 MB a build on React, 0.2 MB on Preact, the style sheets included; the regenerator, `client-check` and `publish-client` stay, needing Node where they run |
 | The guides | `apps/symphony-ui/AGENTS.md` (598 lines), the client's paragraphs in `AGENTS.md`, [CHECKS](../CHECKS.md) and [RELEASES](../RELEASES.md) | written again |
 
@@ -890,10 +950,13 @@ both builds in the distribution meanwhile.
 
 Each page was pictured on each client with `symphony shot`, in a wide window and on a phone, from
 the bench fixture through each client's own server: the board, the task's page, the guide, the
-decision register, and a card of the register after its verdict posted. They are kept with the
-task's evidence, not in the repository.
+decision register, and a card of the register after its verdict posted. Those below are the board,
+the task's page and the guide, wide and on a phone, and a card after its verdict, each on Dioxus
+first and on Preact under it.
 
-- **React and Preact** draw every page byte for byte alike: the same source gives the same DOM.
+- **React and Preact** draw every page byte for byte alike: the same source gives the same DOM, so
+  Preact's pictures stand for React's. Only their verdicts' pictures differ, as each client's run
+  gave its verdict on a card of its own.
 - **The board, the guide and the register** draw as Dioxus draws them, to a few hundred pixels in
   a picture of 1.3 million (0.005 % to 0.04 %): a letter's anti-aliasing where the two clients
   split a line into text nodes differently, the scrollbar's thumb, and the header's crumb to the
@@ -903,6 +966,37 @@ task's evidence, not in the repository.
   page follows them. Above and below them the two match.
 - **A verdict** posts and shows on both: the card takes its stamp and colour, the thread its
   verdict line, and the form says the verdict saved.
+
+**The board**, wide, then on a phone:
+
+![The board on the Dioxus client, wide](client-framework-board-dioxus-wide.webp)
+![The board on the Preact client, wide](client-framework-board-preact-wide.webp)
+
+![The board on the Dioxus client, on a phone](client-framework-board-dioxus-phone.webp)
+![The board on the Preact client, on a phone](client-framework-board-preact-phone.webp)
+
+**A task's page**, wide, then on a phone: the Dioxus page draws the gates and the timeline under
+the head, which the Preact page leaves out.
+
+![A task's page on the Dioxus client, wide](client-framework-task-dioxus-wide.webp)
+![A task's page on the Preact client, wide](client-framework-task-preact-wide.webp)
+
+![A task's page on the Dioxus client, on a phone](client-framework-task-dioxus-phone.webp)
+![A task's page on the Preact client, on a phone](client-framework-task-preact-phone.webp)
+
+**The guide**, wide, then on a phone, where the two are the same picture:
+
+![The guide on the Dioxus client, wide](client-framework-document-dioxus-wide.webp)
+![The guide on the Preact client, wide](client-framework-document-preact-wide.webp)
+
+![The guide on the Dioxus client, on a phone](client-framework-document-dioxus-phone.webp)
+![The guide on the Preact client, on a phone](client-framework-document-preact-phone.webp)
+
+**A verdict on a card of the register**, wide: an approve on the Dioxus client, a reject on the
+Preact client.
+
+![A card of the register after an approve on the Dioxus client, wide](client-framework-verdict-dioxus-wide.webp)
+![A card of the register after a reject on the Preact client, wide](client-framework-verdict-preact-wide.webp)
 
 ## Verified and inferred
 
