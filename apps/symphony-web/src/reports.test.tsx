@@ -27,7 +27,7 @@ import {
   readReports,
   toggle,
 } from "./reports";
-import { asking, CASES, memoryStorage, reply, server } from "./testing";
+import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
 import type { Grain } from "./wire";
 
 const HOUR = 3_600;
@@ -562,6 +562,21 @@ describe("the page's view", () => {
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain("The reports could not be read");
     expect(html).toContain("chart-slot");
+  });
+
+  it("writes its window and a failure each as one text, as the Dioxus page does", () => {
+    // Text set as one run is shaped as one: the browser draws it as it drew the Dioxus page's.
+    const drawn = ReportsView({
+      grain: "day",
+      days: 3,
+      page: null,
+      error: "The server could not be reached",
+      onAsk: () => {},
+    });
+    expect(childrenOf(drawn, "reports-sub")).toBe("Days · the last 3 days · times in UTC");
+    expect(childrenOf(drawn, "reports-error")).toBe(
+      "The reports could not be read: The server could not be reached",
+    );
   });
 
   it("draws the figures, the settings changes and a place for every chart", () => {

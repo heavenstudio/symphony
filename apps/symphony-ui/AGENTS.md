@@ -264,9 +264,9 @@ never the whole target, which the release run runs.
   once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
   budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
   the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. The task
-  pages, `/agents` and Reports are kinds of the program (Build, above;
-  `perf/client-shared-runtime/task-pages-program`, against main's build at 5352c2d), which costs
-  every page the shell's 38 bytes that name its chunks (`/tasks` 295,939 from 295,902, `/`
+  pages, `/agents` and Reports (until it left for the web client, below) became kinds of the
+  program (Build, above; `perf/client-shared-runtime/task-pages-program`, against main's build at
+  5352c2d), which costs every page the shell's 38 bytes that name its chunks (`/tasks` 295,939 from 295,902, `/`
   236,351 from 236,322): a first visit to one takes the program's script (17,907 bytes on the
   wire) and main module (216,782) and its kind's chunk (the task pages' 315,343, Reports'
   48,996), so `/agents` and a task page take 572,269 and 572,862 (from 559,770 and 560,363,
@@ -302,7 +302,14 @@ never the whole target, which the release run runs.
   281,222 bytes (from 299,662: the board's WASM 247,735 from 266,112, the shell 7,880 from
   7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task
   pages' chunk 18 KB less) and `/reports` to 298,951 (from 298,790), the program's script now
-  holding the notice; every other page stays within 50 bytes of main's. Each
+  holding the notice; every other page stays within 50 bytes of main's. Reports moving to the
+  web client (`app/client-moves-to-react/reports`, against main's build at ca3b1c1) takes
+  `/reports` to 105,590 bytes (from 302,187), its entry and the chunk of what it shares with the
+  queue's (React and the frame, 74,459 on the wire), so `/queue` takes 103,263 (from 101,787) and
+  a move between the two fetches the other's entry alone; the program, Reports' chunk gone, takes
+  `/agents` and a task page to 548,634 and 549,227 (from 549,291 and 549,884) and the warmed chat
+  and menus to 603,631 outside home's (from 604,269); every other page stays within 30 bytes of
+  main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

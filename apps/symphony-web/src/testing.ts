@@ -3,6 +3,7 @@
 // The tests run in Node, without a DOM: markup is drawn with react-dom/server, and the page's
 // globals are stubbed where a test needs one.
 
+import { isValidElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
 import type { ProjectView } from "./wire";
 import cases from "./wire.cases.json";
@@ -98,4 +99,23 @@ export async function asking(asked: unknown[], count: number): Promise<void> {
     await new Promise((done) => setTimeout(done, 0));
   }
   expect(asked).toHaveLength(count);
+}
+
+/**
+ * The children of the first element of `node` whose class or tag is `name`, searched through the
+ * elements `node` writes itself (a component in it is not drawn): one string where the element
+ * holds one text. Markup drawn by react-dom/server cannot tell one text from several side by side,
+ * which the browser sets apart.
+ */
+export function childrenOf(node: ReactNode, name: string): ReactNode {
+  if (Array.isArray(node)) {
+    for (const each of node) {
+      const found = childrenOf(each, name);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return undefined;
+  if (node.props.className === name || node.type === name) return node.props.children;
+  return childrenOf(node.props.children, name);
 }

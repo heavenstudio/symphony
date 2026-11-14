@@ -112,7 +112,10 @@ embeds the rest, and needs no Node to run.
 
 The shell imports a kind of this client with `import()` in place of the Dioxus glue's init: its
 entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it before it settles,
-and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it.
+and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it. What the
+kinds share (React, the frame) Vite puts in a chunk their entries import, named after one of its
+modules, so a first visit takes the kind's entry and that chunk, and a move between two kinds of
+this client the target's entry alone.
 
 **Work that outlives its start.** Async work a page starts checks, after each wait and before it
 touches the page, the window, the storage or the address, a signal that ends with what started

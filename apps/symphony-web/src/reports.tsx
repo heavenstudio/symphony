@@ -786,14 +786,14 @@ export function ReportsView({
         <div>
           <h1>Reports</h1>
           <p className="reports-sub">
-            {grainName(grain)} · the last {rangeName(grain, days)} · times in UTC
+            {`${grainName(grain)} · the last ${rangeName(grain, days)} · times in UTC`}
           </p>
         </div>
         <Controls grain={grain} days={days} onAsk={onAsk} />
       </header>
       {error !== null && (
         <p className="reports-error" role="alert">
-          The reports could not be read: {error}
+          {`The reports could not be read: ${error}`}
         </p>
       )}
       {page === null ? (
@@ -882,7 +882,7 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
       {unread > 0 && (
         <details className="reports-unread">
           <summary>
-            {unread} {unread === 1 ? "file" : "files"} not read: their hours show as gaps
+            {`${unread} ${unread === 1 ? "file" : "files"} not read: their hours show as gaps`}
           </summary>
           <ul>
             {page.unread.map((line) => (
@@ -903,9 +903,7 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
       {shownAxis.marks.length > 0 && (
         <ul className="reports-marks" aria-label="Settings changes in the window">
           {shownAxis.marks.map(([, at, text]) => (
-            <li key={text}>
-              {shownAxis.periods[at]}: settings changed, {text}
-            </li>
+            <li key={text}>{`${shownAxis.periods[at]}: settings changed, ${text}`}</li>
           ))}
         </ul>
       )}

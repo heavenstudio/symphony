@@ -595,7 +595,7 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
         .filter(([, period]) => period === at)
         .map(([, , text]) => (
           <p key={text} className="chart-mark-note">
-            Settings changed: {text}
+            {`Settings changed: ${text}`}
           </p>
         ))}
     </div>
@@ -613,7 +613,7 @@ export function ChartTable({ chart, axis }: { chart: ChartData; axis: Axis }) {
   return (
     <div className="chart-table">
       <table>
-        <caption>{chart.title}, by period</caption>
+        <caption>{`${chart.title}, by period`}</caption>
         <thead>
           <tr>
             <th scope="col">Period</th>

@@ -26,6 +26,7 @@ import {
   type Unit,
   upTo,
 } from "./chart";
+import { childrenOf } from "./testing";
 
 function series(name: string, mark: Mark, values: (number | null)[]): SeriesData {
   return { name, mark, values, hidden: false };
@@ -315,6 +316,9 @@ describe("a chart's card", () => {
     expect(html).toContain("Review <strong>1</strong>");
     expect(html).toContain("Blocked <strong>0</strong>");
     expect(html).toContain("Settings changed: settings: land without the check (4f1c0a9b2d3e)");
+    expect(childrenOf(Readout({ chart: openChart(), axis: AXIS, at: 0 }), "chart-mark-note")).toBe(
+      "Settings changed: settings: land without the check (4f1c0a9b2d3e)",
+    );
     expect(html.match(/class="seg up/g)).toHaveLength(3);
     expect(html).toContain('class="chart-mark" style="left:8.33%"');
     expect(html).toContain('aria-expanded="false">Show the table</button>');
@@ -386,6 +390,10 @@ describe("a chart's card", () => {
     const done = { ...chart("count", [series("Done", "bar", [3, null, 4])]), title: "Tasks done" };
     const html = renderToStaticMarkup(<ChartTable chart={done} axis={AXIS} />);
     expect(html).toContain("<caption>Tasks done, by period</caption>");
+    // One text, as the Dioxus page writes it, so the browser shapes it alike.
+    expect(childrenOf(ChartTable({ chart: done, axis: AXIS }), "caption")).toBe(
+      "Tasks done, by period",
+    );
     expect(html).toContain('<th scope="row">Mon 9 Nov</th><td>3</td>');
     expect(html).toContain('<th scope="row">Tue 10 Nov</th><td>–</td>');
   });
