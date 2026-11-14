@@ -216,7 +216,7 @@ fn mid_page(root: &Path, mid: &Path) -> symphony_api::Document {
 }
 
 /// The page `DOC` of the worktree at `wt`, whose branch's id is `id`, as the app draws it.
-fn branch_page(root: &Path, wt: &Path, id: &str) -> symphony_api::Document {
+pub(super) fn branch_page(root: &Path, wt: &Path, id: &str) -> symphony_api::Document {
     let none = BTreeSet::new();
     let page = format!("@{id}/{DOC}");
     let scan = branches::scan_pages(root, &none);

@@ -22,6 +22,7 @@ mod legacy;
 mod linked_tests;
 #[cfg(test)]
 mod outline_tests;
+mod regroup;
 
 pub use legacy::legacy_html;
 
@@ -201,6 +202,20 @@ pub fn document_marked(
 ) -> Result<Document, String> {
     let (path, text, merging) = source(render, rel, scope)?;
     let (text, _) = crate::register::supersede(&text, &crate::clock::now_stamp());
+    // A card shown in another group than its file copy's is drawn in its group: the page draws the
+    // register regrouped, each line standing for the file's it was. Its waiting cards stay the
+    // file's.
+    let regrouped = if cards.is_empty() {
+        None
+    } else {
+        let parsed = crate::register::parse_decisions(&crate::text::splitlines(&text));
+        regroup::drawn(&text, &parsed, cards, render.plugins())
+    };
+    let waiting = crate::tree::pending(&text);
+    let (text, places) = match regrouped {
+        Some((drawn, places)) => (drawn, Some(places)),
+        None => (text, None),
+    };
     let mut sections = render.typed_sections(&text, rel);
     for section in &mut sections {
         if let Some(slug) = section
@@ -216,7 +231,17 @@ pub fn document_marked(
     let lines = crate::text::splitlines(&text);
     let parsed = crate::register::parse_decisions(&lines);
     let mut shown: BTreeMap<&str, &crate::Decision> = BTreeMap::new();
-    if !cards.is_empty() {
+    if let Some(places) = &places {
+        // Each card is written as its one card already; each section's place is the file's.
+        for card in &parsed {
+            if let Some(one) = cards.iter().find(|one| one.slug == card.slug) {
+                shown.insert(one.slug.as_str(), one);
+            }
+        }
+        for section in &mut sections {
+            (section.start, section.end) = regroup::place(places, section.start, section.end);
+        }
+    } else if !cards.is_empty() {
         for section in &mut sections {
             // The file's cards in this section that a one card replaces, in their order.
             let inside: Vec<(&crate::Decision, &crate::Decision)> = parsed
@@ -297,7 +322,7 @@ pub fn document_marked(
                 path.file_stem()
                     .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
             }),
-        waiting: crate::tree::pending(&text),
+        waiting,
         crumbs: wire(crate::tree::crumbs(render.root(), rel)),
         headings: wire(crate::tree::headings(&text)),
         sections: wire(sections),
