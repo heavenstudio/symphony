@@ -2,8 +2,10 @@
 //! stand-in server answering `/api/reports` with a fortnight by the day: a phone's width held, one tap
 //! showing a period's every value on every chart, a day no file recorded told apart from a zero,
 //! the arrow keys moving between periods, two columns on a wide screen, the dark scheme's own
-//! colours, and the empty state saying when the first roll-up comes.
-use super::{SHOWN, chrome, chrome::Chrome, common, site, site::Site, texts};
+//! colours, the empty state saying when the first roll-up comes, the last 24 hours with nothing
+//! chosen, and the window and the series hidden kept for the next visit, a hidden series' room
+//! given to the rest.
+use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
 use serde_json::{Value, json};
 
 const DAY: f64 = 86_400.0;
@@ -218,6 +220,118 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
         );
         assert_eq!(chrome.eval(colours), json!(expected), "{scheme}");
     }
+}
+
+/// [`fortnight`] with Ready far over the other open stages each day it was rolled up, as the live
+/// board's Open work stood on 14 Nov: 107 ready over 2 to 10 in each other stage.
+fn crowded() -> Value {
+    let mut page = fortnight();
+    for bucket in page["buckets"].as_array_mut().unwrap() {
+        if bucket["flow"].is_object() {
+            bucket["flow"]["held"]["ready"] = json!(107);
+        }
+    }
+    page
+}
+
+/// The windows the page asked the reports for so far, each its query.
+fn asked(site: &Site) -> Vec<String> {
+    site.targets()
+        .iter()
+        .filter_map(|target| target.strip_prefix(&format!("{}?", symphony_api::REPORTS_PATH)))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Open work's axis and legend: the top of its axis, each legend button's name with whether it is
+/// pressed (shown), and whether any part of a bar wears Ready's colour.
+fn open_work(chrome: &mut Chrome) -> Value {
+    chrome.eval(
+        "(() => { const c = document.querySelector('#chart-open'); if (!c) return null; const ticks = [...c.querySelectorAll('.chart-y span')]; return {top: ticks.length ? ticks[ticks.length - 1].innerText : null, keys: [...c.querySelectorAll('.chart-key')].map(b => [b.innerText.trim(), b.getAttribute('aria-pressed')]), ready_drawn: [...c.querySelectorAll('.seg')].some(s => s.getAttribute('style').includes('--chart-1)'))}; })()",
+    )
+}
+
+/// Ready's button in Open work's legend focused, and Space pressed on it, as a keyboard reaches it.
+fn toggle_ready(chrome: &mut Chrome) {
+    assert_eq!(
+        chrome.eval(
+            "(() => { const b = [...document.querySelectorAll('#chart-open .chart-key')].find(b => b.innerText.trim() === 'Ready'); b?.focus(); return document.activeElement === b; })()"
+        ),
+        json!(true),
+        "Ready's button takes the focus"
+    );
+    key(chrome, " ", "Space", 32);
+}
+
+/// The page opens on the last 24 hours when this browser chose nothing; the window and a series
+/// hidden are this browser's on the next visit; hiding Open work's Ready, far over the other
+/// stages, scales its axis to the rest, and showing it again puts it back.
+#[test]
+fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_its_axis() {
+    let site = served(&crowded());
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    open(&mut chrome, &site, "[data-ready=reports] #chart-open .chart-plot");
+    assert_eq!(
+        asked(&site),
+        ["grain=hour&days=1"],
+        "nothing chosen: the last 24 hours"
+    );
+    assert_eq!(
+        texts(&mut chrome, ".reports-controls [aria-pressed=true]"),
+        ["Hours", "24 hours"]
+    );
+    chrome.eval("document.querySelector('.reports-controls [data-grain=day]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.reports[aria-busy=false] #chart-open .chart-plot') !== null",
+            SHOWN
+        ),
+        "Days drew the fortnight: {:?}",
+        asked(&site)
+    );
+    assert_eq!(asked(&site), ["grain=hour&days=1", "grain=day&days=14"]);
+    let before = open_work(&mut chrome);
+    assert_eq!(
+        before,
+        json!({"top": "150", "ready_drawn": true, "keys": [["Ready", "true"], ["In progress", "true"], ["Review", "true"], ["Blocked", "true"]]}),
+        "Ready's 107 sets the axis"
+    );
+    toggle_ready(&mut chrome);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#chart-open .chart-y span:last-child')?.innerText === '6'",
+            SHOWN
+        ),
+        "Ready hidden, the axis is the other stages': {}",
+        open_work(&mut chrome)
+    );
+    let hidden = json!({"top": "6", "ready_drawn": false, "keys": [["Ready", "false"], ["In progress", "true"], ["Review", "true"], ["Blocked", "true"]]});
+    assert_eq!(open_work(&mut chrome), hidden);
+    // The next visit asks for the window chosen and hides what was hidden.
+    chrome.open("about:blank");
+    open(&mut chrome, &site, "[data-ready=reports] #chart-open .chart-plot");
+    assert_eq!(
+        asked(&site).last().map(String::as_str),
+        Some("grain=day&days=14"),
+        "{:?}",
+        asked(&site)
+    );
+    assert_eq!(
+        texts(&mut chrome, ".reports-controls [aria-pressed=true]"),
+        ["Days", "14 days"]
+    );
+    assert_eq!(open_work(&mut chrome), hidden, "Ready still hidden");
+    toggle_ready(&mut chrome);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#chart-open .chart-y span:last-child')?.innerText === '150'",
+            SHOWN
+        ),
+        "Ready shown again: {}",
+        open_work(&mut chrome)
+    );
+    assert_eq!(open_work(&mut chrome), before);
 }
 
 #[test]

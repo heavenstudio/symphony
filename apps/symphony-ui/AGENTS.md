@@ -508,11 +508,17 @@ never the whole target, which the release run runs.
   kind: a chunk of its own over the runtime, frame and components the program's main module
   holds for the task pages too, so a move between them fetches the other's chunk alone. Its
   style is `assets/reports.css`, which only its kind loads. It reads
-  the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
+  the window this device last chose (`reports-grain`, `reports-days` through `Platform`), else
+  the last 24 hours by the hour (`reports::FIRST_WINDOW`), at
   once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
   phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
   boxes over a column a period, lines as one SVG whose strokes keep their width, both on one
   axis with its unit; a period no file recorded is hatched and its line broken, never a zero.
+  Each entry of a chart's legend is a toggle button (`aria-pressed`) that hides its series on
+  that chart alone, kept in every window by its chart's id and name (`reports-hidden`, a key a
+  line, through `Platform`): a hidden series leaves the plot, the readout and the table, and the
+  axis scales to the series shown (`Scale::of`), so hiding a large one makes the rest larger; a
+  period stays hatched only when no series, hidden or not, recorded it.
   A tap or the arrow keys pick a period, the same on every chart, and its readout says every
   value as text; each chart's table holds every period. The series take `--chart-1` to
   `--chart-5`, set at no specificity so a theme's own win, with their own steps in the dark.
