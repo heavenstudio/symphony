@@ -281,10 +281,10 @@ pub(crate) fn TimelinePart() -> Element {
 /// The media layer (`media_live::MediaRuntime`), from its chunk, drawn once a page shows media
 /// (`needed`, `media_live::use_activation`): once the chunk is in, nothing before, so the page's
 /// media wait for it as they wait for the activation. A chunk that does not load leaves the page as
-/// it is and sets `needed` back, so the next media the page shows asks for it again; the shell
-/// loads the page again when its build is gone, as for a kind, and otherwise says so with a retry
-/// that shows the media again (`reviewMediaFailed`, assets/chunks.js), its notice taken down once
-/// the chunk is in.
+/// it is and sets `needed` back, so the next media the page shows asks for it again; the page loads
+/// again when its build is gone, as for a kind, and otherwise says so with a retry that shows the
+/// media again (`reviewMediaFailed`, assets/chunks.js, over the shell's `gone` and `alarm`), its
+/// notice taken down once the chunk is in or the page moves on.
 #[component]
 pub(crate) fn MediaPart(needed: Signal<bool>) -> Element {
     let (name, bit) = MEDIA;
