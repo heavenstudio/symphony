@@ -1,7 +1,8 @@
 //! The program (src/split.rs): the task pages with `/agents`, Reports, the chat, the menus and the
 //! task timeline share one script and main module, each kind with a chunk of its own. A move
-//! between its pages fetches the page's chunk alone, never the script or the main module again.
-//! The page shown before stays until the chunk is in; a chunk that does not load ends in the shell's
+//! between its pages fetches the page's chunk alone, never the script or the main module again. The
+//! media layer is a chunk of its own, which a page fetches only once it shows media. The page shown
+//! before stays until the chunk is in; a chunk that does not load ends in the shell's
 //! `gone` state (assets/shell.js) with that page under its notice, never an empty page or one left
 //! waiting.
 
@@ -106,6 +107,72 @@ fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_pro
         [1, 1, 1, 1],
         "back to the pages it has: nothing fetched again"
     );
+}
+
+/// How many times the stand-in was asked for the media layer's chunk, which no kind is, so the
+/// shell's manifest never names it: the program's map of its chunks does.
+fn media_asked(site: &Site) -> usize {
+    site.requests()
+        .iter()
+        .filter(|path| path.starts_with("/assets/module_") && path.contains("_media-"))
+        .count()
+}
+
+#[test]
+fn the_media_layer_is_fetched_only_by_a_page_that_shows_media_and_then_opens_its_pictures() {
+    let site = site();
+    {
+        let Some(mut chrome) = chrome() else { return };
+        chrome.open(&site.url("/task/visual/in-progress"));
+        shows(&mut chrome, "article.task");
+        // The timeline comes once the page has drawn its data and is idle: by then, a page that
+        // would ask for media has.
+        assert!(chrome.wait_for(
+            "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+            SHOWN
+        ));
+        assert_eq!(
+            media_asked(&site),
+            0,
+            "a task page without media fetched the media layer: {:?}",
+            site.requests()
+        );
+    }
+    // The same task, its brief now a picture, in a browser of its own.
+    let mut page = super::look_parity::responses()["/api/task-page"].clone();
+    page["blocks"] = json!([{"type":"image","image":{"src":"/near.svg","alt":"near","presentation":{"attributes":{"width":"200","height":"200"}}}}]);
+    site.set_json("/api/task-page", &page);
+    site.set_file(
+        "/near.svg",
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+        "image/svg+xml",
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/task/visual/in-progress"));
+    shows(&mut chrome, "article.task");
+    // Below the page's head, the picture shows once it is scrolled to, as a reader would; the
+    // media layer marks the page's pictures once its chunk is in.
+    chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main img[alt=near][data-zoom-ready]')?.naturalWidth === 200",
+            SHOWN
+        ),
+        "the picture is never taken up by the media layer: {:?}; {:?}",
+        chrome.eval("[...document.querySelectorAll('main img')].map(image => image.outerHTML)"),
+        site.requests()
+    );
+    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
+    chrome.eval("document.querySelector('main img[alt=near]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/near.svg'",
+            SHOWN
+        ),
+        "the picture never opens in the viewer: {:?}",
+        chrome.eval("document.getElementById('media-lightbox')?.outerHTML")
+    );
+    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
 }
 
 #[test]

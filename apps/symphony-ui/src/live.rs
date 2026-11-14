@@ -180,6 +180,10 @@ fn MediaLayer() -> Element {
     {
         // The activation signal belongs to this component so it lives as long as its runtime.
         let needed = crate::media_live::use_activation();
+        // The program's runtime is a chunk of its own, loaded once a page shows media.
+        #[cfg(feature = "page-program")]
+        return rsx! { if needed() { crate::split::MediaPart {} } };
+        #[cfg(not(feature = "page-program"))]
         rsx! { if needed() { crate::media_live::MediaRuntime {} } }
     }
     #[cfg(not(any(feature = "page-tasks", feature = "page-docs", feature = "page-review")))]

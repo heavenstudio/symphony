@@ -289,7 +289,18 @@ step after the split has to sort them.
    the shell's chunk preload, and the loader's failure path to `gone`. Reports' first visit falls
    to about 286 KB, the size line by about 2.4 MB.
 3. **Trim the shared part** to what every page of the program needs: the media layer, the keyboard
-   types and float formatting behind the pages that use them.
+   types and float formatting behind the pages that use them. Built, only the media layer could
+   go: a chunk of its own, which a page loads once it shows media, takes the main module from
+   216,771 bytes on the wire to 207,303 and a task page's and `/agents`' first visits down by
+   7,868 bytes, of the 12,362 step 2 added. The other two stay with dioxus-web and the splitter
+   as they are pinned. The keyboard's key names (with `document::eval` and the serde_json it
+   reads with, the same way) are functions of tables dioxus-web makes at launch, the event
+   converter's and the document's; the splitter keeps every function of a table the main module
+   reaches, and the compiler keeps these as the chat's and the menus' controls call them. Float
+   formatting's precise branch is chosen inside `Display for f64` by the formatter at run time,
+   and the runtime itself formats through it (an attribute's value), so no format string of the
+   client's drops it: the board's module, with none, holds it too. Either needs a patched
+   dioxus-web or splitter.
 4. **Bring in the documents and the queue**, each once its first visit no longer grows by joining;
    the size line falls by about 2.3 MB more.
 5. **Lower the size line** in the commit of each reduction.

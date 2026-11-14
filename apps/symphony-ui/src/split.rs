@@ -3,7 +3,9 @@
 //! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
 //! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
 //! part. The kinds share the one runtime, so a move between them loads a chunk, never another copy
-//! of the framework.
+//! of the framework. The media layer (`media_live::MediaRuntime`) is a chunk of its own too, though
+//! no kind: a kind's page loads it once it shows media ([`MediaPart`]), so a page without any loads
+//! none of it.
 //!
 //! Each split point is what `wasm_split::lazy_loader!` writes, spelled out: its expansion is edition
 //! 2021 (`extern` blocks and `#[no_mangle]` without `unsafe`), which this crate refuses. The names
@@ -23,7 +25,7 @@ use dioxus::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
-/// A kind of the program, named by the chunk that holds its own part.
+/// A chunk of the program: a kind's own part, or the media layer, which a kind loads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Chunk {
     /// The task pages and `/agents`.
@@ -34,6 +36,8 @@ pub(crate) enum Chunk {
     /// A select's popup and the picture viewer, for every module.
     Overlay,
     Timeline,
+    /// The media layer: no kind, so in neither [`Chunk::KINDS`] nor the shell's manifest.
+    Media,
 }
 
 thread_local! {
@@ -42,7 +46,8 @@ thread_local! {
 }
 
 impl Chunk {
-    pub(crate) const ALL: [Chunk; 5] = [
+    /// The program's kinds, each a module to the shell.
+    pub(crate) const KINDS: [Chunk; 5] = [
         Chunk::Tasks,
         Chunk::Reports,
         Chunk::Panel,
@@ -50,7 +55,8 @@ impl Chunk {
         Chunk::Timeline,
     ];
 
-    /// Its page kind, as the shell's manifest and `reviewChunk` name it.
+    /// Its name, as `reviewChunk` and package.sh's map of the chunks name it: a kind's is the
+    /// kind's, as the shell's manifest names it.
     pub(crate) fn kind(self) -> &'static str {
         match self {
             Chunk::Tasks => "tasks",
@@ -58,17 +64,21 @@ impl Chunk {
             Chunk::Panel => "panel",
             Chunk::Overlay => "overlay",
             Chunk::Timeline => "timeline",
+            Chunk::Media => "media",
         }
     }
 
     /// The element its kind's Dioxus root is mounted on, which the shell makes (`mountFor`): the
-    /// persistent modules' own, a page kind's in `#main`.
+    /// persistent modules' own, a page kind's in `#main`. The media layer, no kind, draws in the
+    /// root of the kind that loads it and is never launched on one of its own.
     pub(crate) fn root(self) -> String {
         match self {
             Chunk::Panel => "quick-root".into(),
             Chunk::Overlay => "overlay-root".into(),
             Chunk::Timeline => "timeline-root".into(),
-            Chunk::Tasks | Chunk::Reports => format!("review-root-{}", self.kind()),
+            Chunk::Tasks | Chunk::Reports | Chunk::Media => {
+                format!("review-root-{}", self.kind())
+            }
         }
     }
 
@@ -134,6 +144,8 @@ unsafe extern "C" {
     fn __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() -> Element;
     #[allow(improper_ctypes)]
     fn __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() -> Element;
+    #[allow(improper_ctypes)]
+    fn __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() -> Element;
 }
 
 #[unsafe(no_mangle)]
@@ -171,6 +183,13 @@ pub extern "C" fn __wasm_split_00___overlay___00_export_5b5e7a5c0000000000000000
 pub extern "C" fn __wasm_split_00___timeline___00_export_5b5e7a5c000000000000000000000005_timeline()
 -> Element {
     rsx! { crate::task_timeline::TimelineApp {} }
+}
+
+#[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn __wasm_split_00___media___00_export_5b5e7a5c000000000000000000000006_media()
+-> Element {
+    rsx! { crate::media_live::MediaRuntime {} }
 }
 
 /// A task page or `/agents`, from the task pages' chunk.
@@ -223,4 +242,16 @@ pub(crate) fn TimelinePart() -> Element {
     }
     // SAFETY: as in `TasksPart`.
     unsafe { __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() }
+}
+
+/// The media layer (`media_live::MediaRuntime`), from its chunk, for a page that shows media: drawn
+/// once the chunk is in, nothing before, so the page's media wait for it as they wait for the
+/// layer's activation.
+#[component]
+pub(crate) fn MediaPart() -> Element {
+    if !use_chunk(Chunk::Media) {
+        return rsx! {};
+    }
+    // SAFETY: as in `TasksPart`.
+    unsafe { __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() }
 }
