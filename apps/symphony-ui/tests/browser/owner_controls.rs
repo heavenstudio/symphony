@@ -16,8 +16,8 @@ mod port;
 
 /// std's `lsof`, which [`port::listens`] runs here: the board's own is its `sys` command.
 impl port::Lsof for Command {
-    fn lsof(args: &[&str]) -> Self {
-        let mut lsof = Command::new("lsof");
+    fn lsof(program: &str, args: &[&str]) -> Self {
+        let mut lsof = Command::new(program);
         lsof.args(args);
         lsof
     }

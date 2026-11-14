@@ -15,8 +15,8 @@
 //!   of it is the network and the server, which a loaded machine does not slow, and a board
 //!   answered late must fail it whatever the load (the wall is 0.4-0.5 s at load 8.5);
 //! - one feed event changes one card in place, and the page fetches nothing for it;
-//! - a page the browser keeps for back and forward holds no feed stream, so ten full loads in one
-//!   tab each draw their data, and a kept page shown again reads what changed (`kept_pages`).
+//! - a page the browser keeps for back and forward holds no feed stream, and a kept page shown
+//!   again reads what changed (`kept_pages`).
 //!
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.

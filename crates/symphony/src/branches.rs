@@ -872,6 +872,57 @@ fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> S
     out
 }
 
+/// Whether the owner's line on the card `slug` of the document `rel`, saved from the page of the
+/// worktree at `tree`, is main's to keep: main's copy of the document (in the checkout at
+/// `main_root`) holds the card, and the worktree is gone (`None`), its branch is in main already
+/// (landed, or with no commit of its own), or its HEAD's copy of the card is the one it forked
+/// with or main's (it did not post the card, as [`tree_scan`] reads it); for each, the branch's
+/// page draws main's card ([`page_cards`]). A card the branch posted, a draft only its worktree
+/// holds and a card main's copy lacks are the branch's: so is a card it posted that main closed
+/// since, though its page then draws main's closed card.
+pub fn mains_card(main_root: &Path, tree: Option<&Path>, rel: &str, slug: &str) -> bool {
+    let project = Project::of(main_root);
+    let card = |text: &str| cards(text).into_iter().find(|card| card.slug == slug);
+    let main_file = project.file(rel);
+    if crate::text::read_text(&main_root.join(&main_file))
+        .ok()
+        .and_then(|text| card(&text))
+        .is_none()
+    {
+        return false;
+    }
+    let Some(tree) = tree else {
+        return true;
+    };
+    let main = &project.default_branch;
+    let (Some(head), Some(base)) = (
+        git(tree, &["rev-parse", "HEAD"]),
+        git(tree, &["merge-base", main, "HEAD"]),
+    ) else {
+        return false;
+    };
+    let (head, base) = (head.trim(), base.trim());
+    let file = Project::of(tree).file(rel);
+    let specs = [
+        format!("{head}:{file}"),
+        format!("{base}:{file}"),
+        format!("{main}:{main_file}"),
+    ];
+    let Some(texts) = blobs(tree, &specs) else {
+        return false;
+    };
+    let Some(posted) = card(&texts[0]) else {
+        return false; // a draft
+    };
+    if head == base {
+        return true;
+    }
+    let copy = shape(&posted);
+    texts[1..]
+        .iter()
+        .any(|text| card(text).is_some_and(|held| shape(&held) == copy))
+}
+
 /// The cards the page `rel` of the worktree at `tree_root` draws in place of its file's copies:
 /// the page's one cards (`shown`, [`crate::dashboard::Snapshot::pages`]), and for each card the
 /// branch did not post, main's card as main's page draws it (`main_shown` over the file of the

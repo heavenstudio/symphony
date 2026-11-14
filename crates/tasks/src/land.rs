@@ -17,7 +17,10 @@
 //!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
 //!    naming it. An approve that does not do sends the task back to review for a fresh one; a
 //!    conflict or a red on the tip as approved is said to its executor, which fixes it on the
-//!    branch and sends the task back to review itself. A tip the default branch holds already is
+//!    branch and sends the task back to review itself, and so is a worktree on the branch that
+//!    holds an owner line no commit has ([`Landing::owner_lines`]): the owner's answer on a card
+//!    only the branch holds, which a land of its commits would leave behind. A tip the default
+//!    branch holds already is
 //!    finished only when this land recorded its merge ([`Record`]): a land interrupted after it
 //!    moved the default branch pushes the commit it checked, writes its landed line and sweeps,
 //!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded, the line
@@ -80,7 +83,7 @@
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
-use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
+use crate::sweep::git::{ancestor, git, owner_lines_left, rev, succeeds, worktrees};
 use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{Error, Held, Message, Store, Task, Unfresh};
@@ -1773,6 +1776,7 @@ impl Landing<'_> {
         if ancestor(&self.main, &tip, &base) {
             return self.finish(&tip, &base, &approval);
         }
+        self.owner_lines().map_err(|refusal| self.refuse(refusal))?;
         let covered = covered(&self.main, slug, &base, &tip, &approval).map_err(|line| {
             self.refuse(Refusal::reopening(
                 line,
@@ -2723,6 +2727,44 @@ impl Landing<'_> {
         // `--exit-code`: 2 is an answer listing no such branch.
         self.remote_output(&["ls-remote", "--exit-code", "--heads", REMOTE, &branch])
             .is_ok_and(|done| done.status.code() == Some(2))
+    }
+
+    /// Refused while a worktree on the branch holds an owner line no commit has
+    /// ([`owner_lines_left`]): the owner's answer the Symphony saved into a card only the branch
+    /// holds, which a land of its commits would leave behind. Said to the executor, which commits it
+    /// on the branch and has the new tip approved.
+    fn owner_lines(&self) -> Result<(), Refusal> {
+        let slug = self.slug;
+        let mut held = String::new();
+        for entry in worktrees(&self.main)? {
+            if entry
+                .branch
+                .as_deref()
+                .and_then(|b| b.strip_prefix("refs/heads/"))
+                != Some(slug)
+            {
+                continue;
+            }
+            let files = owner_lines_left(&entry.path);
+            if !files.is_empty() {
+                let and = if held.is_empty() { "" } else { ", " };
+                held = format!("{held}{and}{} ({})", entry.path.display(), files.join(", "));
+            }
+        }
+        if held.is_empty() {
+            return Ok(());
+        }
+        Err(Refusal::to(
+            format!(
+                "{slug}'s worktree {held} holds the owner's answer no commit has, which a land of \
+                 its commits would leave behind"
+            ),
+            "@executor",
+            format!(
+                "Commit it on {slug} there, then move it back to review (`just tasks move {slug} \
+                 review`) and ask its reviewer to approve the new tip naming it"
+            ),
+        ))
     }
 
     /// What the executor does when the branch, as approved, cannot land: fix it there and have its
