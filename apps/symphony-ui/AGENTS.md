@@ -447,7 +447,10 @@ never the whole target, which the release run runs.
   of roles; its ghost draws no role chip in a column no agent has taken up, `tasks::unstaffed`),
   and showing Load more only once its first
   page is in; a row of that page still waiting to be drawn holds what its own card will take,
-  its ghost as tall (`tasks::row_card`, `card_height::row_height`). A live update that adds or
+  its ghost as tall (`tasks::row_card`, `card_height::row_height`). A first read that fails
+  with nothing drawn yet (a board not made, say) is said in place of the board's ghost, which
+  would wait for ever, in the read's words with a retry (`tasks::UnreadBoard`); the page reads
+  again by itself too. A live update that adds or
   removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
   sets its data: once the reader has scrolled the box around what they read or the page, the
   focused field, else the first of ROWS on the screen, stays where it was while the update

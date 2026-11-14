@@ -274,6 +274,49 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     );
 }
 
+/// A first visit whose board read is refused (a board not made yet, say) says why in place of the
+/// ghost, which would wait for ever, once and in the server's words, and draws the board once a
+/// read answers: its own retry's, or the page's next.
+#[test]
+fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_answers() {
+    let site = site();
+    site.fail_route("/api/task-board", true);
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        site.fail_route("/api/task-board", false);
+        return;
+    };
+    let said = browser.wait_for(
+        "document.querySelector('main .unread-board') !== null",
+        SHOWN,
+    );
+    let shown = browser.eval(
+        "(() => { const block = document.querySelector('main .unread-board');
+            return {heading: block?.querySelector('h2')?.textContent, why: block?.querySelector('p')?.textContent,
+                retry: block?.querySelector('button')?.textContent, ghost: document.querySelector('.ghost-kanban') !== null,
+                status: [...document.querySelectorAll('main [role=status]')].map(status => status.className),
+                alerts: document.querySelectorAll('.page-notices [role=alert]').length,
+                busy: document.querySelector('main').getAttribute('aria-busy')}; })()",
+    );
+    site.fail_route("/api/task-board", false);
+    assert!(said, "the failed read is not said: {}", browser.eval(PAGE));
+    assert_eq!(
+        shown,
+        json!({"heading": "The task board could not be read",
+            "why": "Board snapshot unavailable (the server answered 500).", "retry": "Retry",
+            "ghost": false, "status": ["trouble card unread-board"], "alerts": 0, "busy": "false"}),
+        "the block stands in the ghost's place, says the read's error once, and the page is not busy"
+    );
+    browser.eval("document.querySelector('main .unread-board button').click()");
+    assert!(
+        browser.wait_for(
+            "document.querySelector('main .unread-board') === null && document.querySelector('.pipeline') !== null",
+            SHOWN
+        ),
+        "the board never replaced the block: {}",
+        browser.eval(PAGE)
+    );
+}
+
 #[test]
 fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_task() {
     let site = site();

@@ -462,6 +462,13 @@ impl Home {
         &self.surreal
     }
 
+    /// Whether the board's store is there, as it is once a server has run on it: none is a board
+    /// not made yet. A server that runs makes the store, never the board: only a writer does that
+    /// ([`crate::schema::decide`]).
+    pub fn has_store(&self) -> bool {
+        fs::symlink_metadata(self.dir.join(DATA)).is_ok()
+    }
+
     /// What the address file says, without asking the server: the fast path, which goes to
     /// [`Home::ensure`] when the server does not answer.
     pub fn recorded(&self) -> Option<Running> {
@@ -755,7 +762,9 @@ impl Home {
     /// replay never runs without ([`Home::replay`]), `starters` saying so to whoever waits on them;
     /// otherwise the snapshot every start takes ([`Home::snapshot_before_start`]). A start whose
     /// log is to be replayed, for a caller starting apart ([`Home::starting_apart`]), is run on a
-    /// thread of its own, the caller refused at once naming it.
+    /// thread of its own, the caller refused at once naming it. A start with no replay says it
+    /// starts, in one line ([`Home::telling`]): it takes seconds, which would otherwise pass in
+    /// silence; a replay says its own.
     fn start(&self, starters: &Starters) -> Result<Running, ServerError> {
         self.unheld()?;
         let old = self.dir.join(RECLAIM).join(OLD);
@@ -774,6 +783,11 @@ impl Home {
             return Err(self.start_apart(logged));
         }
         if !self.replay(starters)? {
+            (self.tell)(&format!(
+                "· the board's server is not running: it starts now, on its store at {}, which \
+                 takes some seconds",
+                self.dir.join(DATA).display()
+            ));
             self.snapshot_before_start();
         }
         let running = self.spawn(&self.data(), &[])?;
