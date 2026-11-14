@@ -9,6 +9,7 @@ export const FEED_EVENT = "delta";
 export const PING_EVENT = "ping";
 export const SERVER_EVENT = "server";
 export const CACHE_FORMAT = 2;
+export const FILE_QUERY = "raw";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -302,3 +303,212 @@ export type ActivityItem = {
 export type Pending = { items: Array<PendingItem>; docs: Array<string> };
 
 export type PendingItem = { path: string; slug: string; href: string; branch?: string | null };
+
+export type Block =
+  | { type: "heading"; level: number; anchor: string; spans: Array<Span> }
+  | { type: "paragraph"; spans: Array<Span> }
+  | { type: "list"; ordered: boolean; start: number; items: Array<Array<Block>> }
+  | { type: "table"; head: Array<Cell>; rows: Array<Array<Cell>>; presentation?: Presentation }
+  | { type: "code"; language: string; text: string }
+  | { type: "quote"; blocks: Array<Block> }
+  | { type: "rule" }
+  | {
+      type: "callout";
+      kind: CalloutKind;
+      title: Array<Span>;
+      resolved: boolean;
+      blocks: Array<Block>;
+    }
+  | {
+      type: "card";
+      slug: string;
+      mark: CardState;
+      title: string;
+      body: Array<Block>;
+      verdict: Verdict;
+      thread: Array<ThreadEntry>;
+      /**
+       * Source line or offset supplied by the section pipeline, never guessed by the client.
+       */
+      line: number | null;
+      line_offset: number | null;
+      comparison: Array<Block>;
+    }
+  | { type: "component"; kind: string; blocks: Array<Block> }
+  | { type: "media"; media: Media }
+  | { type: "image"; image: Image }
+  | {
+      type: "figure";
+      picture: Image | null;
+      caption: Array<Span>;
+      href: string | null;
+      badge: string | null;
+      size: FigureSize;
+    }
+  | { type: "caption"; blocks: Array<Block> }
+  | { type: "comparison"; figures: Array<Block> }
+  | { type: "group"; blocks: Array<Block> }
+  | { type: "container"; tag: ContainerKind; presentation: Presentation; blocks: Array<Block> }
+  | { type: "details"; summary: Array<Span>; open: boolean; blocks: Array<Block> }
+  | { type: "settled-card"; summary: Array<Span>; open: boolean; blocks: Array<Block> }
+  | { type: "thread"; entries: Array<ThreadEntry> }
+  | { type: "comment"; text: string }
+  | { type: "unknown"; tag: string; text: string };
+
+export type Span =
+  | { type: "text"; text: string }
+  | { type: "emphasis"; spans: Array<Span> }
+  | { type: "strong"; spans: Array<Span> }
+  | { type: "code"; text: string }
+  | { type: "link"; href: string; target: LinkTarget | null; title: string; spans: Array<Span> }
+  | { type: "wiki-link"; href: string; target: LinkTarget | null; spans: Array<Span> }
+  | { type: "line-break" }
+  | { type: "image"; image: Image }
+  | { type: "media"; media: Media }
+  | { type: "component"; kind: string; blocks: Array<Block> }
+  | { type: "icon"; shape: Array<VectorShape>; label: string; named: boolean; tip?: string }
+  | { type: "styled"; tag: InlineKind; presentation: Presentation; spans: Array<Span> }
+  | { type: "graphic"; view_box: string; presentation: Presentation; shapes: Array<VectorShape> }
+  | { type: "blocks"; blocks: Array<Block> }
+  | { type: "unknown"; tag: string; text: string };
+
+export type LinkTarget = {
+  /**
+   * Project-relative path, or the current document for a fragment-only link.
+   */
+  path: string;
+  anchor: string | null;
+};
+
+export type Presentation = {
+  class?: string;
+  id?: string;
+  title?: string;
+  /**
+   * Only attributes recognized by the server, including sizing, accessibility, and the
+   * document's existing CSS declarations. Unknown attributes are separate Unknown nodes.
+   */
+  attributes?: { [key in string]: string };
+};
+
+export type Image = { src: string; alt: string; presentation: Presentation };
+
+export type Cell = { header: boolean; spans: Array<Span>; presentation: Presentation };
+
+export type Verdict = {
+  group: CardGroup;
+  open: boolean;
+  posted: string | null;
+  decided: string | null;
+};
+
+export type ThreadEntry = {
+  who: ThreadAuthor;
+  timestamp: string | null;
+  verdict: string | null;
+  blocks: Array<Block>;
+};
+
+export type CardState =
+  | "pending"
+  | "approved"
+  | "auto-approved"
+  | "rejected"
+  | "question"
+  | "resolved"
+  | "dismissed";
+
+export type CardGroup = "decide" | "auto" | "confirm" | "agent" | "rejected" | "resolved";
+
+export type ThreadAuthor = "owner" | "agent" | "unknown";
+
+export type CalloutKind = "comment" | "like" | "dislike" | "question" | "decision" | "resolved";
+
+export type FigureSize = "small" | "row" | "large" | "tile" | "cell" | "slot" | "wide";
+
+export type ContainerKind =
+  | "div"
+  | "section"
+  | "figure"
+  | "figcaption"
+  | "aside"
+  | "header"
+  | "footer"
+  | "address"
+  | "center";
+
+export type InlineKind =
+  | "span"
+  | "small"
+  | "sub"
+  | "sup"
+  | "time"
+  | "mark"
+  | "kbd"
+  | "samp"
+  | "delete"
+  | "insert"
+  | "underline"
+  | "abbreviation";
+
+export type VectorShape = {
+  kind: VectorKind;
+  /**
+   * Geometry and paint attributes recognized for this SVG primitive, never markup.
+   */
+  attributes: { [key in string]: string };
+};
+
+export type VectorKind = "path" | "circle" | "ellipse" | "rect" | "line" | "polyline" | "polygon";
+
+export type Media =
+  | { kind: "mockup"; src: string; label: string }
+  | { kind: "viewer"; src: string; label: string; poster?: string | null; viewer: Viewer }
+  | { kind: "gallery"; items: Array<GalleryItem>; viewer: Viewer };
+
+export type GalleryItem = { name: string; src: string; poster: string | null };
+
+export type Viewer = {
+  /**
+   * The element's tag (`orbit-view`): a custom element's name, lower case with a hyphen.
+   */
+  element: string;
+  /**
+   * The module script that defines the element, loaded once, when the first viewer shows.
+   */
+  script: string;
+  /**
+   * Its attributes after `src` and `alt`, in order; an empty value is a bare attribute.
+   */
+  attributes: Array<[string, string]>;
+  /**
+   * The buttons under it, in order.
+   */
+  views: Array<View>;
+  /**
+   * The download link's text; none leaves the link out.
+   */
+  download: string | null;
+  /**
+   * What a gallery's button says to open a file in the viewer, and to close it again; none
+   * says `Open` and `Close`.
+   */
+  open_label: string | null;
+  close_label: string | null;
+};
+
+export type View = {
+  label: string;
+  /**
+   * The button's tooltip.
+   */
+  title: string | null;
+  /**
+   * The attributes a press sets, in order.
+   */
+  set: Array<[string, string]>;
+  /**
+   * The element's method a press calls after setting them.
+   */
+  call: string | null;
+};

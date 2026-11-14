@@ -4,7 +4,7 @@
 // globals are stubbed where a test needs one.
 
 import { expect, vi } from "vitest";
-import type { ProjectView } from "./wire";
+import type { Block, ProjectView, View, Viewer } from "./wire";
 import cases from "./wire.cases.json";
 
 export interface ViewCase {
@@ -21,7 +21,12 @@ export const CASES = cases as unknown as {
   views: ViewCase[];
   queueCategory: [string, string][];
   isHtml: [string, boolean][];
-  samples: { queue: unknown; emptyQueue: unknown; board: unknown };
+  fileAddress: [string, string][];
+  /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
+  elementHtml: [Viewer, string, string, string | null, string | null][];
+  encoded: [View, string][];
+  /** `blocks` holds every kind of block, span and media, and every word they name. */
+  samples: { queue: unknown; emptyQueue: unknown; board: unknown; blocks: Block[] };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
   carried: { rust: string; typescript: string; source: string[] }[];
 };

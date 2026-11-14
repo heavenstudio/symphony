@@ -3,6 +3,7 @@ import {
   crumbs,
   documentsHref,
   entrypoints,
+  fileAddress,
   headerLinks,
   here,
   isDocumentRoute,
@@ -46,6 +47,10 @@ describe("what crates/symphony-api's ProjectView answers", () => {
 
   it.each(CASES.isHtml)("reads %j as an HTML page: %j", (name, html) => {
     expect(isHtml(name)).toBe(html);
+  });
+
+  it.each(CASES.fileAddress)("asks for %j's file at %j", (src, address) => {
+    expect(fileAddress(src)).toBe(address);
   });
 
   it.each(CASES.views)(

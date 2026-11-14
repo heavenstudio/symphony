@@ -1,0 +1,161 @@
+import { describe, expect, it } from "vitest";
+import { isMedia, isSpan, readBlocks } from "./blocks-read";
+import { CASES } from "./testing";
+
+const text = (words: string) => ({ type: "text", text: words });
+const paragraph = (spans: unknown[]) => ({ type: "paragraph", spans });
+const VIEWER = { element: "orbit-view", script: "/orbit.js", attributes: [["controls", ""]] };
+
+describe("blocks read where they arrive", () => {
+  it("are every block crates/symphony-api writes, as it writes them", () => {
+    const sample = CASES.samples.blocks;
+    expect(readBlocks(JSON.parse(JSON.stringify(sample)))).toEqual(sample);
+    expect(readBlocks([])).toEqual([]);
+  });
+
+  it.each([
+    ["a table without its presentation", { type: "table", head: [], rows: [] }],
+    ["an empty presentation", { type: "container", tag: "div", presentation: {}, blocks: [] }],
+    [
+      "an icon without its tip",
+      paragraph([{ type: "icon", shape: [], label: "Lamp", named: false }]),
+    ],
+    ["a figure without its picture, link or badge", { type: "figure", caption: [], size: "wide" }],
+    [
+      "a viewer without its views, its download or its labels",
+      { type: "media", media: { kind: "viewer", src: "/a.item", label: "A", viewer: VIEWER } },
+    ],
+    [
+      "a view without its title or call",
+      {
+        type: "media",
+        media: {
+          kind: "viewer",
+          src: "/a.item",
+          label: "A",
+          viewer: { ...VIEWER, views: [{ label: "Above", set: [] }] },
+        },
+      },
+    ],
+    [
+      "a gallery without its viewer",
+      { type: "media", media: { kind: "gallery", items: [{ name: "A", src: "/a.item" }] } },
+    ],
+    [
+      "a link without its target",
+      paragraph([{ type: "wiki-link", href: "/a", spans: [text("a")] }]),
+    ],
+    [
+      "an entry with no time or verdict",
+      { type: "thread", entries: [{ who: "agent", blocks: [] }] },
+    ],
+    ["a comment", { type: "comment", text: "a note" }],
+    ["fields a newer server adds", { type: "rule", width: 3, colour: "red" }],
+  ])("take %s as serde does", (_, block) => {
+    expect(readBlocks([block])).toEqual([block]);
+  });
+
+  it.each([
+    ["nothing", undefined],
+    ["a block", paragraph([])],
+    ["text", "blocks"],
+    ["a list holding nothing", [null]],
+    ["a list holding a list", [[]]],
+  ])("are none for %s", (_, value) => {
+    expect(readBlocks(value)).toBeNull();
+  });
+
+  it.each([
+    ["a block kind it does not know", { type: "marquee" }],
+    ["an object's own name as a kind", { type: "constructor" }],
+    ["a kind that is not text", { type: 1 }],
+    ["no kind", { spans: [] }],
+    ["a span kind it does not know", paragraph([{ type: "blink", text: "x" }])],
+    ["a media kind it does not know", { type: "media", media: { kind: "sound", src: "/a" } }],
+    [
+      "a callout kind it does not know",
+      { type: "callout", kind: "shout", title: [], resolved: false, blocks: [] },
+    ],
+    ["a figure size it does not know", { type: "figure", caption: [], size: "huge" }],
+    [
+      "a container it does not know",
+      { type: "container", tag: "nav", presentation: {}, blocks: [] },
+    ],
+    [
+      "an inline tag it does not know",
+      paragraph([{ type: "styled", tag: "blink", presentation: {}, spans: [] }]),
+    ],
+    [
+      "a shape it does not know",
+      paragraph([
+        { type: "icon", shape: [{ kind: "arc", attributes: {} }], label: "", named: false },
+      ]),
+    ],
+    ["a thread author it does not know", { type: "thread", entries: [{ who: "bot", blocks: [] }] }],
+    ["a level that is not a number", { type: "heading", level: "2", anchor: "", spans: [] }],
+    ["spans that are no list", paragraph(text("x") as unknown as unknown[])],
+    ["a missing field", { type: "code", language: "rust" }],
+    [
+      "a class that is not text",
+      { type: "container", tag: "div", presentation: { class: 1 }, blocks: [] },
+    ],
+    ["a null class", { type: "container", tag: "div", presentation: { class: null }, blocks: [] }],
+    [
+      "an attribute that is not text",
+      { type: "container", tag: "div", presentation: { attributes: { width: 3 } }, blocks: [] },
+    ],
+    ["a null presentation", { type: "table", head: [], rows: [], presentation: null }],
+    ["a row that is no list", { type: "table", head: [], rows: [{}] }],
+    [
+      "a viewer's pair of three",
+      {
+        type: "media",
+        media: {
+          kind: "viewer",
+          src: "/a",
+          label: "",
+          viewer: { ...VIEWER, attributes: [["a", "b", "c"]] },
+        },
+      },
+    ],
+    [
+      "a null list of views",
+      { type: "media", media: { kind: "gallery", items: [], viewer: { ...VIEWER, views: null } } },
+    ],
+    [
+      "a bad block deep in a list",
+      { type: "list", ordered: false, start: 1, items: [[paragraph([{ type: "x" }])]] },
+    ],
+  ])("fail the whole read for %s", (_, block) => {
+    expect(readBlocks([paragraph([text("fine")]), block])).toBeNull();
+  });
+
+  const card = {
+    type: "card",
+    slug: "lamp",
+    mark: "pending",
+    title: "Which?",
+    body: [],
+    verdict: { group: "decide", open: true },
+    thread: [],
+    comparison: [],
+  };
+
+  it("take a card without its source line, and refuse a state or a group it does not know", () => {
+    expect(readBlocks([card])).toEqual([card]);
+    expect(readBlocks([{ ...card, mark: "maybe" }])).toBeNull();
+    expect(readBlocks([{ ...card, verdict: { group: "later", open: true } }])).toBeNull();
+    expect(readBlocks([{ ...card, verdict: { group: "decide", open: "yes" } }])).toBeNull();
+  });
+});
+
+describe("a span or media read alone", () => {
+  it("is of a kind it knows, with its fields", () => {
+    expect(isSpan({ type: "line-break" })).toBe(true);
+    expect(isSpan({ type: "rule" })).toBe(false);
+    expect(isSpan(null)).toBe(false);
+    expect(isMedia({ kind: "mockup", src: "/a.html", label: "" })).toBe(true);
+    expect(isMedia({ kind: "mockup", src: "/a.html" })).toBe(false);
+    expect(isMedia([])).toBe(false);
+  });
+});
