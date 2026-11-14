@@ -21,8 +21,11 @@ const OURS: [&str; 2] = [
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
 /// What bundle.sh builds, each with its own dx run: four page kinds, and the program.
 const KINDS: [&str; 5] = ["board", "docs", "review", "queue", "program"];
-/// The program's kinds (src/split.rs), each a chunk of it, in the order of its split points' names.
-const PROGRAM: [&str; 5] = ["overlay", "panel", "reports", "tasks", "timeline"];
+/// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
+/// the media layer's ([`MEDIA`]).
+const PROGRAM: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
+/// The program's chunk that is no kind, which the shell's manifest never names.
+const MEDIA: &str = "media";
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -205,7 +208,7 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_overlay module_1_panel module_2_reports module_3_tasks module_4_timeline; do
+        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_reports module_4_tasks module_5_timeline; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
@@ -311,11 +314,12 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The four kinds built alone, and each of the program's.
+    // The four kinds built alone, and each of the program's: the media layer is none.
     assert_eq!(
         manifest.as_object().unwrap().len(),
-        KINDS.len() - 1 + PROGRAM.len()
+        KINDS.len() - 1 + PROGRAM.len() - 1
     );
+    assert!(manifest.get(MEDIA).is_none(), "{manifest}");
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
     let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
     let minified = format!(
@@ -382,19 +386,33 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         ),
         "every program kind is ready when its one initializer is: {program}"
     );
+    let published: Vec<_> = fs::read_dir(out.join("public/assets"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
     for (at, kind) in PROGRAM.iter().enumerate() {
-        assert_eq!(manifest[kind]["script"], script, "{kind}");
-        assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
-        let chunk = manifest[kind]["chunk"].as_str().unwrap();
+        let name = format!("module_{at}_{kind}-");
+        let chunk = if *kind == MEDIA {
+            let named: Vec<_> = published.iter().filter(|n| n.starts_with(&name)).collect();
+            assert_eq!(named.len(), 1, "{kind}: {published:?}");
+            format!("/assets/{}", named[0])
+        } else {
+            manifest[kind]["chunk"].as_str().unwrap().to_string()
+        };
         assert!(
-            chunk.starts_with(&format!("/assets/module_{at}_{kind}-")) && !chunk.contains("dxh"),
+            chunk.starts_with(&format!("/assets/{name}")) && !chunk.contains("dxh"),
             "{kind}: {chunk}"
         );
-        assert_eq!(file(chunk), b"\0asm\x01\0\0\0", "{kind}");
+        assert_eq!(file(&chunk), b"\0asm\x01\0\0\0", "{kind}");
         assert!(
             program.contains(&format!("\"{kind}\":\"{chunk}\"")),
             "the loader names {kind}'s chunk: {program}"
         );
+        if *kind == MEDIA {
+            continue;
+        }
+        assert_eq!(manifest[kind]["script"], script, "{kind}");
+        assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
         // Every program kind takes the styles the other kinds load too, then its own.
         let own = match *kind {
             "reports" => vec!["/assets/reports-program.css"],
@@ -409,10 +427,6 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         );
     }
     // The shared chunk dx leaves empty, which no kind loads, is not published.
-    let published: Vec<_> = fs::read_dir(out.join("public/assets"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect();
     assert!(
         published.iter().all(|name| !name.starts_with("chunk_")),
         "{published:?}"
@@ -420,7 +434,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     assert!(
         published
             .iter()
-            .any(|name| name.starts_with("module_0_overlay-")),
+            .any(|name| name.starts_with("module_1_overlay-")),
         "{published:?}"
     );
 }

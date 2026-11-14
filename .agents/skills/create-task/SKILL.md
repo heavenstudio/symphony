@@ -2,7 +2,7 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: 31299c5f72c1abcf files=SKILL.md -->
+<!-- symphony-stamp: 7609a6e51e748a2a files=SKILL.md -->
 
 # File a task on the board
 
@@ -102,7 +102,8 @@ also follow that project; this skill imposes no separate document execution lane
   of the task you work on, else of your parent session, else to one that
   stays (live past its first live line, and waiting, watching or holding a
   task); with none that stays it says `it waits for an orchestrator that
-  stays`, and the first to come to stay is given it.
+  stays`, and the first to come to stay is given it. On a board with no
+  orchestrator at all, a new project's, it says nothing of one.
 - Tell the owner the slug in one line.
 - Starting an executor on it is a separate step — see the task-orchestrator
   skill.

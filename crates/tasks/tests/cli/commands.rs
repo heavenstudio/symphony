@@ -333,25 +333,21 @@ fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
     );
 }
 
-/// With no orchestrator that stays a filed task waits, said so. An orchestrator that only
+/// With no orchestrator that stays a filed task waits, said so once any orchestrator is on the
+/// board: a board with none, a new project's, says nothing of it. An orchestrator that only
 /// registers is given nothing; a lone new one waiting is given it once it has waited past the
 /// first live line, at a look of its `tasks wait`, told in one GIVEN line.
 #[test]
 fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
     let mut c = Case::new();
     let worker = c.register("worker");
+    // No orchestrator on the board: nothing is said of one.
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator that stays\n"
+        "created sim/loose (ready)\n"
     );
     let shown = c.ok(&worker, &["show", "sim/loose"]);
-    assert!(
-        shown.contains(
-            "  waits for an orchestrator that stays, for 0 min: the first live past its first live \
-             line that waits, watches or holds a task is given it\n"
-        ),
-        "{shown}"
-    );
+    assert!(!shown.contains("orchestrator"), "{shown}");
     // Registering says the handle alone and gives nothing, nor does its first wait.
     let registered = c.run_as("", &["register", "--kind", "orchestrator"], "");
     assert_eq!((registered.code, registered.err.as_str()), (0, ""));
@@ -361,6 +357,12 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
         "{:?}",
         registered.out
     );
+    // One is on the board now, which does not stay yet: the task is said to wait for one.
+    let waits = "  waits for an orchestrator that stays, for 0 min: the first live past its first \
+                 live line that waits, watches or holds a task is given it\n";
+    // (`create` says it waits the same way: tests/cli/pull/wait.rs.)
+    let shown = c.ok(&worker, &["show", "sim/loose"]);
+    assert!(shown.contains(waits), "{shown}");
     let first = c.ok(&handle, &["wait", "--timeout", "0"]);
     assert!(!first.contains("GIVEN"), "{first}");
     assert!(
@@ -889,10 +891,14 @@ fn list_mine_shows_only_the_tasks_it_holds() {
 }
 
 #[test]
-fn next_prints_the_best_slug_or_nothing() {
+fn next_prints_the_best_slug_or_that_there_is_nothing_to_take() {
     let c = Case::new();
     let a = c.register("worker");
-    assert_eq!(c.ok(&a, &["next"]).trim(), "");
+    assert_eq!(
+        c.ok(&a, &["next"]),
+        "nothing to take: no concept, design or ready task is free of an executor, of another's \
+         reservation and of an open dependency (`just tasks list` shows the board)\n"
+    );
     c.ok(&a, &["create", "sim/a", "A"]);
     assert!(c.ok(&a, &["next"]).contains("sim/a"));
 }

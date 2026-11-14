@@ -41,7 +41,8 @@ never the whole target, which the release run runs.
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
   `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
-  the task timeline: one script and main module, and a chunk for each, which
+  the task timeline: one script and main module, and a chunk for each and one for the media
+  layer (no kind: a page of the program loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
@@ -268,7 +269,24 @@ never the whole target, which the release run runs.
   the shell warms the chat's and the menus' chunks, with the program's script and main module
   where the page is not one of the program's: 609,120 bytes outside home's first visit (from
   748,701), about 374,600 outside a task page's, and the chat's first open transfers nothing
-  more. Each module pays for its own compiled framework, the program once for all its kinds;
+  more. The media layer leaving the main module for a chunk of its own
+  (`perf/client-shared-runtime/trim-shared-part`, against main's build at 2eec23a) takes it to
+  207,514 bytes on the wire (from 216,490; 492,237 bytes of wasm from 515,290), and the task
+  pages' chunk to 318,193 (from 316,744), the code they shared with it now theirs: `/agents` and
+  a task page take 567,190 and 567,783 (from 574,579 and 575,172), `/reports` 298,785 (from
+  307,557), and every other page 71 to 94 bytes more, about 60 of them the shell's for a media
+  chunk that does not load (`/tasks` 299,205 from 299,134). The chunk, 31,502 bytes of wasm and
+  12,903 on the wire, comes only once a page shows media: a task page that shows media on its
+  first screen takes it too, 580,686 bytes, 5,514 more than main's, and one more round trip.
+  The timeline then takes 55,938 outside a task page's first visit (from 55,208), and the warmed
+  chat and menus 604,545 outside home's (from 611,040) and about 377,800 outside a task page's:
+  the chunks that share code with the media layer (the task pages', the chat's, the menus', the
+  timeline's and Reports') each hold a copy of it, 4,646 bytes on the wire in all, 19,295 bytes
+  a build. The keyboard's key names, `document::eval` with serde_json, and float formatting stay
+  in the main module: dioxus-web makes at launch the event converter and the document that
+  reach them, and the splitter keeps there every function of a table the main module reaches
+  ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). Each
+  module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -633,8 +651,16 @@ never the whole target, which the release run runs.
   API. The shared visibility latch defers native media shells, gallery rows, document blocks
   and ask threads. Mount `media_live::MediaRuntime` once beside `main`: its
   adapter sizes mounted frames and its component dialog opens
-  pictures at `data-full`. Mockups stay at 1280x800, scaled by their card's width,
-  with only `allow-scripts` in their sandbox. Never add `allow-same-origin`.
+  pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),
+  and the program's from a chunk of its own (`split::MediaPart`, `media` in the program's map of
+  chunks and in no manifest), so the program's main module holds none of it: the task pages, the
+  chat on the board and Reports fetch it only when media first shows. A chunk that does not load
+  leaves the page as it is and is asked for again by the next media shown: the shell loads the
+  page again when its build is gone, and otherwise puts up `#media-error` with a retry that
+  shows the media again, taken down once the chunk is in (`reviewMediaFailed` and
+  `reviewMediaLoaded`, `assets/shell.js`). Mockups stay at 1280x800,
+  scaled by their card's width, with only `allow-scripts` in their sandbox. Never add
+  `allow-same-origin`.
   A file a plugin's renderer draws in a viewer is a `Media::Viewer`, drawn by
   `viewer::FileViewer` from its `symphony_api::Viewer` data alone: the custom
   element (its markup from `Viewer::element_html`, every value escaped), its

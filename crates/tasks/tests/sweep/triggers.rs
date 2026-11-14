@@ -195,7 +195,11 @@ fn an_approving_verdict_starts_one() {
         &["verdict", "sim/jump", "approve", "fine"],
         |_| {},
     );
-    assert_eq!(out, "sim/jump is done\n");
+    assert_eq!(
+        out,
+        "sim/jump is approved: done on the board, not on main until it lands; `just land \
+         sim/jump --as HANDLE` lands it\n"
+    );
     let text = swept(&r, 1);
     started_for(&text, "sim/jump is done");
     r.assert_removed(&wt, &text);

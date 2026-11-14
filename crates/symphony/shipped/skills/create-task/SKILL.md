@@ -101,7 +101,8 @@ also follow that project; this skill imposes no separate document execution lane
   of the task you work on, else of your parent session, else to one that
   stays (live past its first live line, and waiting, watching or holding a
   task); with none that stays it says `it waits for an orchestrator that
-  stays`, and the first to come to stay is given it.
+  stays`, and the first to come to stay is given it. On a board with no
+  orchestrator at all, a new project's, it says nothing of one.
 - Tell the owner the slug in one line.
 - Starting an executor on it is a separate step — see the task-orchestrator
   skill.
