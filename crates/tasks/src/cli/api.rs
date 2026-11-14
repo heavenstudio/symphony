@@ -41,14 +41,15 @@ pub use context::{run, serve};
 /// back to review; and `verdict` refuses a session that ever executed the task; 12: the owner's
 /// asks, `open_ask`, `ask`, `asks`, `hold_ask`, `answer_ask`, `answer_about` and `close_ask`,
 /// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another
-/// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write). A
-/// project's launcher that serves an earlier main build does so only while this matches main's, so
-/// no caller reaches a build without what it relies on.
+/// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write; 14:
+/// `in_status_since`, when each task named took the status it holds, by slug, as `tasks list
+/// --json` carries it). A project's launcher that serves an earlier main build does so only while
+/// this matches main's, so no caller reaches a build without what it relies on.
 #[expect(
     dead_code,
     reason = "a project's launcher reads it from the committed source; no Rust code compares builds"
 )]
-pub const VERSION: i64 = 13;
+pub const VERSION: i64 = 14;
 
 /// Why a call has no result.
 enum Fail {
@@ -371,7 +372,17 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "create" => {
             let new: NewTask = a.rest()?;
             super::check_actor(&new.by)?;
-            shape::task(&board.get()?.create(&new)?)
+            let store = board.get()?;
+            let made = store.create(&new)?;
+            // Every open task has an orchestrator: filed, it stays filed when no give is written,
+            // and the board's next read of the whole board gives it.
+            match store.give_filed(&made.slug, &new.by, None) {
+                Ok(_) => shape::task(&store.get(&made.slug)?),
+                Err(error) => {
+                    eprintln!("{}: no orchestrator was given it yet: {error}", made.slug);
+                    shape::task(&made)
+                }
+            }
         }
         "amend" => {
             args!(slug: need, title: need, links: or(Vec::<String>::new()), by: actor);
@@ -582,6 +593,16 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                     .iter()
                     .map(|slug| shape::messages(&threads[slug]))
                     .collect(),
+            )
+        }
+        "in_status_since" => {
+            args!(slugs: need);
+            let slugs: Vec<String> = slugs;
+            let since = board.get()?.in_status_since(&slugs)?;
+            shape::keyed(
+                since
+                    .into_iter()
+                    .map(|(slug, since)| (slug, Py::Float(since))),
             )
         }
         "snapshot" => {

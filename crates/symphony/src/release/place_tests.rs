@@ -10,8 +10,9 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
     git(dir, args).unwrap_or_else(|e| panic!("{e}"))
 }
 
+/// A bound only a stall reaches: the backstop of a two-minute allowance.
 fn soon() -> Bound<'static> {
-    Bound::until(Instant::now() + std::time::Duration::from_secs(120))
+    Bound::until(Instant::now() + test_time::backstop(std::time::Duration::from_secs(120)))
 }
 
 /// A repository at `main` in `tree` with one commit: its main checkout, common dir and commit.

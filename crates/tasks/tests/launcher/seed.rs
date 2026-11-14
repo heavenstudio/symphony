@@ -395,94 +395,242 @@ fn without_a_compiler_for_the_helper_the_seed_clones_each_file() {
     f.no_staging_left();
 }
 
+/// The signals a seed traps, by number and by the name `kill` takes.
+#[cfg(target_os = "macos")]
+const TRAPPED: [(libc::c_int, &str); 3] = [
+    (libc::SIGTERM, "TERM"),
+    (libc::SIGINT, "INT"),
+    (libc::SIGHUP, "HUP"),
+];
+
+#[cfg(target_os = "macos")]
+impl Seeding {
+    /// The worktree's seed started alone, as `tools/cargo.sh` starts it, with `vars` besides and its
+    /// stderr into `said`; it waits for the main checkout's lock as long as the test does. Each
+    /// signal it traps starts at its default, as a terminal's job has it, whatever the run of the
+    /// tests inherited: a background job inherits SIGINT ignored, and a shell cannot trap a signal
+    /// ignored when it started, so a seed started so rightly lets it pass.
+    fn seed(&self, said: &Path, vars: &[(&str, &std::ffi::OsStr)]) -> symphony_board::sys::Child {
+        let mut command = symphony_board::sys::Command::new(self.wt.join("tools/seed-target.sh"));
+        for name in UNSET {
+            command.env_remove(name);
+        }
+        for (signal, _) in TRAPPED {
+            command.default_signal(signal);
+        }
+        command
+            .arg(self.wt.join(".target"))
+            .current_dir(&self.wt)
+            .env("CARGO", standin())
+            .env("SYMPHONY_SEED_WAIT", "600")
+            .envs(vars.iter().copied())
+            .stdin(symphony_board::sys::Stdio::null())
+            .stdout(symphony_board::sys::Stdio::null())
+            .stderr(File::create(said).unwrap())
+            .spawn()
+            .unwrap()
+    }
+
+    /// Until `what` is so (`ready`), the seed still waiting: within the backstop of the 300 s it
+    /// once had, which only the seed's own SYMPHONY_SEED_WAIT, ending it, comes before.
+    fn until_ready(
+        seed: &mut symphony_board::sys::Child,
+        said: &Path,
+        what: &str,
+        ready: impl Fn() -> bool,
+    ) {
+        test_time::until_true(what, test_time::backstop(Duration::from_secs(300)), || {
+            assert!(
+                seed.try_wait().unwrap().is_none(),
+                "the seed ended before {what}: {}",
+                fs::read_to_string(said).unwrap()
+            );
+            ready()
+        })
+        .unwrap();
+    }
+
+    /// `seed`'s end within the backstop of the minute it once had, never the lock's wait: a seed
+    /// the signal (`how`) did not end waits on with its clone for all of SYMPHONY_SEED_WAIT, so it
+    /// is killed and the test says so.
+    fn end(
+        seed: &mut symphony_board::sys::Child,
+        how: &str,
+        said: &Path,
+    ) -> std::process::ExitStatus {
+        test_time::until(
+            format!("{how} ended the seed"),
+            test_time::backstop(Duration::from_secs(60)),
+            || seed.try_wait().unwrap(),
+        )
+        .unwrap_or_else(|stall| {
+            seed.kill().unwrap();
+            seed.wait().unwrap();
+            panic!("{stall}: {}", fs::read_to_string(said).unwrap());
+        })
+    }
+
+    /// That the seed ended by `signal` (`how` says where it came) and left nothing: no staging, no
+    /// build folder, no process of its clone, and not a word on its stderr.
+    fn left_nothing(
+        &self,
+        ended: std::process::ExitStatus,
+        signal: libc::c_int,
+        how: &str,
+        said: &Path,
+    ) {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(ended.signal(), Some(signal), "{how}: the run ends by it");
+        self.no_staging_left();
+        assert!(!self.wt.join(".target").exists(), "{how}");
+        let ours = format!("{}/", self.base.display());
+        let left: Vec<String> = processes()
+            .into_iter()
+            .filter(|command| command.contains(&ours))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "{how}: the clone ended with the seed: {left:?}"
+        );
+        assert_eq!(fs::read_to_string(said).unwrap(), "", "{how}");
+    }
+}
+
+/// `signal` sent to `seed`, which this test started and has not reaped.
+#[cfg(target_os = "macos")]
+fn send(seed: &symphony_board::sys::Child, signal: libc::c_int) {
+    let pid = libc::pid_t::try_from(seed.id()).unwrap();
+    // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
+    assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn a_seed_ended_by_a_signal_ends_its_clone_and_leaves_nothing() {
-    use std::os::unix::process::ExitStatusExt;
     let f = Seeding::new("signalled");
-    let (source, target) = (f.main.join(".target/debug"), f.wt.join(".target"));
-    let lock_file = source.join(".cargo-lock");
+    let lock_file = f.main.join(".target/debug/.cargo-lock");
     // A build holds the main checkout's lock, so the clone waits for it under the lock tool, a job
     // of the seed's.
     let lock = File::open(&lock_file).unwrap();
     lock.lock().unwrap();
-    let waiting = |command: &String| {
-        command.starts_with("lockf ") && command.contains(lock_file.to_str().unwrap())
+    let waiting = || {
+        processes().iter().any(|command| {
+            command.starts_with("lockf ") && command.contains(lock_file.to_str().unwrap())
+        })
     };
-    let ours = format!("{}/", f.base.display());
-    let signals = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
-    for signal in signals {
-        let said = f.base.join(format!("said-{signal}"));
-        let mut command = symphony_board::sys::Command::new(f.wt.join("tools/seed-target.sh"));
-        for name in UNSET {
-            command.env_remove(name);
-        }
-        // Each signal the seed traps at its default, as a terminal's job has it, whatever the run
-        // of the tests inherited: a background job inherits SIGINT ignored, and a shell cannot
-        // trap a signal ignored when it started, so a seed started so rightly lets it pass.
-        for signal in signals {
-            command.default_signal(signal);
-        }
-        let mut seed = command
-            .arg(&target)
-            .current_dir(&f.wt)
-            .env("CARGO", standin())
-            .env("SYMPHONY_SEED_WAIT", "600")
-            .stdin(symphony_board::sys::Stdio::null())
-            .stdout(symphony_board::sys::Stdio::null())
-            .stderr(File::create(&said).unwrap())
-            .spawn()
-            .unwrap();
-        let start = Instant::now();
-        while !processes().iter().any(waiting) {
-            assert!(
-                seed.try_wait().unwrap().is_none(),
-                "the seed ended before its clone waited: {}",
-                fs::read_to_string(&said).unwrap()
-            );
-            assert!(
-                start.elapsed() < Duration::from_secs(300),
-                "the clone never waited on the lock"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+    for (signal, name) in TRAPPED {
+        let said = f.base.join(format!("said-{name}"));
+        let mut seed = f.seed(&said, &[]);
+        Seeding::until_ready(&mut seed, &said, "the clone waited on the lock", waiting);
         assert!(
             f.beside().contains(&format!(".target.seed.{}", seed.id())),
             "{:?}",
             f.beside()
         );
-
-        let pid = libc::pid_t::try_from(seed.id()).unwrap();
-        // SAFETY: kill only sends a signal, to the seed this test started and has not reaped.
-        assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
-        // Its end within a minute, never the lock's wait: a seed the signal did not end waits on
-        // with its clone for all of SYMPHONY_SEED_WAIT, so it is killed and the test says so.
-        let until = Instant::now() + Duration::from_secs(60);
-        let ended = loop {
-            if let Some(ended) = seed.try_wait().unwrap() {
-                break ended;
-            }
-            if Instant::now() > until {
-                seed.kill().unwrap();
-                seed.wait().unwrap();
-                panic!(
-                    "signal {signal} did not end the seed within a minute: {}",
-                    fs::read_to_string(&said).unwrap()
-                );
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
-        assert_eq!(ended.signal(), Some(signal), "the run ends by its signal");
-        f.no_staging_left();
-        assert!(!target.exists());
-        let left: Vec<String> = processes()
-            .into_iter()
-            .filter(|command| command.contains(&ours))
-            .collect();
-        assert!(left.is_empty(), "the clone ended with the seed: {left:?}");
-        assert_eq!(fs::read_to_string(&said).unwrap(), "");
+        send(&seed, signal);
+        let how = format!("SIG{name} while the clone waited");
+        let ended = Seeding::end(&mut seed, &how, &said);
+        f.left_nothing(ended, signal, &how, &said);
     }
     lock.unlock().unwrap();
+}
+
+/// A bash startup file (`BASH_ENV`) under which a seed sends itself `signal` before the `step`-th
+/// command its own shell runs once its clone's job leads a group of its own, or before its wait on
+/// that job if that comes first, and writes that command to `sent`: a DEBUG trap, which functions
+/// inherit under `set -T`, counting in the seed's own shell alone (`BASH_SUBSHELL` 0). Bash 3.2
+/// refuses `${!:-}` under `set -u` before any job, so `$!` is read with it off for the moment.
+#[cfg(target_os = "macos")]
+fn signalled_at(step: usize, signal: &str, sent: &Path) -> String {
+    format!(
+        r#"set -T
+probe_seen=0
+probe_sent=""
+trap '
+probe_flags=$-
+set +u
+probe_job=$!
+case $probe_flags in *u*) set -u ;; esac
+if [ -z "$probe_sent" ] && [ "$BASH_SUBSHELL" -eq 0 ] && [ -n "$probe_job" ] &&
+    kill -0 -- "-$probe_job" 2>/dev/null; then
+    probe_seen=$((probe_seen + 1))
+    case "$BASH_COMMAND" in wait\ *) probe_seen={step} ;; esac
+    if [ "$probe_seen" -ge {step} ]; then
+        probe_sent=1
+        printf "%s\n" "$BASH_COMMAND" > "{sent}"
+        kill -{signal} $$
+    fi
+fi' DEBUG
+"#,
+        sent = sent.display()
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_signal_at_any_step_of_the_clones_start_ends_the_clone_too() {
+    let f = Seeding::new("signalled-starting");
+    // A build holds the main checkout's lock, so the clone's job waits on it and only the signal
+    // ends the seed.
+    let lock = File::open(f.main.join(".target/debug/.cargo-lock")).unwrap();
+    lock.lock().unwrap();
+    // A trap runs between two of the seed's commands: the first step comes between the job's fork
+    // and the seed's record of it, and from the fifth on the signal comes before its wait.
+    for step in 1..=5 {
+        for (signal, name) in TRAPPED {
+            let said = f.base.join(format!("said-{step}-{name}"));
+            let sent = f.base.join(format!("sent-{step}-{name}"));
+            let startup = f.base.join(format!("startup-{step}-{name}"));
+            fs::write(&startup, signalled_at(step, name, &sent)).unwrap();
+            let mut seed = f.seed(&said, &[("BASH_ENV", startup.as_os_str())]);
+            let ended = Seeding::end(&mut seed, &format!("SIG{name} at step {step}"), &said);
+            let before = fs::read_to_string(&sent).unwrap_or_else(|_| {
+                panic!(
+                    "the seed ended ({ended}) with no SIG{name} sent at step {step}: {}",
+                    fs::read_to_string(&said).unwrap()
+                )
+            });
+            let how = format!("SIG{name} at step {step}, before `{}`", before.trim());
+            f.left_nothing(ended, signal, &how, &said);
+        }
+    }
+    lock.unlock().unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_seed_ended_by_a_signal_ends_a_lock_tool_slow_to_end_before_it_ends() {
+    let f = Seeding::new("signalled-slow");
+    // A lock tool that takes seconds to end once its group is sent TERM, as a copy does in its one
+    // clonefile call: the seed ends only once it has, and its staging goes after. It marks itself
+    // ready once its trap is set.
+    let tools = f.base.join("slow-lockf");
+    fs::create_dir(&tools).unwrap();
+    let slow = tools.join("lockf");
+    fs::write(
+        &slow,
+        "#!/bin/bash\ntrap '/bin/sleep 5; exit 143' TERM\n: > \"$0.ready\"\n/bin/sleep 600 &\nwait\n",
+    )
+    .unwrap();
+    fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
+    let ready = tools.join("lockf.ready");
+    let path = std::env::join_paths(
+        std::iter::once(tools.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for (signal, name) in TRAPPED {
+        let said = f.base.join(format!("said-slow-{name}"));
+        let _ = fs::remove_file(&ready);
+        let mut seed = f.seed(&said, &[("PATH", path.as_os_str())]);
+        Seeding::until_ready(&mut seed, &said, "the lock tool was ready", || {
+            ready.exists()
+        });
+        send(&seed, signal);
+        let how = format!("SIG{name} while the lock tool ran");
+        let ended = Seeding::end(&mut seed, &how, &said);
+        f.left_nothing(ended, signal, &how, &said);
+    }
 }
 
 #[test]

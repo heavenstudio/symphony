@@ -209,6 +209,7 @@ impl Store {
         how: &Opening,
     ) -> Store {
         Store {
+            lookup: None,
             client,
             clock,
             pid_alive,
@@ -221,6 +222,7 @@ impl Store {
             clock_panes: Mutex::new(None),
             process_scan: super::kept::Scan::default(),
             hand_off: None,
+            giving: false,
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,

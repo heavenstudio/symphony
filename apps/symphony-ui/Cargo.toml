@@ -53,6 +53,11 @@ dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "9
 symphony-api = { path = "../../crates/symphony-api" }
 serde = { version = "1", features = ["derive"] }
 
+# The host's side: what the browser's parsed JSON is on the host, for the Reports page's periods it
+# reads by path (src/reports.rs) and their tests.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serde_json = "1"
+
 # The browser's side of the app (src/live.rs, src/platform.rs). serde-wasm-bindgen reads the JSON the
 # browser has parsed into the wire types, in place of serde_json's parser: 11 KB less on a first visit.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -8,23 +8,28 @@ use symphony_board::{Message, NewLaunch, Role, Session, Task};
 
 #[test]
 fn each_command_says_what_it_did_in_one_line() {
-    let c = Case::new();
+    let mut c = Case::new();
+    // Past its first live line, orch stays once it holds sim/a, so the board gives it sim/b too.
     let (orch, exe, rev) = (
-        c.register("orchestrator"),
+        c.register_settled("orchestrator"),
         c.register("worker"),
         c.register("reviewer"),
     );
     let says = |who: &str, args: &[&str], said: &str| assert_eq!(c.ok(who, args), said, "{args:?}");
-    says(&orch, &["create", "sim/a", "A"], "created sim/a (ready)\n");
     says(
         &orch,
+        &["create", "sim/a", "A"],
+        &format!("created sim/a (ready); {orch} orchestrates it\n"),
+    );
+    says(
+        &exe,
         &["create", "sim/b", "B", "--stage", "design"],
-        "created sim/b (design)\n",
+        &format!("created sim/b (design); {orch} orchestrates it\n"),
     );
     says(
         &orch,
-        &["role", "sim/a", "orchestrator"],
-        "orchestrator on sim/a\n",
+        &["role", "sim/b", "orchestrator"],
+        "orchestrator on sim/b\n",
     );
     says(&exe, &["claim", "sim/a"], "claimed sim/a\n");
     says(&exe, &["reserve", "sim/b"], "reserved sim/b\n");
@@ -141,7 +146,7 @@ fn list_is_a_tree_of_aligned_rows() {
                 held.join(", ")
             ),
             format!("  p2 ready       {:<40} Beta\n", "sim/a/b"),
-            format!("p2 ready       {long} Long\n"),
+            format!("p2 ready       {long} Long  [orchestrator {orch}]\n"),
         ]
         .concat()
     );
@@ -265,6 +270,18 @@ mod py {
         )
     }
 
+    /// A task's record as `list --json` lists it: [`task`]'s fields, then when it took its status.
+    pub fn listed(t: &Task, in_status_since: f64, depth: usize) -> String {
+        let record = task(t, depth);
+        let closing = format!("\n{}}}", " ".repeat(depth));
+        let fields = record.strip_suffix(&closing).expect("an object's end");
+        format!(
+            "{fields},\n{}\"in_status_since\": {}{closing}",
+            " ".repeat(depth + 1),
+            float(in_status_since)
+        )
+    }
+
     pub fn message(m: &Message, depth: usize) -> String {
         object(
             vec![
@@ -328,9 +345,10 @@ fn json_is_the_records_as_python_lays_them_out() {
     c.ok(&orch, &["claim", "sim/a"]);
     c.ok(&orch, &["say", "sim/a", "line\nbreak"]);
     let board = c.store();
+    // The case's clock stands still, so each task took the status it holds when it was made.
     let tasks = |status: Option<&str>| -> String {
         let all = board.tasks(status).unwrap();
-        let laid: Vec<String> = all.iter().map(|t| py::task(t, 2)).collect();
+        let laid: Vec<String> = all.iter().map(|t| py::listed(t, t.created, 2)).collect();
         py::object(vec![("tasks", py::list(laid, 1))], 0) + "\n"
     };
     assert_eq!(c.ok("", &["list", "--json"]), tasks(None));
@@ -640,9 +658,10 @@ fn inbox_prints_one_line_a_message_then_nothing() {
 #[test]
 fn export_writes_the_snapshot_and_says_where() {
     let c = Case::new();
-    let (orch, exe) = (c.register("orchestrator"), c.register("worker"));
+    // No orchestrator live: the tasks wait for one, holding none.
+    let exe = c.register("worker");
     c.ok(
-        &orch,
+        &exe,
         &[
             "create",
             "sim/a",
@@ -654,7 +673,7 @@ fn export_writes_the_snapshot_and_says_where() {
         ],
     );
     c.ok(
-        &orch,
+        &exe,
         &[
             "create",
             "sim/b",

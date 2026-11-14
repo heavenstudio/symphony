@@ -299,7 +299,7 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
     let default = &settings.default_branch;
     let started = (|| -> Result<Started, String> {
         let common = crate::git::common_dir(main).map_err(|e| e.to_string())?;
-        let folder = lands(&common)?;
+        let folder = lands(&common);
         fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
         if let Some(running) = holder(&folder)? {
             return Ok(Started::Running(running));
@@ -356,14 +356,9 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
 }
 
 /// The lands' folder in the git common dir `common`, where the regenerator keeps its lock, log and
-/// state: refused while an older build keeps the board's folder in its old place there
-/// ([`crate::unmoved`]), where that build's regenerator keeps them, so none is made or read
-/// beside it.
-fn lands(common: &Path) -> Result<PathBuf, String> {
-    match crate::unmoved::refusal(common, crate::server::FOLDER) {
-        Some(why) => Err(why),
-        None => Ok(trigger::folder(common).join(FOLDER)),
-    }
+/// state.
+fn lands(common: &Path) -> PathBuf {
+    trigger::folder(common).join(FOLDER)
 }
 
 /// The regenerator's lock file in the lands' `folder`, opened.
@@ -461,7 +456,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| format!("{} has no main checkout to regenerate on", common.display()))?
         .to_path_buf();
-    let folder = lands(&common)?;
+    let folder = lands(&common);
     fs::create_dir_all(&folder).map_err(|e| at(&folder, &e))?;
     let interrupts = sys::Interrupts::listen().ok();
     let mut said: Option<String> = None;
@@ -1414,7 +1409,12 @@ fn file_red(
                 red: Some(filed.mark.into()),
                 ..NewTask::default()
             })
-            .map(|_| (next.clone(), format!("red: filed {next}"))),
+            .map(|_| {
+                // Every open task has an orchestrator; one not given here, the board's next read
+                // of the whole board gives ([`Store::give_if_due`]).
+                let _ = store.give_filed(&next, &filer, None);
+                (next.clone(), format!("red: filed {next}"))
+            }),
     };
     let _ = store.leave(&filer);
     said.map_err(|e| e.to_string())
@@ -1510,7 +1510,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
     let default = &settings.default_branch;
     let tip = rev(main, &format!("refs/heads/{default}"))
         .ok_or_else(|| format!("no branch {default} in {}", main.display()))?;
-    let folder = lands(&common)?;
+    let folder = lands(&common);
     let Some(state) = State::read(&folder) else {
         return Ok(standing(
             format!(

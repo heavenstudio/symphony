@@ -1,5 +1,6 @@
 //! A beat's board_changed event writes its session revision independently of counter:board.
-//! These real CLI writes run while 32 independent sessions continuously beat on a scratch board.
+//! These real CLI writes run while 32 independent sessions continuously beat on a scratch board,
+//! each read and decided once: the count of their tries again is the measure, not their time.
 
 use super::launch::Terminals;
 use std::sync::{
@@ -8,10 +9,12 @@ use std::sync::{
     mpsc,
 };
 use std::time::{Duration, Instant};
-use symphony_board::{Beat, NewSession};
+use symphony_board::{Beat, NewSession, Store};
 
 const WRITERS: usize = 32;
-const PATIENCE: Duration = Duration::from_secs(30);
+/// How long every writer has to make its first two beats: the backstop of the 30 s it once had, a
+/// wait for the beats, which a loaded machine slows and never stops.
+const PATIENCE: Duration = test_time::backstop(Duration::from_secs(30));
 
 struct Stop<'a>(&'a AtomicBool);
 impl Drop for Stop<'_> {
@@ -81,12 +84,18 @@ fn create_and_launch_finish_under_32_beats_without_the_counter_board_conflict() 
             vec!["create", "tools/loaded", "Created under beats"],
             vec!["launch", "tools/loaded", "--kind", "claude"],
         ] {
+            let tried = Store::tried_again_here();
             let began = Instant::now();
             let ran = terminals.as_(&actor, &args);
             let elapsed = began.elapsed();
+            let again = Store::tried_again_here() - tried;
             assert_eq!(ran.code, 0, "{args:?}: {} {}", ran.out, ran.err);
-            assert!(elapsed < PATIENCE, "{args:?} took {elapsed:?}");
-            eprintln!("{args:?}: {elapsed:?} with {WRITERS} continuous beat writers");
+            // The beats move nothing it reads or writes: it never read and decided again, however
+            // long a loaded machine made it take.
+            assert_eq!(again, 0, "{args:?} met the beats' writes {again} times");
+            eprintln!(
+                "{args:?}: {elapsed:?} and {again} tries again with {WRITERS} continuous beat writers"
+            );
         }
         drop(stop);
         workers

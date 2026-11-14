@@ -193,13 +193,18 @@ pub(crate) fn output_until(command: &mut Command, bound: Bound<'_>) -> Result<Ou
     }
 }
 
-/// The processes that hold `file` open, by `lsof`: none when no process does.
+/// The processes that hold `file` open, by `lsof` within a minute: none when no process does.
 pub(crate) fn holders(file: &Path) -> Result<Vec<u32>, String> {
+    holders_within(file, Bound::until(Instant::now() + Duration::from_secs(60)))
+}
+
+/// [`holders`], lsof stopped when `bound` ends.
+fn holders_within(file: &Path, bound: Bound<'_>) -> Result<Vec<u32>, String> {
     let done = output_until(
         crate::children::command("lsof")
             .args(["-w", "-t", "--"])
             .arg(file),
-        Bound::until(Instant::now() + Duration::from_secs(60)),
+        bound,
     )
     .map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run lsof: {e}"),
@@ -259,30 +264,59 @@ pub(crate) const SETTLE: Duration = Duration::from_secs(5);
 const AGAIN: Duration = Duration::from_secs(1);
 
 /// The processes but this one that `lsof` sees working in each of `trees` (real paths) or holding
-/// a file inside it open, within `bound`, a list for each: as listed once none is found, or
-/// [`SETTLE`] after the first listing found one, so a process on its way out is not counted. Each
-/// listing is one of every process, read by path: a search of a tree (`lsof +D`) reads every file
-/// of its build folder first.
+/// a file inside it open, within `bound` and each listing within a minute, a list for each: as
+/// listed once none is found, or [`SETTLE`] after the first listing found one, so a process on its
+/// way out is not counted. Each listing is one of every process, read by path: a search of a tree
+/// (`lsof +D`) reads every file of its build folder first.
 pub(crate) fn inside(trees: &[&Path], bound: Bound<'_>) -> Result<Vec<Vec<Inside>>, String> {
-    let mut list = || listing(&mut crate::children::command("lsof"), bound);
-    settled(&mut list, trees, std::process::id(), SETTLE)
+    let mut list = || {
+        listing(
+            &mut crate::children::command("lsof"),
+            bound.sooner(Duration::from_secs(60)),
+        )
+    };
+    settled(
+        &mut list,
+        trees,
+        std::process::id(),
+        SETTLE,
+        &mut Wall(Instant::now()),
+    )
+}
+
+/// The time a look settles by: how long since it began, and a pause before it lists again.
+trait Clock {
+    fn elapsed(&self) -> Duration;
+    fn pause(&mut self, pause: Duration);
+}
+
+/// The machine's clock, from the instant a look began.
+struct Wall(Instant);
+
+impl Clock for Wall {
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+
+    fn pause(&mut self, pause: Duration) {
+        std::thread::sleep(pause);
+    }
 }
 
 /// A listing of every process's working directory and open files by `lsof`, a command for lsof to
 /// which this adds the arguments, within `bound`: never an empty one.
 fn listing(lsof: &mut Command, bound: Bound<'_>) -> Result<String, String> {
-    let done = output_until(
-        lsof.args(["-n", "-P", "-w", "-F", "pcfn"]),
-        bound.sooner(Duration::from_secs(60)),
-    )
-    .map_err(|failed| match failed {
-        Failed::Io(e) => format!("cannot run lsof: {e}"),
-        Failed::Late(took) => format!("lsof did not end within {} s", took.as_secs()),
-        Failed::Interrupted(took) => format!(
-            "lsof was stopped after {} s: the run was told to stop",
-            took.as_secs()
-        ),
-    })?;
+    let done =
+        output_until(lsof.args(["-n", "-P", "-w", "-F", "pcfn"]), bound).map_err(|failed| {
+            match failed {
+                Failed::Io(e) => format!("cannot run lsof: {e}"),
+                Failed::Late(took) => format!("lsof did not end within {} s", took.as_secs()),
+                Failed::Interrupted(took) => format!(
+                    "lsof was stopped after {} s: the run was told to stop",
+                    took.as_secs()
+                ),
+            }
+        })?;
     let listing = String::from_utf8_lossy(&done.stdout).into_owned();
     if listing.trim().is_empty() {
         return Err(format!(
@@ -294,25 +328,25 @@ fn listing(lsof: &mut Command, bound: Bound<'_>) -> Result<String, String> {
 }
 
 /// What the listings `list` makes say works in each of `trees`, but the process `me`: listed again
-/// every [`AGAIN`] while something is found, until nothing is or `settle` has passed since the
-/// first, and the last listing's.
+/// every [`AGAIN`] while something is found, until nothing is or `settle` has passed on `clock`
+/// since the first, and the last listing's.
 fn settled(
     list: &mut dyn FnMut() -> Result<String, String>,
     trees: &[&Path],
     me: u32,
     settle: Duration,
+    clock: &mut dyn Clock,
 ) -> Result<Vec<Vec<Inside>>, String> {
-    let first = Instant::now();
     loop {
         let listing = list()?;
         let found: Vec<Vec<Inside>> = (trees.iter())
             .map(|tree| inside_of(&listing, tree, me))
             .collect();
-        let left = settle.saturating_sub(first.elapsed());
+        let left = settle.saturating_sub(clock.elapsed());
         if found.iter().all(Vec::is_empty) || left.is_zero() {
             return Ok(found);
         }
-        std::thread::sleep(AGAIN.min(left));
+        clock.pause(AGAIN.min(left));
     }
 }
 
@@ -366,9 +400,24 @@ fn inside_of(listing: &str, tree: &Path, me: u32) -> Vec<Inside> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::waits::{far, gone, pid_written, untimed, written_pid};
     use super::*;
     use crate::children::command;
     use crate::test_tree::Tree;
+
+    /// A clock that moves only by the pauses taken on it.
+    #[derive(Default)]
+    struct Paused(Duration);
+
+    impl Clock for Paused {
+        fn elapsed(&self) -> Duration {
+            self.0
+        }
+
+        fn pause(&mut self, pause: Duration) {
+            self.0 += pause;
+        }
+    }
 
     #[test]
     fn a_listing_names_each_process_working_in_the_tree_or_holding_a_file_inside_it_once() {
@@ -441,7 +490,7 @@ mod tests {
 
     #[test]
     fn a_listing_that_cannot_be_had_is_why_and_never_an_empty_one() {
-        let soon = || Bound::until(Instant::now() + Duration::from_secs(30));
+        let soon = far;
         let refused = listing(&mut command("/no/such/lsof"), soon()).unwrap_err();
         assert!(refused.starts_with("cannot run lsof: "), "{refused}");
         let mut silent = command("sh");
@@ -450,20 +499,21 @@ mod tests {
             listing(&mut silent, soon()).unwrap_err(),
             "lsof listed no process: lsof: no listing"
         );
+        // Its time up before it starts, the first look stops it.
         let mut slow = command("sh");
         slow.args(["-c", "sleep 30", "lsof"]);
-        let late = Bound::until(Instant::now() + Duration::from_millis(300));
+        let late = Bound::until(Instant::now());
         assert_eq!(
-            listing(&mut slow, late).unwrap_err(),
-            "lsof did not end within 0 s"
+            untimed(&listing(&mut slow, late).unwrap_err()),
+            "lsof did not end within N s"
         );
         let mut told = command("sh");
         told.args(["-c", "sleep 30", "lsof"]);
         let heard = || true;
-        let stopping = Bound::hearing(Instant::now() + Duration::from_secs(30), &heard);
+        let stopping = Bound::hearing(far().until, &heard);
         assert_eq!(
-            listing(&mut told, stopping).unwrap_err(),
-            "lsof was stopped after 0 s: the run was told to stop"
+            untimed(&listing(&mut told, stopping).unwrap_err()),
+            "lsof was stopped after N s: the run was told to stop"
         );
         // One that could not read every process still says what it read.
         let mut partial = command("sh");
@@ -505,58 +555,80 @@ mod tests {
 
         // Nothing found: one listing.
         let calls = std::cell::Cell::new(0);
-        let found = settled(&mut listings(&[Ok(nothing)], &calls), &trees, 1, SETTLE).unwrap();
+        let found = settled(
+            &mut listings(&[Ok(nothing)], &calls),
+            &trees,
+            1,
+            SETTLE,
+            &mut Paused::default(),
+        )
+        .unwrap();
         assert_eq!(found, [vec![], vec![]]);
         assert_eq!(calls.get(), 1);
 
         // Found, then gone at the next listing, a second later: nothing counts.
         let calls = std::cell::Cell::new(0);
-        let started = Instant::now();
+        let mut clock = Paused::default();
         let gone = [Ok(both), Ok(nothing)];
-        let found = settled(&mut listings(&gone, &calls), &trees, 1, SETTLE).unwrap();
+        let found = settled(&mut listings(&gone, &calls), &trees, 1, SETTLE, &mut clock).unwrap();
         assert_eq!(found, [vec![], vec![]]);
         assert_eq!(calls.get(), 2);
-        assert!(started.elapsed() >= AGAIN, "{:?}", started.elapsed());
+        assert_eq!(clock.elapsed(), AGAIN);
 
         // What stays through the settling time counts, by the last listing, in its own folder.
         let calls = std::cell::Cell::new(0);
+        let mut clock = Paused::default();
         let settle = Duration::from_millis(1500);
         let stays = [Ok(both), Ok(other_only)];
-        let found = settled(&mut listings(&stays, &calls), &trees, 1, settle).unwrap();
+        let found = settled(&mut listings(&stays, &calls), &trees, 1, settle, &mut clock).unwrap();
         assert_eq!(found, [vec![], vec![cargo()]]);
         assert_eq!(calls.get(), 3, "at 0, 1 and 1.5 s");
+        assert_eq!(clock.elapsed(), settle);
 
         // With no time to settle, the first listing is what counts.
         let calls = std::cell::Cell::new(0);
-        let found = settled(&mut listings(&stays, &calls), &trees, 1, Duration::ZERO).unwrap();
+        let found = settled(
+            &mut listings(&stays, &calls),
+            &trees,
+            1,
+            Duration::ZERO,
+            &mut Paused::default(),
+        )
+        .unwrap();
         assert_eq!(found[0].len(), 1);
         assert_eq!(calls.get(), 1);
 
         // A listing that fails while it settles is why, never what an earlier one found.
         let calls = std::cell::Cell::new(0);
         let failing = [Ok(both), Err("lsof did not end within 60 s")];
-        assert_eq!(
-            settled(&mut listings(&failing, &calls), &trees, 1, SETTLE).unwrap_err(),
-            "lsof did not end within 60 s"
+        let failed = settled(
+            &mut listings(&failing, &calls),
+            &trees,
+            1,
+            SETTLE,
+            &mut Paused::default(),
         );
+        assert_eq!(failed.unwrap_err(), "lsof did not end within 60 s");
     }
 
     #[test]
     fn the_real_listing_sees_a_process_working_in_the_tree_and_not_this_one() {
         let tree = Tree::new();
         let dir = tree.root.canonicalize().unwrap();
-        let soon = || Bound::until(Instant::now() + Duration::from_secs(60));
-        assert_eq!(inside(&[&dir], soon()).unwrap(), [vec![]]);
+        let me = std::process::id();
+        let mut real = || listing(&mut command("lsof"), far());
+        let found = settled(&mut real, &[&dir], me, SETTLE, &mut Paused::default());
+        assert_eq!(found.unwrap(), [vec![]]);
         let mut sleeper = command("sleep")
-            .arg("60")
+            .arg("1000")
             .current_dir(&dir)
             .spawn()
             .unwrap();
-        let listed = listing(&mut command("lsof"), soon());
+        let listed = real();
         sleeper.kill().unwrap();
         sleeper.wait().unwrap();
         assert_eq!(
-            inside_of(&listed.unwrap(), &dir, std::process::id()),
+            inside_of(&listed.unwrap(), &dir, me),
             [Inside {
                 pid: sleeper.id(),
                 command: "sleep".into(),
@@ -565,64 +637,59 @@ mod tests {
         );
     }
 
-    fn alive(pid: u32) -> bool {
-        symphony_board::sys::pid_alive(i64::from(pid))
-    }
-
     #[test]
     fn a_command_within_its_time_answers_what_it_printed() {
         let done = output_until(
             command("sh").args(["-c", "echo out; echo err >&2; exit 3"]),
-            Bound::until(Instant::now() + Duration::from_secs(30)),
+            far(),
         )
         .unwrap();
         assert_eq!(done.status.code(), Some(3));
         assert_eq!(done.stdout, b"out\n");
         assert_eq!(done.stderr, b"err\n");
-        let missing = output_until(
-            &mut command("/no/such/program"),
-            Bound::until(Instant::now() + Duration::from_secs(30)),
-        );
+        let missing = output_until(&mut command("/no/such/program"), far());
         assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
+    }
+
+    /// A shell that starts a helper which outlives any wait of a test, writes its pid in `pid` and
+    /// waits for it.
+    fn with_helper(pid: &Path) -> String {
+        format!("sleep 1000 & echo $! > '{}'; wait", pid.display())
     }
 
     #[test]
     fn a_command_past_its_time_is_stopped_with_what_it_started() {
         let tree = Tree::new();
         let pid = tree.path("helper.pid");
-        let script = format!("sleep 30 & echo $! > '{}'; wait", pid.display());
-        let started = Instant::now();
+        // Its time is up before it starts. The run is never told to stop, but asked whether it was,
+        // it answers once the helper runs, so the time stops a command whose helper runs.
+        let heard = || {
+            written_pid(&pid);
+            false
+        };
         let late = output_until(
-            command("sh").args(["-c", &script]),
-            Bound::until(Instant::now() + Duration::from_millis(500)),
+            command("sh").args(["-c", &with_helper(&pid)]),
+            Bound::hearing(Instant::now(), &heard),
         );
         assert!(matches!(late, Err(Failed::Late(_))), "{late:?}");
-        assert!(started.elapsed() < Duration::from_secs(20));
-        let helper: u32 = std::fs::read_to_string(&pid)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let until = Instant::now() + Duration::from_secs(10);
-        while alive(helper) && Instant::now() < until {
-            std::thread::sleep(POLL);
-        }
-        assert!(!alive(helper), "the helper went with the command's group");
+        gone(written_pid(&pid), "the helper of the command's group");
     }
 
     #[test]
     fn a_command_is_stopped_with_its_group_once_the_run_is_told_to_stop() {
-        let started = Instant::now();
-        let heard = move || started.elapsed() >= Duration::from_millis(300);
+        let tree = Tree::new();
+        let pid = tree.path("helper.pid");
+        // The run is told to stop once the helper runs.
+        let heard = || pid_written(&pid);
         let stopped = output_until(
-            command("sh").args(["-c", "sleep 30"]),
-            Bound::hearing(Instant::now() + Duration::from_secs(60), &heard),
+            command("sh").args(["-c", &with_helper(&pid)]),
+            Bound::hearing(far().until, &heard),
         );
         assert!(
             matches!(stopped, Err(Failed::Interrupted(_))),
             "{stopped:?}"
         );
-        assert!(started.elapsed() < Duration::from_secs(20));
+        gone(written_pid(&pid), "the helper of the command's group");
         let quiet = || false;
         let bound = Bound::hearing(Instant::now() + Duration::from_secs(60), &quiet);
         assert!(!bound.interrupted());
@@ -636,7 +703,7 @@ mod tests {
     fn a_group_lives_while_any_of_it_runs_and_not_as_a_later_group_of_its_id() {
         let tree = Tree::new();
         let left = tree.path("left.pid");
-        let script = format!("sleep 30 & echo $! > '{}'; sleep 1", left.display());
+        let script = format!("sleep 1000 & echo $! > '{}'; sleep 1", left.display());
         let mut leader = command("sh")
             .args(["-c", &script])
             .process_group(0)
@@ -662,19 +729,13 @@ mod tests {
         leader.wait().unwrap();
         assert!(lives(group, start.as_ref()));
         signal(libc::pid_t::try_from(group).unwrap(), libc::SIGKILL);
-        let helper: i64 = std::fs::read_to_string(&left)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let until = Instant::now() + Duration::from_secs(10);
-        while lives(group, start.as_ref()) && Instant::now() < until {
-            std::thread::sleep(POLL);
-        }
-        assert!(
-            !lives(group, start.as_ref()),
-            "helper {helper} went with it"
-        );
+        let helper = written_pid(&left);
+        test_time::until_true(
+            format!("the group {group} gone with its helper {helper}"),
+            test_time::FLOOR,
+            || !lives(group, start.as_ref()),
+        )
+        .unwrap_or_else(|stall| panic!("{stall}"));
         for nothing in [0, 1, -5, i64::MAX] {
             assert!(!lives(nothing, None), "{nothing}");
         }
@@ -683,12 +744,13 @@ mod tests {
     #[test]
     fn a_stopped_group_ends_on_term_and_its_leader_is_left_to_be_reaped() {
         let mut child = command("sh")
-            .args(["-c", "sleep 30"])
+            .args(["-c", "sleep 1000"])
             .process_group(0)
             .spawn()
             .unwrap();
         assert!(!ended(child.id()));
-        stop(child.id(), GRACE);
+        // Its grace is a wait for its leader to end, which only a stall outlasts.
+        stop(child.id(), test_time::backstop(GRACE));
         assert!(ended(child.id()));
         let status = child.wait().unwrap();
         assert_eq!(
@@ -700,12 +762,21 @@ mod tests {
 
     #[test]
     fn a_group_that_ignores_term_is_killed_after_the_grace() {
+        let tree = Tree::new();
+        let ignoring = tree.path("ignoring");
+        let script = format!(
+            "trap '' TERM; : > '{}'; while :; do sleep 1; done",
+            ignoring.display()
+        );
         let mut child = command("sh")
-            .args(["-c", "trap '' TERM; while :; do sleep 1; done"])
+            .args(["-c", &script])
             .process_group(0)
             .spawn()
             .unwrap();
-        std::thread::sleep(Duration::from_millis(200));
+        test_time::until_true("the group ignoring TERM", test_time::FLOOR, || {
+            ignoring.exists()
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
         stop(child.id(), Duration::from_millis(300));
         let status = child.wait().unwrap();
         assert_eq!(
@@ -718,16 +789,16 @@ mod tests {
     fn the_holders_of_a_file_are_the_processes_that_hold_it_open() {
         let tree = Tree::new();
         let file = tree.write("index.lock", "");
-        assert_eq!(holders(&file), Ok(Vec::new()));
+        assert_eq!(holders_within(&file, far()), Ok(Vec::new()));
         let mut holder = command("sleep")
-            .arg("30")
+            .arg("1000")
             .stdin(std::fs::File::open(&file).unwrap())
             .spawn()
             .unwrap();
-        let held = holders(&file).unwrap();
+        let held = holders_within(&file, far()).unwrap();
         assert_eq!(held, [holder.id()]);
         holder.kill().unwrap();
         holder.wait().unwrap();
-        assert_eq!(holders(&tree.path("none")), Ok(Vec::new()));
+        assert_eq!(holders_within(&tree.path("none"), far()), Ok(Vec::new()));
     }
 }

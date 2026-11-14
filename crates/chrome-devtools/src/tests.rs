@@ -625,6 +625,8 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         arrivals: Vec::new(),
         deadline: None,
         backstop: BACKSTOP_FLOOR,
+        frame: None,
+        following: false,
     };
     let failure = chrome
         .read(false)
@@ -1376,6 +1378,8 @@ fn with_peer<T: Send + 'static>(
         arrivals: Vec::new(),
         deadline: None,
         backstop,
+        frame: None,
+        following: false,
     };
     (chrome, served)
 }
@@ -1918,6 +1922,429 @@ fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
     assert!(peer.join().unwrap());
 }
 
+/// `Target.attachedToTarget` for a target of `kind` on `session`, held there (`waiting`) or not.
+fn attached(session: &str, kind: &str, waiting: bool) -> Value {
+    json!({"sessionId": "page", "method": "Target.attachedToTarget", "params": {
+        "sessionId": session, "waitingForDebugger": waiting,
+        "targetInfo": {"targetId": session, "type": kind, "url": "http://b/"}}})
+}
+
+#[test]
+fn a_followed_frame_has_its_events_on_and_its_frames_followed_before_it_runs_and_a_worker_only_runs()
+ {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        // Every command but the observer's turns and the page's probes: its session, its method and
+        // its parameters.
+        let mut seen = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            seen.push((
+                command["sessionId"].as_str().unwrap_or("").to_string(),
+                command["method"].as_str().unwrap_or("").to_string(),
+                command["params"].clone(),
+            ));
+            // The targets the page starts, told of before the reply, as Chrome does.
+            match command["method"].as_str() {
+                Some("Fixture.before") => {
+                    peer.send(attached("unfollowed", "iframe", true));
+                    peer.reply(&command, json!({}));
+                }
+                Some("Target.setAutoAttach") if command["sessionId"] == "page" => {
+                    peer.send(attached("frame", "iframe", true));
+                    peer.send(attached("worker", "worker", true));
+                    peer.send(attached("running", "iframe", false));
+                    peer.reply(&command, json!({}));
+                }
+                _ => {}
+            }
+        }
+        seen
+    });
+    // Until frames are followed, a target the page starts is kept and left as it is.
+    chrome.call("Fixture.before", json!({})).unwrap();
+    chrome.follow_frames().unwrap();
+    let kept: Vec<&Value> = chrome
+        .events
+        .iter()
+        .filter(|event| event["method"] == "Target.attachedToTarget")
+        .map(|event| &event["params"]["sessionId"])
+        .collect();
+    assert_eq!(kept, ["unfollowed", "frame", "worker", "running"]);
+    drop(chrome);
+    let follow = json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true});
+    let command = |session: &str, method: &str, params: &Value| {
+        (session.to_string(), method.to_string(), params.clone())
+    };
+    let none = json!({});
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            command("page", "Fixture.before", &none),
+            command("page", "Target.setAutoAttach", &follow),
+            // A held frame: its network and page events on and its own frames followed, then
+            // let run.
+            command("frame", "Network.enable", &none),
+            command("frame", "Page.enable", &none),
+            command("frame", "Target.setAutoAttach", &follow),
+            command("frame", "Runtime.runIfWaitingForDebugger", &none),
+            // A worker is only let run.
+            command("worker", "Runtime.runIfWaitingForDebugger", &none),
+            // A frame already running is followed and has nothing to be let do.
+            command("running", "Network.enable", &none),
+            command("running", "Page.enable", &none),
+            command("running", "Target.setAutoAttach", &follow),
+        ]
+    );
+}
+
+/// A loopback server ([`framing_server`]) and how a test drives it: its address and port, the
+/// paths of the held requests as each arrives, and a release of one held document's rest.
+struct Framing {
+    base: String,
+    port: u16,
+    arrived: std::sync::mpsc::Receiver<String>,
+    release: std::sync::mpsc::Sender<()>,
+}
+
+/// A loopback server of a page with two frames Chrome runs in processes of their own, a sandboxed
+/// one of its own and a cross-site one (the server again, as `localhost`), each with a picture; of
+/// `/swapping.html`, a frame of `localhost` and one of the page's own site; of `/holding.html`, a
+/// frame whose picture `/held.png` is never answered; and of `/slow.html` (any query), a document
+/// whose head and first bytes come at once and the rest only once the test sends on its `release`,
+/// one send each. It tells of each `/held.png` and `/slow.html` request, by its path and query, as
+/// it arrives.
+fn framing_server() -> Framing {
+    use std::io::{BufRead, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://127.0.0.1:{port}/");
+    let (arrive, arrived) = std::sync::mpsc::channel::<String>();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = std::sync::Arc::new(std::sync::Mutex::new(released));
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            let Ok(connection) = connection else {
+                return;
+            };
+            let (arrive, released) = (arrive.clone(), released.clone());
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(connection.try_clone().unwrap());
+                let mut head = String::new();
+                while reader.read_line(&mut head).is_ok_and(|read| read > 2) {}
+                let path = head.split(' ').nth(1).unwrap_or("/").to_string();
+                let answer = |kind: &str, body: &str| {
+                    let _ = write!(
+                        &connection,
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                };
+                match path.split('?').next().unwrap_or("/") {
+                    "/" => answer(
+                        "text/html",
+                        &format!(
+                            "<!doctype html><iframe id=sandboxed sandbox=allow-scripts \
+                             src=/frame.html></iframe><iframe id=cross \
+                             src=http://localhost:{port}/frame.html></iframe>"
+                        ),
+                    ),
+                    "/swapping.html" => answer(
+                        "text/html",
+                        &format!(
+                            "<!doctype html><iframe id=back \
+                             src=http://localhost:{port}/frame.html></iframe><iframe id=out \
+                             src=/frame.html></iframe>"
+                        ),
+                    ),
+                    "/frame.html" => answer("text/html", "<!doctype html><img src=/p.png>"),
+                    "/holding.html" => answer("text/html", "<!doctype html><img src=/held.png>"),
+                    "/held.png" => {
+                        // Never answered: held until the browser lets the connection go.
+                        let _ = arrive.send(path);
+                        let mut rest = String::new();
+                        while reader.read_line(&mut rest).is_ok_and(|read| read > 0) {}
+                    }
+                    "/slow.html" => {
+                        let (first, rest) = ("<!doctype html><p>slow", "ly</p>");
+                        let _ = write!(
+                            &connection,
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\
+                             Cache-Control: no-store\r\nContent-Length: {}\r\n\
+                             Connection: close\r\n\r\n{first}",
+                            first.len() + rest.len()
+                        );
+                        let _ = (&connection).flush();
+                        let _ = arrive.send(path);
+                        // The rest once released; never, once the test has ended.
+                        if released.lock().unwrap().recv().is_ok() {
+                            let _ = write!(&connection, "{rest}");
+                        }
+                    }
+                    _ => answer("image/png", ""),
+                }
+            });
+        }
+    });
+    Framing {
+        base,
+        port,
+        arrived,
+        release,
+    }
+}
+
+/// Wait, reading the browser meanwhile (a followed frame starting is held until the driver reads
+/// of it and lets it run), until the server has seen a request for each of `paths`.
+fn arrive(chrome: &mut Chrome, framing: &Framing, paths: &[&str]) {
+    let mut seen: Vec<String> = Vec::new();
+    test_time::until_true(
+        format!("the server asked for {paths:?}"),
+        test_time::backstop(PROTOCOL_CPU),
+        || {
+            chrome.pump(POLL).unwrap();
+            seen.extend(framing.arrived.try_iter());
+            paths
+                .iter()
+                .all(|path| seen.iter().any(|seen| seen == path))
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+}
+
+/// Wait until the requests [`Chrome::requests`] reads meet `condition`; them.
+fn requests_until(
+    chrome: &mut Chrome,
+    what: &str,
+    condition: impl Fn(&[crate::Request]) -> bool,
+) -> Vec<crate::Request> {
+    test_time::until(what, test_time::backstop(PROTOCOL_CPU), || {
+        let requests = chrome.requests().unwrap();
+        condition(&requests).then_some(requests)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"))
+}
+
+/// The request to `url` among `requests`, if any.
+fn request<'a>(requests: &'a [crate::Request], url: &str) -> Option<&'a crate::Request> {
+    requests.iter().find(|request| request.url == url)
+}
+
+/// Whether the request to `url` among `requests` is still open: seen, neither finished nor failed.
+fn still_open(requests: &[crate::Request], url: &str) -> bool {
+    request(requests, url).is_some_and(|request| !request.finished && request.failed.is_none())
+}
+
+#[test]
+fn a_followed_frame_in_a_process_of_its_own_ends_its_requests_among_the_pages_and_its_removal_too()
+{
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let framing = framing_server();
+    let (base, port) = (framing.base.clone(), framing.port);
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.follow_frames().unwrap();
+    chrome.navigate(&base, PROTOCOL_CPU).unwrap();
+    let sandboxed = format!("{base}frame.html");
+    let cross = format!("http://localhost:{port}/frame.html");
+    let pictures = [
+        format!("{base}p.png"),
+        format!("http://localhost:{port}/p.png"),
+    ];
+    let wanted = [&sandboxed, &cross, &pictures[0], &pictures[1]];
+    let requests = test_time::until(
+        "both frames' documents and pictures answered",
+        test_time::backstop(PROTOCOL_CPU),
+        || {
+            let requests = chrome.requests().unwrap();
+            wanted
+                .iter()
+                .all(|url| {
+                    requests
+                        .iter()
+                        .any(|request| &request.url == *url && request.finished)
+                })
+                .then_some(requests)
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let by = |url: &str| requests.iter().find(|request| request.url == url).unwrap();
+    assert_eq!(by(&base).frame, None);
+    for (document, picture) in [(&sandboxed, &pictures[0]), (&cross, &pictures[1])] {
+        let document = by(document);
+        assert_eq!((document.kind.as_str(), document.status), ("Document", 200));
+        assert_eq!(document.frame.as_deref(), Some(document.url.as_str()));
+        assert_eq!(by(picture).frame.as_deref(), Some(document.url.as_str()));
+    }
+
+    // A frame removed while its picture is in flight leaves no request open.
+    let holding = format!("http://localhost:{port}/holding.html");
+    let held = format!("http://localhost:{port}/held.png");
+    chrome
+        .eval(&format!(
+            "(() => {{ const frame = document.createElement('iframe'); frame.id = 'holding'; \
+             frame.src = {}; document.body.append(frame); return 0; }})()",
+            json!(holding)
+        ))
+        .unwrap();
+    arrive(&mut chrome, &framing, &["/held.png"]);
+    let open = |chrome: &mut Chrome| {
+        chrome
+            .requests()
+            .unwrap()
+            .into_iter()
+            .find(|request| request.url == held)
+            .filter(|request| !request.finished && request.failed.is_none())
+    };
+    let picture = test_time::until(
+        "the held picture told of",
+        test_time::backstop(PROTOCOL_CPU),
+        || open(&mut chrome),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    assert_eq!(picture.frame.as_deref(), Some(holding.as_str()));
+    chrome
+        .eval("document.getElementById('holding').remove(), 0")
+        .unwrap();
+    test_time::until_true(
+        "the held picture ended with its frame",
+        test_time::backstop(PROTOCOL_CPU),
+        || open(&mut chrome).is_none(),
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let ended = chrome
+        .requests()
+        .unwrap()
+        .into_iter()
+        .find(|request| request.url == held)
+        .unwrap();
+    // Given up, by the page or with its frame, never a failure of the network's.
+    assert!(ended.canceled, "{ended:?}");
+}
+
+#[test]
+fn a_followed_frame_moving_between_processes_mid_load_is_waited_for_and_a_removed_one_is_not() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let framing = framing_server();
+    let (base, port) = (framing.base.clone(), framing.port);
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.follow_frames().unwrap();
+    chrome
+        .navigate(&format!("{base}swapping.html"), PROTOCOL_CPU)
+        .unwrap();
+    let first = [
+        format!("http://localhost:{port}/frame.html"),
+        format!("{base}frame.html"),
+    ];
+    requests_until(
+        &mut chrome,
+        "both frames' first documents answered",
+        |requests| {
+            first
+                .iter()
+                .all(|url| request(requests, url).is_some_and(|request| request.finished))
+        },
+    );
+    // Into the page's process: the frame of `localhost` is sent to the page's own site. Out of it:
+    // the frame of the page's site is sent to `localhost`. Each document's head and first bytes
+    // come, so it commits in the process it goes to (the first frame's session ends), and its
+    // rest is held.
+    let back = format!("{base}slow.html?back");
+    let out = format!("http://localhost:{port}/slow.html?out");
+    chrome
+        .eval(&format!(
+            "document.getElementById('back').src = {}, document.getElementById('out').src = {}, 0",
+            json!(back),
+            json!(out)
+        ))
+        .unwrap();
+    arrive(
+        &mut chrome,
+        &framing,
+        &["/slow.html?back", "/slow.html?out"],
+    );
+    let swapped = |chrome: &Chrome| {
+        chrome
+            .events()
+            .iter()
+            .any(|event| event["method"] == "Target.detachedFromTarget")
+    };
+    requests_until(
+        &mut chrome,
+        "both documents answered in their new processes",
+        |requests| {
+            [&back, &out]
+                .iter()
+                .all(|url| request(requests, url).is_some_and(|request| request.status == 200))
+        },
+    );
+    test_time::until_true(
+        "the frame of localhost leaving its process",
+        test_time::backstop(PROTOCOL_CPU),
+        || {
+            chrome.pump(POLL).unwrap();
+            swapped(&chrome)
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    // However its session ended, each frame still loads its document.
+    let requests = chrome.requests().unwrap();
+    for url in [&back, &out] {
+        assert!(still_open(&requests, url), "{url}: {requests:#?}");
+    }
+    for _ in [&back, &out] {
+        framing.release.send(()).unwrap();
+    }
+    let requests = requests_until(&mut chrome, "both documents' rest arrived", |requests| {
+        [&back, &out]
+            .iter()
+            .all(|url| request(requests, url).is_some_and(|request| request.finished))
+    });
+    for url in [&back, &out] {
+        let document = request(&requests, url).unwrap();
+        assert_eq!(
+            (document.frame.as_deref(), document.failed.as_deref()),
+            (Some(url.as_str()), None),
+            "{document:?}"
+        );
+    }
+
+    // Removed while its document's rest is held, a frame of its own process leaves it open no more.
+    let gone = format!("http://localhost:{port}/slow.html?gone");
+    chrome
+        .eval(&format!(
+            "(() => {{ const frame = document.createElement('iframe'); frame.id = 'gone'; \
+             frame.src = {}; document.body.append(frame); return 0; }})()",
+            json!(gone)
+        ))
+        .unwrap();
+    arrive(&mut chrome, &framing, &["/slow.html?gone"]);
+    requests_until(
+        &mut chrome,
+        "the removed frame's document answered",
+        |requests| request(requests, &gone).is_some_and(|request| request.status == 200),
+    );
+    chrome
+        .eval("document.getElementById('gone').remove(), 0")
+        .unwrap();
+    let requests = requests_until(
+        &mut chrome,
+        "the removed frame's document given up",
+        |requests| !still_open(requests, &gone),
+    );
+    let document = request(&requests, &gone).unwrap();
+    assert!(document.canceled && !document.finished, "{document:?}");
+}
+
 /// A loopback server of a page whose `/held` requests are answered only once the test sends on
 /// the channel, one send each; the channel it tells of each `/held` request as it arrives on.
 fn holding_server() -> (
@@ -2284,7 +2711,7 @@ fn requests_follow_each_id_through_cache_failure_and_cancellation() {
             json!({"requestId":"4","errorText":"net::ERR_ABORTED","canceled":true}),
         ),
     ];
-    let requests = crate::requests(&events);
+    let requests = crate::requests(&events, None);
     let urls: Vec<_> = requests
         .iter()
         .map(|request| request.url.as_str())
@@ -2310,6 +2737,271 @@ fn requests_follow_each_id_through_cache_failure_and_cancellation() {
     assert!(aborted.canceled);
 }
 
+/// An event as Chrome sends it on `session`.
+fn on(session: &str, method: &str, params: Value) -> Value {
+    json!({"sessionId": session, "method": method, "params": params})
+}
+
+/// `Network.requestWillBeSent` on `session` for request `id` of `kind` to `url`, made for the
+/// frame `frame` (none for a worker's) and the document at `document`.
+fn sent(
+    session: &str,
+    id: &str,
+    kind: &str,
+    frame: Option<&str>,
+    document: &str,
+    url: &str,
+) -> Value {
+    let mut params =
+        json!({"requestId": id, "type": kind, "documentURL": document, "request": {"url": url}});
+    if let Some(frame) = frame {
+        params["frameId"] = json!(frame);
+    }
+    on(session, "Network.requestWillBeSent", params)
+}
+
+/// `Network.loadingFinished` on `session` for request `id`.
+fn finished(session: &str, id: &str) -> Value {
+    on(
+        session,
+        "Network.loadingFinished",
+        json!({"requestId": id, "encodedDataLength": 10}),
+    )
+}
+
+/// `Target.detachedFromTarget` for `session`, as the page's session tells of it.
+fn detached(session: &str) -> Value {
+    on(
+        "page",
+        "Target.detachedFromTarget",
+        json!({"sessionId": session}),
+    )
+}
+
+/// What [`crate::requests`] made of the request to `url` among `requests`: the frame it names,
+/// whether it finished, why it failed and whether it was given up.
+fn said<'a>(
+    requests: &'a [crate::Request],
+    url: &str,
+) -> (Option<&'a str>, bool, Option<&'a str>, bool) {
+    let request = requests
+        .iter()
+        .find(|request| request.url == url)
+        .unwrap_or_else(|| panic!("{url} in {requests:#?}"));
+    (
+        request.frame.as_deref(),
+        request.finished,
+        request.failed.as_deref(),
+        request.canceled,
+    )
+}
+
+#[test]
+fn a_frames_requests_are_named_by_its_document_and_its_documents_end_with_its_session() {
+    let mock = "http://b/mock.html";
+    let events = [
+        // The page's own document, and a fetch of its own still open at the end.
+        sent(
+            "page",
+            "main",
+            "Document",
+            Some("top"),
+            "http://a/",
+            "http://a/",
+        ),
+        finished("page", "main"),
+        sent(
+            "page",
+            "api",
+            "Fetch",
+            Some("top"),
+            "http://a/",
+            "http://a/api",
+        ),
+        // A frame in a process of its own: its document starts on the page's session and is
+        // answered on the frame's own.
+        sent("page", "mock", "Document", Some("inner"), mock, mock),
+        on(
+            "frame",
+            "Network.responseReceived",
+            json!({"requestId": "mock", "response": {"status": 200}}),
+        ),
+        finished("frame", "mock"),
+        // Its style, which finished, and its picture, still open when the frame's session ends.
+        sent(
+            "frame",
+            "style",
+            "Stylesheet",
+            Some("inner"),
+            mock,
+            "http://b/s.css",
+        ),
+        finished("frame", "style"),
+        sent(
+            "frame",
+            "picture",
+            "Image",
+            Some("inner"),
+            mock,
+            "http://b/p.png",
+        ),
+        // A frame in the page's process, told of on the page's session alone, and a worker's
+        // request, made for no frame.
+        sent(
+            "page",
+            "near",
+            "Fetch",
+            Some("near"),
+            "about:srcdoc",
+            "http://a/near",
+        ),
+        sent(
+            "page",
+            "worker",
+            "Fetch",
+            None,
+            "http://a/w.js",
+            "http://a/w",
+        ),
+        // Another session ending leaves the frame's requests as they are; the frame's ends what its
+        // document made.
+        detached("elsewhere"),
+        detached("frame"),
+    ];
+    let requests = crate::requests(&events, Some("top"));
+    assert_eq!(said(&requests, "http://a/"), (None, true, None, false));
+    assert_eq!(said(&requests, "http://a/api"), (None, false, None, false));
+    assert_eq!(said(&requests, mock), (Some(mock), true, None, false));
+    assert_eq!(
+        requests
+            .iter()
+            .find(|request| request.url == mock)
+            .unwrap()
+            .status,
+        200
+    );
+    assert_eq!(
+        said(&requests, "http://b/s.css"),
+        (Some(mock), true, None, false)
+    );
+    assert_eq!(
+        said(&requests, "http://b/p.png"),
+        (Some(mock), false, Some(crate::DOCUMENT_GONE), true)
+    );
+    assert_eq!(
+        said(&requests, "http://a/near"),
+        (Some("about:srcdoc"), false, None, false)
+    );
+    assert_eq!(said(&requests, "http://a/w"), (None, false, None, false));
+    // Before the page's first navigation no frame is known as its own: none is named.
+    assert!(
+        crate::requests(&events, None)
+            .iter()
+            .all(|request| request.frame.is_none())
+    );
+}
+
+#[test]
+fn a_frame_moving_between_processes_is_followed_by_its_id_and_only_its_removal_gives_it_up() {
+    let back = "http://a/back.html";
+    let out = "http://c/out.html";
+    let slow = "http://b/slow.html";
+    let deep = "http://d/deep.html";
+    let mut events = vec![
+        // Into the page's process: a frame of another site, in a process of its own (session
+        // `away`), navigates to the page's site. Its document starts on its own session, which
+        // ends as the document commits in the page's process; its picture there ends with it.
+        sent(
+            "away",
+            "picture",
+            "Image",
+            Some("back"),
+            "http://b/x.html",
+            "http://b/x.png",
+        ),
+        sent("away", "back", "Document", Some("back"), back, back),
+        on(
+            "away",
+            "Network.responseReceived",
+            json!({"requestId": "back", "response": {"status": 200}}),
+        ),
+        on(
+            "page",
+            "Page.frameDetached",
+            json!({"frameId": "back", "reason": "swap"}),
+        ),
+        detached("away"),
+        // Out of it: a frame in the page's process navigates to another site. Its document starts
+        // on the page's session, the frame leaves the page's process, and the document is answered
+        // on the session of the process it goes to (`out`).
+        sent("page", "out", "Document", Some("out"), out, out),
+        on(
+            "page",
+            "Page.frameDetached",
+            json!({"frameId": "out", "reason": "swap"}),
+        ),
+        on(
+            "out",
+            "Network.responseReceived",
+            json!({"requestId": "out", "response": {"status": 200}}),
+        ),
+        // Removed: a frame whose document is still arriving, told of on the page's session alone,
+        // and, nested in it, a frame (of a process of its own) whose document is too.
+        sent("page", "slow", "Document", Some("slow"), slow, slow),
+        on(
+            "slow",
+            "Page.frameAttached",
+            json!({"frameId": "deep", "parentFrameId": "slow"}),
+        ),
+        sent("slow", "deep", "Document", Some("deep"), deep, deep),
+        // A frame of the page's own removed with nothing open, and the frame the page holds.
+        on(
+            "page",
+            "Page.frameAttached",
+            json!({"frameId": "slow", "parentFrameId": "top"}),
+        ),
+        on(
+            "page",
+            "Page.frameDetached",
+            json!({"frameId": "empty", "reason": "remove"}),
+        ),
+    ];
+    // Until each document is answered or its frame removed, each frame still loads.
+    let open = crate::requests(&events, Some("top"));
+    for url in [back, out, slow, deep] {
+        assert_eq!(said(&open, url), (Some(url), false, None, false), "{url}");
+    }
+    assert_eq!(
+        said(&open, "http://b/x.png"),
+        (
+            Some("http://b/x.html"),
+            false,
+            Some(crate::DOCUMENT_GONE),
+            true
+        )
+    );
+    events.extend([
+        finished("page", "back"),
+        finished("out", "out"),
+        on(
+            "page",
+            "Page.frameDetached",
+            json!({"frameId": "slow", "reason": "remove"}),
+        ),
+    ]);
+    let ended = crate::requests(&events, Some("top"));
+    assert_eq!(said(&ended, back), (Some(back), true, None, false));
+    assert_eq!(said(&ended, out), (Some(out), true, None, false));
+    // The removed frame's document, and the one of the frame within it, are given up.
+    for url in [slow, deep] {
+        assert_eq!(
+            said(&ended, url),
+            (Some(url), false, Some(crate::FRAME_REMOVED), true),
+            "{url}"
+        );
+    }
+}
+
 #[test]
 fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_counts_as_cached() {
     let event = |method: &str, params: Value| json!({"method": method, "params": params});
@@ -2331,7 +3023,7 @@ fn a_prefetch_is_named_by_its_purpose_header_and_served_from_the_prefetch_cache_
             json!({"requestId": "use", "response": {"status": 200, "fromPrefetchCache": true}}),
         ),
     ];
-    let requests = crate::requests(&events);
+    let requests = crate::requests(&events, None);
     let [warm, used] = requests.as_slice() else {
         panic!("two requests: {requests:#?}")
     };
@@ -2385,7 +3077,7 @@ fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
         chunk(45, 19),
         message(symphony_api::FEED_EVENT),
     ];
-    let requests = crate::requests(&events);
+    let requests = crate::requests(&events, None);
     let [feed, glue] = requests.as_slice() else {
         panic!("two requests: {requests:#?}")
     };

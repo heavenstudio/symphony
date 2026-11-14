@@ -4,7 +4,9 @@
 //! least every [`LOOK_SECONDS`], since some of what it would be told changes with time alone (a
 //! child going quiet, a PULL falling due). Waiting is the session's sign of life, as a monitor's
 //! is: it beats for it every [`BEAT_SECONDS`], so an orchestrator waiting on its board is not
-//! called stale for it.
+//! called stale for it. Each look gives the open tasks no orchestrator holds, once the waiting
+//! orchestrator has been live past the first live line ([`Store::give_if_due`]), and its GIVEN line
+//! is then what the look prints.
 
 use super::{Context, Stop};
 use crate::Store;

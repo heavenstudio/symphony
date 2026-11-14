@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::cli::{Env, main_detaching};
 use symphony_board::sys::hostname;
 
@@ -31,50 +31,74 @@ impl Listener {
         Listener { path, socket }
     }
 
-    /// The event lines sent until one holds `marker`, waited for up to `within`.
-    fn until(&self, marker: &str, within: Duration) -> Vec<String> {
-        let deadline = Instant::now() + within;
+    /// The event lines sent until one holds `marker`, waited for up to the backstop of
+    /// `allowance`: a detached dispatcher delivers it once a loaded machine runs it.
+    fn until(&self, marker: &str, allowance: Duration) -> Vec<String> {
         let mut lines = Vec::new();
-        while Instant::now() < deadline {
+        let held = test_time::until(
+            format!("a delivered line holds {marker:?}"),
+            test_time::backstop(allowance),
+            || {
+                lines.extend(self.queued());
+                lines.iter().any(|line| line.contains(marker)).then_some(())
+            },
+        );
+        held.unwrap_or_else(|stall| panic!("{stall}; lines: {lines:?}"));
+        lines
+    }
+
+    /// That a line already sent holds `marker`, waited for not at all: what the command delivered
+    /// itself is in the socket before the command answers.
+    #[track_caller]
+    fn holding(&self, marker: &str) {
+        let lines = self.queued();
+        assert!(
+            lines.iter().any(|line| line.contains(marker)),
+            "no line held {marker:?} once the command answered; lines: {lines:?}"
+        );
+    }
+
+    /// The event lines of every connection already made to it, waiting for none.
+    fn queued(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        loop {
             match self.socket.accept() {
                 Ok((stream, _)) => {
-                    let sent = frames(stream);
-                    for frame in sent.lines() {
+                    for frame in frames(stream).lines() {
                         let frame: serde_json::Value = serde_json::from_str(frame).unwrap();
                         let content = frame["message"]["content"].as_str().unwrap();
                         lines.extend(content.lines().map(String::from));
                     }
-                    if lines.iter().any(|line| line.contains(marker)) {
-                        return lines;
-                    }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return lines,
                 Err(e) => panic!("callback listener: {e}"),
             }
         }
-        panic!("no line held {marker:?} within {within:?}; lines: {lines:?}")
     }
 }
 
-/// What one connection sent, read until the sender closes it (nothing, for a probe).
+/// What one connection sent, read until the sender closes it (nothing, for a probe), waited for up
+/// to the backstop of the 5 s it once had.
 fn frames(mut stream: UnixStream) -> String {
     stream.set_nonblocking(true).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
     let (mut bytes, mut buffer) = (Vec::new(), [0; 4096]);
-    loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => return String::from_utf8(bytes).unwrap(),
-            Ok(n) => bytes.extend_from_slice(&buffer[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                assert!(Instant::now() < deadline, "a callback frame did not close");
-                std::thread::sleep(Duration::from_millis(5));
+    let closed = test_time::until(
+        "a callback frame closed",
+        test_time::backstop(Duration::from_secs(5)),
+        || {
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) => return Some(()),
+                    Ok(n) => bytes.extend_from_slice(&buffer[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return None,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => panic!("callback frame: {e}"),
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => panic!("callback frame: {e}"),
-        }
-    }
+        },
+    );
+    closed.unwrap();
+    String::from_utf8(bytes).unwrap()
 }
 
 impl Drop for Listener {
@@ -151,13 +175,10 @@ fn lease(case: &Case) -> Value {
         .remove(0)
 }
 
-/// Wait until `done`, which a detached dispatcher brings about.
+/// Wait until `done`, which a detached dispatcher brings about, up to the backstop of the minute it
+/// once had.
 fn until(done: impl Fn() -> bool, what: &str) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !done() {
-        assert!(Instant::now() < deadline, "{what} not within a minute");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(what, test_time::backstop(Duration::from_secs(60)), done).unwrap();
 }
 
 #[test]
@@ -252,7 +273,7 @@ fn tasks_dispatch_inline_keeps_the_dispatch_in_the_command() {
     );
     assert_eq!(ran.code, 0, "{}", ran.err);
     // Delivered before the command answered: the socket already holds the frame.
-    listener.until("said and sent", Duration::from_secs(1));
+    listener.holding("said and sent");
 }
 
 #[test]
@@ -306,7 +327,7 @@ fn a_dispatcher_that_cannot_start_leaves_the_dispatch_to_the_command() {
     );
     assert_eq!(ran.code, 0, "{}", ran.err);
     // Delivered before the command answered: the socket already holds the frame.
-    listener.until("here and now", Duration::from_secs(1));
+    listener.holding("here and now");
 }
 
 /// An orchestrator with its callback on `listener`, a task of its in review whose executor has gone

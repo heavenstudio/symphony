@@ -36,7 +36,10 @@ fn a_blocked_pane_is_said_once_until_it_is_answered_and_blocks_again() {
 fn only_the_orchestrator_of_a_blocked_sessions_work_hears_it() {
     let mut m = Monitor::new("blocked-who");
     let (parent, child) = launched_child(&m);
-    let orch = m.register("orchestrator");
+    // Registered through the store, which gives it nothing: the command line's register would have
+    // the board give sim/a, nobody's yet, to the live orchestrator holding fewest, a tie by handle.
+    let session = symphony_board::NewSession::new("orchestrator");
+    let orch = m.board().register(&session).unwrap().row.handle;
     m.ok(&orch, &["role", "sim/a", "orchestrator"]);
     let other = m.register("orchestrator");
     // The orchestrator's own terminal, and one no session holds, wait too.

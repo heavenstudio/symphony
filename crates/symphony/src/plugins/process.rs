@@ -88,6 +88,8 @@ pub struct Limits {
     pub pause: Duration,
     /// How long a call waits for its answer.
     pub wait: Duration,
+    /// How long a started process's declaration is waited for.
+    pub declare: Duration,
     /// How long a call given up and sent a `cancel` may still be answered: a process that has not
     /// answered it by then is ended.
     pub cancel: Duration,
@@ -102,6 +104,7 @@ impl Default for Limits {
         Self {
             pause: PAUSE,
             wait: WAIT,
+            declare: WAIT,
             cancel: WAIT,
             line: LINE_MAX,
             log: LOG_MAX,
@@ -665,7 +668,8 @@ impl Remote {
             );
             return Err(Unstarted::Failed(connection.closed()));
         }
-        let declaration = match self.sent::<Declare>(&connection, Declare { protocol: PROTOCOL }) {
+        let declare = Declare { protocol: PROTOCOL };
+        let declaration = match self.sent_within(&connection, declare, self.limits.declare) {
             Ok((declaration, _, _)) => declaration,
             Err(why) => {
                 self.end(&connection, Some(format!("it did not declare: {why}")));
@@ -947,12 +951,22 @@ impl Remote {
         asked.map(|(answer, _, _)| answer).map_err(Failure::Down)
     }
 
-    /// `request` sent on `connection` and its answer read: the answer, the request line's bytes and
-    /// the reply; or why there is none.
+    /// `request` sent on `connection` and its answer read within [`Limits::wait`]: the answer, the
+    /// request line's bytes and the reply; or why there is none.
     fn sent<A: Ask>(
         &self,
         connection: &Arc<Connection>,
         request: A,
+    ) -> Result<(A::Answer, usize, Reply), String> {
+        self.sent_within(connection, request, self.limits.wait)
+    }
+
+    /// [`Self::sent`], the answer waited for `wait`.
+    fn sent_within<A: Ask>(
+        &self,
+        connection: &Arc<Connection>,
+        request: A,
+        wait: Duration,
     ) -> Result<(A::Answer, usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
         let request: Request = request.into();
@@ -979,9 +993,10 @@ impl Remote {
         let sent = self.queued(connection, line).inspect_err(|_| {
             lock(&connection.waiting).calls.remove(&id);
         })?;
-        let reply = match answered.recv_timeout(self.limits.wait) {
+        let reply = match answered.recv_timeout(wait) {
             Ok(reply) => reply?,
-            Err(mpsc::RecvTimeoutError::Timeout) => match self.given_up(connection, id, sent) {
+            Err(mpsc::RecvTimeoutError::Timeout) => match self.given_up(connection, id, sent, wait)
+            {
                 // Answered, or failed, as it was given up.
                 None => answered
                     .recv()
@@ -1025,12 +1040,17 @@ impl Remote {
         Err(connection.closed())
     }
 
-    /// The call `id`, its request the `sent`th line queued, given up after its wait: why it has no
-    /// answer, or none when it was answered or failed meanwhile. A process that did not take even
-    /// its request in that wait reads no more and is ended. Else the call is cancelled, and a
+    /// The call `id`, its request the `sent`th line queued, given up after its `wait`: why it has
+    /// no answer, or none when it was answered or failed meanwhile. A process that did not take
+    /// even its request in that wait reads no more and is ended. Else the call is cancelled, and a
     /// process that has not answered it [`Limits::cancel`] later is ended ([`Self::after_cancel`]).
-    fn given_up(&self, connection: &Arc<Connection>, id: u64, sent: u64) -> Option<String> {
-        let wait = self.limits.wait;
+    fn given_up(
+        &self,
+        connection: &Arc<Connection>,
+        id: u64,
+        sent: u64,
+        wait: Duration,
+    ) -> Option<String> {
         {
             let mut waiting = lock(&connection.waiting);
             waiting.calls.remove(&id)?;

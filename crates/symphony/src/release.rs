@@ -2,11 +2,11 @@
 //! tip as fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]) and runs the full verification there: a release is
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
-//! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check is
-//! green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it holds
-//! ([`notes`]) and pushes that one tag, then refreshes the projects the machine serves to it
-//! ([`refresh`], [`consumers`]). `--commit COMMIT` does the same out of cycle for a commit already on
-//! the remote's main and past the newest release. A run of main's tip red in a check holds that
+//! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
+//! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
+//! holds ([`notes`]) and pushes that one tag, then refreshes the projects the machine serves to it
+//! ([`refresh`], [`consumers`]). `--commit COMMIT` does the same out of cycle for a commit already
+//! on the remote's main and past the newest release. A run of main's tip red in a check holds that
 //! commit as the release candidate ([`candidate`]) while its reds are fixed: until each is answered
 //! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
 //! released or held again. Each run is recorded in the git common dir ([`record`]), which
@@ -17,21 +17,22 @@
 //! that a check found red, never moves or deletes a tag, and pushes nothing but its new tag. After
 //! each check it looks at its checkout, and before it tags at what git names there once more:
 //! another HEAD, a path `git status` names outside `.target/`, or a process `lsof` sees working
-//! there or holding a file there open stops the run, and nothing is tagged. A look sees a moment, and only what git does not
-//! ignore: a file git ignores (`build/`, `artifacts/`, `.target/`, which checks read) or a change
-//! undone between two looks goes unseen. What keeps those off is that the checkout is the run's
-//! own, made and locked by it, that each check's process group is ended with it, and the same
-//! `lsof` look before anything is checked; that one sees a process only while it works in those
-//! folders or holds a file there open. One run at a time per repository, none while a check of an
-//! earlier run killed while it ran still runs ([`checks`]), and a run that ended without recording
-//! itself is recorded by the next ([`record::recover`]); everything it runs is bounded by the run's
-//! time and stops when the run is told to (HUP, INT or TERM, [`group`]).
+//! there or holding a file there open stops the run, and nothing is tagged. A look sees a moment,
+//! and only what git does not ignore: a file git ignores (`build/`, `artifacts/`, `.target/`,
+//! which checks read) or a change undone between two looks goes unseen. What keeps those off is
+//! that the checkout is the run's own, made and locked by it, that each check's process group is
+//! ended with it, and the same `lsof` look before anything is checked; that one sees a process only
+//! while it works in the checkout or holds a file there open. One run at a time per repository,
+//! none while a check of an earlier run killed while it ran still runs ([`checks`]), and a run that
+//! ended without recording itself is recorded by the next ([`record::recover`]); everything it runs
+//! is bounded by the run's time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
 mod board;
 mod cadence;
 mod candidate;
 mod checks;
 mod consumers;
+mod failures;
 mod git;
 mod gone;
 mod group;
@@ -44,6 +45,8 @@ mod rerun;
 mod schedule;
 mod steps;
 mod tags;
+#[cfg(test)]
+mod waits;
 
 use std::fs::{self, TryLockError};
 use std::io::Write;
@@ -69,12 +72,12 @@ const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder, building and testing nothing of the projects this \
 machine serves; each red check filed on the board as tests/release-red-NAME, and a green commit \
-tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved on a \
-branch through its own commit gate, its main fast-forwarded to it in its main checkout when that \
-is on its main and clean, and its board moved to the schema of the pin its main locks. A run red \
-in a check holds its commit as the release candidate, the local branch release-candidate, until \
-its reds' own lands answer them; then it is rerun, and main's tip is run only once none is held \
-(docs/RELEASES.md).
+tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved \
+on a branch through its own commit gate, its main fast-forwarded to it in its main checkout \
+when that is on its main and clean, and its board moved to the schema of the pin its main locks. \
+A run red in a check holds its commit as the release candidate, the local branch \
+release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
+only once none is held (docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit
@@ -2224,9 +2227,9 @@ fn after(ran: &Ran) -> String {
 /// Stop the run when its checkout (in `place`) changed `at` that point: it no longer holds the
 /// commit `holds` (HEAD moved, or `git status` names a path outside `.target/`), or, when it lists
 /// `processes`, a process works in it or holds a file inside it open. What was checked is then not
-/// what would be tagged, so nothing that check found green counts, and its reds are filed beside the
-/// stop ([`keep`]). The look has a minute past `until`, and sees that moment alone and nothing git
-/// ignores.
+/// what would be tagged, so nothing that check found green counts, and its reds are filed beside
+/// the stop ([`keep`]). The look has a minute past `until`, and sees that moment alone and nothing
+/// git ignores.
 fn look(
     place: &Place,
     holds: &str,

@@ -1,8 +1,17 @@
 # How clippy reads the workspace lints (Cargo.toml, `[workspace.lints.clippy]`). Only what differs from
 # clippy's defaults is here.
 
-# Nothing here is published: a lint may ask for a change to a `pub` signature, since every caller is
-# in this tree.
+# A lint may ask for a change to a `pub` signature. Not every caller is in this tree: consuming
+# projects pin some of these packages by git and call a few hundred of their names. The
+# `tests/consumer_api.rs` guards (docs/RELEASES.md, step 4), which this same lint compiles, hold
+# most of those names by signature, each coerced to its fn pointer type, and some by a call
+# written as a consumer writes it: a lint-driven change to a signature so held fails the gate
+# wherever it would break the consumer's code, and the name keeps its signature under an
+# `#[expect(clippy::..., reason = "a consumer calls it")]`.
+# The signature of a function a guard names alone, and what no guard names, is the consuming
+# project's to meet when it moves its pin, its own gate building it on the new one. `true` would
+# instead exempt every exported item of every package from the lints this setting governs, where
+# the workspace has some two thousand `pub fn`s and nearly all of them only this tree calls.
 avoid-breaking-exported-api = false
 
 # A test asserts: its `unwrap()` and `panic!` are the assertion, and it may print what it saw.

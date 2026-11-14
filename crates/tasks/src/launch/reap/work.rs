@@ -3,8 +3,9 @@
 //! has sat idle at its prompt for [`super::IDLE_HOUR`].
 
 use crate::health::FINISHED;
-use crate::{Error, Message, Store};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::store::unanswered::Asked;
+use crate::{Board, Error, Message, Store};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How the reason a role holder's terminal closed for starts ([`Hold::closing`]).
 pub(super) const HOUR: &str = "idle an hour";
@@ -177,87 +178,135 @@ fn standing(role: &str, slug: &str, status: &str) -> String {
     }
 }
 
-/// What holds each handle's terminal, itself or through a session under it (a subagent): an
-/// addressed post waiting for its answer, else a role on open work ([`Hold`]). A handle's own hold
-/// goes before one through a session under it, a post before a role, and among equals the first by
+/// What holds a handle's terminal, itself or through a session under it (a subagent): an addressed
+/// post waiting for its answer, else a role on open work ([`Hold`]). A handle's own hold goes
+/// before one through a session under it, a post before a role, and among equals the first by
 /// task. A departed middle session still links its live descendants to their ancestors; leaving
-/// releases its own roles.
-pub(super) fn holds(store: &Store) -> Result<BTreeMap<String, Hold>, Error> {
-    let tasks = store.tasks(None)?;
-    let mut own: Vec<(String, Hold)> = store
-        .pending_posts(&tasks)?
-        .into_iter()
-        .map(|p| {
-            let hold = Hold::Post {
-                slug: p.slug,
-                post: p.post.id,
-                through: None,
-            };
-            (p.handle, hold)
-        })
-        .collect();
-    let threads = store.threads(
-        &tasks
-            .iter()
-            .filter(|t| t.status == "in_progress")
-            .map(|t| t.slug.clone())
-            .collect::<Vec<_>>(),
-    )?;
-    for task in tasks {
-        for role in &task.roles {
-            let live = match role.role.as_str() {
-                // Store::tasks omits lapsed reservations; do not derive their expiry again here.
-                "reserved" => !FINISHED.contains(&task.status.as_str()),
-                "executor" => matches!(task.status.as_str(), "in_progress" | "blocked" | "review"),
-                "reviewer" => {
-                    task.status == "review"
-                        || (task.status == "in_progress"
-                            && threads.get(&task.slug).is_some_and(|thread| {
-                                awaits_rereview(thread, &role.handle, &task.slug)
-                            }))
-                }
-                _ => false,
-            };
-            if live {
-                let hold = Hold::Role {
-                    slug: task.slug.clone(),
-                    role: role.role.clone(),
-                    status: task.status.clone(),
-                    through: None,
-                };
-                own.push((role.handle.clone(), hold));
-            }
-        }
-    }
-    own.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
-    let parent: HashMap<String, String> = store
-        .sessions()?
-        .into_iter()
-        .filter_map(|s| Some((s.row.handle, s.row.parent?)))
-        .collect();
-    let mut held = BTreeMap::new();
-    for (handle, hold) in &own {
-        stronger(&mut held, handle, hold.clone());
-    }
-    for (handle, hold) in &own {
-        let mut seen = HashSet::from([handle.clone()]);
-        let mut at = parent.get(handle).cloned();
-        while let Some(here) = at.filter(|h| seen.insert(h.clone())) {
-            // every session above the holder
-            stronger(&mut held, &here, hold.through(handle));
-            at = parent.get(&here).cloned();
-        }
-    }
-    Ok(held)
+/// releases its own roles. One look at the board, and for each handle a sweep asks of
+/// ([`Holds::of`]) the posts and roles of it and the sessions under it alone, never every
+/// handle's.
+pub(super) struct Holds<'a> {
+    store: &'a Store,
+    board: Board,
+    /// Each session's parent session.
+    parent: HashMap<String, String>,
+    /// What each handle asked of so far is held by.
+    found: HashMap<String, Option<Hold>>,
 }
 
-/// `hold` for `handle`, unless it has one already that is as strong.
-fn stronger(held: &mut BTreeMap<String, Hold>, handle: &str, hold: Hold) {
-    match held.get(handle) {
-        Some(had) if had.is_post() || !hold.is_post() => {}
-        _ => {
-            held.insert(handle.to_string(), hold);
+impl<'a> Holds<'a> {
+    pub(super) fn read(store: &'a Store) -> Result<Holds<'a>, Error> {
+        let board = store.board()?;
+        let parent = (board.sessions.iter())
+            .filter_map(|s| Some((s.row.handle.clone(), s.row.parent.clone()?)))
+            .collect();
+        Ok(Holds {
+            store,
+            board,
+            parent,
+            found: HashMap::new(),
+        })
+    }
+
+    /// What holds `handle`'s terminal, if anything does.
+    pub(super) fn of(&mut self, handle: &str) -> Result<Option<Hold>, Error> {
+        if let Some(found) = self.found.get(handle) {
+            return Ok(found.clone());
         }
+        let mut asked: BTreeSet<String> = self.under(handle).into_iter().collect();
+        asked.insert(handle.to_string());
+        let posts: Vec<(Hold, String)> = (self.store)
+            .pending_posts(&self.board, Asked::Handles(&asked))?
+            .into_iter()
+            .map(|p| {
+                let hold = Hold::Post {
+                    slug: p.slug,
+                    post: p.post.id,
+                    through: None,
+                };
+                (hold, p.handle)
+            })
+            .collect();
+        let roles = self.roles(&asked)?;
+        let first = |holds: &[(Hold, String)], own: bool| {
+            (holds.iter())
+                .filter(|(_, holder)| (holder == handle) == own)
+                .min()
+                .map(|(hold, holder)| match own {
+                    true => hold.clone(),
+                    false => hold.through(holder),
+                })
+        };
+        let hold = first(&posts, true)
+            .or_else(|| first(&posts, false))
+            .or_else(|| first(&roles, true))
+            .or_else(|| first(&roles, false));
+        self.found.insert(handle.to_string(), hold.clone());
+        Ok(hold)
+    }
+
+    /// The sessions under `handle`: those whose chain of parents reaches it, once round a loop.
+    fn under(&self, handle: &str) -> Vec<String> {
+        let reaches = |session: &str| {
+            let mut seen = HashSet::from([session]);
+            let mut at = self.parent.get(session);
+            while let Some(here) = at.filter(|here| seen.insert(here.as_str())) {
+                if here == handle {
+                    return true;
+                }
+                at = self.parent.get(here);
+            }
+            false
+        };
+        (self.parent.keys())
+            .filter(|session| *session != handle && reaches(session))
+            .cloned()
+            .collect()
+    }
+
+    /// The roles of `asked` on open work, each with its holder: an executor of a task in progress,
+    /// blocked or in review, a reviewer of one in review or awaiting its re-review, a live
+    /// reservation on an unfinished task.
+    fn roles(&self, asked: &BTreeSet<String>) -> Result<Vec<(Hold, String)>, Error> {
+        let rereviewed: Vec<String> = (self.board.tasks.iter())
+            .filter(|t| t.status == "in_progress")
+            .filter(|t| (t.roles.iter()).any(|r| r.role == "reviewer" && asked.contains(&r.handle)))
+            .map(|t| t.slug.clone())
+            .collect();
+        let threads = match rereviewed.is_empty() {
+            true => BTreeMap::new(),
+            false => self.store.threads(&rereviewed)?,
+        };
+        let mut roles = Vec::new();
+        for task in &self.board.tasks {
+            for role in task.roles.iter().filter(|r| asked.contains(&r.handle)) {
+                let live = match role.role.as_str() {
+                    // Store::tasks omits lapsed reservations; do not derive their expiry again here.
+                    "reserved" => !FINISHED.contains(&task.status.as_str()),
+                    "executor" => {
+                        matches!(task.status.as_str(), "in_progress" | "blocked" | "review")
+                    }
+                    "reviewer" => {
+                        task.status == "review"
+                            || (task.status == "in_progress"
+                                && threads.get(&task.slug).is_some_and(|thread| {
+                                    awaits_rereview(thread, &role.handle, &task.slug)
+                                }))
+                    }
+                    _ => false,
+                };
+                if live {
+                    let hold = Hold::Role {
+                        slug: task.slug.clone(),
+                        role: role.role.clone(),
+                        status: task.status.clone(),
+                        through: None,
+                    };
+                    roles.push((hold, role.handle.clone()));
+                }
+            }
+        }
+        Ok(roles)
     }
 }
 

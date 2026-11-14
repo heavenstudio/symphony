@@ -23,10 +23,11 @@ pub const MARK: &str = "fast_fix";
 /// ([`crate::land::check_paths`]), said where the orchestrator reads it. It opens with
 /// [`RED_OPENING`], by which the land knows it ([`bounds`]); the rest may be reworded.
 pub const RED: &str = "a red is fixed as a bug fix is (RULES.md `workflow/fast-bugfixes`): the \
-code is fixed, never a test or check loosened. Its orchestrator's approve lands a fix that changes \
-none of the project's tests and checks (`[land] check_paths`), on the posted evidence of the \
-failing tests, unchanged, rerun alone and green at its tip; the land refuses it on a fix that \
-changes a test, a check, a budget or a run step, which a fresh reviewer approves";
+code is fixed, never a test or check loosened, and a test red on the machine's load is discarded \
+in the red's own fix (RULES.md `tests/no-test-fails-on-load`). Its orchestrator's approve lands a \
+fix that changes none of the project's tests and checks (`[land] check_paths`), on the posted \
+evidence of the failing tests, unchanged, rerun alone and green at its tip; the land refuses it on \
+a fix that changes a test, a check, a budget or a run step, which a fresh reviewer approves";
 
 /// How every red's recorded risk ([`RED`]) opens, in each wording it has had or will have: the
 /// land knows a red's fast fix by it ([`bounds`]), and no session clears the risk, so a red whose
@@ -90,6 +91,8 @@ mod tests {
         for said in [
             "RULES.md `workflow/fast-bugfixes`",
             "never a test or check loosened",
+            "a test red on the machine's load is discarded in the red's own fix (RULES.md \
+             `tests/no-test-fails-on-load`)",
             "changes none of the project's tests and checks (`[land] check_paths`)",
             "unchanged, rerun alone and green at its tip",
             "changes a test, a check, a budget or a run step, which a fresh reviewer approves",

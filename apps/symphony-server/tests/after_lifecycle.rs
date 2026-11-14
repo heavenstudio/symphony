@@ -20,15 +20,36 @@ mod private_tests;
 #[path = "after_lifecycle/board_schema_tests.rs"]
 mod board_schema_tests;
 
-use fixture::{Repo, front, get, repository, until, write};
+#[path = "after_lifecycle/worktree_tests.rs"]
+mod worktree_tests;
+
+use fixture::{Repo, answer, front, get, repository, status, until, write};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use symphony_board::sys::{Command, Stdio};
 use symphony_server::home::{Home, ServerError};
+
+/// The pinned SurrealDB a case's own board runs on: `SYMPHONY_SURREAL`, else what
+/// `tools/surreal.sh` fetches.
+fn surreal() -> PathBuf {
+    symphony_env::SURREAL.os().map_or_else(
+        || {
+            let found = symphony_board::sys::output(
+                Command::new("bash")
+                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
+                    .env_remove("BASH_ENV"),
+            )
+            .unwrap();
+            assert!(found.status.success(), "SurrealDB lookup: {found:?}");
+            PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
+        },
+        PathBuf::from,
+    )
+}
 
 #[test]
 fn bash_env_does_not_add_output_to_build_fixtures() {
@@ -161,10 +182,14 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
     let repo = Repo::new("concurrent");
     // Spawn all contenders before waiting on any. Each prints the pid it actually found; requiring
     // that same pid in every result catches duplicate starts without scanning machine processes.
+    // The worktree's are the owner's `--shared` starts, which may start the one server too.
     let mut starts: Vec<_> = (0..8)
         .map(|n| {
-            let dir = if n % 2 == 0 { &repo.main } else { &repo.tree };
-            (n, repo.run(repo.command(dir)))
+            let mut command = repo.command(if n % 2 == 0 { &repo.main } else { &repo.tree });
+            if n % 2 == 1 {
+                command.arg("--shared");
+            }
+            (n, repo.run(command))
         })
         .collect();
     for (_, child) in &mut starts {
@@ -206,7 +231,7 @@ fn concurrent_starts_from_main_and_a_worktree_publish_one_native_server() {
 #[test]
 fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
     let repo = Repo::new("record recovery");
-    repo.start(&repo.tree, false);
+    repo.start(&repo.main, false);
     let running = repo.record().unwrap();
     let mut dead = Command::new("/usr/bin/true").spawn().unwrap();
     let stale_pid = dead.id();
@@ -232,7 +257,7 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
         if let Some(contents) = contents {
             fs::write(&address, contents).unwrap();
         }
-        repo.start(&repo.tree, false);
+        repo.start(&repo.main, false);
         assert_eq!(repo.record(), Some(running.clone()));
         assert_eq!(repo.check_server().pid, running.pid);
     }
@@ -247,9 +272,11 @@ fn missing_malformed_stale_and_lying_records_recover_the_same_running_server() {
 #[test]
 fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
     let repo = Repo::new("foreign-record-cleanup");
-    let mut command = Command::new("/bin/sleep");
-    command.arg("60");
+    // It reads its input, which this test holds open to the end: it never ends by itself.
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "read -r line"]).stdin(Stdio::piped());
     let mut unrelated = repo.run(command);
+    let _held = unrelated.child.stdin.take().unwrap();
     write(
         &repo.home.join("server.json"),
         &serde_json::json!({
@@ -267,11 +294,14 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
         "cleanup signalled a foreign record's pid"
     );
     // The record is foreign to Repo, but this Process owns the child. Its drop must end and
-    // reap that exact child before returning, rather than waiting for the sleep to expire.
+    // reap that exact child before returning: the child, whose input is held, would never end.
     let pid = libc::pid_t::try_from(unrelated.child.id()).unwrap();
-    let began = Instant::now();
-    drop(unrelated);
-    let elapsed = began.elapsed();
+    let dropping = std::thread::spawn(move || drop(unrelated));
+    let dropped = test_time::until_true(
+        "Process::drop to end its child rather than wait for it",
+        fixture::BACKSTOP,
+        || dropping.is_finished(),
+    );
     let mut status = 0;
     // SAFETY: the recorded pid is this test's child; WNOHANG only observes/reaps that child.
     let observed = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
@@ -291,14 +321,16 @@ fn a_record_naming_an_unrelated_owned_process_never_makes_cleanup_signal_it() {
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
         {}
     }
+    if let Err(stall) = dropped {
+        panic!("{stall}");
+    }
+    if let Err(failure) = dropping.join() {
+        std::panic::resume_unwind(failure);
+    }
     assert_eq!(
         (observed, error),
         (-1, Some(libc::ECHILD)),
         "Process::drop left its child {pid} alive or unreaped"
-    );
-    assert!(
-        elapsed < fixture::PATIENCE,
-        "Process::drop waited for its child instead of ending it: {elapsed:?}"
     );
 }
 
@@ -339,42 +371,16 @@ fn a_killed_shared_server_is_replaced_by_one_that_answers() {
     until("killed shared server", || {
         (!symphony_server::sys::pid_alive(first.pid)).then_some(())
     });
-    check_progress(repo.start(&repo.tree, false));
+    check_progress(repo.start(&repo.main, false));
     let second = repo.check_server();
     assert_ne!(second.pid, first.pid);
 }
 
 #[test]
-fn a_start_where_an_older_builds_state_was_not_moved_refuses_and_registers_nothing() {
-    let repo = Repo::new("unmoved-start");
-    let common = symphony_server::repo::checkout(&repo.main).unwrap().common;
-    // The shared server's old install folder, which `tools/move-state.sh` moves into
-    // `symphony/server`.
-    let (new, old) = symphony_board::unmoved::OLD[1];
-    assert_eq!(new, symphony_server::home::FOLDER);
-    fs::create_dir_all(common.join(old)).unwrap();
-    let refusal = symphony_board::unmoved::refusal(&common, new).expect("unmoved");
-    for dir in [&repo.main, &repo.tree] {
-        let mut start = repo.run(repo.command(dir));
-        assert_eq!(start.wait().code(), Some(2), "{}", start.output());
-        assert!(
-            start.output().contains(&format!("✖ Symphony: {refusal}\n")),
-            "{}",
-            start.output()
-        );
-    }
-    assert!(repo.record().is_none(), "no server started");
-    assert!(
-        !repo.home.join("projects.json").exists(),
-        "the project was registered"
-    );
-    assert!(!common.join("symphony").exists(), "symphony/ was made");
-}
-
-#[test]
 fn shared_starts_report_and_ignore_in_repository_root_and_host_overrides() {
     let repo = Repo::new("ignored-options");
-    for dir in [&repo.tree, &repo.main] {
+    // Main's start starts the one server; the worktree's finds it (`worktree_tests`).
+    for dir in [&repo.main, &repo.tree] {
         let mut command = repo.command(dir);
         command.args([
             "--root",
@@ -415,7 +421,7 @@ fn record_write_failure_leaves_no_partial_and_does_not_restart_the_server() {
         .filter(|name| name.to_string_lossy().starts_with("server.json."))
         .collect();
     assert!(partials.is_empty(), "{partials:?}");
-    assert_eq!(front(running.port).unwrap().pid, running.pid);
+    assert_eq!(status(running.port).pid, running.pid);
     fs::remove_dir(&address).unwrap();
     repo.start(&repo.main, false);
     assert_eq!(repo.record(), Some(running));
@@ -544,8 +550,8 @@ fn a_profiled_server_times_each_stage_of_its_warm_start() {
     let actual = server.ready();
     // Only the card the branch added is its own: had a register read come back empty, the
     // card it shares with main and with its fork would be listed too.
-    let (status, queue) = get(actual.port, "/api/queue").unwrap();
-    assert_eq!(status, 200, "{queue}");
+    let (code, queue) = answer(actual.port, "/api/queue");
+    assert_eq!(code, 200, "{queue}");
     let queue: symphony_api::Queue = serde_json::from_str(&queue).unwrap();
     let proposed: Vec<_> = queue
         .waiting
@@ -612,7 +618,7 @@ fn the_native_server_has_no_interpreter_child() {
     until("native server without resident children", || {
         children(actual.pid).is_empty().then_some(())
     });
-    assert_eq!(get(actual.port, "/api/front").unwrap().0, 200);
+    assert_eq!(answer(actual.port, "/api/front").0, 200);
     server.signal(libc::SIGTERM);
     server.success();
 }

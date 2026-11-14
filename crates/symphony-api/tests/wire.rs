@@ -343,6 +343,82 @@ fn an_hour_of_the_boards_health_reads_and_writes_back_as_the_same_json() {
     );
 }
 
+/// An agents' hour line as the shared server appends it to `symphony/agents/`, read by its type:
+/// what the Reports page sums. The file's line carries its `type` first; the line's own fields
+/// read and write back as they are, and one written before a field was added reads with it empty.
+#[test]
+fn an_agents_hour_line_reads_and_writes_back_as_the_same_json_after_its_type() {
+    use symphony_api::agent_activity::Level;
+    use symphony_api::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
+    let (written, fixture) = round_trip::<AgentHour>("agent-hour.json");
+    assert_eq!(written, fixture);
+    let hour: AgentHour = serde_json::from_str(&self::fixture("agent-hour.json")).unwrap();
+    assert_eq!(
+        (hour.schema, run_day_of(&AgentLine::Hour(hour.clone()))),
+        (AGENT_ACTIVITY_SCHEMA, "2027-01-15".to_string())
+    );
+    let line = serde_json::to_string(&AgentLine::Hour(hour.clone())).unwrap();
+    assert!(line.starts_with(r#"{"type":"hour","schema":1,"#), "{line}");
+    let read: AgentHour = serde_json::from_str(&line).unwrap();
+    assert_eq!(read, hour, "the type is passed over when the line is read");
+    let older: AgentHour = serde_json::from_str(
+        r#"{"schema":1,"at":1.0,"pid":1,"generation":1.0,"start":0.0,"from":0.0,"to":3600.0,"observed_s":0.0,"samples":0}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (older.running_agents, older.live.len(), older.load_1m),
+        (Level::default(), 0, None)
+    );
+}
+
+fn run_day_of(line: &symphony_api::AgentLine) -> String {
+    line.day()
+}
+
+/// The Reports page's one read: periods oldest first, each source's part none where no file held
+/// an hour of it (`null`, never a zero), a figure per status by the statuses that have one.
+#[test]
+fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
+    use symphony_api::report_page::{REPORTS_HOUR_MAX_DAYS, REPORTS_MAX_DAYS};
+    use symphony_api::{Grain, ReportsPage};
+    let (written, fixture) = round_trip::<ReportsPage>("reports-page.json");
+    assert_eq!(written, fixture);
+    let page: ReportsPage = serde_json::from_str(&self::fixture("reports-page.json")).unwrap();
+    assert_eq!((page.grain, page.days), (Grain::Day, 2));
+    assert_eq!(page.buckets[0].end, page.buckets[1].start);
+    assert_eq!(page.buckets.last().map(|b| b.end), Some(page.to));
+    let gap = &page.buckets[1];
+    assert!(gap.flow.is_none() && gap.git.is_none() && gap.agents.is_some());
+    assert_eq!(page.buckets[0].flow.unwrap().held.review, 1);
+    // A period's tasks done, each once, beside its entries into done, which count a second approve.
+    let flow = page.buckets[0].flow.unwrap();
+    assert_eq!((flow.entered.done, flow.done), (6, Some(5)));
+    // An empty page, as a server with no file yet answers, reads with every list empty.
+    let empty: ReportsPage =
+        serde_json::from_str(r#"{"grain":"hour","days":1,"from":0.0,"to":3600.0}"#).unwrap();
+    assert_eq!(
+        (empty.buckets.len(), empty.first, empty.marks.len()),
+        (0, None, 0)
+    );
+    for (word, grain) in [
+        ("hour", Grain::Hour),
+        ("day", Grain::Day),
+        ("week", Grain::Week),
+    ] {
+        assert_eq!(Grain::parse(word), Some(grain));
+        assert_eq!(grain.word(), word);
+        assert_eq!(
+            serde_json::to_string(&grain).unwrap(),
+            format!("\"{word}\"")
+        );
+    }
+    assert_eq!(Grain::parse("month"), None);
+    assert_eq!(Grain::Hour.days(Some(30)), REPORTS_HOUR_MAX_DAYS);
+    assert_eq!(Grain::Week.days(Some(365)), REPORTS_MAX_DAYS);
+    assert_eq!(Grain::Day.days(Some(0)), 1);
+    assert_eq!(Grain::Day.days(None), 14);
+}
+
 #[test]
 fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it() {
     let project: symphony_api::ProjectView =
@@ -450,6 +526,25 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     assert_eq!(sum(|h| u64::from(h.decisions.unwrap().auto_approved)), 1);
     assert_eq!(sum(|h| u64::from(h.decisions.unwrap().withdrawn)), 1);
     assert_eq!(sum(|h| u64::from(h.landed)), 1);
+    assert_eq!(
+        sum(|h| u64::from(h.top.done.unwrap() + h.subtasks.done.unwrap())),
+        1
+    );
+    // A day file written before its hours counted the tasks done reads with none in each, never a
+    // zero, and writes that back as `null`.
+    let mut older: Value = serde_json::from_str(&self::fixture("report-day.json")).unwrap();
+    for hour in older["hours"].as_array_mut().unwrap() {
+        for part in ["top", "subtasks"] {
+            hour[part].as_object_mut().unwrap().remove("done");
+        }
+    }
+    let older: ReportDay = serde_json::from_value(older).unwrap();
+    assert!(
+        (older.hours.iter()).all(|h| h.top.done.is_none() && h.subtasks.done.is_none()),
+        "no hour of an older file counted them"
+    );
+    let written = serde_json::to_value(&older).unwrap();
+    assert_eq!(written["hours"][0]["top"]["done"], Value::Null);
     let decisions = day.decisions.unwrap();
     assert_eq!(
         decisions.open[0].since, None,

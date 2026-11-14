@@ -452,6 +452,7 @@ fn recorded(r: &Repo, checkout: &Path, ended: f64) {
         signal: None,
         reason: String::new(),
         run: None,
+        reading: None,
     };
     recorded::write(&folder.join(format!("{id}.json")), &record).unwrap();
 }

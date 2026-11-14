@@ -3,6 +3,8 @@
 //! tasks and 100 recipients with a native callback) on the engine the live board runs on,
 //! `surrealkv://` ([`board`]).
 //!
+//! - [`copied`]: the generated board is copied whole onto a store in the run's folder, on a server
+//!   the store's fixture starts as committed: its rows and its store, never a time.
 //! - [`plans`]: every query the board's commands on a per-write, per-recipient or per-tick path send
 //!   (a say, a claim, an inbox, the dispatch passes to every recipient, the `tasks api` calls land
 //!   makes, the pull digest and the agents view a recipient's look reads), recorded on their way to
@@ -16,6 +18,8 @@
 //! - [`timings`]: say, claim, inbox, looks of `tasks wait` and the api answers, each run as the
 //!   `tasks` binary an agent runs, the CPU it costs (its own and the server's, [`cpu`]) within a
 //!   bound stated there, which the machine's load does not move as it moves a wall.
+//! - [`unanswered`]: the unanswered-post lookup a PULL digest runs reads the open tasks' threads
+//!   alone, by record range, within a bound of the server's CPU.
 //! - [`words`]: each sender's last word kept by its event where the board is biggest, a rare
 //!   sender's newest word deleted and every message deleted at once, within a bound of the
 //!   server's CPU stated there.
@@ -35,6 +39,7 @@ mod store;
 
 mod board;
 mod cleanup;
+mod copied;
 mod cpu;
 mod findings;
 mod generated;
@@ -44,4 +49,5 @@ mod proxy;
 mod reports;
 mod sql;
 mod timings;
+mod unanswered;
 mod words;

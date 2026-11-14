@@ -402,7 +402,8 @@ options:
   --mine                only tasks you hold a role on
   --doubled             only tasks holding two or more orchestrators
   --all                 done and cancelled tasks too
-  --json
+  --json                the task records, each with in_status_since: when it
+                        took the status it holds
 "#,
     ),
     (
@@ -443,7 +444,10 @@ Where the pipeline's time goes, over the top-level tasks made in the window:
 tasks by status; for the done ones, lead time and the time in each status
 (median, p75, p90); how often review sent work back; the ten open tasks
 longest in their status; blocked and unstaffed ready work. Done per day
-counts every top-level task closed in the window, whenever it was made.
+counts each top-level task done now once, on the day of its last close in
+this machine's time zone, whenever it was made: one approved again after its
+landing sent it back counts once, one cancelled or reopened since counts
+none. The Reports page's Tasks done counts the same tasks, by UTC day.
 
 options:
   -h, --help  show this help message and exit
@@ -501,7 +505,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -509,7 +513,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX]
+                         [--fast-fix FAST_FIX] [--no-role]
                          slug title
 
 positional arguments:
@@ -531,7 +535,8 @@ options:
   --backlog             same as --stage backlog
   --parent PARENT       file it as a subtask of this task
   --for ASSIGNEE        reserve it for this handle, with no lapse (nobody else
-                        is offered it)
+                        is offered it); with --no-role, the live orchestrator
+                        that takes it
   --instruction         a subtask its executor closes with `done`; its slug is
                         never a branch that lands
   --depends DEPENDS     a task that must be done first (repeatable)
@@ -540,6 +545,11 @@ options:
   --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
                         reviewer: its orchestrator approves it (RULES.md
                         workflow/fast-bugfixes)
+  --no-role             file it for the orchestrator --for names, not for the
+                        filer: else an orchestrator filing it takes the
+                        role, and the board gives any other filer's task an
+                        orchestrator, unless one holds the task it is filed
+                        under
 "#,
     ),
     (

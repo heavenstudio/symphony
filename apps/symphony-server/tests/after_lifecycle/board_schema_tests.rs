@@ -4,27 +4,9 @@
 //! what does, and the main checkout's build reads and writes the board as it left it.
 
 use super::*;
-use std::path::PathBuf;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
 use symphony_board::{NewTask, Opening, Schema, Store};
-
-/// The pinned SurrealDB: `SYMPHONY_SURREAL`, else what `tools/surreal.sh` fetches.
-fn surreal() -> PathBuf {
-    symphony_env::SURREAL.os().map_or_else(
-        || {
-            let found = symphony_board::sys::output(
-                Command::new("bash")
-                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/surreal.sh"))
-                    .env_remove("BASH_ENV"),
-            )
-            .unwrap();
-            assert!(found.status.success(), "SurrealDB lookup: {found:?}");
-            PathBuf::from(String::from_utf8(found.stdout).unwrap().trim())
-        },
-        PathBuf::from,
-    )
-}
 
 /// The main checkout's board: its server in the common dir, stopped when the test ends.
 struct Board {
@@ -116,18 +98,19 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
     // own serves its one checkout at `/`.
     assert_eq!(actual.projects, Vec::<String>::new());
     for page in ["/api/tasks", "/api/agents"] {
-        let deadline = Instant::now() + fixture::PATIENCE;
-        let (status, body) = loop {
-            let answer = get(actual.port, page);
-            match answer {
-                Some((status, body)) if body.contains(&behind) => break (status, body),
-                answer => assert!(
-                    Instant::now() < deadline,
-                    "{page} never said why it reads no board: {answer:?}"
-                ),
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        };
+        let mut last = None;
+        let said = test_time::until(
+            format!("{page} to say why it reads no board"),
+            fixture::BACKSTOP,
+            || {
+                let answer = get(actual.port, page);
+                let said = answer.clone().filter(|(_, body)| body.contains(&behind));
+                last = answer;
+                said
+            },
+        );
+        let (status, body) =
+            said.unwrap_or_else(|stall| panic!("{stall}; its last answer: {last:?}"));
         assert_eq!(status, 503, "{page}: {body}");
         assert_eq!(board.version(), Some(before), "{page}");
     }

@@ -1,12 +1,20 @@
 //! The header: one name for each of the Symphony's pages, the shown page lit and never named again
 //! by a crumb, Appearance opened from it rather than from the chat sheet, and on a phone two rows
-//! that keep six pages in view at 390 wide.
+//! that keep seven pages in view at 390 wide.
 use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
-/// The Symphony's five pages, then the stand-in project's own page under its plugin's label: six,
-/// as many as the consuming project's header holds.
-const PAGES: [&str; 6] = ["Home", "Queue", "Docs", "Board", "Agents", "⬡ lamps"];
+/// The Symphony's six pages, then the stand-in project's own page under its plugin's label: seven,
+/// one more than the consuming project's header holds.
+const PAGES: [&str; 7] = [
+    "Home",
+    "Queue",
+    "Docs",
+    "Board",
+    "Reports",
+    "Agents",
+    "⬡ lamps",
+];
 
 /// The stand-in server, answering a document, a task and their threads as well as the board.
 fn content_site() -> Site {
@@ -56,6 +64,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
         ("/queue", "[data-ready=queue]", "Queue", &[]),
         ("/docs/", "[data-ready=folder]", "Docs", &[]),
         ("/tasks", "[data-slug='tools/example']", "Board", &[]),
+        ("/reports", "[data-ready=reports]", "Reports", &[]),
         ("/agents", ".agents", "Agents", &[]),
         (
             "/docs/look-parity.md",
@@ -99,6 +108,7 @@ fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
     for (path, ready) in [
         ("/", ".hero-title"),
         ("/tasks", "[data-slug='tools/example']"),
+        ("/reports", "[data-ready=reports]"),
         ("/docs/look-parity.md", ".doc-card"),
     ] {
         open(&mut page, &site, path, ready);

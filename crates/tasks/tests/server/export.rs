@@ -94,27 +94,23 @@ fn a_board_whose_database_is_not_running_is_refused_and_nothing_starts() {
 #[test]
 fn an_export_past_its_time_is_stopped_and_writes_nothing_while_the_database_serves_on() {
     use std::os::unix::fs::PermissionsExt as _;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let s = Scratch::new("export-slow");
     let running = s.home().ensure().unwrap();
-    // An export client that writes part of its file, then hangs.
+    // An export client that writes part of its file, then hangs until it is killed: one waited out
+    // would end well, its file written, so the refusal naming the limit says it was not.
     let slow = s.dir.join("slow-surreal");
     fs::write(
         &slow,
-        "#!/bin/sh\nfor last; do :; done\necho partial > \"$last\"\nexec sleep 30\n",
+        "#!/bin/sh\nfor last; do :; done\necho partial > \"$last\"\nexec sleep 600\n",
     )
     .unwrap();
     fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
     let home = symphony_board::server::Home::new(&s.dir, &slow);
     let file = s.dir.join("snapshots/before.surql");
-    let began = Instant::now();
     let refused = home
         .export_within("tasks", &file, Duration::from_secs(1))
         .unwrap_err();
-    assert!(
-        began.elapsed() < Duration::from_secs(10),
-        "it did not wait the hang out"
-    );
     assert!(
         matches!(&refused, ServerError::Io(why) if why.contains("did not start or end within 1 s")
             && why.contains("nothing was written")),

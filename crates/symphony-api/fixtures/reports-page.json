@@ -1,0 +1,108 @@
+{
+  "grain": "day",
+  "days": 2,
+  "from": 1799884800.0,
+  "to": 1800003600.0,
+  "buckets": [
+    {
+      "start": 1799884800.0,
+      "end": 1799971200.0,
+      "rolled": 24,
+      "flow": {
+        "held": { "blocked": 1, "in_progress": 3, "ready": 2, "review": 1 },
+        "entered": { "done": 6, "in_progress": 6, "review": 7 },
+        "done": 5,
+        "task_hours": { "in_progress": 30.5, "ready": 12.25, "review": 6.0 },
+        "unclaimed_hours": 4.5,
+        "bounces": 2,
+        "landed": 5,
+        "reds_filed": 1,
+        "reds_closed": 1
+      },
+      "decisions": { "open": 3, "answered": 4, "auto_approved": 2, "withdrawn": 1 },
+      "git": { "commits": 41, "merges": 5, "added": 3120, "removed": 845, "reverts": 1 },
+      "waits": {
+        "review_to_reviewer": { "n": 7, "median": 420.0, "p90": 1310.5 },
+        "changes_to_resumed": null,
+        "changes_to_review": { "n": 2, "median": 2700.0, "p90": 3420.0 },
+        "approved_to_landed": { "n": 5, "median": 95.0, "p90": 600.0 }
+      },
+      "lead": { "n": 5, "median": 15400.0, "p90": 40100.0 },
+      "verdicts": { "changes": 2, "approved": 7 },
+      "red_fix": { "n": 1, "median": 5400.0, "p90": 5400.0 },
+      "agents": {
+        "observed_s": 86100.0,
+        "samples": 1435,
+        "running": [
+          { "role": "executor", "peak": 4, "mean": 2.125 },
+          { "role": "reviewer", "peak": 2, "mean": 0.75 }
+        ],
+        "running_agents": { "peak": 5, "mean": 2.875 },
+        "holding": [
+          { "role": "executor", "peak": 5, "mean": 3.5 }
+        ],
+        "holding_agents": { "peak": 6, "mean": 4.0 },
+        "live": [
+          { "kind": "claude", "peak": 7, "mean": 5.25 },
+          { "kind": "codex", "peak": 1, "mean": 0.125 }
+        ],
+        "started": 23,
+        "went_stale": 9,
+        "went_lost": 2,
+        "stale_s": 5400.0,
+        "lost_s": 1800.0,
+        "load_1m": { "peak": 48.5, "mean": 12.75 },
+        "load_15m": { "peak": 31.0, "mean": 11.5 }
+      },
+      "health": {
+        "covered_s": 86400.0,
+        "dispatch": { "ok": 48888, "failed": 12 },
+        "sweep": { "ok": 144, "failed": 0 },
+        "requests": 98880,
+        "slow": 14,
+        "unanswered": 3,
+        "slowest_ms": 3000.5,
+        "writes": 5088,
+        "write_p90_ms": 11.0
+      }
+    },
+    {
+      "start": 1799971200.0,
+      "end": 1800003600.0,
+      "rolled": 0,
+      "flow": null,
+      "decisions": null,
+      "git": null,
+      "waits": null,
+      "lead": null,
+      "verdicts": null,
+      "red_fix": null,
+      "agents": {
+        "observed_s": 28740.0,
+        "samples": 479,
+        "running": [],
+        "running_agents": { "peak": 0, "mean": 0.0 },
+        "holding": [],
+        "holding_agents": { "peak": 0, "mean": 0.0 },
+        "live": [
+          { "kind": "claude", "peak": 1, "mean": 1.0 }
+        ],
+        "started": 0,
+        "went_stale": 0,
+        "went_lost": 0,
+        "stale_s": 0.0,
+        "lost_s": 0.0,
+        "load_1m": null,
+        "load_15m": null
+      },
+      "health": null
+    }
+  ],
+  "first": 1799280000.0,
+  "marks": [
+    { "at": 1799913600.0, "commit": "4f1c0a9b2d3e", "subject": "settings: land without the check" }
+  ],
+  "unread": [
+    "/repo/.git/symphony/health/2027-01-15.jsonl: not a regular file"
+  ]
+}

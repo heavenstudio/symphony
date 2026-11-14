@@ -185,7 +185,7 @@ fn a_dependency_change_that_would_start_blocked_work_past_the_cap_is_refused() {
 }
 
 #[test]
-fn reparenting_open_work_into_an_existing_feature_consumes_no_extra_slot() {
+fn open_work_moved_out_of_its_feature_keeps_a_slot_and_rejoining_one_consumes_no_extra_slot() {
     let mut seed = sessions();
     for (slug, status) in &EIGHT[..7] {
         seed = with(seed, slug, status, None, Some(O));
@@ -195,11 +195,27 @@ fn reparenting_open_work_into_an_existing_feature_consumes_no_extra_slot() {
     seed = with(seed, "loose", "review", None, None);
     let f = Fixture::new(seed.role("work/a/part", K, "executor"));
     let store = capped(&f, 8);
-    // A child leaving its feature does not free the feature's slot. Rejoining an already counted
-    // feature, including after another feature starts, does not consume another slot.
+    // A child leaving its feature stays its orchestrator's: the move gives O the part, which
+    // takes a slot of its own, decided by the move's own cap read. O holds 8 then, the cap, so a
+    // start waits until the part rejoins.
     store.set_parent("work/a/part", None, K).unwrap();
-    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    let part = store.get("work/a/part").unwrap();
+    assert_eq!(part.holders("orchestrator"), [O]);
+    let start = refused(store.claim("work/next", K));
+    assert!(
+        start.starts_with("work/next cannot start: olive-orch holds 8 open tasks"),
+        "{start}"
+    );
+    // Rejoining an already counted feature consumes no slot of its own, and frees the one it took.
     store.set_parent("work/a/part", Some("work/a"), K).unwrap();
+    assert_eq!(store.claim("work/next", K).unwrap().status, "in_progress");
+    // At the cap, the move out is refused, as any change that would raise O's count past it is.
+    let out = refused(store.set_parent("work/a/part", None, K));
+    assert!(
+        out.starts_with("work/a/part cannot go under nothing: olive-orch holds 8 open tasks"),
+        "{out}"
+    );
+    // Joining a counted feature after another started consumes no slot either.
     store.set_parent("loose", Some("work/b"), K).unwrap();
     assert_eq!(
         store.get("work/a/part").unwrap().parent.as_deref(),
@@ -518,8 +534,9 @@ fn work_started_under_a_red_as_it_closes_is_decided_again_and_takes_a_slot() {
     }
 }
 
-/// How long a race's side waits for the other before the test fails rather than hangs.
-pub(super) const WAIT: Duration = Duration::from_secs(60);
+/// How long a race's side waits for the other before the test fails rather than hangs: the backstop
+/// of the minute it once had.
+pub(super) const WAIT: Duration = test_time::backstop(Duration::from_secs(60));
 
 #[test]
 fn a_red_marked_as_the_owner_cancels_it_is_decided_again_and_a_claim_read_between_counts_it() {

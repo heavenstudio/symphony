@@ -324,17 +324,6 @@ fn refresh(
             "{id}: its Cargo.lock takes none of the Symphony's packages from git"
         )));
     }
-    // A release keeps a project's state in `symphony/` of its common dir: one whose state an older
-    // build still keeps in its old folders takes no pin of it, nor a move of its board, until the
-    // owner moves that state (`tools/move-state.sh`), as each of the release's builds would refuse
-    // it.
-    let common = PathBuf::from(git(
-        &consumer.root,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?);
-    if let Some(why) = symphony_board::unmoved::refusal(&common, symphony_board::server::FOLDER) {
-        return Err(format!("{why}: nothing of {id} was moved"));
-    }
     let pinned: BTreeSet<&str> = locked
         .iter()
         .map(|package| package.commit.as_str())

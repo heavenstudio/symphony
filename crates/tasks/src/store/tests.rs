@@ -80,6 +80,40 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
     }
 }
 
+/// Each try a moving board costs a call is counted on the call's thread, and on no other: what a
+/// test reads to say a call never met a conflict. A refusal stops the call untried again, and one
+/// out of patience gives up, saying how often it tried, without one more counted.
+#[test]
+fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives_up() {
+    let before = Store::tried_again_here();
+    let mut tries = 0;
+    let done = retried(PATIENCE, || {
+        tries += 1;
+        if tries < 3 {
+            Err(Failure::Again)
+        } else {
+            Ok(tries)
+        }
+    });
+    assert_eq!(done, Ok(3));
+    assert_eq!(Store::tried_again_here() - before, 2);
+    let elsewhere = std::thread::spawn(Store::tried_again_here).join().unwrap();
+    assert_eq!(elsewhere, 0, "another thread's count is its own");
+    let before = Store::tried_again_here();
+    let refused = retried::<()>(PATIENCE, || {
+        Err(Failure::Stop(Error::Refused("no task 'x'".into())))
+    });
+    assert_eq!(refused, Err(Error::Refused("no task 'x'".into())));
+    let gave_up = retried::<()>(Duration::ZERO, || Err(Failure::Again));
+    assert_eq!(
+        gave_up,
+        Err(Error::Db(
+            "gave up after 0 s and 1 tries: the board kept moving under the write".into()
+        ))
+    );
+    assert_eq!(Store::tried_again_here(), before);
+}
+
 #[test]
 fn a_refusal_is_its_words_and_a_database_failure_says_so() {
     assert_eq!(

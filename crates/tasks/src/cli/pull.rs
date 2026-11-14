@@ -588,7 +588,11 @@ pub(crate) fn idle_and_busy(
 /// The whole digest as `handle` hears it now, read on demand (`tasks pull`): the agents view the
 /// machine's probes make, and the branches on main in the checkout `env` runs in.
 pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<Digest, Error> {
-    let board = store.board()?;
+    let mut board = store.board()?;
+    // A PULL gives what no orchestrator holds first, when one that stays could take it.
+    if store.give_if_due(&board) {
+        board = store.board()?;
+    }
     let holdings = store.slot_holdings()?;
     let probes = crate::cli::probes::machine(env);
     let now = store.now();
@@ -694,7 +698,8 @@ pub(crate) fn digest_on(
     // already told keeps its identity (`pull_unanswered`), so its return is not told again.
     // A PULL diffed against an earlier one says nothing of them ([`Digest::said_after`]).
     let mut unanswered_scanned = true;
-    let pending = store.pending_posts(tasks).unwrap_or_else(|error| {
+    let overdue = crate::store::unanswered::Asked::Overdue(tasks, now);
+    let pending = store.pending_posts(board, overdue).unwrap_or_else(|error| {
         let reason = error.to_string().replace('\n', " ");
         eprintln!("PULL unanswered scan skipped: {reason}");
         unanswered_scanned = false;
@@ -702,7 +707,7 @@ pub(crate) fn digest_on(
     });
     let unanswered: Vec<_> = pending
         .into_iter()
-        .filter(|p| p.overdue(now) && !busy.contains(p.handle.as_str()))
+        .filter(|p| !busy.contains(p.handle.as_str()))
         .collect();
     for t in tasks {
         if unanswered.iter().any(|p| p.slug == t.slug) {

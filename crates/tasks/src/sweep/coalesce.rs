@@ -34,12 +34,8 @@ pub struct Pass {
     pub tasks: Vec<String>,
 }
 
-/// Record one request, then try the lock without waiting. No board is needed for either step, and
-/// neither is taken while an older build's board is still in its old folder ([`crate::unmoved`]).
+/// Record one request, then try the lock without waiting. No board is needed for either step.
 pub fn request(common: &Path, tasks: &[&str]) -> Result<Option<Pass>, String> {
-    if let Some(why) = crate::unmoved::refusal(common, crate::server::FOLDER) {
-        return Err(why);
-    }
     let dir = trigger::folder(common);
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut line = serde_json::to_vec(tasks).map_err(|e| e.to_string())?;
@@ -152,7 +148,7 @@ mod tests {
             })
             .collect();
         for _ in 0..10 {
-            told.recv_timeout(std::time::Duration::from_secs(10))
+            told.recv_timeout(test_time::backstop(std::time::Duration::from_secs(10)))
                 .expect("each contender returns while the first pass still holds the lock");
         }
         for thread in threads {

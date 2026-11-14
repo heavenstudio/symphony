@@ -2,7 +2,7 @@
 //! whether any of them could reach a recipient, made on the client from those rows
 //! ([`Store::could_hear`]), so a write's observation reads no inbox that holds nothing for it.
 
-use super::messages::DELIVERED;
+use super::messages::{DELIVERED, OWNER_MOVES};
 use super::work::OWNER;
 use super::{Error, Message, Store};
 use serde_json::{Value, json};
@@ -12,10 +12,10 @@ use serde_json::{Value, json};
 /// no pool grows to carry it for every recipient.
 const POOL_SPAN: i64 = 2000;
 
-/// The delivered messages after `floor`, as of message `latest`, that one dispatch pass reads every
-/// recipient's inbox from: one scan of the message table a pass, where each recipient's own read
-/// scanned it, and the deliveries, twice. Only the fields the inbox's `could_reach` reads and the
-/// row's id.
+/// The delivered messages and the owner's moves ([`OWNER_MOVES`]) after `floor`, as of message
+/// `latest`, that one dispatch pass reads every recipient's inbox from: one scan of the message
+/// table a pass, where each recipient's own read scanned it, and the deliveries, twice. Only the
+/// fields the inbox's `could_reach` reads and the row's id.
 pub(super) struct Pool {
     floor: i64,
     latest: i64,
@@ -95,13 +95,13 @@ impl Store {
             .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)
         {
             let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
-            let (latest, rows): (i64, Value) = self.retrying(|| {
-                self.read(
-                    "RETURN [(SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                        (SELECT sid, slug, sender, recipient, kind, ts FROM message WHERE sid > $floor AND kind IN $delivered)];",
-                    json!({"floor": floor, "delivered": DELIVERED}),
-                )
-            })?;
+            let read = format!(
+                "RETURN [(SELECT VALUE last FROM ONLY counter:message) ?? 0,
+                    (SELECT sid, slug, sender, recipient, kind, ts FROM message WHERE sid > $floor AND (kind IN $delivered OR {}))];",
+                *OWNER_MOVES
+            );
+            let (latest, rows): (i64, Value) = self
+                .retrying(|| self.read(&read, json!({"floor": floor, "delivered": DELIVERED})))?;
             *pool = Some(Pool {
                 floor,
                 latest,

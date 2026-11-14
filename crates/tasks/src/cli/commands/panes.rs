@@ -238,8 +238,55 @@ pub(super) fn clean(store: &Store, c: &mut Context) -> Result<(), Stop> {
 }
 
 /// `reap [--dry-run]`: one sweep, which never closes the pane or the handle of whoever asked.
+/// What a sweep says of its gives ([`Store::give_unowned`]): each task given, to whom and from whom
+/// or why, as its thread's line says it; then the tasks it marked waiting for an orchestrator, none
+/// that stays being there; a dry run, every task that would wait, marked before or not.
+fn given_lines(given: &crate::Given, dry_run: bool) -> Vec<String> {
+    let verb = if dry_run { "would give" } else { "gave" };
+    let mut lines: Vec<String> = (given.gave.iter().zip(&given.lines))
+        .map(|((slug, to), line)| {
+            let how = line
+                .split_once(crate::orchestration::GIVEN)
+                .map_or("", |(_, how)| how);
+            format!("{verb} {slug} to {to}{how}")
+        })
+        .collect();
+    let waiting = if dry_run {
+        &given.waiting
+    } else {
+        &given.marked
+    };
+    if !waiting.is_empty() {
+        let would = if dry_run { "would wait" } else { "wait" };
+        lines.push(format!(
+            "{would} for an orchestrator that stays: {}",
+            waiting.join(", ")
+        ));
+    }
+    lines
+}
+
 pub(super) fn reap(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let dry_run = c.parsed.flag("dry_run");
+    // Every open task has an orchestrator: what nobody orchestrates goes to one that stays first, so
+    // staffing and the sweep read it held.
+    let given = match dry_run {
+        true => store.would_give_unowned(),
+        false => store.give_unowned(None),
+    };
+    match given {
+        Ok(given) => {
+            for line in given_lines(&given, dry_run) {
+                c.say(&line);
+            }
+        }
+        Err(problem) => {
+            let _ = writeln!(
+                c.err,
+                "giving open tasks an orchestrator failed; idle sweep continues: {problem}"
+            );
+        }
+    }
     // The app's existing five-minute timer invokes reap; staffing stays entirely in Rust.
     if !dry_run {
         match launch::staff::automatic(store, c.env) {

@@ -25,7 +25,7 @@ const T0: f64 = 1_794_469_500.0;
 /// answers. Ended by its own handle.
 fn foreign_server(surreal: &Path, dir: &Path, data: &str) -> Child {
     let log = dir.join("foreign.log");
-    let until = Instant::now() + Duration::from_secs(60);
+    let until = Instant::now() + test_time::backstop(Duration::from_secs(60));
     let (child, _) = start_on_free_port(ATTEMPTS, until, |reserved| {
         let addr = reserved.to_string();
         let out = std::fs::File::create(&log).unwrap();

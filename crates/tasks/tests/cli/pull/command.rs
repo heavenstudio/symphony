@@ -2,6 +2,7 @@
 //! carried before, read on demand and changing nothing.
 
 use crate::{Case, repository, scratch};
+use symphony_board::NewTask;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-hc");
 
@@ -39,12 +40,14 @@ fn pull_prints_the_whole_digest_its_actor_hears_every_time_it_asks() {
     let c = case("whole");
     let orch = c.register("orchestrator");
     let other = c.register("orchestrator");
+    // Filed through the store, which gives no orchestrator: sim/free stays nobody's, as a task is
+    // until the board gives it one.
     for (slug, title) in [
         ("sim/free", "Free"),
         ("sim/mine", "Mine"),
         ("sim/theirs", "Theirs"),
     ] {
-        c.ok(&orch, &["create", slug, title]);
+        c.store().create(&NewTask::new(slug, title, &orch)).unwrap();
     }
     c.ok(&orch, &["role", "sim/mine", "orchestrator"]);
     c.ok(&other, &["role", "sim/theirs", "orchestrator"]);
@@ -99,6 +102,45 @@ fn pull_lists_idle_no_child_it_is_told_went_quiet_as_the_dispatch_does() {
         assert!(!said.contains(&format!("idle {child}")), "{said}");
         assert!(said.contains(&format!("idle {stranger}")), "{said}");
     }
+}
+
+/// Past its wait (`TASKS_UNANSWERED_WAIT`), the unanswered lookup leaves its posts out of the PULL
+/// and the rest of the PULL stands; within it, the same pull tells them. A microsecond is a wait no
+/// answer meets, however quiet the machine.
+#[test]
+fn pull_past_the_unanswered_wait_leaves_out_the_posts_alone() {
+    use symphony_board::UNANSWERED_WAIT_VAR;
+    let mut c = case("unanswered-wait");
+    let orch = c.register("orchestrator");
+    let worker = c.register("worker");
+    for slug in ["sim/asked", "sim/free"] {
+        c.ok(&orch, &["create", slug, "Work"]);
+        c.ok(&orch, &["role", slug, "orchestrator"]);
+    }
+    c.ok(&worker, &["claim", "sim/asked"]);
+    let post = (c.store())
+        .say("sim/asked", "owner", "continue", Some("@executor"))
+        .unwrap();
+    // Half an hour on, its executor gone: the post is overdue.
+    let later = crate::common::NOW + 31.0 * 60.0 + crate::common::GONE;
+    c.env.vars.insert("TASKS_NOW".into(), later.to_string());
+    let told = c.ok(&orch, &["pull"]);
+    assert!(told.contains(&format!("post #{} —", post.id)), "{told}");
+    assert!(told.contains("ready_unstaffed=1"), "{told}");
+
+    c.env
+        .vars
+        .insert(UNANSWERED_WAIT_VAR.into(), "0.000001".into());
+    let skipped = c.ok(&orch, &["pull"]);
+    let without: Vec<String> = (told.lines())
+        .map(|line| line.replace(" unanswered=1", ""))
+        .filter(|line| !line.trim_start().starts_with("unanswered "))
+        .collect();
+    assert_eq!(skipped.lines().collect::<Vec<_>>(), without, "{told}");
+
+    let backstop = crate::common::LOOKUP_BACKSTOP.to_string();
+    c.env.vars.insert(UNANSWERED_WAIT_VAR.into(), backstop);
+    assert_eq!(c.ok(&orch, &["pull"]), told);
 }
 
 #[test]

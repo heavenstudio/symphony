@@ -585,6 +585,19 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
             )));
         }
     }
+    // `--no-role` files it for another orchestrator, named with `--for`, and no reservation.
+    let no_role = p.flag("no_role");
+    let for_orchestrator = match (no_role, p.get("assignee")) {
+        (true, Some(to)) => Some(live_orchestrator(store, to)?),
+        (true, None) => {
+            return Err(Stop::Refused(
+                "--no-role files a task for another orchestrator: name a live one with --for \
+                 HANDLE (every open task has an orchestrator)"
+                    .into(),
+            ));
+        }
+        (false, _) => None,
+    };
     let new = NewTask {
         slug,
         title: c.arg("title"),
@@ -595,15 +608,45 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         parent: p.get("parent").map(str::to_string),
         links: p.all("link").to_vec(),
         depends: p.all("depends").to_vec(),
-        assignee: p.get("assignee").map(str::to_string),
+        assignee: p.get("assignee").filter(|_| !no_role).map(str::to_string),
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
         fast_fix: p.get("fast_fix").map(str::to_string),
     };
     let t = store.create(&new)?;
-    c.say(&format!("created {} ({})", t.slug, t.status));
+    // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
+    // line says who, or that it waits for one that stays.
+    let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
+        Ok(Some(to)) => format!("; {to} orchestrates it"),
+        Ok(None) => "; it waits for an orchestrator that stays".to_string(),
+        Err(error) => format!(
+            "; no orchestrator was given it yet ({error}): the board gives it at its next read"
+        ),
+    };
+    c.say(&format!("created {} ({}){role}", t.slug, t.status));
     Ok(())
+}
+
+/// `handle`, when it names a live orchestrator's session: what `--no-role --for` files a task for.
+fn live_orchestrator(store: &Store, handle: &str) -> Result<String, Stop> {
+    let named = |why: String| {
+        Stop::Refused(format!(
+            "--no-role --for names the orchestrator that takes the task, and {why}"
+        ))
+    };
+    match store.session(handle) {
+        Ok(s) if s.row.kind != "orchestrator" => Err(named(format!(
+            "{handle} is a session of kind {}",
+            s.row.kind
+        ))),
+        Ok(s) if s.health != crate::Health::Live => {
+            Err(named(format!("{handle} is {}", s.health.as_str())))
+        }
+        Ok(_) => Ok(handle.to_string()),
+        Err(Error::Refused(_)) => Err(named(format!("no session is {handle}"))),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Where `body` names a worktree of dependency `dep` as a source of data, which only builds on main
@@ -680,6 +723,14 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
             r.role,
             r.handle,
             r.health.as_str()
+        ));
+    }
+    let held = (task.roles.iter()).any(|r| r.role == "orchestrator" && r.health.holds());
+    if let Some(at) = crate::orchestration::waiting(&task.fields).filter(|_| !held) {
+        let minutes = ((store.now() - at) / 60.0).max(0.0).floor();
+        c.say(&format!(
+            "  waits for an orchestrator that stays, for {minutes} min: the first live past its \
+             first live line that waits, watches or holds a task is given it"
         ));
     }
     let parent: Vec<String> = task.parent.iter().cloned().collect();

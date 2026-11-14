@@ -360,10 +360,10 @@ pub(crate) fn tail(path: &Path, lines: usize, bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::waits::{far, gone, pid_written, written_pid};
     use super::*;
     use crate::test_tree::Tree;
     use std::cell::RefCell;
-    use std::time::Duration;
 
     fn script(tree: &Tree) {
         tree.write(
@@ -372,21 +372,21 @@ mod tests {
         );
     }
 
-    /// `step` run with a minute to spare.
+    /// `step` run within a bound only a stall reaches.
     fn checked(step: &Step, checkout: &Path, log: &Path) -> Ran {
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_secs(60)));
-        run(step, checkout, log, within)
+        run(step, checkout, log, Within::bound(far()))
     }
 
-    /// Whether the process whose pid `pid` holds still lives after a few seconds' wait for it to
-    /// end and be reaped by whoever inherited it.
-    fn alive(pid: &Path) -> bool {
-        let pid: i64 = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
-        let until = Instant::now() + std::time::Duration::from_secs(10);
-        while symphony_board::sys::pid_alive(pid) && Instant::now() < until {
-            std::thread::sleep(group::POLL);
-        }
-        symphony_board::sys::pid_alive(pid)
+    /// A step that starts a helper which outlives any wait of a test, says `started` and writes the
+    /// helper's pid in `helper`, then waits for it.
+    fn helper_step(helper: &Path) -> Step {
+        Step::shell(
+            "verify",
+            &format!(
+                "sleep 1000 & h=$!; echo started; echo $h > '{}'; wait",
+                helper.display()
+            ),
+        )
     }
 
     #[test]
@@ -416,30 +416,36 @@ mod tests {
     fn a_check_past_the_runs_time_is_stopped_with_its_group_and_is_red() {
         let tree = Tree::new();
         let helper = tree.path("helper.pid");
-        let step = Step::shell(
-            "verify",
-            &format!(
-                "sleep 30 & echo $! > '{}'; echo started; wait",
-                helper.display()
-            ),
+        // The run's time is up once the check has started its helper: what says the check runs is
+        // told before the run looks at its time, and waits there for the helper's pid.
+        let running = |check: Option<&Checking>| {
+            if check.is_some() {
+                written_pid(&helper);
+            }
+        };
+        let within = Within {
+            bound: Bound::until(Instant::now()),
+            running: Some(&running),
+        };
+        let ran = run(
+            &helper_step(&helper),
+            &tree.root,
+            &tree.path("verify.log"),
+            within,
         );
-        let started = Instant::now();
-        let within = Within::bound(Bound::until(Instant::now() + Duration::from_millis(500)));
-        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
-        assert!(ran.timed_out && !ran.green(), "{ran:?}");
-        assert!(
-            ran.ended()
-                .starts_with("timed out: stopped after 1 s, when the run's time was up")
-                || ran
-                    .ended()
-                    .starts_with("timed out: stopped after 0 s, when the run's time was up"),
-            "{ran:?}"
+        assert!(ran.timed_out && !ran.interrupted && !ran.green(), "{ran:?}");
+        let said = Ran {
+            seconds: 1.0,
+            ..ran.clone()
+        };
+        assert_eq!(
+            said.ended(),
+            "timed out: stopped after 1 s, when the run's time was up"
         );
         let log = fs::read_to_string(tree.path("verify.log")).unwrap();
         assert!(log.contains("started\n"), "{log}");
         assert!(log.contains("s: the run's time was up)\n"), "{log}");
-        assert!(!alive(&helper), "what the check started went with it");
+        gone(written_pid(&helper), "what the check started");
     }
 
     #[test]
@@ -448,39 +454,39 @@ mod tests {
         let helper = tree.path("helper.pid");
         let step = Step::shell(
             "verify",
-            &format!("sleep 30 & echo $! > '{}'", helper.display()),
+            &format!("sleep 1000 & echo $! > '{}'", helper.display()),
         );
-        let started = Instant::now();
         let ran = checked(&step, &tree.root, &tree.path("verify.log"));
         assert!(ran.green(), "{ran:?}");
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
-        assert!(!alive(&helper));
+        gone(written_pid(&helper), "what the check left running");
     }
 
     #[test]
     fn a_check_of_a_run_told_to_stop_is_stopped_with_its_group() {
         let tree = Tree::new();
         let helper = tree.path("helper.pid");
-        let step = Step::shell(
-            "verify",
-            &format!("sleep 30 & echo $! > '{}'; wait", helper.display()),
+        // The run is told to stop once the check has started its helper.
+        let heard = || pid_written(&helper);
+        let within = Within::bound(Bound::hearing(far().until, &heard));
+        let ran = run(
+            &helper_step(&helper),
+            &tree.root,
+            &tree.path("verify.log"),
+            within,
         );
-        let started = Instant::now();
-        let heard = move || started.elapsed() >= Duration::from_millis(300);
-        let within = Within::bound(Bound::hearing(
-            Instant::now() + Duration::from_secs(60),
-            &heard,
-        ));
-        let ran = run(&step, &tree.root, &tree.path("verify.log"), within);
-        assert!(started.elapsed().as_secs() < 20, "{ran:?}");
         assert!(ran.interrupted && !ran.timed_out && !ran.green(), "{ran:?}");
-        assert!(
-            ran.ended().starts_with("interrupted: stopped after "),
-            "{ran:?}"
+        let said = Ran {
+            seconds: 2.0,
+            ..ran.clone()
+        };
+        assert_eq!(
+            said.ended(),
+            "interrupted: stopped after 2 s, when the run was told to stop"
         );
         let log = fs::read_to_string(tree.path("verify.log")).unwrap();
+        assert!(log.contains("started\n"), "{log}");
         assert!(log.contains("s: the run was told to stop)\n"), "{log}");
-        assert!(!alive(&helper), "what the check started went with it");
+        gone(written_pid(&helper), "what the check started");
     }
 
     #[test]
@@ -498,7 +504,7 @@ mod tests {
         let said = RefCell::new(Vec::new());
         let running = |check: Option<&Checking>| said.borrow_mut().push(check.cloned());
         let within = Within {
-            bound: Bound::until(Instant::now() + Duration::from_secs(60)),
+            bound: far(),
             running: Some(&running),
         };
         let ran = run(&step, &tree.root, &tree.path("verify.log"), within);

@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: d750bf09395c8d5f files=SKILL.md -->
+<!-- symphony-stamp: 7adf86d6768cf48a files=SKILL.md -->
 
 # Work from the task board
 
@@ -73,6 +73,7 @@ VERDICT #124 tools/example from slate-owl — changes: the hash moved
 AGENT from slate-owl to amber-heron — can you check the launch?
 ROLE tools/example slate-owl reviewer, in_progress
 STATUS tools/example in_progress → review
+MOVE #125 tools/example from owner — owner moved it review → cancelled; it moves no further: stop work on it
 NEW tools/next ready — Next task          (orchestrators only)
 STALE amber-heron — … / LOST amber-heron — its work is claimable: …   (your subagents holding claimable work;
                                             never one whose own verify is running or queued)
@@ -145,6 +146,8 @@ Reply to an `AGENT` sender with `just agent-send SENDER "text" --as HANDLE`;
 when the result belongs on a task, post it on that task's thread instead.
 One dispatch combines role and status changes for the same task and handle:
 `ROLE SLUG HANDLE ROLE[, ROLE], STATUS`; `none` means the handle released all roles.
+What the board gives you comes as one line for every task it gave since your last read,
+`GIVEN N open tasks are yours to orchestrate: SLUG, …`, never a `ROLE` per task.
 Your own events are not echoed. Codex uses `codex queue` by default. The owner
 can enable active-turn `turn/steer` with `git config symphony.codexSteer true`;
 unset, false or invalid values leave the proxy unused. With steering enabled,
@@ -158,7 +161,12 @@ so an older writer cannot restart the baseline or discard new addressed messages
 An agent's `MSG` is pushed only to its `--to` handle or role. Unaddressed posts
 stay on the thread: read them with `just tasks show SLUG` or in the app.
 Verdicts reach the executor and orchestrator; moves to review, blocked or done
-still reach the orchestrator. Owner messages reach everyone on the task.
+still reach the orchestrator. The owner's word (posts, verdicts and moves, a move
+as a `MOVE` line) reaches everyone on the task and its orchestrator; on a task
+no live orchestrator holds (nobody, or a holder stale or of unknown liveness),
+every orchestrator too, marked `[unowned: …]` with that holder if there is one,
+which hears it too. An owner's `MOVE` that ends
+`it moves no further: stop work on it` means stop: the owner cancelled the task.
 A post or `changes` verdict to `@executor`, or a post to the executor by handle,
 that no executor can read (no callback, and its terminal recorded closed or no live
 beat) brings the task's orchestrator
@@ -222,17 +230,33 @@ Read any review checklist the project provides for the changed languages or doma
 Pull work from the board, don't only wait for events: [task-orchestrator](../task-orchestrator/SKILL.md).
 
 1. Create the work: `just tasks create area/slug "title" --body "..."
-   --link docs/X.md#Heading [--depends …] [--parent …]`. Then
-   `just tasks role SLUG orchestrator` on each task you will follow; on a
-   task with subtasks, the root alone is enough, events climb to you.
+   --link docs/X.md#Heading [--depends …] [--parent …]`. A task
+   you file as an orchestrator is yours from that write (its line ends
+   `; HANDLE orchestrates it`; `--no-role --for HANDLE` files it for
+   HANDLE, a live orchestrator, instead), and
+   `just tasks role SLUG orchestrator` takes one another orchestrator holds
+   no more; on a task with subtasks, the root alone is enough, events climb to you.
+   Every open task has an orchestrator: the board gives one filed by any other
+   session to the orchestrator of the work that session holds, else of its
+   parent, else to the orchestrator holding the nearest task above it, else to
+   the one holding fewest among those that stay (live past the first live line,
+   and waiting, watching or holding a task: a session that only registered gets
+   nothing). A leaving orchestrator's open work goes in the leave; a lost one's,
+   and any other open work with none, at the next read of the whole board (an
+   orchestrator's `wait`, monitor or `pull`, the server's clock, a dispatch),
+   one thread line each, with no sweep needed; a task moved out from under yours
+   stays yours. `release SLUG --role orchestrator` is refused while it would
+   leave open work with none (hand it over). With none that stays, such work
+   waits, and the first orchestrator to come to stay is given it at its next
+   look, told one line: `GIVEN N open tasks are yours to orchestrate: …`.
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
    `just tasks handover SLUG HANDLE` (one write; the thread names the new
    orchestrator, who hears one `ROLE`; you made the move and are not told it);
    never take it beside the holder and release later. Taking the role over a
-   lost or left holder moves it. You hear your own tasks and the unclaimed ones
-   only; `just tasks list --doubled` lists tasks still holding two, to settle
-   with `handover`.
+   lost or left holder moves it. You hear your own tasks, and those the board
+   has not given an orchestrator yet; `just tasks list --doubled` lists tasks
+   still holding two, to settle with `handover`.
    **Every instruction to an agent is a subtask** (`--parent SLUG --for
    <handle> [--instruction]`) whose body is the instruction verbatim, never a
    file (a hook refuses a brief written to a file or a scratchpad);
@@ -360,6 +384,10 @@ Follow project-local guidance for specialized tools and shared resources.
 
 ## Stop
 
-When the owner says stop, or your work is done: release what you will not
-finish (`just tasks release SLUG`), then `just tasks leave`. This unregisters
-delivery and chat ownership. Say in one line what you left where.
+When the owner says stop, or your work is done: release the executor or
+reviewer roles you will not finish (`just tasks release SLUG --role ROLE`),
+then `just tasks leave`. This unregisters delivery and chat ownership. Do not
+release the open work you orchestrate (that is refused): the leave gives it to
+another orchestrator that stays, or leaves it waiting for the first to come
+while none does; hand a task to one you choose first with
+`just tasks handover SLUG HANDLE`. Say in one line what you left where.

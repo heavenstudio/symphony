@@ -199,10 +199,12 @@ mod tests {
             "packages": [
                 {"id": "host 0.1", "name": "host", "dependencies": [
                     {"name": "symphony", "source": "git+https://github.com/o/symphony?branch=main"},
-                    {"name": "serde", "source": "registry+https://github.com/rust-lang/crates.io-index"},
+                    {"name": "serde",
+                     "source": "registry+https://github.com/rust-lang/crates.io-index"},
                 ]},
                 {"id": "tasks 0.1", "name": "tasks", "dependencies": [
-                    {"name": "symphony-board", "source": "git+https://github.com/o/symphony?branch=main#abc"},
+                    {"name": "symphony-board",
+                     "source": "git+https://github.com/o/symphony?branch=main#abc"},
                     {"name": "symphony-board", "source": "git+ssh://git@github.com/o/symphony.git"},
                 ]},
                 {"id": "game 0.1", "name": "game", "dependencies": [
@@ -229,16 +231,20 @@ mod tests {
     #[test]
     fn a_workspaces_metadata_is_read_by_its_own_cargo_and_a_failure_says_where() {
         let tree = Tree::new();
+        // Each folder pins the toolchain this workspace pins: the test never reaches for another.
+        let pin = include_str!("../../../../rust-toolchain.toml");
+        tree.write("w/rust-toolchain.toml", pin);
         tree.write(
             "w/Cargo.toml",
             "[package]\nname = \"w\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         );
         tree.write("w/src/lib.rs", "");
-        let until = Bound::until(Instant::now() + Duration::from_secs(120));
+        // A bound only a stall reaches: the backstop of a two-minute allowance.
+        let until = Bound::until(Instant::now() + test_time::backstop(Duration::from_secs(120)));
         let read = metadata(&tree.path("w"), until).unwrap();
         assert_eq!(read["packages"][0]["name"], "w");
+        tree.write("none/rust-toolchain.toml", pin);
         let none = tree.path("none");
-        fs::create_dir_all(&none).unwrap();
         let said = metadata(&none, until).unwrap_err();
         assert!(
             said.starts_with(&format!("cargo metadata failed in {}: ", none.display())),

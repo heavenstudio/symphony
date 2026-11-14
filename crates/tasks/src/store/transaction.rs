@@ -34,20 +34,20 @@ impl Store {
     /// commit syncs the store even when nothing was written (about 5 ms on the board's server, paid
     /// for each recipient of each write that reads this way).
     #[track_caller]
-    pub(super) fn read<T: DeserializeOwned>(
+    pub(super) fn read<T: DeserializeOwned>(&self, body: &str, vars: Value) -> Result<T, Failure> {
+        read_on(&self.client, body, vars)
+    }
+
+    /// [`Store::read`] through the unanswered-post lookup's client when one is set, which waits a
+    /// bounded time and sends a read that ran it out no second time
+    /// ([`Store::looking_up_within`]).
+    #[track_caller]
+    pub(super) fn bounded_read<T: DeserializeOwned>(
         &self,
         body: &str,
-        mut vars: Value,
+        vars: Value,
     ) -> Result<T, Failure> {
-        unset_nulls(&mut vars);
-        let answer = self.client.query(body, vars)?.pop();
-        let answer =
-            answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))?;
-        serde_json::from_value(answer).map_err(|e| {
-            Failure::Stop(Error::Db(format!(
-                "an answer not in the board's shape: {e}"
-            )))
-        })
+        read_on(self.lookup.as_ref().unwrap_or(&self.client), body, vars)
     }
 
     /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
@@ -110,6 +110,23 @@ impl Store {
             )))
         })
     }
+}
+
+/// `body`, one read, answered by `client` ([`Store::read`]).
+#[track_caller]
+fn read_on<T: DeserializeOwned>(
+    client: &crate::rpc::Client,
+    body: &str,
+    mut vars: Value,
+) -> Result<T, Failure> {
+    unset_nulls(&mut vars);
+    let answer = client.query(body, vars)?.pop();
+    let answer = answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))?;
+    serde_json::from_value(answer).map_err(|e| {
+        Failure::Stop(Error::Db(format!(
+            "an answer not in the board's shape: {e}"
+        )))
+    })
 }
 
 fn unset_nulls(value: &mut Value) {

@@ -703,6 +703,12 @@ RETURN NONE;");
         // Each look reads the messages afresh, as each pass does.
         *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let (mut board, mut sequence) = self.callback_board()?;
+        // Each look gives what no orchestrator holds, when one that stays could take it (the
+        // reader among them, on the waiting list now), and then reads the board the give left.
+        if self.give_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
             .transpose()?;
@@ -759,6 +765,15 @@ RETURN NONE;");
     /// dispatches too).
     pub fn dispatching_by(mut self, hand_off: super::HandOff) -> Store {
         self.hand_off = Some(hand_off);
+        self
+    }
+
+    /// This store, its delivering passes first giving the open tasks no orchestrator holds, when
+    /// one that stays could take them ([`Store::give_if_due`]): a detached dispatcher's, which
+    /// every command-line write starts while a channel is registered, so a board whose
+    /// orchestrators listen on channels alone gives at the next write's dispatch.
+    pub fn giving(mut self) -> Store {
+        self.giving = true;
         self
     }
 
@@ -834,6 +849,13 @@ RETURN NONE;");
         // The pool is plain data, whole or none, so a panic elsewhere leaves nothing half-made in it.
         *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let (mut board, mut sequence) = self.callback_board()?;
+        // A giving store's delivering pass (a write's detached dispatcher) gives what no
+        // orchestrator holds first, so its recipients hear the give; an observing one keeps the
+        // board as its write left it.
+        if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
         let holdings = callbacks
             .values()
             .any(|callback| callback.host == self.host && callback.session.kind == "orchestrator")
@@ -1251,7 +1273,7 @@ RETURN NONE;");
                 handle: handle.to_string(),
                 text: format!(
                     "{} #{} {} from {} — {}",
-                    message.kind.to_uppercase(),
+                    crate::cli::text::event_kind(&message.kind),
                     message.id,
                     message.slug,
                     message.sender,
@@ -1772,11 +1794,13 @@ fn deliver(callback: &Callback, text: &str) -> Result<(), DeliveryError> {
     queue(thread, text)
 }
 
-/// `text` queued on Codex thread `thread` by `codex queue`, given 5 s. Started without a fork: a
-/// connection the Symphony server accepted and has not yet marked close-on-exec stays out of it, so
-/// that client's read to the end of its answer never waits for the queue.
+/// `text` queued on Codex thread `thread` by `codex queue`, given 5 s (`codex_queue::patience`).
+/// Started without a fork: a connection the Symphony server accepted and has not yet marked
+/// close-on-exec stays out of it, so that client's read to the end of its answer never waits for
+/// the queue.
 fn queue(thread: &str, text: &str) -> Result<(), DeliveryError> {
-    crate::codex_queue::queue(crate::sys::command("codex"), thread, text)
+    let patience = crate::codex_queue::patience(&crate::cli::Env::of_process());
+    crate::codex_queue::queue(crate::sys::command("codex"), thread, text, patience)
         .map_err(DeliveryError::retry)
 }
 

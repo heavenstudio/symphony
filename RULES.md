@@ -50,6 +50,26 @@ follow-up task, never claiming green or loosening a test. After recovery another
 bounded postmortem (root cause, the class of recurrence, a shared API or refactor that would
 prevent it), reusing an existing analysis task; it blocks nothing.
 
+### `workflow/simplest-thing-that-solves-it`
+
+Keep it simple: the smallest thing that solves the problem in front of us. A problem met once is
+solved once: an agent runs the commands or a throwaway script, says on the thread what it ran and
+what came of it, and that is the end. It gets no committed tool, no tests, no review round and no
+task of its own. Code is committed only for what will be run again, and guarded only against what
+has happened or plainly will; a script that has done its one job is deleted, never hardened. An
+orchestrator filing work, an executor starting it and a reviewer judging it each refuse the larger
+form: "this is once and done" is a finding, and the reply is to do it and close the task.
+
+### `workflow/question-the-task-first`
+
+A task is questioned when it starts, before any code. The executor that claims it reads the brief
+against the tree and the board as they are now and answers two things on the thread: is this
+still needed (already done, overtaken by another change, about a state that no longer exists, a
+case nobody has), and is the way the brief asks for the simplest that solves it. A no to either
+goes to the orchestrator with the smaller alternative, which may be "cancel", and the executor
+does not build the brief as written while it waits. A brief is an instruction, not proof the work
+is worth doing.
+
 ### `workflow/release-reds-first`
 
 A red the release run files blocks every release, so it is fixed first, the way a bug fix is. The
@@ -60,10 +80,11 @@ releases. Meaning express path line followed up by another run". A candidate red
 ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
 executes it 10 minutes after it was filed. An orchestrator staffs it before anything else, and one
 agent fixes it with the smallest checks that cover the repair, starting from the failing tests or
-the failing step rerun alone as its text names them. A red is fixed in the code. A test or check
-is never loosened to turn it green (an assertion widened, a timeout or a budget raised, a test
-ignored or moved out of the release run): a fix that must change one says on its thread why the code
-was not the thing to fix, and a fresh reviewer judges that. It is filed as a fast fix
+the failing step rerun alone as its text names them. A red is fixed in the code, and a test red on
+load is discarded instead (`tests/no-test-fails-on-load`). A test or check is never loosened to
+turn it green (an assertion widened, a timeout or a budget raised, a test ignored or moved out of
+the release run): a fix that must change one says on its thread why the code was not the thing to
+fix, and a fresh reviewer judges that. It is filed as a fast fix
 (`workflow/fast-bugfixes`) under a bound the land enforces: its orchestrator's approve lands a fix
 that changes none of the project's tests and checks (`[land] check_paths`,
 [TASKS](docs/TASKS.md#the-default-landing)), the failing tests unchanged and green at its tip, and
@@ -152,11 +173,23 @@ stall and gives the load average. Elapsed time stays only where the product's pr
 time, with its clock injected where it can be. A test that can be none of these is proposed on
 its task's thread, with the promise it guards and why no CPU bound, count, wait or injected clock
 can stand in for it; the orchestrator puts it to the owner, and it leaves `just verify` only on the
-owner's word. Until then it stays and runs. A product's real-time promise is never dropped: a test
-the owner lets go moves to a recipe a quiet machine runs, which still runs it, and none leaves
-before that recipe exists; docs/CHECKS.md lists each with its promise and the owner's word. No
-budget or tolerance is widened to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to
-use it: [CHECKS](docs/CHECKS.md#time-in-tests).
+owner's word. Until then it stays and runs. A test the owner lets go on such a proposal moves to a
+recipe a quiet machine runs, which still runs it, and none leaves before that recipe exists;
+docs/CHECKS.md lists each with its promise and the owner's word. No budget or tolerance is widened
+to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to use it:
+[CHECKS](docs/CHECKS.md#time-in-tests).
+
+A test that fails a release run or its rerun because of load is discarded. The owner, 2026-11-13:
+"A rerun should not fail or pass based on machine load. If it does, discard the tests and move on".
+It is load when the test passes alone, or when its failure is a wall-clock bound, a sleep-ordered
+step or a timeout under load. The red's own fix removes it from the tree, with one line on the
+red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
+what it proved. The owner's word is the approval: no card is put to them to discard such a test.
+If what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
+time or an injected clock, but the release does not wait for that. No rerun is spent on it, no
+rewrite is waited for, and nobody lowers the machine's load to help a run pass. A test that fails
+alone on what its code did, or fails the same way without load, is not this case and is fixed in
+the code.
 
 ### `a-test-that-passes-either-way-is-not-a-test`
 
@@ -248,6 +281,12 @@ did not: "I don't fully understand this issue. So pick whatever choice makes sen
 the decision does not need goes in a linked file, and pictures go where the thing judged is visual
 ([REVIEW](docs/REVIEW.md#writing-a-card)).
 
+### `docs/one-decision-per-card`
+
+A card asks one decision. A detail that carries choices of its own, its own A, B or C, is a card
+of its own that links the first, so no verdict has to decide several things at once
+([REVIEW](docs/REVIEW.md#writing-a-card)).
+
 ## Documents
 
 ### `history-is-not-reference`
@@ -256,6 +295,14 @@ Docs, guides, skills and code comments say how things are now, never what the co
 and a reviewer refuses a line that does. Evidence and superseded numbers go to `docs/history/`,
 which the Symphony passes over when it reads documents; a rejected approach keeps one line and a
 pointer.
+
+### `docs/no-ledger-in-documents`
+
+A document under `docs/` describes intent, behaviour and options. The owner's exact words and the
+dated history of who decided what, and when, live in the decision register (`docs/DECISIONS.md`,
+each card's dated lines) and on task threads; a document whose reason matters links its card,
+`[its card](DECISIONS.md#SLUG)` ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and
+`docs/history/` are the records that keep them.
 
 ### `docs/one-topic-per-doc`
 
@@ -273,10 +320,11 @@ An agent's handle belongs on the board thread, never in the commit.
 
 ### `tools/no-new-python`
 
-No Python is written or run here: not in the project's code, and not in an agent's own scratch
-scripts or one-off edits. The repository tracks no Python file. Simple operations use the `just`
-recipes and shell pipelines (`curl` with `jq` for JSON) rather than a language runtime; anything
-more is Rust.
+The repository tracks no Python file, and nothing it ships, builds, tests or checks runs Python:
+its simple operations are `just` recipes and shell pipelines (`curl` with `jq` for JSON), and
+anything more is Rust. An agent's throwaway code may be Python: a scratch script, a one-off edit or
+count, never committed and never a step of a recipe, a test or a check. The owner, 2026-11-13:
+"By the way, usage of python is acceptable for throw away code."
 
 ### `memory-lives-in-the-repo`
 

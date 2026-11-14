@@ -788,42 +788,112 @@ fn the_record_of_a_board_is_in_its_common_dir_named_by_its_database() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A repository whose board an older build keeps in its old folder has no record here: one made
-/// beside that board would make the move refuse. Its fence, once it moved, is no board.
-#[test]
-fn a_repository_whose_board_has_not_moved_keeps_no_record_and_one_that_moved_does() {
-    let dir = scratch("unmoved");
-    fs::create_dir_all(dir.join(".git")).unwrap();
-    let common = crate::git::common_dir(&dir).unwrap();
-    let old = common.join(crate::unmoved::OLD[0].1);
-    fs::create_dir_all(old.join("data")).unwrap();
-    let refused = crate::unmoved::refusal(&common, crate::folders::TASKS).unwrap();
-    for database in [None, Some("scratch_1")] {
-        let vars: Vec<(&str, &str)> = database
-            .map(|db| ("TASKS_DATABASE", db))
-            .into_iter()
-            .collect();
-        assert_eq!(
-            file(&env(&vars, &dir)),
-            Err(refused.clone()),
-            "{database:?}"
-        );
+/// A task of `status` at `slug` under `parent`, held by the orchestrators `held` of `health`.
+fn task(
+    slug: &str,
+    parent: Option<&str>,
+    status: &str,
+    held: &[(&str, crate::Health)],
+) -> crate::Task {
+    crate::Task {
+        branch: None,
+        id: 0,
+        slug: slug.into(),
+        title: String::new(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: parent.map(str::to_string),
+        created_by: String::new(),
+        created: 0.0,
+        updated: 0.0,
+        links: Vec::new(),
+        depends: Vec::new(),
+        roles: (held.iter())
+            .map(|(handle, health)| crate::Role {
+                handle: handle.to_string(),
+                role: "orchestrator".into(),
+                since: 0.0,
+                expires: None,
+                health: *health,
+            })
+            .collect(),
+        instruction: false,
+        fields: Default::default(),
     }
+}
+
+#[test]
+fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read() {
+    use crate::Health::{Live, Lost};
+    let recorder = Recorder::default();
+    let report = recorder.report(T0);
+    assert_eq!(report.unowned, None, "no board read yet");
     assert!(
-        !common.join("symphony").exists(),
-        "nothing made beside the old board"
+        !(report.lines(T0, &[]).iter()).any(|line| line.contains("no orchestrator")),
+        "and none said"
     );
-    // A record the caller names is its own to place.
-    let named = dir.join("named.json");
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("unowned").is_none(), "{json}");
+    let board = crate::Board {
+        tasks: vec![
+            task("held", None, "in_progress", &[("amber", Live)]),
+            task("held/below", Some("held"), "ready", &[]),
+            task("left", None, "review", &[("ghost", Lost)]),
+            task("free", None, "ready", &[]),
+            task("finished", None, "done", &[]),
+            task("dropped", None, "cancelled", &[]),
+        ],
+        sessions: Vec::new(),
+        latest_message: 0,
+    };
+    recorder.unowned(&board);
+    let report = recorder.report(T0 + 1.0);
+    assert_eq!(report.unowned, Some(2), "left and free");
+    let lines = report.lines(T0 + 1.0, &["it is unwell".into()]);
     assert_eq!(
-        file(&env(&[(FILE_VAR, named.to_str().unwrap())], &dir)),
-        Ok(named)
+        lines[lines.len() - 2..],
+        [
+            "  open tasks no orchestrator holds: 2, as of the newest board read".to_string(),
+            "⚠ it is unwell".to_string(),
+        ]
     );
-    fs::remove_dir_all(&old).unwrap();
-    fs::write(&old, "moved by tools/move-state.sh to symphony/tasks\n").unwrap();
+    // A defect, as `tasks status` reads the record: every open task has an orchestrator.
+    let defect = "2 open tasks no orchestrator holds, as of the newest board read: the next read of \
+                  the whole board gives each to an orchestrator that stays (live past its first \
+                  live line, and waiting, watching or holding a task), and it waits while none does";
+    assert_eq!(report.read_warnings(T0 + 1.0, |_| true), [defect]);
+    assert!(
+        report.warnings(T0 + 1.0).is_empty(),
+        "the record's own warnings, which the server's pages show, stay its passes'"
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["unowned"], 2);
+    let read: Report = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(read.unowned, Some(2));
+    let mut older = json;
+    older.as_object_mut().unwrap().remove("unowned");
+    let read: Report = serde_json::from_value(older).unwrap();
     assert_eq!(
-        file(&env(&[], &dir)),
-        Ok(common.join("symphony/tasks/health.json"))
+        read.unowned, None,
+        "a record written before the count reads without it"
     );
-    fs::remove_dir_all(&dir).unwrap();
+    recorder.unowned(&crate::Board {
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        latest_message: 0,
+    });
+    let settled = recorder.report(T0 + 2.0);
+    assert_eq!(settled.unowned, Some(0), "the newest board decides");
+    assert!(settled.read_warnings(T0 + 2.0, |_| true).is_empty());
+    let mut one = settled;
+    one.unowned = Some(1);
+    assert_eq!(
+        one.read_warnings(T0 + 2.0, |_| true),
+        [
+            "1 open task no orchestrator holds, as of the newest board read: the next read of the \
+             whole board gives each to an orchestrator that stays (live past its first live line, \
+             and waiting, watching or holding a task), and it waits while none does"
+        ]
+    );
 }

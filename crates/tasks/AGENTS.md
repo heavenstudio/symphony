@@ -46,16 +46,7 @@ none, or none naming an id, the machine registry (`projects.json` in
 entry for the repository's main checkout, else that checkout's folder name
 does. The board is the repository's own, its server in that common dir and its
 namespace and database unchanged. The heartbeat keys, the idle sweep's state
-and the staffing lock stay there too. While an older build's state is still in
-the old folders there, which `tools/move-state.sh` moves into `symphony/`
-(`src/unmoved.rs`), a command reaching the board, a start or stop of its server
-(`Home::in_common`'s), a sweep's request and a model's fetch refuse with the line
-naming the move, and the heartbeat's keys, recorded work and runs are kept
-nowhere, and the board's health record (`board_health::file`) only in the memory of
-the one server, which serves such a project when another build registered it, so no
-empty board or folder is made beside the old one
-(`tests/cli/unmoved.rs`); `just symphony` refuses the same before it registers
-the project. A fixture repository under a checkout's
+and the staffing lock stay there too. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
@@ -99,9 +90,7 @@ with an empty registry, or in a copy of the repository that kept the original's
 original's default branch. Only where the machine cannot say who listens there
 (nothing does, or no `lsof` or `ps` answers) is it known by the record of the
 working directory's repository, then of a registered project, that names its
-port. Until `tools/move-state.sh` moves a repository's state, an older build's
-board in the board's old folder is its live one, by the data it serves and the
-record there (`unmoved::board_record`). Only a build
+port. Only a build
 the repository's default branch says is its own moves one behind it, judged by
 what that branch commits (`live::committed`, which `git` reads from the common
 dir), never by what a checkout holds, the branch the main checkout has out or the
@@ -258,7 +247,9 @@ The next successful sweep confirms the terminal or retires the registration.
 An incomplete terminal inventory still confirms its identified threads; it withholds retirement of
 unmatched registrations until an inventory establishes absence. PULL lists unknown handles only
 while they hold claimable work, just as the per-child warning does.
-The shared server sweeps once on startup, then every five minutes. Each command has a four-minute
+The shared server sweeps each project it serves that has a board, in that project's checkout, once
+it first serves it (at startup, or as the project is registered), then every five minutes, each on
+a schedule of its own until the project is removed. Each command has a four-minute
 deadline and its owned process group is ended on timeout or shutdown, so the next sweep can run.
 An unchanged callback snapshot drains its durable outbox without rescanning the inbox; its message
 cursor advances only with the persisted observation and queued events.
@@ -382,8 +373,23 @@ identities in `callback_state.pull_unanswered`, separate from main's whole-board
 withheld or merely queued entries never enter that history. `store/unanswered.rs::unanswered_post`
 defines pending work for the digest, restore selection and sweep: a post since that handle took
 its role, without a later message, status move or verdict by it on that task or a descendant.
-The descendant lookup reads only that recipient's eligible records after the post through
-`message_sender`, then checks actual task parents. Direct `land-approve` approvals journal a
+`Store::pending_posts` reads in proportion to what it is asked (`unanswered::Asked`), never the
+board: PULL and recovery ask for the posts overdue on open tasks and read only the threads and
+launches of tasks `in_progress`, `blocked` or in `review`; the reap asks for the posts its judged
+handle and the sessions under it owe, on the threads that address one of them, hold a system
+record one made (`message_recipient`, `message_sender`) or name one in a role. Threads, launches
+and the threads below a task are record ranges (`message:[slug, ..]`, `task_session:[slug, ..]`),
+and only the posts still asked after the in-memory filters read the threads below their task after
+the post (the own thread's answer is the thread check). In a board command each of its reads (four
+at most) waits at most `UNANSWERED_WAIT` (10 s, `TASKS_UNANSWERED_WAIT` when set), sent once
+(`Store::looking_up_within`, `rpc::Client::bounded`); a store none is set on waits on it as on
+any read. A PULL then skips its unanswered posts and says why, and the reap, at its judgment or
+either last look, keeps the terminal it could not judge and goes on to the next (the cli target's
+`pull::command` and the launch target's `reap_unread` set the wait short). The plans
+inside its closures are pinned by `store/unanswered_reads.rs`, its cost on the generated board by
+the perf target's `unanswered`. Recovery's final check reads only that recipient's eligible
+records after the post through `message_sender`, then checks actual task parents. Direct
+`land-approve` approvals journal a
 message through the existing board API. The final recovery reservation rechecks the recipient's
 records and the parent edges used in its answer decision before reserving the attempt. Acquiring the
 role also puts the predecessor's posts before the new holder's work, even at the same clock time.
@@ -658,6 +664,17 @@ row for the terminal's process says nothing of it. A terminal the board would
 close whose `hc get`, table or window cannot be read stays, and cleanup and
 finish print `kept pane T [of H] (never closed on no information: WHY)`; one on
 screen prints `kept pane T [of H] (on screen in the Herdr app)`.
+A product deadline a test would otherwise trip on a loaded machine is a setting, read only when
+set and never raised for anyone else: the recorder's waits scale by `TASKS_RUN_WAIT_SCALE` on a
+scratch board alone (docs/MACHINE_WORK.md), and these are seconds (`Env::seconds`):
+`tools/record.sh`'s probe `TASKS_RECORDER_PROBE_WAIT`, the landing's listening window
+`TASKS_ON_LAND_SAYS`, hc's wait for a killed terminal `TASKS_HC_ENDING`, a Codex delivery's
+`TASKS_CODEX_WAIT`, and each read of the unanswered-post lookup `TASKS_UNANSWERED_WAIT` (a store a
+test opens itself sets none). A test of the deadline itself sets it short; every other test gives it a
+backstop, so its result never turns on how loaded the machine is. Where a test must act only after
+the product did something on a thread of its own, the product leaves a mark it reads only when
+set: the recorder makes the file `TASKS_RUN_END_MARK` names once it has stamped its command's end
+(docs/MACHINE_WORK.md).
 The idle sweep (`launch/reap.rs`) removes each terminal of the board whose program ended at the
 first sweep that finds it, out of the owner's sight, its open records closed first with their
 restore line (`its program ended`); one whose records are closed already goes without a line.
@@ -1042,6 +1059,28 @@ field, since a reader built before it refuses a task row with a field it does
 not know, and every write that moves the task, changes its parent or its
 dependencies deletes it. Each statement the cap sends is in `SLOT_READS`, which
 `tests/store/slots/cost.rs` has the server plan.
+Every open task has an orchestrator (`store/work/given.rs`, its rules in `orchestration.rs`,
+`tests/store/orchestrator_given.rs`). A pass of the board's gives is one write, fenced on the
+versions of the tasks it read and the last beat of each lost or left holder it drops
+(`given::FENCES`); each receiver is fenced as a hand-over's is and its slot counter bumped, so a
+start decided before the give is decided again, and no cap refuses a give but a move's, which
+the move's own cap read decides. `leave` carries its
+gives in its own transaction, over the orchestrator roles it read (`$held`). The waiting mark is
+the board field `fields._board.waiting`, on the topmost task of a tree nobody holds, lifted by the
+give or once the tree is held. A plain `Store::create` gives none: the command line's and the
+API's `create`, the owner's task, staffing's review job and the regenerator's red give
+(`Store::give_filed`); `set_parent` gives a task it moves out from under its orchestrator's to
+that one in the move's own write (`Store::kept_at_move`, read only when a task above it leaves
+its line), its cap read counting the work as that one's; and every reader of the whole board
+gives the rest (`Store::give_if_due`, a pass of `Store::give_unowned` only when its read shows
+work one that stays could take, a top not yet marked or a stale mark): `collect_callbacks` (each
+`tasks wait` look), a detached dispatcher's delivering `dispatch_board` (`Store::giving`), the
+monitor's look, `tasks pull`, the server's `Hub::board_read` each tick, and the idle sweep. Its own write's dispatch makes
+no pass (a thread-local guard). The board's own choice takes only an orchestrator that stays
+(`orchestration::Pool::of`: live, connected `LIVE_SECONDS` before, and listening, a channel, the
+chat seat's waiting list or a monitor's pid, or holding a task); `Store::pool` reads the listeners
+for the candidates alone. A give's line is read by `orchestration::moved`, so `ever_held` counts
+its receiver, and the receiver hears the board's gives as one GIVEN line (`attach/events.rs`).
 `alarm.rs` owns the pipeline alarm PULL says: `[board] review_alarm_ratio`,
 `review_alarm_hours` and `review_alarm_clear_hours`, read as the cap is
 (`limits.rs`, `Store::alarming` in a test). It writes only where rework ended (below):
@@ -1492,8 +1531,9 @@ its 384-F32 chunks publish atomically. Missing parts are repaired, removed
 sources are pruned, and a model id change re-embeds every source. The schema's
 `task_embedding` HNSW index is cosine/F32 over `task_chunk.embedding`.
 
-The shared Symphony server runs `tasks embed --maintenance --threads 1` through
-the project's committed-main launcher, at startup and every minute, in an owned
+The shared Symphony server runs `tasks embed --maintenance --threads 1` for each
+project it serves that has a board, through that project's committed-main launcher,
+as it first serves it and every minute, in an owned
 child with `nice -n 10` and without the starter's agent, database or server
 environment. Private previews never run it. Failures retry; server shutdown
 cancels the child, and completed sources survive interruption. If the shared

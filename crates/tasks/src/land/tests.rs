@@ -873,36 +873,57 @@ fn a_lands_worktree_lock_names_its_pid_and_when_it_started() {
 
 #[test]
 fn a_command_past_its_limit_is_ended_with_its_whole_group() {
+    use std::os::unix::process::ExitStatusExt as _;
+    // Sleeps no wait outlasts: a shell that ended by itself would end well, never by a signal.
     let mut child = sys::command("sh")
-        .args(["-c", "sleep 30 & sleep 30; wait"])
+        .args(["-c", "sleep 600 & sleep 600; wait"])
         .process_group(0)
         .spawn()
         .unwrap();
-    let began = Instant::now();
     let group = child.id();
     let (status, ended) = watched(group, Duration::from_millis(300), None, || child.wait());
     assert_eq!(ended, Ended::Late);
-    assert!(!status.unwrap().success());
+    // Asked to end, or made to once its grace ran out on a machine too loaded to end it sooner.
+    let signal = status.unwrap().signal();
     assert!(
-        !sys::group_alive(group),
-        "the background sleep went with it"
+        [Some(libc::SIGTERM), Some(libc::SIGKILL)].contains(&signal),
+        "the watchdog ended it: {signal:?}"
     );
-    assert!(
-        began.elapsed() < Duration::from_secs(10),
-        "{:?}",
-        began.elapsed()
-    );
+    until_gone(group, "the background sleep went with it");
     let mut quick = sys::command("true").process_group(0).spawn().unwrap();
-    let (status, ended) = watched(quick.id(), Duration::from_secs(30), None, || quick.wait());
+    let (status, ended) = watched(quick.id(), PATIENT, None, || quick.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
 }
 
+/// The limit a command given no limit to reach is watched with: the backstop of the 30 s these
+/// tests once gave it, which no loaded machine keeps a quick command from ending within.
+const PATIENT: Duration = test_time::backstop(Duration::from_secs(30));
+
+/// Once the process group `group` is gone: what a watchdog ended goes once whoever took it on
+/// reaps it, as soon as a loaded machine lets them, which a look at once can find not done yet.
+/// What it left runs ten minutes, so a group still there past the backstop of the 10 s these
+/// tests once allowed was never ended.
+#[track_caller]
+fn until_gone(group: u32, what: &str) {
+    test_time::until_true(
+        format!("{what}: its group is gone"),
+        test_time::backstop(Duration::from_secs(10)),
+        || !sys::group_alive(group),
+    )
+    .unwrap();
+}
+
 #[test]
 fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
-    // The shell ends at once; the sleep it left in the background, in its group, would run on.
+    // The shell ends at once; what it left in the background, in its group, would run on, and
+    // marks it ran to its end: only a wait for it to end by itself finds the mark.
+    let dir = std::env::temp_dir().join(format!("symphony-land-leftover-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let mark = dir.join("ran-to-its-end");
     let mut child = sys::command("sh")
-        .args(["-c", "sleep 30 &"])
+        .args(["-c", &format!("(sleep 600; touch '{}') &", mark.display())])
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -910,12 +931,12 @@ fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
         .spawn()
         .unwrap();
     let group = child.id();
-    let began = Instant::now();
-    let (status, ended) = watched(group, Duration::from_secs(30), None, || child.wait());
+    let (status, ended) = watched(group, PATIENT, None, || child.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
-    assert!(!sys::group_alive(group), "the sleep it left was ended");
-    assert!(began.elapsed() < GRACE + Duration::from_secs(5));
+    until_gone(group, "what it left was ended");
+    assert!(!mark.exists(), "what it left was waited out, not ended");
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A scratch main checkout: the folder `dir` holding `files` alone.

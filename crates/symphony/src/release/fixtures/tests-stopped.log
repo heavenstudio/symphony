@@ -1,0 +1,24 @@
+   Compiling symphony-api v0.1.0 (/work/symphony-wt/release/crates/symphony-api)
+   Compiling chrome-devtools v0.1.0 (/work/symphony-wt/release/crates/chrome-devtools)
+   Compiling symphony v0.1.0 (/work/symphony-wt/release/crates/symphony)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 02s
+     Running unittests src/lib.rs (.target/debug/deps/chrome_devtools-0a1b2c3d4e5f6071)
+
+running 46 tests
+Chrome shutdown /tmp/symphony-chrome-501/19028-0/0: suite stdin closed
+Chrome cleanup /tmp/symphony-chrome-501/19028-0/0: group=19042 still present after browser reap
+Chrome shutdown /tmp/symphony-chrome-501/17778-0/17: its profile: No such file or directory (os error 2)
+test tests::cpu_exhaustion_stops_renderer_work_before_the_poll_allowance ... ok
+test tests::chrome_dies_with_its_suite ... ok
+
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.14s
+
+     Running tests/release/main.rs (.target/debug/deps/release-5e2f8d6c1a0b9e37)
+
+running 2 tests
+after_commit case=a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure pid=46447 +0.861s: waiting for socket entry at 127.0.0.1:49493
+Symphony: branch docs/verdict-46447-0-4: just verify failed: fixture content check refused
+error: recipe `verify` failed on line 15 with exit code 23
+test a_failed_output_check_keeps_the_verdict_branch_and_reports_the_failure ... ok
+Chrome cleanup /tmp/symphony-chrome-501/20111-0/3: its group: Not a directory (os error 20)
+(stopped after 36000 s: the run's time was up)

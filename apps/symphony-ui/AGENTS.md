@@ -43,15 +43,8 @@ never the whole target, which the release run runs.
   these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
-  bundle.sh runs when one is missing. Until `tools/move-state.sh` moves a
-  repository's state, the copies an older build installed stand in its old
-  folder, and every build of the old code runs them there: a build of this
-  code runs them there too (`tools.sh --folder` names the folder a build runs
-  them from), installs none beside them, and refuses what they lack, naming
-  the move (`tests/tools.rs`). No build removes them, since another worktree's
-  build may be running them; only the move takes them away, while nothing
-  builds, and it refuses while a process has a file open under them or works
-  there. A build runs dx from neither folder: dx makes itself the rustc wrapper of
+  bundle.sh runs when one is missing (`tools.sh --folder` names that folder,
+  `tests/tools.rs`). A build does not run dx from there: dx makes itself the rustc wrapper of
   the workspace's own crates by its canonical path, which Cargo mixes into their
   symbol names, and so into every byte of the wasm and every asset name. So
   `bundle.sh` runs it as `/private/tmp/symphony-client-tools/dx-0.7.10/bin/dx`,
@@ -410,6 +403,19 @@ never the whole target, which the release run runs.
   `queue_filter.rs` derives counts from the complete snapshot and stores the selected
   owner category through `Platform` on this device. Chips use the shared Button;
   an absent saved category displays All without hiding new work.
+- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, drawn by the task pages'
+  module (`page-tasks`) as the Agents page is, which already holds the runtime, frame and
+  components it uses: a module of its own would weigh some 560 KB in each build the
+  distribution keeps, against the client's line. Its style is `assets/reports.css`. It reads
+  the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
+  once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
+  phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
+  boxes over a column a period, lines as one SVG whose strokes keep their width, both on one
+  axis with its unit; a period no file recorded is hatched and its line broken, never a zero.
+  A tap or the arrow keys pick a period, the same on every chart, and its readout says every
+  value as text; each chart's table holds every period. The series take `--chart-1` to
+  `--chart-5`, set at no specificity so a theme's own win, with their own steps in the dark.
+  Charts below the screen mount through `NearViewport`. Hours are labelled in UTC.
 - **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
   source positions and anchors, with short card summaries. `viewport::NearViewport`
   uses the shared visibility latch to mount each block once near the screen; a collapsed

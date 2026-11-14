@@ -70,11 +70,12 @@ pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
+pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Held, LANDS_FROM, Landed, NewTask, PIPELINE, PULLABLE,
-    ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by, covered_line,
-    landing,
+    BEFORE_WORK, COVERED, CoveredLine, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
+    PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
+    covered_line, landing,
 };
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
@@ -88,6 +89,10 @@ pub type HandOff = Box<dyn Fn() -> bool + Send + Sync>;
 /// How long a call reads and decides again before it gives up on a board that keeps moving: as long as
 /// the SQLite store waited on its write lock, not a count of tries a busy board spends in two seconds.
 const PATIENCE: Duration = Duration::from_secs(30);
+thread_local! {
+    /// The tries this thread's calls made again ([`Store::tried_again_here`]).
+    static TRIED_AGAIN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 /// What a write throws when what its rule decided on has moved.
 const STALE: &str = "stale";
 /// What a write throws to refuse goes before its words: the refusal comes back as `Error::Refused`.
@@ -188,6 +193,10 @@ pub struct Board {
 
 pub struct Store {
     client: Client,
+    /// The client the unanswered-post lookup reads through when one is set
+    /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
+    /// sent again ([`Client::bounded`]). None reads through `client`, as every other read.
+    lookup: Option<Client>,
     clock: Clock,
     pid_alive: Probe,
     host: String,
@@ -201,6 +210,9 @@ pub struct Store {
     process_scan: kept::Scan,
     /// Where this store's writes send their callback dispatch; none dispatches in the write.
     hand_off: Option<HandOff>,
+    /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
+    /// dispatcher's ([`Store::giving`]).
+    giving: bool,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an
@@ -236,6 +248,15 @@ impl Store {
     /// name that server ([`board_command`]).
     pub fn on_named_server(mut self) -> Store {
         self.named_server = true;
+        self
+    }
+
+    /// This store, each read of its unanswered-post lookup waiting at most `wait` (its client's own
+    /// wait when that is shorter) and sent once: a board command's, [`UNANSWERED_WAIT`] unless
+    /// [`UNANSWERED_WAIT_VAR`] says, so no command waits minutes on what it can do without. A
+    /// store none is set on waits on the lookup as on any read.
+    pub fn looking_up_within(mut self, wait: Duration) -> Store {
+        self.lookup = Some(self.client.bounded(wait));
         self
     }
 
@@ -699,24 +720,41 @@ impl Store {
         Ok(view.tasks().remove(0))
     }
 
-    fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
-        let began = Instant::now();
-        let mut attempt = 0;
-        loop {
-            match once() {
-                Ok(done) => return Ok(done),
-                Err(Failure::Stop(error)) => return Err(error),
-                Err(Failure::Again) if began.elapsed() < PATIENCE => {
-                    std::thread::sleep(backoff(attempt));
-                    attempt += 1;
-                }
-                Err(Failure::Again) => {
-                    return Err(Error::Db(format!(
-                        "gave up after {} s and {} tries: the board kept moving under the write",
-                        PATIENCE.as_secs(),
-                        attempt + 1
-                    )));
-                }
+    /// How many times a call on this thread has read and decided again since the thread began, the
+    /// board having moved under it (a conflict, or a stale guard): the work a busy board cost this
+    /// thread's calls, which a caller reads before and after a call to count that call's own.
+    pub fn tried_again_here() -> u64 {
+        TRIED_AGAIN.with(std::cell::Cell::get)
+    }
+
+    fn retrying<T>(&self, once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
+        retried(PATIENCE, once)
+    }
+}
+
+/// `once` tried until it gives its result or refuses, again each time the board moved under it,
+/// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+fn retried<T>(
+    patience: Duration,
+    mut once: impl FnMut() -> Result<T, Failure>,
+) -> Result<T, Error> {
+    let began = Instant::now();
+    let mut attempt = 0;
+    loop {
+        match once() {
+            Ok(done) => return Ok(done),
+            Err(Failure::Stop(error)) => return Err(error),
+            Err(Failure::Again) if began.elapsed() < patience => {
+                TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
+                std::thread::sleep(backoff(attempt));
+                attempt += 1;
+            }
+            Err(Failure::Again) => {
+                return Err(Error::Db(format!(
+                    "gave up after {} s and {} tries: the board kept moving under the write",
+                    patience.as_secs(),
+                    attempt + 1
+                )));
             }
         }
     }

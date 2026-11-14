@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Whether a dispatcher holds this host's dispatch lease now.
 fn held(f: &Fixture) -> bool {
@@ -19,13 +19,12 @@ fn held(f: &Fixture) -> bool {
         .is_some_and(|until| until > f.now())
 }
 
-/// Wait until `done`, which another thread brings about within seconds.
+/// Wait until `done`, which another thread brings about within seconds, up to the backstop of the
+/// 30 s it once had.
+#[track_caller]
 fn until(done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !done() {
-        assert!(Instant::now() < deadline, "not within 30 s");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let what = format!("the condition at {}", std::panic::Location::caller());
+    test_time::until_true(what, test_time::backstop(Duration::from_secs(30)), done).unwrap();
 }
 
 /// Whether `handle` acknowledged `message`, as a delivery records it.

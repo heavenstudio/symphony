@@ -498,43 +498,6 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
-### The folder move
-
-An older build keeps a repository's state in folders of the git common dir under the old names,
-and a build of this code refuses to start a board, a server or a recorder there until
-`tools/move-state.sh` has moved them into `symphony/` (its header lists each move). It is run once
-per repository, from any of its checkouts, `--dry-run` first, with the board held and the shared
-server stopped. Every move is a rename, and nothing moves while anything of the repository runs:
-a process whose command line names the old folders, one with a file of the board's, the server's
-or the old client tools open or working there, by whatever path (lsof finds the ones named
-relatively), a server either record names, a land, a fetch of SurrealDB, or a program of the
-board or the server in a checkout. Each refusal names the pid and says what to end.
-
-A SurrealDB server whose data folder and working folder both lie outside the repository is passed
-instead, and named on stdout with both: a test's private board an older build left running on the
-pinned program from the old folder, which it keeps running once that moves. Its data is the last
-word of its command line (`memory`, or a path after `surrealkv://` or another engine's scheme),
-made absolute against its working folder. A folder lies in the repository when the common dir
-holds it or git, asked there, finds this repository, or, where git finds none, when a checkout
-holds it; a repository nested in a checkout's ignored files is another, and a working folder since
-removed lies in none. One that also has a file of the board's or the server's open is refused. The
-move signals no process, passed or refused.
-
-The board's records of processes move with its folder, byte for byte, and the new build reads
-them as its own: the hold the move was made under, a private replay's record and each ask to end
-a server. The hold still holds the board after the move, so the script's closing line then says
-to release it first, with a build of the new code (`just tasks database release --as HANDLE`);
-otherwise the next `just tasks` starts the board, and `just symphony` the shared server.
-
-The board's, SurrealDB's, the server's and the model's old folders, once moved, each leave a
-one-line file of their name saying where they went, so a build from before the move fails there
-instead of starting an empty board or fetching SurrealDB beside the moved state. Such
-a build (an unmerged worktree's, an agent's binary still running) then says `held by an unknown
-setter since 1969-12-31 …: …/hold is there and does not read as a hold (Not a directory (os error
-20))` from most commands, and `could not make …: File exists` from a hold, a release, a snapshot,
-a sweep or `tasks-reclaim`. Both mean the state moved: merge main and rebuild. `just tasks
-database release` run by such a build does nothing to it, as the file is no hold.
-
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a
@@ -627,6 +590,20 @@ new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or i
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
+
+**Open tasks nobody orchestrates.** Every open task has an orchestrator
+([Tasks and roles](#tasks-and-roles)), so one with none is a defect: the record also counts the
+unfinished tasks with no holding orchestrator on them or above them in the board the server's clock
+read last (`unowned` in the record, `Recorder::unowned`), and `tasks status` says `open tasks no
+orchestrator holds: N, as of the newest board read` and, while N is above zero, warns of it, in its
+`--json` warnings too: `N open tasks no orchestrator holds, as of the newest board read: the next
+read of the whole board gives each to an orchestrator that stays (live past its first live line, and
+waiting, watching or holding a task), and it waits while none does`. The tick gives what it finds
+first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait for an
+orchestrator that stays. Counting reads the board the tick already read and adds no request; a
+record written before any board read, or by a build older than the count, has none and says none. The owner's word on each of those tasks reaches
+every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
+server's own notice and the project picker do not warn of it.
 
 **Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
 line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
@@ -786,11 +763,15 @@ floor defers work. Every proposal, dispatch, deferral and failure prints one lin
 the task; deferrals and dry runs post nothing. A dry run previews even while
 disabled and creates no task, session or terminal.
 
-**Idle agents are closed by the board, not by a reminder** (owner, 2026-10-07). A task
+**Idle agents are closed by the board, not by a reminder.** A task
 that becomes done or cancelled closes its sessions at once; the rest is a sweep the
-Symphony's process (`just symphony`) runs every five minutes. A lock in `symphony/tasks/`,
-beside the board's server, keeps two sweeps (a second app's, or `just tasks reap` by
-hand) from running at once, and nothing goes into any monitor. It closes (`hc kill`,
+Symphony's process (`just symphony`) runs every five minutes for each project it serves that
+has a board, each on a schedule of its own in its own checkout, started as the project is
+registered and stopped as it is removed, so one project's failing or hung sweep holds up no
+other's; each writes its own `reap.json` and its own board's health, which `just tasks status`
+reads. A lock in `symphony/tasks/`, beside the board's server, keeps two sweeps (a second
+app's, or `just tasks reap` by hand) from running at once, and nothing goes into any monitor.
+It closes (`hc kill`,
 then `hc rm`) one of this board's terminals (label `symphony.board`) whose named agent was
 idle (or stuck on the folder-trust prompt) at two sweeps at least five minutes apart,
 however many apps sweep, when neither its handle nor a subagent session under it holds
@@ -804,8 +785,8 @@ Nothing runs under it but MCP helpers (Codex's configured `node_repl` and the Ch
 app's `cua-repl.mjs` under its own `node` among them, each by its exact path, and
 Codex's `codex-code-mode-host` in a standalone release's `bin` folder), caffeinate and
 board commands: anything else is work, a `codex exec` job included. The roles above
-keep it for an hour at most (owner, 2026-11-08: "Only sessions doing active work or that
-will soon (less than one hour) have active work should be kept open"): idle at its
+keep it for an hour at most, since only a session doing work, or about to within the hour, stays
+open: idle at its
 prompt that long, from its last tool call or the last change of its role or task
 status, it closes saying what brings it back; only an unanswered addressed post keeps
 it longer. A terminal whose program ended is removed at the first sweep, the open
@@ -821,9 +802,8 @@ and why each terminal stays; a sweep tells its log why it keeps an idle one, onc
 reason. `just tasks clean` runs cleanup and one sweep at once, never closing the caller's.
 Code: `crates/tasks/src/launch/reap.rs`.
 
-**Finished worktrees go by themselves** (owner, 2026-10-21: "do any cleanups for worktrees
-that can help decrease needless disk usage. No need to ask, this should happen automatically
-when tasks are complete"). The worktree sweep (`just tasks sweep`, the rules in
+**Finished worktrees go by themselves**, without asking, so they hold no disk once their tasks
+are complete. The worktree sweep (`just tasks sweep`, the rules in
 the consuming project's worktree policy) starts, detached, whenever work
 finishes: a task going to done or cancelled (its closed sessions' worktrees then go without
 the 2 h wait), `just tasks leave`, `just tasks reap`, and at most once an hour `just tasks
@@ -886,14 +866,10 @@ A board `TASKS_SERVER` names (a test's) starts no sweep unless
 `TASKS_SWEEP=on`; `TASKS_SWEEP=off` starts none anywhere. Code: `crates/tasks/src/sweep.rs`.
 
 **What the sweep sets aside stays, its build output never, and past a cap the sweep asks for a
-check by hand.** The owner, 2026-11-12: "images should be kept, build should not. Images and other
-artifacts can be pushed into a main tree. However there should be a cap to the size of the folder,
-after which it should ask/warn agents to manually check and remove stale images and artifacts not
-in use. Maybe 5 GB limit?"; and the same day: "Instead of directly commiting, artifacts could be
-attached some with some different process. Either nodes, or git files? Forgot the name but I think
-there was something for this type of challenge in particular. But if there's something that still
-actively references the artifact, then it should be kept until space used becomes a problems
-requiring it to be remove." What is set aside stays in the main checkout's artifacts folder, which
+check by hand.** A finished worktree's pictures and other artifacts are kept in the main checkout
+and its build output is not; past a size cap, agents are asked to check by hand and remove what
+nothing uses any more ([its card](DECISIONS.md#sweep-artifacts-set-aside)). What is set aside
+stays in the main checkout's artifacts folder, which
 git ignores, and nothing commits it; attaching it to the repository without a commit on main is a
 design of its own. Build output in a worktree's artifacts folder (a folder tagged as a cache by a
 `CACHEDIR.TAG` that begins with the convention's signature, `Signature:
@@ -901,7 +877,7 @@ design of its own. Build output in a worktree's artifacts folder (a folder tagge
 nothing; or a file of compiled code, known by its first bytes: ELF, Mach-O, wasm, an archive) is
 never set aside and goes with the worktree. Nothing removes what
 was set aside, ever: past its cap, `[board] swept_cap_gb` in `symphony.toml`, in gigabytes (5 when
-unwritten, the owner's suggested figure; a value that is no number over 0 is said and 5 taken), the
+unwritten; a value that is no number over 0 is said and 5 taken), the
 sweep still sets aside and refuses nothing. Each sweep that may set aside measures `FOLDER/swept/`
 and keeps the measure in `symphony/tasks/swept.json` in the git common dir, beside the tasks tied to each
 folder's worktree when it was set aside. Past the cap, the sweep's output (the log's, for the
@@ -976,7 +952,7 @@ counts as a sign of life, and so does every tool call of a subagent (below):
 | live | seen in the last 90 s, or inside one long tool call that could still be running |
 | stale | quiet, or its monitor has stopped: its work is still held, nobody may take it |
 | lost | gone for 10 minutes holding claimable work: that work can be claimed, on the record |
-| left | it said `just tasks leave` (its roles were released), or it has been gone 10 minutes holding nothing anyone could claim |
+| left | it said `just tasks leave` (its roles were released, the open work it orchestrated given to another orchestrator, or waiting for one while none stays), or it has been gone 10 minutes holding nothing anyone could claim |
 
 **Claimable work** is what a session executes in `concept`, `design`, `ready`
 or `in_progress`, and what it reviews that is still in `review`. A session
@@ -1141,7 +1117,7 @@ place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
 digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
-(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own and unclaimed tasks (an idle agent another orchestrator launched is left out). An executor
+(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own tasks and those with no orchestrator yet ([Tasks and roles](#tasks-and-roles)) (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 A task in review whose tip a reviewer asked changes of is rework, counted in progress
 ([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
@@ -1167,7 +1143,8 @@ A channel registered anew starts again from the whole digest: `--off`, a registr
 session acknowledged, and a PULL waiting for it gives way to the whole digest; the posts it was told stay told.
 Only the same listener moving to a new socket keeps its account, so what waited out an outage is said there as it
 stands. An orchestrator reads the whole digest at its decision points with `just tasks pull` whatever it heard.
-A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
+The scan reads only the open tasks' threads, and each of its reads waits at most ten seconds and is sent once, so a
+board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
 those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
 next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
 Unanswered work retains its task/post identity across departures and returns.
@@ -1183,8 +1160,8 @@ orchestrator receives each task/post once, even if it leaves and returns; a new
 unanswered post can push a new line for the same task. Its count appears only when
 nonzero. `reap` makes the sole automatic recovery attempt described above.
 
-What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, NEW,
-STATUS, ROLE, BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
+owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
 or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
 children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
@@ -1237,8 +1214,8 @@ while one waits is said and work that only departs renews no budget. Work it hea
 acknowledged, whatever older dispatchers write, queue or acknowledge after. Only what was withheld from it is
 ambiguous, since an older dispatcher's own PULL told it the whole board and reads the same as the waiting one:
 withheld work counts as untold, so when a hand-over makes it the recipient's, one PULL counts it, once more at most
-for that hand-over and never left out, and nothing repeats on its own. Posts and verdicts are kept: they were said to
-whoever held the role then.
+for that hand-over and never left out, and nothing repeats on its own. Posts, verdicts and the owner's `MOVE`
+lines are kept: they were said to whoever held the role then.
 Codex callbacks use the queue by default; `git config symphony.codexSteer true` opts in to
 active-turn steering. The owner decides its first live use.
 
@@ -1363,9 +1340,8 @@ the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once, and the board's Status filter offers neither of them
 ([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
 
-**Review waiting on nobody is blocked.** The owner, 2026-11-03: "the task was
-in review, but actually waiting for some approval. So it should had been
-blocked instead in regards to the status, since no work was happening." A task
+**Review waiting on nobody is blocked.** A task that only waits on an approval,
+with no work happening, says so by its status. A task
 in review whose branch has every stamp it needs to land but ones nobody is
 producing (the owner's approval, a dependency only that approval collects, a
 hold its orchestrator names: the consuming project's stamp policy)
@@ -1419,7 +1395,7 @@ can hold one task at once, one role each:
 
 | role | how | may |
 |---|---|---|
-| orchestrator | `just tasks role SLUG orchestrator` | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
+| orchestrator | `just tasks role SLUG orchestrator`, or `just tasks create` by an orchestrator session | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
 | executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
 | reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
@@ -1438,10 +1414,9 @@ executor) is the one that lands it.
 
 ### A task another landing covers
 
-The owner, 2026-11-12, of a task whose fix landed with another task's branch, so that it had no
-branch of its own to land: "seems like a proccess bug. Should be able to close or cancel it". Its
-executor or its orchestrator, the session holding that role on it, closes it in any open status
-with no reviewer's verdict:
+A task whose fix landed with another task's branch has no branch of its own to land, and can
+still be closed. Its executor or its orchestrator, the session holding that role on it, closes it
+in any open status with no reviewer's verdict:
 
 ```sh
 just tasks done SLUG "what came of it" --covered-by OTHER --as HANDLE
@@ -1500,11 +1475,9 @@ what it lands. An orchestrator lands an approved task without asking the owner. 
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
-path or behind its lock, by the owner's verdict (2026-11-12, 06:42): "Adding 5 minutes
-may seem low, but the issue is that it becomes a “blocking 5 mins”. Every new PR that
-gets merged could invalidate the 5 min run, making it have to run it again and again
-and again, spiraling the 5 minute forever. A solution like a lock or queue would
-directly bottleneck the pipeline which isn’t acceptable either." One land of a
+path or behind its lock, since every merge could make a slow run start again, and a lock
+or queue around one would hold the whole pipeline back
+([its card](DECISIONS.md#land-tests-changed-packages)). One land of a
 repository runs at a time (`land.lock` in `symphony/tasks/`), the lock held for those
 seconds and its check; a second waits its turn and says whose, with no timeout,
 since the lock is freed when its holder's process ends however it ends, and a signal
@@ -1755,18 +1728,80 @@ HANDLE's open tasks past it ([Slots](#slots)). Taking the role over a holder tha
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
-role on it, or on the nearest task above it that has a holder still there; a
-task with none is **unclaimed**, as are a lost or left orchestrator's tasks
-until another takes them over. Each orchestrator hears its own tasks and the
-unclaimed ones only (`crates/tasks/src/orchestration.rs`): every
-orchestrator hears an unclaimed task's NEW lines, PULL digest rows and the
-STATUS of its move to `blocked`, which no digest row shows, and only its owner
-a claimed one's. A post to `@orchestrator`, and a
-verdict, go to the nearest holder still there, passing one gone quiet. A
+role on it, or on the nearest task above it that has a holder still there, and
+**every open task has an orchestrator**: one without is a bug. The board gives the role wherever
+a task would come to have none (`crates/tasks/src/orchestration.rs`,
+`crates/tasks/src/store/work/given.rs`):
+
+- **Filed.** An orchestrator session that files a task with `just tasks create` holds its
+  orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
+  task is already another's under a parent it holds; a subagent's claim of it leaves that role
+  where it is. `--no-role --for HANDLE` files it for HANDLE, a live orchestrator, which takes the
+  role instead; `--no-role` without `--for`, or with one naming no live orchestrator, is refused.
+  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, staffing's review
+  job, `tasks api`'s `create`) goes to the orchestrator of a task that session holds another role
+  on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
+  the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
+  is that one's by the tree, and nothing is written. `create` names who took it.
+- **Left.** A `leave` gives each open task the leaver orchestrates, and no other holder keeps, to
+  another orchestrator by the rule, in the leave's own write, one thread line each:
+  `B was given orchestrator from A (left)`. Only a leaver holding the orchestrator role reads the
+  board for it.
+- **Moved.** A `just tasks parent` move that takes a task out from under the task its orchestrator
+  holds keeps it with that orchestrator: the move gives it the role on the moved task in the same
+  write (`B was given orchestrator (SLUG moved out from under PARENT)`), so an orchestrator
+  restructuring its own tree keeps its work, and the move's cap read counts the moved work as
+  B's, in a slot of its own ([Slots](#slots)). Only such a move reads more than the tree: the two
+  lines of parents and the moved tree, once.
+- **Lost, or nobody's.** Every read of the whole board that shows an open task nobody orchestrates
+  gives it, as the board (`Store::give_if_due`): each look of an orchestrator's `just tasks wait`
+  and of its `attach` monitor, `just tasks pull`, each pass of the detached dispatcher a
+  command-line write starts while a channel is registered, the machine server's clock for every
+  project it serves, and the idle sweep (`just tasks reap`, from the server's maintenance of each
+  project it serves that has a board). So a lost or left holder's task (`B was given
+  orchestrator from A (lost)`), one filed by a build or a tool that gives none, or one on a board
+  copied in (`B was given orchestrator (nobody orchestrated it)`) is given at the next of them, on
+  every board, with no sweep run. Each read is bounded: one that shows every open task held reads
+  nothing more, one that shows only tasks waiting with none that stays reads one record of who
+  listens, and a give is made once (fenced on what it read, one thread line per give).
+  `reap --dry-run` says what it would give.
+- **Released.** `release SLUG --role orchestrator`, and `release` of every role, is refused while
+  it would leave open work with none and no orchestrator holds a task above it, naming
+  `just tasks handover SLUG HANDLE` to the orchestrator the rule picks, or saying no other that
+  stays is there (a `leave` then leaves the work waiting).
+- **Reopened.** A done task moved back to open work after its orchestrator went is given by the
+  rule in that move.
+
+A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
+had) names its orchestrator while that one is live. Otherwise the rule: the orchestrator holding the
+nearest task above it, else, among the orchestrators that stay, the one holding the fewest open
+tasks (ties by handle), one task at a time. An orchestrator **stays** when it is live, has been
+since past the first live line (registered 90 seconds or more before), and either listens (a native
+channel, a `just tasks wait` in progress, an `attach` monitor) or already holds the orchestrator role
+on an unfinished task. A session that only registered is given nothing by the board's own choice,
+so a throwaway that registers and goes moves nothing. With none that stays, the task is marked
+waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`), and the first
+orchestrator to come to stay is given it at the next whole-board read, told in one line however
+many it was given: `GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten
+named), in its wait, its monitor or its channel. The board's gives reach their receiver as that one
+line, never a `ROLE` line per task, and a given orchestrator has orchestrated the task, for the
+fresh reviewer rule. So a task with no orchestrator is only the moment before the board gives it
+one, or the wait while none stays, and their count is a defect on the board's health ([Board
+health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
+progress counts for its new orchestrator as it did for the one it had, and a ready one counts for
+none.
+
+Each orchestrator hears its own tasks, and every orchestrator hears a task with none, for that
+interval (`crates/tasks/src/orchestration.rs`): its NEW lines, PULL digest rows and the STATUS of
+its move to `blocked`, which no digest row shows; only its orchestrator hears an orchestrated
+one's. A post to `@orchestrator`, and a verdict, go to the nearest holder still there, passing one
+gone quiet. The owner's word, a post, a verdict or a move, asks more: on a task whose nearest
+holder is not live (stale, or of unknown liveness, as well as a task with none) it reaches every
+orchestrator, marked, since none is there to relay it ([Talking on a task](#talking-on-a-task)). A
 session gone stale or lost, or waiting in its terminal, is said to the
 orchestrator of the work it holds, its LOST line naming only that
 orchestrator's tasks and its BLOCKED line only a launch for one of them; a
-session whose work is nobody's, or who holds none, is
+session whose work has no orchestrator yet, or who holds none, is
 said to its parent, as before. The digest's idle sessions leave out the
 children of another orchestrator still there. Another orchestrator's task
 reaches it only in a post to its own handle. `just tasks list --doubled` lists the tasks
@@ -1784,11 +1819,10 @@ already work in (`--affinity`, and the slug prefix of tasks you hold).
 ### The regenerator
 
 What a project's `[land] generators` make (this repository's client distribution) is
-made after a land, never on its path, by the owner's rule (2026-11-12): "There should
-only be one version being built for main at a time, and once a version is built, it
-could then build the next most recent one. It should not cancel a previous in progress
-build and let it finish. This way there's no queue, just a limit of 1 per time that
-possibly skips some merges from building entirely". A land that closed its task starts
+made after a land, never on its path. One build for main runs at a time, and once it is
+built the next is main's newest tip: a build in progress is never cancelled but let
+finish, and there is no queue, so some merges are never built on their own. A land that
+closed its task starts
 `tasks regenerate` detached (`crates/tasks/src/land/regenerate.rs`), by the land's own
 build, its output appended to `symphony/tasks/land/regenerate.log`, and waits for nothing it
 does.
@@ -1876,7 +1910,7 @@ sources, and a server built from main then embeds the older client. The release 
 within its time, while the regenerator makes main's outputs, and releases nothing of a
 main still behind, filing nothing for it: the regenerator's red is the task then
 ([RELEASES](RELEASES.md)). A consuming project's pin moved to a commit of main waits the
-same way, by the owner's verdict (2026-11-12): it moves only once `just tasks
+same way ([its card](DECISIONS.md#pin-waits-for-current-client)): it moves only once `just tasks
 regenerate --status --wait`, run in the Symphony checkout, exits 0, and then to the
 commit it names. The pin is the project's own tooling, which runs it first; a pin to a
 release needs no wait, as no release is cut on a main whose client is behind. A branch
@@ -1991,9 +2025,9 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 
 ## Limits and models
 
-The owner, 2026-11-12: "all WIP limits should be settings anyway, as well as preferred model to
-delegate to. Should be very easy and simple to change the file whenever conditions or deicions
-happen." Each is a key of the project's `symphony.toml`, read from the repository's main
+Every work-in-progress limit, and the model each role is delegated to, is a setting, so a change
+of conditions or of mind is one edit of one file. Each is a key of the project's `symphony.toml`,
+read from the repository's main
 checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src/limits.rs`,
 `crates/tasks/src/launch/defaults.rs`):
 
@@ -2079,16 +2113,20 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 - **Whose slot.** The orchestrator of the task, or of the nearest task above it
   that has one whose session still holds ([Subtasks](#subtasks)); a task two
   orchestrators hold counts against both, and a start is refused if either is
-  full. A task no orchestrator holds counts against the parent session
+  full. A task no orchestrator holds yet, until the board gives it one
+  ([Tasks and roles](#tasks-and-roles)), counts against the parent session
   (`register --parent`) of the session starting it, or of its executors once
-  open.
+  open. No cap refuses the board's give: the task then counts against the orchestrator given it.
+  The one give a cap decides is a move's, which keeps the moved work with the orchestrator it had
+  (below), decided by that move's own cap read.
 - **Where it bites.** A claim into `in_progress`; a move into `in_progress`
   or `review` from a status that holds no slot, blocked work going back to
   review included; a dependency change that sends blocked work back to
   `in_progress` or `review`; taking the `orchestrator` role on a task with
   open work at or below it, or being handed it (`handover`, refused as the
   receiver's take would be); and a change of parent that brings open work at
-  or below the task under an orchestrator's tree. Each is refused when it would raise an
+  or below the task under an orchestrator's tree, or takes it out from under one, which keeps it
+  that orchestrator's in a slot of its own. Each is refused when it would raise an
   orchestrator's open tasks past the cap, naming them and their status, a
   shared slot's tasks joined by `with`:
   `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
@@ -2345,6 +2383,16 @@ an unblock's): they follow one another from the task's creation, the one it
 holds has no `to`, and their times add up to the statuses'. No table is added
 for them; they are the same read.
 
+`just tasks list --json` carries, on each task it lists, `in_status_since`:
+when the task took the status it holds, the replay's `current.since` (its close
+for a done or cancelled task; the task's `updated` where its thread does not
+record the change). `just tasks search --json` carries it too, its rows being
+list's, and `tasks api`'s `in_status_since` (api version 14) answers it for the
+tasks its `slugs` name, by slug, refusing a slug no task has. Each reads the
+tasks it names and their status and verdict lines in one request however many
+there are (`Store::in_status_since`; `tests/cli/stats.rs` counts them over 300
+tasks); `list` and `search` read nothing more without `--json`.
+
 `just tasks stats [--days N] [--json]` (14 days unless `--days` says, from 1
 to 3650; no session needed) is the same reading over every top-level task
 made in the window, subtasks left out. Every figure is of those tasks but the
@@ -2360,7 +2408,13 @@ tasks done per day, which its header says:
 - how many tasks review sent back how often (`0 × 41 · 1 × 6 · 2 × 1`);
 - top-level tasks done on each day of the window, whenever they were made (a
   task made a month ago and closed yesterday counts yesterday), by this
-  machine's time zone, every date of the window named once;
+  machine's time zone, every date of the window named once: each task done
+  now, once, on the day of its last close (`Stages::done_at`), so one approved,
+  sent back to review by its landing and approved again counts once, at the
+  second approve, and one cancelled or reopened since counts on no day. The
+  Reports page's Tasks done counts the same tasks by the same rule, by UTC
+  day (its day files' `done`, beside `entered.done`, which counts every entry
+  into done);
 - the ten open tasks that have held their status longest, with that status
   and how long;
 - how many tasks are blocked and how many are ready with no executor, each
@@ -2462,8 +2516,19 @@ just tasks say sim/jump-departure "the dock ring is at 900" --to @reviewer
 `@reserved`), or `owner`. Addressed messages reach the matching native callback
 as plain `MSG` event lines. Without an address, an agent's post stays on the
 thread; the orchestrator reads it in the app or with `just tasks show SLUG`.
-Verdicts reach the executor and orchestrator, and owner messages reach everyone
-on the task. Post milestones only, address what someone must act on, never
+Verdicts reach the executor and orchestrator. The owner's word, its posts, its
+verdicts and its moves (the thread's `owner moved it FROM → TO`, which a channel,
+`just tasks wait` and the inbox carry as a `MOVE` line, never again as a
+`STATUS`), reaches everyone on the task and the task's orchestrator, with no
+orchestrator relaying it. On a task no live orchestrator holds it reaches every
+orchestrator too: one nobody holds (none on it or above it, or only a lost or left
+one, in the interval before the board gives it one, [Tasks and roles](#tasks-and-roles)), its copy marked `[unowned: no orchestrator holds it]`, and one whose nearest
+holder is stale or of unknown liveness, marked with that holder,
+`[unowned: no live orchestrator holds it: HANDLE (stale)]`; that holder hears it too,
+unmarked (`Store::inbox`, `crates/tasks/src/store/messages.rs`). Only a live holder
+keeps it to itself. The owner's cancel adds `; it moves no further: stop work on it`
+to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done` is
+an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
 acknowledge a message, and never repeat a post on a subtask and its parent.
 A session without a channel keeps `just tasks inbox`.
 

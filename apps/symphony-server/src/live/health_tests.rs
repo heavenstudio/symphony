@@ -1,4 +1,5 @@
-//! The board's health as the hub records it: a board tick whose dispatch fails warns of it, on the
+//! The board's health as the hub records it: a board tick counts the open tasks nobody
+//! orchestrates in the board it read, and one whose dispatch fails warns of it, on the
 //! pages' server notice too, a minute of good passes clears it, with no flicker on a board failing
 //! every other tick, a tick that cannot reach the board is a failed pass, a board that went back is
 //! said unwell in its own words until a store opens it, the one server's record says the same,
@@ -77,10 +78,11 @@ impl Relay {
     }
 }
 
-/// A store on `fixture`'s board through `relay`.
+/// A store on `fixture`'s board through `relay`. A cut ends its connections at once; an answer that
+/// comes is waited for to a backstop only a stall reaches, never to a loaded machine's 10 s.
 fn through(relay: &Relay, fixture: &Fixture) -> symphony_board::Store {
     let client = Client::new(&relay.addr, "sf", fixture.store.client().database())
-        .waiting(Duration::from_secs(10));
+        .waiting(test_time::backstop(Duration::from_secs(10)));
     symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST).unwrap()
 }
 
@@ -110,6 +112,56 @@ fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
     hub
 }
 
+/// Every open task has an orchestrator, on every board the server serves: its tick gives a gone
+/// holder's open work to an orchestrator that stays, with no sweep run, and the count it records is
+/// of what is left nobody's.
+#[test]
+fn a_tick_gives_a_gone_holders_open_work_to_an_orchestrator_that_stays() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let orchestrator = |handle: &str, seen: f64| symphony_board::rows::SessionRow {
+        handle: handle.into(),
+        kind: "orchestrator".into(),
+        connected: NOW - 3_600.0,
+        last_seen: seen,
+        ..Default::default()
+    };
+    // amber held tools/quiet and went an hour ago; cobalt, registered as long ago, beats and holds
+    // tools/mine.
+    let fixture = Fixture::new(
+        Seed::default()
+            .session_row(orchestrator("amber-heron", NOW - 3_600.0))
+            .session_row(orchestrator("cobalt-otter", NOW))
+            .task("tools/mine", "ready")
+            .task("tools/quiet", "ready")
+            .role("tools/mine", "cobalt-otter", "orchestrator")
+            .role("tools/quiet", "amber-heron", "orchestrator"),
+    );
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    hub.board_read(&fixture.store).unwrap();
+    let quiet = fixture.store.get("tools/quiet").unwrap();
+    assert_eq!(quiet.holders("orchestrator"), ["cobalt-otter"]);
+    let line = fixture.store.thread("tools/quiet").unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            line.sender.as_str(),
+            line.text
+                .starts_with("cobalt-otter was given orchestrator from amber-heron (")
+        ),
+        ("board", true),
+        "{}",
+        line.text
+    );
+    assert_eq!(hub.health.report(clock.now()).unowned, Some(0));
+    // The next tick finds nothing to give, and writes nothing.
+    let lines = fixture.store.thread("tools/quiet").unwrap().len();
+    clock.pass(1.0);
+    hub.board_read(&fixture.store).unwrap();
+    assert_eq!(fixture.store.thread("tools/quiet").unwrap().len(), lines);
+}
+
 #[test]
 fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();
@@ -128,6 +180,11 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
         (1, 0, 0)
     );
     assert!(ok.queries.count > 0, "the tick's requests are counted");
+    assert_eq!(
+        ok.unowned,
+        Some(1),
+        "the tick's board read counts its one task nobody orchestrates"
+    );
     assert_eq!(Report::read(&file).unwrap().unwrap().dispatch.ok, 1);
     assert_eq!(*hub.server_notice.borrow(), "", "a well board: no notice");
     assert_eq!(hub.health_notice(), "");

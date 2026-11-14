@@ -4,6 +4,16 @@
 use super::*;
 use std::sync::atomic::AtomicUsize;
 
+/// The wall-clock backstop of every wait here: each waits on its condition, and only a stall
+/// reaches this (RULES.md `tests/no-test-fails-on-load`).
+const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(15));
+
+/// The time a stand-in sweep on the wall clock is given: the 3 s these stand-ins once had, as a
+/// backstop only a stall reaches, so a loaded machine's slow `sh` is never a sweep timed out. The
+/// sweep's own timeout is read on a clock the test moves
+/// (`the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout`).
+const SWEEP_WITHIN: Duration = test_time::backstop(Duration::from_secs(3));
+
 pub(super) struct SweepFixture {
     pub(super) root: PathBuf,
     pub(super) shared: Arc<Shared>,
@@ -20,8 +30,18 @@ impl SweepFixture {
         fixture
     }
 
-    /// A shared installation whose launcher runs `script`; its sweep starts with `start`.
+    /// A shared installation whose launcher runs `script`; its sweep starts with `start`. Its
+    /// project's hub stands for one whose first board read is done and found a board (a board
+    /// still starting), so its maintenance runs.
     pub(super) fn new(script: &str) -> Self {
+        let fixture = Self::without_hub(script);
+        let hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
+        assert!(fixture.shared.api.set(Arc::new(hub)).is_ok());
+        fixture
+    }
+
+    /// [`SweepFixture::new`] with no hub yet, for a test to give it its own.
+    pub(super) fn without_hub(script: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "symphony-sweep-{}-{}",
@@ -51,26 +71,32 @@ impl SweepFixture {
         self.root.join(".target/bin/tasks")
     }
 
-    /// Own `worker` as the server does, until the fixture is dropped.
+    /// Own `worker` as the server does, beside any started before, until the fixture is dropped.
     pub(super) fn start(&mut self, worker: std::thread::JoinHandle<()>) {
-        self.background = Some(Background {
-            shared: self.shared.clone(),
-            workers: vec![worker],
-        });
+        let shared = self.shared.clone();
+        self.background
+            .get_or_insert_with(|| Background {
+                shared,
+                workers: Vec::new(),
+            })
+            .workers
+            .push(worker);
     }
 
+    /// Wait until `file` holds `expected`; only a stall reaches the backstop, and its failure
+    /// says what the file held last and the load average.
     pub(super) fn wait_for(&self, file: &str, expected: &str) {
-        let began = Instant::now();
-        loop {
-            let read = std::fs::read_to_string(self.root.join(file)).ok();
-            if read.as_deref() == Some(expected) {
-                return;
-            }
-            assert!(
-                began.elapsed() < Duration::from_secs(15),
-                "sweep did not write {file}: it holds {read:?}"
-            );
-            std::thread::sleep(Duration::from_millis(10));
+        let mut read = None;
+        let waited = test_time::until_true(
+            format!("the sweep to write {expected:?} to {file}"),
+            BACKSTOP,
+            || {
+                read = std::fs::read_to_string(self.root.join(file)).ok();
+                read.as_deref() == Some(expected)
+            },
+        );
+        if let Err(stall) = waited {
+            panic!("{stall}; {file} holds {read:?}");
         }
     }
 }
@@ -121,18 +147,27 @@ impl TestClock {
             state.0 = elapsed;
         }
         let seen = state.1;
+        let backstop = test_time::backstop(Duration::from_secs(30));
         let (_state, waited) = read
-            .wait_timeout_while(state, Duration::from_secs(30), |state| {
-                state.1 < seen + more
-            })
+            .wait_timeout_while(state, backstop, |state| state.1 < seen + more)
             .unwrap();
-        assert!(!waited.timed_out(), "the sweep stopped reading its clock");
+        assert!(
+            !waited.timed_out(),
+            "the sweep to read its clock: stalled: the wait's wall-clock backstop of \
+             {backstop:?} ran out; {}",
+            test_time::Load::now()
+        );
     }
 
     /// Move the clock to `elapsed` past its start. The first read after decides on that time;
     /// the second comes only once the worker has acted on the decision.
     fn set(&self, elapsed: Duration) {
         self.read_at(Some(elapsed), 2);
+    }
+
+    /// How often it has been read: each look of a worker reading it is one.
+    fn reads(&self) -> u64 {
+        self.state.0.lock().unwrap().1
     }
 }
 
@@ -169,7 +204,9 @@ fn the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout() {
 
 #[test]
 fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
-    let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 30");
+    // The child never ends by itself, so only a cancellation ends the drop before the sweep's
+    // four-minute deadline, which is past the backstop below.
+    let mut fixture = SweepFixture::new("printf '%s' \"$*\" > started; exec sleep 86400");
     use std::os::unix::fs::MetadataExt;
     let other = SweepFixture::new("exit 0");
     let first = std::fs::metadata(fixture.board_build()).unwrap();
@@ -177,12 +214,15 @@ fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
     assert_eq!((first.dev(), first.ino()), (second.dev(), second.ino()));
     fixture.start(session_maintenance(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
     fixture.wait_for("started", "reap");
-    let stopping = Instant::now();
-    drop(fixture);
-    assert!(
-        stopping.elapsed() < Duration::from_secs(5),
-        "shutdown must cancel an active sweep instead of waiting for its four-minute deadline"
-    );
+    const { assert!(BACKSTOP.as_secs() < SWEEP_TIMEOUT.as_secs()) };
+    let stopping = std::thread::spawn(move || drop(fixture));
+    test_time::until_true(
+        "shutdown to cancel an active sweep instead of waiting for its four-minute deadline",
+        BACKSTOP,
+        || stopping.is_finished(),
+    )
+    .unwrap();
+    stopping.join().unwrap();
 }
 
 #[test]
@@ -378,7 +418,7 @@ fn a_round_is_reported_late_by_its_whole_delay_past_the_threshold() {
 
 #[test]
 fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "if [ ! -f failed ]; then touch failed; echo 'the board did not answer' >&2; exit 3; fi",
     );
     let (hub, clock) = clocked_hub(&fixture);
@@ -386,7 +426,7 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -424,13 +464,13 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
          where `SYMPHONY_SURREAL` names it' >&2; exit 1; fi",
         symphony_board::server::SURREAL_VERSION
     );
-    let mut fixture = SweepFixture::new(&script);
+    let mut fixture = SweepFixture::without_hub(&script);
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -450,7 +490,7 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
 
 #[test]
 fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "if [ ! -f failed ]; then touch failed; printf 'tasks: ' >&2; cat unserved >&2; exit 1; fi",
     );
     let unserved = symphony_board::server::ServerError::Unserved {
@@ -463,7 +503,7 @@ fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no sweep was recorded ok", || {
@@ -508,26 +548,20 @@ fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, Clock) {
     (hub, Clock(time))
 }
 
-/// What `seen` sees first, within fifteen seconds; `waiting` says what did not come.
-fn waited<T>(waiting: &str, mut seen: impl FnMut() -> Option<T>) -> T {
-    let began = Instant::now();
-    loop {
-        if let Some(seen) = seen() {
-            return seen;
-        }
-        assert!(began.elapsed() < Duration::from_secs(15), "{waiting}");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+/// What `seen` sees first; `waiting` says what did not come when only a stall reaches the
+/// backstop.
+fn waited<T>(waiting: &str, seen: impl FnMut() -> Option<T>) -> T {
+    test_time::until(waiting, BACKSTOP, seen).unwrap()
 }
 
 #[test]
 fn a_failing_sweep_is_said_on_every_page_of_the_project() {
-    let mut fixture = SweepFixture::new("echo 'the board did not answer' >&2; exit 3");
+    let mut fixture = SweepFixture::without_hub("echo 'the board did not answer' >&2; exit 3");
     let (hub, _) = clocked_hub(&fixture);
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     waited("no failed sweep was said", || {
@@ -539,7 +573,7 @@ fn a_failing_sweep_is_said_on_every_page_of_the_project() {
 #[test]
 fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
     // `tasks reap`'s long stderr: many lines, then its error.
-    let mut fixture = SweepFixture::new(
+    let mut fixture = SweepFixture::without_hub(
         "i=0; while [ $i -lt 300 ]; do echo \"Compiling crate $i\" >&2; i=$((i+1)); done\n\
          echo 'error: the board did not answer' >&2; exit 3",
     );
@@ -547,7 +581,7 @@ fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let report = waited("no failed sweep was recorded", || {
@@ -586,10 +620,85 @@ fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     fixture.start(maintenance_worker(
         fixture.shared.clone(),
         Duration::ZERO,
-        Duration::from_secs(3),
+        SWEEP_WITHIN,
         Stamp::now,
     ));
     let _hub_starting = fixture.shared.lifecycle.lock().unwrap();
     fixture.wait_for("started", "first");
     fixture.wait_for("retried", "again");
+}
+
+/// The lines of `file` in the fixture's checkout, none while it is not there.
+fn lines(fixture: &SweepFixture, file: &str) -> Vec<String> {
+    std::fs::read_to_string(fixture.root.join(file))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+/// A project whose hub has not read its board, or read none there, is not maintained: its sweep
+/// and its embedding catch-up each look at a round due, again and again, and run nothing, so
+/// neither makes a board where none is. Once its hub reads one, a scratch board here, each runs at
+/// its next look.
+#[test]
+fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
+    let mut fixture = SweepFixture::without_hub("printf '%s\\n' \"$1\" >> calls");
+    let (sweep, embed) = (TestClock::new(), TestClock::new());
+    let looked = |clock: &TestClock, what: &str| {
+        let seen = clock.reads();
+        test_time::until_true(
+            format!("three more looks of the {what}"),
+            test_time::backstop(Duration::from_secs(5)),
+            || clock.reads() >= seen + 3,
+        )
+        .unwrap();
+    };
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        Duration::ZERO,
+        Duration::from_secs(30),
+        sweep.reader(),
+    ));
+    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), embed.reader()).unwrap());
+    // No hub yet: whether there is a board is not known.
+    looked(&sweep, "sweep with no hub");
+    looked(&embed, "catch-up with no hub");
+    assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
+
+    // Its hub's reach found no board: no store, and no SurrealDB here to serve one.
+    let hub = Arc::new(crate::live::Hub::new(
+        &fixture.root,
+        &fixture.root.join("client"),
+    ));
+    assert!(fixture.shared.api.set(hub.clone()).is_ok());
+    let missing =
+        symphony_board::server::ServerError::NoSurreal(fixture.root.join("surreal")).to_string();
+    assert!(
+        hub.reconnect(&mut |_: &Path| Err(missing.clone()))
+            .is_none()
+    );
+    assert_eq!(hub.has_board(), Some(false));
+    looked(&sweep, "sweep with no board");
+    looked(&embed, "catch-up with no board");
+    assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
+
+    // The hub's next read finds a board: each runs at its next look.
+    let board = crate::testing::board::Fixture::empty();
+    hub.board_read(&board.store).unwrap();
+    assert_eq!(hub.has_board(), Some(true));
+    let calls = test_time::until(
+        "a sweep and a catch-up once the board is there",
+        test_time::backstop(Duration::from_secs(15)),
+        || {
+            let calls = lines(&fixture, "calls");
+            (calls.iter().any(|call| call == "reap") && calls.iter().any(|call| call == "embed"))
+                .then_some(calls)
+        },
+    )
+    .unwrap();
+    assert!(
+        calls.iter().all(|call| call == "reap" || call == "embed"),
+        "{calls:?}"
+    );
 }

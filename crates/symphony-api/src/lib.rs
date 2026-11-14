@@ -34,6 +34,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod agent_activity;
 mod agent_probes;
 mod agents;
 mod blocks;
@@ -44,16 +45,19 @@ mod links;
 mod machine_work;
 mod media;
 mod project;
+pub mod report_page;
 pub mod reports;
 mod runs;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
+pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
 pub use field_value::FieldValue;
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
 pub use media::{GalleryItem, Media, View, Viewer};
+pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,

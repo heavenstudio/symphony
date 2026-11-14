@@ -1,6 +1,7 @@
-//! `list`: the board's open tasks as a tree, or as JSON; `--all` adds the done and cancelled ones,
-//! as `--status` naming either does; `--mine` keeps the tasks the session holds a role on,
-//! `--doubled` those still holding two orchestrators ([`crate::orchestration::doubled`]).
+//! `list`: the board's open tasks as a tree, or as JSON, each task with when it took the status it
+//! holds ([`Store::in_status_since`]); `--all` adds the done and cancelled ones, as `--status`
+//! naming either does; `--mine` keeps the tasks the session holds a role on, `--doubled` those still
+//! holding two orchestrators ([`crate::orchestration::doubled`]).
 
 use super::{Context, Stop};
 use crate::cli::shape;
@@ -30,7 +31,13 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         tasks.retain(|t| doubled.contains(&t.slug));
     }
     if p.flag("json") {
-        let json = Py::obj(vec![("tasks", shape::tasks(&tasks))]);
+        let slugs: Vec<String> = tasks.iter().map(|t| t.slug.clone()).collect();
+        let since = store.in_status_since(&slugs)?;
+        let listed = tasks
+            .iter()
+            .map(|t| shape::listed(t, since.get(&t.slug).copied()))
+            .collect();
+        let json = Py::obj(vec![("tasks", Py::List(listed))]);
         c.say(&pyjson::dumps(&json));
         return Ok(());
     }

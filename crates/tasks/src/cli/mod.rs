@@ -24,7 +24,7 @@ mod shape;
 mod snapshot;
 mod status;
 mod sweep;
-mod text;
+pub(crate) mod text;
 mod usage;
 
 use crate::rpc::{self, Client};
@@ -63,6 +63,16 @@ impl Env {
             .get(name)
             .map(String::as_str)
             .filter(|v| !v.is_empty())
+    }
+
+    /// The deadline `name` sets in seconds (a fraction or none), else `fallback`: how a test gives
+    /// a product's deadline the time a loaded machine needs, or makes it run out at once, without
+    /// changing it for anyone else. A value that is no such number leaves `fallback`.
+    pub(crate) fn seconds(&self, name: &str, fallback: Duration) -> Duration {
+        self.var(name)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+            .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+            .unwrap_or(fallback)
     }
 
     /// One of Symphony's variables, by [`Env::var`]'s rule: an empty value is unset.
@@ -235,7 +245,7 @@ fn run(
         return snapshot::run(&parsed, env, out, err);
     }
     let reached = Clock::of(env).and_then(|clock| {
-        let store = open(reach(env, &env.cwd, true)?, &clock)?;
+        let store = looking_up(open(reach(env, &env.cwd, true)?, &clock)?, env);
         let store = capped_saying(store, env, &mut |problem| {
             let _ = writeln!(err, "⚠ {problem}");
         });
@@ -322,10 +332,15 @@ fn with_nearest_slug(store: &Store, why: String) -> String {
 /// the one in the git common dir of the working directory, started if it is not running; its clock
 /// pinned at `TASKS_NOW` if that is set; its starts held to the cap the project sets ([`capped`]).
 pub fn connect(env: &Env) -> Result<Store, String> {
-    Ok(capped(
-        open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?,
-        env,
-    ))
+    let store = open(reach(env, &env.cwd, true)?, &Clock::of(env)?)?;
+    Ok(capped(looking_up(store, env), env))
+}
+
+/// `store`, each read of its unanswered-post lookup waiting [`crate::UNANSWERED_WAIT`] at most, or
+/// what `TASKS_UNANSWERED_WAIT` sets ([`Env::seconds`]), and sent once: a command does without the
+/// posts rather than wait minutes on them.
+fn looking_up(store: Store, env: &Env) -> Store {
+    store.looking_up_within(env.seconds(crate::UNANSWERED_WAIT_VAR, crate::UNANSWERED_WAIT))
 }
 
 /// `store`, held to the limits the main checkout of `env`'s repository writes ([`crate::limits`]):
@@ -391,13 +406,18 @@ impl Clock {
         }
     }
 
-    /// Wait `seconds`. A pinned clock moves on by them instead, says `STEP <now>` on `err`, and reads a
-    /// line on `input` (or its end) before going on, so a test acts between a monitor's looks.
+    /// What the machine's clock sleeps for a wait of `seconds`: none for a negative span or no
+    /// number.
+    pub fn span(seconds: f64) -> Duration {
+        Duration::try_from_secs_f64(seconds).unwrap_or_default()
+    }
+
+    /// Wait `seconds` ([`Clock::span`]). A pinned clock moves on by them instead, says `STEP <now>` on
+    /// `err`, and reads a line on `input` (or its end) before going on, so a test acts between a
+    /// monitor's looks.
     pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
         match self {
-            Clock::Machine => {
-                std::thread::sleep(Duration::try_from_secs_f64(seconds).unwrap_or_default())
-            }
+            Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {
                     let mut now = now.lock().unwrap_or_else(|held| held.into_inner());
@@ -559,9 +579,6 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     }
     let project = crate::project::find(cwd, machine(env).as_deref())?;
     let common = &project.place.common;
-    if let Some(why) = crate::unmoved::refusal(common, crate::server::FOLDER) {
-        return Err(why);
-    }
     let live = (db == DATABASE).then(|| crate::live::Live {
         project: project.id.clone(),
         common: common.clone(),
@@ -694,6 +711,29 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deadline_a_setting_names_replaces_the_products_and_no_number_leaves_it() {
+        let fallback = Duration::from_secs(3);
+        let read = |value: &str| {
+            Env {
+                vars: [("TASKS_SOME_WAIT".to_string(), value.to_string())].into(),
+                cwd: std::env::temp_dir(),
+            }
+            .seconds("TASKS_SOME_WAIT", fallback)
+        };
+        assert_eq!(read("120"), Duration::from_secs(120));
+        assert_eq!(read("0.25"), Duration::from_millis(250));
+        assert_eq!(read(" 7 "), Duration::from_secs(7));
+        assert_eq!(read("0"), Duration::ZERO);
+        for nothing in ["", "soon", "-1", "NaN", "inf", "1e400", "3 s"] {
+            assert_eq!(read(nothing), fallback, "{nothing:?}");
+        }
+        assert_eq!(
+            Env::default().seconds("TASKS_SOME_WAIT", fallback),
+            fallback
+        );
+    }
 
     #[test]
     fn the_board_an_environment_names_is_the_command_its_refusals_name() {

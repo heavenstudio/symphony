@@ -10,8 +10,10 @@
 //! all there is, where a work folder is written by a recorder that may still be on its way.
 //!
 //! Each run names a board that cannot be reached ([`UNREACHED`]), a scratch one, so it takes the
-//! recorder tests' scale of the recorder's waits ([`SCALE`]): a loaded machine never decides
-//! whether it is recorded.
+//! recorder tests' scale of the recorder's waits ([`SCALE`]), and the script's wait for its
+//! recorder's probe is long ([`PROBE_WAIT`]) but in the case of that deadline: a loaded machine
+//! never decides whether it is recorded. What the long wait would hide, a recorder grown slow to
+//! answer, a probe of its own shows ([`PROMPT_PROBE`]).
 
 use crate::recorder::{MACHINE, RUNS_VAR, SCALE, SCALE_VAR, UNREACHED, day_lines, git_says, kept};
 use crate::{git, scratch};
@@ -20,6 +22,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record};
 use symphony_board::sys::{Command, Stdio, output, wait_output};
@@ -127,7 +130,8 @@ impl Setup {
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
             .env_remove(RUNS_VAR)
-            .env_remove("TASKS_RECORDER");
+            .env_remove("TASKS_RECORDER")
+            .env(PROBE_WAIT_VAR, PROBE_WAIT);
         if let Some(recorder) = recorder {
             command.env("TASKS_RECORDER", recorder);
         }
@@ -174,6 +178,20 @@ impl Setup {
 const RECORDER: &str = env!("CARGO_BIN_EXE_tasks");
 /// The file [`logging`] logs its runs in.
 const LOG_VAR: &str = "RECORDER_LOG";
+/// What sets, in seconds, how long `tools/record.sh` waits for its recorder's probe.
+const PROBE_WAIT_VAR: &str = "TASKS_RECORDER_PROBE_WAIT";
+/// The probe's wait in every case here but the one of it: the backstop of a test's wait, so a
+/// loaded machine never leaves Cargo to run unrecorded for a probe it answered late.
+const PROBE_WAIT: &str = "120";
+/// The probe's own wait, the script's when [`PROBE_WAIT_VAR`] names none: the default
+/// `tools/record.sh` writes, which the probe's case holds it to. A recorder that answers no later
+/// than this records the builds it is asked to.
+const SCRIPT_PROBE_WAIT: Duration = Duration::from_secs(2);
+/// What a probe of the real recorder must answer within, from its start to its end (the end of its
+/// answer, which the script reads to), once at least, for the recorder to count as prompt: half of [`SCRIPT_PROBE_WAIT`]. Every other
+/// case lengthens the script's wait ([`PROBE_WAIT`]), so this is what turns a recorder grown slow
+/// to answer red. Spans measured: 12 ms to 193 ms at loads of 19 to 48 on 16 cores.
+const PROMPT_PROBE: Duration = Duration::from_secs(1);
 /// The folder a verify writes its steps' logs and list into, when one is named (tools/verify.sh).
 const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 
@@ -368,9 +386,11 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${LOG_VAR}\"\nwhile [ ! -e \"$RELEASE\" ]; do sleep 0.05; done\n: > \"$ENDED\"\n"
         ),
     );
+    // The probe's own two seconds: the deadline this case is of.
     let done = setup.run(
         setup
             .command("cargo.sh", &["test"], Some(hung.to_str().unwrap()))
+            .env_remove(PROBE_WAIT_VAR)
             .env("RELEASE", &release)
             .env("ENDED", &ended),
     );
@@ -378,16 +398,53 @@ fn a_recorder_whose_probe_hangs_leaves_cargo_to_run_as_it_is() {
     cargo_said(&setup, done, &["test"]);
     assert!(!ended.exists(), "cargo waited for the probe to end");
     fs::write(&release, "").unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !ended.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the probe never ended"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the probe ended once released",
+        test_time::backstop(std::time::Duration::from_secs(30)),
+        || ended.exists(),
+    )
+    .unwrap();
     // It was asked, and never asked to record: its one run was the probe.
     assert_eq!(setup.logged(), "run --probe\n");
+}
+
+/// The real recorder answers a probe well within the script's own wait ([`PROMPT_PROBE`]): probed
+/// until one answer comes that soon, so a loaded machine's slow probes, however many, never fail
+/// it, and a recorder slow on every probe stalls the wait. A failure says each probe's span. The
+/// script's wait is [`SCRIPT_PROBE_WAIT`] where none is named, as the script says it.
+#[test]
+fn the_recorder_answers_its_probe_well_within_the_scripts_own_wait() {
+    let default = format!("${{{PROBE_WAIT_VAR}:-{}}}", SCRIPT_PROBE_WAIT.as_secs());
+    let script = fs::read_to_string(tool("record.sh")).unwrap();
+    assert!(
+        script.contains(&format!("read -r -t \"{default}\"")),
+        "tools/record.sh waits for its probe other than {default}"
+    );
+    warmed();
+    let mut spans = Vec::new();
+    let prompt = test_time::until(
+        format!("a probe of the recorder answered within {PROMPT_PROBE:?}"),
+        test_time::backstop(SCRIPT_PROBE_WAIT),
+        || {
+            let asked = Instant::now();
+            let probe = output(
+                Command::new(RECORDER)
+                    .args(["run", "--probe"])
+                    .stdin(Stdio::null()),
+            )
+            .unwrap();
+            let span = asked.elapsed();
+            assert_eq!(probe.stdout, b"run 1\nrun 2\n", "{probe:?}");
+            spans.push(span.as_secs_f64());
+            (span < PROMPT_PROBE).then_some(span)
+        },
+    );
+    if let Err(stall) = prompt {
+        panic!(
+            "{stall}: the script waits {SCRIPT_PROBE_WAIT:?} for the answer; each probe's span, in \
+             seconds: {spans:?}"
+        );
+    }
 }
 
 #[test]
@@ -446,6 +503,7 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
                 .env_remove("TASKS_TASK")
                 .envs(UNREACHED)
                 .env(SCALE_VAR, SCALE)
+                .env(PROBE_WAIT_VAR, PROBE_WAIT)
                 .env_remove(recorded::PARENT_VAR)
                 .env_remove("TASKS_RECORDER"),
         )
@@ -508,6 +566,7 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             .env_remove("TASKS_TASK")
             .envs(UNREACHED)
             .env(SCALE_VAR, SCALE)
+            .env(PROBE_WAIT_VAR, PROBE_WAIT)
             .env_remove(recorded::PARENT_VAR);
         if let Some(task) = task {
             command.env("TASKS_TASK", task);
@@ -704,6 +763,7 @@ impl Recipes {
             .env_remove("TASKS_TASK")
             .envs(UNREACHED)
             .env(SCALE_VAR, SCALE)
+            .env(PROBE_WAIT_VAR, PROBE_WAIT)
             .env_remove(recorded::PARENT_VAR)
             .env_remove(recorded::PIPELINE_VAR)
             .env_remove(recorded::TRIGGER_VAR)
@@ -821,11 +881,22 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_and_size_checks_docs_
             assert_eq!(line.end, Some(ended), "{step}");
         }
         for line in runs {
-            assert_eq!(line.commit.as_deref(), Some(commit.as_str()));
-            assert_eq!(line.tree.as_deref(), Some(checked.as_str()));
+            assert_eq!(line.commit.as_deref(), Some(commit.as_str()), "{line:#?}");
+            // The tree and the checkout's cleanliness are git's answers, which the recorder asks
+            // for no longer than its bound at the tests' scale ([`SCALE`]: 12 s), so a line
+            // without them is a stall, said with the machine's load.
+            let stalled = || format!("{line:#?}; {}", test_time::Load::now());
+            assert_eq!(
+                line.tree.as_deref(),
+                Some(checked.as_str()),
+                "{}",
+                stalled()
+            );
             assert_eq!(
                 (line.dirty, line.branch.as_deref()),
-                (Some(false), Some("main"))
+                (Some(false), Some("main")),
+                "{}",
+                stalled()
             );
             assert_eq!(
                 (line.machine.as_deref(), line.project.as_deref()),
@@ -1123,14 +1194,12 @@ fn an_interrupt_stops_a_verify_once_the_step_it_reached_ends() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while !held.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the lint never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the verify's lint started",
+        test_time::backstop(std::time::Duration::from_secs(120)),
+        || held.exists(),
+    )
+    .unwrap();
     // Ctrl-C: the interrupt a terminal sends the whole foreground group.
     let group = i32::try_from(child.id()).unwrap();
     // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.

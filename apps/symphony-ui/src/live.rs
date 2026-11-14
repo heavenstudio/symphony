@@ -126,6 +126,8 @@ pub fn App() -> Element {
     let page = match current.path.as_str() {
         #[cfg(feature = "page-board")]
         "tasks" => rsx! { crate::board_live::TasksPage { key: "{current.scope}" } },
+        #[cfg(feature = "page-tasks")]
+        "reports" => rsx! { crate::reports::ReportsRoute { key: "{current.scope}" } },
         #[cfg(feature = "page-docs")]
         _ if current.document => {
             rsx! { main {

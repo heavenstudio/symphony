@@ -36,9 +36,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             updated: r.updated,
         };
         let stages = stages(facts, &r.lines, now);
-        if r.status == "done" {
-            closes.extend(stages.closed);
-        }
+        closes.extend(stages.done_at());
         if r.created >= since {
             rows.push(Row {
                 slug: r.slug,
@@ -119,7 +117,8 @@ fn text(s: &Summary) -> Vec<String> {
         ));
     }
     lines.push(format!(
-        "Done per day (every top-level task closed in the last {} days, whenever it was made):",
+        "Done per day, local time (each top-level task done now, once, on the day of its last close \
+         in the last {} days, whenever it was made):",
         s.days
     ));
     for (day, count) in &s.done_per_day {

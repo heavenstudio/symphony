@@ -1,10 +1,11 @@
 # Releases
 
 How a Symphony release is cut, named and read. Projects that use the Symphony follow its release
-tags, never main. A release is cut by a run that verifies main in full, and an urgent fix can be
-released out of cycle. It is judged by the checks this repository owns, never by a consuming
-project's suite: a project's own reds stay on its own board. The evidence and the update command
-that takes a release are in [the analysis](analysis/symphony-update.md).
+tags, never main ([its card](DECISIONS.md#symphony-update-command)), since other projects use it. A
+release comes from a run that verifies main in full; an urgent fix may be released out of cycle. It
+is judged by the checks this repository owns, never by a consuming project's suite: a project's
+own reds stay on its own board. The evidence and the update command that takes a release are in
+[the analysis](analysis/symphony-update.md).
 
 ## A release
 
@@ -69,8 +70,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    a package's folder by that package too, since cargo runs a package's tests there and what one of
    them left works there (`working in apps/symphony-ui, where cargo runs the tests of the package
    symphony-ui`): that is as near to the test that left it as the run can tell. It could change
-   the checkout under the run's checks. It may be anyone's: a shell, a terminal tab, an editor's terminal, a Finder window or a
-   `tail -f` left there counts as much as what an earlier check left. So the red `run` it files is
+   the checkout under the run's checks. It may be anyone's: a shell, a terminal tab, an editor's
+   terminal, a Finder window or a `tail -f` left there counts as much as what an earlier check
+   left. So the red `run` it files is
    the owner's, not an executor's, since an executor ends only a process it started (RULES.md
    `delete-by-name`). End the process, or move it out of that folder, and the next run goes. A
    process found is listed again for up to 5 s, and counts only if it is still there, so one on
@@ -144,20 +146,28 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    moves a consumer's pin and none of its code, a public name its code calls changes only with a
    consumer release plan, and those names are held at every task's gate instead, by a
    `tests/consumer_api.rs` that the workspace's lint compiles in each package a consumer's code
-   calls: `crates/tasks` (`symphony_board`), `crates/symphony`
-   (with `symphony_plugin`, `symphony_api`, `symphony_docs`, `symphony_schema` and
-   `symphony_args`), `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`.
-   Each holds the functions and methods it names by signature, the structs a consumer builds by
-   the fields it builds them with, and the plugin traits by the methods a plugin writes. The
-   blocks a consumer builds (`symphony_api`'s `Block`, `Span`, `Media`, `Cell`, `Image`,
-   `Presentation` and `Fragment`), and a field read or a method called on a value that no guard
-   names, are the project's to meet when it moves its pin: its own gate builds it on the new one.
+   calls: `crates/tasks` (`symphony_board`), `crates/symphony` (with `symphony_plugin`,
+   `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
+   `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`. Each holds the
+   functions and methods it names, most by signature (coerced to their pointer type), some by a
+   call written as a consumer writes it, and a few, a generic one among them, by name alone; the
+   structs a consumer builds by the fields it builds them with; the variants a consumer builds,
+   compares or matches, as it does, but the blocks'; and the plugin traits by the methods a plugin
+   writes. Each enum whose variants a guard holds is also matched there by every variant, the
+   guards' own choice: a variant added fails the guard, and waits for a consumer release plan only
+   where a consumer matches that enum whole, while a variant that only that match names goes or
+   changes with it. The blocks a consumer builds (`symphony_api`'s `Block`, `Span`, `Media`,
+   `Cell`, `Image`, `Presentation` and `Fragment`, and the variants of `FigureSize`,
+   `ContainerKind` and `InlineKind` they take), the signature of a function a guard names alone,
+   and a field read or a method called on a value that no guard names, are the project's to meet
+   when it moves its pin: its own gate builds it on the new one.
 5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a
    task on this repository's board, `tests/release-red-NAME`, filed at p0 and marked red, so it
    takes no orchestrator slot and is offered before other work of its priority
    ([TASKS](TASKS.md#slots)). It is staffed before anything else (RULES.md
-   `workflow/release-reds-first`), fixed in the code and never by a loosened test or check, and
-   filed as a fast fix whose recorded risk is the bound the land holds a red's fix to
+   `workflow/release-reds-first`), fixed in the code and never by a loosened test or check (a test
+   red on load is discarded instead, below), and filed as a fast fix whose recorded risk is the
+   bound the land holds a red's fix to
    (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that changes none of
    the project's tests and checks (`[land] check_paths`), the failing tests unchanged and green at
    its tip, and a fix that changes a test, a check, a budget or a run step lands only on a fresh
@@ -168,7 +178,25 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
-   - the log's last lines;
+   - what the log names failed (`crates/symphony/src/release/failures.rs`), then a few of its last
+     lines; its last 40 lines alone when it names nothing it knows, and for a check that listed its
+     steps, whose log is its own lines and its steps' tails. A test run's, a log in which cargo
+     started a test target, names each test libtest said `FAILED`, with where it panicked (its own
+     thread's panic before that of a thread it started) and the first line of what it said, then
+     cargo's list of the targets that failed (`error: N targets failed:`, or each target's own `to
+     rerun pass` line when there is no list), and nothing else of it: the tests' own output, what
+     a failed test printed among it, says the errors, refusals and failed tests of what they run;
+     what a failed test printed ends at libtest's list of the failed tests, or, where that list
+     never comes (a test binary died while cargo went on), at its next target, so no failure
+     after it is lost. One that names no failed test or target (stopped at the run's time, hung or ended by a
+     signal) names only the errors its build said before cargo started its first target, so its
+     last lines say where it stopped. Any other log names each line with a word starting `error`
+     or `refus` (never one inside a name: `thiserror`, `gix-error`, `std::error`), or the docs
+     audit's `✖`, a compiler's `-->` line after an error, and the step's own last word, the line
+     before just's saying its recipe failed (`client-check: …`), with each line its tool starts
+     the same way (`size-budget: …`), and never a line of cargo's progress (`Compiling gix-error
+     v0.3.2`). Each stops at 40, then says how many more, and a quote is fenced past every run of
+     backticks its lines hold;
    - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
      named no failed test and never ran or never compiled because a file its own build had made
      was gone (its executable, cargo's `could not execute process … (never executed)` for no such
@@ -192,6 +220,19 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+
+   **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
+   (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
+   rerun, because of load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered
+   step or a timeout under load) is removed from the tree in its red's own fix, with one line on
+   the red's thread naming the test, the evidence it is load (its runs alone and the failing line)
+   and what it proved. That rule is the approval: no card is put to the owner to discard it. If
+   what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
+   time or an injected clock; the release does not wait for that. No rerun is spent on it, no
+   rewrite of it is waited for, and nobody lowers the machine's load to help a run pass: an
+   orchestrator holds no other work back to keep the load down for a run. A test that fails alone
+   on what its code did, or fails the same way without load, is not this case and is fixed in the
+   code.
 
    A check red again while its task is open adds a line to that task, with that run's load and
    reruns; a run green in it closes the task (`cancelled`, saying the check passed) when its
@@ -222,8 +263,9 @@ one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)):
 
 **Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
 holds later runs off for its run's time). A check still running then is stopped (its
-group sent `TERM`, then `KILL` after 10 s) and red, as is each check not yet started. A git command stops at the run's time or after 15 minutes, whichever
-is sooner. A run whose checks all ended green within its time keeps 5 more minutes to tag and push.
+group sent `TERM`, then `KILL` after 10 s) and red, as is each check not yet started. A git
+command stops at the run's time or after 15 minutes, whichever is sooner. A run whose checks all
+ended green within its time keeps 5 more minutes to tag and push.
 A run told to stop (`HUP`, `INT` or `TERM`, as launchd's stop or a terminal sends them) stops its
 check's group the same way, and its git, records why, files the red `run` (the stopped check is no
 check's red) and releases the lock. A signal it was started ignoring stays ignored, and `KILL`
@@ -293,7 +335,9 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
   lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
-  repository (a consumer's) answers its red by the task cancelled, saying where.
+  repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
+  is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
+  it, and no rerun is spent to see it pass.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
   approve on that task named that is the landed branch's tip or behind it, descends from the
@@ -359,9 +403,8 @@ the next landing; after a drop, at once.
 
 ## The cadence
 
-The owner, 2026-11-12: "Given the pace, It would be nice to release a new version every given
-number of tasks done, say 20 and refresh server/clients. Random number I know." So a release run
-also starts once enough tasks have landed, whatever the hour
+Tasks land fast, so a release run also starts once a given number of them have landed, whatever
+the hour, and its green release refreshes the server and its projects
 (`crates/symphony/src/release/cadence.rs`):
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
@@ -398,8 +441,9 @@ also starts once enough tasks have landed, whatever the hour
   lock, brings the release run's own checkout (`../symphony-wt/release`) to `origin/main`'s tip,
   builds `symphony` there with `tools/rs-bin.sh --build symphony` in that checkout's own build
   folder, never the main checkout's, and becomes that build, which runs exactly as `just release`
-  does: the full verification, the tag and its push, each red filed, then the refresh. A tip that cannot be built so is said, and its run goes on from the linked build, which
-  meets the same red in its checks. The record names what started it (`cause`: `20 landings since
+  does: the full verification, the tag and its push, each red filed, then the refresh. A tip that
+  cannot be built so is said, and its run goes on from the linked build, which meets the same red
+  in its checks. The record names what started it (`cause`: `20 landings since
   release-…, the last SLUG`). A red run files its reds, as any release run does. A linked build
   older than the cadence knows no `--due`: the land shows its refusal, and `tools/rs-bin.sh --link
   symphony` in the main checkout renews the link.
@@ -420,14 +464,14 @@ also starts once enough tasks have landed, whatever the hour
 
 ## The refresh
 
-Asked whether a green release should refresh the machine, the owner, 2026-11-12: "yes, a green
-release should refresh". The clients are the projects the machine serves, the consuming project
-among them.
+A green release refreshes the machine and its clients, the projects the machine serves, the
+consuming project among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project in the machine's registry (`projects.json`) whose `symphony.toml` names plugins, this
 repository aside, and whose packages take one of the Symphony's from git
 (`crates/symphony/src/release/refresh.rs`, its projects found by
-`crates/symphony/src/release/consumers.rs`).
+`crates/symphony/src/release/consumers.rs`). A registered project whose checkout is gone, or is
+not a git checkout, is left out, and the refresh says so (`left out: ID: …`).
 
 **What the run does with a consuming project.** It builds and tests nothing of a consuming
 project's, and reads the machine's registry only to refresh. The refresh moves what the steps below
@@ -538,10 +582,10 @@ The release run is the one thing that pushes a tag to `origin`: the release that
 nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md)). A release
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
-does either only on the owner's word. The cadence's run is that word, given on 2026-11-12 (*The
-cadence*, above): a land starts `--due` without asking, and the release it runs is automatic. A
-green release's refresh is that word too ("yes, a green release should refresh"), so its retry,
-`just release --refresh`, is an orchestrator's act, run on a red refresh's task without asking.
+does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
+land starts `--due` without asking, and the release it runs is automatic. So has a green release's
+refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
+run on a red refresh's task without asking.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -636,8 +680,8 @@ may be the one the main checkout links, and what it left on disk is this build's
   ([above](#the-release-run)) stops it; else it moves the checkout (unlocked, moved by `git
   worktree move` with its `.target/`, locked with the new reason and marked again, its build's
   stamp renamed). A checkout that build did not make, or one with something where it would go, is
-  left as it is, and said. The board's sweep keeps a checkout locked with either reason, and clears its build
-  after a week.
+  left as it is, and said. The board's sweep keeps a checkout locked with either reason, and
+  clears its build after a week.
 - **Records of an older build.** One of version 1 reads as this build's (version 2): its kind
   `nightly` as `release`, its `release` (an out-of-cycle release) as `out-of-cycle`, and each log
   under the old folder where the move put it. The Runs page's day files keep the label `nightly

@@ -49,6 +49,7 @@ mod panel_open;
 mod phone;
 mod polish;
 mod projects;
+mod reports;
 mod restored;
 mod run_records;
 mod server_notices;
@@ -185,6 +186,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/agents", "tasks", ".agents", false),
         ("/docs/", "docs", "[data-ready=folder]", false),
         ("/queue", "queue", "[data-ready=queue]", false),
+        ("/reports", "tasks", "[data-ready=reports]", false),
         ("/task/visual/in-progress", "tasks", "article.task", false),
         ("/docs/look-parity.md", "docs", ".doc-card", false),
     ] {

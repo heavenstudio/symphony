@@ -390,6 +390,53 @@ fn a_merge_counts_only_what_no_commit_before_it_on_the_line_brought() {
 }
 
 #[test]
+fn the_settings_marks_are_the_commits_on_the_line_that_changed_the_project_file() {
+    let tree = repository();
+    // A branch's change of the file lands by its merge, at 04:30; one on main itself at 05:00.
+    git(&tree.root, 4.0, &["switch", "-qc", "gates"]);
+    commit(
+        &tree,
+        4.0,
+        "gates: a slower check",
+        &[("symphony.toml", "[land]\ncheck = false\n")],
+    );
+    git(&tree.root, 4.5, &["switch", "-q", "main"]);
+    git(
+        &tree.root,
+        4.5,
+        &["merge", "-q", "--no-ff", "-m", "Merge gates", "gates"],
+    );
+    commit(
+        &tree,
+        5.0,
+        "settings: limits",
+        &[("symphony.toml", "[land]\ncheck = true\n")],
+    );
+    commit(&tree, 5.5, "elsewhere", &[("e.txt", "e\n")]);
+    let marks: Vec<(f64, String)> = settings_changes(&tree.root, "main", midnight())
+        .unwrap()
+        .into_iter()
+        .map(|commit| ((commit.at - midnight()) / HOUR, commit.subject))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (5.0, "settings: limits".to_string()),
+            (4.5, "Merge gates".to_string())
+        ],
+        "tip first, the merge for the branch's commit, the file's first commit before the window \
+         and every commit that left it alone out"
+    );
+    assert!(
+        settings_changes(&tree.root, "main", midnight() + DAY)
+            .unwrap()
+            .is_empty()
+    );
+    let error = settings_changes(&tree.root, "trunk", midnight()).unwrap_err();
+    assert!(error.contains("trunk"), "{error}");
+}
+
+#[test]
 fn a_read_of_no_repository_or_no_branch_fails_with_why() {
     let tree = Tree::new();
     let error = read(&tree.root, "main", midnight(), &[]).unwrap_err();

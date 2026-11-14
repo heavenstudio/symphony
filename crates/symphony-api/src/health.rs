@@ -45,7 +45,8 @@ pub struct HealthHour {
     /// The server clock's callback dispatch passes.
     #[serde(default)]
     pub dispatch: HourPasses,
-    /// The idle sweeps: the machine's one server makes them for its starter's project alone.
+    /// The idle sweeps of this board's project: the machine's one server makes them for each
+    /// project it serves that has a board, each recorded in that project's own report.
     #[serde(default)]
     pub sweep: HourPasses,
     /// Every request any client in the server's process sent the board.

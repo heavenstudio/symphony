@@ -34,13 +34,23 @@ entrypoint.
 One server serves every project the machine folder's registry holds
 (`crates/symphony/src/machine/registry.rs`: `projects.json` beside the server's record,
 in `SYMPHONY_MACHINE_DIR` when set), each under `/<id>/` with its own watcher, feed,
-board snapshot and branch scan. A project's state stays in its checkout: paths under
+board snapshot and branch scan, and, while it has a board, its own idle sweep and embedding
+catch-up (`front::maintenance`); the server reads the registry again each second, so a project
+registered or removed starts or stops them. A project's state stays in its checkout: paths under
 its artifacts folder go through `Project::artifact`, never an `artifacts/` literal.
 The projects share the server's origin, so the client keys what it keeps in the
 browser by the project's id (`project::stored` in `apps/symphony-ui`).
 The host rule (`crates/symphony/src/machine/host.rs`) decides whether a start's build
-serves, waits for or replaces the running one. A project's look is its theme
-package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
+serves, waits for or replaces the running one. A start in a linked worktree (its git dir has a
+`commondir`: a submodule or a `--separate-git-dir` checkout is a main checkout), whichever build it
+runs, never starts the one server, registers a project with it or replaces it
+(`apps/symphony-server/src/starter.rs`): it prints the running server's page for its worktree when
+that server serves the project, and is refused otherwise, naming `just symphony --port 0`, a server
+of its own. `--shared` there is the owner's word that the start may register the project and
+start the one server when none runs; the host rule never lets a start in a linked worktree replace
+a running one, and `project add` run in one registers no project of that worktree's own
+repository, though it registers another repository's. A project's look
+is its theme package (`crates/symphony/src/theme.rs`), served as `/<id>/theme.css` and inlined in
 its pages. Tests use a temporary machine folder.
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
@@ -141,17 +151,10 @@ standing rules in [RULES.md](RULES.md).
 **Its own names.** Symphony names only its own variables (`SYMPHONY_`), state folders
 (`symphony/` in the git common dir), formats and settings, never a consuming project's
 tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
-outside the fences it lists, each with its reason (the move command `tools/move-state.sh`
-and its tests, `crates/tasks/src/unmoved.rs`, the launcher's read of an older build's board
-record, and the client's tools script, which runs an older build's copies where they stand),
-and on the first consuming project's name, in any spelling or identifier built from it, in a
-tracked file's text or path: say "the consuming project". The state folders are named once, in
-`crates/tasks/src/folders.rs`. Until the move, a build of this code starts no board, server
-or recorder on a repository whose old folders still hold its state, and makes no verdict
-journal there, refusing with the line naming `tools/move-state.sh` (`unmoved.rs`). It
-installs no client tools beside an older build's either, and no build removes those: another
-worktree's build may be running them. Only the move takes them away, on a quiet machine,
-refusing while a process has a file open under them.
+outside the fences it lists, each with its reason (a past incident's record in
+`docs/history/`), and on the first consuming project's name, in any spelling or identifier
+built from it, in a tracked file's text or path: say "the consuming project". The state
+folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
@@ -381,10 +384,11 @@ standalone workspace requires no project gate or landing executable.
 
 `just release` cuts this repository's releases ([RELEASES](docs/RELEASES.md)): main's tip
 verified in full in a clean checkout outside this folder, judged by the checks this repository
-owns and never by a consuming project's suite, each red check filed on this board, a green tip tagged `release-YYYY-MM-DD` and
-that tag alone pushed, then the machine refreshed to it. A red tip is held as the release
-candidate, the local branch `release-candidate` that is never pushed, until its reds' own tasks,
-started there, land; then it is rerun and released, and main's tip is not run meanwhile.
+owns and never by a consuming project's suite, each red check filed on this board, a green tip
+tagged `release-YYYY-MM-DD` and that tag alone pushed, then the machine refreshed to it. A red
+tip is held as the release candidate, the local branch `release-candidate` that is never pushed,
+until its reds' own tasks, started there, land; then it is rerun and released, and main's tip is
+not run meanwhile.
 `--commit COMMIT` releases a commit of main out of cycle, `--due` starts a run only once
 `[releases] every_landings` tasks have landed or the release candidate's rerun or drop is due
 (what a land's `[board] on_land` runs here), `--refresh` refreshes the machine to the newest

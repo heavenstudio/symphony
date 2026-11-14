@@ -334,10 +334,16 @@ fn set_parent_moves_a_task_on_the_record_and_needs_the_parent_to_exist() {
         (moved.parent.as_deref(), moved.updated),
         (Some("elsewhere"), f.now())
     );
+    // Out from under orch's task, it stays orch's: the move gives it in the same write.
+    let said = f.said("a/b/c");
     assert_eq!(
-        f.said("a/b/c").last().unwrap(),
-        "owner put it under elsewhere (was a/b)"
+        said[said.len() - 2..],
+        [
+            "owner put it under elsewhere (was a/b)".to_string(),
+            format!("{orch} was given orchestrator (a/b/c moved out from under a/b)"),
+        ]
     );
+    assert_eq!(moved.holders("orchestrator"), [orch.as_str()]);
     f.advance(LIVE_SECONDS + 1.0);
     let top = f.store.set_parent("a/b/c", None, &orch).unwrap();
     assert_eq!(top.parent, None);

@@ -42,7 +42,6 @@ mod search;
 mod slots;
 mod stats;
 mod sweep;
-mod unmoved;
 mod write_load;
 
 use std::collections::BTreeMap;
@@ -66,6 +65,10 @@ pub fn env() -> Env {
         ("TASKS_SERVER", db.addr().to_string()),
         ("TASKS_DATABASE", db.database().to_string()),
         ("TASKS_NOW", common::NOW.to_string()),
+        (
+            symphony_board::UNANSWERED_WAIT_VAR,
+            common::LOOKUP_BACKSTOP.to_string(),
+        ),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -129,6 +132,18 @@ impl Case {
 
     pub fn register(&self, kind: &str) -> String {
         self.register_with(kind, &[])
+    }
+
+    /// A session of `kind` registered before the first live line and beating at the case's clock,
+    /// as an orchestrator that stays must be: it stays once it also waits, watches or holds a task.
+    pub fn register_settled(&mut self, kind: &str) -> String {
+        let now = self.env.vars["TASKS_NOW"].clone();
+        let before = now.parse::<f64>().unwrap() - symphony_board::health::LIVE_SECONDS - 1.0;
+        self.env.vars.insert("TASKS_NOW".into(), before.to_string());
+        let handle = self.register(kind);
+        self.env.vars.insert("TASKS_NOW".into(), now);
+        self.store().touch(&handle).unwrap();
+        handle
     }
 
     /// The board, as of the clock `TASKS_NOW` pins.

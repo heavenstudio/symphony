@@ -150,7 +150,7 @@ fn close(found: &mut Log, segment: &Segment) {
 
 /// The line cargo starts a target with, trimmed: `Running unittests src/lib.rs (…)`, `Running
 /// tests/a.rs (…)`, `Doc-tests NAME`.
-fn header(line: &str) -> Option<String> {
+pub(super) fn header(line: &str) -> Option<String> {
     let line = line.trim();
     let starts = (line.strip_prefix("Running "))
         .is_some_and(|rest| rest.ends_with(')') && rest.contains(" ("))
@@ -248,7 +248,7 @@ fn target_of(header: &str) -> Option<String> {
 
 /// The recipe a just line says failed: NAME of `error: recipe `NAME` failed …`, `Recipe` as an
 /// older just writes it.
-fn recipe(line: &str) -> Option<String> {
+pub(super) fn recipe(line: &str) -> Option<String> {
     let rest = line.strip_prefix("error: ")?;
     let rest = (rest.strip_prefix("recipe `")).or_else(|| rest.strip_prefix("Recipe `"))?;
     let (name, after) = rest.split_once('`')?;
@@ -268,7 +268,7 @@ pub(crate) fn step(recipes: &[String]) -> Option<String> {
 
 /// The test a libtest line names failed, `test NAME ... FAILED`, a `should panic` test's name
 /// without that note.
-fn failed_test(line: &str) -> Option<String> {
+pub(super) fn failed_test(line: &str) -> Option<String> {
     let name = line.strip_prefix("test ")?.strip_suffix(" ... FAILED")?;
     let name = name.strip_suffix(" - should panic").unwrap_or(name);
     (!name.trim().is_empty()).then(|| name.to_string())
@@ -276,7 +276,7 @@ fn failed_test(line: &str) -> Option<String> {
 
 /// The arguments a cargo line says rerun a failed target: ARGS of
 /// `error: test failed, to rerun pass `ARGS``.
-fn target(line: &str) -> Option<String> {
+pub(super) fn target(line: &str) -> Option<String> {
     let (_, args) = line.strip_prefix("error: ")?.split_once(RERUN)?;
     let args = args.strip_suffix('`')?;
     (!args.trim().is_empty() && !args.contains('`')).then(|| args.to_string())

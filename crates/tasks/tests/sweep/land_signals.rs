@@ -48,16 +48,14 @@ fn send(pid: u32, signal: i32, group: bool) {
     assert_eq!(unsafe { libc::kill(target, signal) }, 0, "kill {target}");
 }
 
-/// The land's end, within a minute.
+/// The land's end, within the backstop of the minute it once had.
 fn ended(land: &mut Child) -> ExitStatus {
-    let until = Instant::now() + Duration::from_secs(60);
-    loop {
-        if let Some(status) = land.try_wait().unwrap() {
-            return status;
-        }
-        assert!(Instant::now() < until, "the land never ended");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until(
+        "the land ended",
+        test_time::backstop(Duration::from_secs(60)),
+        || land.try_wait().unwrap(),
+    )
+    .unwrap()
 }
 
 /// The pid a script wrote to `path`, once it has: a whole line, as a shell's `>` creates the file
@@ -83,16 +81,15 @@ fn pid_in(path: &Path) -> i64 {
     written().unwrap()
 }
 
-/// Whether process `pid` is gone within ten seconds (once ended, its new parent reaps it).
+/// Whether process `pid` is gone within the backstop of the ten seconds it once had (once ended,
+/// its new parent reaps it).
 fn gone(pid: i64) -> bool {
-    let until = Instant::now() + Duration::from_secs(10);
-    while pid_alive(pid) {
-        if Instant::now() > until {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    true
+    test_time::until_true(
+        format!("{pid} is gone"),
+        test_time::backstop(Duration::from_secs(10)),
+        || !pid_alive(pid),
+    )
+    .is_ok()
 }
 
 /// The land's worktree and what names its group, left behind or not.
