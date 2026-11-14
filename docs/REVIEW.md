@@ -126,15 +126,18 @@ The card's page and every page its links reach are served from that worktree, un
 `/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict on a card the branch posted,
 or on its draft, is written **into that worktree's file**, uncommitted, where the agent's
 `just symphony-status --open` reads it exactly as before; the branch carries it once the agent commits it, and
-a land refuses while a worktree of the branch holds an owner line no commit has
+a land refuses while a worktree at a commit it brings holds an owner's answer no commit has
 ([TASKS](TASKS.md#the-default-landing)). Until then
-the owner's own lines there count at once, laid on the posted card. A line on a card main holds is main's when
-the branch did not post the card (its copy is the one it forked with, or main's), the branch is in main already
-(landed), or the page's worktree is gone: in each, the branch's page draws main's card. A card the branch posted
-stays its own, even once main closed its copy and the page draws that one. A line that is main's is saved in main's
-file and committed there like a line given on main's page, so `just symphony-status` counts it at once; from a
-gone worktree's page, a line on a card main lacks has nowhere to go and is refused. While git cannot list the
-worktrees, nothing says a worktree is gone: a branch page's line is refused, never taken to main. A line left in a worktree
+the owner's own lines there count at once, laid on the posted card. A line given on a branch's page is main's
+exactly when that page draws main's card: main holds the card, and the branch did not post it (its copy is the
+one it forked with, or main's), the branch is in main already (landed), or main closed its copy after every line
+of the page's. A card the branch posted that main has not closed since stays its own. A page whose worktree is
+gone is judged on its branch while the branch is kept, as the page was drawn from it, and only with neither left
+is a line on a card main holds main's. A line that is main's is saved in main's
+file and committed there like a line given on main's page, so `just symphony-status` counts it at once; a line
+that is the branch's from a gone worktree's page, or on a card main lacks, has nowhere to go and is refused.
+While git cannot list the worktrees, or read the branch of a gone one, nothing says where the card is: a branch
+page's line is refused, never taken to main. A line left in a worktree
 whose branch reached main another way (merged by hand, or saved while it landed) still joins main's copy of the
 card on the terms above, or stands as the branch page's card when main has none. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed
@@ -154,8 +157,10 @@ moves (and every minute, for a register file only a branch has), and an owner's 
 About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing moved is stat calls.
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
-`land`'s cleanup keep it and say so (`symphony::landing::owner_lines_left`, and the sweep's own reading of it);
-commit the verdict first.
+`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, in the documents of the
+project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
+commit the verdict first. A consuming project's own gate asks the Symphony with
+`symphony::landing::owner_lines_left`, which names the documents holding such a line.
 
 ## Start with the decision register
 
