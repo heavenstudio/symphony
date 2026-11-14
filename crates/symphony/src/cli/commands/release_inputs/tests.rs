@@ -926,7 +926,10 @@ fn the_regenerators_client_key_captures_the_inputs_as_the_client_build_does() {
         .unwrap();
     let snapshot = r#""$publisher" release-inputs "${snapshot_args[@]}" --key"#;
     assert!(printed.contains(snapshot), "{printed}");
-    assert!(printed.contains("web-$web"), "{printed}");
+    assert!(
+        printed.starts_with(r"printf '%s web-%s\n' ") && printed.ends_with(r#" "$web""#),
+        "{printed}"
+    );
     assert!(
         lines.any(|line| line.contains(snapshot)),
         "bundle.sh names its lock by no `{snapshot}`"

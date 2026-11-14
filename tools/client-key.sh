@@ -9,6 +9,18 @@ set -euo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 inputs="$(mktemp -d "${TMPDIR:-/tmp}/symphony-client-key.XXXXXXXX")"
 trap 'rm -rf "$inputs"' EXIT
+# The web client's build reads its package (apps/symphony-web) from the checkout: the hash of each
+# file git lists there but its guides, by its path in the package and its bytes.
+web="$(
+    cd "$root/apps/symphony-web"
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
+        git ls-files --cached --others --exclude-standard -z -- . ':(exclude)*.md' \
+        | LC_ALL=C sort -zu \
+        | while IFS= read -r -d '' file; do
+            [ ! -f "$file" ] || shasum -a 256 "$file"
+        done \
+        | shasum -a 256 | cut -c1-16
+)"
 # bundle.sh's capture, line for line:
 owned_git() {
     env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE git "$@"
@@ -26,16 +38,5 @@ fi
 owned_git -C "$components" ls-files --cached -z > "$inputs/components"
 snapshot_args=("$root" "$inputs/metadata.json" "$inputs/source" "$inputs/components")
 publisher="$("$root/tools/rs-bin.sh" --build symphony-build)"
-# The web client's build reads its package (apps/symphony-web) from the checkout: the hash of each
-# file git lists there but its guides, by its path in the package and its bytes.
-web="$(
-    cd "$root/apps/symphony-web"
-    owned_git ls-files --cached --others --exclude-standard -z -- . ':(exclude)*.md' \
-        | LC_ALL=C sort -zu \
-        | while IFS= read -r -d '' file; do
-            [ ! -f "$file" ] || shasum -a 256 "$file"
-        done \
-        | shasum -a 256 | cut -c1-16
-)"
 # Its key, as bundle.sh names its snapshot's lock:
 printf '%s web-%s\n' "$("$publisher" release-inputs "${snapshot_args[@]}" --key)" "$web"
