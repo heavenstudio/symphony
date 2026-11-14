@@ -558,6 +558,56 @@ fn the_owners_approve_is_one_commits_id_posted_as_an_approve_line() {
     }
 }
 
+/// The land leaves a task lacking only the owner's stamp done by its approve, so the page offers
+/// the owner's approve there too, until a landing or the owner's approve of the tip answers it.
+#[test]
+fn the_owner_is_waited_on_while_open_or_done_by_an_approve_no_landing_closed() {
+    let approve = line(
+        3,
+        "verdict",
+        "teal-merlin",
+        &format!("approve: {TIP} reads right"),
+    );
+    let owner = line(4, "msg", "owner", &format!("approve {TIP}"));
+    for status in ["ready", "in_progress", "review", "blocked"] {
+        assert!(awaits_owner(status, &[], TIP), "{status}");
+        assert!(
+            !awaits_owner(status, std::slice::from_ref(&owner), TIP),
+            "{status}"
+        );
+    }
+    assert!(awaits_owner("done", std::slice::from_ref(&approve), TIP));
+    assert!(!awaits_owner(
+        "done",
+        &[approve.clone(), owner.clone()],
+        TIP
+    ));
+    // The owner's approve of another commit leaves it waiting on the tip.
+    let other = line(4, "msg", "owner", &format!("approve {LATER}"));
+    assert!(awaits_owner("done", &[approve.clone(), other], TIP));
+    // Done by a landing, a covered close or no verdict at all: nothing waits.
+    let landed = line(
+        5,
+        "verdict",
+        "quiet-plover",
+        "landed tools/x on main at 0123abc4",
+    );
+    let covered = line(
+        5,
+        "verdict",
+        "quiet-plover",
+        "covered by tools/y, whose landing at 0123abc4",
+    );
+    for thread in [
+        vec![approve.clone(), landed],
+        vec![approve.clone(), covered],
+        Vec::new(),
+    ] {
+        assert!(!awaits_owner("done", &thread, TIP), "{thread:?}");
+    }
+    assert!(!awaits_owner("cancelled", &[approve], TIP));
+}
+
 #[test]
 fn the_catalogue_that_cannot_be_read_is_one_unknown_gate() {
     let gate = unreadable("symphony.toml: [stamps] names no stamp\nmore");

@@ -388,29 +388,31 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
     assert!(!again.contains("GIVEN"), "{again}");
 }
 
-/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
-/// verdict a reviewer would; the executor never does.
+/// The command line files no fast fix: a task needing no reviewer says so by its assessment
+/// (`tests/sweep/land_stamps.rs`). One an older board filed with the mark, here written through the
+/// store as that board wrote it, keeps today's path until it closes: its orchestrator, which did
+/// not execute it, gives the verdict a reviewer would; the executor never does.
 #[test]
-fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+fn a_fast_fix_is_no_longer_filed_and_one_filed_before_is_approved_by_its_orchestrator() {
     let c = Case::new();
     let orch = c.register("orchestrator");
     let exe = c.register_with("worker", &["--parent", &orch]);
     let why = "a one-line regex fix, its test posted";
-    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
-    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
-    let blank = c.run_as(
-        &orch,
-        &["create", "fix/blank", "Blank", "--fast-fix", " "],
-        "",
-    );
-    assert_eq!(blank.code, 1);
+    let refused = c.run_as(&orch, &["create", "fix/new", "New", "--fast-fix", why], "");
+    assert_eq!(refused.code, 2, "{}", refused.err);
     assert!(
-        blank
-            .err
-            .contains("a fast fix records why it needs no reviewer"),
+        refused.err.contains("unrecognized arguments: --fast-fix"),
         "{}",
-        blank.err
+        refused.err
     );
+    assert!(c.store().get("fix/new").is_err(), "nothing is filed");
+    (c.store())
+        .create(&symphony_board::NewTask {
+            fast_fix: Some(why.into()),
+            ..symphony_board::NewTask::new("fix/regex", "Regex", &orch)
+        })
+        .unwrap();
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
     c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
     c.ok(&exe, &["claim", "fix/regex"]);
     c.ok(&exe, &["move", "fix/regex", "review"]);

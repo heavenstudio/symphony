@@ -4,10 +4,10 @@
 //! (KEY the check's name, a step's under its check's: `verify-size-check`), filed at p0, marked red
 //! ([`symphony_board::red`]: red work takes no orchestrator slot, `next` offers it before other
 //! work of its priority, and PULL names it first while nobody is on it 10 minutes after it was
-//! filed) and as a fast fix, under the bound the land holds a red's fix to
-//! ([`symphony_board::fast_fix::RED`]: its orchestrator's approve lands a fix that changes none of
-//! the project's tests and checks, a fresh reviewer's any other). A stop the owner clears is filed
-//! with no fast-fix mark, since nothing lands for it. Its text says what is red, what its log names
+//! filed), with no fast-fix mark: what its fix needs to land is read at review by an assessor, as
+//! for any task ([`symphony_board::stamps`]: its tests for a fix in code, a fresh reviewer's
+//! approve as well for one that changes a test or a check), and a stop the owner clears lands
+//! nothing. Its text says what is red, what its log names
 //! failed ([`super::failures`]: each failed test with where it panicked and cargo's list of the
 //! targets that failed, or the lines that say an error, a refusal or the step's own last word)
 //! before a few of the log's last lines, the commands that
@@ -60,15 +60,8 @@ pub(crate) trait Reds {
     fn leave(&self, handle: &str) -> Result<(), String>;
     /// The status of the task `slug`, none when the board has no such task.
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
-    /// A red task `slug`, filed by `by` at p0, marked red, and as a fast fix when `fast_fix`.
-    fn create(
-        &self,
-        slug: &str,
-        title: &str,
-        body: &str,
-        by: &str,
-        fast_fix: bool,
-    ) -> Result<(), String>;
+    /// A red task `slug`, filed by `by` at p0 and marked red.
+    fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String>;
     fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String>;
     /// Close `slug` with `why` on its thread.
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String>;
@@ -102,15 +95,8 @@ impl Reds for CliBoard {
         }
     }
 
-    fn create(
-        &self,
-        slug: &str,
-        title: &str,
-        body: &str,
-        by: &str,
-        fast_fix: bool,
-    ) -> Result<(), String> {
-        let mut task = json!({
+    fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
+        let task = json!({
             "slug": slug,
             "title": title,
             "body": body,
@@ -119,9 +105,6 @@ impl Reds for CliBoard {
             "red": MARK,
             "links": [LINK],
         });
-        if fast_fix {
-            task["fast_fix"] = json!(symphony_board::fast_fix::RED);
-        }
         self.call("create", &task).map(|_| ()).map_err(|e| e.0)
     }
 
@@ -301,17 +284,16 @@ passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout 
 discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` says, with one line on \
 this thread naming it, the evidence it is load and what it proved. It is red work, which takes no \
 orchestrator slot.";
-/// How a red's fix is approved: the bound its fast-fix mark records
-/// ([`symphony_board::fast_fix::RED`]) and the land holds it to, said in full.
-const APPROVED: &str = "It is filed as a fast fix, under a bound the land holds it to: its \
-orchestrator, which did not execute it, approves a fix that changes none of the project's tests \
-and checks (`[land] check_paths`), on the posted evidence of the failing tests, unchanged, rerun \
-alone and green at the fix's tip. The land refuses that approve on a fix that changes a test, a \
-check, a budget or a run step: a fresh reviewer, which its orchestrator staffs, approves one, and \
-the fix says on the thread why the code was not the thing to fix.";
-/// What a stop the owner clears says of its mark: nothing lands for it.
-const UNMARKED: &str = "It is not filed as a fast fix: what clears it is a process ended, not a \
-fix that lands.";
+/// What a red's fix needs to land, as its assessor reads it at review ([`symphony_board::stamps`]):
+/// the catalogue's worked example for a red, said in full.
+const LANDS: &str = "What its fix needs to land is read at review by an assessor, before any \
+reviewer (`/assess-task`): a fix in code that leaves the failing tests unchanged needs its tests \
+(the task's recorded test runs green at the fix's tip, the failing tests rerun alone among them); \
+one that changes a test, a check, a budget or a run step (`[land] check_paths`) needs a fresh \
+reviewer's approve as well, which its orchestrator staffs, and the fix says on the thread why the \
+code was not the thing to fix.";
+/// What a stop the owner clears says of its landing: nothing lands for it.
+const NOTHING_LANDS: &str = "Nothing lands for it: what clears it is a process ended, not a fix.";
 /// How many of the commands that rerun a failure alone a red task lists at most.
 const RERUNS_LISTED: usize = 12;
 
@@ -468,22 +450,24 @@ fn held(tip: &str) -> String {
          `{branch}` (never pushed), so the release is that commit and its reds' fixes alone, however \
          fast main moves. Fix it there, not on main: start this task's branch, named for its slug, \
          at `{branch}`, never at main; merge `{branch}` again before review, as it moves when \
-         another red's fix lands; and never merge main before the approve. When the fix changes \
+         another red's fix lands; and never merge main before its land. When the fix changes \
          what the client is built from, commit the distribution its own sources make (`just \
          client-update`): the one kind of branch that commits it, as no regenerator builds the \
-         candidate, and the land keeps main's side of it. Its approve names the full tip it read. It \
-         lands by `just land` like any task, and its land advances the candidate to the newest \
-         approved commit of this branch that holds the candidate and the fix alone. A land that \
-         conflicts comes back to its executor: merge main then and ask for a fresh approve, and the \
-         candidate takes the commit approved before that merge. A fix that merges main before any \
-         approve leaves the candidate nothing to take, and drops it. A fix that landed with another \
-         red's task answers this red by the task closed as covered by that landing (`just tasks \
-         done SLUG NOTE --covered-by OTHER`), once that land advances the candidate; closed as \
-         covered by any other landing, its fix is on main and not in the candidate, which is \
-         dropped. A fix made outside this repository answers this red by the task cancelled, \
-         saying where. Once every red of the \
-         candidate is answered, its tip is rerun (the next landing starts it, or `just release \
-         --rerun`): each step that was red, did not run or whose inputs a fix changed.\n\n",
+         candidate, and the land keeps main's side of it. Its approve, where it needs review, names \
+         the full tip it read. It lands by `just land` like any task, and its land advances the \
+         candidate to the newest commit of this branch that holds the candidate and the fix alone \
+         among those an approve names, or, where it needed no review, the tip its landing's line \
+         says its needed stamps stood on. A land that conflicts comes back to its executor: merge \
+         main then and ask for a fresh approve, and the candidate takes the commit approved before \
+         that merge; a fix that needed no review has none, and drops it. A fix that merges main \
+         before any approve leaves the candidate nothing to take, and drops it. A fix that landed \
+         with another red's task answers this red by the task closed as covered by that landing \
+         (`just tasks done SLUG NOTE --covered-by OTHER`), once that land advances the candidate; \
+         closed as covered by any other landing, its fix is on main and not in the candidate, \
+         which is dropped. A fix made outside this repository answers this red by the task \
+         cancelled, saying where. Once every red of the candidate is answered, its tip is rerun \
+         (the next landing starts it, or `just release --rerun`): each step that was red, did not \
+         run or whose inputs a fix changed.\n\n",
         tip = short(tip)
     )
 }
@@ -519,7 +503,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {alone}\n\n\
          {since}\n\n\
          {held}\
-         Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}\n\n\
+         Who fixes: any free executor takes this from the board. {FIRST} {LANDS}\n\n\
          {beside}\
          {closed}\n\n\
          key: {key}\ncheck: {name}",
@@ -600,7 +584,7 @@ fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
          refreshed on their own.\n\n\
          Who fixes: what the line above names. A red here is the refresh's own work that failed, \
          fixed here; a project's own gate, hooks or main checkout that stopped the move is that \
-         project's to finish and is never filed here. {APPROVED} Then an orchestrator reruns the \
+         project's to finish and is never filed here. {LANDS} Then an orchestrator reruns the \
          refresh, `just release --refresh` in the Symphony's main checkout, which finishes what \
          this step did not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
@@ -677,21 +661,18 @@ fn stopped_body(why: &str, night: &Night<'_>, held: &[String]) -> String {
         when = night.when,
         gap = if beside.is_empty() { "" } else { "\n\n" },
         who = if night.for_owner {
-            format!("{OWNERS} {UNMARKED}")
+            format!("{OWNERS} {NOTHING_LANDS}")
         } else {
-            format!("{EXECUTORS} {FIRST} {APPROVED}")
+            format!("{EXECUTORS} {FIRST} {LANDS}")
         },
     )
 }
 
-/// What a key that is red files: the task's title and body, the line a later red run adds, and
-/// whether it is filed as a fast fix ([`symphony_board::fast_fix::RED`]): every red but a stop the
-/// owner clears, for which nothing lands.
+/// What a key that is red files: the task's title and body, and the line a later red run adds.
 struct Red {
     title: String,
     body: String,
     again: String,
-    fast_fix: bool,
 }
 
 /// What a run does to one key's task.
@@ -791,8 +772,7 @@ fn act(
 }
 
 /// What a red check files, as a refresh step's or a check's (a step a check listed among them), its
-/// body naming the open red `beside` it when there is one; none when green. Every one is filed as a
-/// fast fix.
+/// body naming the open red `beside` it when there is one; none when green.
 fn red_of(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> Option<Red> {
     (!ran.green()).then(|| {
         if is_refresh(&ran.name) {
@@ -800,14 +780,12 @@ fn red_of(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> Option<Red> {
                 title: format!("Release red: {}", ran.command),
                 body: refresh_body(ran, night),
                 again: refresh_again(ran, night),
-                fast_fix: true,
             }
         } else {
             Red {
                 title: format!("Release red: {} on {}", ran.name, short(night.commit)),
                 body: body(ran, night, beside),
                 again: again(ran, night),
-                fast_fix: true,
             }
         }
     })
@@ -919,7 +897,6 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                     "Stopped again (run {}, {}): {why}{gap}{beside}",
                     night.id, night.when
                 ),
-                fast_fix: !night.for_owner,
             }
         });
         found.push(act(board, night, RUN, stopped, "the run got through"));
@@ -956,7 +933,7 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                 done.reds.extend(of.as_ref().map(|of| of.on(slug)));
             }),
             Act::File { slug, red, of } => {
-                let wrote = match board.create(slug, &red.title, &red.body, &handle, red.fast_fix) {
+                let wrote = match board.create(slug, &red.title, &red.body, &handle) {
                     Ok(()) => {
                         done.filed.push(slug.clone());
                         Ok(())
@@ -1004,8 +981,6 @@ mod tests {
         refuse: Vec<&'static str>,
         /// A task another run files between this one's look and its create.
         raced: Option<&'static str>,
-        /// The tasks filed as a fast fix.
-        fast_fixes: RefCell<Vec<String>>,
     }
 
     impl Fake {
@@ -1061,14 +1036,7 @@ mod tests {
                 .map(|(status, _)| status.clone()))
         }
 
-        fn create(
-            &self,
-            slug: &str,
-            title: &str,
-            body: &str,
-            by: &str,
-            fast_fix: bool,
-        ) -> Result<(), String> {
+        fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
             assert_eq!(by, "filer-1");
             if self.raced == Some(slug) {
                 self.tasks
@@ -1081,9 +1049,6 @@ mod tests {
                 slug.into(),
                 ("ready".into(), vec![format!("{title}\n{body}")]),
             );
-            if fast_fix {
-                self.fast_fixes.borrow_mut().push(slug.into());
-            }
             Ok(())
         }
 
@@ -1157,16 +1122,15 @@ mod tests {
         );
         assert!(
             filed.contains(&format!(
-                "\n\n{OWNERS} It is not filed as a fast fix: what clears it is a process ended, \
-                 not a fix that lands. The next run that gets through closes this task.\n\nkey: \
+                "\n\n{OWNERS} {NOTHING_LANDS} The next run that gets through closes this task.\n\nkey: \
                  run\n"
             )),
             "{filed}"
         );
         assert!(!filed.contains("any free executor"), "{filed}");
         assert!(
-            board.fast_fixes.borrow().is_empty(),
-            "nothing an executor lands, so no fast-fix mark"
+            !filed.contains(LANDS),
+            "nothing lands for it, so nothing to assess: {filed}"
         );
 
         let board = Fake::default();
@@ -1176,13 +1140,12 @@ mod tests {
         let filed = board.thread("tests/release-red-run").join("\n");
         assert!(
             filed.contains(&format!(
-                "\n\n{EXECUTORS} {FIRST} {APPROVED} The next run that gets through closes this \
+                "\n\n{EXECUTORS} {FIRST} {LANDS} The next run that gets through closes this \
                  task.\n\nkey: run\n"
             )),
             "{filed}"
         );
         assert!(!filed.contains("the owner"), "{filed}");
-        assert_eq!(*board.fast_fixes.borrow(), ["tests/release-red-run"]);
     }
 
     #[test]
@@ -1305,11 +1268,6 @@ mod tests {
             ),
             "{run}"
         );
-        assert_eq!(
-            *board.fast_fixes.borrow(),
-            ["tests/release-red-verify-tests"],
-            "the step's red takes the express path, the owner's stop none"
-        );
 
         // Stopped again on the same red: the step's task hears it, and the run's line names it.
         let done = report(&board, &stopped, &[red]);
@@ -1362,14 +1320,6 @@ mod tests {
         }
         assert!(!filed.contains("just verify"), "{filed}");
         assert!(!filed.contains("The open red of"), "none was open: {filed}");
-        // Each step's red takes the express path a check's does.
-        assert_eq!(
-            *board.fast_fixes.borrow(),
-            [
-                "tests/release-red-verify-size-check",
-                "tests/release-red-verify-tests"
-            ]
-        );
 
         // Its size fixed, its tests still red: the one closed, the other told again.
         let done = report(
@@ -1480,10 +1430,6 @@ mod tests {
                  run again."
             ),
             "{filed}"
-        );
-        assert_eq!(
-            *board.fast_fixes.borrow(),
-            ["tests/release-red-verify-lint", "tests/release-red-verify"]
         );
 
         // Red with every step it listed green: the check, and no step.
@@ -1678,10 +1624,13 @@ mod tests {
              reds' fixes alone",
             "start this task's branch, named for its slug, at `release-candidate`, never at main; \
              merge `release-candidate` again before review",
-            "never merge main before the approve",
+            "never merge main before its land",
             "commit the distribution its own sources make (`just client-update`)",
             "A land that conflicts comes back to its executor: merge main then and ask for a fresh \
-             approve, and the candidate takes the commit approved before that merge.",
+             approve, and the candidate takes the commit approved before that merge; a fix that \
+             needed no review has none, and drops it.",
+            "or, where it needed no review, the tip its landing's line says its needed stamps \
+             stood on.",
             "A fix that landed with another red's task answers this red by the task closed as \
              covered by that landing (`just tasks done SLUG NOTE --covered-by OTHER`), once that \
              land advances the candidate; closed as covered by any other landing, its fix is on \
@@ -1981,7 +1930,7 @@ mod tests {
              - `just test-rs -p symphony-board --lib -- store::case_1 --exact`\n\
              - `just test-rs -p symphony --test nightly`\n\n"
                 .into(),
-            format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
+            format!("Who fixes: any free executor takes this from the board. {FIRST} {LANDS}"),
             // A test red on load is discarded, not fixed.
             "the code fixed, never a test or check loosened; a test red on the machine's load (it \
              passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under \
@@ -1992,7 +1941,6 @@ mod tests {
         ] {
             assert!(filed.contains(&said), "{said:?} in:\n{filed}");
         }
-        assert_eq!(*board.fast_fixes.borrow(), ["tests/release-red-verify"]);
 
         // Red again: the line says the load and the reruns of this run.
         let later = Ran {

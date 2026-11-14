@@ -644,7 +644,8 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
-        fast_fix: p.get("fast_fix").map(str::to_string),
+        // No task is filed as a fast fix any more: what it needs to land is its assessor's.
+        fast_fix: None,
     };
     let t = store.create(&new)?;
     // Every open task has an orchestrator: the filer when it is one, else the board gives it. One

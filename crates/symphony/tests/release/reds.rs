@@ -37,8 +37,8 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     assert!(red.red(), "marked red: it takes no orchestrator slot");
     assert_eq!(
         red.fast_fix(),
-        Some(symphony_board::fast_fix::RED),
-        "filed as a fast fix, under the bound the land holds a red's fix to"
+        None,
+        "filed unmarked: its assessor reads what its fix needs at review"
     );
     assert_eq!(
         red.title,
@@ -85,12 +85,11 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
          sleep-ordered step or a timeout under load) is discarded in this fix instead, as RULES.md \
          `tests/no-test-fails-on-load` says"
             .into(),
-        "It is filed as a fast fix, under a bound the land holds it to: its orchestrator, which \
-         did not execute it, approves a fix that changes none of the project's tests and checks \
-         (`[land] check_paths`)"
+        "What its fix needs to land is read at review by an assessor, before any reviewer \
+         (`/assess-task`): a fix in code that leaves the failing tests unchanged needs its tests"
             .into(),
-        "The land refuses that approve on a fix that changes a test, a check, a budget or a run \
-         step: a fresh reviewer"
+        "one that changes a test, a check, a budget or a run step (`[land] check_paths`) needs a \
+         fresh reviewer's approve as well"
             .into(),
         format!(
             "Commits since the last green run, `git log --oneline {}..{}` (1):\n- {} a change that turns the check red",

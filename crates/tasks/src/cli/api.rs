@@ -51,7 +51,8 @@ pub const MAJOR: i64 = 1;
 /// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
 /// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
 /// approved, which stays done; `create` takes `fast_fix`, why a fix needs no reviewer, under which
-/// its orchestrator gives the verdict; `move` takes an approved task no landing closed from done
+/// its orchestrator gives the verdict, still taken for an older client though no command of this
+/// build files one ([`crate::fast_fix`]); `move` takes an approved task no landing closed from done
 /// back to review; and `verdict` refuses a session that ever executed the task; 12: the owner's
 /// asks, `open_ask`, `ask`, `asks`, `hold_ask`, `answer_ask`, `answer_about` and `close_ask`,
 /// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another

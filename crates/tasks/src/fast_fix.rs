@@ -1,8 +1,11 @@
-//! A fast fix: a bug fix whose recorded risk calls for no reviewer (RULES.md
-//! `workflow/fast-bugfixes`). Its filer records that risk where it files it
-//! ([`crate::NewTask::fast_fix`], `just tasks create --fast-fix WHY`), and the board keeps it among
-//! the task's own fields ([`crate::red::FIELDS`]`.`[`MARK`], the text saying why no reviewer is
-//! needed), out of `set_field`'s reach, so a reader judges a task by its record, never its slug.
+//! A fast fix: a bug fix whose recorded risk calls for no reviewer, as a board filed it before a
+//! task's needed stamps said so ([`crate::stamps`]). No command files one now: a task needing no
+//! review says so by its assessment, and a red is filed unmarked. One already filed keeps this path
+//! until it closes, and so do the store's and the API's `fast_fix` ([`crate::NewTask::fast_fix`]),
+//! kept for it and for an older client alone. Its filer recorded that risk where it filed it, and
+//! the board keeps it among the task's own fields ([`crate::red::FIELDS`]`.`[`MARK`], the text
+//! saying why no reviewer is needed), out of `set_field`'s reach, so a reader judges a task by its
+//! record, never its slug.
 //!
 //! Such a fix is judged on its posted evidence by its orchestrator, which did not execute it: on a
 //! task carrying the mark, and only there, the orchestrator's verdict is the task's verdict

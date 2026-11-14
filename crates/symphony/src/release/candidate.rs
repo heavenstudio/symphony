@@ -651,7 +651,7 @@ impl Red {
 pub(crate) trait Board {
     /// The status of the task `slug`; none when the board has no such task.
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
-    /// The texts of the approving verdicts on `slug`'s thread, oldest first.
+    /// The texts naming the commits that vouch for a land of `slug`, oldest first ([`approving`]).
     fn approves(&self, slug: &str) -> Result<Vec<String>, String>;
     /// The landing `slug` was closed as covered by, when its thread's last verdict is a covered
     /// close's line (`just tasks done SLUG NOTE --covered-by OTHER`).
@@ -710,15 +710,26 @@ fn covering(messages: &[serde_json::Value]) -> Option<Covered> {
     })
 }
 
-/// The texts of the approving verdicts among a thread's `messages`, as the board shapes them: a
-/// verdict whose text is `approve`, or `approve:` and why.
+/// The texts naming the commits that vouch for a land among a thread's `messages`, as the board
+/// shapes them: a verdict whose text is `approve`, or `approve:` and why; and, of a task that
+/// needed no review, the tip its landing's line (a verdict starting `landed `, never another that
+/// quotes one) says its needed stamps stood on ([`symphony_board::land::needs::stood_at`]), which
+/// no approve names.
 fn approving(messages: &[serde_json::Value]) -> Vec<String> {
     (messages.iter())
         .filter(|message| message["kind"] == "verdict")
         .filter_map(|message| message["text"].as_str())
-        .filter(|text| {
-            text.strip_prefix("approve")
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+        .filter_map(|text| {
+            let approve = text
+                .strip_prefix("approve")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'));
+            if approve {
+                Some(text)
+            } else if text.starts_with("landed ") {
+                symphony_board::land::needs::stood_at(text)
+            } else {
+                None
+            }
         })
         .map(str::to_string)
         .collect()

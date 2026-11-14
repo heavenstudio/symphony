@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: b6bdb25a23d5fde4 files=SKILL.md -->
+<!-- symphony-stamp: dd3d789c0512b46c files=SKILL.md -->
 
 # Work from the task board
 
@@ -172,6 +172,16 @@ tests itself, recorded on that task as a round of its review. A later round is t
 reviewer's, resumed with the new tip. Choose reviewer
 families, models and launch methods under the project's policy; `just tasks limits`
 names the reviewer's model the project sets.
+
+## Assess (assessor)
+
+An assessor works by the [assess-task](../assess-task/SKILL.md) skill, its whole prompt
+`/assess-task SLUG HANDLE` (Codex: `$assess-task SLUG HANDLE`) on the task itself: it writes
+the stamps the task needs to land, from the project's catalogue (`just tasks stamps`), at the
+tip it read, and why. Its orchestrator starts one when it files the task and again each time
+the task moves to review, before any reviewer, on the model `just tasks limits` names for the
+assessor, and staffs a reviewer only where the stamps name review. The land lands a task once
+every stamp it needs stands on its tip, and a missing one refuses, naming who gives it.
 
 ## Orchestrate (orchestrator)
 

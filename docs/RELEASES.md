@@ -312,13 +312,12 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    takes no orchestrator slot and is offered before other work of its priority
    ([TASKS](TASKS.md#slots)). It is staffed before anything else (RULES.md
    `workflow/release-reds-first`), fixed in the code and never by a loosened test or check (a test
-   red on load is discarded instead, below), and filed as a fast fix whose recorded risk is the
-   bound the land holds a red's fix to
-   (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that changes none of
-   the project's tests and checks (`[land] check_paths`), the failing tests unchanged and green at
-   its tip, and a fix that changes a test, a check, a budget or a run step lands only on a fresh
-   reviewer's approve ([the default landing](TASKS.md#the-default-landing)), a bound that stands
-   though its red mark is lifted, as no session clears the risk. Its text says, a red step's as
+   red on load is discarded instead, below), and filed with no fast-fix mark: what its fix needs
+   to land is read at review by its assessor, as any task's ([needed
+   stamps](TASKS.md#needed-stamps)): its tests, the failing tests unchanged and green at its tip,
+   for a fix that changes none of the project's tests and checks (`[land] check_paths`), and a
+   fresh reviewer's approve as well for one that changes a test, a check, a budget or a run step
+   ([the default landing](TASKS.md#the-default-landing)). Its text says, a red step's as
    its line in its check's list recorded it:
    - the command and how it ended;
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
@@ -392,9 +391,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
    `tests/release-red-run`, filed, updated and closed by the next run that gets through, as a
-   check's is, and filed the same way, but with no fast-fix mark when a process stopped it, since
-   nothing lands for that. Its body says who fixes it: the owner when a process stopped it, else
-   any free executor, then how a check's red is staffed and approved. A command
+   check's is, and filed the same way. Its body says who fixes it: the owner when a process
+   stopped it, for which nothing lands, else any free executor, then how a check's red is
+   staffed and what its fix needs to land. A command
    line or
    `--commit`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
@@ -476,23 +475,24 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   read, or of a newer version, stops the run as the red `run` and is left as it is.
 - **A red's fix** is the red's own task, whose text says so. Its branch, named for its slug,
   starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
-  as that branch moves when another red's fix lands, and never merges main before its approve
+  as that branch moves when another red's fix lands, and never merges main before its land
   ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
-  of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
-  lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
+  of it ([TASKS](TASKS.md#the-default-landing)). Its approve, where it needs review, names the
+  full tip it read, and it lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
   repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
   is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
   it, and no rerun is spent to see it pass.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
-  approve on that task named that is the landed branch's tip or behind it, descends from the
+  approve on that task named, or its landing's line says its needed stamps stood on where it
+  needed no review, that is the landed branch's tip or behind it, descends from the
   candidate's tip, and holds beyond it nothing main held before the land (`git rev-list --count
   X ^TIP` equal to `git rev-list --count X ^TIP ^MERGE^1`). A land that went straight in gives its
   tip; one that conflicted, whose executor merged main and was approved again, gives the commit
-  approved before that merge. A task forked at the candidate passes the same tests, which is why
+  approved before that merge, and one that needed no review gives none, and drops it. A task forked at the candidate passes the same tests, which is why
   only a red's own land moves it, and a land of any other task, stray or not, moves nothing. A
   landing counts only once `origin/main`, as this checkout last fetched or pushed it, holds its
   merge: one landed in the main checkout and not pushed (its push failed) waits, said, until its
@@ -754,8 +754,8 @@ A red step says what it found, the release stands (its tag is pushed), and the r
 before its main moved leaves that main as it was, with the branch made and its board moved only to
 the pin that main already locks; a migrate that fails leaves the snapshot taken before it. It is
 filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
-read), saying what was left as it was and who fixes it, and filed as a fast fix as a check's red
-is. A refresh green for it closes the task.
+read), saying what was left as it was and who fixes it, and filed as a check's red is. A refresh
+green for it closes the task.
 
 What stays by hand, said in `--status` under a refresh with a step that is its project's to
 finish:

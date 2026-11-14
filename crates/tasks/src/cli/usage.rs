@@ -516,16 +516,14 @@ options:
                          [--body-file BODY_FILE] [--priority {0,1,2,3,4}]
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
-                         [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX] [--no-role]
+                         [--depends DEPENDS] [--link LINK] [--no-role]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
                          [--body-file BODY_FILE] [--priority {0,1,2,3,4}]
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
-                         [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX] [--no-role]
+                         [--depends DEPENDS] [--link LINK] [--no-role]
                          slug title
 
 positional arguments:
@@ -554,8 +552,6 @@ options:
   --depends DEPENDS     a task that must be done first (repeatable)
   --link LINK           a document it implements, docs/X.md#Heading
                         (repeatable)
-  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
-                        reviewer: its orchestrator approves it
   --no-role             file it for the orchestrator --for names, not for the
                         filer: else an orchestrator filing it takes the
                         role, and the board gives any other filer's task an
@@ -1115,9 +1111,13 @@ options:
 "#,
         r#"usage: just tasks land [-h] [--as ACTOR] slug
 
-Land the task's branch, named as its slug, on the default branch: the approve
-of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
-verdict and cover the branch's tip; the branch is merged (--no-ff) in a
+Land the task's branch, named as its slug, on the default branch once every
+stamp it needs stands on the branch's tip: its assessment's on the tip it read,
+else the catalogue's defaults beside them (`just tasks stamps SLUG` says which).
+Where review is needed, the approve of a fresh reviewer (or of its orchestrator,
+on a task filed with the fast-fix mark) must be its last verdict and cover the
+tip; where it is not, the task lands from review or blocked. A missing stamp
+refuses, naming who gives it. The branch is merged (--no-ff) in a
 worktree of its own, main's side of each generated path kept, and checked by
 [verdicts] check unless [land] check = false; main moves there, is pushed to
 origin (unless [land] push = false), the task closes with its `landed` line,

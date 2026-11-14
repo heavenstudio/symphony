@@ -1546,8 +1546,8 @@ with no branch so named names the branch whose tip is the commit the approve nam
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
 land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
 guard against accident, not the gate: anyone can set an environment variable, and what
-lands is decided by the approval check below, a fresh reviewer's approve standing on the
-tip. So `symphony init` allows `just land` with no permission prompt, and writes no ask
+lands is decided by the checks below, every stamp the task needs standing on the tip, a fresh
+reviewer's approve among them where it needs review. So `symphony init` allows `just land` with no permission prompt, and writes no ask
 rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
 project's own `land` recipe gets the same allow rule, and its own landing policy decides
 what it lands. An orchestrator lands an approved task without asking the owner. In a project
@@ -1566,8 +1566,28 @@ check, nor what counts as one (`check_paths`, below). A land of this repository 
 takes seconds; what the client distribution needs, the regenerator it starts makes
 afterwards, and runs the check, the docs audit, on what it made ([below](#the-regenerator)).
 
-- **Approved by someone else.** The task's last verdict is an `approve`, which left
-  it done, given by a fresh reviewer: never a session that ever executed the task or a
+- **What it needs.** The land goes by the stamps the task needs ([needed
+  stamps](#needed-stamps), `crates/tasks/src/land/needs.rs`), read by the board's own readers:
+  its newest assessment's, on the tip it read; on another tip, or from the brief alone, those
+  and the catalogue's defaults; with none, the defaults, `review` alone in the Symphony's
+  catalogue, so a task nobody assessed lands as it did before stamps. Where it needs `review`,
+  the task is done by an approve the checks below go by. Where it does not, it lands from
+  review or blocked (its executor's move to review says the work is ready, and the landing
+  closes it with no verdict) or done by an approve standing; in progress or ready it is
+  refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
+  the task's recorded runs there (each command's newest run, so a red run of a command is
+  cleared by running it again green at the tip, and one that cannot pass only by a new
+  commit), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
+  tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
+  `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
+  start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
+  `@orchestrator`, holds the task blocked from review (`Store::hold_blocked`, keeping its
+  slot), or leaves it done by its approve, until the owner approves the tip on the task's
+  page. A land of a task that needed no review says on its landing line the stamps and the
+  whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
+  the commit it vouched for, as an approve names one.
+- **Approved by someone else.** Where it needs review, the task's last verdict is an
+  `approve`, which left it done, given by a fresh reviewer: never a session that ever executed the task or a
   work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
@@ -1576,16 +1596,18 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
   approve the land refuses for whose it is is one an older board took; the
   executor of an instruction subtask is none. The one
-  exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
-  `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
-  words, which the board keeps among its own fields where no session sets or clears it
-  afterwards. On a fast fix its orchestrator, which did not execute it, gives the
-  verdict on the executor's posted evidence, and the land goes by that approve; on any
-  other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
-  is landed by a fresh reviewer's approve, as any other task is.
-- **A red's fix changes no check.** A tool that files a red before any fix exists may
-  file it as a fast fix, its risk the bound `symphony_board::fast_fix::RED` states
-  (`crates/tasks/src/fast_fix.rs`), and the land enforces that bound, since the board
+  exception is a **fast fix**: a task an older board filed with the fast-fix mark, the
+  risk that called for no reviewer in words, which the board keeps among its own fields where
+  no session sets or clears it afterwards. No command files one now (a task needing no review
+  says so by its assessment), and the store's and the API's `fast_fix` are kept only for
+  such a task still open and an older client, until none is open: no live option. On a fast
+  fix its orchestrator, which did not execute it, gives the verdict on the executor's posted
+  evidence, and the land goes by that approve, its needs unread; on any other task it
+  refuses an orchestrator's. A fast fix its orchestrator executed itself is landed by a
+  fresh reviewer's approve, as any other task is.
+- **A red's fix changes no check.** A red an older tool filed as a fast fix, its risk the
+  bound `symphony_board::fast_fix::RED` states
+  (`crates/tasks/src/fast_fix.rs`), is held to that bound, since the board
   cannot read the repository: on a fast fix whose recorded risk is that bound, or one
   marked red, its orchestrator's approve (or its filer's) lands only a fix whose diff from
   where it left the default branch changes none of the project's tests and checks, and a
@@ -1636,10 +1658,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   orchestrator's approve for a fresh reviewer's. What it does not see is product: a module
   declared inside an inline module is looked for beside its file, and a test-only file named
   only by a macro or a build script, or a lint set in a file no entry names, is product. The
-  release run files every red so (RULES.md `workflow/release-reds-first`,
-  [RELEASES](RELEASES.md#the-release-run)), but a stop the owner clears, for which nothing
-  lands; the regenerator files its reds (`tests/main-red-regenerate`,
-  `tests/main-red-check`) with no fast-fix mark, as it does on every project's board.
+  same list is the fact `just tasks stamps SLUG` gives an assessor (CHECK PATHS), whose
+  `review` guideline keeps a fresh reviewer for a fix that changes one. The release run
+  (RULES.md `workflow/release-reds-first`, [RELEASES](RELEASES.md#the-release-run)) and the
+  regenerator (`tests/main-red-regenerate`, `tests/main-red-check`) file their reds with no
+  fast-fix mark: what a red's fix needs is its assessor's, as any task's.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
   `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
   commit over any commit time. An approve naming none of the branch's commits covers
@@ -1681,12 +1704,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
 - **A release candidate's red.** While the release run holds a candidate
   ([RELEASES](RELEASES.md#the-release-candidate)), a red of it is fixed on a branch started
   at the local branch `release-candidate`, which merges that branch again before review and
-  never merges main before its approve, its approve naming the full tip, and it lands by this
-  same land. Nothing in the land changes for it: its `[board] on_land`, the release run's
-  `--due`, reads the land afterwards and moves the candidate to the newest commit of the
-  branch an approve named that holds the candidate and the fix alone. A conflict goes back to
-  `@executor` as above, who merges the default branch then and asks for a fresh approve; the
-  candidate keeps the commit approved before that merge. A red whose fix landed with another
+  never merges main before its land, its approve, where it needs review, naming the full tip,
+  and it lands by this same land. Nothing in the land changes for it: its `[board] on_land`,
+  the release run's `--due`, reads the land afterwards and moves the candidate to the newest
+  commit of the branch an approve named, or the tip the landing line says its needed stamps
+  stood on, that holds the candidate and the fix alone. A conflict goes back to `@executor` as
+  above, who merges the default branch then and asks for a fresh approve; the candidate keeps
+  the commit approved before that merge, and one that needed no review has none, and drops
+  it. A red whose fix landed with another
   red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
@@ -2100,16 +2125,17 @@ why.
   waits on the owner, by the sign-off lane's rule above. Until the task page is ported
   ([the design](analysis/needed-stamps.md#the-task-page)), its approval offers the stamp:
   where no plugin's board action offers anything, the Symphony's own, `owner-approve`,
-  offers `Approve SHORT` while the task needs the stamp at its tip and has none there, and
-  posts the owner's line `approve TIP`, the whole tip, through `POST /api/task-action`,
+  offers `Approve SHORT` while the task needs the stamp at its tip and has none there, open
+  or done by an approve no landing has closed (where a land waiting on the owner leaves it),
+  and posts the owner's line `approve TIP`, the whole tip, through `POST /api/task-action`,
   refused unless its payload is one commit's id.
 
 A subtask, and a task done or cancelled with no assessment, keep the gates they had before
 stamps, so no task's history is judged again:
 
 - **review**: met by an `approve` in the last round, missing until then, the earlier
-  rounds its past. A task done with no round landed without review, as a bug fix may
-  (RULES.md `workflow/fast-bugfixes`): waived. A subtask has none: only its top-level
+  rounds its past. A task done with no round landed without review, as a bug fix filed
+  before stamps might: waived. A subtask has none: only its top-level
   task goes to review.
 - **owner**: held while a card the task posted waits on the owner, by the sign-off
   lane's rule above; absent otherwise.
@@ -2142,8 +2168,8 @@ its own work.
 What a task needs to land is the stamps its risk calls for, named by an assessor from one
 catalogue ([the design](analysis/needed-stamps.md)). The board holds the catalogue's reading,
 each task's needs (`crates/tasks/src/stamps.rs`) and each stamp's reader at a tip
-(`stamps/read.rs`); the task page's [gates](#gates) draw them, and nothing reads the needs to
-land yet, so the default landing still goes by a fresh reviewer's approve ([the default
+(`stamps/read.rs`); the task page's [gates](#gates) draw them, and the default landing lands a
+task once every stamp it needs stands on its tip, by the same readers ([the default
 landing](#the-default-landing)).
 
 - **The catalogue** is the project's `[stamps]` ([PROJECT_FILE](PROJECT_FILE.md#stamps)), read
@@ -2173,8 +2199,14 @@ landing](#the-default-landing)).
   by the rule a reviewer's verdict is held to, to a session that executed the task or work under
   it (an instruction subtask's agent excepted), orchestrates or orchestrated it, or filed it, so
   whoever writes the needs is none of those, and the field and its line name it. Its orchestrator
-  starts it as a session of its own, on `[agents.models] assessor` ([Limits and
-  models](#limits-and-models)).
+  starts it as a session of its own (an Agent launch: a board launch takes no assessor's role),
+  on `[agents.models] assessor` ([Limits and models](#limits-and-models)), when it files the
+  task and again each time the task moves to review, before it staffs any reviewer, and staffs
+  one only where the needs name `review`. Its whole prompt is `/assess-task SLUG HANDLE`
+  (`.agents/skills/assess-task/SKILL.md`), the skill all it is told: it reads `just tasks stamps
+  SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data but for
+  the owner's own posts (sender `owner`, which it follows and reads for `owner`'s applies), keeps
+  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
 
 ## Subtasks
 

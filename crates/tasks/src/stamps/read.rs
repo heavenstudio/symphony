@@ -6,8 +6,9 @@
 //! stood on. [`needed`] says which stamps a task needs at a tip, from its assessment and the
 //! catalogue.
 //!
-//! They read and decide nothing: the task page's gates (`symphony::gates`) draw them, and nothing
-//! reads them to land yet.
+//! They read and decide nothing themselves: the task page's gates (`symphony::gates`) draw them, and
+//! the land goes by them ([`crate::land::needs`]), the same readers; [`reds`] names a red run for
+//! the land's refusal.
 
 use super::{Catalogue, Needs, short};
 use crate::Message;
@@ -101,16 +102,17 @@ fn listed(labels: &[&str]) -> String {
     said
 }
 
-/// The `tests` stamp at `tip`, from `runs`, the recorder's, of which those whose task `ours` names
-/// are the task's (its own, or work under it): met when the newest run at the tip of each build
-/// and test command the task ran there is green, and one test run at least is among them; not met
-/// while one is red, still going or queued, or none ran at the tip, the last run elsewhere named.
-pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading {
+/// The task's runs among `runs` (those whose task `ours` names) that name a commit, oldest first,
+/// and of them the newest at `tip` of each command, in the order each was first run there.
+fn newest_at<'a>(
+    runs: &'a [Record],
+    tip: &str,
+    ours: impl Fn(&str) -> bool,
+) -> (Vec<&'a Record>, Vec<&'a Record>) {
     let mut mine: Vec<&Record> = (runs.iter())
         .filter(|run| run.commit.is_some() && run.task.as_deref().is_some_and(&ours))
         .collect();
     mine.sort_by(|a, b| began(a).total_cmp(&began(b)));
-    // The newest run at the tip of each command, in the order each was first run there.
     let mut newest: Vec<&Record> = Vec::new();
     for run in mine.iter().filter(|run| run.commit.as_deref() == Some(tip)) {
         match newest.iter_mut().find(|kept| kept.label == run.label) {
@@ -118,6 +120,27 @@ pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading
             None => newest.push(run),
         }
     }
+    (mine, newest)
+}
+
+/// Each command whose newest finished run at `tip`, of the task's (`ours`, as [`tests`] reads
+/// them), is red, with why: what keeps the `tests` stamp from standing while nothing still runs,
+/// and what a run of the same command, green, at the tip clears.
+pub fn reds(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    let (_, newest) = newest_at(runs, tip, ours);
+    (newest.iter())
+        .filter(|run| run.state == Step::Finished)
+        .filter_map(|run| red(run).map(|why| (run.label.clone(), why)))
+        .collect()
+}
+
+/// The `tests` stamp at `tip`, from `runs`, the recorder's, of which those whose task `ours` names
+/// are the task's (its own, or work under it): met when the newest run at the tip of each build
+/// and test command the task ran there is green, and one test run at least is among them; not met
+/// while one is red ([`reds`]), still going or queued, or none ran at the tip, the last run
+/// elsewhere named.
+pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading {
+    let (mine, newest) = newest_at(runs, tip, ours);
     let at_tip = short(tip);
     let Some(last) = newest.iter().max_by(|a, b| began(a).total_cmp(&began(b))) else {
         return match mine.last() {

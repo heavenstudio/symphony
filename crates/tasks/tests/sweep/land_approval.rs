@@ -176,7 +176,7 @@ fn its_orchestrators_approve_lands_a_fast_fix_and_no_other_task() {
     let (_, result) = landed(&r, SLUG, &orch);
     let line = format!(
         "{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it, and its \
-         orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+         orchestrator only a fast fix (a task filed with the fast-fix mark)"
     );
     assert_refused(&r, &result, &line, &before);
     assert_eq!(store.get(SLUG).unwrap().status, "review");

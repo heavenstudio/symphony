@@ -638,6 +638,23 @@ pub fn history(folder: &Path) -> io::Result<Vec<Record>> {
     Ok(kept)
 }
 
+/// Every run the work folder `folder` holds, each once: the history's, and the operations still in
+/// the folder ([`read`]), which say more of one the history keeps too. A folder not there holds
+/// none. What the `tests` stamp is read from, by the task page and the land alike.
+pub fn runs(folder: &Path) -> Vec<Record> {
+    let mut found: Vec<Record> = history(folder).unwrap_or_default();
+    for (live, _) in read(folder).records {
+        match found
+            .iter_mut()
+            .find(|run| run.operation_id == live.operation_id)
+        {
+            Some(kept) => *kept = live,
+            None => found.push(live),
+        }
+    }
+    found
+}
+
 /// Keep `finished` in the history of `folder`: one line appended in one write, which waits for
 /// no other recorder; a history that reached [`ROTATE_BYTES`] then becomes [`ROTATED`], unless
 /// another recorder is rotating or sweeping now.

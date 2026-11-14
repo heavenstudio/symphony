@@ -14,7 +14,7 @@
 //! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
 //! `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked before a land), an ask
 //! list they leave empty going with them. What the Symphony's default land lands is decided by its
-//! approval check, a fresh reviewer's approve standing on the tip it lands, never by a prompt; a
+//! checks, every stamp the task needs standing on the tip it lands, never by a prompt; a
 //! project whose own `land` recipe replaces it gets the same allow rule, and its own landing policy
 //! decides what lands.
 //!
@@ -143,8 +143,8 @@ const MEMORY_GUARD: Hook = Hook {
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
 /// What Claude allows without a prompt: the board and reply recipes of `symphony.just`, and `land`.
-/// The Symphony's default land lands only what its approval check passes, a fresh reviewer's
-/// approve standing on the tip, so a prompt before it would add only a wait on the owner; a
+/// The Symphony's default land lands only what its checks pass, every stamp the task needs
+/// standing on the tip, so a prompt before it would add only a wait on the owner; a
 /// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
 /// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
 /// stops the machine's shared server) and `symphony-cli` (which reaches `serve` and `init`), ask
@@ -251,6 +251,8 @@ impl Shipped {
         Shipped {
             skills: vec![
                 skill!("apply-review", "rewrite-brief.md"),
+                // The assessor's skill: the stamps a task needs to land, read from its diff.
+                skill!("assess-task"),
                 skill!("chat-doc"),
                 skill!("create-task"),
                 skill!("review-task"),

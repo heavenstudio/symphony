@@ -1853,3 +1853,5 @@ mod limits;
 mod regenerate;
 #[path = "land_signals.rs"]
 mod signals;
+#[path = "land_stamps.rs"]
+mod stamps;
