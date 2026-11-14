@@ -20,11 +20,18 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: two page kinds, and the program.
-const KINDS: [&str; 3] = ["board", "docs", "program"];
+/// What bundle.sh builds, each with its own dx run: the board's kind, and the program.
+const KINDS: [&str; 2] = ["board", "program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
-/// kind is its script, with no wasm, and its styles.
-const WEB: [&str; 3] = ["queue", "reports", "review"];
+/// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
+/// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
+/// media sheet, for the two kinds that show media), then its entry's own.
+const WEB: [(&str, &[&str]); 4] = [
+    ("docs", &["media-layer", "docs"]),
+    ("queue", &["queue"]),
+    ("reports", &["reports"]),
+    ("review", &["media-layer"]),
+];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
 const PROGRAM: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
@@ -318,8 +325,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The two kinds built alone, each of the program's (the media layer is none) and the web
-    // client's.
+    // The kind built alone, each of the program's (the media layer is none) and the web client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
         KINDS.len() - 1 + PROGRAM.len() - 1 + WEB.len()
@@ -354,7 +360,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..2] {
+    for kind in &KINDS[..1] {
         for key in ["script", "wasm"] {
             file(manifest[kind][key].as_str().unwrap());
         }
@@ -366,8 +372,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
     }
     // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
-    // and the shared stylesheet before the CSS its entry imports.
-    for kind in WEB {
+    // and the shared stylesheet before the CSS its chunks and its entry import.
+    for (kind, sheets) in WEB {
         let script = manifest[kind]["script"].as_str().unwrap();
         assert!(
             script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
@@ -382,14 +388,20 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
         let styles = manifest[kind]["styles"].as_array().unwrap();
         assert_eq!(styles[0], shared, "{kind}");
-        let own = styles[1..].iter().map(|style| style.as_str().unwrap());
+        let own: Vec<_> = styles[1..]
+            .iter()
+            .map(|style| style.as_str().unwrap())
+            .collect();
         assert_eq!(
-            own.clone().count(),
-            1,
+            own.len(),
+            sheets.len(),
             "{kind} loads the shared stylesheet, then its own: {styles:?}"
         );
-        for style in own {
-            assert!(style.starts_with(&format!("/assets/{kind}-")), "{style}");
+        for (style, sheet) in own.into_iter().zip(sheets) {
+            assert!(
+                style.starts_with(&format!("/assets/{sheet}-")),
+                "{kind}: {style}"
+            );
             assert!(!file(style).is_empty(), "{style}");
         }
     }
@@ -620,14 +632,14 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             .output()
             .expect("run cargo-symphony-ui")
     };
-    let done = size(&["floor_dioxus", "docs"]);
+    let done = size(&["floor_dioxus", "board"]);
     succeeded(&done, "cargo symphony-ui size");
     let out = scratch.0.join("sizes").canonicalize().unwrap();
 
     // bundle.sh's arguments for a page kind (the dist test's), the probe's with its own bin.
     for (name, bin, features) in [
         ("floor_dioxus", "floor_dioxus", "web,size-probe"),
-        ("docs", "symphony-ui", "page-docs"),
+        ("board", "symphony-ui", "page-board"),
     ] {
         let dx = fs::read_to_string(dx_said.join(name)).expect("dx never bundled it");
         assert_eq!(
@@ -661,7 +673,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             linked.join(format!("{stem}.wasm")).display(),
             out.join(format!(
                 "{}-nodwarf.wasm",
-                if stem == "symphony-ui" { "docs" } else { stem }
+                if stem == "symphony-ui" { "board" } else { stem }
             ))
             .display()
         ))
@@ -670,7 +682,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     assert_eq!(bindgen.len(), 2);
     for (call, (name, stem)) in bindgen
         .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
+        .zip([("floor_dioxus", "floor_dioxus"), ("board", "symphony-ui")])
     {
         assert_eq!(
             *call,
@@ -685,7 +697,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     assert_eq!(opt.len(), 2);
     for (call, (name, stem)) in opt
         .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("docs", "symphony-ui")])
+        .zip([("floor_dioxus", "floor_dioxus"), ("board", "symphony-ui")])
     {
         assert_eq!(
             *call,
@@ -707,7 +719,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let stdout = String::from_utf8(done.stdout).unwrap();
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{stdout}");
-    for (line, name) in lines.iter().zip(["floor_dioxus", "docs"]) {
+    for (line, name) in lines.iter().zip(["floor_dioxus", "board"]) {
         let numbers: Vec<usize> = line
             .split(|c: char| !c.is_ascii_digit())
             .filter(|word| !word.is_empty())

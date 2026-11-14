@@ -101,8 +101,6 @@ pub(crate) fn kind() -> &'static str {
         "board"
     } else if cfg!(feature = "page-tasks") {
         "tasks"
-    } else if cfg!(feature = "page-docs") {
-        "docs"
     } else {
         "review"
     }

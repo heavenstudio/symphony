@@ -117,11 +117,10 @@ web-sys = { version = "0.3", features = [
 # One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
 # its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
 [features]
-default = ["web", "page-board", "page-tasks", "page-docs", "overlays"]
+default = ["web", "page-board", "page-tasks", "overlays"]
 web = ["dioxus/web"]
 page-board = []
 page-tasks = []
-page-docs = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
 page-overlay = ["overlays"]
@@ -133,7 +132,7 @@ page-timeline = []
 page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-docs", "page-panel", "page-overlay", "page-timeline"]
+devtools = ["dioxus/devtools", "page-board", "page-tasks", "page-panel", "page-overlay", "page-timeline"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

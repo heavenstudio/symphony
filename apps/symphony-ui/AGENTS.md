@@ -39,8 +39,9 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board and document modules and the program, build the React client's
-  kinds (`web`: one Vite build of `apps/symphony-web`, home and the queue, [its guide](../symphony-web/AGENTS.md)),
+  board module and the program, build the React client's
+  kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports and the
+  documents, [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
@@ -57,8 +58,9 @@ never the whole target, which the release run runs.
   in the one instance (a `VirtualDom` per root, `module.rs`); the board keeps a module of its
   own, under its 300,000-byte cap, which a program shared with it would pass. The
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
-  each the program's styles another kind loads too and its own by name, and refuses a style no
-  kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
+  each the program's styles another kind loads too, the media sheet by name (`media-`: each of
+  them shows media, and since the documents moved no other Dioxus kind loads it) and its own by
+  name, and refuses a style no kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
   never fills, and no kind loads), and refuses one that holds more than custom sections.
   Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
@@ -183,21 +185,23 @@ never the whole target, which the release run runs.
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
   every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
   draws nothing from the device.
-  A document keeps `Item::document(path, false)`: its outline (`outline`,
-  `/api/document?view=outline`) and the bodies of the sections it drew (`sections`, one map by
-  key, each with its card and thread and the validator it was taken under,
-  `cache::document::KeptBody`). A section's validator is its outline `hash` and, for a card, its
-  thread's hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a
-  section showing a difference from main is never kept. Opened, the page counts a visit and draws
-  the outline and every body current by it at once (`docs_live::from_device`), then reads the
-  outline naming its copy's tag (`request::get_document`). The server tags a document read
+  The documents are the React client's since they moved ([its guide](../symphony-web/AGENTS.md)),
+  which keeps them in the same store under the same names, so a copy kept by either reads back
+  on the other. A document keeps `documentItem(path, false)` (`src/cache-document.ts` there): its
+  outline (`outline`, `/api/document?view=outline`) and the bodies of the sections it drew
+  (`sections`, one map by key, each with its card and thread and the validator it was taken
+  under, `KeptBody`). A section's validator is its outline `hash` and, for a card, its thread's
+  hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a section
+  showing a difference from main is never kept. Opened, the page counts a visit and draws the
+  outline and every body current by it at once (`fromDevice`, `src/document-live.ts`), then
+  reads the outline naming its copy's tag (`getDocument`, `src/request.ts`). The server tags a document read
   without the feed's cursor, so an unchanged document is a `304` however the board moved, and
   names the cursor in a header (`symphony_api::VERSION_HEADER`), on the `304` too, from which the
   feed opens. The bodies the server's outline names alike stay and are read no more
-  (`cache::document::Bodies`), on a reconnect as on a return; the others are read as the page
+  (`Bodies`), on a reconnect as on a return; the others are read as the page
   wants them, and no body is read before the outline answers. A body the feed changed is kept
   again only once a later outline names it. An entrypoint's own page, the main checkout's, is kept
-  pinned (`Item::document("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
+  pinned (`documentItem("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
   server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
   so it outlives the documents visited once. No other folder page is kept. A document the server no
   longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
@@ -216,7 +220,7 @@ never the whole target, which the release run runs.
   (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
   within `symphony_api::AHEAD_BYTES`; the server does not follow it), whose contents and bodies a
   visit draws at once, so nothing moves when its outline answers, and keeps as its own
-  (`cache::document::split`). Never on save-data or a 3g or slower link, never a link that acts, a
+  (`split`, the React client's `src/cache-document.ts`). Never on save-data or a 3g or slower link, never a link that acts, a
   search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
   API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
   `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
@@ -318,7 +322,18 @@ never the whole target, which the release run runs.
   sources, take `/tasks` to 280,848 (from 281,212), `/agents` and a task page to 548,042 and
   548,635 (from 548,627 and 549,220) and `/docs/` to 506,544 (from 507,082); the warmed chat and
   menus take 604,993 outside home's (from 603,664), the media sheet home no longer holds under
-  the program's name among them. Each
+  the program's name among them. The documents moving to the web client
+  (`app/client-moves-to-react/documents-page`, against main's build at 0aed38c) take `/docs/` to
+  135,262 bytes (from 506,543) and a document to 136,879 (from 508,160): their entry (23,264 on
+  the wire), their sheet (5,393), the media layer's sheet, the chunk the four web kinds share
+  (76,321, 762 more than before, the documents' share of what it holds), the media layer's chunk
+  they now share with home (4,274), the board's feed and keep (3,399) and the cards' Later they
+  share with the queue (`postpone.tsx`, 953), with the same reads as the Dioxus page. Home takes 111,380 (from 108,351): its entry 4,125 (from
+  6,535), the media layer's chunk, and its task chip a chunk of 371 it shares with the queue
+  alone, so `/queue` takes 106,772 (from 104,992) and `/reports` 107,211 (from 106,456); the
+  Dioxus kinds, the documents' code gone from the shared sources, take `/tasks` to 280,803 (from
+  280,842) and `/agents` and a task page to 545,693 and 546,286 (from 548,027 and 548,620), and
+  the warmed chat and menus 602,730 outside home's (from 605,016). Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -539,18 +554,24 @@ never the whole target, which the release run runs.
   (frames scaled, a viewer's script loaded, its view buttons, the picture viewer's opener) is
   the web client's own (`media-layer.ts`); the picture viewer it opens is still the overlay
   module's here.
-- **Documents.** `docs_live` reads `/api/document?view=outline`: section keys,
-  source positions and anchors, with short card summaries. `viewport::NearViewport`
-  uses the shared visibility latch to mount each block once near the screen; a collapsed
+- **Documents.** The documents (`/docs/`, each document, folder and HTML document an
+  entrypoint serves, the kind `docs`) are the React client's, the fourth page kind it took over
+  ([its guide](../symphony-web/AGENTS.md#the-documents)): this client builds none of them, and
+  its document page's sources (`docs.rs`, `docs_live.rs`, `html_page.rs`, `asks.rs`,
+  `postpone_live.rs`, the `page-docs` feature) left with them. What follows is the page's
+  contract, which the React page keeps, its code named there.
+  `document-live.ts` reads `/api/document?view=outline`: section keys,
+  source positions and anchors, with short card summaries. `NearViewport`
+  mounts each block once near the screen; a collapsed
   card requests its body only when opened. Mounted blocks request their bodies
   and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts
   request `format=blocks` too; reads without it retain the legacy HTML/media
   response for compatible API callers. Canonical `/docs/` pages use the client;
   old `/app/docs/` and `/doc/docs/` bookmarks redirect there.
   Only Markdown files, HTML documents and folders are client routes; raw files keep normal links.
-  An HTML document (`html_page`, docs/PROJECT_FILE.md "HTML documents") is no fragment: its
+  An HTML document (`HtmlPage`, docs/PROJECT_FILE.md "HTML documents") is no fragment: its
   page loads the file whole into one frame whose sandbox allows its scripts alone
-  (`html_page::SANDBOX`; never `allow-same-origin`, top navigation, forms or popups), so it runs
+  (`SANDBOX`, `document-page.tsx`; never `allow-same-origin`, top navigation, forms or popups), so it runs
   in an opaque origin with no reach into the app's storage, cookies, feed, API or page. The
   document's route is the app's page whatever headers ask for it (a browser sends no fetch
   metadata to a plain-http address but loopback's); the frame, and a Markdown document's mockup
@@ -570,7 +591,7 @@ never the whole target, which the release run runs.
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies
   when the form or excerpt is free. The owner's own saved answer on a card
-  releases that card (`docs::release`, `docs::held`, `docs::settle`): its mark,
+  releases that card (`release`, `held`, `settle`, the React client's `document.ts`): its mark,
   line and the register's regroup show at once, an open excerpt beside it or
   not. The release lasts until the card shows one more line of the owner's than
   its latest copy had when the save was sent, so an agent's reply the feed
@@ -684,7 +705,7 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`) are no part of it, and at their routes it draws its frame over "Page unavailable".
+  `/reports`, `/docs/` and the documents) are no part of it, and at their routes it draws its frame over "Page unavailable".
   Such a page is tried on the built distribution, with no hot reload: once a whole
   `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
   web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
@@ -702,8 +723,7 @@ never the whole target, which the release run runs.
   the base in place and adds nothing to it, leaves any other to the browser, and
   the project switch's `/` alone leaves the project.
 - **Media.** Typed document images carry real dimensions and thumbnail URLs from the
-  API (home's pictures, which reserve a square, are the web client's). The shared visibility latch defers native media shells, gallery rows, document blocks
-  and ask threads. Mount `media_live::MediaRuntime` once beside `main`: its
+  API (home's pictures, which reserve a square, are the web client's). The shared visibility latch defers native media shells and gallery rows. Mount `media_live::MediaRuntime` once beside `main`: its
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),
   and the program's from a chunk of its own (`split::MediaPart`, `media` in the program's map of
@@ -744,17 +764,14 @@ never the whole target, which the release run runs.
   `content-visibility: auto` is lost, so the picture never loads (a folded card
   opened by a click). The picture viewer skips a waiting img. `MediaView(media)` renders native
   media from either `Block::Media` or `Span::Media`.
-  `asks::Asks(path, scope, render_blocks)` reads and posts ephemeral document
-  questions and follow-ups. Key both pages by scope and path when navigating so
-  their tasks end with the old page. Ask reads request `format=blocks`; the
-  `render_blocks: Callback<Vec<Block>, Element>` prop supplies the shared
-  document renderer for answers. No rendered HTML is sent on that path.
+  A document's questions and follow-ups are the React client's (`asks.tsx`), which reads them
+  with `format=blocks`, no rendered HTML on that path.
   A document's questions and the `+` sheet's chat read again when the page's feed
-  says so (`frame::use_asks_heard`): its `asks` region names a moved thread (by id
+  says so (the chat by `frame::use_asks_heard`): its `asks` region names a moved thread (by id
   and document path) or a new chat recipient, or a stream opens again. The page
   module forwards that region to every module as a `review:asks` event; a read
-  that fails tries again every 3 s until one answers, and none polls. A read the
-  next one replaces aborts its fetch (`media_live/requests.rs`): a fetch whose
+  that fails tries again every 3 s until one answers, and none polls. A document's
+  question read the next one replaces aborts its fetch (`getJson`'s signal): a fetch whose
   body the page never reads stays in flight in Chrome's eyes for as long as the
   page is open, and `symphony shot` waits on it.
   The media style is `assets/media.css`; the browser adapter uses web-sys and

@@ -63,7 +63,7 @@ custom_only() {
 }
 # The program last: its styles are placed by what the other kinds load. The web client's kinds
 # (apps/symphony-web) are placed after the shared stylesheet, below.
-for module_kind in board docs program; do
+for module_kind in board program; do
     module="$out/.modules/$module_kind"
     # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
     # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
@@ -122,8 +122,7 @@ for module_kind in board docs program; do
     rm -f "$stage/assets/$original"
     styles="$(find "$module/public/assets" -name '*.css' -exec basename {} \; | sort | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s .)"
     # The summary board has no media nodes. The persistent panel loads these styles when
-    # opened; documents keep them with their visible pictures, and home has its own copy
-    # (apps/symphony-web, its entry's CSS).
+    # opened; home and the documents have their own copy (apps/symphony-web, their media layer's).
     if [ "$module_kind" = board ]; then
         styles="$(jq 'map(select(contains("/media-") | not))' <<< "$styles")"
     fi
@@ -131,13 +130,15 @@ for module_kind in board docs program; do
         manifest="$(jq --arg kind "$module_kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
         continue
     fi
-    # Each program kind's styles, of the program's: those another kind loads too (the frame's, the
-    # pictures'), then its own: the timeline's by its name, the shared controls' (`style-`,
-    # components/) for the chat and the menus. A style none of these places is refused.
+    # Each program kind's styles, of the program's: those another kind loads too (the frame's), the
+    # pictures' (`media-`), which each of them shows and no other Dioxus kind loads since the
+    # documents moved to the web client, then its own: the timeline's by its name, the shared
+    # controls' (`style-`, components/) for the chat and the menus. A style none of these places is
+    # refused.
     others="$(jq -c '[.[].styles[]] | unique' <<< "$manifest")"
     for kind in "${program_kinds[@]}"; do
         own="$(jq -c --arg kind "$kind" --argjson others "$others" '
-            (({timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) as $names
+            ((({timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) + ["media-"]) as $names
             | map(select(. as $style | ($others | index($style)) != null
                 or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
         manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
@@ -226,4 +227,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the board and the documents as modules of their own, the web client's kinds (home, the queue, Reports) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the board as a module of its own, the web client's kinds (home, the queue, Reports, the documents) as its own, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

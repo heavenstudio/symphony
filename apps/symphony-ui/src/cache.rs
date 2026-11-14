@@ -14,13 +14,12 @@ use dioxus::prelude::{GlobalSignal, Signal};
 /// the owner never saw. Drafts stay editable.
 pub static STALE: GlobalSignal<bool> = Signal::global(|| false);
 
-/// Which caps an item counts against: each project keeps the 30 tasks opened last and the 20
-/// documents visited most (`CAPS` in cache.js); the board's reads are outside both.
+/// Which caps an item counts against: each project keeps the 30 tasks opened last (`CAPS` in
+/// cache.js, which caps the web client's documents too); the board's reads are outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Board,
     Task,
-    Document,
 }
 
 impl Kind {
@@ -29,7 +28,6 @@ impl Kind {
         match self {
             Kind::Board => "board",
             Kind::Task => "task",
-            Kind::Document => "document",
         }
     }
 }
@@ -53,12 +51,6 @@ impl Item {
     /// The task `slug`'s page, as the checkout `scope` names shows it.
     pub fn task(scope: &str, slug: &str) -> Item {
         Item::new(Kind::Task, scoped(scope, slug), false)
-    }
-
-    /// A document or folder page by its path as the API names it (`docs/X.md`, or
-    /// `@tree/docs/X.md` for a branch's); `entrypoint` for an entrypoint's own page.
-    pub fn document(path: &str, entrypoint: bool) -> Item {
-        Item::new(Kind::Document, path.to_string(), entrypoint)
     }
 
     fn new(kind: Kind, name: String, pinned: bool) -> Item {
@@ -145,250 +137,6 @@ pub mod task {
             }
         }
         entries.sort_by_key(|entry| entry.message.id);
-    }
-}
-
-/// The parts of [`Item::document`]: what a document page, or an entrypoint's folder page, keeps of
-/// a visit. Never its versions, diffs, asks or history, nor a folder page but an entrypoint's own.
-pub mod document {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    use serde::Deserialize;
-    #[cfg(test)]
-    use symphony_api::Document;
-    use symphony_api::{DocumentChange, DocumentOutline, Section};
-
-    use crate::docs::{self, Body};
-
-    /// `/api/document?view=outline`; or, for a document read ahead of its first visit, its first
-    /// part (`view=first`), which carries the bodies of its leading sections ([`read_ahead`]).
-    pub const OUTLINE: &str = "outline";
-    /// The bodies of the sections the page drew, in one map by section key, each with its card and
-    /// thread and the [`validator`] it was drawn under ([`KeptBody`]): a section's body is read
-    /// again only when the outline names another validator for it.
-    pub const SECTIONS: &str = "sections";
-    /// An entrypoint's own folder page (`/api/folder?view=outline`).
-    pub const FOLDER: &str = "folder";
-    /// The names a kept body goes by ([`KeptBody`], [`Body`]): the page writes it from the values
-    /// the server sent, as they came, not from its types, so no page kind carries the code that
-    /// writes a block.
-    pub const VALIDATOR: &str = "validator";
-    pub const BODY: &str = "body";
-    pub const SECTION: &str = "section";
-    pub const CARD: &str = "card";
-    pub const THREAD: &str = "thread";
-
-    /// A section's body as this device keeps it, under the validator it was taken under.
-    #[derive(Clone, Debug, PartialEq, Deserialize)]
-    #[cfg_attr(test, derive(serde::Serialize))]
-    pub struct KeptBody {
-        pub validator: String,
-        pub body: Body,
-    }
-
-    /// Whether a kept outline is a document's first part, read ahead of its first visit: one that
-    /// carries bodies, which an outline never does.
-    pub fn read_ahead(outline: &DocumentOutline) -> bool {
-        !outline.document.threads.is_empty()
-            || outline
-                .document
-                .sections
-                .iter()
-                .any(|section| !section.blocks.is_empty())
-    }
-
-    /// A document's first part read ahead ([`read_ahead`]), as a visit would have kept it: its
-    /// outline, the bodies taken out, and each body under its validator.
-    pub fn split(mut first: DocumentOutline) -> (DocumentOutline, BTreeMap<String, KeptBody>) {
-        let keys = first
-            .document
-            .sections
-            .iter()
-            .map(|section| section.key.clone())
-            .collect();
-        let kept = docs::bodies(&first.document, &keys)
-            .into_iter()
-            .filter_map(|body| {
-                let validator = validator(&body.section, &first.thread_hashes)?;
-                Some((body.section.key.clone(), KeptBody { validator, body }))
-            })
-            .collect();
-        for section in &mut first.document.sections {
-            section.blocks.clear();
-        }
-        first.document.threads.clear();
-        (first, kept)
-    }
-
-    /// Which of the section bodies a page holds are current, and so kept on this device and not
-    /// read again: each body is taken under the [`validator`] the server's outline names for its
-    /// section, and stays current while the outline names the same one. Before the server has
-    /// answered, the bodies drawn from this device are current by the outline kept with them, and
-    /// unconfirmed until the server's outline names the same validator or the body is read again.
-    #[derive(Clone, Debug, Default, PartialEq)]
-    pub struct Bodies {
-        /// The validators of the outline the server last answered, by key, less the sections the
-        /// feed changed since.
-        validators: BTreeMap<String, String>,
-        /// That outline's thread hashes, which a body read since is taken under.
-        threads: BTreeMap<String, String>,
-        /// The validator each body the page holds was taken under, by key.
-        taken: BTreeMap<String, String>,
-        /// The bodies drawn from this device that the server has not confirmed yet.
-        unconfirmed: BTreeSet<String>,
-        /// A body was taken or let go since the device was last given what is taken
-        /// ([`Bodies::unkept`]). A body the feed changed is not: the device's copy of it is
-        /// recognised as out of date by the next outline.
-        dirty: bool,
-    }
-
-    impl Bodies {
-        /// The bodies this device `kept` drawn with `outline`, the outline kept with them: of
-        /// them, those current by it, each taken under its validator and unconfirmed.
-        pub fn drawn(
-            &mut self,
-            outline: &DocumentOutline,
-            kept: BTreeMap<String, KeptBody>,
-        ) -> Vec<Body> {
-            let validators = validators(outline);
-            let mut drawn = Vec::new();
-            for (key, kept) in kept {
-                if kept.body.section.key == key && validators.get(&key) == Some(&kept.validator) {
-                    self.taken.insert(key.clone(), kept.validator);
-                    self.unconfirmed.insert(key);
-                    drawn.push(kept.body);
-                }
-            }
-            drawn
-        }
-
-        /// The bodies [`Bodies::drawn`] came with a document's first part read ahead of the
-        /// visit, kept in its outline ([`read_ahead`]), which the outline the visit reads replaces
-        /// on the device: the device is to keep those still current as the visit's own.
-        pub fn drawn_ahead(&mut self) {
-            self.dirty = true;
-        }
-
-        /// The server answered the outline: bodies are taken under its validators from now on.
-        /// Returns the keys of the bodies held that are still current by it, which the page keeps
-        /// and reads no more. A body drawn from this device that is not current stays unconfirmed
-        /// while the page still wants it (`wanted`), until it is read again.
-        pub fn answered(
-            &mut self,
-            outline: &DocumentOutline,
-            wanted: &BTreeSet<String>,
-        ) -> BTreeSet<String> {
-            self.validators = validators(outline);
-            self.threads = outline.thread_hashes.clone();
-            let validators = &self.validators;
-            let held = self.taken.len();
-            self.taken
-                .retain(|key, valid| validators.get(key) == Some(valid));
-            self.dirty |= self.taken.len() != held;
-            let current: BTreeSet<String> = self.taken.keys().cloned().collect();
-            self.unconfirmed
-                .retain(|key| !current.contains(key) && wanted.contains(key));
-            current
-        }
-
-        /// The page read the bodies of the sections `asked` and holds the answer's `sections`: each
-        /// whose section the server's outline names as it is now is taken under its validator,
-        /// and no other asked one is. Whether what is taken changed.
-        pub fn read(&mut self, asked: &BTreeSet<String>, sections: &[Section]) -> bool {
-            let before = self.taken.clone();
-            self.taken.retain(|key, _| !asked.contains(key));
-            for section in sections {
-                let valid = validator(section, &self.threads)
-                    .filter(|valid| self.validators.get(&section.key) == Some(valid));
-                match valid {
-                    Some(valid) => self.taken.insert(section.key.clone(), valid),
-                    None => self.taken.remove(&section.key),
-                };
-            }
-            self.unconfirmed.retain(|key| !asked.contains(key));
-            let changed = self.taken != before;
-            self.dirty |= changed;
-            changed
-        }
-
-        /// The feed changed `delta`'s sections (their text, card or thread): no validator the
-        /// outline named tells them current any more, until the server's next outline. Whether
-        /// what is taken changed.
-        pub fn changed(&mut self, delta: &DocumentChange) -> bool {
-            let cards = delta
-                .threads
-                .keys()
-                .chain(delta.cards.iter().map(|card| &card.key))
-                .map(|slug| format!("card:{slug}"));
-            let keys: Vec<String> = delta
-                .sections
-                .iter()
-                .map(|section| section.key.clone())
-                .chain(delta.deleted.iter().cloned())
-                .chain(cards)
-                .collect();
-            let mut changed = false;
-            for key in keys {
-                self.validators.remove(&key);
-                changed |= self.taken.remove(&key).is_some();
-            }
-            changed
-        }
-
-        /// Whether every body drawn from this device is confirmed or read again.
-        pub fn confirmed(&self) -> bool {
-            self.unconfirmed.is_empty()
-        }
-
-        /// Which bodies this device is to keep, each under its validator, when one was taken or
-        /// let go since it was last given them; `None` when it holds them already.
-        pub fn unkept(&mut self) -> Option<BTreeMap<String, String>> {
-            std::mem::take(&mut self.dirty).then(|| self.taken.clone())
-        }
-
-        /// What this device keeps of `document`, as the page writes it from what the server sent:
-        /// each body it holds that is taken, under its validator.
-        #[cfg(test)]
-        pub fn kept(&self, document: &Document) -> BTreeMap<String, KeptBody> {
-            let keys = self.taken.keys().cloned().collect();
-            docs::bodies(document, &keys)
-                .into_iter()
-                .filter_map(|body| {
-                    let validator = self.taken.get(&body.section.key)?.clone();
-                    Some((body.section.key.clone(), KeptBody { validator, body }))
-                })
-                .collect()
-        }
-    }
-
-    /// What tells a section's kept body current: the outline's `hash` of it, and for a card the
-    /// hash of its thread (`DocumentOutline::thread_hashes`), which its own leaves out. `None` for a
-    /// section never kept: one showing a difference from main, whose `before` the outline leaves
-    /// out.
-    pub fn validator(section: &Section, threads: &BTreeMap<String, String>) -> Option<String> {
-        if section.comparison.is_some() {
-            return None;
-        }
-        Some(match section.key.strip_prefix("card:") {
-            Some(slug) => format!(
-                "{}/{}",
-                section.hash,
-                threads.get(slug).map_or("", String::as_str)
-            ),
-            None => section.hash.clone(),
-        })
-    }
-
-    /// The validator of each section of `outline` that may be kept, by key.
-    pub fn validators(outline: &DocumentOutline) -> BTreeMap<String, String> {
-        outline
-            .document
-            .sections
-            .iter()
-            .filter_map(|section| {
-                validator(section, &outline.thread_hashes).map(|valid| (section.key.clone(), valid))
-            })
-            .collect()
     }
 }
 
