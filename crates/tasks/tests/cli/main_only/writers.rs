@@ -3,14 +3,25 @@
 //! week that its move would leave behind and moves nothing; the writer, rebuilt and run once, writes
 //! its line though the board refuses it; the migrate then moves the board; and a writer built
 //! before it is refused, named as what to rebuild. `--leave-behind` moves a board all the same.
+//! A line's time is the machine's clock, which `TASKS_NOW` does not pin, so these write a line seen
+//! some hours before now by hand.
 
 use super::{Held, Live, before, refused, this};
 use crate::common::NOW;
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
 use symphony_board::{Opening, Program, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
+
+/// The machine's clock, as a line's `seen` reads it.
+fn now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
 
 /// The project's own gate, which opens its board to write through the board's crate.
 fn gate() -> Program {
@@ -50,7 +61,7 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
         &gate(),
         "studio",
         before(),
-        NOW - 3.0 * HOUR,
+        now() - 3.0 * HOUR,
     );
     let left_behind = format!(
         "the live board has a writer seen in the last week behind schema {this}, the one this \
@@ -67,6 +78,7 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
 
     // The gate, rebuilt at this build's schema, runs once: the board is behind it, and only the
     // migrate moves it, so it is refused, but its line now says where it is.
+    let start = now();
     let rebuilt = Store::opening(
         live.client("tasks"),
         Box::new(|| NOW),
@@ -94,7 +106,8 @@ fn a_migrate_waits_for_a_writer_it_would_leave_behind_to_be_rebuilt_and_run_then
             .unwrap()
     };
     let line = gate_line(&live);
-    assert_eq!((line.schema, line.seen), (this(), NOW));
+    assert_eq!(line.schema, this());
+    assert!(line.seen >= start, "seen as it ran: {}", line.seen);
 
     // So the migrate moves the board, its own build's line among the writers it leaves out.
     let ran = live.tasks(&live.main, &["migrate"]);
@@ -158,7 +171,7 @@ fn migrate_leave_behind_moves_a_board_whose_writers_are_behind_and_says_so_in_it
             json!({"version": before()}),
         )
         .unwrap();
-    write_line(&client, &gate(), "studio", before(), NOW - 48.0 * HOUR);
+    write_line(&client, &gate(), "studio", before(), now() - 48.0 * HOUR);
     let board = format!(
         "the board in database {} at {}",
         env.vars["TASKS_DATABASE"], env.vars["TASKS_SERVER"]

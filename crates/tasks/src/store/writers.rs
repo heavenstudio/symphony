@@ -11,7 +11,7 @@
 //! writes its line, so a rebuilt writer stops counting as behind once it has run; one refused a board
 //! ahead of its build writes nothing, refused before any write. The table is schemaless and its line
 //! is written without the schema guard, as builds of other schemas write it; it has no event, so a
-//! line written moves no board marker.
+//! line written moves no board marker. Its times are this machine's clock ([`seen_now`]).
 
 use super::{Failure, Store};
 use crate::board_health::ago;
@@ -31,6 +31,14 @@ pub const EVERY: f64 = 3600.0;
 
 /// How recently a writer was seen, in seconds, for `tasks migrate` to count it: a week.
 pub const RECENT: f64 = 7.0 * 24.0 * 3600.0;
+
+/// The time a line is seen at and a migrate reads lines by: this machine's clock, never a store's
+/// own ([`super::Clock`], which a test or `TASKS_NOW` pins), since a line says when a program on
+/// the machine last ran, and an opening never reads the store's clock: a rule's first read of it is
+/// its own.
+pub(super) fn seen_now() -> f64 {
+    super::now()
+}
 
 /// A program that opens a board, as its line names it: its file name and where it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,7 +88,7 @@ pub struct Writer {
     pub host: String,
     /// The schema the program was built at.
     pub schema: i64,
-    /// When it last opened the board to write, as the board's clock read it then.
+    /// When it last opened the board to write, by this machine's clock ([`seen_now`]).
     pub seen: f64,
 }
 
@@ -198,14 +206,14 @@ impl Store {
     }
 
     /// The writers seen in the last week that are behind `target`, the schema a migrate moves this
-    /// board to, `program` (the migrate's) left out.
+    /// board to, `program` (the migrate's) left out, as [`seen_now`] reads the time.
     pub(super) fn writers_behind(
         &self,
         target: i64,
         program: &Program,
     ) -> Result<Vec<Writer>, Failure> {
         let lines = self.writer_lines()?;
-        Ok(behind(lines, target, self.now(), program, &self.host))
+        Ok(behind(lines, target, seen_now(), program, &self.host))
     }
 
     /// `program`'s line, as a build of `schema` opening this board for `access`, written when `line`
@@ -221,7 +229,7 @@ impl Store {
         if access != Access::Write || schema.version() < SINCE {
             return;
         }
-        let now = self.now();
+        let now = seen_now();
         if !due(line, schema.version(), now) {
             return;
         }

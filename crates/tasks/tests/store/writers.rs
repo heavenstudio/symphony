@@ -1,23 +1,35 @@
 //! Who writes a board: each opening to write keeps its program's line (its name, where it is, its
-//! host, the schema it was built at, when it was last seen), read in the opening's one read and
-//! written again only once it names another schema or is an hour old; a reader keeps none, and nor
-//! does a build from before the record. A migrate that would leave behind a writer seen in the last
-//! week names each and moves nothing unless told to, and once moved past one, that writer is refused
-//! naming itself as what to rebuild.
+//! host, the schema it was built at, when it was last seen by this machine's clock), read in the
+//! opening's one read and written again only once it names another schema or is an hour old; a
+//! reader keeps none, and nor does a build from before the record. A migrate that would leave behind
+//! a writer seen in the last week names each and moves nothing unless told to, and once moved past
+//! one, that writer is refused naming itself as what to rebuild.
+//!
+//! A line's time is the machine's, never the store's pinned clock, so these tests age a line by
+//! moving its `seen` back by hand.
 
 use crate::common::{HOST, NOW, client, refused};
 use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
 use symphony_board::{Error, NewTask, Opening, Program, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 const DAY: f64 = 24.0 * HOUR;
 
-/// The store `how` opens on a new client of `client`'s database, on `host`, its clock at `at`.
-fn opened_at(client: &Client, how: &Opening, host: &str, at: f64) -> Result<Store, Error> {
+/// The machine's clock, as a line's `seen` reads it.
+fn now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// The store `how` opens on a new client of `client`'s database, on `host`.
+fn opened(client: &Client, how: &Opening, host: &str) -> Result<Store, Error> {
     Store::opening(
         Client::new(client.addr(), "sf", client.database()),
-        Box::new(move || at),
+        Box::new(|| NOW),
         Box::new(|_| false),
         host,
         how,
@@ -43,6 +55,24 @@ fn lines(client: &Client) -> Vec<Writer> {
     lines
 }
 
+/// `program`'s line on `host`, which the test expects there.
+fn line(client: &Client, program: &str, host: &str) -> Writer {
+    lines(client)
+        .into_iter()
+        .find(|w| w.program == program && w.host == host)
+        .unwrap_or_else(|| panic!("no line of {program} on {host}"))
+}
+
+/// `program`'s line on `host` made to have been seen `by` seconds earlier than it was.
+fn age(client: &Client, program: &str, host: &str, by: f64) {
+    client
+        .query(
+            "UPDATE writer SET seen = seen - $by WHERE program = $program AND host = $host;",
+            json!({"by": by, "program": program, "host": host}),
+        )
+        .unwrap();
+}
+
 /// The version `meta:schema` records.
 fn version(client: &Client) -> Option<i64> {
     let found = client
@@ -66,47 +96,53 @@ fn newer() -> Schema {
 #[test]
 fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gone() {
     let client = client();
-    opened_at(&client, &Opening::write().by(gate()), HOST, NOW).unwrap();
-    let first = Writer {
-        program: "gate-review".into(),
-        path: "/work/alpha/.target/debug/gate-review".into(),
-        host: HOST.into(),
-        schema: this(),
-        seen: NOW,
-    };
+    let start = now();
+    opened(&client, &Opening::write().by(gate()), HOST).unwrap();
+    let first = line(&client, "gate-review", HOST);
     assert_eq!(
         lines(&client),
-        std::slice::from_ref(&first),
+        [Writer {
+            program: "gate-review".into(),
+            path: "/work/alpha/.target/debug/gate-review".into(),
+            host: HOST.into(),
+            schema: this(),
+            seen: first.seen,
+        }],
         "made with the board"
     );
+    assert!(
+        (start..=now()).contains(&first.seen),
+        "seen by the machine's clock, not the store's: {}",
+        first.seen
+    );
     // Within the hour an opening reads its line in its one read, and writes nothing.
-    let soon = opened_at(
-        &client,
-        &Opening::write().by(gate()),
-        HOST,
-        NOW + HOUR - 1.0,
-    )
-    .unwrap();
+    age(&client, "gate-review", HOST, HOUR - 600.0);
+    let soon = opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     assert_eq!(soon.client().requests(), 1);
-    assert_eq!(lines(&client), std::slice::from_ref(&first));
+    let kept = line(&client, "gate-review", HOST);
+    assert_eq!(kept.seen, first.seen - (HOUR - 600.0), "not written again");
     // An hour on, the line is written again: its last seen moves.
-    let later = opened_at(&client, &Opening::write().by(gate()), HOST, NOW + HOUR).unwrap();
+    age(&client, "gate-review", HOST, 600.0);
+    let again = now();
+    let later = opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     assert_eq!(later.client().requests(), 2, "its read, then its line");
-    let moved = Writer {
-        seen: NOW + HOUR,
-        ..first.clone()
-    };
-    assert_eq!(lines(&client), std::slice::from_ref(&moved));
+    let moved = line(&client, "gate-review", HOST);
+    assert!(moved.seen >= again, "{} moved to {}", kept.seen, moved.seen);
+    assert_eq!(
+        moved,
+        Writer {
+            seen: moved.seen,
+            ..first.clone()
+        }
+    );
     // The same program on another host is a writer of its own.
-    opened_at(&client, &Opening::write().by(gate()), "studio", NOW + HOUR).unwrap();
-    let studio = Writer {
-        host: "studio".into(),
-        ..moved.clone()
-    };
+    opened(&client, &Opening::write().by(gate()), "studio").unwrap();
+    let studio = line(&client, "gate-review", "studio");
+    assert_eq!(studio.path, first.path);
     assert_eq!(lines(&client), [studio.clone(), moved.clone()]);
     // A reader writes no line.
     let reader = Program::named("symphony", "/work/symphony");
-    opened_at(&client, &Opening::read().by(reader), HOST, NOW + 2.0 * HOUR).unwrap();
+    opened(&client, &Opening::read().by(reader), HOST).unwrap();
     assert_eq!(lines(&client), [studio, moved]);
 }
 
@@ -115,17 +151,16 @@ fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_bo
     let client = client();
     let older = Program::named("tasks", "/opt/old/tasks");
     // `before` defines this build's tables at the version behind, the writers' among them.
-    opened_at(
+    opened(
         &client,
         &Opening::write().at(Schema::this_build().before()).by(older),
         HOST,
-        NOW,
     )
     .unwrap()
     .create(&NewTask::new("old/one", "Made before the record", "owner"))
     .unwrap();
     assert_eq!(lines(&client), []);
-    opened_at(&client, &Opening::write().by(gate()), HOST, NOW).unwrap();
+    opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     assert_eq!(version(&client), Some(this()));
     let recorded: Vec<(String, i64)> = lines(&client)
         .into_iter()
@@ -134,12 +169,13 @@ fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_bo
     assert_eq!(recorded, [("gate-review".to_string(), this())]);
 }
 
-/// A board at this build, its gate's line written `ago` before [`NOW`], and the line of the test's
-/// own program, which the migrates below are, at [`NOW`].
+/// A board at this build, its gate's line last seen `ago` before now, and the line of the test's own
+/// program, which the migrates below are, seen now.
 fn board_with_gate(ago: f64) -> Client {
     let client = client();
-    opened_at(&client, &Opening::write().by(gate()), HOST, NOW - ago).unwrap();
-    opened_at(&client, &Opening::write(), HOST, NOW)
+    opened(&client, &Opening::write().by(gate()), HOST).unwrap();
+    age(&client, "gate-review", HOST, ago);
+    opened(&client, &Opening::write(), HOST)
         .unwrap()
         .create(&NewTask::new("old/one", "Made at this version", "owner"))
         .unwrap();
@@ -150,7 +186,7 @@ fn board_with_gate(ago: f64) -> Client {
 fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board_unmoved() {
     let client = board_with_gate(3.0 * HOUR);
     let migrate = Opening::write().at(newer()).migrating().of(Some("alpha"));
-    let why = refused(opened_at(&client, &migrate, HOST, NOW).map(drop));
+    let why = refused(opened(&client, &migrate, HOST).map(drop));
     assert_eq!(
         why,
         format!(
@@ -175,21 +211,14 @@ fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board
     );
 
     // Told to, it moves the board, and the gate left behind is refused, named as what to rebuild.
-    opened_at(&client, &migrate.clone().leave_behind(), HOST, NOW).unwrap();
+    opened(&client, &migrate.clone().leave_behind(), HOST).unwrap();
     assert_eq!(version(&client), Some(this() + 1));
-    let gate_line = |client: &Client| {
-        lines(client)
-            .into_iter()
-            .find(|w| w.program == "gate-review")
-            .unwrap()
-    };
-    let before = gate_line(&client);
+    let before = line(&client, "gate-review", HOST);
     let why = refused(
-        opened_at(
+        opened(
             &client,
             &Opening::write().by(gate()).of(Some("alpha")),
             HOST,
-            NOW + DAY,
         )
         .map(drop),
     );
@@ -204,7 +233,11 @@ fn a_migrate_names_a_writer_seen_in_the_last_week_behind_it_and_leaves_the_board
             this()
         )
     );
-    assert_eq!(gate_line(&client), before, "refused before any write");
+    assert_eq!(
+        line(&client, "gate-review", HOST),
+        before,
+        "refused before any write, its line three hours old and all"
+    );
 }
 
 #[test]
@@ -212,47 +245,42 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     // Not seen in the last week.
     let unseen = board_with_gate(7.0 * DAY + 1.0);
     let migrate = Opening::write().at(newer()).migrating();
-    opened_at(&unseen, &migrate, HOST, NOW).unwrap();
+    opened(&unseen, &migrate, HOST).unwrap();
     assert_eq!(version(&unseen), Some(this() + 1));
 
     // The migrate's own line, written before it was rebuilt: the migrate is the gate itself.
     let itself = client();
-    opened_at(&itself, &Opening::write().by(gate()), HOST, NOW - HOUR).unwrap();
+    opened(&itself, &Opening::write().by(gate()), HOST).unwrap();
+    age(&itself, "gate-review", HOST, HOUR);
     let rebuilt = Opening::write().at(newer()).by(gate()).migrating();
-    opened_at(&itself, &rebuilt, HOST, NOW).unwrap();
+    let start = now();
+    opened(&itself, &rebuilt, HOST).unwrap();
     assert_eq!(version(&itself), Some(this() + 1));
-    let moved: Vec<(String, i64, f64)> = lines(&itself)
-        .into_iter()
-        .map(|w| (w.program, w.schema, w.seen))
-        .collect();
+    let moved = line(&itself, "gate-review", HOST);
     assert_eq!(
-        moved,
-        [("gate-review".to_string(), this() + 1, NOW)],
+        (lines(&itself).len(), moved.schema),
+        (1, this() + 1),
         "its line moved with it"
     );
+    assert!(moved.seen >= start, "seen as it moved the board");
 
     // A writer already at the schema the migrate moves to is not behind it.
     let already = client();
-    opened_at(&already, &Opening::write().by(gate()), HOST, NOW - HOUR).unwrap();
+    opened(&already, &Opening::write().by(gate()), HOST).unwrap();
     already
         .query(
             "UPDATE writer SET schema = $schema;",
             json!({"schema": this() + 1}),
         )
         .unwrap();
-    opened_at(&already, &migrate, HOST, NOW).unwrap();
+    opened(&already, &migrate, HOST).unwrap();
     assert_eq!(version(&already), Some(this() + 1));
 
     // Two writers behind, on two hosts: both named, by program then host.
     let two = board_with_gate(HOUR);
-    opened_at(
-        &two,
-        &Opening::write().by(gate()),
-        "studio",
-        NOW - 2.0 * DAY,
-    )
-    .unwrap();
-    let why = refused(opened_at(&two, &migrate, HOST, NOW).map(drop));
+    opened(&two, &Opening::write().by(gate()), "studio").unwrap();
+    age(&two, "gate-review", "studio", 2.0 * DAY);
+    let why = refused(opened(&two, &migrate, HOST).map(drop));
     assert!(
         why.starts_with(&format!(
             "this board has 2 writers seen in the last week behind schema {}",
@@ -280,7 +308,7 @@ fn an_opening_whose_line_is_refused_still_opens_its_board() {
             json!({}),
         )
         .unwrap();
-    let store = opened_at(&client, &Opening::write().by(gate()), HOST, NOW + DAY).unwrap();
+    let store = opened(&client, &Opening::write().by(gate()), HOST).unwrap();
     assert_eq!(
         store.client().requests(),
         2,

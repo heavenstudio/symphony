@@ -97,7 +97,10 @@ migrate`) whose move would leave behind a writer seen in the last week
 (`writers::left_behind`); `Opening::leave_behind` (`--leave-behind`) moves it
 all the same. Only the migrate asks, so main's build still moves this
 repository's board at its first command. `Store::writers` lists the lines.
-The dump and the copy carry no line.
+The dump and the copy carry no line. A line's time is the machine's clock
+(`writers::seen_now`), never the store's `Clock`: the opening must not read
+that clock, whose first read a test's fixture takes as its rule's own, so a test
+ages a line by moving its `seen` back by hand.
 
 Which writer moves a project's live board forward (`src/live.rs`): the live
 board is the `tasks` database on a repository's board server, the one on the

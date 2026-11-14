@@ -531,17 +531,11 @@ fn seeded(tasks: usize) -> Case {
 /// the requests it sent and the seconds it took.
 fn measured(tasks: usize) -> (String, Vec<proxy::Request>, f64) {
     let c = seeded(tasks);
-    let mut later = c.env.clone();
-    later
-        .vars
-        .insert("TASKS_NOW".into(), (NOW + 24.0 * H).to_string());
-    // A command a day after the board's last one writes its writer's line again as it opens
-    // (`store/writers.rs`): written first, at the clock stats runs at, so the requests counted are
-    // stats' own.
-    Case { env: later.clone() }.ok("", &["list"]);
     let relay = proxy::Proxy::to(&c.env.vars["TASKS_SERVER"]);
-    let mut env = later;
+    let mut env = c.env.clone();
     env.vars.insert("TASKS_SERVER".into(), relay.addr.clone());
+    env.vars
+        .insert("TASKS_NOW".into(), (NOW + 24.0 * H).to_string());
     let through = Case { env };
     let started = Instant::now();
     let said = through.ok("", &["stats"]);

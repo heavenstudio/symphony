@@ -233,7 +233,7 @@ impl Store {
             &board,
             target,
             &behind,
-            self.now(),
+            writers::seen_now(),
         ))))
     }
 

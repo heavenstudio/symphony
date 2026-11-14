@@ -133,11 +133,11 @@ once each of its readers and writers runs a build that carries it, the main chec
 
 A board keeps a line for each program that opens it to write (`crates/tasks/src/store/writers.rs`,
 the `writer` table): the program's file name, where it is, its host, the schema it was built at
-and when it was last seen. The board's own programs (`tasks`, `agent-send`, `tasks-copy`) keep
-one, and so does a project's own program that opens the board to write through the board's crate.
-The heartbeat and the recorder, which take the board's tables as they are, keep none: the `tasks`
-build they run keeps its line by its other commands. The line is read in the opening's one read of the
-board's schema and written only when it is missing, names another schema, or is an hour old, so a
+and when it was last seen, by the machine's clock, which `TASKS_NOW` does not set. The board's own
+programs (`tasks`, `agent-send`, `tasks-copy`) keep one, and so does a project's own program that
+opens the board to write through the board's crate. The heartbeat and the recorder, which take the
+board's tables as they are, keep none: the `tasks` build they run keeps its line by its other
+commands. The line is read in the opening's one read of the board's schema and written only when it is missing, names another schema, or is an hour old, so a
 board command sends no request for it most of the time and "last seen" is good to the hour. A reader
 (the Symphony) keeps none. A writer refused a board behind its build (a project's live board,
 which only `just tasks migrate` moves) still writes its line, so a writer rebuilt for the next
