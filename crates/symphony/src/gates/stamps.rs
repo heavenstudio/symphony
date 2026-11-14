@@ -4,7 +4,8 @@
 //! the assessment its reason. `owner` is held too while a card the task posted waits ([`owner`]),
 //! and `review` reads the rounds ([`review`]), met only while the last approve names the tip
 //! ([`review_at`]). A task done or cancelled with no assessment keeps the gates it had before
-//! stamps ([`stamped`]): no history is judged again.
+//! stamps ([`stamped`]): no history is judged again. The task's timeline draws no lane for a stamp
+//! left out ([`left_out`]).
 //!
 //! Until the task page is ported, the owner gives the `owner` stamp through the page's approval
 //! offer: [`owner_offer`] makes the Symphony's own where no plugin offers one, and its action posts
@@ -16,7 +17,7 @@ use symphony_api::gates::{OWNER, REVIEW};
 use symphony_api::{Gate, GateState, PendingItem, TaskOffer};
 use symphony_board::cli::machine_work::recorded::Record;
 use symphony_board::stamps::read::{self, Reading};
-use symphony_board::stamps::{Catalogue, Needs, said, short};
+use symphony_board::stamps::{Catalogue, Needs, READERS, said, short};
 use symphony_board::{Message, Store, Task};
 
 use super::{Round, covered_close, first_line, owner, review, review_of, review_rounds};
@@ -25,6 +26,10 @@ use super::{Round, covered_close, first_line, owner, review, review_of, review_r
 pub const TESTS: &str = "tests";
 /// The Symphony's own board action: the owner's approve of a task's tip ([`owner_offer`]).
 pub const OWNER_APPROVE: &str = "owner-approve";
+/// How a stamp the task's assessment left out starts its detail, the assessment's reading after.
+const LEFT_OUT: &str = "Left out by the assessment";
+/// The detail of a stamp the catalogue does not need by default, on a task no assessment read.
+const BY_DEFAULT: &str = "Not needed by default: no assessment yet";
 
 /// Whether the gates of `record` are its stamps: a top-level task, open or assessed. A subtask has
 /// none, as it had no review gate; a task done or cancelled with no assessment keeps the reading it
@@ -199,7 +204,7 @@ fn waived(
                 "a task no assessment has read needs only the catalogue's defaults: {}",
                 said(defaults)
             )),
-            detail: "Not needed by default: no assessment yet".into(),
+            detail: BY_DEFAULT.into(),
             ..Gate::default()
         };
     };
@@ -215,10 +220,19 @@ fn waived(
         at: line.map(|line| line.ts),
         commit: needs.tip.clone(),
         why: Some(needs.why.clone()),
-        detail: format!("Left out by the assessment {}", needs.read()),
+        detail: format!("{LEFT_OUT} {}", needs.read()),
         link: line.map(|line| format!("/task/{slug}#message-{}", line.id)),
         past: Vec::new(),
     }
+}
+
+/// Whether `gate` is a stamp left out ([`waived`]): by the task's assessment, or by default with
+/// none. The task page's gates list it; its timeline draws no lane for it, which would say the
+/// same thing over the task's whole life.
+pub fn left_out(gate: &Gate) -> bool {
+    gate.state == GateState::Waived
+        && READERS.contains(&gate.name.as_str())
+        && (gate.detail.starts_with(LEFT_OUT) || gate.detail == BY_DEFAULT)
 }
 
 /// The gate saying the project's catalogue cannot be read (`why`): its stamps are unknown, and the

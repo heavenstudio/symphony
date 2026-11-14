@@ -423,6 +423,45 @@ fn a_done_task_with_an_assessment_reads_its_stamps_and_a_covered_close_stays_wai
 }
 
 #[test]
+fn only_a_stamp_left_out_by_an_assessment_or_by_default_goes_without_a_timeline_lane() {
+    let named = |gates: &[Gate]| -> Vec<String> {
+        (gates.iter())
+            .filter(|gate| left_out(gate))
+            .map(|gate| gate.name.clone())
+            .collect()
+    };
+    // With no assessment, the stamps not needed by default; review, needed, keeps its lane.
+    let gates = read(&task("ready", None), &[], &[], Some(TIP));
+    assert_eq!(named(&gates), ["tests", "pictures", "owner"]);
+    // With one, each it left out.
+    let record = task("review", Some(assessed(&["tests"], Some(TIP))));
+    let gates = read(&record, &given(), &[], Some(TIP));
+    assert_eq!(named(&gates), ["review", "pictures", "owner"]);
+    // A review a covered close waived, a bug fix's waiver of a task with no stamps and a plugin's
+    // waived gate are what happened to the task: their lanes stay.
+    let covered = symphony_board::covered_line("tools/y", TIP, "quiet-plover", "its fix");
+    let thread = [line(5, "verdict", "quiet-plover", &covered)];
+    let gates = read(
+        &task("done", Some(assessed(&[], Some(TIP)))),
+        &thread,
+        &[],
+        Some(TIP),
+    );
+    assert_eq!(named(&gates), ["tests", "pictures", "owner"]);
+    let fixed = review_of(SLUG, "done", &[], &[]);
+    let plugins = Gate {
+        name: "dependency".into(),
+        state: GateState::Waived,
+        detail: "Left out by the assessment at 4be91c2".into(),
+        ..Gate::default()
+    };
+    for gate in [fixed, plugins] {
+        assert_eq!(gate.state, GateState::Waived, "{gate:?}");
+        assert!(!left_out(&gate), "{gate:?}");
+    }
+}
+
+#[test]
 fn a_card_the_task_posted_holds_its_owner_stamp_needed_or_not_and_in_any_catalogue() {
     let card = PendingItem {
         path: "docs/DECISIONS.md".into(),

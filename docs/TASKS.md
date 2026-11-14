@@ -2702,8 +2702,10 @@ so each time reads on the server's local clock as it then stood, the thread's.
   every run, and the page says so.
 - **gates**: each gate's states from the [gates](#gates) answer, its past and its
   current, a lane each by name; a state taken before the task was made counts from
-  its creation, and the review gate's from the task's first move to review. A gates
-  answer that cannot be read leaves the lanes out, never the timeline.
+  its creation, and the review gate's from the task's first move to review. A stamp
+  left out, by the task's assessment or by default with none, has no lane: the gates
+  list it, waived. A gates answer that cannot be read leaves the lanes out, never the
+  timeline.
 
 The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
 this browser last drew the task's timeline, with placeholder rows in it, so nothing on
