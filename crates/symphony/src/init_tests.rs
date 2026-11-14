@@ -1269,7 +1269,9 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
         left(&tree, ""),
         [
             "write symphony.toml to name the project (until then it is `lamp-shop`, after its \
-             folder) and to set its agents, verdicts and board",
+             folder) and to set its agents, verdicts and board: \
+             https://github.com/heavenstudio/symphony/blob/main/docs/PROJECT_FILE.md lists its \
+             tables and keys",
             "make docs/ for the documents the Symphony serves at /lamp-shop/docs/, or name the \
              folders it serves with [[entrypoints]] in symphony.toml",
             NO_BUILDS[0],

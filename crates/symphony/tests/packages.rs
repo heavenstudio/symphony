@@ -5,6 +5,8 @@
 //! member inherits from the workspace as `cargo publish` does, and from each manifest's own
 //! `include`, which the metadata leaves out.
 
+#[path = "common/owner_words.rs"]
+mod owner_words;
 #[path = "common/tree.rs"]
 mod tree;
 
@@ -444,11 +446,10 @@ fn every_copy_a_package_carries_is_the_file_it_copies() {
 
 /// No file a published package carries, its manifest's comments among them, gives a rule as the
 /// owner's words, dated or quoted: each says the rule it sets, without the quote, the date or the
-/// card. What each package carries is what `cargo package --list` names.
+/// card ([`owner_words`]). What each package carries is what `cargo package --list` names.
 #[test]
 fn no_published_package_carries_the_owners_words() {
-    let words =
-        regex::Regex::new(r#"(?i)owner('s (word|rule))?,? (of )?20\d\d-\d\d|owner's ""#).unwrap();
+    let words = owner_words::pattern();
     let mut found = Vec::new();
     for package in members().iter().filter(|package| published(package)) {
         let out = Command::new(env!("CARGO"))

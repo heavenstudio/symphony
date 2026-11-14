@@ -17,6 +17,7 @@ mod live_limits;
 mod manifest;
 mod no_documents;
 mod offers;
+mod reference;
 mod seams;
 
 use common::Tree;

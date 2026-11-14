@@ -1118,6 +1118,13 @@ const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
 /// Where a Symphony checkout's `cargo build --release` leaves its builds.
 const RELEASE: &str = ".target/release";
 
+/// The reference of the project file's tables and keys, docs/PROJECT_FILE.md, where a project
+/// that has no Symphony checkout reads it: in the Symphony's repository.
+pub const PROJECT_FILE_REFERENCE: &str = concat!(
+    env!("CARGO_PKG_REPOSITORY"),
+    "/blob/main/docs/PROJECT_FILE.md"
+);
+
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
 /// the project. None left means agents can run the board.
 pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
@@ -1133,7 +1140,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
         if !root.join(crate::project::FILE).is_file() {
             steps.push(format!(
                 "write {} to name the project (until then it is `{}`, after its folder) and to set \
-                 its agents, verdicts and board",
+                 its agents, verdicts and board: {PROJECT_FILE_REFERENCE} lists its tables and keys",
                 crate::project::FILE,
                 project.id
             ));

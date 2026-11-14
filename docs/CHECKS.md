@@ -109,7 +109,11 @@ a measurement before and after.
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. For a shipped skill,
+  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
+  shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
+  owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
+  shape. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
   the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
 

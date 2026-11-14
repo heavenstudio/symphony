@@ -1,0 +1,187 @@
+# The project file
+
+A project's settings are its `symphony.toml`, committed at the root of its main checkout. Every
+table and key is optional: a key left out takes the default below, and an empty file, or none, is
+a plain project of every default. A table or key the Symphony does not know is refused by name and
+line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
+read, where the Symphony runs with the file as it is. The board reads its own keys (`[board]`'s
+commands and thresholds, `[limits]`, `[agents] launch` and `[agents.models]`) from the main
+checkout's copy, so a branch cannot change its own. A path is relative to the project's root and
+stays inside it, unless its key says otherwise.
+
+```toml
+[project]
+name = "Lamp Shop"
+
+[agents]
+launch = { default = "claude", model = "opus" }
+```
+
+This page lists every key the Symphony reads (`crates/symphony/src/project/file.rs`, `board.rs`
+and `theme.rs`, and a generator's in `crates/tasks/src/land.rs`): a test,
+`crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
+not have.
+
+## `[project]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `name` | the folder's name | the name the pages show |
+| `id` | `name` made a slug (lowercase letters, digits and dashes), `project` when that is empty | the project's segment on the machine's server (`/<id>/`) and its data folder |
+| `register` | `DECISIONS.md` in the first entrypoint's folder | the decision register |
+| `artifacts` | `artifacts` | the folder of served files and the Symphony's private files |
+| `default_branch` | `main` | the branch tasks land on |
+| `cargo` | `tools/cargo.sh` in the Symphony's own workspace, `cargo` elsewhere | the command that runs Cargo when the machine's server rebuilds itself from this checkout |
+
+## `[[entrypoints]]`
+
+Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
+`/docs/`, Markdown, `docs/history` listed but never read as documents. A key not listed here
+refuses the file, as a misspelt one would change what is served.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `url` | (required) | the route it is served at, such as `"/docs/"`, or `"/"` |
+| `folder` | (required) | the folder it reads; `"."` is the project's root |
+| `include` | `["**"]` | the files shown, as patterns over their path in the folder |
+| `exclude` | `[]` | the files left out of those |
+| `types` | `["markdown"]` | the renderers that show its files: `markdown`, `media` (pictures and `.html` mockups) and the plugins' |
+| `history` | `[]` | folders inside it served and listed but never read as documents |
+
+## `[plugins]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `crates` | `[]` | the project's plugins, by crate name: a host linking them, or a process of their own ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) |
+| `process` | none | `[plugins.process]`: a plugin's name, then the command that starts its process, run in the project's root |
+| `timing` | `false` | record each plugin call's time ([PLUGIN_CALLS](PLUGIN_CALLS.md)) |
+| `loopback` | `false` | send each call through a JSON round trip inside the process, and record both times |
+
+## `[theme]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `package` | the Symphony's own | a theme package a selected plugin brings, by name |
+| `name` | the package's, else the project's | the name in the header and the tab |
+| `icon` | none | the icon of the header and the tab |
+| `stylesheet` | none | a stylesheet served after the package's |
+| `tokens` | none | `[theme.tokens]`: the package's tokens set over, by name (`primary = "#a33"`) |
+| `layouts` | none | `[theme.layouts]`: a variant for each region, `header` (`default`, `compact`) and `home` (`default`, `focus`) |
+
+## `[agents]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `transports` | `["claude-uds", "codex-queue", "inbox"]` | the agent transports the project names; read and checked, acted on by nothing of the Symphony's own |
+| `panes` | `"none"` | what agents' terminals run in: `"hc"` (Herdr), whose panes the pages can show, or `"none"` |
+| `worktrees` | none: `symphony/tasks/land/` in the git common dir | the folder of a land's and the regenerator's worktrees; it may lie outside the project |
+| `launch` | below | the table `[agents.launch]` |
+| `models` | below | the table `[agents.models]` |
+
+## `[agents.launch]`
+
+What `just tasks launch` and the staffing pass start when the caller names nothing; `just tasks
+limits` prints what holds and where it came from.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `default` | `"codex"` | the agent a launch starts: `"codex"` or `"claude"` |
+| `model` | the board's own for that agent | its model |
+| `effort` | the board's own for that agent | its effort |
+
+## `[agents.models]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `orchestrator` | none: whoever starts one chooses | the model an orchestrator runs on |
+| `executor` | `[agents.launch] model`, else the board's own | the model an executor runs on |
+| `reviewer` | `[agents.launch] model`, else the board's own | the model a reviewer runs on |
+
+## `[verdicts]`
+
+The owner's edits commit straight to the default branch unless a generator changes an output;
+then they go on a branch with the outputs, checked and landed.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `check` | `[]`: none | the command a generated branch passes before it lands, and a land's check (`[land] check`) |
+| `land` | `[]` | the command that lands a generated branch, its name appended; needed once `generators` names any |
+| `generators` | `[]` | the generators run on the owner's edits, each a table as below |
+| `record` | none: no record | where a verdict commit's record goes, for the project's landing hook; under `.git/`, the git common dir |
+
+## `[land]`
+
+What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASKS.md#the-default-landing)).
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `check` | `true` | whether a land runs `[verdicts] check` on its merge |
+| `push` | `true` | whether a land pushes the default branch to `origin` |
+| `timeout_seconds` | `3600` | how long each generator and the check may run |
+| `generators` | `[]` | what the regenerator a land starts makes of the default branch's newest tip, each a table as below ([TASKS](TASKS.md#the-regenerator)) |
+| `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
+| `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
+
+## `[[land.generators]]`
+
+A generator, in `[land] generators` or `[verdicts] generators`, usually written inline
+(`{ name = "…", outputs = "…", command = […] }`). A key not listed here refuses the file.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `name` | (required) | its name, in its key and in what the regenerator says |
+| `outputs` | (required) | the path it writes, a folder ending in `/`; a land keeps the default branch's side of it |
+| `command` | (required) | what runs it, in the project's root |
+| `when_changed` | `false` | run only after an earlier generator changed something |
+
+## `[board]`
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `guide` | `TASKS.md` | the board's guide: the links and pictures in task messages resolve from it |
+| `on_review` | `[]`: none | the command started, detached from the main checkout, when a task moves to review, with its slug, branch and tip appended |
+| `on_land` | `[]`: none | the command started once `just land` closed a task, with its slug and merge appended |
+| `orchestrator_slots` | none: no cap | the open tasks an orchestrator holds before the board refuses it new work; `[limits]` wins |
+| `review_alarm_ratio` | `2` | review over this many times the work in progress raises the pipeline alarm ([TASKS](TASKS.md#the-pipeline-alarm)) |
+| `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
+| `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
+| `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
+| `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
+| `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
+| `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
+| `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
+| `export` | none | read and checked, acted on by nothing of the Symphony's own (`just tasks export` takes `--out`) |
+| `disposable` | `[]` | read and checked, acted on by nothing of the Symphony's own (the sweep keeps its own list) |
+
+## `[board.machine_wip.MACHINE]`
+
+Advice for one machine, by the installation ID the board's Advisory targets show; nothing
+enforces it, and zero is advice too.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `build` | none | the builds to run at once there |
+| `test` | none | the tests to run at once there |
+
+## `[limits]`
+
+Read by the board itself ([TASKS](TASKS.md#limits-and-models)); a value it cannot read takes its
+default and is said on stderr.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds |
+| `low_volume` | `4` | PULL's low-volume line below this many open slots; `0` says it to none |
+| `machine_agents` | none: no limit | the agents this machine runs, past which a launch is refused |
+
+## `[releases]`
+
+Read only by the release run of the Symphony's own repository ([RELEASES](RELEASES.md)), which no
+other project runs.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `every_landings` | `20` | a release run starts once this many tasks have landed; `0` starts none |
+| `refresh` | `true` | whether a green release refreshes the machine |
+| `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
+| `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

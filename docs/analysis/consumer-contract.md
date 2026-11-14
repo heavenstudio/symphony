@@ -54,8 +54,8 @@ that day: Symphony's main at `22bdb4c4`, the consuming project's checkout read i
   consumer's packages that use Symphony against the candidate
   ([step 4](../RELEASES.md#the-release-run)).
 - **The version numbers that do exist** are four counters, each raised by hand: the board's schema
-  (`VERSION = 17`, `crates/tasks/src/schema.rs`), the `tasks api` methods (`VERSION = 14`,
-  `crates/tasks/src/cli/api.rs`; 13 at `22bdb4c4`, raised later that day), the plugin protocol (`PROTOCOL`, 0.1,
+  (`VERSION = 17`, `crates/tasks/src/schema.rs`), the `tasks api` methods (1.14:
+  `MAJOR = 1` and `MINOR = 14`, `crates/tasks/src/cli/api.rs`), the plugin protocol (`PROTOCOL`, 0.2,
   `crates/symphony-plugin/src/protocol.rs`) and the machine's pin (`PIN = 1`,
   `crates/symphony/src/machine.rs`: "raised with each change to the wire contract or the plugin
   seams a host and its projects share", 1 since it came on 2026-11-05).
@@ -92,9 +92,9 @@ names (`crates/symphony/tests/consumer_api.rs`, the file's doc).
 
 | Surface | What the consuming project does with it | Stated? | Versioned? |
 |---|---|---|---|
-| The plugin process protocol ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)) | nothing yet: its plugin is linked (its `symphony.toml` has no `[plugins.process]`), and it declares seams a process does not answer (`unanswered` in `crates/symphony/src/plugins/process.rs`: renderers, routes, navigation, home regions, board actions, watches, doc checks, commands, a theme), with card kinds that would cost about eight round trips per card | yes | yes: 0.1, every call naming its minor; another major is refused by name (`Version::agreed`) |
+| The plugin process protocol ([PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md)) | nothing yet: its plugin is linked (its `symphony.toml` has no `[plugins.process]`), and it declares seams a process does not answer (`unanswered` in `crates/symphony/src/plugins/process.rs`: renderers, routes, navigation, home regions, board actions, watches, doc checks, commands, a theme), with card kinds that would cost about eight round trips per card | yes | yes: 0.2, every call naming its minor; another major is refused by name (`Version::agreed`) |
 | The board's schema | its own `tasks` build and its review tool write its live board at the pin's schema | yes (`schema.rs`, its doc) | yes, 17: a writer opens a board only at its own version, a reader at its own or one ahead, read-only (`decide`); it went from 9 on 2026-11-02 to 17 on 2026-11-12 |
-| `tasks api` (JSON in, JSON out) | its notices are told through it (`tools/gate/src/cargo/notice/delivery.rs`), and its board launcher reads the schema's and the api's `VERSION` from Symphony's committed source (`tools/tasks.sh`, `contract`) | yes (`api.rs`, its doc) | yes, 14, raised each time a method takes or does something an earlier build did otherwise |
+| `tasks api` (JSON in, JSON out) | its notices are told through it (`tools/gate/src/cargo/notice/delivery.rs`), and its board launcher reads the schema's and the api's `VERSION` from Symphony's committed source (`tools/tasks.sh`, `contract`) | yes (`api.rs`, its doc) | yes, 1.14, its minor raised each time a method takes or does something an earlier build did otherwise |
 | `symphony.toml` | the machine's one server reads it for every project | in `crates/symphony/src/project.rs` | no. The server reads it through `Project::of`, which leaves out a table or key the build does not know, says so on stderr and reads the rest, "so a file a newer Symphony wrote keeps its settings"; only `Project::load` refuses the file, as registration (`project add`, a server started from that checkout), `status --lint` and `init` read it (`project/file.rs`, `refusal`). Three tables are strict wherever the file is read (`deny_unknown_fields`): an unknown key in an `[[entrypoints]]` entry (`project/file.rs`, `FileEntrypoint`), in a landing generator (`[land]` or `[verdicts] generators`, the board's `land::Generator`) or in a `[board] machine_wip` entry (`project/board.rs`, `WipGuidance`) fails the file, and the server then serves that project on the defaults. The board's own reading of `[land]`, which `tasks land`, `tasks done --covered-by` and the regenerator make, refuses a key it does not know anywhere in that table (`crates/tasks/src/land.rs`, `Settings::of`) |
 | Recipes, skills and hooks (`symphony init`) | it keeps recipes and skills of its own; its Claude settings run its own build's `symphony hook tasks-beat` | the names, in AGENTS.md | no |
 | The client | embedded in the server its host builds, from the pin's committed distribution (`apps/symphony-server/build.rs`) | yes | rides with the server |
@@ -357,7 +357,7 @@ Under B, in the words RELEASES would then use:
 | It can stay behind on | its plugin binary, while the machine speaks that protocol major; its `tasks api` and command clients, within their versions | A's, plus the kit's version, and each helper for as long as it likes | any package, within what the others' version ranges allow |
 | It cannot stay behind on | the server, the board commands, its board's schema, the client, the recipes | the same | the board's schema and the machine's server: a board writer of its own holds the schema, and the server is still one build |
 | Symphony keeps compatible | the protocol's minors and a kept major; `tasks api`; command names and outputs; settings keys | A's, plus the kit's and each helper's Rust names within a major | every package's public names within its major, the library's and the board's included |
-| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough, though the owner chose crates.io ([below](#open-choices)) | a registry, private or crates.io |
+| Distribution | one release tag; the kit at any tag | one release tag, one tag line for the kit, one per helper; Git is enough, though the versions live on crates.io ([below](#open-choices)) | a registry, private or crates.io |
 | The release judges | contract checks | contract checks and semver checks | semver checks of every package and their combinations; the project's suite or a matrix |
 | A break of a promised name shows | as a refused call or a default answer at run time | at the kit's or helper's semver check, at its task's gate | at each package's semver check |
 
@@ -416,8 +416,8 @@ of its own:
 Over Git this works without a registry: a consumer names the kit's three packages at one kit tag
 (one source, one copy each), and each helper at its own tag (two sources, but they share no
 types). A registry is needed only once version ranges must unify, such as two kit-dependent crates
-of a consumer each asking for a different minor. The owner chose one all the same, after B: the
-versions live on crates.io ([below](#open-choices)).
+of a consumer each asking for a different minor. One is used all the same, after B: the versions
+live on crates.io ([below](#open-choices)).
 
 - **A consumer stays behind on** its kit version, and so its plugin, while the machine's server
   speaks that kit's protocol major; on each helper as long as it likes, since nothing on the machine
@@ -541,9 +541,9 @@ the contract.
 
 B decides the rest:
 
-- **Where versions live:** on crates.io, by the owner's word after B, 2026-11-13: "I would like to
-  publish crates (MIT license) to crates.io as the pacakge manager". So not on lines of tags in this
-  repository, which the options' table (Distribution) found enough for B: the kit and the helpers
+- **Where versions live:** on crates.io, the package manager, where the packages are published
+  under MIT ([its card](../DECISIONS.md#consumer-contract-versioning)). So not on lines of tags in
+  this repository, which the options' table (Distribution) found enough for B: the kit and the helpers
   are published there, each version once ([RELEASES](../RELEASES.md#packages-on-cratesio)).
 - **The board's rules:** the board commands stay one per machine and move at its update, so a
   changed rule reaches every project at once, the release's notes saying so. `tasks api` promises
