@@ -668,7 +668,7 @@ impl Remote {
             );
             return Err(Unstarted::Failed(connection.closed()));
         }
-        let declare = Declare { protocol: PROTOCOL };
+        let declare = Declare::new(PROTOCOL);
         let declaration = match self.sent_within(&connection, declare, self.limits.declare) {
             Ok((declaration, _, _)) => declaration,
             Err(why) => {
@@ -1220,24 +1220,24 @@ impl Component for RemoteComponent {
         option: Option<&str>,
     ) -> Result<Vec<Block>, String> {
         self.ask(
-            Render {
-                component: self.name.clone(),
-                page: PageData::of(page),
-                argument: argument.into(),
-                option: option.map(str::to_string),
-            },
+            Render::new(
+                self.name.clone(),
+                PageData::of(page),
+                argument.into(),
+                option.map(str::to_string),
+            ),
             |answer| answer,
             |agreed| self.missing(Render::TAG, agreed),
         )
     }
     fn resolve(&self, page: &Page<'_>, argument: &str, option: Option<&str>) -> Result<(), String> {
         self.ask(
-            Resolve {
-                component: self.name.clone(),
-                page: PageData::of(page),
-                argument: argument.into(),
-                option: option.map(str::to_string),
-            },
+            Resolve::new(
+                self.name.clone(),
+                PageData::of(page),
+                argument.into(),
+                option.map(str::to_string),
+            ),
             |answer| answer,
             |_| ComponentDefaults(self).resolve(page, argument, option),
         )
@@ -1245,10 +1245,7 @@ impl Component for RemoteComponent {
     fn cache_version(&self, page: &Page<'_>) -> Option<String> {
         // A component with no version is rendered afresh on every read: what a failure asks too.
         self.ask(
-            CacheVersion {
-                component: self.name.clone(),
-                page: PageData::of(page),
-            },
+            CacheVersion::new(self.name.clone(), PageData::of(page)),
             Ok,
             |_| Ok(ComponentDefaults(self).cache_version(page)),
         )
@@ -1296,80 +1293,51 @@ impl CardKind for RemoteKind {
     }
     fn recognises(&self, card: &Card<'_>) -> bool {
         // Required of every kind, so in every minor: a kind that did not answer recognises nothing.
-        self.ask(
-            Recognises {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
-            || false,
-        )
+        self.ask(Recognises::new(self.name.clone(), self.card(card)), || {
+            false
+        })
     }
     fn pictures(&self, root: &Path, card: &Card<'_>) -> Vec<Picture> {
         self.ask(
-            Pictures {
-                kind: self.name.clone(),
-                root: root.to_path_buf(),
-                card: self.card(card),
-            },
+            Pictures::new(self.name.clone(), root.to_path_buf(), self.card(card)),
             || KindDefaults(self).pictures(root, card),
         )
     }
     fn slot(&self, card: &Card<'_>) -> Option<String> {
-        self.ask(
-            Slot {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
-            || KindDefaults(self).slot(card),
-        )
+        self.ask(Slot::new(self.name.clone(), self.card(card)), || {
+            KindDefaults(self).slot(card)
+        })
     }
     fn markers(&self) -> &[&str] {
         &self.markers
     }
     fn triage_category(&self, card: &Card<'_>) -> Option<String> {
         self.ask(
-            TriageCategory {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
+            TriageCategory::new(self.name.clone(), self.card(card)),
             || KindDefaults(self).triage_category(card),
         )
     }
     fn auto_approvable(&self, card: &Card<'_>) -> bool {
         self.ask(
-            AutoApprovable {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
+            AutoApprovable::new(self.name.clone(), self.card(card)),
             || KindDefaults(self).auto_approvable(card),
         )
     }
     fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
-        self.ask(
-            CardGates {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
-            || KindDefaults(self).gates(card),
-        )
+        self.ask(CardGates::new(self.name.clone(), self.card(card)), || {
+            KindDefaults(self).gates(card)
+        })
     }
     fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
         self.ask(
-            ApprovalNeedsAgent {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
+            ApprovalNeedsAgent::new(self.name.clone(), self.card(card)),
             || KindDefaults(self).approval_needs_agent(card),
         )
     }
     fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
-        self.ask(
-            Chosen {
-                kind: self.name.clone(),
-                card: self.card(card),
-            },
-            || KindDefaults(self).chosen(card),
-        )
+        self.ask(Chosen::new(self.name.clone(), self.card(card)), || {
+            KindDefaults(self).chosen(card)
+        })
     }
 }
 

@@ -10,12 +10,11 @@ machine, and moves with the machine's load as much as with the files ([below](#t
 The published client's size is main's at c76d0bc4, 20,557,418 bytes (at 310a8c3 it was
 20,471,262).
 
-The owner, 2026-11-13, on the Reports page costing 557 KB on a first visit, choosing "Share the
-runtime between modules. One common chunk that every page module loads, so a page's own module is
-only its own code": "seems like the obious choice. I'm okay with keeping it t 557 for now, and a
-follow up to investigate this option". The 300,000-byte first-visit caps on `/` and `/tasks` are
-the owner's too, of 2026-11-11 ("lets increase the budget to 300"); that choice left them as they
-are, and only the owner moves them.
+The Reports page costs 557 KB on a first visit, which stays for now. The way chosen to bring it
+down, investigated here as a follow-up: share the runtime between modules, one common chunk that
+every page module loads, so that a page's own module is only its own code. The 300,000-byte
+first-visit caps on `/` and `/tasks` are the owner's; that choice left them as they are, and only
+the owner moves them.
 
 ## The choice
 
@@ -24,7 +23,7 @@ Sharing works with this toolchain, through the splitter dx already ships (`dx bu
 It shrinks the published client and makes Reports cheap. But a shared part that every page loads
 holds code a given page never needed, and the board page has about 4 KB of room under its cap: on
 the prototype, `/tasks`'s first visit grew from 295,837 to 360,579 bytes. So the card asked which
-pages share, and the owner chose A, 2026-11-13:
+pages share, and A was chosen:
 
 - **A, recommended: every page but home and the board.** `/` and `/tasks` keep a module of their
   own, as today, and their caps stand. The task pages, `/agents` and Reports share one runtime with

@@ -3,9 +3,9 @@
 The workspace, the cargo wrapper and the toolchain pin: [the Rust section of
 the root guide](../../AGENTS.md#rust).
 
-`apps/symphony-ui` is one Dioxus app (the owner: "I want to experiment more with
-dioxus, so let's switch to it"), the browser now and the desktop window later,
-from the same code. It reads the server's JSON API, whose wire types are
+`apps/symphony-ui` is one Dioxus app, the framework the owner chose to experiment
+further with, the browser now and the desktop window later, from the same code.
+It reads the server's JSON API, whose wire types are
 `crates/symphony-api` (tested against its `fixtures/`), and never runs server
 code: no fullstack server functions. Dioxus is pinned `=0.7.10` and built by
 dx 0.7.10.
@@ -214,8 +214,8 @@ never the whole target, which the release run runs.
   raced by the reads ahead; `tests/browser/cache_ahead.rs` covers them.
 - **Budget.** Both `/` and `/tasks` have a 300 KB first-visit gzip budget and
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
-  the owner's, never loosened by an agent; the first-visit cap is the owner's
-  of 2026-11-11: "lets increase the budget to 300"). A visit counts each response the page loaded at what Chrome's
+  both the owner's, the first-visit cap raised by the owner to 300 KB, and
+  never loosened by an agent). A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
@@ -227,7 +227,8 @@ never the whole target, which the release run runs.
   and all, only for the canonical-entry test's report.
   It leaves out document-content images, browser-cache hits and
   the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
-  page is open and are reported beside the total (the owner's, 2026-11-11).
+  page is open and are reported beside the total: leaving the pings out is
+  the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture a first visit to `/tasks` takes 261,350 bytes, 38,650 under the
   cap: the board WASM 230,907, its glue 11,086, the shared style sheet 9,175,
