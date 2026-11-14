@@ -218,15 +218,16 @@ impl Plugins {
         if remotes.is_empty() {
             return self.clone();
         }
-        let mut seen = std::collections::HashSet::new();
+        // A card twice (two alike in one document) is asked twice and answered alike.
         let mut cards = Vec::new();
         for doc in docs {
             for decision in &doc.decisions {
                 for on in [doc.path.as_str(), ""] {
-                    let card = with_card(decision, on, symphony_plugin::protocol::CardData::of);
-                    if seen.insert(card.clone()) {
-                        cards.push(card);
-                    }
+                    cards.push(with_card(
+                        decision,
+                        on,
+                        symphony_plugin::protocol::CardData::of,
+                    ));
                 }
             }
         }

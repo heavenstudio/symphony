@@ -149,11 +149,12 @@ answer fails alone: the calls after it start the process again once its pause is
 A plugin's commands do not go on the pipe. `symphony NAME ARGS…`, run in a project whose plugin
 answers from a process and declared the command `NAME`, runs the plugin's program alone as `PROGRAM
 … command NAME ARGS…`, the words `[plugins.process]` gives it first: in the folder `symphony` runs
-in, with its stdin, without the session, its stdout and stderr written to `symphony`'s as they come,
-and its exit code `symphony`'s, which the SDK's `serve` gives as the command's (its low byte, as an
-exit status holds it). A program killed exits 128 and the signal's number, and one that cannot start
-exits 1, each saying so on stderr (`plugin NAME: its command C was killed by signal 9`). It is no
-call: it starts no process of the pipe's, waits on none, and is not measured. `symphony help` lists
+in, without the session, with `symphony`'s own stdin, stdout and stderr, which the program writes to
+itself once what `symphony` wrote before is flushed, and its exit code `symphony`'s, which the SDK's
+`serve` gives as the command's (its low byte, as an exit status holds it). A program killed exits
+128 and the signal's number, and one that cannot start exits 1, each saying so on stderr (`plugin
+NAME: its command C was killed by signal 9`). It is no call: it starts no process of the pipe's,
+waits on none, copies no stream and is not measured. `symphony help` lists
 the commands the project's processes declared, each once, before those of the plugins linked in the
 binary; a linked plugin that the project's file gives a process adds none, even while that process
 does not start, so a copy built into the binary never stands in for the project's own. The project

@@ -885,9 +885,8 @@ fn a_seam_whose_process_does_not_answer_is_shown_where_its_answer_goes() {
     );
 }
 
-/// The command `every` of the plugin `tiny` whose program is `program`, never started as a
-/// process: its exit code and what it wrote to its stdout and stderr, run with `args`.
-fn commanded(tree: &Tree, program: &[&str], args: &[&str]) -> (i32, String, String) {
+/// The command `every` of the plugin `tiny` whose program is `program`, its process never started.
+fn command_of(tree: &Tree, program: &[&str]) -> seams::RemoteCommand {
     let remote = Remote::leaked(
         "tiny",
         PluginProcess {
@@ -906,35 +905,71 @@ fn commanded(tree: &Tree, program: &[&str], args: &[&str]) -> (i32, String, Stri
         (command.name(), command.summary()),
         ("every", "print its arguments")
     );
+    command
+}
+
+/// The command `every` of the plugin `tiny` whose program is `program` run with `args`: its exit
+/// code and what was written to the `out` and `err` it was given.
+fn commanded(tree: &Tree, program: &[&str], args: &[&str]) -> (i32, String, String) {
     let args: Vec<String> = args.iter().map(|&arg| arg.into()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = command.run(&args, &mut out, &mut err);
+    let code = command_of(tree, program).run(&args, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
 
+/// A stream that keeps what it is given until it is flushed, then appends it to its file.
+struct Held {
+    file: std::path::PathBuf,
+    held: Vec<u8>,
+}
+
+impl io::Write for Held {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.held.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.file)?;
+        file.write_all(&std::mem::take(&mut self.held))
+    }
+}
+
 #[test]
-fn a_command_runs_as_the_plugins_program_with_its_streams_and_exit_code() {
+fn a_command_runs_as_the_plugins_program_with_this_process_streams_and_its_exit_code() {
     let tree = Tree::new();
-    // The program's own words first, then `command NAME ARGS…`, each argument as it was given.
-    let script = r#"test "$1 $2" = "command every" || exit 99
+    let said = tree.path("said");
+    // The program's own words first, then `command NAME ARGS…`, each argument as it was given;
+    // what it writes goes where it writes it, after what was written before is flushed.
+    let script = r#"said=$1; shift
+test "$1 $2" = "command every" || exit 99
 shift 2
-for arg; do printf '%s;' "$arg"; done
-printf '%s arguments\n' "$#" >&2
+for arg; do printf '%s;' "$arg" >> "$said"; done
 exit "$#""#;
-    let program = ["/bin/sh", "-c", script, "sh"];
-    assert_eq!(
-        commanded(&tree, &program, &["--all", "a b", ""]),
-        (3, "--all;a b;;".into(), "3 arguments\n".into())
+    let command = command_of(
+        &tree,
+        &["/bin/sh", "-c", script, "sh", said.to_str().unwrap()],
     );
+    let mut out = Held {
+        file: said.clone(),
+        held: b"before;".to_vec(),
+    };
+    let mut err = Vec::new();
+    let args = ["--all", "a b", ""].map(String::from);
+    assert_eq!(command.run(&args, &mut out, &mut err), 3);
     assert_eq!(
-        commanded(&tree, &program, &[]),
-        (0, String::new(), "0 arguments\n".into())
+        std::fs::read_to_string(&said).unwrap(),
+        "before;--all;a b;;"
     );
-    // More than a pipe holds on each stream at once: both read as they come, neither stalls.
-    let both = "head -c 300000 /dev/zero; head -c 200000 /dev/zero >&2";
-    let (code, out, err) = commanded(&tree, &["/bin/sh", "-c", both, "sh"], &[]);
-    assert_eq!((code, out.len(), err.len()), (0, 300_000, 200_000));
+    assert!(out.held.is_empty() && err.is_empty());
+    assert_eq!(command.run(&[], &mut out, &mut err), 0);
+    assert_eq!(
+        std::fs::read_to_string(&said).unwrap(),
+        "before;--all;a b;;"
+    );
 }
 
 #[test]

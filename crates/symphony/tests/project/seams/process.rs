@@ -486,17 +486,8 @@ fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
 }
 
-/// `command` run with `args`: its exit code and what it wrote to its stdout and stderr.
-fn ran(command: &dyn Command, args: &[&str]) -> (i32, String, String) {
-    let args: Vec<String> = args.iter().map(|&arg| arg.into()).collect();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = command.run(&args, &mut out, &mut err);
-    let text = |bytes| String::from_utf8(bytes).unwrap();
-    (code, text(out), text(err))
-}
-
 #[test]
-fn a_plugins_process_runs_its_command_as_its_program_as_it_does_linked() {
+fn a_plugins_process_declares_its_command_and_symphony_finds_it_in_the_project() {
     let tree = Tree::new();
     let (linked, piped, project) = linked_and_piped(&tree, true);
     let (theirs, ours) = (linked.list()[0].commands(), piped.list()[0].commands());
@@ -506,15 +497,9 @@ fn a_plugins_process_runs_its_command_as_its_program_as_it_does_linked() {
     };
     assert_eq!(said(&ours), said(&theirs));
     assert_eq!(ours.len(), 1);
-    for args in [&[][..], &["--all", "a b", "", "ünï"]] {
-        assert_eq!(ran(ours[0], args), ran(theirs[0], args), "{args:?}");
-    }
     // `symphony NAME` in the project finds the process's command, and its listing names it once.
     let found = symphony::plugins::command("every", Some(&tree.root)).unwrap();
-    assert_eq!(
-        ran(found, &["x"]),
-        (1, "x\n".into(), "1 arguments\n".into())
-    );
+    assert!(std::ptr::addr_eq(found, ours[0]));
     let listed = symphony::plugins::commands_of(Some(&tree.root));
     assert_eq!(listed.iter().filter(|c| c.name() == "every").count(), 1);
     // A command is no call on the pipe, so none is recorded.
@@ -522,10 +507,11 @@ fn a_plugins_process_runs_its_command_as_its_program_as_it_does_linked() {
 }
 
 #[test]
-fn symphony_runs_a_command_of_a_plugins_process_in_its_project() {
+fn symphony_runs_a_command_of_a_plugins_process_with_its_streams_as_it_runs_one_linked() {
     let tree = Tree::new();
     project(&tree, "");
     tree.write("docs/a/.keep", "");
+    // Run from a folder of the project, which it finds above.
     let symphony = |args: &[&str]| {
         let done = std::process::Command::new(env!("CARGO_BIN_EXE_symphony"))
             .args(args)
@@ -533,15 +519,24 @@ fn symphony_runs_a_command_of_a_plugins_process_in_its_project() {
             .output()
             .unwrap();
         let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
-        (done.status.code(), text(done.stdout), text(done.stderr))
+        (
+            done.status.code().unwrap(),
+            text(done.stdout),
+            text(done.stderr),
+        )
     };
-    assert_eq!(
-        symphony(&["every", "--all", "a b"]),
-        (Some(2), "--all|a b\n".into(), "2 arguments\n".into())
-    );
+    let linked = symphony_plugin::Plugin::commands(&super::every::EVERY)[0];
+    for args in [&[][..], &["--all", "a b", "", "ünï"]] {
+        let owned: Vec<String> = args.iter().map(|&arg| arg.into()).collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = linked.run(&owned, &mut out, &mut err);
+        let text = |bytes| String::from_utf8(bytes).unwrap();
+        let ran = symphony(&[&["every"][..], args].concat());
+        assert_eq!(ran, (code, text(out), text(err)), "{args:?}");
+    }
     // Its listing names the command with the summary the process declared.
     let (code, listing, _) = symphony(&["help"]);
-    assert_eq!(code, Some(0));
+    assert_eq!(code, 0);
     let line = |line: &&str| line.split_whitespace().next() == Some("every");
     let named: Vec<&str> = listing.lines().filter(line).collect();
     assert_eq!(named.len(), 1, "{listing}");
