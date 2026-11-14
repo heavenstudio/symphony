@@ -203,7 +203,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/agents", "program", ".agents", None),
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
-        ("/reports", "program", "[data-ready=reports]", None),
+        ("/reports", "reports", "[data-ready=reports]", None),
         ("/task/visual/in-progress", "program", "article.task", None),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {

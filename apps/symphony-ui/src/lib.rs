@@ -74,9 +74,6 @@ pub mod docs_live;
 pub mod navigation;
 #[cfg(all(target_arch = "wasm32", feature = "page-docs"))]
 pub mod postpone_live;
-/// The Reports page, drawn by the task pages' module as the Agents page is.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
-pub mod reports;
 #[cfg(target_arch = "wasm32")]
 pub mod request;
 #[cfg(target_arch = "wasm32")]

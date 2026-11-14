@@ -26,10 +26,10 @@ const KINDS: [&str; 3] = ["docs", "review", "program"];
 /// kind is its script, with no wasm, and its styles, the shared stylesheet and then as many of its
 /// own as given here. The task board has none: its styles (assets/board.css) are every Dioxus
 /// kind's, in the shared file.
-const WEB: [(&str, usize); 2] = [("board", 0), ("queue", 1)];
+const WEB: [(&str, usize); 3] = [("board", 0), ("queue", 1), ("reports", 1)];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
-const PROGRAM: [&str; 6] = ["media", "overlay", "panel", "reports", "tasks", "timeline"];
+const PROGRAM: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
 /// The program's chunk that is no kind, which the shell's manifest never names.
 const MEDIA: &str = "media";
 
@@ -214,7 +214,7 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_reports module_4_tasks module_5_timeline; do
+        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_tasks module_4_timeline; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
@@ -226,7 +226,7 @@ if [ "$kind" = program ]; then
     # takes, when a case asks for it.
     printf '.a{}' > "$assets/a-shared.css"
     printf '.z{}\n' > "$assets/z-shared.css"
-    for own in reports task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
+    for own in task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
     exit 0
 fi
 printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind" > "$out/public/index.html"
@@ -415,9 +415,9 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     );
     assert!(
         program.contains(
-            "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_reports=\
-             globalThis.reviewModuleReady_panel=globalThis.reviewModuleReady_overlay=\
-             globalThis.reviewModuleReady_timeline=init({module_or_path:"
+            "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_panel=\
+             globalThis.reviewModuleReady_overlay=globalThis.reviewModuleReady_timeline=\
+             init({module_or_path:"
         ),
         "every program kind is ready when its one initializer is: {program}"
     );
@@ -450,7 +450,6 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
         // Every program kind takes the styles the other kinds load too, then its own.
         let own = match *kind {
-            "reports" => vec!["/assets/reports-program.css"],
             "timeline" => vec!["/assets/task-timeline-program.css"],
             "panel" | "overlay" => vec!["/assets/style-program.css"],
             _ => vec![],

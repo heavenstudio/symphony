@@ -3,6 +3,7 @@
 // The tests run in Node, without a DOM: markup is drawn with react-dom/server, and the page's
 // globals are stubbed where a test needs one.
 
+import { isValidElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
 import type {
   Block,
@@ -43,6 +44,8 @@ export const CASES = cases as unknown as {
     /** Two works by their names, and whether they place every task alike. */
     alike: [string, string, boolean][];
   };
+  /** A word, the grain it names, and that grain's default and longest windows in days. */
+  grains: [string, string | null, number | null, number | null][];
   fileAddress: [string, string][];
   /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
   elementHtml: [Viewer, string, string, string | null, string | null][];
@@ -60,6 +63,8 @@ export const CASES = cases as unknown as {
     bareChange: unknown;
     taskAdded: unknown;
     taskRemoved: unknown;
+    reports: unknown;
+    emptyReports: unknown;
     blocks: Block[];
   };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */
@@ -210,4 +215,23 @@ export async function asking(asked: unknown[], count: number): Promise<void> {
     await new Promise((done) => setTimeout(done, 0));
   }
   expect(asked).toHaveLength(count);
+}
+
+/**
+ * The children of the first element of `node` whose class or tag is `name`, searched through the
+ * elements `node` writes itself (a component in it is not drawn): one string where the element
+ * holds one text. Markup drawn by react-dom/server cannot tell one text from several side by side,
+ * which the browser sets apart.
+ */
+export function childrenOf(node: ReactNode, name: string): ReactNode {
+  if (Array.isArray(node)) {
+    for (const each of node) {
+      const found = childrenOf(each, name);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return undefined;
+  if (node.props.className === name || node.type === name) return node.props.children;
+  return childrenOf(node.props.children, name);
 }
