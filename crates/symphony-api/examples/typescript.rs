@@ -87,6 +87,21 @@ fn types() -> String {
         declared::<api::ActivityItem>(&cfg),
         declared::<api::Pending>(&cfg),
         declared::<api::PendingItem>(&cfg),
+        declared::<api::TaskListing>(&cfg),
+        declared::<api::Task>(&cfg),
+        declared::<api::Role>(&cfg),
+        declared::<api::FieldValue>(&cfg),
+        declared::<api::TaskChange>(&cfg),
+        declared::<api::TaskFields>(&cfg),
+        declared::<api::ItemChange<api::Task>>(&cfg),
+        declared::<api::MachineWork>(&cfg),
+        declared::<api::MachineObservation>(&cfg),
+        declared::<api::WorkOperation>(&cfg),
+        declared::<api::WorkCounts>(&cfg),
+        declared::<api::WorkGuidance>(&cfg),
+        declared::<api::WorkFreshness>(&cfg),
+        declared::<api::WorkKind>(&cfg),
+        declared::<api::WorkState>(&cfg),
     ];
     let names: BTreeSet<&str> = types.iter().map(|one| one.name.as_str()).collect();
     for one in &types {
@@ -207,6 +222,8 @@ fn cases() -> Result<Value, String> {
     cases["views"] = routes();
     cases["queueCategory"] = categories.into();
     cases["isHtml"] = html.into();
+    cases["slugOrder"] = slug_orders();
+    cases["stages"] = stages();
     cases["samples"] = samples();
     cases["carried"] = carried()?;
     Ok(cases)
@@ -247,6 +264,15 @@ const CARRIED: &[(&str, &str, &str)] = &[
     ),
     ("project.rs", "within", "within, src/project.ts"),
     ("lib.rs", "queue_category", "queueCategory, src/queue.tsx"),
+    ("task_queries.rs", "slug_order", "slugOrder, src/task.ts"),
+    ("task_queries.rs", "kind", "isTask, src/task.ts"),
+    ("task_queries.rs", "is_task", "isTask, src/task.ts"),
+    ("task_queries.rs", "has_status", "taskStage, src/work.ts"),
+    ("machine_work.rs", "is_for", "isFor, src/work.ts"),
+    ("task_stage.rs", "task_stage", "taskStage, src/work.ts"),
+    ("task_stage.rs", "places_alike", "placesAlike, src/work.ts"),
+    ("task_stage.rs", "can_place", "canPlace, src/work.ts"),
+    ("task_stage.rs", "conflicts", "conflicts, src/work.ts"),
 ];
 
 /// Each of [`CARRIED`]: its name, the TypeScript that carries it, and its source, line by line.
@@ -256,6 +282,9 @@ fn carried() -> Result<Value, String> {
         .map(|(file, name, ts)| {
             let text = match *file {
                 "project.rs" => include_str!("../src/project.rs"),
+                "task_queries.rs" => include_str!("../src/task_queries.rs"),
+                "machine_work.rs" => include_str!("../src/machine_work.rs"),
+                "task_stage.rs" => include_str!("../src/task_stage.rs"),
                 _ => include_str!("../src/lib.rs"),
             };
             Ok(json!({
@@ -307,6 +336,296 @@ fn declares(line: &str, name: &str) -> bool {
         && ["(", "<"]
             .iter()
             .any(|after| line.contains(&format!("fn {name}{after}")))
+}
+
+/// How `slug_order` orders each pair of a set of slugs: -1, 0 or 1, as `a` comes before, with or
+/// after `b`. Runs of digits by their number, leading zeros apart, text and bytes past ASCII.
+fn slug_orders() -> Value {
+    let slugs = [
+        "",
+        "0",
+        "00",
+        "01",
+        "1",
+        "9",
+        "10",
+        "ready-3",
+        "ready-30",
+        "ready-03",
+        "ready-3a",
+        "ready-3-1",
+        "a2b9",
+        "a2b10",
+        "a10b1",
+        "ready",
+        "ready-",
+        "ready-#",
+        "ready-a",
+        "ready-é",
+        "é01",
+        "a/2",
+        "a/10",
+        "A1",
+        "a 1",
+        "\u{ffff}",
+        "\u{10000}",
+    ];
+    let pairs: Vec<Value> = slugs
+        .iter()
+        .flat_map(|a| {
+            slugs.iter().map(move |b| {
+                let order = match api::slug_order(a, b) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                };
+                json!([a, b, order])
+            })
+        })
+        .collect();
+    pairs.into()
+}
+
+/// An operation of a machine's work: `kind` (`build`, `test`, `command`) and `state` (`queued`,
+/// `running`) of the task `task`, as the machine `machine` reports it by the id `id`.
+fn operation(machine: &str, id: &str, task: &str, kind: &str, state: &str) -> api::WorkOperation {
+    let kind = match kind {
+        "build" => api::WorkKind::Build,
+        "test" => api::WorkKind::Test,
+        _ => api::WorkKind::Command,
+    };
+    let state = if state == "running" {
+        api::WorkState::Running
+    } else {
+        api::WorkState::Queued
+    };
+    api::WorkOperation {
+        machine_id: (!machine.is_empty()).then(|| machine.into()),
+        operation_id: Some(id.into()),
+        parent_id: None,
+        handle: Some("amber".into()),
+        task: Some(task.into()),
+        checkout: "/opaque".into(),
+        recipe: "fixture".into(),
+        kind,
+        state,
+        resource: "run_slot".into(),
+        reason: String::new(),
+        phase_since: None,
+        under: Vec::new(),
+    }
+}
+
+/// A machine `id` reporting `operations`, as `freshness` and `complete` say it.
+fn machine(
+    id: &str,
+    freshness: api::WorkFreshness,
+    complete: bool,
+    operations: Vec<api::WorkOperation>,
+) -> api::MachineObservation {
+    api::MachineObservation {
+        machine_id: id.into(),
+        label: id.into(),
+        producer_id: "fixture".into(),
+        sequence: 1,
+        age_ms: Some(0),
+        freshness,
+        complete,
+        reason: String::new(),
+        counts: None,
+        operations,
+    }
+}
+
+/// The work of one machine `alpha`, fresh and complete, reporting `operations`.
+fn work(operations: Vec<api::WorkOperation>) -> api::MachineWork {
+    api::MachineWork {
+        freshness: api::WorkFreshness::Fresh,
+        machines: vec![machine(
+            "alpha",
+            api::WorkFreshness::Fresh,
+            true,
+            operations,
+        )],
+        ..api::MachineWork::default()
+    }
+}
+
+/// A task `slug` in `status`, under `parent` when one is given.
+fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
+    api::Task {
+        slug: slug.into(),
+        title: "A task".into(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: parent.map(Into::into),
+        created_by: "owner".into(),
+        created: 1.0,
+        updated: 2.0,
+        links: vec!["docs/A.md".into()],
+        depends: Vec::new(),
+        roles: vec![api::Role {
+            handle: "amber".into(),
+            role: "executor".into(),
+            since: 1.0,
+            expires: None,
+            health: "live".into(),
+        }],
+        instruction: false,
+        fields: std::collections::BTreeMap::new(),
+    }
+}
+
+/// The works the stage cases place tasks by: each what it shows, by its name.
+fn works() -> Vec<(&'static str, api::MachineWork)> {
+    let op = operation;
+    let mut under = op("alpha", "u", "w/a/1", "build", "running");
+    under.under = vec!["w/a".into(), "w".into()];
+    let mut no_id = op("alpha", "n", "w/a", "test", "running");
+    no_id.operation_id = None;
+    let mut empty_id = op("alpha", "e", "w/a", "test", "running");
+    empty_id.operation_id = Some(String::new());
+    let mut contradicted = work(vec![op("alpha", "c", "w/a", "build", "running")]);
+    contradicted.machines.push(machine(
+        "beta",
+        api::WorkFreshness::Fresh,
+        true,
+        vec![op("alpha", "c", "w/a", "build", "queued")],
+    ));
+    let mut stale = work(vec![op("alpha", "s", "w/a", "test", "running")]);
+    stale.machines[0].freshness = api::WorkFreshness::Stale;
+    let mut partial = work(vec![op("alpha", "p", "w/a", "test", "queued")]);
+    partial.machines[0].freshness = api::WorkFreshness::Incomplete;
+    partial.machines[0].complete = false;
+    let unassigned = api::MachineWork {
+        unassigned: vec![op("alpha", "x", "w/a", "build", "running")],
+        ..api::MachineWork::default()
+    };
+    vec![
+        ("none", api::MachineWork::default()),
+        (
+            "queued build",
+            work(vec![op("alpha", "b", "w/a", "build", "queued")]),
+        ),
+        (
+            "running build",
+            work(vec![op("alpha", "b", "w/a", "build", "running")]),
+        ),
+        (
+            "queued test",
+            work(vec![op("alpha", "t", "w/a", "test", "queued")]),
+        ),
+        (
+            "running build, queued test",
+            work(vec![
+                op("alpha", "b", "w/a", "build", "running"),
+                op("alpha", "t", "w/a", "test", "queued"),
+            ]),
+        ),
+        (
+            "queued test, running test",
+            work(vec![
+                op("alpha", "t", "w/a", "test", "queued"),
+                op("alpha", "r", "w/a", "test", "running"),
+            ]),
+        ),
+        (
+            "another task's",
+            work(vec![op("alpha", "o", "w/b", "test", "running")]),
+        ),
+        (
+            "a command",
+            work(vec![op("alpha", "c", "w/a", "command", "running")]),
+        ),
+        (
+            "another machine's id",
+            work(vec![op("beta", "m", "w/a", "build", "running")]),
+        ),
+        (
+            "no machine id",
+            work(vec![op("", "m", "w/a", "build", "running")]),
+        ),
+        ("no operation id", work(vec![no_id])),
+        ("an empty operation id", work(vec![empty_id])),
+        ("a subtask's", work(vec![under])),
+        ("contradicted", contradicted),
+        ("stale", stale),
+        ("partial", partial),
+        ("unassigned", unassigned),
+    ]
+}
+
+/// The stage each work puts each task in, connected and not, and whether each two works place
+/// alike (`places_alike`), the same works told apart by a heartbeat and by the order of their
+/// operations.
+fn stages() -> Value {
+    let works = works();
+    let tasks = [
+        task("w/a", "in_progress", None),
+        task("w/a", "review", None),
+        task("w", "in_progress", None),
+        task("w/a/1", "in_progress", Some("w/a")),
+        task("w/b", "in_progress", None),
+    ];
+    let placed: Vec<Value> = works
+        .iter()
+        .flat_map(|(name, work)| {
+            tasks.iter().enumerate().flat_map(move |(at, task)| {
+                [true, false].map(|connected| {
+                    json!([
+                        name,
+                        at,
+                        connected,
+                        work.task_stage(task, connected).as_str()
+                    ])
+                })
+            })
+        })
+        .collect();
+    // Two operations, a running build and a queued test of `w/a`, told apart from this work by
+    // what places nothing (a heartbeat, a command) and by their order.
+    let both = || {
+        work(vec![
+            operation("alpha", "b", "w/a", "build", "running"),
+            operation("alpha", "t", "w/a", "test", "queued"),
+        ])
+    };
+    let mut beat = both();
+    for machine in &mut beat.machines {
+        machine.sequence = 9;
+        machine.age_ms = Some(900);
+    }
+    let mut swapped = both();
+    for machine in &mut swapped.machines {
+        machine.operations.reverse();
+    }
+    let mut others = both();
+    for machine in &mut others.machines {
+        machine
+            .operations
+            .push(operation("alpha", "x", "w/c", "command", "running"));
+    }
+    let mut compared: Vec<(&str, api::MachineWork)> = works.clone();
+    compared.extend([
+        ("a heartbeat later", beat),
+        ("swapped", swapped),
+        ("with a command", others),
+    ]);
+    let alike: Vec<Value> = compared
+        .iter()
+        .flat_map(|(a, one)| {
+            compared
+                .iter()
+                .map(move |(b, other)| json!([a, b, one.places_alike(other)]))
+        })
+        .collect();
+    let works: serde_json::Map<String, Value> = compared
+        .iter()
+        .map(|(name, work)| ((*name).to_string(), json!(work)))
+        .collect();
+    let tasks: Vec<Value> = tasks.iter().map(|task| json!(task)).collect();
+    json!({ "works": works, "tasks": tasks, "placed": placed, "alike": alike })
 }
 
 /// `here` and `strip` under no base and one, each for a set of paths.
@@ -466,7 +785,78 @@ fn samples() -> Value {
         counts: api::Counts::default(),
         progress: api::Progress::default(),
     };
-    json!({ "queue": queue, "emptyQueue": api::Queue::default(), "board": board })
+    let mut idle = task("w/b", "ready", None);
+    idle.links.clear();
+    idle.roles.clear();
+    let mut fielded = task("w/a/1", "in_progress", Some("w/a"));
+    fielded.fields.insert(
+        "game".into(),
+        [
+            ("effort".to_string(), api::FieldValue::Number(3.0)),
+            ("risk".to_string(), api::FieldValue::Text("high".into())),
+        ]
+        .into(),
+    );
+    let mut guided = work(vec![operation("alpha", "b", "w/a", "build", "running")]);
+    guided.guidance.insert(
+        "alpha".into(),
+        api::WorkGuidance {
+            build: Some(2),
+            test: None,
+        },
+    );
+    guided.unassigned = vec![operation("", "x", "w/b", "test", "queued")];
+    let listing = api::TaskListing {
+        machine_work: guided.clone(),
+        tasks: vec![task("w/a", "in_progress", None), fielded, idle],
+        statuses: vec!["ready".into(), "in_progress".into()],
+        signoff: vec!["w/a".into()],
+        counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
+        lifecycle_counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
+        next: Some("w/b".into()),
+    };
+    let empty = api::TaskListing {
+        machine_work: api::MachineWork::default(),
+        tasks: Vec::new(),
+        statuses: Vec::new(),
+        signoff: Vec::new(),
+        counts: Vec::new(),
+        lifecycle_counts: Vec::new(),
+        next: None,
+    };
+    let change = api::TaskChange {
+        key: "w/a".into(),
+        fields: api::TaskFields {
+            status: Some("review".into()),
+            priority: Some(1),
+            parent: Some(String::new()),
+            roles: Some(Vec::new()),
+            ..api::TaskFields::default()
+        },
+    };
+    let added = api::ItemChange {
+        key: "w/a".into(),
+        value: Some(task("w/a", "ready", None)),
+        removed: false,
+    };
+    let removed = api::ItemChange::<api::Task> {
+        key: "w/a".into(),
+        value: None,
+        removed: true,
+    };
+    json!({
+        "queue": queue,
+        "emptyQueue": api::Queue::default(),
+        "board": board,
+        "listing": listing,
+        "emptyListing": empty,
+        "work": guided,
+        "emptyWork": api::MachineWork::default(),
+        "taskChange": change,
+        "bareChange": api::TaskChange { key: "w/b".into(), fields: api::TaskFields::default() },
+        "taskAdded": added,
+        "taskRemoved": removed,
+    })
 }
 
 #[cfg(test)]

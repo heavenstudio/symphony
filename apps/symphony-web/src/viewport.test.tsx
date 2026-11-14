@@ -10,6 +10,7 @@ import {
   onScreen,
   recallHeight,
   Skeleton,
+  waitsNear,
 } from "./viewport";
 
 describe("a placeholder's lines", () => {
@@ -90,6 +91,39 @@ describe("a region on the screen", () => {
   });
 });
 
+describe("what waits near the screen", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const box = (top: number, bottom: number, left = 0, right = 100) => ({
+    getBoundingClientRect: () => ({ top, bottom, left, right }),
+  });
+  /** A part of the page, in `scroller` when it is in one, holding `waiting` regions. */
+  const part = (scroller: unknown, ...waiting: unknown[]) =>
+    ({ closest: () => scroller, querySelectorAll: () => waiting }) as unknown as Element;
+
+  it("is a region waiting within the sentinel's reach of the window", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 400);
+    expect(waitsNear(part(null, box(1300, 1350)))).toBe(true);
+    expect(waitsNear(part(null, box(1500, 1550)))).toBe(false);
+    expect(waitsNear(part(null))).toBe(false);
+  });
+
+  it("is cut to the box of the scroller it sits in", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 400);
+    // The scroller ends 300 px down: its reach ends 600 px below that.
+    expect(waitsNear(part(box(0, 300), box(1300, 1350)), ".board-scroll")).toBe(false);
+    expect(waitsNear(part(box(0, 300), box(850, 900)), ".board-scroll")).toBe(true);
+    // A column scrolled out of the scroller's sides never shows, however near it is.
+    expect(waitsNear(part(box(0, 800, 0, 200), box(100, 200, 250, 300)), ".board-scroll")).toBe(
+      false,
+    );
+    // Outside any scroller, the window's reach.
+    expect(waitsNear(part(null, box(1300, 1350)), ".board-scroll")).toBe(true);
+  });
+});
+
 describe("a paragraph waiting for its read", () => {
   it("is a bar per line, and its label for a reader of the page's text", () => {
     expect(renderToStaticMarkup(<Skeleton lines={2} label="Loading…" />)).toBe(
@@ -113,6 +147,15 @@ describe("content near the screen", () => {
     expect(markup).toContain("contain-intrinsic-size:auto 64px;min-height:64px");
     expect(markup).toContain('data-pending="true"><span id="a"></span><i>ghost</i>');
     expect(markup).not.toContain("content");
+  });
+
+  it("is a list's item where it stands in a list", () => {
+    const markup = renderToStaticMarkup(
+      <NearViewport id="tree-a" height={40} listItem>
+        <b>content</b>
+      </NearViewport>,
+    );
+    expect(markup).toMatch(/^<li id="tree-a" style="[^"]*" class="viewport-slot ">/);
   });
 
   it("is lines of text without a ghost", () => {

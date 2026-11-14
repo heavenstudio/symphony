@@ -27,6 +27,31 @@ export function boardItem(scope: string): Item {
 /** The parts of a board item: `/api/board`, as home and the queue drew it, and `/api/queue`. */
 export const BOARD = "board";
 export const QUEUE = "queue";
+/** The task board's counts (`/api/task-board?counts=1`), and the machines' work that places it. */
+export const COUNTS = "counts";
+export const WORK = "work";
+
+/** A task board column's first page. */
+export function column(status: string): string {
+  return `column:${status}`;
+}
+
+/**
+ * Whether a read of the task board's listing is the default view's, the one kept: no search,
+ * finished tasks of the last 24 hours, stages by the machines' activity.
+ */
+export function keptView(query: string, days: number, activity: number): boolean {
+  return query === "" && days === 1 && activity === 1;
+}
+
+/**
+ * The columns a task board with these counts may have kept: each status its listing names (its
+ * counts' when it names none), the machines' two stages and the owner's sign-off, once each.
+ */
+export function columns(statuses: string[], counts: [string, number][]): string[] {
+  const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
+  return [...new Set([...named, "build", "test", "signoff"])];
+}
 
 /** A kept read: its value, the tag the server answered it with, and when it was kept (ms). */
 export interface Kept<T> {
@@ -150,6 +175,14 @@ export function answered(f: Freshness, part: string): Freshness {
     unanswered: f.unanswered.filter((one) => one !== part),
     failing: f.failing.filter((one) => one !== part),
   });
+}
+
+/**
+ * The page no longer shows `part` (a search replaced it), answered or not, and asks for it no more:
+ * to what the page shows from this device, as if answered.
+ */
+export function gone(f: Freshness, part: string): Freshness {
+  return answered(f, part);
 }
 
 /** The read of `part` went unanswered. */

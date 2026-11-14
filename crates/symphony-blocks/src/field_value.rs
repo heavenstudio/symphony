@@ -14,6 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// docs/CHECKS.md) hands a float as a one-entry map holding its text, which a derived untagged enum
 /// would refuse.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(untagged)]
 pub enum FieldValue {
     Number(f64),

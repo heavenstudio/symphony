@@ -3,16 +3,22 @@ import {
   answered,
   BOARD,
   boardItem,
+  COUNTS,
+  column,
+  columns,
   drawn,
   FRESH,
   failed,
+  gone,
   keepLater,
+  keptView,
   lost,
   opened,
   QUEUE,
   readKept,
   shown,
   visitLater,
+  WORK,
 } from "./cache";
 import { CACHE_FORMAT } from "./wire";
 
@@ -21,6 +27,31 @@ describe("a board's item", () => {
     expect(boardItem("")).toEqual({ kind: "board", id: "board:", pinned: false });
     expect(boardItem("proposal~x").id).toBe("board:@proposal~x/");
     expect(BOARD).not.toBe(QUEUE);
+  });
+});
+
+describe("the task board's kept reads", () => {
+  it("are the counts, the machines' work and each column's first page", () => {
+    expect(new Set([BOARD, QUEUE, COUNTS, WORK, column("ready")]).size).toBe(5);
+    expect(column("in_progress")).toBe("column:in_progress");
+  });
+
+  it("are the default view's alone", () => {
+    expect(keptView("", 1, 1)).toBe(true);
+    expect(keptView("lamp", 1, 1)).toBe(false);
+    expect(keptView("", 7, 1)).toBe(false);
+    expect(keptView("", 1, 0)).toBe(false);
+  });
+
+  it("are a column for each status, the machines' two and the owner's sign-off, once each", () => {
+    expect(columns(["ready", "build", "review"], [["done", 1]])).toEqual([
+      "ready",
+      "build",
+      "review",
+      "test",
+      "signoff",
+    ]);
+    expect(columns([], [["done", 1]])).toEqual(["done", "build", "test", "signoff"]);
   });
 });
 
@@ -59,6 +90,14 @@ describe("what a page shows from this device", () => {
     expect(shown(f)).toEqual([9, true]);
     expect(lost(f)).toBe(f);
     expect(shown(answered(opened(f), QUEUE))).toBeNull();
+  });
+
+  it("drops a part the page no longer shows, answered or not", () => {
+    let f = failed(drawn(drawn(FRESH, COUNTS, 4), column("ready"), 2), column("ready"));
+    f = opened(gone(f, column("ready")));
+    expect(f.unanswered).toEqual([COUNTS]);
+    expect(f.failing).toEqual([]);
+    expect(shown(gone(f, COUNTS))).toBeNull();
   });
 
   it("changes by new values, the old one as it was", () => {

@@ -456,6 +456,7 @@ pub struct ActivityItem {
 /// The task board's read records. These stay serde-only so native and wasm clients share them;
 /// a build with the feature `skip-board-fields` reads a task without its [`Task::fields`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Task {
     pub slug: String,
     pub title: String,
@@ -481,6 +482,7 @@ pub struct Task {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Role {
     pub handle: String,
@@ -908,6 +910,7 @@ pub struct AskMessage {
 /// Upserts replace that record, removals delete it; an order event moves one key after `after`,
 /// or to the front when `after` is null. The server never sends the whole task board in a delta.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
 pub struct ItemChange<T> {
     pub key: String,
@@ -926,6 +929,7 @@ pub struct OrderChange {
 /// A task's body is fetched in the initial snapshot. A task status/role update carries its changed
 /// fields only; this type lists every mutable field and lets a client merge it into its record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -951,6 +955,7 @@ pub struct TaskFields {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskChange {
     pub key: String,
     pub fields: TaskFields,

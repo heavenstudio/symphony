@@ -120,10 +120,14 @@ async function pause(ms: number, retry: { current: number }, signal: AbortSignal
 export interface Views {
   /** Changes what the page shows from this device. */
   freshen(change: (f: Freshness) => Freshness): void;
-  /** The board was read: each view reads its own parts again. */
-  read(): void;
-  /** One event of the feed, not yet applied. */
-  heard(delta: unknown): void;
+  /**
+   * The board was read: each view reads its own parts again. The feed is followed once what it
+   * gives (a promise, for a page that reads before it follows) has settled.
+   */
+  read(): unknown;
+  /** One event of the feed, not yet applied; what it gives is `false` when the page cannot read
+   * it, which loses the stream. */
+  heard(delta: unknown): unknown;
   frame: FrameRefresh;
 }
 
@@ -170,9 +174,10 @@ async function follow(
       const shown = board.current;
       if (shown && version <= shown.version) continue;
       views.frame.heard(said.value);
-      views.heard(said.value);
+      const read = views.heard(said.value);
       if (shown) shown.version = version;
       followClient(said.value);
+      if (read === false) break;
     }
   } finally {
     close();
@@ -314,7 +319,8 @@ export async function keepBoard(
       reloadIfRedeployed(read.build);
       run.show(read);
       run.views.freshen((f) => answered(f, BOARD));
-      run.views.read();
+      await run.views.read();
+      if (signal.aborted) return;
       ended = await follow(
         run.board,
         run.setStale,

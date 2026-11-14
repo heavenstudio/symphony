@@ -50,6 +50,10 @@ export interface NearViewportProps {
   anchors?: string[];
   id?: string;
   className?: string;
+  /** Called once, the first time the content mounts. */
+  onEnter?: () => void;
+  /** Whether the box is a list's item (`li`) rather than a `div`. */
+  listItem?: boolean;
 }
 
 /**
@@ -63,6 +67,8 @@ export function NearViewport({
   anchors = [],
   id = "",
   className = "",
+  onEnter,
+  listItem = false,
 }: NearViewportProps) {
   const [addressed] = useState(() => {
     const target = anchor();
@@ -70,9 +76,12 @@ export function NearViewport({
   });
   const [shown, setShown] = useState(addressed);
   const sentinel = useRef<HTMLDivElement>(null);
+  const entered = useRef(onEnter);
+  entered.current = onEnter;
   useEffect(() => {
     if (shown) {
       if (addressed) scrollAnchor();
+      entered.current?.();
       return;
     }
     const node = sentinel.current;
@@ -95,8 +104,9 @@ export function NearViewport({
     containIntrinsicSize: `auto ${height}px`,
     minHeight: `${shown ? 0 : height}px`,
   };
+  const Box = listItem ? "li" : "div";
   return (
-    <div id={id === "" ? undefined : id} style={style} className={`viewport-slot ${className}`}>
+    <Box id={id === "" ? undefined : id} style={style} className={`viewport-slot ${className}`}>
       {shown ? (
         children
       ) : (
@@ -115,7 +125,7 @@ export function NearViewport({
           </div>
         </>
       )}
-    </div>
+    </Box>
   );
 }
 
@@ -188,9 +198,25 @@ export function onScreen(region: number[], screen: number[]): boolean {
   );
 }
 
-/** Whether any region still waiting for its read inside `part` is within reach of the screen. */
-function waitsNear(part: Element): boolean {
-  const screen = [-REACH, innerHeight + REACH, 0, innerWidth];
+/**
+ * Whether any region still waiting for its read inside `part` is within reach of the screen: the
+ * window, cut to the box of `part`'s closest ancestor `scroller` names when it sits in one.
+ */
+export function waitsNear(part: Element, scroller?: string): boolean {
+  let view = [0, innerHeight, 0, innerWidth];
+  const clip = scroller === undefined ? null : part.closest(scroller);
+  if (clip) {
+    const box = clip.getBoundingClientRect();
+    const [top = 0, bottom = 0, left = 0, right = 0] = view;
+    view = [
+      Math.max(top, box.top),
+      Math.min(bottom, box.bottom),
+      Math.max(left, box.left),
+      Math.min(right, box.right),
+    ];
+  }
+  const [top = 0, bottom = 0, left = 0, right = 0] = view;
+  const screen = [top - REACH, bottom + REACH, left, right];
   return [...part.querySelectorAll("[data-pending=true]")].some((region) => {
     const box = region.getBoundingClientRect();
     return onScreen([box.top, box.bottom, box.left, box.right], screen);
