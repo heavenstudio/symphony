@@ -679,6 +679,18 @@ describe("the task groups", () => {
     expect(await failed).toContain("down");
   });
 
+  it("give a read up on the wire once the part that asked is gone", async () => {
+    const asked = server();
+    const part = new AbortController();
+    const read = readTree("", null, null, part.signal);
+    await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
+    part.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    asked[0]?.answer(reply(200, { tasks: [], counts: [] }));
+    await read;
+  });
+
   it("grow by each page read, each task once, and say why a read failed", () => {
     const page = (slugs: string[], total: number) =>
       ({ tasks: slugs.map((slug) => aTask(slug)), counts: [["ready", total]] }) as never;

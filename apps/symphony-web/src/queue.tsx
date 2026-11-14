@@ -356,7 +356,7 @@ export async function checkQueue(
   const backoff = new Backoff();
   while (!signal.aborted) {
     try {
-      const answer = await getIf(url, etag());
+      const answer = await getIf(url, etag(), signal);
       if (signal.aborted) return;
       if (answer.same) {
         check.answered(null, "", null);
