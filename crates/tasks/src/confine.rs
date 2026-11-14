@@ -27,6 +27,12 @@ pub const MARKER: &str = "SYMPHONY_UNASKED";
 pub struct Places {
     /// The top of the checkout the command runs in; with no checkout, its folder.
     pub checkout: PathBuf,
+    /// The main checkout of the checkout's repository, where the repository itself says so: the
+    /// checkout when its common dir is its own `.git` folder, and from a linked worktree the folder
+    /// holding the common dir, only when that repository lists the worktree as its own. None for
+    /// any other layout, a worktree whose `.git` file names another repository among them, and
+    /// for no checkout.
+    pub main: Option<PathBuf>,
     /// From a linked worktree its repository lists as its own, the main checkout's artifacts
     /// folder (`project::artifacts`, as `Project::artifact` reads it), where the ask store is.
     pub artifacts: Option<PathBuf>,
@@ -88,6 +94,7 @@ pub fn places(cwd: &Path) -> Places {
     else {
         return Places {
             checkout: here,
+            main: None,
             artifacts: None,
             git: Vec::new(),
         };
@@ -95,17 +102,18 @@ pub fn places(cwd: &Path) -> Places {
     // The checkout's own marker alone: an unreadable one never falls through to an enclosing
     // repository, nor asks git.
     let common = crate::git::checkout_common_dir(&top);
-    let artifacts = common
-        .as_deref()
-        .and_then(|common| main_of(&top, common))
-        .and_then(|main| {
-            let folder = crate::project::artifacts(&main)?;
-            resolve(Path::new("/"), &main.join(folder)).ok()
-        });
+    let listed = common.as_deref().and_then(|common| main_of(&top, common));
+    let artifacts = listed.as_deref().and_then(|main| {
+        let folder = crate::project::artifacts(main)?;
+        resolve(Path::new("/"), &main.join(folder)).ok()
+    });
+    let own = common.as_deref() == Some(top.join(".git").as_path());
+    let main = if own { Some(top.clone()) } else { listed };
     let mut git: Vec<PathBuf> = [gitdir(&top), common].into_iter().flatten().collect();
     git.dedup();
     Places {
         checkout: top,
+        main,
         artifacts,
         git,
     }
@@ -343,6 +351,7 @@ mod tests {
             places(&main.join("docs")),
             Places {
                 checkout: main.clone(),
+                main: Some(main.clone()),
                 artifacts: None,
                 git: vec![main.join(".git")],
             }
@@ -351,6 +360,7 @@ mod tests {
             places(&tree),
             Places {
                 checkout: tree.clone(),
+                main: Some(main.clone()),
                 artifacts: Some(main.join("artifacts")),
                 git: vec![main.join(".git/worktrees/tree"), main.join(".git")],
             }
@@ -375,6 +385,7 @@ mod tests {
             places(&alone),
             Places {
                 checkout: alone.clone(),
+                main: None,
                 artifacts: None,
                 git: Vec::new(),
             }
@@ -395,13 +406,15 @@ mod tests {
             "../../../../tree/.git\n",
         );
         assert_eq!(places(&tree).artifacts, Some(main.join("artifacts")));
-        // A `.git` file rewritten to name another repository reaches nothing of it, nor of its own.
+        assert_eq!(places(&tree).main, Some(main.clone()));
+        // A `.git` file rewritten to name another repository reaches nothing of it, nor of its own,
+        // and has no main checkout: the other repository's is not this worktree's.
         write(
             &tree.join(".git"),
             &format!("gitdir: {}\n", other.join(".git").display()),
         );
         let named = places(&tree);
-        assert_eq!(named.artifacts, None);
+        assert_eq!((named.main, named.artifacts), (None, None));
         assert_eq!(named.git, vec![other.join(".git")]);
         for path in [
             main.join("artifacts/board.md"),
@@ -416,7 +429,14 @@ mod tests {
             &format!("gitdir: {}\n", main.join(".git/worktrees/lamp").display()),
         );
         assert_eq!(places(&tree).artifacts, None);
+        assert_eq!(places(&tree).main, None);
         assert!(inside(&tree, &main.join("artifacts/board.md")).is_err());
+        // Nor one made a link to another repository's `.git` folder: a checkout is its own main
+        // checkout only when its common dir is the `.git` folder it holds.
+        std::fs::remove_file(tree.join(".git")).unwrap();
+        symlink(other.join(".git"), tree.join(".git")).unwrap();
+        assert_eq!(places(&tree).main, None);
+        assert_eq!(places(&other).main, Some(other.clone()));
     }
 
     #[test]
