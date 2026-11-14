@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use super::board;
 use super::checks::Ran;
+use super::crates::Publication;
 use super::git::short;
 use super::group::Stamp;
 use super::tags::Release;
@@ -91,6 +92,10 @@ pub(crate) struct Run {
     /// (docs/RELEASES.md).
     #[serde(default)]
     pub(crate) refreshed: Option<Refresh>,
+    /// What the release it tagged, or the release a `--refresh` named, published on crates.io
+    /// before its refresh ([`super::crates`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) published: Option<Publication>,
     /// The release candidate it reran, when it was a rerun of one ([`super::candidate`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rerun: Option<Rerun>,
@@ -501,6 +506,7 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         unpushed: None,
         cause: None,
         refreshed: None,
+        published: None,
         rerun: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
@@ -785,6 +791,28 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     text
 }
 
+/// What `--status` says of the newest publication on crates.io among `runs` at `now`: its release,
+/// which run made it and when, red when an upload or a read of it failed, then each line it said.
+pub(crate) fn publish_status(runs: &[Run], now: f64) -> String {
+    let Some((run, published)) =
+        (runs.iter().rev()).find_map(|run| Some((run, run.published.as_ref()?)))
+    else {
+        return "last publish: none recorded\n".into();
+    };
+    let mut text = format!(
+        "last publish: {}of {} by the run {}, {} ({})\n",
+        if published.failed { "red, " } else { "" },
+        published.release,
+        run.id,
+        local(run.started_at),
+        age(now, run.started_at)
+    );
+    for line in published.lines() {
+        text.push_str(&format!("  {line}\n"));
+    }
+    text
+}
+
 /// What a refresh leaves to the projects whose own gate, hooks or main checkout stopped it, which
 /// `--status` says under it.
 const BY_HAND: &str = "  by hand: a project whose own gate refused the move meets that itself; one \
@@ -825,6 +853,7 @@ mod tests {
             unpushed: None,
             cause: None,
             refreshed: None,
+            published: None,
             rerun: None,
         }
     }
@@ -1351,6 +1380,45 @@ mod tests {
             ..Refresh::default()
         });
         assert!(!refresh_status(&[green], NOW).contains("by hand"));
+    }
+
+    #[test]
+    fn the_newest_publication_is_said_with_each_line_and_red_when_an_upload_failed() {
+        assert_eq!(publish_status(&[], NOW), "last publish: none recorded\n");
+        let mut older = run("older", "release", "green", NOW - 7200.0);
+        older.published = Some(Publication::not("release-2026-11-11", "off", false));
+        let mut newer = run("newer", "release", "green", NOW - 3600.0);
+        newer.published = Some(Publication {
+            release: "release-2026-11-12".into(),
+            skipped: vec!["alpha 1.0.0".into()],
+            left: vec!["bravo 1.0.0".into()],
+            why: Some("the upload of bravo 1.0.0 failed (error: refused; log /l)".into()),
+            failed: true,
+            ..Publication::default()
+        });
+        // A later run that published nothing, as a refused one, leaves the newer one said.
+        let after = run("after", "release", "red", NOW - 60.0);
+        assert_eq!(
+            publish_status(&[older, newer.clone(), after], NOW),
+            format!(
+                "last publish: red, of release-2026-11-12 by the run newer, {} (1 h ago)\n  \
+                 on crates.io already: alpha 1.0.0\n  \
+                 not published: the upload of bravo 1.0.0 failed (error: refused; log /l): bravo \
+                 1.0.0\n  \
+                 the release stays tagged; `just release --refresh`, or the next release, \
+                 publishes what is left\n",
+                local(NOW - 3600.0)
+            )
+        );
+        newer.published = Some(Publication {
+            release: "release-2026-11-12".into(),
+            uploaded: vec!["bravo 1.0.0".into()],
+            ..Publication::default()
+        });
+        assert!(
+            publish_status(&[newer], NOW).ends_with(" (1 h ago)\n  published bravo 1.0.0\n"),
+            "a green one"
+        );
     }
 
     #[test]

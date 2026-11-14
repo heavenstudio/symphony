@@ -1,0 +1,690 @@
+//! The published packages, their order, crates.io's index, the changed-sources check and the
+//! release's step, against a workspace and a registry folder of the test's own and a stand-in for
+//! the cargo that publishes: nothing here reads crates.io or publishes anything.
+
+use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::process::ExitStatusExt as _;
+use std::process::ExitStatus;
+
+use serde_json::json;
+
+use super::*;
+use crate::test_tree::Tree;
+
+/// A bound no test reaches.
+fn later() -> Instant {
+    Instant::now() + Duration::from_secs(600)
+}
+
+fn bound() -> Bound<'static> {
+    Bound::until(later())
+}
+
+fn package(name: &str, needs: &[&str]) -> Package {
+    Package {
+        name: name.into(),
+        version: "1.0.0".into(),
+        needs: needs.iter().map(|need| (*need).to_string()).collect(),
+    }
+}
+
+fn names(packages: &[Package]) -> Vec<&str> {
+    packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect()
+}
+
+/// A workspace of the test's own: `alpha`; `bravo` building with it; `charlie` building with
+/// `bravo` and testing with `delta`, which is `publish = false`; each at 1.0.0 with a source of its
+/// own.
+fn workspace(tree: &Tree) -> PathBuf {
+    tree.write(
+        "ws/Cargo.toml",
+        "[workspace]\nresolver = \"2\"\nmembers = [\"alpha\", \"bravo\", \"charlie\", \"delta\"]\n",
+    );
+    let member = |name: &str, more: &str, deps: &str| {
+        tree.write(
+            &format!("ws/{name}/Cargo.toml"),
+            &format!(
+                "[package]\nname = \"{name}\"\nversion = \"1.0.0\"\nedition = \"2021\"\n\
+                 description = \"{name}\"\nlicense = \"MIT\"\n{more}\n[dependencies]\n{deps}"
+            ),
+        );
+        tree.write(
+            &format!("ws/{name}/src/lib.rs"),
+            &format!("//! {name}\npub fn {name}() {{}}\n"),
+        );
+    };
+    member("alpha", "", "");
+    member(
+        "bravo",
+        "",
+        "alpha = { path = \"../alpha\", version = \"1.0.0\" }\n",
+    );
+    member(
+        "charlie",
+        "",
+        "bravo = { path = \"../bravo\", version = \"1.0.0\" }\n\n[dev-dependencies]\n\
+         delta = { path = \"../delta\" }\n",
+    );
+    member("delta", "publish = false\n", "");
+    tree.path("ws")
+}
+
+/// The index file of `name` in the registry folder `registry` listing `versions`.
+fn listed(registry: &Path, name: &str, versions: &[&str]) {
+    let file = registry.join("index").join(index_path(name));
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let lines: String = (versions.iter())
+        .map(|version| format!("{}\n", json!({"name": name, "vers": version, "deps": []})))
+        .collect();
+    fs::write(file, lines).unwrap();
+}
+
+/// A stand-in for the cargo that publishes, in `tree`: it appends each command line, with the
+/// build folder it was handed, to `published.log` there; says it found no token for the packages
+/// `no_token` names, that an upload failed for those `fails` names and that crates.io holds those
+/// `there` names; and lists each package it uploads in `registry`'s index at 1.0.0.
+fn stand_in(tree: &Tree, registry: &Path, no_token: &str, fails: &str, there: &str) -> PathBuf {
+    let log = tree.path("published.log");
+    let script = format!(
+        r#"#!/bin/sh
+name="$3"
+echo "$* target=$CARGO_TARGET_DIR" >> '{log}'
+case " {no_token} " in *" $name "*) echo 'error: no token found, please run `cargo login`' >&2; exit 101;; esac
+case " {fails} " in *" $name "*) printf 'error: failed to publish %s to registry at https://crates.io\n\nCaused by:\n  the remote server responded with an error (status 503)\n' "$name" >&2; exit 101;; esac
+case " {there} " in *" $name "*) echo "error: crate $name@1.0.0 already exists on crates.io index" >&2; exit 101;; esac
+dir='{registry}/index/'"$(printf %s "$name" | cut -c1-2)/$(printf %s "$name" | cut -c3-4)"
+mkdir -p "$dir" && printf '{{"name":"%s","vers":"1.0.0"}}\n' "$name" >> "$dir/$name"
+echo "   Uploaded $name v1.0.0 to registry crates-io"
+"#,
+        log = log.display(),
+        registry = registry.display(),
+    );
+    let path = tree.write("cargo", &script);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The command lines the stand-in ran, one a line.
+fn ran(tree: &Tree) -> Vec<String> {
+    fs::read_to_string(tree.path("published.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn packages_publish_after_what_they_build_with_and_by_name_among_those_ready_together() {
+    let ordered = ordered(vec![
+        package("alpha", &["zulu"]),
+        package("bravo", &["alpha"]),
+        package("zulu", &[]),
+        package("echo", &[]),
+    ])
+    .unwrap();
+    assert_eq!(names(&ordered), ["echo", "zulu", "alpha", "bravo"]);
+    let circle = ordered_err(vec![
+        package("alpha", &["bravo"]),
+        package("bravo", &["alpha"]),
+    ]);
+    assert!(
+        circle.starts_with("the published packages alpha, bravo build with each other in a circle"),
+        "{circle}"
+    );
+}
+
+fn ordered_err(packages: Vec<Package>) -> String {
+    ordered(packages).unwrap_err()
+}
+
+#[test]
+fn a_member_is_published_unless_it_says_publish_false_and_needs_only_published_members() {
+    let metadata = json!({"packages": [
+        {"name": "alpha", "version": "1.0.0", "publish": null, "dependencies": [
+            {"name": "serde", "path": null, "kind": null},
+            {"name": "bravo", "path": "/ws/bravo", "kind": null},
+            {"name": "charlie", "path": "/ws/charlie", "kind": "build"},
+            {"name": "kept", "path": "/ws/kept", "kind": null},
+            {"name": "other", "path": "/ws/other", "kind": "dev"},
+            {"name": "alpha", "path": "/ws/alpha", "kind": "dev"},
+        ]},
+        {"name": "bravo", "version": "0.1.0", "publish": ["crates-io"], "dependencies": []},
+        {"name": "charlie", "version": "2.0.0", "dependencies": []},
+        {"name": "kept", "version": "0.1.0", "publish": [], "dependencies": []},
+        {"name": "elsewhere", "version": "0.1.0", "publish": ["mine"], "dependencies": []},
+        {"name": "other", "version": "1.0.0", "publish": null, "dependencies": []},
+    ]});
+    let found = published(&metadata);
+    assert_eq!(names(&found), ["alpha", "bravo", "charlie", "other"]);
+    assert_eq!(
+        found[0].needs,
+        ["bravo", "charlie"],
+        "no dev, unpublished or outside need"
+    );
+    assert_eq!(found[1].version, "0.1.0");
+    assert!(published(&json!({})).is_empty());
+}
+
+#[test]
+fn a_workspace_is_read_by_cargo_metadata_and_a_tree_without_one_publishes_nothing() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let found = packages(&root, bound()).unwrap();
+    assert_eq!(names(&found), ["alpha", "bravo", "charlie"]);
+    assert_eq!(found[2].needs, ["bravo"], "delta is a test's alone");
+    assert_eq!(found[1].said(), "bravo 1.0.0");
+    assert!(
+        packages(&tree.path("ws/alpha/src"), bound())
+            .unwrap()
+            .is_empty()
+    );
+    tree.write("broken/Cargo.toml", "[package\n");
+    let broken = packages(&tree.path("broken"), bound()).unwrap_err();
+    assert!(broken.starts_with("cargo metadata failed in "), "{broken}");
+}
+
+#[test]
+fn a_sparse_index_names_a_crate_by_its_length_and_first_letters() {
+    assert_eq!(index_path("a"), "1/a");
+    assert_eq!(index_path("ab"), "2/ab");
+    assert_eq!(index_path("abc"), "3/a/abc");
+    assert_eq!(index_path("Serde"), "se/rd/serde");
+    assert_eq!(index_path("symphony-env"), "sy/mp/symphony-env");
+    let file = "{\"name\":\"x\",\"vers\":\"1.0.0\"}\nnot json\n{\"name\":\"x\",\"vers\":\"1.1.0\",\"yanked\":true}\n";
+    assert!(lists(file, "1.0.0"));
+    assert!(
+        lists(file, "1.1.0"),
+        "a yanked version is published all the same"
+    );
+    assert!(!lists(file, "1.0"));
+    assert!(!lists("", "1.0.0"));
+}
+
+#[test]
+fn a_folder_registry_holds_what_its_index_lists_and_fails_closed_on_what_it_cannot_read() {
+    let tree = Tree::new();
+    let registry = Registry::Folder(tree.path("registry"));
+    assert!(
+        !registry.has("alpha", "1.0.0", bound()).unwrap(),
+        "no file: none"
+    );
+    listed(&tree.path("registry"), "alpha", &["0.9.0", "1.0.0"]);
+    assert!(registry.has("alpha", "1.0.0", bound()).unwrap());
+    assert!(!registry.has("alpha", "1.0.1", bound()).unwrap());
+    fs::create_dir_all(tree.path("registry/index/br/av/bravo")).unwrap();
+    assert!(
+        registry.has("bravo", "1.0.0", bound()).is_err(),
+        "a folder is no index file"
+    );
+    assert_eq!(
+        registry.said(),
+        format!("the registry {}", tree.path("registry").display())
+    );
+    assert_eq!(Registry::CratesIo.said(), "crates.io");
+}
+
+#[test]
+fn two_packages_differ_by_each_file_added_gone_or_changed_but_where_and_how_they_were_packaged() {
+    let tree = Tree::new();
+    for side in ["ours", "theirs"] {
+        tree.write(&format!("{side}/src/lib.rs"), "same\n");
+        tree.write(&format!("{side}/Cargo.lock"), &format!("{side}\n"));
+        tree.write(
+            &format!("{side}/.cargo_vcs_info.json"),
+            &format!("{side}\n"),
+        );
+    }
+    assert!(
+        differ(&tree.path("ours"), &tree.path("theirs"))
+            .unwrap()
+            .is_empty()
+    );
+    tree.write("ours/src/lib.rs", "changed\n");
+    tree.write("ours/src/new.rs", "new\n");
+    tree.write("theirs/README.md", "old\n");
+    tree.write("ours/src/Cargo.lock", "a source of its own below the top\n");
+    assert_eq!(
+        differ(&tree.path("ours"), &tree.path("theirs")).unwrap(),
+        [
+            "README.md gone",
+            "src/Cargo.lock added",
+            "src/lib.rs changed",
+            "src/new.rs added"
+        ]
+    );
+    std::os::unix::fs::symlink("lib.rs", tree.path("ours/src/link")).unwrap();
+    std::os::unix::fs::symlink("new.rs", tree.path("theirs/src/link")).unwrap();
+    assert!(
+        differ(&tree.path("ours"), &tree.path("theirs"))
+            .unwrap()
+            .contains(&"src/link changed".to_string()),
+        "a link is compared by where it leads"
+    );
+    assert!(differ(&tree.path("ours"), &tree.path("none")).is_err());
+}
+
+#[test]
+fn a_changed_package_is_said_with_its_first_files_and_a_count_of_the_rest() {
+    let few = Changed {
+        package: "alpha 1.0.0".into(),
+        files: vec!["src/lib.rs changed".into()],
+    };
+    assert_eq!(
+        changed_line(&few),
+        "alpha 1.0.0: on crates.io, and its packaged sources differ from that version's \
+         (src/lib.rs changed): a version is published once, so move its version, its line's as \
+         the packages' lines say (docs/RELEASES.md, \"Packages on crates.io\")"
+    );
+    let many = Changed {
+        package: "alpha 1.0.0".into(),
+        files: (0..13).map(|n| format!("f{n} added")).collect(),
+    };
+    assert!(
+        changed_line(&many).contains(
+            "(f0 added, f1 added, f2 added, f3 added, f4 added, f5 \
+                                      added, f6 added, f7 added, f8 added, f9 added and 3 more)"
+        ),
+        "{}",
+        changed_line(&many)
+    );
+}
+
+/// `cargo package` of the workspace at `root`'s package `name` into `target`: its `.crate`.
+fn packaged(root: &Path, name: &str, target: &Path) -> PathBuf {
+    let done = output_until(
+        command("cargo")
+            .args([
+                "package",
+                "--no-verify",
+                "--exclude-lockfile",
+                "--allow-dirty",
+                "--offline",
+                "--quiet",
+                "-p",
+                name,
+            ])
+            .env("CARGO_TARGET_DIR", target)
+            .current_dir(root),
+        bound(),
+    )
+    .unwrap();
+    assert!(
+        done.status.success(),
+        "{}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+    target.join("package").join(format!("{name}-1.0.0.crate"))
+}
+
+#[test]
+fn a_package_whose_version_the_registry_holds_is_red_once_its_sources_move_and_not_before() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    // Nothing published: each is the next release's, and nothing is packaged.
+    let none = check(
+        &root,
+        &Registry::Folder(registry.clone()),
+        &tree.path("target"),
+        later(),
+    )
+    .unwrap();
+    assert!(none.changed.is_empty());
+    assert_eq!(none.lines.len(), 3, "{:?}", none.lines);
+    assert!(
+        none.lines[0].starts_with("alpha 1.0.0: not on the registry ")
+            && none.lines[0].ends_with(
+                " yet: nothing to compare, and a release publishes it while [releases] publish is on"
+            ),
+        "{:?}",
+        none.lines
+    );
+    assert!(!tree.path("target/package").exists(), "nothing packaged");
+    // alpha published as it stands: the same.
+    let published = packaged(&root, "alpha", &tree.path("published"));
+    fs::create_dir_all(registry.join("crates/alpha")).unwrap();
+    fs::copy(&published, registry.join("crates/alpha/alpha-1.0.0.crate")).unwrap();
+    listed(&registry, "alpha", &["1.0.0"]);
+    let folder = Registry::Folder(registry.clone());
+    let same = check(&root, &folder, &tree.path("target"), later()).unwrap();
+    assert!(same.changed.is_empty(), "{:?}", same.changed);
+    assert!(
+        same.lines
+            .iter()
+            .any(|line| line.starts_with("alpha 1.0.0: on the registry ")
+                && line.ends_with(", its packaged sources the same")),
+        "{:?}",
+        same.lines
+    );
+    assert!(
+        !tree.path("target").join(CHECKED).exists(),
+        "its scratch is gone"
+    );
+    // Its source moved while its version did not: red, naming the file.
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "//! alpha, changed\npub fn alpha() {}\n",
+    );
+    let moved = check(&root, &folder, &tree.path("target"), later()).unwrap();
+    assert_eq!(
+        moved.changed,
+        [Changed {
+            package: "alpha 1.0.0".into(),
+            files: vec!["src/lib.rs changed".into()],
+        }]
+    );
+    // Its version moved too: the next release's to publish, no red.
+    let manifest = tree.read("ws/alpha/Cargo.toml").replace("1.0.0", "1.0.1");
+    tree.write("ws/alpha/Cargo.toml", &manifest);
+    let bumped = check(&root, &folder, &tree.path("target"), later()).unwrap();
+    assert!(bumped.changed.is_empty(), "{:?}", bumped.changed);
+    assert!(bumped.lines[0].starts_with("alpha 1.0.1: not on the registry "));
+}
+
+#[test]
+fn a_check_fails_closed_on_a_registry_it_cannot_read_or_a_package_it_cannot_fetch() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    fs::create_dir_all(registry.join("index/al/ph/alpha")).unwrap();
+    let unread = check(
+        &root,
+        &Registry::Folder(registry.clone()),
+        &tree.path("t"),
+        later(),
+    );
+    assert!(unread.is_err(), "{unread:?}");
+    fs::remove_dir_all(registry.join("index/al/ph/alpha")).unwrap();
+    listed(&registry, "alpha", &["1.0.0"]);
+    let unfetched =
+        check(&root, &Registry::Folder(registry), &tree.path("t"), later()).unwrap_err();
+    assert!(unfetched.contains("alpha-1.0.0.crate"), "{unfetched}");
+}
+
+fn status(code: i32) -> ExitStatus {
+    ExitStatus::from_raw(code << 8)
+}
+
+fn ended(code: i32, stderr: &str) -> Output {
+    Output {
+        status: status(code),
+        stdout: Vec::new(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn an_upload_is_told_done_already_there_without_a_token_or_failed_by_cargos_line() {
+    assert_eq!(upload(&ended(0, "warning: x\n")), Upload::Done);
+    assert_eq!(
+        upload(&ended(
+            101,
+            "error: crate a@1.0.0 already exists on crates.io index\n"
+        )),
+        Upload::There
+    );
+    assert_eq!(
+        upload(&ended(
+            101,
+            "error: crate version `1.0.0` is already uploaded\n"
+        )),
+        Upload::There
+    );
+    assert_eq!(
+        upload(&ended(
+            101,
+            "error: no token found, please run `cargo login`\n"
+        )),
+        Upload::NoToken
+    );
+    assert_eq!(
+        upload(&ended(
+            101,
+            "   Packaging a v1.0.0\nerror: failed to publish a\n\nCaused by:\n  503\n"
+        )),
+        Upload::Failed("error: failed to publish a".into())
+    );
+    assert_eq!(
+        upload(&ended(1, "\nsomething else\n\n")),
+        Upload::Failed("something else".into())
+    );
+}
+
+#[test]
+fn a_publication_uploads_what_crates_io_lacks_in_order_and_skips_what_it_holds() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    listed(&registry, "alpha", &["1.0.0"]);
+    let cargo = stand_in(&tree, &registry, "", "", "");
+    let log = tree.path("logs/publish.log");
+    let folder = Registry::Folder(registry.clone());
+    let done = publish(
+        &root,
+        "release-2026-11-12",
+        &folder,
+        cargo.as_os_str(),
+        &log,
+        bound(),
+    );
+    assert_eq!(
+        done,
+        Publication {
+            release: "release-2026-11-12".into(),
+            uploaded: vec!["bravo 1.0.0".into(), "charlie 1.0.0".into()],
+            skipped: vec!["alpha 1.0.0".into()],
+            ..Publication::default()
+        }
+    );
+    let target = root.join(".target");
+    assert_eq!(
+        ran(&tree),
+        [
+            format!("publish -p bravo --locked target={}", target.display()),
+            format!("publish -p charlie --locked target={}", target.display()),
+        ]
+    );
+    let said = fs::read_to_string(&log).unwrap();
+    assert!(
+        said.starts_with("$ cargo publish -p bravo --locked\n   Uploaded bravo v1.0.0"),
+        "{said}"
+    );
+    assert_eq!(
+        done.lines(),
+        [
+            "published bravo 1.0.0, charlie 1.0.0",
+            "on crates.io already: alpha 1.0.0"
+        ]
+    );
+    // Again: everything is there, so nothing more is run.
+    let again = publish(
+        &root,
+        "release-2026-11-12",
+        &folder,
+        cargo.as_os_str(),
+        &log,
+        bound(),
+    );
+    assert_eq!(
+        again.skipped,
+        ["alpha 1.0.0", "bravo 1.0.0", "charlie 1.0.0"]
+    );
+    assert!(again.uploaded.is_empty());
+    assert_eq!(ran(&tree).len(), 2, "no upload more");
+}
+
+#[test]
+fn with_no_token_nothing_more_is_tried_and_the_release_stays_green() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    let cargo = stand_in(&tree, &registry, "alpha bravo charlie", "", "");
+    let done = publish(
+        &root,
+        "release-2026-11-12",
+        &Registry::Folder(registry),
+        cargo.as_os_str(),
+        &tree.path("publish.log"),
+        bound(),
+    );
+    assert!(!done.failed, "no token is no red");
+    assert_eq!(done.left, ["alpha 1.0.0", "bravo 1.0.0", "charlie 1.0.0"]);
+    assert_eq!(done.why.as_deref(), Some(NO_TOKEN));
+    assert_eq!(
+        ran(&tree).len(),
+        1,
+        "the first upload alone: {:?}",
+        ran(&tree)
+    );
+    let lines = done.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with("not published: no token: "),
+        "{lines:?}"
+    );
+    assert!(
+        lines[0].ends_with(": alpha 1.0.0, bravo 1.0.0, charlie 1.0.0"),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_failed_upload_stops_the_rest_and_names_the_package_and_cargos_line() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    let cargo = stand_in(&tree, &registry, "", "bravo", "alpha");
+    let log = tree.path("publish.log");
+    let done = publish(
+        &root,
+        "release-2026-11-12",
+        &Registry::Folder(registry),
+        cargo.as_os_str(),
+        &log,
+        bound(),
+    );
+    assert!(done.failed);
+    assert_eq!(
+        done.skipped,
+        ["alpha 1.0.0"],
+        "an upload crates.io had already"
+    );
+    assert_eq!(done.left, ["bravo 1.0.0", "charlie 1.0.0"]);
+    assert_eq!(
+        done.why.as_deref(),
+        Some(
+            format!(
+                "the upload of bravo 1.0.0 failed (error: failed to publish bravo to registry at \
+                 https://crates.io; log {})",
+                log.display()
+            )
+            .as_str()
+        )
+    );
+    assert_eq!(
+        ran(&tree).len(),
+        2,
+        "charlie is not tried: {:?}",
+        ran(&tree)
+    );
+    let lines = done.lines();
+    assert_eq!(lines[0], "on crates.io already: alpha 1.0.0");
+    assert!(
+        lines[1].ends_with("): bravo 1.0.0, charlie 1.0.0"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines[2],
+        "the release stays tagged; `just release --refresh`, or the next release, publishes what \
+         is left"
+    );
+}
+
+#[test]
+fn a_publication_that_cannot_read_its_packages_or_the_registry_is_red_and_tries_nothing() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    fs::create_dir_all(registry.join("index/al/ph/alpha")).unwrap();
+    let cargo = stand_in(&tree, &registry, "", "", "");
+    let folder = Registry::Folder(registry);
+    let log = tree.path("publish.log");
+    let unread = publish(&root, "r", &folder, cargo.as_os_str(), &log, bound());
+    assert!(unread.failed);
+    assert_eq!(unread.left.len(), 3);
+    assert!(
+        unread.why.as_deref().unwrap().contains(" cannot be read: "),
+        "{unread:?}"
+    );
+    tree.write("ws/Cargo.toml", "[workspace\n");
+    let broken = publish(&root, "r", &folder, cargo.as_os_str(), &log, bound());
+    assert!(broken.failed);
+    assert!(
+        broken
+            .why
+            .as_deref()
+            .unwrap()
+            .starts_with("its packages cannot be read: cargo metadata failed"),
+        "{broken:?}"
+    );
+    assert!(ran(&tree).is_empty(), "no upload: {:?}", ran(&tree));
+    let nothing = publish(
+        &tree.path("none"),
+        "r",
+        &folder,
+        cargo.as_os_str(),
+        &log,
+        bound(),
+    );
+    assert_eq!(nothing.lines(), ["no package to publish"]);
+}
+
+#[test]
+fn a_publication_off_says_so_and_is_no_red() {
+    let off = Publication::not("release-2026-11-12", OFF, false);
+    assert_eq!(off.lines(), ["not published: [releases] publish is off"]);
+    let json = serde_json::to_value(&off).unwrap();
+    assert_eq!(
+        json,
+        json!({"release": "release-2026-11-12", "why": OFF, "failed": false}),
+        "what is empty is left out of the record"
+    );
+}
+
+#[test]
+fn the_notes_name_each_version_the_registry_lacks_when_tagged() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    let folder = Registry::Folder(registry.clone());
+    listed(&registry, "alpha", &["1.0.0"]);
+    let said = notes(&root, &folder, bound());
+    assert_eq!(
+        said,
+        [format!(
+            "Publishes to {}: bravo 1.0.0, charlie 1.0.0.",
+            folder.said()
+        )]
+    );
+    listed(&registry, "bravo", &["1.0.0"]);
+    listed(&registry, "charlie", &["1.0.0"]);
+    assert_eq!(
+        notes(&root, &folder, bound()),
+        [format!(
+            "Publishes nothing: {} holds each package's version.",
+            folder.said()
+        )]
+    );
+    fs::remove_file(registry.join("index/ch/ar/charlie")).unwrap();
+    fs::create_dir_all(registry.join("index/ch/ar/charlie")).unwrap();
+    let unread = notes(&root, &folder, bound());
+    assert!(
+        unread[0].contains(" could not be read when it was tagged (")
+            && unread[0].ends_with("): the step after its push publishes what it lacks."),
+        "{unread:?}"
+    );
+    assert!(notes(&tree.path("none"), &folder, bound()).is_empty());
+}

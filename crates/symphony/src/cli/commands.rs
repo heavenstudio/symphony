@@ -8,6 +8,7 @@
 
 use std::io::Write;
 
+mod crates_check;
 mod release_inputs;
 mod shot;
 mod size_budget;
@@ -70,7 +71,7 @@ const PLAIN: [(&str, &str, &str); 3] = [
 
 /// The commands only this repository's own build and release run use, `symphony-build`'s, in the
 /// order its usage names them, each with what it does.
-const BUILD: [(&str, &str); 5] = [
+const BUILD: [(&str, &str); 6] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -84,6 +85,10 @@ const BUILD: [(&str, &str); 5] = [
         "check the shipped binaries' sizes against their budget",
     ),
     (
+        "crates-check",
+        "check each published package on crates.io holds its sources",
+    ),
+    (
         "split-repair",
         "repair dx's --wasm-split output: safe, same bytes each build",
     ),
@@ -95,7 +100,7 @@ const BUILD: [(&str, &str); 5] = [
 
 /// The usage of `symphony-build`'s commands that read no options of their own, and what their help
 /// says after their line.
-const BUILD_PLAIN: [(&str, &str, &str); 4] = [
+const BUILD_PLAIN: [(&str, &str, &str); 5] = [
     (
         "publish-client",
         "usage: symphony-build publish-client STAGE PUBLIC",
@@ -110,6 +115,15 @@ const BUILD_PLAIN: [(&str, &str, &str); 4] = [
         "size-budget",
         "usage: symphony-build size-budget ROOT RELEASE",
         "",
+    ),
+    (
+        "crates-check",
+        "usage: symphony-build crates-check [ROOT]",
+        "ROOT is the workspace (default: the current folder). A version crates.io\n\
+         lacks has nothing to compare with; one it holds is packaged here, in the\n\
+         build folder, and compared file by file with that version there: one whose\n\
+         sources moved while its version did not is red (exit 1). A registry it cannot\n\
+         read is exit 2.\n",
     ),
     (
         "split-repair",
@@ -221,6 +235,7 @@ pub(super) fn build(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         Some("publish-client") => super::publish::publish_client_main(rest, err),
         Some("release-inputs") => release_inputs::main(rest, out, err),
         Some("size-budget") => size_budget::main(rest, out, err),
+        Some("crates-check") => crates_check::main(rest, out, err),
         Some("split-repair") => split_repair::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
@@ -383,6 +398,7 @@ mod tests {
             "publish-client",
             "release-inputs",
             "size-budget",
+            "crates-check",
             "split-repair",
             "release",
         ];

@@ -88,9 +88,11 @@ a measurement before and after.
   or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication. The packages test is also the closest one for a change to a file a package
-  carries a copy of (the client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it
-  fails until the copy is made again, naming the `cp`.
+  never a publication. A change to a published package's sources adds `just crates-check`, red
+  for a package whose version crates.io holds with other sources, which only reads crates.io. The
+  packages test is also the closest one for a change to a file a package carries a copy of (the
+  client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
+  made again, naming the `cp`.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
@@ -240,7 +242,8 @@ back as main has it.
 ## The release run
 
 `just verify` is the full verification: lint, the real client check, the
-[size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
+[size budgets](#size-budgets), the docs audit, the crates check
+([RELEASES](RELEASES.md#packages-on-cratesio)), and every test target of the workspace, the
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
@@ -267,8 +270,9 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
-and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+budgets, the docs audit, the crates check and the tests (`tools/verify.sh`), each whatever the
+ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
+is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 `build/verify/STEP.log` (a folder of the run's when the release run runs it), which `steps.tsv`
 beside it lists with each step's exit status, seconds and command and the load average it ended

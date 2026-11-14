@@ -97,7 +97,8 @@ containing project. `just symphony
 
 `symphony-build` (`crates/symphony/src/bin/symphony-build.rs`, `symphony::cli::build_main`) holds
 the commands only this repository's own build and release run use: `publish-client`,
-`release-inputs`, `size-budget`, `split-repair` and `release`. The recipes and scripts run it by
+`release-inputs`, `size-budget`, `crates-check`, `split-repair` and `release`. The recipes and
+scripts run it by
 `tools/rs-bin.sh symphony-build`; it is never shipped or installed (`init::BUILDS` does not name
 it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
 links them ([CHECKS](docs/CHECKS.md#size-budgets)).
@@ -138,7 +139,9 @@ built path and byte with that committed distribution. The distribution keeps the
 previous builds is the orchestrator's choice, not the owner's, who can change it); a page whose
 build is gone loads again onto the current one. The check allows those older builds and refuses
 a build or a file beyond them. `just verify` runs lint, that real client check, the shipped
-binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit and the
+binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit, the crates check
+(each published package's version on crates.io holding its sources,
+[RELEASES](docs/RELEASES.md#packages-on-cratesio)) and the
 workspace's native/headless browser tests locally, each step whatever the ones before it did and
 with a log of its own (`tools/verify.sh`): the release run's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-release-run)). Local acceptance requires a working
@@ -216,7 +219,10 @@ since the last release or the last run that checked something (`[releases] every
 `just release` in the main checkout makes or renews, which counts with git and builds nothing
 short of due; [the cadence](docs/RELEASES.md#the-cadence)), one run at a time; with
 no release and no run on record the first landing counts the line's whole history and starts a
-run at once. A green release then refreshes the machine
+run at once. A green release, once pushed, publishes on crates.io each package whose version it
+lacks only while `[releases] publish` says so, which this repository leaves off: turning it on is
+the owner's word ([the packages](docs/RELEASES.md#packages-on-cratesio)). It then refreshes the
+machine
 ([the refresh](docs/RELEASES.md#the-refresh)): each consuming project's pin moved to it on a
 branch of its own through its own commit gate, its main fast-forwarded to that branch's one
 commit, by its hash, in its main checkout through its own hooks when that commit is the move and
