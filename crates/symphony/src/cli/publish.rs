@@ -1,7 +1,8 @@
-//! `symphony publish-client STAGE PUBLIC`: a fully assembled client put in place of the one served,
-//! as a reload publishes its build: one rename, or one exchange of the folders over a client there.
-//! What it publishes keeps the stage's build and the builds published just before it over
-//! PUBLIC, [`KEEP`] in all, as the folder's `builds.json` lists them ([`retain`]).
+//! `symphony-build publish-client STAGE PUBLIC`: a fully assembled client put in place of the one
+//! served, as a reload publishes its build: one rename, or one exchange of the folders over a
+//! client there. What it publishes keeps the stage's build and the builds published just before it
+//! over PUBLIC, [`KEEP`] in all, as the folder's `builds.json` lists them ([`retain`]). The command
+//! is `symphony-build`'s, this repository's own; a reload publishes through [`publish_client`].
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -43,14 +44,17 @@ struct Builds {
 /// keeping what [`retain`] keeps.
 pub(super) fn publish_client_main(args: &[String], err: &mut dyn Write) -> i32 {
     let [stage, public] = args else {
-        let _ = writeln!(err, "usage: symphony publish-client STAGE PUBLIC");
+        let _ = writeln!(err, "usage: symphony-build publish-client STAGE PUBLIC");
         return 2;
     };
     let (stage_path, public_path) = (Path::new(stage), Path::new(public));
     match retain(stage_path, public_path).and_then(|()| publish_client(stage_path, public_path)) {
         Ok(()) => 0,
         Err(error) => {
-            let _ = writeln!(err, "symphony publish-client: {stage} -> {public}: {error}");
+            let _ = writeln!(
+                err,
+                "symphony-build publish-client: {stage} -> {public}: {error}"
+            );
             1
         }
     }

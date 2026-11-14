@@ -1,5 +1,6 @@
-//! `symphony release` (`just release`): Symphony's releases (docs/RELEASES.md). A run takes main's
-//! tip as fetched from the remote, the commit a project can fetch, into a clean checkout of its own
+//! `symphony-build release` (`just release`): Symphony's releases (docs/RELEASES.md), a command of
+//! this repository's own build binary, which no project is given. A run takes main's tip as
+//! fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]) and runs the full verification there: a release is
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
@@ -62,12 +63,20 @@ use record::{Checking, Run, Running, local};
 use symphony_board::sys::{Interrupts, pid_alive};
 use tags::Release;
 
-use crate::cli::{Flag, parse, refuse};
+use crate::cli::{Flag, parse};
 use crate::project::Project;
 
-const USAGE: &str = "usage: symphony release [-h] [--root ROOT] [--remote NAME] [--branch NAME] \
-[--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] [--timeout SECONDS] \
-[--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] [--rerun] [--drop]";
+/// A refusal of the command line, as `symphony::cli::refuse` words one but under the binary that
+/// runs it: the usage, then the error. Exit 2.
+fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
+    let _ = writeln!(err, "{usage}\nsymphony-build {command}: error: {problem}");
+    2
+}
+
+const USAGE: &str = "usage: symphony-build release [-h] [--root ROOT] [--remote NAME] \
+[--branch NAME] [--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] \
+[--timeout SECONDS] [--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] \
+[--rerun] [--drop]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder, building and testing nothing of the projects this \
@@ -196,8 +205,8 @@ fn clock() -> Result<f64, String> {
     }
 }
 
-/// `symphony release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or a
-/// run that could not finish, 2 a command line refused.
+/// `symphony-build release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or
+/// a run that could not finish, 2 a command line refused.
 pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flag = |name, value| Flag { name, value };
     let flags = [
@@ -292,7 +301,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
         Ok(repo) => repo,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -359,7 +368,7 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 Err(problem) => {
                     let _ = writeln!(
                         err,
-                        "symphony release: the landings cannot be counted: {problem}"
+                        "symphony-build release: the landings cannot be counted: {problem}"
                     );
                     return 1;
                 }
@@ -411,15 +420,9 @@ pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
 /// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
-/// What a build older than the rename tells the build it hands a due count's run to, which may be
-/// this one ([`legacy`]): the same as [`DRIVER`].
-const LEGACY_DRIVER: &str = "SYMPHONY_NIGHTLY_DRIVER";
 /// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
-/// The command's name before the rename to `symphony release`, which a build older than it runs
-/// ([`legacy`]).
-pub const LEGACY: &str = "nightly";
 /// `--commit` as it was named before the rename, which older briefs and reds say.
 const LEGACY_COMMIT: &str = "--release";
 
@@ -437,24 +440,9 @@ fn names_legacy_commit(args: &[String], flags: &[Flag]) -> bool {
         })
 }
 
-/// `symphony nightly ARGS`, the command's name before the rename: its exit code. A landing's
-/// `on_land` that still names it (`nightly --due SLUG COMMIT`), and a build older than the rename
-/// handing a due count's run to a build of the tip (which may be this one), run it as `release
-/// --due` would; anything else is refused, saying the new name, exit 2.
-pub fn legacy(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    if args.iter().any(|arg| arg == "--due") {
-        return main(args, out, err);
-    }
-    let _ = writeln!(err, "`symphony {LEGACY}` is now `symphony release`");
-    2
-}
-
-/// Whether this process is the build a due count handed its run to, by this build or by one older
-/// than the rename.
+/// Whether this process is the build a due count handed its run to.
 fn driven() -> bool {
-    [DRIVER, LEGACY_DRIVER]
-        .into_iter()
-        .any(|name| std::env::var_os(name).is_some())
+    std::env::var_os(DRIVER).is_some()
 }
 
 /// Say each line of `noted` on `out`, as a run says what it did on the way.
@@ -465,13 +453,13 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 }
 
 /// A due count's run, handed to a build of the tip it verifies. The count ran on the build the
-/// main checkout links, building nothing; now, the lock held, the release run's own checkout is brought
-/// to the line's tip, `tools/rs-bin.sh --build symphony` builds there, in that checkout's own build
-/// folder and never the main checkout's (where a landing's `just tasks` would wait on its lock), and
-/// this process becomes that build, with `args` as given. None when the run goes on here: this is
-/// that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or the build failed,
-/// which is said and which the run then meets as it would. An exit code when a run holds the lock:
-/// the count waits for it and nothing more runs.
+/// main checkout links, building nothing; now, the lock held, the release run's own checkout is
+/// brought to the line's tip, `tools/rs-bin.sh --build symphony-build` builds there, in that
+/// checkout's own build folder and never the main checkout's (where a landing's `just tasks` would
+/// wait on its lock), and this process becomes that build, with `args` as given. None when the run
+/// goes on here: this is that build already, the tip holds no `tools/rs-bin.sh`, or the checkout or
+/// the build failed, which is said and which the run then meets as it would. An exit code when a
+/// run holds the lock: the count waits for it and nothing more runs.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     use std::os::unix::process::CommandExt as _;
     if driven() {
@@ -532,9 +520,10 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
     None
 }
 
-/// The build of `symphony` a due count's run starts from: the release run's checkout brought to
-/// the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the build
-/// printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it fails.
+/// The build of `symphony-build` a due count's run starts from: the release run's checkout brought
+/// to the line's tip as fetched, then built there in its own build folder ([`hand_off`]), what the
+/// build printed going to `out`. None when the tip holds no `tools/rs-bin.sh`; why, when any of it
+/// fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
     // A process in what a build older than the rename left keeps it where it is: the run goes on
@@ -558,11 +547,10 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
     let tree = place.checkout.display();
     let mut build = crate::children::command(&launcher);
     build
-        .args(["--build", "symphony"])
+        .args(["--build", "symphony-build"])
         .current_dir(&place.checkout)
         .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER)
-        .env_remove(LEGACY_DRIVER);
+        .env_remove(DRIVER);
     let done = group::output_until(&mut build, until).map_err(|failed| match failed {
         group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
         group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
@@ -686,7 +674,7 @@ fn status(
     let ordered = match ordered_releases(&repo.root) {
         Ok(ordered) => ordered,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -837,7 +825,7 @@ fn settled(
 /// main's tip: its exit code. Refused while a run holds the lock or none is held.
 fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let refused = |err: &mut dyn Write, why: &str| {
-        let _ = writeln!(err, "symphony release: {why}");
+        let _ = writeln!(err, "symphony-build release: {why}");
         1
     };
     let lock = match record::lock(&repo.common) {
@@ -913,7 +901,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     let lock = match record::lock(&repo.common) {
         Ok(lock) => lock,
         Err(problem) => {
-            let _ = writeln!(err, "symphony release: {problem}");
+            let _ = writeln!(err, "symphony-build release: {problem}");
             return 1;
         }
     };
@@ -963,7 +951,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         Err(TryLockError::Error(e)) => {
             let _ = writeln!(
                 err,
-                "symphony release: {}",
+                "symphony-build release: {}",
                 crate::text::os_error(e, &lock_path)
             );
             return 1;
@@ -1111,7 +1099,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     let mut for_owner = false;
     match ran {
         Err(Stop::Refused(why)) => {
-            let _ = writeln!(err, "symphony release: {why}");
+            let _ = writeln!(err, "symphony-build release: {why}");
             record::release(&folder, &record.id);
             return 1;
         }
@@ -1131,7 +1119,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         code = 1;
     }
     if let Some(error) = &record.error {
-        let _ = writeln!(err, "symphony release: {error}");
+        let _ = writeln!(err, "symphony-build release: {error}");
         code = 1;
     }
     if record
@@ -1151,7 +1139,10 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     );
     code = code.max(said(&record.board, out, err));
     if let Err(problem) = record::write(&folder, &record) {
-        let _ = writeln!(err, "symphony release: cannot record the run: {problem}");
+        let _ = writeln!(
+            err,
+            "symphony-build release: cannot record the run: {problem}"
+        );
         code = 1;
     }
     if let Some(next) = next.as_mut() {
@@ -1161,7 +1152,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         if let Err(problem) = candidate::write(&folder, next) {
             let _ = writeln!(
                 err,
-                "symphony release: cannot record the release candidate: {problem}"
+                "symphony-build release: cannot record the release candidate: {problem}"
             );
             code = 1;
         }
@@ -1171,7 +1162,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     {
         let _ = writeln!(
             err,
-            "symphony release: cannot record the release candidate: {problem}"
+            "symphony-build release: cannot record the release candidate: {problem}"
         );
         code = 1;
     }
@@ -1355,7 +1346,7 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
     }
     match &board.error {
         Some(error) => {
-            let _ = writeln!(err, "symphony release: the board: {error}");
+            let _ = writeln!(err, "symphony-build release: the board: {error}");
             1
         }
         None => 0,
@@ -1388,7 +1379,7 @@ fn held(
         && let Some(check) = &earlier.check
         && group::lives(check.group, check.start.as_ref())
     {
-        let _ = writeln!(err, "symphony release: {}", runs_on(&earlier, check));
+        let _ = writeln!(err, "symphony-build release: {}", runs_on(&earlier, check));
         return 1;
     }
     let lock = folder.join("run.lock");
@@ -1396,7 +1387,7 @@ fn held(
         Some(holder) if options.now <= holder.until + LATE_SECONDS => {
             let _ = writeln!(
                 err,
-                "symphony release: another release run of this repository is running \
+                "symphony-build release: another release run of this repository is running \
                  (run {}, process {}, since {})",
                 holder.id,
                 holder.pid,
@@ -1421,7 +1412,7 @@ fn held(
             held_by(&lock),
         ),
     };
-    let _ = writeln!(err, "symphony release: {why}");
+    let _ = writeln!(err, "symphony-build release: {why}");
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
@@ -1476,7 +1467,7 @@ fn outlived(
     err: &mut dyn Write,
 ) -> i32 {
     if options.now <= earlier.until + LATE_SECONDS {
-        let _ = writeln!(err, "symphony release: {}", runs_on(earlier, check));
+        let _ = writeln!(err, "symphony-build release: {}", runs_on(earlier, check));
         return 1;
     }
     let why = format!(
@@ -1489,7 +1480,7 @@ fn outlived(
         local(earlier.until),
         check.group
     );
-    let _ = writeln!(err, "symphony release: {why}");
+    let _ = writeln!(err, "symphony-build release: {why}");
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);

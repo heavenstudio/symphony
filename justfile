@@ -52,7 +52,7 @@ client-update:
 [private]
 _client-update:
     @just symphony-ui-dist build/shipped-client
-    @tools/rs-bin.sh symphony publish-client build/shipped-client/public apps/symphony-server/client/public
+    @tools/rs-bin.sh symphony-build publish-client build/shipped-client/public apps/symphony-server/client/public
 
 # The generic document CLI and board binaries belong to this workspace.
 [no-exit-message]
@@ -73,11 +73,13 @@ tasks *ARGS:
 # release-YYYY-MM-DD and that tag pushed. `--commit COMMIT` releases a commit of main out of cycle,
 # `--status` runs nothing, and `--schedule` prints the entry that runs it each day. Scheduling is
 # the owner's. The board's binary is built and linked first: the run files its reds and records
-# its checks through it.
+# its checks through it. So is `symphony-build`, whose link `[board] on_land` runs (symphony.toml):
+# any `just release`, even `--status`, makes that link or renews it.
 [no-exit-message]
 release *ARGS:
     @tools/rs-bin.sh --link tasks >/dev/null
-    @tools/rs-bin.sh symphony release "$@"
+    @tools/rs-bin.sh --link symphony-build >/dev/null
+    @tools/rs-bin.sh symphony-build release "$@"
 
 # The release run's name before `just release`: it runs nothing and says so, exit 2, until the
 # first release `just release` cuts.
@@ -107,7 +109,7 @@ size-check:
 [private]
 _size-check:
     @tools/cargo.sh build --release --locked -p symphony-server -p symphony -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
-    @tools/rs-bin.sh symphony size-budget . "${CARGO_TARGET_DIR:-.target}/release"
+    @tools/rs-bin.sh symphony-build size-budget . "${CARGO_TARGET_DIR:-.target}/release"
 
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit
 # and every test target, each a step of this run with a log of its own, run whatever the ones before

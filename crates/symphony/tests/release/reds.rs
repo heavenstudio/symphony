@@ -267,7 +267,7 @@ fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
     );
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        err.contains("symphony release: the board: cannot run /no/such/tasks"),
+        err.contains("symphony-build release: the board: cannot run /no/such/tasks"),
         "{err}"
     );
     let run = fixture.runs().last().unwrap().clone();
