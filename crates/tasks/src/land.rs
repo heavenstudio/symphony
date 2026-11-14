@@ -28,16 +28,19 @@
 //!    branch, which keeps the default branch's side of every path inside the project's `[land]
 //!    generators`' outputs that the branch changed, in a conflict or not ([`Landing::take_ours`]):
 //!    what they make is the regenerator's, of the default branch's own sources, so no branch's
-//!    build of it lands. The tip merged stays the one approved. Any other conflict refuses. Then
-//!    `[verdicts] check`, unless `[land] check = false`, must pass on the merge; with it off, a
-//!    project's regenerator runs it on the default branch's tip after the land
+//!    build of it lands. The tip merged stays the one approved. Any other conflict refuses. The
+//!    merge is committed through the project's git hooks, those git runs on a merge concluded
+//!    after `--no-commit` ([`COMMIT_HOOKS`]): one that refuses is said as a red check is, naming
+//!    the hooks. Then `[verdicts] check`, unless `[land] check = false`, must pass on the merge;
+//!    with it off, a project's regenerator runs it on the default branch's tip after the land
 //!    ([`Settings::main_check`]). A land runs no generator. This merge is one step,
 //!    [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted pull-request merge would
 //!    replace.
 //! 3. **Moved.** The land records its merge and the commit the check passed on, in
-//!    `symphony/tasks/land/` and on the thread; then the main checkout, with no staged or tracked
-//!    edit and on the default branch, fast-forwards to what passed, so the default branch's new
-//!    tree is the tree the check passed on. The fast-forward runs in a process group of its own,
+//!    `symphony/tasks/land/` and on the thread (which says `checked at` only when a check ran);
+//!    then the main checkout, with no staged or tracked edit and on the default branch,
+//!    fast-forwards to what passed, so the default branch's new tree is the tree the check passed
+//!    on (the merge's, with none). The fast-forward runs in a process group of its own,
 //!    which no terminal's signal reaches and the land forwards none to, so nothing but its timeout
 //!    stops it part way; where the default branch is once it ends says whether it moved, and only
 //!    a move that did not happen drops the record, restoring what it half-wrote in the main
@@ -59,9 +62,10 @@
 //!
 //! Two lands of one repository wait for each other ([`LOCK`] in `symphony/tasks/` of the common
 //! dir), with no timeout: the lock guards a merge, a check and a push, and is freed when its
-//! holder's process ends however it ends. The check runs in a process group of its own, ended
-//! whole past `[land] timeout_seconds` ([`TIMEOUT`] unless the project says), and a fetch or a push
-//! within [`NETWORK`]; what is left of a group once its first process ends is ended too.
+//! holder's process ends however it ends. The merge's commit, with its hooks, and the check each
+//! run in a process group of its own, ended whole past `[land] timeout_seconds` ([`TIMEOUT`]
+//! unless the project says), and a fetch or a push within [`NETWORK`]; what is left of a group
+//! once its first process ends is ended too.
 //! A hang-up, an interrupt or a terminate signal (a terminal's Ctrl-C, `kill`) ends the group
 //! running, or a land waiting for the lock, but the fast-forward, which it waits for, removes the
 //! land's worktree and ends the land by that signal: before the default branch moved nothing
@@ -69,10 +73,10 @@
 //! meanwhile, with when its first process started, so a land killed outright leaves its name: the
 //! next land refuses while that group lives, or while any process works in the worktree it left,
 //! and tells how to end the group only while its first process is the one the land started
-//! ([`Landing::leftover_group`]). What the check prints goes to `symphony/tasks/land/SLUG.log`,
-//! the slug's `/` as `%2F` ([`file_stem`]). The settings are read from the default branch as the
-//! main checkout has it committed, never from the branch landing, so a branch cannot change its own
-//! check.
+//! ([`Landing::leftover_group`]). What the commit's hooks and the check print goes to
+//! `symphony/tasks/land/SLUG.log`, the slug's `/` as `%2F` ([`file_stem`]). The settings are read
+//! from the default branch as the main checkout has it committed, never from the branch landing, so
+//! a branch cannot change its own check.
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
@@ -1117,6 +1121,30 @@ fn hold(
     Ok(held)
 }
 
+/// The hooks `git commit` runs that can refuse a commit, in the order it runs them.
+const COMMIT_HOOKS: [&str; 3] = ["pre-commit", "prepare-commit-msg", "commit-msg"];
+
+/// Which of [`COMMIT_HOOKS`] a commit in the checkout `dir` runs: those git finds there (in the
+/// repository's hooks folder, or the one `core.hooksPath` names) as executable files.
+fn commit_hooks(dir: &Path) -> Vec<&'static str> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut args = vec!["rev-parse"];
+    let paths = COMMIT_HOOKS.map(|hook| format!("hooks/{hook}"));
+    for path in &paths {
+        args.extend(["--git-path", path]);
+    }
+    let found = run_git(dir, &args).unwrap_or_default();
+    COMMIT_HOOKS
+        .into_iter()
+        .zip(found.lines())
+        .filter(|(_, path)| {
+            fs::metadata(dir.join(path))
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+        .map(|(hook, _)| hook)
+        .collect()
+}
+
 /// `git ARGS` in `dir`: its output, trimmed, or the line saying why it failed.
 fn run_git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let done = git(dir, args).ok_or_else(|| format!("git cannot run in {}", dir.display()))?;
@@ -1774,11 +1802,11 @@ impl Landing<'_> {
             ))
         })?;
         self.say(&format!(
-            "land {slug}: its tip {} is on {default} already, by this land's merge {}, checked at \
-             {}: finishing the land (the push, the landed line, the sweep)",
+            "land {slug}: its tip {} is on {default} already, by this land's merge {}{}: \
+             finishing the land (the push, the landed line, the sweep)",
             short(tip),
             short(&record.merge),
-            short(&record.checked)
+            self.checked_at(short(&record.checked))
         ));
         self.close(
             &record.merge,
@@ -2227,8 +2255,39 @@ impl Landing<'_> {
                 generated_named(&taken, &self.settings.generators)
             ));
         }
-        run_git(&path, &["commit", "--quiet", "--no-verify", "-m", &message])
-            .map_err(Refusal::here)?;
+        // The merge is committed through the project's git hooks, as git commits a merge concluded
+        // after `--no-commit` (pre-commit, prepare-commit-msg, commit-msg; pre-merge-commit is `git
+        // merge`'s own), run as the check is: its output in the log, within the land's timeout.
+        let commit = ["git", "commit", "--quiet", "-m", &message].map(String::from);
+        let ran = self.logged(&commit, &path)?;
+        if let Ran::Interrupted(signal) = ran {
+            return Err(Refusal::here(self.halted(signal, None)));
+        }
+        if ran != Ran::Passed {
+            let (by, did) = match commit_hooks(&path).as_slice() {
+                [] => ("git commit".to_string(), "failed on"),
+                [hook] => (format!("the project's git hook {hook}"), "refused"),
+                hooks => (
+                    format!("one of the project's git hooks ({})", hooks.join(", ")),
+                    "refused",
+                ),
+            };
+            let did = if ran == Ran::Late {
+                format!("{} on", self.failed(ran))
+            } else {
+                did.to_string()
+            };
+            let into = match merging {
+                Merging::Tip(_) => slug.to_string(),
+                Merging::Origin(_) => format!("{REMOTE}/{default}"),
+            };
+            let line = format!(
+                "{by} {did} the merge of {into} into {default} at {}; its output is in {}",
+                short(base),
+                self.log.display()
+            );
+            return Err(self.red(merging, again, line));
+        }
         let merge = rev(&path, "HEAD").ok_or("the merge left no HEAD")?;
         if !self.settings.check.is_empty() {
             let check = self.settings.check.join(" ");
@@ -2249,16 +2308,7 @@ impl Landing<'_> {
                     short(base),
                     self.log.display()
                 );
-                // Red once the default branch moved, it is the orchestrator's to look at; red on
-                // the merge of the tip as approved, the executor's to fix on its branch.
-                return Err(match merging {
-                    _ if again => Refusal {
-                        to: Some("@orchestrator"),
-                        ..Refusal::thread(line)
-                    },
-                    Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
-                    Merging::Origin(_) => Refusal::thread(line),
-                });
+                return Err(self.red(merging, again, line));
             }
         }
         let top = rev(&path, "HEAD").ok_or("the check left no HEAD")?;
@@ -2280,9 +2330,9 @@ impl Landing<'_> {
             record.write(&self.folder)?;
             self.post(
                 &format!(
-                    "land {slug}: merged {tip} as {merge}{}, checked at {top}; moving {default} \
-                     there",
-                    taken_said(&taken, &default, &self.settings.generators)
+                    "land {slug}: merged {tip} as {merge}{}{}; moving {default} there",
+                    taken_said(&taken, &default, &self.settings.generators),
+                    self.checked_at(&top)
                 ),
                 None,
             );
@@ -2359,6 +2409,30 @@ impl Landing<'_> {
         match merging {
             Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
             Merging::Origin(_) => Refusal::thread(line),
+        }
+    }
+
+    /// The refusal of a merge of `merging` that a check or a commit hook judged red, `again` once
+    /// the default branch moved: then the orchestrator's to look at; on the merge of the tip as
+    /// approved, the executor's to fix on its branch; on what `origin` gained, the thread's.
+    fn red(&self, merging: &Merging, again: bool, line: String) -> Refusal {
+        match merging {
+            _ if again => Refusal {
+                to: Some("@orchestrator"),
+                ..Refusal::thread(line)
+            },
+            Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
+            Merging::Origin(_) => Refusal::thread(line),
+        }
+    }
+
+    /// What the thread says of the commit `top` the land moves the default branch to: that the
+    /// check passed there, nothing when the land runs none.
+    fn checked_at(&self, top: &str) -> String {
+        if self.settings.check.is_empty() {
+            String::new()
+        } else {
+            format!(", checked at {top}")
         }
     }
 
