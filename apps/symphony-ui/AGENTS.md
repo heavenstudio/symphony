@@ -36,11 +36,25 @@ never the whole target, which the release run runs.
   --debug-symbols false`, on the root manifest's `wasm-release` profile
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
-  board, task/detail, document, review-home, queue, deferred panel, overlay and task timeline modules, then
-  assemble their content-hashed assets with `package.sh`. Naming a kind rebuilds
-  it against the other kinds already in that output folder. Dioxus's native
-  splitter retained shared exports and increased the measured initial payload;
-  these builds use the page-kind fallback. Without `--debug-symbols false` dx 0.7 emits 260 KB of
+  board, document, review-home and queue modules and the program, then
+  assemble their content-hashed assets with `package.sh`. Naming a kind (`program` among
+  them) rebuilds it against the other kinds already in that output folder. The program
+  (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
+  `dx bundle --wasm-split` of the task pages with `/agents`, Reports, the chat, the menus and
+  the task timeline: one script and main module, and a chunk for each, which
+  `symphony-build split-repair` puts right after dx
+  (crates/symphony/src/cli/commands/split_repair.rs)
+  and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
+  the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
+  before it stops the page shown, which stays until the chunk is in, and under the shell's
+  notice when it does not load. A chunk mounts its kind's root
+  in the one instance (a `VirtualDom` per root, `module.rs`); home and the board keep modules
+  of their own, under their 300,000-byte caps, which a program shared with them would pass. The
+  shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
+  each the program's styles another kind loads too and its own by name, and refuses a style no
+  kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
+  never fills, and no kind loads), and refuses one that holds more than custom sections.
+  Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
   repository into `symphony/tools/` in the git common dir by `tools.sh`, which
   bundle.sh runs when one is missing (`tools.sh --folder` names that folder,
@@ -225,10 +239,8 @@ never the whole target, which the release run runs.
   cache's bindings (`wasm_size` on the named copies); about 13.6 KB of the task page's and
   `/agents`' kind, 11.0 KB of it the task page's draw, checks and retries (`task_live`), and
   the documents' 2.2 KB. The pages' ghosts and what they keep (Loading, below) cost it
-  about 13.3 KB of `/tasks` (295,466 bytes in all, 4,534 under the cap), 2.4 KB of `/`,
-  7.8 KB of `/queue`, 13.0 KB of a task page and `/agents` and 6.8 KB of the documents. The same run reports `/agents` at 492,922, `/docs/` at
-  462,793, `/queue` at 244,327, a task page at 493,470 (2,195 on a return that finds it
-  unchanged, its page and thread each a `304` of 82) and a document at 464,410. Documents
+  about 13.3 KB of `/tasks`, 2.4 KB of `/`, 7.8 KB of `/queue`, 13.0 KB of a task page and
+  `/agents` and 6.8 KB of the documents. Documents
   drawn from the device, an entrypoint's page kept and the reads ahead
   (`perf/client-cache/documents` and `/ahead`, against main's build at 8ef025d) cost every page
   about 0.9 KB of the shell and the documents' kind about 30.4 KB (`wasm_size` on the named
@@ -240,13 +252,23 @@ never the whole target, which the release run runs.
   on its document reads, so its outline's `304` is read again whole. The reads ahead start only
   once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so the
   budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`): on
-  the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. A task page's
-  timeline, its own module, which carries none of the cache's code, comes once the page has
-  drawn and is idle: 202,155 bytes outside its first visit (its WASM 186,101, glue 12,344,
-  style sheet 2,605 and first read 1,105), and `/agents` never loads it. Once a page has its
-  data and is idle, the shell warms the chat's and the menus' modules, 745,884 bytes outside
-  its first visit, and the chat's first open transfers nothing more. Each kind pays for its own
-  compiled framework; later visits reuse cached imports. The home budget test
+  the stand-in's links page, a task and seven documents, 5,511 bytes on the wire. The task
+  pages, `/agents` and Reports are kinds of the program (Build, above;
+  `perf/client-shared-runtime/task-pages-program`, against main's build at 5352c2d), which costs
+  every page the shell's 38 bytes that name its chunks (`/tasks` 295,939 from 295,902, `/`
+  236,351 from 236,322): a first visit to one takes the program's script (17,907 bytes on the
+  wire) and main module (216,782) and its kind's chunk (the task pages' 315,343, Reports'
+  48,996), so `/agents` and a task page take 572,269 and 572,862 (from 559,770 and 560,363,
+  2,241 on a return that finds a task unchanged, its page and thread each a `304` of 82) and
+  `/reports` 306,609 (from 558,271), and a move between them takes the target's chunk alone. A
+  task page's timeline, a chunk of the same program, comes once the page has drawn and is
+  idle: 54,357 bytes outside its first visit (from 202,226; its chunk 50,648, style sheet 2,604
+  and first read 1,105), and `/agents` never loads it. Once a page has its data and is idle,
+  the shell warms the chat's and the menus' chunks, with the program's script and main module
+  where the page is not one of the program's: 609,120 bytes outside home's first visit (from
+  748,701), about 374,600 outside a task page's, and the chat's first open transfers nothing
+  more. Each module pays for its own compiled framework, the program once for all its kinds;
+  later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
@@ -304,9 +326,10 @@ never the whole target, which the release run runs.
   the task or its runs change, a newer read aborting the one before. Until then
   it is its own outline, the shape the server or this browser last saw (`Room`);
   a task nothing gates shows none, and a failed read says so in its place. In the
-  tasks module alone, a read dropped before its answer aborts its fetch
-  (`request.rs`, `page-tasks`), so every other module's transport is unchanged; a
-  post never does. As attach.rs does, it puts its own style
+  program alone (the task pages, Reports, the chat, the menus and the timeline, which
+  share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
+  `page-tasks`, which `page-program` turns on), so the board's, home's, the documents'
+  and the queue's transport is unchanged; a post never does. As attach.rs does, it puts its own style
   (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. Thread history, subtasks, hierarchy groups
@@ -448,10 +471,10 @@ never the whole target, which the release run runs.
   `queue_filter.rs` derives counts from the complete snapshot and stores the selected
   owner category through `Platform` on this device. Chips use the shared Button;
   an absent saved category displays All without hiding new work.
-- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, drawn by the task pages'
-  module (`page-tasks`) as the Agents page is, which already holds the runtime, frame and
-  components it uses: a module of its own would weigh some 560 KB in each build the
-  distribution keeps, against the client's line. Its style is `assets/reports.css`. It reads
+- **Reports.** `reports.rs` renders `/api/reports` at `/reports`, the program's `reports`
+  kind: a chunk of its own over the runtime, frame and components the program's main module
+  holds for the task pages too, so a move between them fetches the other's chunk alone. Its
+  style is `assets/reports.css`, which only its kind loads. It reads
   the window this device last chose (`reports-grain`, `reports-days` through `Platform`) at
   once, on each new choice and every five minutes with the last answer's tag. Four figures sit over five sections of charts, one column on a
   phone and two from 960 px. `reports/chart.rs` draws each chart as one component: bars as
@@ -523,23 +546,25 @@ never the whole target, which the release run runs.
   focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
   its opener; its status is filled a frame after the sheet is in the page, so a
   screen reader announces it. The panel's own sheet takes the focus over. A
-  select's popup and the picture viewer are drawn by the overlay module
+  select's popup and the picture viewer are drawn by the overlay kind
   (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. A task page's timeline is a persistent module too
-  (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
+  never the chat's. The chat, the menus and the timeline are kinds of the program, each a
+  chunk the shell names in the manifest (`chunk`) and mounts in its root; a page of the
+  program that has them already fetches the chunk alone. A task page's timeline is a
+  persistent kind too (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
   never warmed, loaded only once a task page's box asks for it and the page has its
   data and is idle, its root moved into that box and parked hidden at the body's
   end when the box goes. What listens on a module's root, as each module's Dioxus
   does, hears only the events of that module's own part of the page (`assets/shell.js`
   `scope`): Dioxus finds an event's element by a number each module counts on its
   own, so without it, a click in the timeline would run the page's control of the same number.
-  The shell requests a module's script, its wasm (a `fetch`
+  The shell requests a module's script, its wasm and a program kind's chunk (each a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is
-  idle, it prefetches the persistent modules' script,
-  wasm and styles at the lowest priority, nothing evaluated: the chat's first, the
-  menus' once the chat's wasm (or the chat's own load, when a click came first) is
+  idle, it prefetches the persistent kinds' script,
+  wasm, chunk and styles at the lowest priority, nothing evaluated: the chat's first, the
+  menus' once the chat's chunk (or the chat's own load, when a click came first) is
   in, so no two share a slow link. A browser asking to save data, or reporting a
   2g link, warms nothing; the browser tests count those prefetches apart from a
   first visit. `index.html` in the crate is dx's build template (`{app_title}`), and

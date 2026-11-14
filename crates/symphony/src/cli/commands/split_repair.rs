@@ -9,11 +9,12 @@
 //!   back every byte two data symbols lie over, and fails the run when the main module still reads
 //!   zero there;
 //! - it writes a chunk's data segments and table entries in the order of a hash map, so the same
-//!   sources give other bytes on every build: [`order`] puts them in a fixed one.
+//!   sources give other bytes on every build: [`order`] puts them in a fixed one, and joins those
+//!   that touch or overlap, a segment a symbol or a function as the splitter writes them, into one.
 //!
 //! Each module is then named by its bytes (`STEM-HASH.wasm`, HASH the first 16 hex digits of their
-//! SHA-256, as `package.sh` names a page kind's script), the scripts that name it are rewritten to
-//! the new name, and each script so changed is named by its bytes too, in `index.html`: two builds
+//! SHA-256, as `package.sh` names a page kind's script), the scripts and `index.html` that name it
+//! are rewritten to the new name, and each script so changed is named by its bytes too: two builds
 //! of the same sources give the same files. The main module is the one module that defines its
 //! memory; a chunk uses the main module's, imported from the splitter's `__wasm_split` (or none, as
 //! the empty shared chunk wasm-opt leaves). It exits 0 with a line on each module and on each
@@ -176,8 +177,8 @@ fn repair(program: &Path, public: &Path) -> Result<String, Failure> {
             chunk.clone(),
             ordered.bytes,
             format!(
-                "{} of its {} segments put in order",
-                ordered.moved, ordered.segments
+                "{} of its {} segments put in order, {} joined to the one before",
+                ordered.moved, ordered.segments, ordered.joined
             ),
         ));
     }
@@ -197,6 +198,8 @@ fn repair(program: &Path, public: &Path) -> Result<String, Failure> {
                 output.assets.display()
             )));
         }
+        // The page may name a module too (a preload of the main one): it follows the new name.
+        rename_in(&mut page.bytes, &file.name, &new);
         report.push_str(&format!("{what} {}: {said}\n", renaming(&file.name, &new)));
         if new != file.name {
             gone.push(file.name.clone());

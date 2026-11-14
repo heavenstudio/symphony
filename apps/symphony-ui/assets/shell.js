@@ -77,19 +77,26 @@ async function gone() {
 
 async function initialize(kind) {
     const spec = modules[kind];
-    // The module's initializer fetches its wasm only once its script has been fetched and run.
-    // A preload asks for both at once; the initializer's own fetch takes the preloaded response.
-    if (!preloaded.has(spec.wasm)) {
-        preloaded.add(spec.wasm);
-        document.head.insertAdjacentHTML("beforeend", `<link rel="preload" as="fetch" crossorigin href="${spec.wasm}">`);
+    // The module's initializer fetches its wasm only once its script has been fetched and run, and
+    // a program kind's run its chunk (src/split.rs) only once that wasm has: a preload asks for all
+    // at once, and each fetch takes the preloaded response.
+    for (const href of [spec.wasm, spec.chunk]) {
+        if (href && !preloaded.has(href)) {
+            preloaded.add(href);
+            document.head.insertAdjacentHTML("beforeend", `<link rel="preload" as="fetch" crossorigin href="${href}">`);
+        }
     }
     const module = await import(spec.script);
     try {
         if (failed.has(kind)) await module.default({ module_or_path: spec.wasm });
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
-        return window[`reviewModule_${kind}`];
     } catch (error) { failed.add(kind); throw error; }
+    // A program kind draws nothing before its chunk is in: awaited here, the page shown before stays
+    // until then, and a chunk that does not load rejects while it still shows (chunks.js forgets the
+    // failure, so a retry fetches it again). The kind's `run` then finds the chunk in.
+    if (spec.chunk) await window.reviewChunk(kind);
+    return window[`reviewModule_${kind}`];
 }
 
 // Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
@@ -331,10 +338,11 @@ window.reviewTimeline = request => {
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
-// nothing evaluated, so a first open waits on no network: the chat's first, then, once its wasm
-// (or its own load, if a click came first) is in, the menus', so no two share a slow link. A
-// browser asking to save data, or a 2g link, skips it; the first open then fetches them. A
-// browser without idle callbacks warms them at once; one without prefetch (Safari) ignores it.
+// nothing evaluated, so a first open waits on no network: the chat's first (the program's script
+// and main module, which a task page has in already, and its chunk), then, once its chunk (or its
+// own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
+// to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
+// callbacks warms them at once; one without prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
     const link = navigator.connection, kinds = Object.keys(PERSISTENT).filter(kind => !PERSISTENT[kind].cold);
@@ -345,11 +353,11 @@ function warm() {
         const kind = kinds.shift();
         if (!kind) return;
         if (persistent.has(kind)) return persistent.get(kind).then(next);
-        const { script, wasm, styles } = modules[kind];
-        for (const href of [wasm, script, ...styles]) {
+        const { script, wasm, styles, chunk } = modules[kind];
+        for (const href of [wasm, script, chunk, ...styles]) {
             if (!document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
         }
-        const last = document.querySelector(`link[rel=prefetch][href="${wasm}"]`);
+        const last = document.querySelector(`link[rel=prefetch][href="${chunk}"]`);
         if (last) last.onload = last.onerror = next; else next();
     }, { timeout: 5000 });
 }
@@ -444,8 +452,8 @@ function route(path) {
     path = path.replace(/^doc\//, "");
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
-    if (path.startsWith("task/") || clean === "agents" || clean === "reports") return "tasks";
-    if (clean === "queue") return "queue";
+    if (path.startsWith("task/") || clean === "agents") return "tasks";
+    if (clean === "queue" || clean === "reports") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";
@@ -477,8 +485,9 @@ async function show(generation, scroll) {
     if (!kind) { location.reload(); return; }
     if (active?.kind !== kind) {
         const spec = modules[kind];
-        // Keep the previous page while its replacement loads. Its styles are requested with its
-        // script and wasm; insets and row geometry must apply before page effects can anchor.
+        // Keep the previous page while its replacement loads (its script, wasm and any chunk), and
+        // under the notice when it does not. Its styles are requested with its script and wasm;
+        // insets and row geometry must apply before page effects can anchor.
         const mount = mountFor(kind);
         const [imported] = await Promise.all([initialize(kind), styles(spec)]);
         if (generation !== requested) return;
