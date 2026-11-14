@@ -1,11 +1,18 @@
 [package]
 name = "symphony-args"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Command-line arguments with stable option matching and refusals, as Symphony's commands read them."
+readme = "README.md"
+keywords = ["symphony", "cli", "arguments"]
+categories = ["command-line-interface"]
+# What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
+include = ["src/**", "README.md", "LICENSE"]
 
 [lints]
 workspace = true

@@ -4253,7 +4253,7 @@ dependencies = [
 
 [[package]]
 name = "process-cwd"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "libc",
  "test-time",
@@ -4608,7 +4608,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "repository-read"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "symphony-env",
 ]
@@ -5217,7 +5217,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-args"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "symphony-board"
@@ -5244,7 +5244,7 @@ version = "0.1.0"
 
 [[package]]
 name = "symphony-env"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "symphony-plugin"
@@ -5258,7 +5258,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-schema"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "jsonschema",
  "serde_json",

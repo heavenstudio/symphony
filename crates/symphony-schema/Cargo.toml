@@ -1,11 +1,18 @@
 [package]
 name = "symphony-schema"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Local JSON Schema validation with stable diagnostics and no external reference reads, as Symphony checks its settings files."
+readme = "README.md"
+keywords = ["symphony", "json-schema", "validation"]
+categories = ["config", "encoding"]
+# What crates.io gets: the sources, the readme and the licence; never tests/ or fixtures.
+include = ["src/**", "README.md", "LICENSE"]
 
 [lints]
 workspace = true
