@@ -130,7 +130,10 @@ pub fn split_message(message: &str) -> Result<(String, String), EditError> {
     ))
 }
 
-/// A callout of `kind` after line `after_line` (1-based), blank lines around it.
+/// A callout of `kind` after line `after_line` (1-based), blank lines around it. Refused inside a
+/// decision register (after its start marker, or after any line before its end marker): a register
+/// holds cards only, and a callout there would leave it text that is not a card, so every later
+/// verdict on its cards would be refused ([`register::sort_register`]).
 pub fn insert_comment(
     text: &str,
     after_line: i64,
@@ -155,6 +158,16 @@ pub fn insert_comment(
             lines.len()
         )));
     };
+    if let Some((start, end)) = register::regions(&lines)
+        .into_iter()
+        .find(|(start, end)| (*start..*end).contains(&(at - 1)))
+    {
+        return Err(EditError(format!(
+            "line {at} is inside the decision register (lines {} to {}), which holds cards only: a comment there would stop every later verdict on its cards. Say it on the card itself (its Verdict / message), or comment on a block outside the register",
+            start + 1,
+            end + 1
+        )));
+    }
     let title = format!("> [!{kind}] {}", strip(title));
     let mut callout = vec![title];
     callout.extend(

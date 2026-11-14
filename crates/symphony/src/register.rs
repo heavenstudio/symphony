@@ -488,10 +488,28 @@ pub fn parse_decisions<L: AsRef<str>>(lines: &[L]) -> Vec<Decision> {
 }
 
 /// The register region's bounds: the indexes of its start and end markers.
-fn region(lines: &[&str]) -> Option<(usize, usize)> {
-    let start = lines.iter().position(|line| *line == REGION_START)?;
-    let end = start + lines[start..].iter().position(|line| *line == REGION_END)?;
+fn region<L: AsRef<str>>(lines: &[L]) -> Option<(usize, usize)> {
+    let start = lines
+        .iter()
+        .position(|line| line.as_ref() == REGION_START)?;
+    let end = start
+        + lines[start..]
+            .iter()
+            .position(|line| line.as_ref() == REGION_END)?;
     Some((start, end))
+}
+
+/// Every register region's bounds in `lines`, the indexes of its start and end markers, paired as
+/// [`sort_register`] pairs them: each start marker with the first end marker after it, the next
+/// region looked for after that end. A start marker no end marker follows opens none.
+pub fn regions<L: AsRef<str>>(lines: &[L]) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some((start, end)) = region(&lines[from..]) {
+        found.push((from + start, from + end));
+        from += end + 1;
+    }
+    found
 }
 
 /// Rewrite the register region grouped owner-first, topics and histories kept, each card grouped as
