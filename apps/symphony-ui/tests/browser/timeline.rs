@@ -599,10 +599,14 @@ fn a_wide_box_holds_every_lane_with_no_show_all_and_the_next_visit_reserves_it_a
             format!("document.querySelectorAll('.tl-drawn .tl-list .tl-row').length === {rows}");
         assert!(chrome.wait_for(&arrived, SHOWN), "{rows} steps: not drawn");
         frames(&mut chrome);
-        assert_eq!(
-            places(&mut chrome),
-            before,
-            "{rows} steps: the timeline moved the page"
+        // The height is kept in whole pixels, the timeline's own a fraction under it: what is under
+        // the box may move by less than one.
+        let after = places(&mut chrome);
+        assert!(
+            ["brief", "thread"].iter().all(|part| {
+                (after[part].as_f64().unwrap() - before[part].as_f64().unwrap()).abs() < 1.0
+            }) && after["box"] == before["box"],
+            "{rows} steps: the timeline moved the page: {before} then {after}"
         );
         chrome.eval("document.getElementById('timeline').scrollIntoView()");
         frames(&mut chrome);
