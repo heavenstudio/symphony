@@ -138,7 +138,11 @@ never the whole target, which the release run runs.
   this client cannot read is forgotten (`cache::read`). Without IndexedDB, or in the development
   runtime, which has no shell, every read misses and nothing is kept. A database that does not
   open within 500 ms leaves the calls until it opens without the cache; the pages after it,
-  which the shell changes without a reload, use it once it opens.
+  which the shell changes without a reload, use it once it opens. A page that goes away
+  (`pagehide`, `freeze`) aborts the store's open transactions and starts none until it is back
+  (`pageshow`, `resume`), as it closes its feed's stream: a page kept for back and forward runs
+  none of its callbacks, so a transaction left between two of them would hold its locks, and
+  Chrome evicts the kept page (IgnoreEventAndEvict) once the next page's first call asks for them.
   `tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
   needed, and reports its coverage. Each case starts on a deleted database once the store has
   opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
