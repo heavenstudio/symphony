@@ -125,7 +125,7 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
     for keyword in keywords.iter().filter(|keyword| !keyword_shape(keyword)) {
         lacks.push(format!(
             "the keyword {keyword:?} is not one crates.io takes: at most 20 characters, ASCII \
-             letters, digits, `_`, `-` or `+`, a letter first"
+             letters, digits, `_`, `-` or `+`, a letter or digit first"
         ));
     }
     let keywords = keywords.len();
@@ -156,13 +156,13 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
 }
 
 /// A keyword as crates.io takes one: at most 20 characters, ASCII letters, digits, `_`, `-` or `+`,
-/// and a letter first.
+/// and a letter or digit first.
 fn keyword_shape(keyword: &str) -> bool {
     keyword.len() <= 20
         && keyword
             .chars()
             .next()
-            .is_some_and(|first| first.is_ascii_alphabetic())
+            .is_some_and(|first| first.is_ascii_alphanumeric())
         && keyword
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+'))
@@ -279,6 +279,8 @@ fn a_keyword_crates_io_refuses_is_told_by_its_shape() {
         "os_unix",
         "c++",
         "a",
+        "1password",
+        "3d",
         "a2345678901234567890",
     ] {
         assert!(
@@ -288,8 +290,9 @@ fn a_keyword_crates_io_refuses_is_told_by_its_shape() {
     }
     for refused in [
         "",
-        "1password",
         "-cli",
+        "_private",
+        "+plus",
         "über",
         "two words",
         "a23456789012345678901",
