@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceNotice, savedAt } from "./words";
+import { deviceNotice, localMoment, moment, parseMoment, plural, savedAt } from "./words";
 
 /** A moment on the wall clock where the tests run. */
 const at = (year: number, month: number, day: number, hours: number, minutes: number) =>
@@ -30,5 +30,83 @@ describe("what a page drawn from this device says", () => {
       "Shown from this device, saved 14:32. Checking for changes…",
     );
     expect(deviceNotice("14:32", true)).toBe("Not reachable: shown from this device, saved 14:32");
+  });
+});
+
+describe("a noun", () => {
+  it("takes an s unless there is one", () => {
+    expect(plural(1, "card")).toBe("card");
+    expect(plural(0, "card")).toBe("cards");
+    expect(plural(2, "document")).toBe("documents");
+  });
+});
+
+describe("a register's moment", () => {
+  const minutes = (text: string) => {
+    const read = parseMoment(text);
+    if (read === null) throw new Error(`${text} does not parse`);
+    return read;
+  };
+
+  it("reads a date with or without its time, across a year and a leap day", () => {
+    expect(minutes("2026-10-08 07:42") - minutes("2026-10-08")).toBe(7 * 60 + 42);
+    expect(minutes("2026-10-08") - minutes("2026-10-07")).toBe(24 * 60);
+    expect(minutes("2025-01-01") - minutes("2024-12-31")).toBe(24 * 60);
+    expect(minutes("2024-03-01") - minutes("2024-02-28")).toBe(2 * 24 * 60);
+  });
+
+  it("counts minutes from 1970 on the proleptic calendar, before it too", () => {
+    expect(minutes("1970-01-01")).toBe(0);
+    expect(minutes("1970-01-02 00:01")).toBe(1441);
+    expect(minutes("1969-12-31 23:59")).toBe(-1);
+    expect(minutes("2000-03-01") - minutes("2000-02-28")).toBe(2 * 24 * 60);
+    expect(minutes("1900-03-01") - minutes("1900-02-28")).toBe(24 * 60);
+    expect(minutes("0001-01-01")).toBe(-719_162 * 1440);
+  });
+
+  it.each([
+    "",
+    "yesterday",
+    "2026-13-01",
+    "2026-00-10",
+    "2026-10-32",
+    "2026-10-00",
+    "2026-10-08 25:00",
+    "2026-10-08 07:60",
+    "2026-10-08T07:42",
+    "2026-10-08 07:42:00",
+    "2026-10-08 0742",
+    "2026-10-08 7:42",
+    "2026-10-08 ",
+    "26-10-08",
+    "2026-1-08",
+    "2026-10-8",
+    "2026-10-08-01",
+    "2026/10/08",
+    "2026-1a-08",
+    "2026-10-08 -1:00",
+    "2026--1-08",
+  ])("is none for %j", (text) => {
+    expect(parseMoment(text)).toBeNull();
+  });
+
+  it("reads each number as Rust does, a plus before it allowed", () => {
+    expect(minutes("2026-+1-08")).toBe(minutes("2026-01-08"));
+    expect(minutes("2026-10-08 +7:+2")).toBe(minutes("2026-10-08 07:02"));
+    expect(minutes("+026-01-01")).toBe(minutes("0026-01-01"));
+    expect(parseMoment("-001-03-01")).toBeNull();
+  });
+
+  it("is none for a part out of range", () => {
+    expect(moment(2026, 12, 31, 23, 59)).toBe(minutes("2026-12-31 23:59"));
+    expect(moment(2026, 13, 1, 0, 0)).toBeNull();
+    expect(moment(2026, 1, 32, 0, 0)).toBeNull();
+    expect(moment(2026, 1, 1, 24, 0)).toBeNull();
+    expect(moment(2026, 1, 1, 0, 60)).toBeNull();
+  });
+
+  it("is the wall clock's where the owner is", () => {
+    expect(localMoment(at(2026, 10, 8, 7, 42))).toBe(minutes("2026-10-08 07:42"));
+    expect(localMoment(at(1999, 12, 31, 23, 59))).toBe(minutes("1999-12-31 23:59"));
   });
 });

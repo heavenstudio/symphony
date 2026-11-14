@@ -15,6 +15,7 @@ import { scrollAnchor } from "./route";
 import { field, list, STALE, useStore } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
+import { TaskTag } from "./task-tag";
 import { ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
 import type { Card, Queue, QueueItem } from "./wire";
@@ -147,15 +148,6 @@ const GROUPS: [string, number][] = [
 /** What the page says under its heading: what its groups hold, and the order of the first. */
 const LEAD =
   "The cards waiting on you, oldest first, the document folders taken in turn; then those to spot-check and those waiting on an agent.";
-
-/** The task proposing a card's version, as a chip leading to its page. */
-export function TaskTag({ task }: { task?: string | null | undefined }) {
-  return task !== undefined && task !== null ? (
-    <a className="chip" href={href(`/task/${task}`)}>
-      {task}
-    </a>
-  ) : null;
-}
 
 /** A card waiting on the owner, as Later and its Undo name it. */
 export interface Postponed {

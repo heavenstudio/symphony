@@ -134,6 +134,7 @@ fn types() -> String {
         ("PING_EVENT", text(api::PING_EVENT)),
         ("SERVER_EVENT", text(api::SERVER_EVENT)),
         ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
+        ("BOARD_CARDS", api::BOARD_CARDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
     ];
     for (name, value) in constants {
@@ -246,6 +247,7 @@ fn cases() -> Result<Value, String> {
     cases["fileAddress"] = addresses.into();
     cases["elementHtml"] = elements();
     cases["encoded"] = encodings();
+    cases["decode"] = decodings();
     cases["samples"] = samples();
     cases["carried"] = carried()?;
     Ok(cases)
@@ -322,6 +324,23 @@ fn encodings() -> Value {
         .collect()
 }
 
+/// What [`api::View::decode`] reads out of a view's attribute value, line by line: the pairs.
+fn decodings() -> Value {
+    [
+        "angle=0deg 25deg auto\nzoom=a=b",
+        "no pair\n=empty\nBad=x\nok=",
+        "a=1\r\nb=2\r\n",
+        "a=1\r",
+        "x=a\rb\n\n\ny-2=",
+        "\n",
+        "",
+        "a-=1\n9=2\nb c=3",
+    ]
+    .iter()
+    .map(|value| json!([value, api::View::decode(value)]))
+    .collect()
+}
+
 /// The Rust the web client carries in TypeScript, each function by its file, its name and the
 /// TypeScript that carries it. Their source goes into the cases whole ([`carried`]), so a change to
 /// one, which the cases' inputs may not show, fails `just client-lint` until the cases are written
@@ -361,6 +380,7 @@ const CARRIED: &[(&str, &str, &str)] = &[
     (API_LIB, "queue_category", "queueCategory, src/queue.tsx"),
     (BLOCKS_MEDIA, "element_html", "elementHtml, src/media.tsx"),
     (BLOCKS_MEDIA, "encoded", "encoded, src/media.tsx"),
+    (BLOCKS_MEDIA, "decode", "decode, src/media.tsx"),
     (BLOCKS_MEDIA, "is_name", "isName, src/media.tsx"),
     (BLOCKS_MEDIA, "is_element", "isElement, src/media.tsx"),
     (BLOCKS_MEDIA, "escape", "escapeText, src/media.tsx"),

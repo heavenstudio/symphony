@@ -34,7 +34,7 @@ export function localAsset(src: string): boolean {
 }
 
 /** `src`'s path without its query and fragment, its ASCII letters in lower case. */
-function pathOf(src: string): string {
+export function pathOf(src: string): string {
   return (src.split(/[?#]/)[0] ?? "").replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
@@ -106,6 +106,22 @@ export function encoded(view: View): string {
     .filter(([name, value]) => isName(name) && !/[\n\r]/.test(value))
     .map(([name, value]) => `${name}=${value}`)
     .join("\n");
+}
+
+/**
+ * The pairs an `encoded` value holds, in order; a line without `=` or naming no attribute is passed
+ * over. Its lines are Rust's: a `\r` before a line's `\n` is no part of it, and a last `\n` ends a
+ * line rather than starting one.
+ */
+export function decode(value: string): [string, string][] {
+  const pieces = value.split("\n");
+  const last = pieces.pop() ?? "";
+  const lines = [...pieces.map((line) => line.replace(/\r$/, "")), ...(last === "" ? [] : [last])];
+  return lines.flatMap((line): [string, string][] => {
+    const at = line.indexOf("=");
+    const name = line.slice(0, at);
+    return at >= 0 && isName(name) ? [[name, line.slice(at + 1)]] : [];
+  });
 }
 
 /** The viewer a gallery sent without one, as Rust's serde reads it: one that draws nothing. */

@@ -495,6 +495,16 @@
     ],
     [{ "label": "Above", "title": null, "set": [], "call": null }, ""]
   ],
+  "decode": [
+    ["angle=0deg 25deg auto\nzoom=a=b", [["angle", "0deg 25deg auto"], ["zoom", "a=b"]]],
+    ["no pair\n=empty\nBad=x\nok=", [["ok", ""]]],
+    ["a=1\r\nb=2\r\n", [["a", "1"], ["b", "2"]]],
+    ["a=1\r", [["a", "1\r"]]],
+    ["x=a\rb\n\n\ny-2=", [["x", "a\rb"], ["y-2", ""]]],
+    ["\n", []],
+    ["", []],
+    ["a-=1\n9=2\nb c=3", [["a-", "1"]]]
+  ],
   "samples": {
     "queue": {
       "waiting": [
@@ -1376,6 +1386,19 @@
         "            .map(|(name, value)| format!(\"{name}={value}\"))",
         "            .collect::<Vec<_>>()",
         "            .join(\"\\n\")",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs decode",
+      "typescript": "decode, src/media.tsx",
+      "source": [
+        "    pub fn decode(value: &str) -> Vec<(&str, &str)> {",
+        "        value",
+        "            .lines()",
+        "            .filter_map(|line| line.split_once('='))",
+        "            .filter(|(name, _)| is_name(name))",
+        "            .collect()",
         "    }"
       ]
     },

@@ -3,18 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardItem } from "./cache";
 import {
   BoardPage,
+  type BoardRun,
   FEED_NOTICE,
   flushReload,
   followClient,
   keepBoard,
   noticeGeometry,
+  type PageBoard,
   PageNotices,
   readPageBoard,
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
 import { asking, CASES, memoryStorage, reply, server } from "./testing";
-import { CACHE_FORMAT } from "./wire";
+import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -145,9 +147,13 @@ describe("the board's loop", () => {
   /**
    * A loop over the stubbed server, for the board item, on a page whose window and document hear
    * events and that has no EventSource unless its test gives it one (`feeds`), so its feed cannot
-   * open. What it drew, kept and waited.
+   * open. `reads` is how the page reads the board and each event it hears (`heard`, read by
+   * default). What it drew, kept and waited, and what its frame heard.
    */
-  const loop = (waitBack: (page: AbortController) => Promise<void> = async () => {}) => {
+  const loop = (
+    waitBack: (page: AbortController) => Promise<void> = async () => {},
+    reads: Pick<BoardRun, "read"> & { heard?: (delta: unknown) => boolean } = {},
+  ) => {
     const asked = server();
     vi.stubGlobal("window", new EventTarget());
     vi.stubGlobal(
@@ -160,21 +166,30 @@ describe("the board's loop", () => {
     const page = new AbortController();
     const did: unknown[] = [];
     const paused: number[] = [];
+    const frame = { refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() };
+    const board: { current: PageBoard | null } = { current: null };
     const done = keepBoard(
       "",
       boardItem(""),
       {
-        board: { current: null },
-        show: (read) => did.push(["show", read.version]),
+        board,
+        show: (read) => {
+          board.current = read;
+          did.push(["show", read.version]);
+        },
         setStale: (stale) => did.push(["stale", stale]),
         setTrouble: (why) => did.push(["trouble", why]),
         retry: { current: 0 },
         views: {
           freshen: () => {},
           read: () => did.push(["read"]),
-          heard: () => {},
-          frame: { refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() },
+          heard: (delta) => {
+            did.push(["heard", delta]);
+            return reads.heard?.(delta) ?? true;
+          },
+          frame,
         },
+        ...(reads.read ? { read: reads.read } : {}),
       },
       page.signal,
       {
@@ -186,7 +201,7 @@ describe("the board's loop", () => {
         },
       },
     );
-    return { asked, keep, page, did, paused, done };
+    return { asked, keep, page, did, paused, done, frame };
   };
 
   afterEach(() => vi.unstubAllGlobals());
@@ -294,6 +309,73 @@ describe("the board's loop", () => {
     expect(opened.map(({ closed }) => closed)).toEqual([1]);
     expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
     expect(paused).toEqual([]);
+  });
+
+  /** The loop's board read and its feed open, then `events` said on it, one after another. */
+  const following = async (
+    run: ReturnType<typeof loop>,
+    opened: ReturnType<typeof feeds>,
+    ...events: unknown[]
+  ) => {
+    await asking(run.asked, 1);
+    run.asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await asking(opened, 1);
+    const source = opened[0]?.source;
+    source?.dispatchEvent(new Event("open"));
+    for (const event of events) {
+      source?.dispatchEvent(new MessageEvent(FEED_EVENT, { data: JSON.stringify(event) }));
+    }
+  };
+
+  it("tells the frame each event the page read, and none it has seen", async () => {
+    const opened = feeds();
+    const run = loop();
+    const delta = { version: 8, changes: [] };
+    await following(run, opened, { version: 7, changes: [] }, delta);
+    await vi.waitFor(() => expect(run.frame.heard).toHaveBeenCalledTimes(1));
+    expect(run.frame.heard).toHaveBeenCalledWith(delta);
+    run.page.abort();
+    await run.done;
+    expect(run.did).toEqual([["show", 7], ["read"], ["stale", false], ["heard", delta]]);
+  });
+
+  it("loses the feed on an event the page cannot read, hearing nothing after it", async () => {
+    const opened = feeds();
+    const run = loop(undefined, { heard: () => false });
+    const delta = { version: 8, changes: [] };
+    await following(run, opened, delta, { version: 9, changes: [] });
+    await run.done;
+    expect(opened.map(({ closed }) => closed)).toEqual([1]);
+    expect(run.frame.heard.mock.calls).toEqual([[delta]]);
+    expect(run.did).toEqual([
+      ["show", 7],
+      ["read"],
+      ["stale", false],
+      ["heard", delta],
+      ["stale", true],
+    ]);
+    expect(run.paused).toHaveLength(1);
+  });
+
+  it("says a board its page cannot read is no board, keeping nothing", async () => {
+    const { asked, keep, did, done } = loop(undefined, { read: () => null });
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await done;
+    expect(keep).not.toHaveBeenCalled();
+    expect(did).toEqual([
+      ["trouble", "The board's answer has no version, ping or build"],
+      ["stale", true],
+    ]);
+  });
+
+  it("draws the board as its page reads it", async () => {
+    const read = (value: unknown) => ({ ...readPageBoard(value), version: 70 }) as PageBoard;
+    const { asked, did, done } = loop(undefined, { read });
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
+    await done;
+    expect(did[0]).toEqual(["show", 70]);
   });
 });
 

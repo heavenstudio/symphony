@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 // The web client's page kinds, each an entry the shell imports by the name the shell's manifest
 // gives it (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`.
-const KINDS = ["queue"];
+const KINDS = ["queue", "review"];
 
 export default defineConfig({
   // No dev server and no public folder: the server serves the files package.sh publishes.
@@ -28,7 +28,11 @@ export default defineConfig({
         // for good (apps/symphony-server/src/api/client.rs, `content_hashed`).
         hashCharacters: "hex",
         entryFileNames: "assets/[name]-[hash:16].js",
-        chunkFileNames: "assets/[name]-[hash:16].js",
+        // A chunk the kinds share is named so, not for whichever of its modules Rolldown would name
+        // it after (a kind's, which another kind's page would then seem to load); a chunk a kind
+        // imports when it needs it keeps its own name.
+        chunkFileNames: (chunk) =>
+          chunk.isDynamicEntry ? "assets/[name]-[hash:16].js" : "assets/shared-[hash:16].js",
         assetFileNames: "assets/[name]-[hash:16][extname]",
       },
     },

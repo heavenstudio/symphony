@@ -25,6 +25,8 @@ export const CASES = cases as unknown as {
   /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
   elementHtml: [Viewer, string, string, string | null, string | null][];
   encoded: [View, string][];
+  /** A view's attribute value, and the pairs it holds. */
+  decode: [string, [string, string][]][];
   /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: { queue: unknown; emptyQueue: unknown; board: unknown; blocks: Block[] };
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */

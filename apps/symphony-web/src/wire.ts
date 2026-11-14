@@ -9,6 +9,7 @@ export const FEED_EVENT = "delta";
 export const PING_EVENT = "ping";
 export const SERVER_EVENT = "server";
 export const CACHE_FORMAT = 2;
+export const BOARD_CARDS = 5;
 export const FILE_QUERY = "raw";
 export const SYMPHONY_ROUTES = [
   "tasks",
