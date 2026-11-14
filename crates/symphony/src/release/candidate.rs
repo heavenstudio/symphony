@@ -18,9 +18,9 @@
 //! is dropped); or by its task cancelled with no landing, its fix made outside this repository (one
 //! done otherwise is approved, and waits for its land). Once every
 //! red is answered, its tip is rerun ([`Candidate::plan`]): each check or step that was red or did
-//! not run, each whose inputs changed, and the conciliation. Until the stamps give a step inputs of
-//! its own, a step's inputs are the whole tree, so a step keeps its green only from a commit whose
-//! tree is the tip's. It is dropped at its bounds ([`Bounds`]), and main's tip is run at once.
+//! not run, and each whose inputs changed. Until the stamps give a step inputs of its own, a step's
+//! inputs are the whole tree, so a step keeps its green only from a commit whose tree is the tip's.
+//! It is dropped at its bounds ([`Bounds`]), and main's tip is run at once.
 
 use std::fs;
 use std::io::ErrorKind;

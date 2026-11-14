@@ -34,7 +34,8 @@ fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() 
         "local child roles do not take another owner's slot"
     );
     assert_eq!(ledger.place("review-2/alias").key, "work/a");
-    assert_eq!(ledger.held(O)["work/a"].len(), 5);
+    assert_eq!(ledger.held(O)["work/a"].len(), 2, "work/a and part");
+    assert_eq!(ledger.reviews()[O]["work/a"].len(), 3, "in review, apart");
     assert_eq!(
         store
             .tasks_for_branch("alias")
@@ -46,8 +47,14 @@ fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() 
     );
     let said = refused(store.claim("next", K));
     assert!(said.contains("holds 8 open tasks"), "{said}");
-    assert!(said.contains("with nested (review)"), "{said}");
-    assert!(said.contains("with review/alias (review)"), "{said}");
+    assert!(
+        said.contains("work/a (in_progress) with part (in_progress)"),
+        "{said}"
+    );
+    assert!(
+        said.contains("; not counted, as work in review takes no slot: nested (review) with review-2/alias (review) with review/alias (review)"),
+        "{said}"
+    );
 }
 
 #[test]

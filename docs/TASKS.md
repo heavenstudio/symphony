@@ -2087,7 +2087,7 @@ checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src
 
 ```toml
 [limits]
-orchestrator_slots = 8  # the open tasks an orchestrator holds (Slots, below)
+orchestrator_slots = 8  # the tasks in progress an orchestrator holds (Slots, below)
 low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
 machine_agents = 12     # the agents this machine runs
 
@@ -2156,8 +2156,16 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
 
 - **Open** is `in_progress` or `review`, or `blocked` under a hold that keeps
   the slot (below). Other `blocked` work, `backlog`, `concept`, `design` and
-  `ready` hold no slot; a slot frees when its task is `done` or `cancelled`,
-  or leaves the open statuses another way.
+  `ready` hold no slot. A slot frees when its task moves to `review` (below), is
+  `done` or `cancelled`, or leaves the open statuses another way.
+- **Work in review takes no slot.** The cap counts the tasks being built, not
+  the review of them: a task's slot frees when it moves to `review`, and a move
+  into `review` is never refused. The work under a task in review goes with it,
+  judged by the task whose work it is and the tasks above it, as red work is: a
+  reviewer's review mirror or instruction subtask in progress takes no slot
+  either, and starts at any count. The task's return to `in_progress`, on a
+  changes verdict or a move, goes between open statuses and starts nothing: it
+  is never refused, and counts again from then, as it was being worked already.
 - **Each open task, one slot.** A subtask holds a slot of its own, so
   gathering open work under one task frees none. Two kinds of task share the
   slot of another: a review mirror (`review/BRANCH`, `review-N/BRANCH`,
@@ -2174,32 +2182,34 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   The one give a cap decides is a move's, which keeps the moved work with the orchestrator it had
   (below), decided by that move's own cap read.
 - **Where it bites.** A claim into `in_progress`; a move into `in_progress`
-  or `review` from a status that holds no slot, blocked work going back to
-  review included; a dependency change that sends blocked work back to
-  `in_progress` or `review`; taking the `orchestrator` role on a task with
-  open work at or below it, or being handed it (`handover`, refused as the
-  receiver's take would be); and a change of parent that brings open work at
+  from a status that holds no slot; a dependency change that sends blocked
+  work back to `in_progress`; taking the `orchestrator` role on a task with
+  work in progress at or below it, or being handed it (`handover`, refused as the
+  receiver's take would be); and a change of parent that brings work in progress at
   or below the task under an orchestrator's tree, or takes it out from under one, which keeps it
   that orchestrator's in a slot of its own. Each is refused when it would raise an
-  orchestrator's open tasks past the cap, naming them and their status, a
-  shared slot's tasks joined by `with`:
+  orchestrator's counted tasks past the cap, naming them and their status, a
+  shared slot's tasks joined by `with`, and then its work in review apart:
   `sim/x cannot start: cobalt-otter holds 8 open tasks, the cap of 8 an
-  orchestrator holds: sim/a (review) with review/sim/a (review), …; a slot
-  frees when one of them is done or cancelled`. The count is the number of
-  entries listed. `tasks api` holds the same cap. A start inside a slot
-  already open (a mirror of a task in review, an instruction for open work)
-  is never refused.
+  orchestrator holds: sim/a (in_progress) with sim/a/build (in_progress), …; a
+  slot frees when one of them goes to review or is done or cancelled; not
+  counted, as work in review takes no slot: sim/b (review)`. The count is the
+  number of entries listed before the work named apart. `tasks api` holds the
+  same cap. A start inside a slot already open (a mirror or an instruction of a
+  task in review, an instruction for work in progress) is never refused.
 - **A landing's hold.** A landing that holds a task in review blocked while
   every stamp its branch lacks is one nobody is producing does it with a hold
   (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
   stays blocked, as any blocked task does to everyone on it, and keeps its
-  slot, shown as `(blocked, held)`, so its move
-  back to review starts nothing and is never refused. The hold is the record
+  slot, shown as `(blocked, held)` and counted as work in progress is, so its
+  move back to `in_progress` starts nothing and is never refused, as its move
+  back to `review`, which takes no slot, never is. The hold is the record
   `counter:['hold', SLUG]`, stamped with the task's `updated` as the hold left
   it, and ends with the task's next move (a landing's close and the owner's
   moves included: every status write deletes it), change of parent or of
   dependencies.
-  Work blocked by any other move holds no slot, and takes one to come back.
+  Work blocked by any other move holds no slot, and takes one to come back to
+  `in_progress`.
   The PULL header and the agents API do not read holds: they count a held task
   as the blocked task it is.
 - **Red work takes no slot.** A task filed for a red that stops every
@@ -2234,10 +2244,12 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   closed unfenced as a red filed since. `unmark_red`, from a filer too, lifts
   the mark of an open red that stays open as ordinary work (main's green
   reached it once work on it started): it and the work under it count from
-  then, decided and held as a close is, never refused; a task unmarked or
+  then as any work does, none while it is in review, decided and held as a
+  close is, never refused; a task unmarked or
   closed is left as it is. A refusal names the owner's open red work after its
-  counted slots: `…; a slot frees when one of them is done or cancelled; not
-  counted, as red work takes no slot: tests/main-red-abc (in_progress)`. The
+  counted slots: `…; a slot frees when one of them goes to review or is done or
+  cancelled; not counted, as red work takes no slot: tests/main-red-abc
+  (in_progress)`. The
   mark alone tells; a slug never does. The PULL header's `slots=` and the
   agents API count no red work. As with review, nothing authenticates a
   session: a filer is honour-based, guarding against a mistake, not malice.
@@ -2255,7 +2267,8 @@ record ids and their tasks by id, the tasks above them and the tasks they
 review by id, a level a round trip, and their roles through `role_slug`; it
 reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
-`slots` ([The agents API](#the-agents-api)).
+`slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
+work in review and no red work.
 
 ## The pipeline alarm
 

@@ -35,10 +35,8 @@ fn active_children_of_inactive_umbrellas_remain_counted_without_changing_the_par
         );
         assert_eq!(ledger.tasks["umbrella"].status, status);
         assert_eq!(ledger.counts(), HashMap::from([("o", 1)]), "{status}");
-        assert_eq!(
-            ledger.held("o")["umbrella"],
-            [("child", "in_progress"), ("nested", "review")]
-        );
+        assert_eq!(ledger.held("o")["umbrella"], [("child", "in_progress")]);
+        assert_eq!(ledger.reviews()["o"]["umbrella"], [("nested", "review")]);
     }
     let legacy = Ledger::new(
         [
@@ -59,7 +57,7 @@ fn missing_parents_and_cyclic_mirrors_do_not_drop_active_work_or_loop() {
             led("missing", Some("gone"), "in_progress", "o"),
             Entry {
                 branch: Some("b"),
-                ..led("review/a", None, "review", "o")
+                ..led("review/a", None, "in_progress", "o")
             },
             Entry {
                 branch: Some("a"),

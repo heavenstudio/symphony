@@ -20,7 +20,7 @@ use symphony_board::server::{Home, Running};
 use symphony_board::sys::{Command, output};
 
 use super::common::older_board;
-use super::conciliation::{checkout, consumer, register, symphony_crate};
+use super::consumers::{checkout, consumer, register, symphony_crate};
 use super::{DAY, Fixture, NOW, git};
 
 /// The release a run of the fixture's clock tags.
@@ -84,7 +84,7 @@ fn run_in(fixture: &Fixture, dir: &Path, program: &str, args: &[&str]) {
     );
 }
 
-/// The conciliation's consumer taking both packages, its lock committed at the fixture's main as
+/// The registered [`consumer`] taking both packages, its lock committed at the fixture's main as
 /// pushed now, and a commit gate of its own (`hooks/pre-commit`, red while the fixture holds
 /// `gate-red`, and staging a file of its own into the commit while it holds `gate-stages`)
 /// logging each commit it gates to `gate.log`: its checkout.
@@ -298,6 +298,15 @@ fn a_green_release_moves_each_projects_pin_and_main_through_its_own_gate_and_hoo
         );
     }
     assert!(out.contains("release: refresh-consumer green ("), "{out}");
+    // The release was judged by its own check alone: the project was neither copied nor built,
+    // and none of its tests ran.
+    assert_eq!(
+        super::consumers::checked(&fixture.runs().pop().unwrap()),
+        ["verify"]
+    );
+    assert!(!out.contains("conciliat"), "{out}");
+    assert!(!fixture.root.join("wt/release-conciliate").exists());
+    assert!(!super::consumers::tested(&fixture).exists());
 
     // The branch is one commit on its old main: the manifest naming the release's tag in place of
     // main, and the lock binding it, both packages at the release.
@@ -462,7 +471,7 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
 fn a_red_commit_gate_moves_nothing_and_is_a_red_task_until_a_refresh_gets_through() {
     let (fixture, _) = refreshing();
     let consumer = locked_consumer(&fixture);
-    // Released with no project registered (nothing conciliated), then registered.
+    // Released with no project registered (nothing to refresh), then registered.
     register(&fixture, &[]);
     fixture.land("crates/core/notes.txt", Some("b\n"), "a change on main");
     let out = fixture.night(NOW, 0);

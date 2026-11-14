@@ -12,7 +12,7 @@ fn red<'a>(entry: Entry<'a>) -> Entry<'a> {
 fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_it_holds() {
     let open = Ledger::new(
         [
-            red(led("red", None, "review", "o")),
+            red(led("red", None, "in_progress", "o")),
             entry("red/fix", Some("red"), "in_progress"),
             entry("red/new", Some("red"), "ready"),
             led("a", None, "in_progress", "o"),
@@ -45,6 +45,11 @@ fn a_reds_close_holds_the_counts_it_raises_and_the_red_that_work_started_under_i
         Vec::<&str>::new(),
         "no red to end"
     );
+    // A red in review with its mark lifted is work in review: it and red/fix count nothing.
+    let in_review = open.changed("red", Some("review"), None, &[]);
+    let lifted = in_review.unmarked("red");
+    assert_eq!(changed(&in_review, &lifted), Vec::<&str>::new());
+    assert_eq!(lifted.reviews()["o"]["red"].len(), 2, "red and red/fix");
     let under = open.changed("red/new", Some("in_progress"), None, &[]);
     assert_eq!(
         (changed(&open, &under), reds(&open, &under)),
@@ -98,9 +103,10 @@ fn red_work_takes_no_slot_with_its_mirrors_instructions_and_the_work_under_it() 
     }
     assert_eq!(
         named(&ledger.held("o")),
-        "a (in_progress) with review/a (review), tests/red-alike (in_progress)",
+        "a (in_progress), tests/red-alike (in_progress)",
         "a slug that looks red is counted: only the mark tells"
     );
+    assert_eq!(named(&ledger.reviews()["o"]), "review/a (review)");
     assert_eq!(ledger.counts()["o"], 2);
     assert_eq!(
         named(&ledger.reds()["o"]),
@@ -181,6 +187,7 @@ fn a_refusal_names_the_red_work_apart_as_not_counted() {
             red(led("tests/red", None, "in_progress", "o")),
             entry("review/tests/red", None, "review"),
             entry("fix", Some("tests/red"), "in_progress"),
+            led("b", None, "review", "o"),
         ],
         [],
     );
@@ -188,9 +195,11 @@ fn a_refusal_names_the_red_work_apart_as_not_counted() {
         owner: "o",
         held: ledger.held("o"),
         red: ledger.reds().remove("o").unwrap(),
+        review: ledger.reviews().remove("o").unwrap(),
     };
     assert_eq!(
         refusal("c cannot start", &full, &[], 1),
-        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: a (in_progress); a slot frees when one of them is done or cancelled; not counted, as red work takes no slot: tests/red (in_progress) with fix (in_progress) with review/tests/red (review)"
+        "c cannot start: o holds 1 open tasks, the cap of 1 an orchestrator holds: a (in_progress); a slot frees when one of them goes to review or is done or cancelled; not counted, as red work takes no slot: tests/red (in_progress) with fix (in_progress) with review/tests/red (review); not counted, as work in review takes no slot: b (review)",
+        "red work in review is named once, as red work"
     );
 }

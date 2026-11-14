@@ -508,7 +508,7 @@ fn the_header_names_every_count_at_the_given_time_in_local_time() {
 }
 
 #[test]
-fn under_a_cap_the_orchestrators_header_counts_its_open_tasks_against_it() {
+fn under_a_cap_the_orchestrators_header_counts_its_work_in_progress_not_in_review_against_it() {
     let c = Case::new();
     let orch = c.f.session("orchestrator");
     for (slug, status) in [
@@ -529,10 +529,16 @@ fn under_a_cap_the_orchestrators_header_counts_its_open_tasks_against_it() {
             .lines()[0]
             .clone()
     };
-    // sim/a and sim/b, its review mirror counted with it: two slots.
+    // sim/a alone: sim/b in review, and its review mirror with it, take no slot.
     let plain = header(&local_minute(NOW)[11..], [1, 1, 0, 2, 0, 0]);
-    assert_eq!(first_line(&capped), format!("{plain} slots=2/8"));
+    assert_eq!(first_line(&capped), format!("{plain} slots=1/8"));
     assert_eq!(first_line(&c.f.store), plain, "no cap, no count");
+    c.f.store.move_to("sim/a", "review", &orch).unwrap();
+    assert!(
+        first_line(&capped).ends_with(" slots=0/8"),
+        "{}",
+        first_line(&capped)
+    );
 }
 
 #[test]
