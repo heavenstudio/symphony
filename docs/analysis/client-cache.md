@@ -344,11 +344,11 @@ more of it)." As built (`perf/client-cache/ahead`):
   shell's warmed modules are.
 - **Measured** (`tests/browser/cache_ahead.rs`, the release build on the stand-in). A page linking
   a task and seven documents on the screen reads them ahead in 9 reads, 5,511 bytes on the wire
-  (8,661 of JSON), after its own 10 reads (2,510 bytes). A 60-section document's first part is
-  17 sections, 9,282 bytes on the wire (15,903 of JSON, of 55,404 for the whole). Eight stays the
-  number: the most it can cost is eight first parts at the cap, 128,000 bytes of JSON, about
-  75 KB on the wire at that document's ratio, once per page, at low priority and after the page;
-  read again, each costs a `304`.
+  (8,661 of JSON), after its own 10 reads (2,510 bytes). A 60-section document under 60 headings
+  has a first part of 13 sections and every heading, 7,682 bytes on the wire (15,078 of JSON, of
+  58,265 for the whole). Eight stays the number: the most it can cost is eight first parts at the
+  cap, 128,000 bytes of JSON, about 65 KB on the wire at that document's ratio, once per page, at
+  low priority and after the page; read again, each costs a `304`.
 
 ## Across versions
 
