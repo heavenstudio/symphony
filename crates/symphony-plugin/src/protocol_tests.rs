@@ -460,7 +460,7 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
             root: "/r".into()
         }
     );
-    assert_eq!(Version::new(0, 2), PROTOCOL);
+    assert_eq!(Version::new(0, 3), PROTOCOL);
 }
 
 #[test]
