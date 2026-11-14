@@ -109,13 +109,31 @@ const UNREPORTED: [&str; 10] = [
     "Cancelled",
 ];
 
+/// What it offers once a machine reports: Build and Test too, where the board draws their columns,
+/// between In progress and Review.
+const REPORTED: [&str; 12] = [
+    "All statuses",
+    "Backlog",
+    "Concept",
+    "Design",
+    "Ready",
+    "In progress",
+    "Build",
+    "Test",
+    "Review",
+    "Done",
+    "Blocked",
+    "Cancelled",
+];
+
 /// The board's columns as drawn, by `data-status`, the sign-off lane's and the lower row's too.
 const DRAWN: &str =
     "[...document.querySelectorAll('.kanban section.column')].map(column => column.dataset.status)";
 
 /// Until a machine reports the project's work the Status filter offers neither Build nor Test,
 /// which one rail stands for, though the server's listing names both; once one reports, it
-/// offers both after the nine, and Test shows its column alone (docs/MACHINE_WORK.md).
+/// offers both after In progress, as the board draws them, and Test shows its column alone
+/// (docs/MACHINE_WORK.md).
 #[test]
 fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_before() {
     let site = site();
@@ -150,13 +168,11 @@ fn the_status_filter_offers_build_and_test_once_a_machine_reports_and_neither_be
     site.set_json("/api/machine-work", &reporting["machine_work"]);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
-    let mut expected = UNREPORTED.to_vec();
-    expected.extend(["Build", "Test"]);
     let reported = status_options(&mut chrome);
     assert_eq!(
         reported,
-        json!(expected),
-        "a machine reports: twelve options, Build and Test after the nine"
+        json!(REPORTED),
+        "a machine reports: twelve options, Build and Test after In progress"
     );
     crate::components::choose(&mut chrome, "[aria-label=Status]", "Test");
     assert!(
