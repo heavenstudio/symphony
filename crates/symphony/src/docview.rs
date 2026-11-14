@@ -20,6 +20,8 @@ mod first_tests;
 mod legacy;
 #[cfg(test)]
 mod linked_tests;
+#[cfg(test)]
+mod outline_tests;
 
 pub use legacy::legacy_html;
 
@@ -347,6 +349,15 @@ pub fn anchors(html: &str) -> Vec<String> {
         .collect()
 }
 
+/// The most characters of a card's text the outline carries, its ellipsis among them.
+pub const OUTLINE_CARD_CHARS: usize = 140;
+
+/// A card's line as the outline and the feed carry it for a card whose body is not read (a folded
+/// card's summary): its plain words, cut at a word's end with an ellipsis, never inside one.
+pub fn card_line(text: &str) -> String {
+    crate::dashboard::cut(&crate::tree::plain(text), OUTLINE_CARD_CHARS)
+}
+
 pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
     let anchors = document
         .sections
@@ -371,7 +382,7 @@ pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
         }
     }
     for card in &mut document.cards {
-        card.text = crate::tree::plain(&card.text).chars().take(140).collect();
+        card.text = card_line(&card.text);
     }
     let thread_hashes = std::mem::take(&mut document.threads)
         .iter()

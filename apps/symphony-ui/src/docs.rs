@@ -512,6 +512,32 @@ pub fn scoped(scope: &str, route: &str) -> String {
     }
 }
 
+/// What a folder's page says it holds, in the pill under its title: the documents the server
+/// counts, which leave out a history folder's pages (`tree::Place::count_docs`), then those its
+/// listing shows beyond them, so the pill and the cards below add up.
+pub fn folder_pill(folder: &symphony_api::Folder) -> String {
+    let docs = |n: usize| {
+        if n == 1 {
+            "1 doc".to_string()
+        } else {
+            format!("{n} docs")
+        }
+    };
+    let listed: usize = folder
+        .entries
+        .iter()
+        .map(|entry| match entry.kind.as_str() {
+            "folder" => entry.docs,
+            "doc" => 1,
+            _ => 0,
+        })
+        .sum();
+    match listed.saturating_sub(folder.docs) {
+        0 => docs(folder.docs),
+        more => format!("{} · {more} in history", docs(folder.docs)),
+    }
+}
+
 /// A route's breadcrumbs, and whether they sit under the tasks page. A document or folder sits
 /// under its folders, each crumb but the page's own a link to its folder; a task's slug is one
 /// name under the tasks page, which its other crumb links to, since the parts of a slug are not
@@ -551,6 +577,51 @@ mod tests {
             (vec!["taskforce", "notes.md"], false),
             "only the task route's own prefix makes a slug"
         );
+    }
+
+    fn folder(docs: usize, entries: &[(&str, usize)]) -> symphony_api::Folder {
+        symphony_api::Folder {
+            path: "docs".into(),
+            title: "Docs".into(),
+            crumbs: Vec::new(),
+            docs,
+            intro: None,
+            entries: entries
+                .iter()
+                .enumerate()
+                .map(|(n, &(kind, docs))| symphony_api::FolderEntry {
+                    kind: kind.into(),
+                    path: format!("docs/{n}"),
+                    title: format!("Entry {n}"),
+                    docs,
+                    waiting: 0,
+                    summary: String::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The pill says the documents the server counts, and the history pages the listing shows
+    /// beyond them, so it and the cards below add up; pictures are no documents.
+    #[test]
+    fn a_folders_pill_adds_up_with_its_listing() {
+        // This repository's docs/: Analysis (15), History (2, not counted) and ten documents.
+        let mut entries = vec![("folder", 15), ("folder", 2)];
+        entries.extend([("doc", 0); 10]);
+        assert_eq!(folder_pill(&folder(25, &entries)), "25 docs · 2 in history");
+        assert_eq!(folder_pill(&folder(27, &entries)), "27 docs");
+        assert_eq!(
+            folder_pill(&folder(2, &[("doc", 0), ("doc", 0), ("media", 0)])),
+            "2 docs"
+        );
+        assert_eq!(folder_pill(&folder(1, &[("doc", 0)])), "1 doc");
+        assert_eq!(
+            folder_pill(&folder(1, &[("doc", 0), ("folder", 3)])),
+            "1 doc · 3 in history"
+        );
+        assert_eq!(folder_pill(&folder(0, &[])), "0 docs");
+        // A count above the listing (a page the listing does not show) says the count alone.
+        assert_eq!(folder_pill(&folder(4, &[("doc", 0)])), "4 docs");
     }
 
     #[test]

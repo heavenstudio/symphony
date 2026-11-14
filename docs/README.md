@@ -16,9 +16,9 @@
   where, for how long, and how a reader takes them.
 - [Agent activity](AGENT_ACTIVITY.md) — the day files of the agents' health changes and their
   hours: sessions started, stale and lost, running by role and model, and the machine's load.
-- [PLUGIN_CALLS](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
+- [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
   JSON round trip inside the process: the two settings, the record and how to read it.
-- [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
+- [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, its process, the line, each call's minor, the versions and the wire's shape.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
