@@ -139,9 +139,8 @@ fn usage(err: &mut dyn Write, said: &str) -> i32 {
 }
 
 /// The board of the project `env`'s working directory is in, as [`super::reach_board`] finds it,
-/// refused for a server `TASKS_SERVER` names, a scratch database, a process Cargo runs from that
-/// board's repository ([`crate::live::cargo_refusal`]), and a repository whose board an older build
-/// keeps in its old folder ([`crate::unmoved`]): what it would say or hold there is no board.
+/// refused for a server `TASKS_SERVER` names, a scratch database and a process Cargo runs from that
+/// board's repository ([`crate::live::cargo_refusal`]).
 fn home(env: &Env) -> Result<Home, String> {
     if env.var("TASKS_SERVER").is_some() {
         return Err(
@@ -164,9 +163,6 @@ fn home(env: &Env) -> Result<Home, String> {
         common: project.place.common.clone(),
     };
     if let Some(why) = crate::live::cargo_refusal(&live, crate::live::cargo_here()) {
-        return Err(why);
-    }
-    if let Some(why) = crate::unmoved::refusal(&project.place.common, crate::server::FOLDER) {
         return Err(why);
     }
     Ok(Home::in_common(

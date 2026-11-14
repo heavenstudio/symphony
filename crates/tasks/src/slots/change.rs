@@ -29,7 +29,8 @@ impl<'a> Ledger<'a> {
 /// What a change from `before` to `after` does under `cap`: the owners whose counted open slots it
 /// changes, each of which the write holds the slot counter of, by handle. Refused, naming the first
 /// such owner and what it holds before, when it raises an owner's open slots past `cap`: one at the
-/// cap, or above it, starts nothing new. Red work counts in neither, so it starts at any count.
+/// cap, or above it, starts nothing new. Red work and work in review count in neither, so red work
+/// starts at any count, and so does a move into review.
 pub fn started<'a>(
     before: &Ledger<'a>,
     after: &Ledger<'a>,
@@ -43,7 +44,13 @@ pub fn started<'a>(
         if next > held && next > cap {
             let held = was.remove(owner).unwrap_or_default();
             let red = before.reds().remove(owner).unwrap_or_default();
-            return Err(Full { owner, held, red });
+            let review = before.reviews().remove(owner).unwrap_or_default();
+            return Err(Full {
+                owner,
+                held,
+                red,
+                review,
+            });
         }
     }
     Ok(changed)

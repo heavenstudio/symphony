@@ -71,9 +71,6 @@ pub(crate) struct Run {
     pub(crate) previous: Option<String>,
     #[serde(default)]
     pub(crate) checks: Vec<Ran>,
-    /// What it left out, and why: a registered project it could not conciliate.
-    #[serde(default)]
-    pub(crate) skipped: Vec<String>,
     /// The release it tagged, and whether the tag reached the remote.
     #[serde(default)]
     pub(crate) tag: Option<String>,
@@ -477,7 +474,6 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         error: None,
         previous: None,
         checks: Vec::new(),
-        skipped: Vec::new(),
         tag: None,
         pushed: false,
         board: Board::default(),
@@ -786,7 +782,6 @@ mod tests {
             error: None,
             previous: None,
             checks: Vec::new(),
-            skipped: Vec::new(),
             tag: None,
             pushed: false,
             board: Board::default(),

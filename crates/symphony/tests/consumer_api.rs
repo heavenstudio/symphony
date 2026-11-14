@@ -2,7 +2,7 @@
 //! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
 //! calls it: a signature pinned by coercing the function to its pointer type, or a call written as
 //! a consumer writes it (a few functions, one of them generic, are named alone, their signatures
-//! left to the conciliation below), a struct it builds by its fields built by them all (by those it
+//! left to the project, below), a struct it builds by its fields built by them all (by those it
 //! names, where it fills the rest from `Default`), a variant it builds, compares or matches built,
 //! compared or matched as it does, a trait it implements implemented with the methods it writes, a
 //! type it names named. Nothing it defines is called but `compared` and
@@ -20,10 +20,10 @@
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
-//! consumer's code calls. Not held by any of them, and caught only by the release run's conciliation
-//! (`crates/symphony/src/release/conciliate.rs`, which builds each project the machine serves on the
-//! candidate): the signature of a function a guard names alone, and a field it reads or a method it
-//! calls on a value that is not named in a guard.
+//! consumer's code calls. Not held by any of them, and the project's to meet when it moves its pin
+//! (its own gate builds it on the new one, docs/RELEASES.md, *The refresh*): the signature of a
+//! function a guard names alone, and a field it reads or a method it calls on a value that is not
+//! named in a guard.
 //!
 //! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
 //! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a

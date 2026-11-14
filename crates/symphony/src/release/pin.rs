@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::conciliate::git_url;
+use super::consumers::git_url;
 use super::git::git;
 
 /// The names of the packages the repository at `root` holds at `commit`: each `Cargo.toml` there

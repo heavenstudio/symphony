@@ -321,7 +321,8 @@ fn a_launch_hands_each_flag_to_the_launcher() {
     );
     assert_eq!(p.board().session(&s.handle).unwrap().row.kind, "reviewer");
     assert_eq!(p.state()["layout"]["spaces"][0]["tabs"][0]["name"], "t");
-    assert_eq!(p.sent(), format!("/work sim/jump {} go", s.handle));
+    // A reviewer's first message is its own skill's.
+    assert_eq!(p.sent(), format!("/review-task sim/jump {} go", s.handle));
 }
 
 #[test]

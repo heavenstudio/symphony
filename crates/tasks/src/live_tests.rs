@@ -190,35 +190,6 @@ fn where_the_machine_cannot_say_who_listens_a_tasks_server_is_the_board_its_repo
 }
 
 #[test]
-fn where_the_machine_cannot_say_who_listens_an_older_builds_board_is_known_by_its_own_record_until_the_move()
- {
-    let scratch = Scratch::new("unmoved");
-    let (main, common) = scratch.repository("alpha");
-    fs::write(main.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
-    // The board an older build runs from its old folder, its record there.
-    assert_eq!(
-        crate::unmoved::board_record(&common),
-        common.join(crate::server::FOLDER).join("server.json")
-    );
-    let (_, old) = crate::unmoved::OLD[0];
-    fs::create_dir_all(common.join(old)).unwrap();
-    let record = crate::unmoved::board_record(&common);
-    assert_eq!(record, common.join(old).join("server.json"));
-    fs::write(
-        &record,
-        r#"{"addr":"127.0.0.1:5000","pid":1,"version":"3.3.0"}"#,
-    )
-    .unwrap();
-    assert_eq!(recorded(&common), Recorded::Port(5000));
-    let alpha = Some(Live {
-        project: "alpha".into(),
-        common: common.clone(),
-    });
-    assert_eq!(named_by_record("127.0.0.1:5000", &main, None), alpha);
-    assert_eq!(named_by_record("127.0.0.1:5001", &main, None), None);
-}
-
-#[test]
 fn where_the_machine_cannot_say_who_listens_an_address_is_the_board_its_folder_or_a_registered_project_records()
  {
     let scratch = Scratch::new("find");
