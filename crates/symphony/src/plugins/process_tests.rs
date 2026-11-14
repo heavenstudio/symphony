@@ -1660,10 +1660,8 @@ fn every_call_that_finds_its_process_ending_is_told_how_the_first_ended_it() {
         argument: "a".into(),
         option: None,
     };
-    assert_eq!(
-        remote.sent(&connection, request).err().as_deref(),
-        Some(first)
-    );
+    let sent = remote.sent_within(&connection, request.into(), WAIT, &mut |_| Ok(()));
+    assert_eq!(sent.err().as_deref(), Some(first));
     assert_eq!(
         remote
             .queued(&connection, b"{}\n".to_vec())

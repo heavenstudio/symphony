@@ -443,6 +443,39 @@ struct Reply {
     bytes: usize,
 }
 
+/// What [`Remote::asked`] needs of a call's [`Ask`], held as values so that one body serves every
+/// call: its tag, the minor it came in, whether it goes on a pipe, and its seam and call.
+#[derive(Clone, Copy)]
+struct Call {
+    tag: &'static str,
+    since: u32,
+    piped: bool,
+    names: (&'static str, &'static str),
+}
+
+impl Call {
+    fn of<A: Ask>() -> Call {
+        Call {
+            tag: A::TAG,
+            since: A::SINCE,
+            piped: A::PIPED,
+            names: A::names(),
+        }
+    }
+}
+
+/// What reads a call's answer as it came, keeping it: why it does not read, if it does not.
+type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
+
+/// `raw`, the plugin's answer to the call `tag`: the answer, or why it does not read or that the
+/// plugin refused the call.
+fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
+    serde_json::from_str::<Answered<T>>(raw.get())
+        .map_err(|why| format!("its answer to {tag} cannot be read: {why}"))?
+        .shown()
+        .map_err(|why| format!("it refused {tag}: {why}"))
+}
+
 /// Why a call has no answer of the plugin's.
 #[derive(Debug, PartialEq)]
 pub enum Failure {
@@ -674,9 +707,8 @@ impl Remote {
             );
             return Err(Unstarted::Failed(connection.closed()));
         }
-        let declare = Declare { protocol: PROTOCOL };
-        let declaration = match self.sent_within(&connection, declare, self.limits.declare) {
-            Ok((declaration, _, _)) => declaration,
+        let declaration = match self.declaration_on(&connection) {
+            Ok(declaration) => declaration,
             Err(why) => {
                 self.end(&connection, Some(format!("it did not declare: {why}")));
                 return Err(Unstarted::Failed(format!(
@@ -906,36 +938,57 @@ impl Remote {
     }
 
     /// The call `request` asked of the plugin, recorded under the project's settings: its answer,
-    /// or why there is none.
+    /// or why there is none. Only the reading of its answer is the call's own; the rest is one
+    /// body for every call ([`Self::asked`]), so each seam a process answers adds little to the
+    /// binary.
     pub fn ask<A: Ask>(&self, name: &str, request: A) -> Result<A::Answer, Failure> {
-        if !A::PIPED {
+        let mut answer = None;
+        self.asked(name, Call::of::<A>(), request.into(), &mut |raw| {
+            answer = Some(answer_of(A::TAG, raw)?);
+            Ok(())
+        })?;
+        answer.ok_or_else(|| Failure::Down(format!("its answer to {} was not read", A::TAG)))
+    }
+
+    /// [`Self::ask`] of every call: `request` sent as `call`, recorded, and its answer handed to
+    /// `read`; nothing once `read` took it, or why there is no answer.
+    #[inline(never)]
+    fn asked(
+        &self,
+        name: &str,
+        call: Call,
+        request: Request,
+        read: ReadAnswer<'_>,
+    ) -> Result<(), Failure> {
+        if !call.piped {
             return Err(Failure::Down(format!(
                 "{} is not asked of a plugin's process",
-                A::TAG
+                call.tag
             )));
         }
         let started = Instant::now();
         let asked = match self.connection() {
             Ok(connection) => {
                 let agreed = connection.agreed.get().copied().unwrap_or(PROTOCOL);
-                if A::SINCE > agreed.minor {
+                if call.since > agreed.minor {
                     return Err(Failure::Newer(agreed));
                 }
                 // How the process ended is in its log already, once.
-                self.sent::<A>(&connection, request).inspect_err(|why| {
-                    if !why.starts_with("its process") {
-                        self.log(&format!("{} of {name}: {why}", A::TAG));
-                    }
-                })
+                self.sent_within(&connection, request, self.limits.wait, read)
+                    .inspect_err(|why| {
+                        if !why.starts_with("its process") {
+                            self.log(&format!("{} of {name}: {why}", call.tag));
+                        }
+                    })
             }
             Err(why) => Err(why),
         };
         let round_trip = started.elapsed();
         let record = *lock(&self.record);
         if let Some(record) = record {
-            let (seam, call) = A::names();
+            let (seam, call) = call.names;
             let (us, request_bytes, answer_bytes, failed) = match &asked {
-                Ok((_, sent, reply)) => (reply.us, Some(*sent), Some(reply.bytes), None),
+                Ok((sent, reply)) => (reply.us, Some(*sent), Some(reply.bytes), None),
                 Err(why) => (None, None, None, Some(why.clone())),
             };
             record.write(&Line {
@@ -954,28 +1007,30 @@ impl Remote {
                 failed,
             });
         }
-        asked.map(|(answer, _, _)| answer).map_err(Failure::Down)
+        asked.map(|_| ()).map_err(Failure::Down)
     }
 
-    /// `request` sent on `connection` and its answer read within [`Limits::wait`]: the answer, the
-    /// request line's bytes and the reply; or why there is none.
-    fn sent<A: Ask>(
-        &self,
-        connection: &Arc<Connection>,
-        request: A,
-    ) -> Result<(A::Answer, usize, Reply), String> {
-        self.sent_within(connection, request, self.limits.wait)
+    /// The plugin's declaration on `connection`, waited for [`Limits::declare`].
+    fn declaration_on(&self, connection: &Arc<Connection>) -> Result<Declaration, String> {
+        let mut declared = None;
+        let asked = Declare { protocol: PROTOCOL }.into();
+        self.sent_within(connection, asked, self.limits.declare, &mut |raw| {
+            declared = Some(answer_of(Declare::TAG, raw)?);
+            Ok(())
+        })?;
+        declared.ok_or_else(|| format!("its answer to {} was not read", Declare::TAG))
     }
 
-    /// [`Self::sent`], the answer waited for `wait`.
-    fn sent_within<A: Ask>(
+    /// `request` sent on `connection` and its answer handed to `read` within `wait`: the request
+    /// line's bytes and the reply; or why there is none.
+    fn sent_within(
         &self,
         connection: &Arc<Connection>,
-        request: A,
+        request: Request,
         wait: Duration,
-    ) -> Result<(A::Answer, usize, Reply), String> {
+        read: ReadAnswer<'_>,
+    ) -> Result<(usize, Reply), String> {
         let id = self.ids.fetch_add(1, Ordering::Relaxed);
-        let request: Request = request.into();
         let mut line = serde_json::to_vec(&Envelope::<&Request, ()>::asking(id, &request))
             .map_err(|why| format!("the request cannot be written: {why}"))?;
         if line.len() > self.limits.line {
@@ -1013,11 +1068,8 @@ impl Remote {
                 return Err("its answers stopped".into());
             }
         };
-        let answer = serde_json::from_str::<Answered<A::Answer>>(reply.answered.get())
-            .map_err(|why| format!("its answer to {} cannot be read: {why}", A::TAG))?
-            .shown()
-            .map_err(|why| format!("it refused {}: {why}", A::TAG))?;
-        Ok((answer, bytes, reply))
+        read(&reply.answered)?;
+        Ok((bytes, reply))
     }
 
     /// `line` queued for `connection`'s stdin: its number among the lines queued, or why it is not.
