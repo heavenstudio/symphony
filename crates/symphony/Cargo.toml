@@ -15,10 +15,12 @@ readme = "README.md"
 keywords = ["symphony", "review", "documentation", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 # What crates.io gets: the sources, the build script, what `symphony init` installs (shipped/), the
-# readme and the licence; never tests/ or fixtures, nor this repository's own binaries:
+# readme and the licence; never tests/ or fixtures (the release run's recorded logs in
+# src/release/fixtures, which only its unit tests read), nor this repository's own binaries:
 # `symphony-build` (its build and release run) and `symphony-test-plugin` (the seam tests' plugin).
 include = [
     "src/**",
+    "!src/release/fixtures/**",
     "!src/bin/symphony-build.rs",
     "!src/bin/symphony-test-plugin.rs",
     "build.rs",
