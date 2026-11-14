@@ -717,16 +717,27 @@ fn frames(browser: &mut Chrome) {
     assert!(browser.wait_for("window.__framed === true", SHOWN));
 }
 
+/// A page expression: whether a region waiting for its read (`[data-pending=true]`) lies within its
+/// sentinel's reach, 600 px above and below what its own scroller shows of the window, as the
+/// shell's hold (`reviewHoldPlace`) and `viewport::waits_near` decide: one past it never draws.
+const WAITS_NEAR: &str = "[...document.querySelectorAll('[data-pending=true]')].some(box => {
+    const scroller = node => { while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY))); return node; };
+    const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
+    const r = box.getBoundingClientRect();
+    return reaches(r) && reaches(r, scroller(box)?.getBoundingClientRect());
+})";
+
 /// Wait until the page is still: the top of `selector`'s box has stayed within 0.5 px for five
-/// frames in a row, and no region waiting for its read lies within its sentinel's 600 px reach of
-/// the screen (as the shell's `near` sees one), so nothing near it is about to draw.
+/// frames in a row, and no region waiting for its read lies within its sentinel's reach
+/// ([`WAITS_NEAR`]), so nothing near it is about to draw.
 fn still(browser: &mut Chrome, selector: &str) {
     browser.eval(&format!(
         "window.__still = false;
         (function frame(last, calm) {{
             const node = document.querySelector({}), top = node ? node.getBoundingClientRect().top : NaN;
-            const near = [...document.querySelectorAll('[data-pending=true]')].some(box => {{ const r = box.getBoundingClientRect();
-                return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth; }});
+            const near = {WAITS_NEAR};
             calm = node && !near && Math.abs(top - last) <= 0.5 ? calm + 1 : 0;
             if (calm >= 5) window.__still = true; else requestAnimationFrame(() => frame(top, calm));
         }})(NaN, 0)",
@@ -782,16 +793,6 @@ window.IntersectionObserver = class extends Observer {
     }
 };"#;
 
-/// A page script under which, once the test sets `window.__gap` to a count of milliseconds, the
-/// clocks the page reads from one frame to the next (`performance.now()` and each frame's time)
-/// run that far ahead, as after a tab hidden that long, which draws no frame meanwhile.
-const GAP: &str = "window.__gap = 0;
-(() => {
-    const now = performance.now.bind(performance), frame = window.requestAnimationFrame.bind(window);
-    performance.now = () => now() + window.__gap;
-    window.requestAnimationFrame = callback => frame(stamp => callback(stamp + window.__gap));
-})();";
-
 /// Counting frames from now (`window.__drawn`): the first in which the message `#message-7` holds
 /// the box it reserves, and the first in which its own box has taken that box's place.
 const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
@@ -801,20 +802,11 @@ const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
     if (slot && !waiting) __drawn.drawn = at; else requestAnimationFrame(() => frame(at + 1));
 })(0)";
 
-/// A message far taller than the box the thread reserves for it.
-const LONG: [&str; 4] = [
-    "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
-    "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
-    "A third, so the message stands far taller than the box the thread kept for it.",
-    "And a fourth, the last of them.",
-];
-
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     // A busy machine's frames: the message's box gives way to it frames after it is drawn.
     message_lands_above_the_composer(
         6,
-        0,
         0,
         &[
             "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread.",
@@ -824,25 +816,25 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
 
 #[test]
 fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
-    // A slow phone: the message's own box comes ninety frames after the box it reserves: the hold
-    // lasts until it is drawn, however many frames that takes.
-    message_lands_above_the_composer(1, 90, 0, &LONG);
-}
-
-#[test]
-fn a_message_drawn_after_the_tab_was_hidden_leaves_the_owner_typing_in_place() {
-    // The tab hidden for forty seconds while the message waits to draw, then shown again: the page
-    // drew no frame meanwhile, so the hold's backstop has spent none of its thirty seconds of
-    // drawing, and the message's own box, ninety frames on, is still held.
-    message_lands_above_the_composer(1, 90, 40_000, &LONG);
+    // A slow phone: the message's own box, far taller than the one it reserves, comes ninety frames
+    // after that box: the hold lasts until it is drawn, however many frames that takes.
+    message_lands_above_the_composer(
+        1,
+        90,
+        &[
+            "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
+            "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
+            "A third, so the message stands far taller than the box the thread kept for it.",
+            "And a fourth, the last of them.",
+        ],
+    );
 }
 
 /// The task's page on a phone, scrolled down to its composer with a reply typed in it, as a message
 /// of `paragraphs` lands above it from the feed on a machine `throttle` times slower, the message's
-/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]), and the page's clocks
-/// `gap` ms ahead from the frame after that box is drawn ([`GAP`]): the composer keeps its place,
-/// the focus and the reply.
-fn message_lands_above_the_composer(throttle: u32, late: u32, gap: u32, paragraphs: &[&str]) {
+/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]): the composer keeps its
+/// place, the focus and the reply.
+fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str]) {
     let site = site();
     // A thread long enough to put the composer below the first screen.
     let entries: Vec<Value> = (1..=6)
@@ -854,7 +846,7 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, gap: u32, paragrap
         "/api/task-history",
         &json!({"entries": entries, "before": null, "after": 6}),
     );
-    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS, GAP]) else {
+    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS]) else {
         return;
     };
     browser.open(&site.url(TASK));
@@ -914,15 +906,6 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, gap: u32, paragrap
         4183,
         &json!({"version": 4183, "changes": [{"region": "message", "data": message}]}).to_string(),
     );
-    if gap > 0 {
-        // The hold has begun by the time the box is drawn: it is called before the update is set.
-        assert!(
-            browser.wait_for("window.__drawn.reserved !== null", SHOWN),
-            "the message's box was never reserved: {}",
-            browser.eval(PAGE)
-        );
-        browser.eval(&format!("window.__gap = {gap}"));
-    }
     assert!(
         browser.wait_for(
             "document.querySelectorAll('#task-thread .entry').length === 7",
@@ -1039,13 +1022,17 @@ fn land(site: &Site, version: u64, row: Option<Value>) {
     );
 }
 
-/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed, on a
-/// machine six times slower: a landed row's box gives way to it frames after it is drawn.
+/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed.
 fn board_of_fourteen(site: &Site) -> Option<Chrome> {
-    let tasks: Vec<Value> = (1..=14).map(|n| task(n, 2)).collect();
+    board_of(site, 14)
+}
+
+/// The task board at 1280 x 900 with `count` ready tasks at p2, following the feed.
+fn board_of(site: &Site, count: u32) -> Option<Chrome> {
+    let tasks: Vec<Value> = (1..=count).map(|n| task(n, 2)).collect();
     site.set_json(
         "/api/task-board",
-        &json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", 14]], "signoff": [], "next": null}),
+        &json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", count]], "signoff": [], "next": null}),
     );
     let mut browser = open(site, "/tasks", 1280, 900)?;
     assert!(
@@ -1155,6 +1142,62 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
     assert!(
         (added - before).abs() < 1.0 && (removed - before).abs() < 1.0,
         "the row read moved from {before} to {added} when a task was added above it, and to {removed} when it was removed; [ms, row top, board scroll, page scroll] each frame from the add: {trace}"
+    );
+}
+
+#[test]
+fn a_task_whose_box_lands_past_the_board_s_reach_leaves_no_hold_running() {
+    let site = site();
+    let Some(mut browser) = board_of(&site, 30) else {
+        return;
+    };
+    // The board scrolled down its column until the place a task landing at its top takes is more
+    // than 600 px above the board's box, past the reach of its sentinel there, though within 600 px
+    // of the window: that box never draws while the board stays there.
+    let read = browser.eval(
+        "(() => { const board = document.querySelector('.board-scroll'), first = document.querySelector('[id=\"row-tools/t-01\"]');
+            board.scrollTop += first.getBoundingClientRect().top - (board.getBoundingClientRect().top - 800);
+            const top = board.getBoundingClientRect().top;
+            return [...document.querySelectorAll('[data-slug]')].find(row => row.getBoundingClientRect().top >= top)?.dataset.slug; })()",
+    );
+    let read = format!(
+        "[data-slug={}]",
+        json!(read.as_str().expect("a row shows on the scrolled board"))
+    );
+    still(&mut browser, &read);
+    land(&site, 4183, Some(task(0, 0)));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('[id=\"row-tools/t-00\"]') !== null",
+            SHOWN
+        ),
+        "the added task never landed: {}",
+        browser.eval(PAGE)
+    );
+    // The hold kept the row read in place and ended once the board stood still, a few frames on:
+    // a scroll the page itself then makes, by no gesture, stays where it is put.
+    still(&mut browser, &read);
+    let at = browser.eval(
+        "(() => { const board = document.querySelector('.board-scroll'), clip = board.getBoundingClientRect();
+            const box = document.querySelector('[id=\"row-tools/t-00\"] [data-pending=true]')?.getBoundingClientRect();
+            board.scrollTop += 200;
+            return {box: box ? [box.top, box.bottom] : null, board: [clip.top, clip.bottom], set: board.scrollTop}; })()",
+    );
+    let (box_bottom, board_top) = (
+        at["box"][1].as_f64().unwrap_or(f64::NAN),
+        at["board"][0].as_f64().unwrap_or(f64::NAN),
+    );
+    assert!(
+        box_bottom > -600.0 && box_bottom + 600.0 < board_top,
+        "the landed task's box must wait within 600 px of the window yet past the board's reach: {at}"
+    );
+    for _ in 0..4 {
+        frames(&mut browser);
+    }
+    assert_eq!(
+        browser.eval("document.querySelector('.board-scroll').scrollTop"),
+        at["set"],
+        "a hold still running scrolled the board back for a box that cannot draw: {at}"
     );
 }
 

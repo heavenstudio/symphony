@@ -261,13 +261,13 @@ window.reviewOverlay = request => {
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
 // what lands at the top. Each frame the box and then the page scroll by however far it moved, until
-// four pass with nothing moved and no reserved box within 600 px of the screen waiting to draw (its
-// `.viewport-sentinel`'s reach): however many frames that box takes, as on a slow phone, and thirty
-// seconds of the page drawing at most, a backstop only a box that never draws reaches (as
-// `viewport::KEEP_MS`). The time between two frames counts a tenth of a second at most, so a
-// hidden tab, which draws none and lets nothing draw, spends none of it. A move the box and the
-// page cannot take back (one at its end) counts as nothing moved once it stays. The reader's own
-// scroll, click or key (typing in a field aside) ends the hold.
+// four pass with nothing moved and no reserved box waiting to draw within its sentinel's reach:
+// 600 px above and below what its own scroller shows of the window (`.viewport-sentinel`, as
+// `viewport::waits_near` decides), for a box past it never draws. However many frames that takes, as
+// on a slow phone, and 1800 at most (half a minute at sixty a second; a hidden tab draws none), a
+// backstop only a box that never draws reaches. A move the box and the page cannot take back (one
+// at its end) counts as nothing moved once it stays. The reader's own scroll, click or key (typing
+// in a field aside) ends the hold.
 window.reviewHoldPlace = rows => {
     const scrollerOf = node => {
         while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
@@ -283,15 +283,18 @@ window.reviewHoldPlace = rows => {
     const scroller = scrollerOf(anchor), page = scrollY > 0;
     if (scroller ? scroller.scrollTop <= 0 : !page) return;
     const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
-    let stopped = false, quiet = 0, stuck = 0, drawing = 0, last;
+    let stopped = false, frame = 0, quiet = 0, stuck = 0;
     const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
+    // The window cut to `clip`, a scroller's box, and the reach of a sentinel around it: whether `r`
+    // meets it.
+    const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
     const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
         const r = box.getBoundingClientRect();
-        return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
+        return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
     });
-    const hold = stamp => {
-        drawing += Math.min(stamp - (last ?? stamp), 100);
-        last = stamp;
+    const hold = () => {
         if (!stopped && anchor.isConnected) {
             const moved = anchor.getBoundingClientRect().top - top;
             let left = moved;
@@ -307,7 +310,7 @@ window.reviewHoldPlace = rows => {
             }
             quiet = Math.abs(moved - stuck) >= 0.5 || near() ? 0 : quiet + 1;
             stuck = left;
-            if (quiet < 4 && drawing < 30000) return requestAnimationFrame(hold);
+            if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
         }
         gestures.forEach(kind => removeEventListener(kind, gesture, true));
     };
