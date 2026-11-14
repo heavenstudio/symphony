@@ -11,6 +11,7 @@ import type {
   MachineWork,
   ProjectView,
   Role,
+  SessionGo,
   Task,
   View,
   Viewer,
@@ -66,6 +67,14 @@ export const CASES = cases as unknown as {
   /** A word, the grain it names, and that grain's default and longest windows in days. */
   grains: [string, string | null, number | null, number | null][];
   fileAddress: [string, string][];
+  /** An address, and whether a page may link it as a session's. */
+  webAddress: [string, boolean][];
+  /**
+   * A way into a session, whether the page is on the server's machine, the control it shows
+   * (`{focus|link|screen: target}`, null for none), and whether it goes through another session
+   * than `amber`'s.
+   */
+  sessionControl: [SessionGo, boolean, Record<string, string> | null, boolean][];
   /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
   elementHtml: [Viewer, string, string, string | null, string | null][];
   encoded: [View, string][];
@@ -84,6 +93,13 @@ export const CASES = cases as unknown as {
     bareTaskChange: unknown;
     taskAdded: unknown;
     taskRemoved: unknown;
+    agentPage: unknown;
+    emptyAgentPage: unknown;
+    agentChange: unknown;
+    bareAgent: unknown;
+    agentProbes: unknown;
+    agentFocus: unknown;
+    agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
     blocks: Block[];
