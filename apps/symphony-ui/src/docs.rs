@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use symphony_api::{Block, Document, DocumentChange, Section, ThreadAuthor};
+use symphony_api::{Block, Document, DocumentCard, DocumentChange, Section, ThreadAuthor};
 
 #[derive(Clone, PartialEq)]
 pub struct DocumentState {
@@ -424,6 +424,70 @@ pub fn fragment(section: &Section) -> symphony_api::Fragment {
     }
 }
 
+/// A section's body as a page draws it: the section with its blocks and, for a card, its card and
+/// thread, as `/api/section` answers them and this device keeps them
+/// ([`crate::cache::document::SECTIONS`], which the page writes as the server sent them).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+pub struct Body {
+    pub section: Section,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<DocumentCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<symphony_api::Fragment>,
+}
+
+/// The bodies `document` holds of the sections `keys` names: each one drawn, with its card and
+/// thread.
+pub fn bodies(document: &Document, keys: &BTreeSet<String>) -> Vec<Body> {
+    document
+        .sections
+        .iter()
+        .filter(|section| keys.contains(&section.key) && !section.blocks.is_empty())
+        .map(|section| {
+            let slug = section.key.strip_prefix("card:");
+            Body {
+                section: section.clone(),
+                card: slug
+                    .and_then(|slug| document.cards.iter().find(|card| card.slug == slug))
+                    .cloned(),
+                thread: slug.and_then(|slug| document.threads.get(slug)).cloned(),
+            }
+        })
+        .collect()
+}
+
+/// `bodies` drawn into `document`, an outline's, whose sections have no blocks: the section of the
+/// same key takes its body's blocks and keeps its place from the outline, and a card's takes its
+/// thread and the card's whole text, its state the outline's. A body whose section the outline no
+/// longer names is left out.
+pub fn draw_bodies(document: &mut Document, bodies: Vec<Body>) {
+    for body in bodies {
+        let key = body.section.key;
+        let Some(section) = document.sections.iter_mut().find(|s| s.key == key) else {
+            continue;
+        };
+        section.blocks = body.section.blocks;
+        let Some(slug) = key.strip_prefix("card:") else {
+            continue;
+        };
+        if let Some((kept, card)) = body
+            .card
+            .zip(document.cards.iter_mut().find(|card| card.slug == slug))
+        {
+            card.text = kept.text;
+        }
+        match body.thread {
+            Some(thread) => {
+                document.threads.insert(slug.to_string(), thread);
+            }
+            None => {
+                document.threads.remove(slug);
+            }
+        }
+    }
+}
+
 /// A section keeps its keyed parent when the register regroups. Only the contiguous part's
 /// visible edges change, so a focused editor never remounts to acquire its card's border.
 #[cfg(any(all(target_arch = "wasm32", feature = "page-docs"), test))]
@@ -608,6 +672,109 @@ mod tests {
             },
         );
         doc
+    }
+
+    fn card(slug: &str, state: &str, text: &str) -> DocumentCard {
+        DocumentCard {
+            slug: slug.into(),
+            state: state.into(),
+            text: text.into(),
+            group: "decide".into(),
+            open: true,
+        }
+    }
+
+    /// The document as an outline holds it: its sections' places and hashes with no blocks, no
+    /// threads, and its cards' text cut short.
+    fn outlined(mut doc: Document) -> Document {
+        for section in &mut doc.sections {
+            section.blocks.clear();
+        }
+        doc.threads.clear();
+        for card in &mut doc.cards {
+            card.text = card.text.chars().take(3).collect();
+        }
+        doc
+    }
+
+    #[test]
+    fn a_documents_bodies_are_its_drawn_sections_with_their_cards_and_threads() {
+        let mut doc = thread(
+            document(&[("intro", "i1"), ("card:alpha", "a1"), ("card:bravo", "b1")]),
+            "alpha",
+            1,
+            1,
+        );
+        doc.cards = vec![
+            card("alpha", "pending", "Alpha's whole text"),
+            card("bravo", "approved", "Bravo"),
+        ];
+        doc.sections[2].blocks.clear();
+        let taken = bodies(&doc, &keys(&["intro", "card:alpha", "card:bravo", "gone"]));
+        // Bravo has no body drawn yet, and no section is called gone.
+        assert_eq!(
+            taken
+                .iter()
+                .map(|b| b.section.key.as_str())
+                .collect::<Vec<_>>(),
+            ["intro", "card:alpha"]
+        );
+        assert_eq!((&taken[0].card, &taken[0].thread), (&None, &None));
+        assert_eq!(taken[1].card.as_ref().unwrap().text, "Alpha's whole text");
+        assert_eq!(taken[1].thread.as_ref(), doc.threads.get("alpha"));
+        assert!(bodies(&doc, &BTreeSet::new()).is_empty());
+    }
+
+    #[test]
+    fn bodies_drawn_into_an_outline_keep_its_places_and_states_and_bring_their_threads() {
+        let mut full = thread(
+            document(&[("intro", "i1"), ("card:alpha", "a1"), ("card:bravo", "b1")]),
+            "alpha",
+            2,
+            0,
+        );
+        full.cards = vec![
+            card("alpha", "pending", "Alpha's whole text"),
+            card("bravo", "pending", "Bravo"),
+        ];
+        let kept = bodies(&full, &keys(&["intro", "card:alpha", "card:bravo"]));
+        // Since they were kept the sections moved, alpha was answered and intro went.
+        let mut outline = outlined(full.clone());
+        outline.sections.remove(0);
+        outline.sections[0].start = 40;
+        outline.cards[0].state = "approved".into();
+        let mut drawn = outline.clone();
+        draw_bodies(&mut drawn, kept);
+        assert_eq!(
+            drawn
+                .sections
+                .iter()
+                .map(|s| (s.key.as_str(), s.start))
+                .collect::<Vec<_>>(),
+            [("card:alpha", 40), ("card:bravo", 0)],
+            "the outline's sections in its places, the body it no longer names left out"
+        );
+        assert!(drawn.sections.iter().all(|s| !s.blocks.is_empty()));
+        assert_eq!(drawn.cards[0].state, "approved", "the outline's state");
+        assert_eq!(drawn.cards[0].text, "Alpha's whole text", "the kept text");
+        assert_eq!(drawn.threads.get("alpha"), full.threads.get("alpha"));
+        assert!(!drawn.threads.contains_key("bravo"));
+        // A body with no thread takes away one the document held.
+        let mut held = drawn.clone();
+        held.threads
+            .insert("bravo".into(), full.threads["alpha"].clone());
+        draw_bodies(&mut held, bodies(&drawn, &keys(&["card:bravo"])));
+        assert!(!held.threads.contains_key("bravo"));
+        // A card body without its card keeps the outline's text.
+        let mut bare = outline.clone();
+        let mut alpha = bodies(&drawn, &keys(&["card:alpha"]));
+        alpha[0].card = None;
+        draw_bodies(&mut bare, alpha);
+        assert_eq!(bare.cards[0].text, outline.cards[0].text);
+        // Nothing drawn leaves the outline as it was.
+        let mut untouched = outline.clone();
+        draw_bodies(&mut untouched, Vec::new());
+        assert_eq!(untouched, outline);
     }
 
     /// Alpha is answered and moves from the first group to the second, its excerpt open.

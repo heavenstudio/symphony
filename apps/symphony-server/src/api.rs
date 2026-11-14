@@ -613,6 +613,20 @@ fn document_response(
         };
     }
     let result = match path {
+        // What a page reads ahead of a document it links to: its first part, within the cap, or
+        // nothing when its head alone is over it. Read ahead, the document is not followed.
+        "/api/document" if query(request, "view").as_deref() == Some("first") => {
+            match hub.document_ahead(scope, rel).map(symphony::docview::first) {
+                Ok(Some(first)) => Ok(json!(first)),
+                Ok(None) => {
+                    return error(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "the document's head alone is over the read ahead's cap",
+                    );
+                }
+                Err(why) => Err(why),
+            }
+        }
         "/api/document" => hub.document(scope, rel).map(|doc| {
             if query(request, "view").as_deref() == Some("outline") {
                 json!(symphony::docview::outline(doc))
@@ -673,16 +687,24 @@ fn document_response(
         _ => Err("no such route".into()),
     };
     match result {
-        Ok(mut value) => {
-            // A document and its sections carry the feed's cursor, which is not their content.
-            let content = matches!(path, "/api/document" | "/api/section")
-                .then(|| validated::without_cursor(&mut value));
-            let mut response = no_store(Json(value));
-            if let Some(tag) = content {
-                response.extensions_mut().insert(validated::Content(tag));
+        // A document, its sections and a folder's intro carry the feed's cursor, which is not their
+        // content: their tag leaves it out, and a header names it, on the `304` too.
+        Ok(mut value) if matches!(path, "/api/document" | "/api/section" | "/api/folder") => {
+            let tagged = validated::without_cursor(&mut value);
+            let mut response =
+                no_store(([(header::CONTENT_TYPE, "application/json")], tagged.body));
+            response
+                .extensions_mut()
+                .insert(validated::Content(tagged.tag));
+            if let Some(cursor) = tagged.cursor {
+                response.headers_mut().insert(
+                    symphony_api::VERSION_HEADER,
+                    header::HeaderValue::from(cursor),
+                );
             }
             response
         }
+        Ok(value) => no_store(Json(value)),
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
 }

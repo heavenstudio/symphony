@@ -1,5 +1,12 @@
 //! Document and folder pages, forms and the document feed. Typed prose stays in keyed
 //! components; drafts live outside that markup and are saved locally on every input event.
+//!
+//! A document keeps its outline and the bodies of the sections it drew on this device
+//! ([`crate::cache::Item::document`]), and an entrypoint's folder page its folder and its intro's,
+//! pinned: opened again, the page draws them at once ([`from_device`]), marked as possibly out of
+//! date, then reads the outline naming its copy's tag. A `304` confirms it, at the feed's cursor its
+//! header names, and the outline's validators tell which bodies are still current, so only the
+//! others are read again (docs/analysis/client-cache.md, "A return visit, step by step").
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,13 +30,17 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
     block_view::{BlocksView, CardAnchor, Excerpts, SpansView},
+    cache::{
+        self, Freshness, Item,
+        document::{self as kept, Bodies, KeptBody},
+    },
     components::button::{Button, ButtonVariant},
     doc_components::DocumentWithTasks,
     docs::{self, DocumentState},
     live::{Feed, Heard, back, mark, pause, sleep},
     navigation::scroll_anchor,
     platform,
-    request::{encode, field, get, get_found, save},
+    request::{Answer, encode, field, get, get_document, get_if_found, get_json, object, save},
     state::Ended,
     task_save::Failure,
     viewport::NearViewport,
@@ -47,6 +58,21 @@ fn api(scope: &str, route: &str, path: &str) -> String {
     format!("{}?path={}", docs::scoped(scope, route), encode(path))
 }
 
+/// The document `path` as the API names it, in its document's `path` and its feed's changes: a
+/// checkout's other than the main one's under `@SCOPE/`.
+fn named(scope: &str, path: &str) -> String {
+    if scope.is_empty() {
+        path.to_string()
+    } else {
+        format!("@{scope}/{path}")
+    }
+}
+
+/// The item an entrypoint's folder page keeps on this device, pinned, and its intro keeps its own
+/// reads in; `None` for any other folder page, which keeps nothing, its intro included.
+#[derive(Clone)]
+struct KeptFolder(Option<Item>);
+
 #[derive(Clone)]
 struct DocumentRequests {
     frame: crate::frame::FrameRefresh,
@@ -62,6 +88,17 @@ struct DocumentRequests {
     released: Rc<RefCell<BTreeMap<String, usize>>>,
     /// The page's document, whose latest copy a save reads its card's lines from ([`docs::release`]).
     state: Signal<Option<DocumentState>>,
+    /// Which section bodies the page holds are current by the server's outline, and so kept on
+    /// this device and not read again.
+    bodies: Rc<RefCell<Bodies>>,
+    /// Each body the page took, as the server sent it (or this device kept it), by key: what the
+    /// device is given of a body it keeps ([`keep_bodies`]).
+    sent: Rc<RefCell<BTreeMap<String, JsValue>>>,
+    /// Where the page keeps what it drew: its document's item, its entrypoint folder's for that
+    /// folder's intro, or none.
+    kept: Option<Item>,
+    /// What the page shows from this device, and whether the server has answered it.
+    freshness: Signal<Freshness>,
 }
 
 fn keys_query(keys: &BTreeSet<String>) -> String {
@@ -104,6 +141,67 @@ struct FolderNotice {
     stale: Signal<bool>,
     removed: Signal<bool>,
     error: Signal<String>,
+    /// What the intro shows from this device ([`Freshness::shown`]).
+    device: Signal<Option<(f64, bool)>>,
+}
+
+/// Give this device the bodies the page holds as current, when one was taken or let go since it
+/// was last given them ([`Bodies::unkept`]): each as the server sent it, under its validator.
+fn keep_bodies(requests: &DocumentRequests) {
+    let Some(item) = &requests.kept else {
+        return;
+    };
+    let Some(taken) = requests.bodies.borrow_mut().unkept() else {
+        return;
+    };
+    let sent = requests.sent.borrow();
+    let bodies: Vec<(&str, JsValue)> = taken
+        .iter()
+        .filter_map(|(key, validator)| {
+            let body = sent.get(key)?.clone();
+            Some((
+                key.as_str(),
+                object(&[(kept::VALIDATOR, validator.into()), (kept::BODY, body)]),
+            ))
+        })
+        .collect();
+    cache::keep_later(item, kept::SECTIONS, String::new(), object(&bodies));
+}
+
+/// The items of `value`, an array; none of anything else.
+fn items(value: &JsValue) -> Vec<JsValue> {
+    value
+        .dyn_ref::<Array>()
+        .map(Array::to_vec)
+        .unwrap_or_default()
+}
+
+/// The bodies of the drawn `sections`, as the server sent them, by key: each section with, for a
+/// card, its card from `cards` (by slug) and its thread from `threads`, as this device keeps a body
+/// ([`kept::BODY`]).
+fn sent_bodies(
+    sections: &JsValue,
+    cards: &BTreeMap<String, JsValue>,
+    threads: &JsValue,
+) -> BTreeMap<String, JsValue> {
+    items(sections)
+        .into_iter()
+        .filter_map(|section| {
+            let key = field(&section, "key").as_string()?;
+            if items(&field(&section, "blocks")).is_empty() {
+                return None;
+            }
+            let mut body = vec![(kept::SECTION, section)];
+            if let Some(slug) = key.strip_prefix("card:") {
+                let thread = field(threads, slug);
+                body.extend(cards.get(slug).map(|card| (kept::CARD, card.clone())));
+                body.extend(
+                    (!thread.is_null() && !thread.is_undefined()).then_some((kept::THREAD, thread)),
+                );
+            }
+            Some((key, object(&body)))
+        })
+        .collect()
 }
 
 #[component(lazy)]
@@ -115,6 +213,7 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     // The server has no document at this path (it answered 404), and the reader's Retry presses.
     let missing = use_signal(|| false);
     let mut retry = use_signal(|| 0_u64);
+    let freshness = use_signal(Freshness::default);
     let folder_notice = try_consume_context::<FolderNotice>();
     use_effect(move || {
         if embedded && let Some(mut notice) = folder_notice {
@@ -124,8 +223,15 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             notice
                 .removed
                 .set(state.read().as_ref().is_some_and(|state| state.removed));
+            notice.device.set(freshness.read().shown());
         }
     });
+    // An intro keeps its reads in its entrypoint folder's item; a document page, in its own.
+    let kept_in = if embedded {
+        try_consume_context::<KeptFolder>().and_then(|folder| folder.0)
+    } else {
+        Some(Item::document(&named(&scope, &path), false))
+    };
     let wanted = use_signal(BTreeSet::new);
     let loaded = use_signal(BTreeSet::new);
     let anchors = use_signal(BTreeMap::new);
@@ -161,6 +267,10 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
         trouble,
         released: Rc::default(),
         state,
+        bodies: Rc::default(),
+        sent: Rc::default(),
+        kept: kept_in,
+        freshness,
     });
     use_context_provider(|| requests.clone());
     let p = path.clone();
@@ -197,8 +307,9 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
     } else {
         crate::trouble::ready(missing(), trouble().is_some())
     };
+    let device = freshness.read().shown();
     rsx! {
-        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" }, "aria-busy": "{state.read().is_none() && trouble().is_none() && !missing()}",
+        div { class: "document-page", "data-ready": ready, "data-feed": if stale() { "stale" } else { "live" }, "data-cache": device.map(|_| "device"), "aria-busy": "{state.read().is_none() && trouble().is_none() && !missing()}",
             if let Some(state) = state() {
                 DocumentBody { failed: trouble().is_some(), anchor_ids: anchors(), present: state.latest.sections.iter().map(|s| s.key.clone()).collect(), document: state.shown, scope: scope.clone(), embedded }
                 if !embedded {
@@ -217,7 +328,7 @@ pub fn DocumentPage(path: String, scope: String, #[props(default)] embedded: boo
             }
             // Until the document is shown, what kept it away is the block above's to say, once.
             if !embedded {
-                crate::live::PageNotices { reconnecting: stale() && state.read().is_some(), reconnect: "Reconnecting: this document may be out of date", error: trouble().filter(|_| state.read().is_some()).unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed) }
+                crate::live::PageNotices { reconnecting: stale() && state.read().is_some(), reconnect: "Reconnecting: this document may be out of date", error: trouble().filter(|_| state.read().is_some()).unwrap_or_default(), document_removed: state.read().as_ref().is_some_and(|state| state.removed), device }
             }
         }
     }
@@ -887,11 +998,22 @@ pub fn FolderPage(path: String, scope: String) -> Element {
     let mut stale = use_signal(|| false);
     let mut notice_error = use_signal(String::new);
     let mut removed = use_signal(|| false);
+    let mut intro_device = use_signal(|| None::<(f64, bool)>);
+    let mut freshness = use_signal(Freshness::default);
     use_context_provider(|| FolderNotice {
         stale,
         error: notice_error,
         removed,
+        device: intro_device,
     });
+    // An entrypoint's own page, the main checkout's, is kept on this device, pinned, with its
+    // intro's reads; no other folder page is.
+    let item = use_hook(|| {
+        let page = path.trim_matches('/');
+        (scope.is_empty() && crate::project::current().entrypoints().contains(&page))
+            .then(|| Item::document(&format!("{page}/"), true))
+    });
+    use_context_provider(|| KeptFolder(item.clone()));
     use_effect(move || {
         if folder
             .read()
@@ -901,33 +1023,99 @@ pub fn FolderPage(path: String, scope: String) -> Element {
             stale.set(false);
             notice_error.set(String::new());
             removed.set(false);
+            intro_device.set(None);
         }
     });
     let p = path.clone();
     let s = scope.clone();
     use_hook(move || {
         spawn(async move {
-            loop {
-                match get_found::<Folder>(&format!("{}&view=outline", api(&s, "/api/folder", &p)))
-                    .await
+            // The folder the server last answered, or this device kept, with its tag.
+            let mut copy = None::<(String, Folder)>;
+            if let Some(item) = &item {
+                cache::visit_later(item);
+                if let Some(held) = cache::read::<Folder>(item, kept::FOLDER).await
+                    && folder.peek().is_none()
                 {
-                    Ok(Some(value)) => {
-                        folder.set(Some(value));
+                    folder.set(Some(held.value.clone()));
+                    freshness.write().drawn(kept::FOLDER, held.saved);
+                    copy = Some((held.etag, held.value));
+                }
+            }
+            let url = format!("{}&view=outline", api(&s, "/api/folder", &p));
+            // The page reads its folder every few seconds: it draws again only for a change.
+            let mut fresh = move |change: fn(&mut Freshness)| {
+                let mut next = freshness.peek().clone();
+                change(&mut next);
+                if *freshness.peek() != next {
+                    freshness.set(next);
+                }
+            };
+            loop {
+                let tag = copy
+                    .as_ref()
+                    .map_or_else(String::new, |(tag, _)| tag.clone());
+                let read = get_if_found(&url, &tag).await.and_then(|answer| {
+                    answer
+                        .map(|answer| match answer {
+                            Answer::Same => copy.clone().ok_or_else(|| {
+                                "The server answered 304 to a plain read".to_string()
+                            }),
+                            Answer::Fresh(value, tag) => {
+                                let read = serde_wasm_bindgen::from_value::<Folder>(value.clone())
+                                    .map_err(|e| e.to_string())?;
+                                if let Some(item) = item.as_ref().filter(|_| !tag.is_empty()) {
+                                    cache::keep_later(item, kept::FOLDER, tag.clone(), value);
+                                }
+                                Ok((tag, read))
+                            }
+                        })
+                        .transpose()
+                });
+                match read {
+                    Ok(Some(answered)) => {
+                        if folder.peek().as_ref() != Some(&answered.1) {
+                            folder.set(Some(answered.1.clone()));
+                        }
+                        copy = Some(answered);
                         missing.set(false);
                         error.set(None);
+                        // The folder follows no feed: the server's answer is all it waits for.
+                        fresh(|f| {
+                            f.answered(kept::FOLDER);
+                            f.opened();
+                        });
                     }
                     Ok(None) => {
+                        // A folder gone while away shows nothing this device drew of it.
+                        if freshness.peek().waits(kept::FOLDER) {
+                            folder.set(None);
+                            fresh(|f| f.left(&[kept::FOLDER]));
+                        }
+                        copy = None;
                         missing.set(true);
                         error.set(None);
                     }
-                    Err(why) => error.set(Some(why)),
+                    Err(why) => {
+                        error.set(Some(why));
+                        fresh(|f| {
+                            f.failed(kept::FOLDER);
+                            f.lost();
+                        });
+                    }
                 }
                 pause(5_000, retry).await;
             }
         });
     });
+    let device = match (freshness.read().shown(), intro_device()) {
+        (Some((saved, unreachable)), Some((intro, unanswered))) => {
+            Some((saved.min(intro), unreachable || unanswered))
+        }
+        (folder, intro) => folder.or(intro),
+    };
     rsx! {
-        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { crate::trouble::ready(missing(), error().is_some()) }, "data-feed": if stale() { "stale" } else { "live" },
+        div { class: "document-page", "data-ready": if folder.read().is_some() { "folder" } else { crate::trouble::ready(missing(), error().is_some()) }, "data-feed": if stale() { "stale" } else { "live" }, "data-cache": device.map(|_| "device"),
             if let Some(folder) = folder() {
                 div { class: "doc-head",
                     p { class: "eyebrow", {folder.path.trim_start_matches(&format!("@{scope}/"))} "/" }
@@ -959,7 +1147,7 @@ pub fn FolderPage(path: String, scope: String) -> Element {
             } else if let Some(why) = error() {
                 crate::trouble::Trouble { title: "The folder could not be loaded", text: crate::trouble::failed(&why), retry: move |_| retry += 1 }
             } else { p { role: "status", "Loading folder…" } }
-            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: if folder.read().is_some() { error().unwrap_or(notice_error()) } else { String::new() }, document_removed: removed() }
+            crate::live::PageNotices { reconnecting: stale(), reconnect: "Reconnecting: this document may be out of date", error: if folder.read().is_some() { error().unwrap_or(notice_error()) } else { String::new() }, document_removed: removed(), device }
         }
     }
 }
@@ -1054,39 +1242,184 @@ async fn document_live(
             }
         }
     });
+    let url = format!("{}&view=outline", api(&scope, "/api/document", &path));
+    let mut freshness = requests.freshness;
+    // The outline the server last answered, or this device kept, with its tag: the next read names
+    // the tag, and a `304` is this copy again.
+    let mut copy = from_device(&path, &scope, state, &requests).await;
     loop {
         back().await;
         let mut ended = Ended::Lost(0.0);
-        match get_found::<DocumentOutline>(&format!(
-            "{}&view=outline",
-            api(&scope, "/api/document", &path)
-        ))
-        .await
-        {
+        match read_outline(&url, &mut copy, requests.kept.as_ref()).await {
             Ok(None) => {
                 missing.set(true);
                 trouble.set(None);
+                // A document gone while away: what this device drew of it goes, and a document's
+                // own item is forgotten (an entrypoint's stays, its folder still there).
+                if freshness.peek().waits(kept::OUTLINE) {
+                    state.set(None);
+                    freshness.write().left(&[kept::OUTLINE, kept::SECTIONS]);
+                    if let Some(item) = requests.kept.clone().filter(|item| !item.pinned) {
+                        spawn(async move { cache::forget(&item).await });
+                    }
+                }
             }
             Ok(Some(outline)) => {
                 missing.set(false);
                 requests.epoch.set(requests.epoch.get().wrapping_add(1));
                 requests.cursor.set(outline.document.version);
-                requests.anchors.set(outline.anchors);
-                requests.loaded.write().clear();
+                requests.anchors.set(outline.anchors.clone());
+                // The bodies still current by the server's outline stay, and are read no more.
+                let current = requests
+                    .bodies
+                    .borrow_mut()
+                    .answered(&outline, &requests.wanted.peek());
                 let mut next =
                     state().unwrap_or_else(|| DocumentState::new(outline.document.clone()));
+                let bodies = docs::bodies(&next.latest, &current);
                 next.latest = outline.document;
+                docs::draw_bodies(&mut next.latest, bodies);
+                requests.loaded.set(current);
                 next.removed = false;
                 let keys = held(&requests, &next.latest);
                 show(&mut next, &requests, &keys);
+                keep_bodies(&requests);
                 state.set(Some(next));
+                let confirmed = requests.bodies.borrow().confirmed();
+                let mut fresh = freshness.write();
+                fresh.answered(kept::OUTLINE);
+                if confirmed {
+                    fresh.answered(kept::SECTIONS);
+                }
+                drop(fresh);
                 ended =
                     follow_document(&path, &scope, state, stale, trouble, requests.clone()).await;
+                freshness.write().lost();
             }
-            Err(why) => trouble.set(Some(why)),
+            Err(why) => {
+                trouble.set(Some(why));
+                freshness.write().failed(kept::OUTLINE);
+            }
         }
         stale.set(true);
         pause(backoff.wait(ended), retry).await;
+    }
+}
+
+/// Draw what this device kept of the document while the page shows nothing yet: its outline and
+/// the bodies current by it, marked as drawn from the device; or the first part a page read ahead
+/// of this first visit, its bodies with it. A document page counts one more visit first. The kept
+/// outline, with its tag, for the first read to name.
+async fn from_device(
+    path: &str,
+    scope: &str,
+    mut state: Signal<Option<DocumentState>>,
+    requests: &DocumentRequests,
+) -> Option<(String, DocumentOutline)> {
+    let item = requests.kept.as_ref()?;
+    if item.id == Item::document(&named(scope, path), false).id {
+        cache::visit_later(item);
+    }
+    let (mut outline, sent) = cache::read_sent::<DocumentOutline>(item, kept::OUTLINE).await?;
+    // An entrypoint's intro may have moved to another document since.
+    if outline.value.document.path != named(scope, path) || state.peek().is_some() {
+        return None;
+    }
+    let ahead = kept::read_ahead(&outline.value);
+    let (held, sent, saved) = if ahead {
+        let first = field(&sent, "document");
+        let cards = items(&field(&first, "cards"))
+            .into_iter()
+            .filter_map(|card| Some((field(&card, "slug").as_string()?, card)))
+            .collect();
+        let sent = sent_bodies(
+            &field(&first, "sections"),
+            &cards,
+            &field(&first, "threads"),
+        );
+        let (split, held) = kept::split(outline.value);
+        outline.value = split;
+        (held, sent, Some(outline.saved))
+    } else {
+        match cache::read_sent::<BTreeMap<String, KeptBody>>(item, kept::SECTIONS).await {
+            Some((sections, sent)) => {
+                let sent = sections
+                    .value
+                    .keys()
+                    .map(|key| (key.clone(), field(&field(&sent, key), kept::BODY)))
+                    .collect();
+                (sections.value, sent, Some(sections.saved))
+            }
+            None => Default::default(),
+        }
+    };
+    let mut document = outline.value.document.clone();
+    let bodies = {
+        let mut kept = requests.bodies.borrow_mut();
+        let bodies = kept.drawn(&outline.value, held);
+        if ahead && !bodies.is_empty() {
+            kept.drawn_ahead();
+        }
+        bodies
+    };
+    let drawn: BTreeSet<String> = bodies.iter().map(|body| body.section.key.clone()).collect();
+    requests.sent.borrow_mut().extend(
+        sent.into_iter()
+            .filter(|(key, _): &(String, JsValue)| drawn.contains(key)),
+    );
+    docs::draw_bodies(&mut document, bodies);
+    let mut freshness = requests.freshness;
+    let mut fresh = freshness.write();
+    fresh.drawn(kept::OUTLINE, outline.saved);
+    if let Some(saved) = saved.filter(|_| !drawn.is_empty()) {
+        fresh.drawn(kept::SECTIONS, saved);
+    }
+    drop(fresh);
+    let (mut anchors, mut loaded) = (requests.anchors, requests.loaded);
+    anchors.set(outline.value.anchors.clone());
+    loaded.set(drawn);
+    state.set(Some(DocumentState::new(document)));
+    Some((outline.etag, outline.value))
+}
+
+/// The server's outline, read naming the tag of `copy`: a `304` is that copy again, at the feed's
+/// cursor its answer names; a new outline replaces the copy, and this device keeps it in `item`.
+/// A `304` that names no cursor opens no feed: the copy goes, and the outline is read again whole.
+/// `None` when the server has no such document.
+async fn read_outline(
+    url: &str,
+    copy: &mut Option<(String, DocumentOutline)>,
+    item: Option<&Item>,
+) -> Result<Option<DocumentOutline>, String> {
+    loop {
+        let tag = copy
+            .as_ref()
+            .map_or_else(String::new, |(tag, _)| tag.clone());
+        let Some((answer, cursor)) = get_document(url, &tag).await? else {
+            *copy = None;
+            return Ok(None);
+        };
+        return match (answer, copy.as_ref(), cursor) {
+            (Answer::Same, Some((_, outline)), Some(cursor)) => {
+                let mut outline = outline.clone();
+                outline.document.version = cursor;
+                Ok(Some(outline))
+            }
+            (Answer::Same, Some(_), None) => {
+                *copy = None;
+                continue;
+            }
+            (Answer::Same, None, _) => Err("The server answered 304 to a plain read".into()),
+            (Answer::Fresh(value, tag), ..) => {
+                let outline = serde_wasm_bindgen::from_value::<DocumentOutline>(value.clone())
+                    .map_err(|e| e.to_string())?;
+                if let Some(item) = item.filter(|_| !tag.is_empty()) {
+                    cache::keep_later(item, kept::OUTLINE, tag.clone(), value);
+                }
+                *copy = Some((tag, outline.clone()));
+                Ok(Some(outline))
+            }
+        };
     }
 }
 
@@ -1098,7 +1431,9 @@ async fn load_sections(
 ) {
     loop {
         sleep(50).await;
-        if state.peek().is_none() {
+        // Nothing is read before the server's outline has answered: a page drawn from this device
+        // does not know yet which of its bodies are current, nor the feed's cursor.
+        if state.peek().is_none() || requests.epoch.get() == 0 {
             continue;
         }
         let missing = requests
@@ -1116,8 +1451,14 @@ async fn load_sections(
             keys_query(&missing)
         );
         let epoch = requests.epoch.get();
-        match get::<DocumentSections>(&url).await {
-            Ok(parts) => {
+        // As the browser parsed it too: the bodies this device keeps are what the server sent.
+        let read = get_json(&url).await.and_then(|sent| {
+            serde_wasm_bindgen::from_value::<DocumentSections>(sent.clone())
+                .map(|parts| (parts, field(&sent, "change")))
+                .map_err(|e| e.to_string())
+        });
+        match read {
+            Ok((parts, change)) => {
                 if requests.epoch.get() != epoch {
                     continue;
                 }
@@ -1140,11 +1481,35 @@ async fn load_sections(
                 {
                     continue;
                 }
+                let cards = items(&field(&change, "cards"))
+                    .into_iter()
+                    .filter_map(|card| {
+                        let value = field(&card, "value");
+                        (!value.is_null() && !value.is_undefined())
+                            .then(|| Some((field(&card, "key").as_string()?, value)))
+                            .flatten()
+                    })
+                    .collect();
+                requests.sent.borrow_mut().extend(sent_bodies(
+                    &field(&change, "sections"),
+                    &cards,
+                    &field(&change, "threads"),
+                ));
+                requests
+                    .bodies
+                    .borrow_mut()
+                    .read(&missing, &parts.change.sections);
                 requests.loaded.write().extend(missing);
                 if let Some(current) = state.write().as_mut() {
                     current.change(parts.change);
                     let keys = held(&requests, &current.latest);
                     show(current, &requests, &keys);
+                    keep_bodies(&requests);
+                }
+                if requests.freshness.peek().waits(kept::SECTIONS)
+                    && requests.bodies.borrow().confirmed()
+                {
+                    requests.freshness.write().answered(kept::SECTIONS);
                 }
                 requests.trouble.set(None);
             }
@@ -1167,11 +1532,7 @@ async fn follow_document(
     let mut opened = None;
     'subscribe: loop {
         let subscribed = (requests.wanted)();
-        let document = if scope.is_empty() {
-            path.to_string()
-        } else {
-            format!("@{scope}/{path}")
-        };
+        let document = named(scope, path);
         let url = format!(
             "{}?since={}&document={}&sections={}",
             docs::scoped(scope, "/api/feed"),
@@ -1205,6 +1566,7 @@ async fn follow_document(
                     opened.get_or_insert(last_word);
                     stale.set(false);
                     trouble.set(None);
+                    requests.freshness.write().opened();
                 }
                 Heard::Ping => {}
                 Heard::Server(message) => {
@@ -1246,6 +1608,7 @@ async fn follow_document(
                         if delta.path != document {
                             continue;
                         }
+                        requests.bodies.borrow_mut().changed(&delta);
                         if let Ok(anchors) = serde_wasm_bindgen::from_value::<
                             BTreeMap<String, Vec<String>>,
                         >(field(&data, "anchors"))

@@ -21,7 +21,7 @@ window.symphonyCache = (() => {
     // How long a page waits for the database to open before it goes on without the cache, and
     // within how long of a page's first keep its visit comes.
     const OPENING = 500, VISIT = 6e4;
-    let opened;
+    let opened, named;
     let checked = new Map();
 
     // Each name with its length first, so no item's key begins another's: the parts of an item are
@@ -64,8 +64,10 @@ window.symphonyCache = (() => {
         }).catch(() => null);
     }
 
-    // The store, once a store of another format is cleared.
+    // The store, once a store of another format is cleared. The format the page's own code named
+    // last is the one a read ahead keeps under (`ahead`).
     function ready(format) {
+        named = format;
         if (!checked.has(format)) {
             checked.set(format, open().then(db => db && run(db, ["meta", "items", "parts"], (stores, give) => {
                 stores.meta.get("format").onsuccess = event => {
@@ -162,6 +164,28 @@ window.symphonyCache = (() => {
         visited: !ahead, pinned: false, size: 0,
     });
 
+    // Keep `value`, answered with `etag`, as `part` of the item. `size` is its JSON's length,
+    // measured here when not given. Gives whether the item is still kept once the caps hold. A read
+    // ahead (`ahead`) never replaces what a visit kept: the page was opened meanwhile.
+    function keep(format, project, id, kind, part, etag, value, size, ahead) {
+        const now = Date.now();
+        return within(format, ["items", "parts"], (stores, give) => {
+            // Inside the transaction's guard: a value with no JSON keeps nothing.
+            size ??= JSON.stringify(value).length;
+            const itemKey = key(project, id), partKey = itemKey + key(part);
+            stores.items.get(itemKey).onsuccess = event => {
+                if (ahead && event.target.result?.visited) return give(true);
+                const kept = event.target.result ?? fresh(itemKey, project, kind, now, ahead);
+                stores.parts.get(partKey).onsuccess = event => {
+                    kept.size += size - (event.target.result?.size ?? 0);
+                    stores.parts.put({ key: partKey, format, etag, value, size, saved: now });
+                    stores.items.put(kept);
+                    evict(stores, now, itemKey, give);
+                };
+            };
+        });
+    }
+
     return {
         // `part` of `item` as kept: { value, etag, saved }, or null. A part saved by a clock ahead
         // of this one was saved now, as far as the page says.
@@ -171,24 +195,36 @@ window.symphonyCache = (() => {
                 if (kept?.format === format) give({ value: kept.value, etag: kept.etag, saved: Math.min(kept.saved, Date.now()) });
             };
         }, "readonly"),
-        // Keep `value`, answered with `etag`, as `part` of the item. `size` is its JSON's length,
-        // measured here when not given. Gives whether the item is still kept once the caps hold.
-        keep: (format, project, id, kind, part, etag, value, size, ahead) => {
-            const now = Date.now();
-            return within(format, ["items", "parts"], (stores, give) => {
-                // Inside the transaction's guard: a value with no JSON keeps nothing.
-                size ??= JSON.stringify(value).length;
-                const itemKey = key(project, id), partKey = itemKey + key(part);
+        keep,
+        // Read the item ahead of its visit (shell.js, `ahead`): each of `reads`, [part, url], with
+        // `fetch` at the lowest priority, marked as a prefetch and naming the tag kept for its part,
+        // so an unchanged one costs no body; what the server sends is kept unvisited. Nothing for
+        // an item a visit kept, nor before the page's own code named its format.
+        ahead: async (fetch, project, id, kind, reads) => {
+            const format = named;
+            const tags = format === undefined ? null : await within(format, ["items", "parts"], (stores, give) => {
+                const itemKey = key(project, id), tags = {};
                 stores.items.get(itemKey).onsuccess = event => {
-                    const kept = event.target.result ?? fresh(itemKey, project, kind, now, ahead);
-                    stores.parts.get(partKey).onsuccess = event => {
-                        kept.size += size - (event.target.result?.size ?? 0);
-                        stores.parts.put({ key: partKey, format, etag, value, size, saved: now });
-                        stores.items.put(kept);
-                        evict(stores, now, itemKey, give);
-                    };
+                    if (event.target.result?.visited) return;
+                    let left = reads.length;
+                    for (const [part] of reads) {
+                        stores.parts.get(itemKey + key(part)).onsuccess = event => {
+                            const kept = event.target.result;
+                            tags[part] = kept?.format === format ? kept.etag : "";
+                            if (--left === 0) give(tags);
+                        };
+                    }
                 };
-            });
+            }, "readonly");
+            if (!tags) return;
+            for (const [part, url] of reads) {
+                const headers = { Purpose: "prefetch" };
+                if (tags[part]) headers["If-None-Match"] = tags[part];
+                try {
+                    const response = await fetch(url, { priority: "low", cache: "no-store", headers });
+                    if (response.status === 200) await keep(format, project, id, kind, part, response.headers.get("ETag") || "", await response.json(), undefined, true);
+                } catch (_) { /* Read when opened, then. */ }
+            }
         },
         // The page was opened: one more visit, on the count decayed since the last. `pinned`
         // marks a project's entrypoint page, kept while its project has room.

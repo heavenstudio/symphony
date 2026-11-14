@@ -117,6 +117,10 @@ pub struct Front {
 pub const BOARD_PATH: &str = "/api/board";
 /// The route of the feed: Server-Sent Events, `?since=VERSION`.
 pub const FEED_PATH: &str = "/api/feed";
+/// The response header a document read (`/api/document`, `/api/section`) names the feed's cursor
+/// at the read in, on its `200` and its `304` alike: a page that draws the copy it kept on a
+/// `304`, which has no body, opens the feed from it.
+pub const VERSION_HEADER: &str = "symphony-version";
 /// A server-update failure, a JSON string (empty clears it). It does not advance the document
 /// cursor. A retiring server finishes its feed normally; reconnects fetch a fresh snapshot.
 pub const SERVER_EVENT: &str = "server";
@@ -132,8 +136,9 @@ pub const PING_MAX_MS: u32 = 5_000;
 /// The client cache's format (docs/analysis/client-cache.md, "Across versions"): what a page keeps
 /// on the device is written under it, and a client built with another number clears what it
 /// finds. It moves when a kept type's shape does, which the wire test ties it to; a server update
-/// needs nothing, since a changed body has a new tag.
-pub const CACHE_FORMAT: u32 = 1;
+/// needs nothing, since a changed body has a new tag. 2: documents and an entrypoint's folder page
+/// are kept too.
+pub const CACHE_FORMAT: u32 = 2;
 /// How many cards the board shows: the next one and the four after it.
 pub const BOARD_CARDS: usize = 5;
 /// The quick-task form and save endpoint accept at most this many Unicode characters in a title.
@@ -600,6 +605,73 @@ pub struct DocumentComparison {
 pub struct DocumentOutline {
     pub document: Document,
     pub anchors: std::collections::BTreeMap<String, Vec<String>>,
+    /// The hash of each card's thread, by the card's slug, as a section's `hash` is taken. A thread
+    /// is no part of its card section's `hash`, so a client that keeps a card's body and thread on
+    /// the device tells by this whether the thread changed since (docs/analysis/client-cache.md,
+    /// "What is kept").
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub thread_hashes: std::collections::BTreeMap<String, String>,
+}
+
+/// The most a page reads ahead of a document it links to, in bytes of the JSON the server answers
+/// (`/api/document?view=first`, [`DocumentOutline::first`]): a screen of the document or a bit more.
+/// Measured on this repository's documents, the leading sections within it, beside the headings,
+/// hold 990 to 7,300 characters of text (`docs/DECISIONS.md` 990 in its first 6 sections, its next
+/// a 12 KB card, `docs/TASKS.md` 6,627 in 10), where a phone's screen shows about 1,200 and a
+/// desktop's about 2,700; their whole
+/// outlines are 9 to 27 KB, and the consuming project's register's 56 KB.
+pub const AHEAD_BYTES: usize = 16_000;
+
+impl DocumentOutline {
+    /// What a page reads ahead of a document it links to (`/api/document?view=first`): this
+    /// outline's head, its headings all among it, and `document`'s leading sections whole, as many
+    /// as `fits` takes in turn, each card among them with its thread and each with its anchors; the
+    /// cards, waiting slugs, anchors and threads of the sections left out are left out with them.
+    /// Opened, the page draws its top and its whole contents from the device at once, so nothing
+    /// moves when it reads the rest. `None` when `fits` takes not even the head with no section.
+    pub fn first(
+        &self,
+        document: &Document,
+        fits: impl Fn(&DocumentOutline) -> bool,
+    ) -> Option<DocumentOutline> {
+        let mut part = self.clone();
+        part.document.sections.clear();
+        part.document.cards.clear();
+        part.document.waiting.clear();
+        part.document.threads.clear();
+        part.anchors.clear();
+        part.thread_hashes.clear();
+        if !fits(&part) {
+            return None;
+        }
+        for section in &document.sections {
+            let mut next = part.clone();
+            let ids = self.anchors.get(&section.key).cloned().unwrap_or_default();
+            next.anchors.insert(section.key.clone(), ids);
+            if let Some(slug) = section.key.strip_prefix("card:") {
+                next.document
+                    .cards
+                    .extend(document.cards.iter().filter(|c| c.slug == slug).cloned());
+                if self.document.waiting.iter().any(|waiting| waiting == slug) {
+                    next.document.waiting.push(slug.to_string());
+                }
+                if let Some(thread) = document.threads.get(slug) {
+                    next.document
+                        .threads
+                        .insert(slug.to_string(), thread.clone());
+                }
+                if let Some(hash) = self.thread_hashes.get(slug) {
+                    next.thread_hashes.insert(slug.to_string(), hash.clone());
+                }
+            }
+            next.document.sections.push(section.clone());
+            if !fits(&next) {
+                break;
+            }
+            part = next;
+        }
+        Some(part)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

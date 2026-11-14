@@ -37,6 +37,9 @@ struct Body {
     gzipped: bool,
     cache: &'static str,
     etag: String,
+    /// Header lines of its own, each ending in CRLF, sent on its `304` too: a document read's
+    /// cursor ([`symphony_api::VERSION_HEADER`]).
+    headers: String,
 }
 
 /// One answer the stand-in sent: to which request, naming which tag, with which status.
@@ -47,6 +50,9 @@ pub struct Answered {
     /// Its `If-None-Match`, when it named one.
     pub named: Option<String>,
     pub status: u16,
+    /// A read ahead of a visit (assets/shell.js, `ahead`): a read of the API marked as a prefetch,
+    /// no page's own ([`Site::read_ahead`]).
+    pub ahead: bool,
 }
 
 /// A file the site serves: the shell and the API replies, made at the start, or a build file,
@@ -129,11 +135,14 @@ fn runs(bytes: &[u8]) -> usize {
 struct Shared {
     replies: HashMap<String, Body>,
     posts: Vec<(String, serde_json::Value)>,
-    /// Every request's path, in arrival order.
+    /// Every request's path but the reads ahead's, in arrival order.
     log: Vec<String>,
     /// Every answer but the feed's, in the order sent.
     answers: Vec<Answered>,
+    /// Every request's path and query but the reads ahead's, in arrival order.
     targets: Vec<String>,
+    /// The reads ahead's paths and queries, in arrival order ([`Answered::ahead`]).
+    ahead: Vec<String>,
     /// The open feed streams, by the number each was given, written to by `push`. A stream the
     /// page closes leaves at once ([`hold_feed`]).
     feeds: Vec<(u64, TcpStream)>,
@@ -169,6 +178,8 @@ struct Shared {
     /// Build files the server no longer holds, answered 404, as a server whose published client
     /// dropped their build.
     retired: BTreeSet<String>,
+    /// Documents read as the server reads them, by their path ([`Site::set_document`]).
+    documents: HashMap<String, serde_json::Value>,
 }
 
 pub struct Site {
@@ -260,6 +271,7 @@ impl Site {
             log: Vec::new(),
             answers: Vec::new(),
             targets: Vec::new(),
+            ahead: Vec::new(),
             feeds: Vec::new(),
             opened_feeds: 0,
             board: serde_json::from_str(board).expect("a board"),
@@ -278,6 +290,7 @@ impl Site {
             ending_feeds: false,
             silent: false,
             retired: BTreeSet::new(),
+            documents: HashMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -315,23 +328,42 @@ impl Site {
         format!("http://{}{path}", self.addr)
     }
 
-    /// The paths requested so far, in order.
+    /// The paths the pages requested so far, in order: their own, not their reads ahead.
     pub fn requests(&self) -> Vec<String> {
         self.shared.lock().unwrap().log.clone()
     }
 
+    /// [`Site::requests`] with their queries.
     pub fn targets(&self) -> Vec<String> {
         self.shared.lock().unwrap().targets.clone()
     }
 
-    /// The answers sent so far to requests for `path` (any query, any checkout's), in order.
+    /// The answers sent so far to the pages' own requests for `path` (any query, any checkout's),
+    /// in order.
     pub fn answers(&self, path: &str) -> Vec<Answered> {
         self.shared
             .lock()
             .unwrap()
             .answers
             .iter()
-            .filter(|answer| route_of(&answer.target) == path)
+            .filter(|answer| !answer.ahead && route_of(&answer.target) == path)
+            .cloned()
+            .collect()
+    }
+
+    /// The reads ahead of a visit asked so far, their paths and queries in order, answered or not.
+    pub fn asked_ahead(&self) -> Vec<String> {
+        self.shared.lock().unwrap().ahead.clone()
+    }
+
+    /// The answers sent so far to reads ahead of a visit, in order.
+    pub fn read_ahead(&self) -> Vec<Answered> {
+        self.shared
+            .lock()
+            .unwrap()
+            .answers
+            .iter()
+            .filter(|answer| answer.ahead)
             .cloned()
             .collect()
     }
@@ -342,6 +374,19 @@ impl Site {
 
     pub fn set_json(&self, path: &str, value: &serde_json::Value) {
         self.set_file(path, value.to_string().into_bytes(), "application/json");
+    }
+
+    /// Serve `document` (as `/api/document` without a view sends it, its bodies and threads in it)
+    /// at its path as the server does: its outline, the sections a read's `keys` name, each
+    /// tagged without the feed's cursor and naming it in a header ([`document_read`]). A reply
+    /// [`Site::set_json`] gave a read's route or target wins over it.
+    pub fn set_document(&self, document: &serde_json::Value) {
+        let path = document["path"].as_str().expect("a document's path");
+        self.shared
+            .lock()
+            .unwrap()
+            .documents
+            .insert(path.to_string(), document.clone());
     }
 
     pub fn set_file(&self, path: &str, bytes: Vec<u8>, mime: &'static str) {
@@ -739,7 +784,156 @@ fn encoded(
         gzipped,
         cache,
         etag: format!("{weak}\"{hash:016x}\""),
+        headers: String::new(),
     }
+}
+
+/// A document read's answer, as the server sends it (apps/symphony-server/src/api.rs,
+/// `validated::without_cursor`): tagged by its JSON with the feed's cursor `null`, so the same
+/// content answers `304` at any cursor, and the cursor named in a header of its own, on the `304`
+/// too.
+fn document_body(value: &serde_json::Value) -> Body {
+    let cursor = value
+        .get("document")
+        .unwrap_or(value)
+        .get("version")
+        .and_then(serde_json::Value::as_u64);
+    let mut bare = value.clone();
+    if bare.get("document").is_some() {
+        bare["document"]["version"] = serde_json::Value::Null;
+    } else if bare.get("version").is_some() {
+        bare["version"] = serde_json::Value::Null;
+    }
+    let mut body = body(
+        value.to_string().into_bytes(),
+        "application/json",
+        "no-store",
+    );
+    body.etag = format!("W/\"{:016x}\"", fnv1a(bare.to_string().as_bytes()));
+    if let Some(cursor) = cursor {
+        body.headers = format!("{}: {cursor}\r\n", symphony_api::VERSION_HEADER);
+    }
+    body
+}
+
+/// A query parameter of a request's target, percent-decoded.
+pub fn query(target: &str, name: &str) -> Option<String> {
+    let (_, query) = target.split_once('?')?;
+    let value = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))?;
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut rest = value.as_bytes();
+    while let Some((&byte, after)) = rest.split_first() {
+        let hex = after
+            .get(..2)
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match (byte, hex) {
+            (b'%', Some(decoded)) => {
+                bytes.push(decoded);
+                rest = &after[2..];
+            }
+            _ => {
+                bytes.push(byte);
+                rest = after;
+            }
+        }
+    }
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The section keys a `/api/section` request asked for, as its `keys` query names them.
+pub fn asked_keys(target: &str) -> Vec<String> {
+    query(target, "keys")
+        .and_then(|keys| serde_json::from_str(&keys).ok())
+        .unwrap_or_default()
+}
+
+/// `document`'s outline (`/api/document?view=outline`): no bodies or threads, each card's thread
+/// named by a hash of it.
+pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
+    let mut outline = document.clone();
+    for section in outline["sections"].as_array_mut().into_iter().flatten() {
+        section["blocks"] = serde_json::json!([]);
+    }
+    let threads = outline["threads"].take();
+    outline["threads"] = serde_json::json!({});
+    let hashes: serde_json::Map<String, serde_json::Value> = threads
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(slug, thread)| {
+            let hash = format!("{:016x}", fnv1a(thread.to_string().as_bytes()));
+            (slug.clone(), hash.into())
+        })
+        .collect();
+    serde_json::json!({"document": outline, "anchors": {}, "thread_hashes": hashes})
+}
+
+/// What a page reads ahead of `document` (`/api/document?view=first`), as the server cuts it
+/// (`DocumentOutline::first`): its leading sections whole within `symphony_api::AHEAD_BYTES`.
+pub fn first_of(document: &serde_json::Value) -> serde_json::Value {
+    let whole: symphony_api::Document =
+        serde_json::from_value(document.clone()).expect("a whole document");
+    let outline: symphony_api::DocumentOutline =
+        serde_json::from_value(outline_of(document)).expect("its outline");
+    let part = outline
+        .first(&whole, |part| {
+            serde_json::to_vec(part).is_ok_and(|json| json.len() <= symphony_api::AHEAD_BYTES)
+        })
+        .expect("a fixture's head within the cap");
+    serde_json::to_value(part).unwrap()
+}
+
+/// The answer the server gives `target`, a read of `/api/document` or `/api/section` of
+/// `document` (a whole document, as `/api/document` without a view sends it): its outline
+/// ([`outline_of`]), its first part ([`first_of`]), the sections its `keys` name with their cards
+/// and threads, or the document whole.
+fn document_read(document: &serde_json::Value, route: &str, target: &str) -> Body {
+    let value = if route == "/api/section" {
+        let keys = asked_keys(target);
+        let asked = |key: &str| keys.iter().any(|asked| asked == key);
+        let sections: Vec<&serde_json::Value> = document["sections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|section| asked(section["key"].as_str().unwrap_or_default()))
+            .collect();
+        let cards: Vec<&serde_json::Value> = document["cards"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|card| {
+                asked(&format!(
+                    "card:{}",
+                    card["slug"].as_str().unwrap_or_default()
+                ))
+            })
+            .collect();
+        let threads: serde_json::Map<String, serde_json::Value> = cards
+            .iter()
+            .map(|card| {
+                let slug = card["slug"].as_str().unwrap_or_default();
+                (slug.to_string(), document["threads"][slug].clone())
+            })
+            .collect();
+        let cards: Vec<serde_json::Value> = cards
+            .into_iter()
+            .map(|card| serde_json::json!({"key": card["slug"], "value": card}))
+            .collect();
+        serde_json::json!({
+            "version": document["version"],
+            "change": {"path": document["path"], "sections": sections, "cards": cards, "threads": threads}
+        })
+    } else {
+        match query(target, "view").as_deref() {
+            Some("outline") => outline_of(document),
+            Some("first") => first_of(document),
+            _ => document.clone(),
+        }
+    };
+    document_body(&value)
 }
 
 fn gzip_at(bytes: &[u8], level: Compression) -> Vec<u8> {
@@ -806,11 +1000,18 @@ fn serve(
         }
         let path = route_of(&target);
         let named = headers.get("if-none-match").cloned();
+        // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
+        // the shell's warmed modules are prefetches too, but no reads of the API.
+        let ahead = path.starts_with("/api/")
+            && headers
+                .get("purpose")
+                .is_some_and(|purpose| purpose.starts_with("prefetch"));
         let answered = |status: u16| {
             shared.lock().unwrap().answers.push(Answered {
                 target: target.clone(),
                 named: named.clone(),
                 status,
+                ahead,
             });
         };
         let length = headers
@@ -823,8 +1024,12 @@ fn serve(
         }
         let (turn, ticket) = {
             let mut shared = shared.lock().unwrap();
-            shared.log.push(path.clone());
-            shared.targets.push(target.clone());
+            if ahead {
+                shared.ahead.push(target.clone());
+            } else {
+                shared.log.push(path.clone());
+                shared.targets.push(target.clone());
+            }
             if line.starts_with("POST ") {
                 shared.posts.push((
                     path.clone(),
@@ -918,6 +1123,13 @@ fn serve(
                 .get(&target)
                 .or_else(|| shared.replies.get(&path))
                 .cloned()
+                .or_else(|| {
+                    let read = matches!(path.as_str(), "/api/document" | "/api/section")
+                        .then(|| query(&target, "path"))
+                        .flatten()?;
+                    let document = shared.documents.get(&read)?;
+                    Some(document_read(document, &path, &target))
+                })
         });
         let found = if overridden.is_some() {
             overridden.as_ref()
@@ -965,8 +1177,8 @@ fn serve(
                 answered(304);
                 out.write_all(
                     format!(
-                        "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n\r\n",
-                        body.etag, body.cache
+                        "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n{}\r\n",
+                        body.etag, body.cache, body.headers
                     )
                     .as_bytes(),
                 )
@@ -979,11 +1191,12 @@ fn serve(
                     ""
                 };
                 let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: {}\r\nETag: {}\r\n{encoding}\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: {}\r\nETag: {}\r\n{}{encoding}\r\n",
                     body.content_type,
                     body.bytes.len(),
                     body.cache,
-                    body.etag
+                    body.etag,
+                    body.headers
                 );
                 let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
                     body.bytes.len() / 2
