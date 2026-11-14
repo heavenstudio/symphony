@@ -59,11 +59,11 @@ a measurement before and after.
   store changed; for a `symphony` subcommand, the `symphony` target named for its area (`asks`,
   `edit`, `picks`, `register`, `render`, `tree`). A change that adds, renames or retires a
   `symphony` subcommand, or changes a test that lists them, also runs the two targets that list
-  every command the binary has: `just test-rs -p symphony --test serve` and
-  `just test-rs -p symphony --lib cli::commands`.
+  every command the binary has: `just test-rs -p symphony-app --test serve` and
+  `just test-rs -p symphony-app --lib cli::commands`.
 - **A server route** (a handler, its status, headers and body, or where its answer comes from,
   such as the hub's last board read): the route's tests in the server
-  targets (`-p symphony-server --test after_http`, `-p symphony --test serve`), the wire target
+  targets (`-p symphony-server --test after_http`, `-p symphony-app --test serve`), the wire target
   (`-p symphony-api --test wire`) when a payload's shape changed, and the route's answer, status
   and body, read with `curl` from a server of the task's own on a scratch board
   (`TASKS_DATABASE=NAME just symphony --port 0`,
@@ -82,13 +82,15 @@ a measurement before and after.
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
   `store` target and `--lib schema`), the `perf` target for a query or index change
   (`just test-rs -p symphony-board --test perf`), the launcher's and hooks' own targets
-  (`-p symphony-board --test launcher`, `-p symphony --test hooks`, `-p symphony --lib init`),
+  (`-p symphony-board --test launcher`, `-p symphony-app --test hooks`, `-p symphony-app --lib init`),
   and the command run in a scratch worktree, never against the live board.
 - **A package's publication** (a member's `publish`, version, crates.io metadata, `include` list
-  or a published package's dependency on a sibling): `just test-rs -p symphony --test packages`
+  or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication.
+  never a publication. The packages test is also the closest one for a change to a file a package
+  carries a copy of (the client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it
+  fails until the copy is made again, naming the `cp`.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
@@ -98,7 +100,7 @@ a measurement before and after.
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
   last edit: a run before an edit is evidence of the text before it. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
-  the shipped skills' tests (`just test-rs -p symphony --lib init`). It runs no other test.
+  the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
 
 ### The recipes a text names
 
@@ -123,7 +125,7 @@ but never a blank line. One rule, two places:
   Symphony's crate vendored in it or not;
 - the hooks test (`named_recipes`) judges what the Symphony delivers too, and the strings the
   binaries print, which no docs change touches: a change to such a string runs it
-  (`just test-rs -p symphony --test hooks named_recipes`).
+  (`just test-rs -p symphony-app --test hooks named_recipes`).
 
 Each name either refuses is an error naming its file and line. Each entry of the lists is kept
 current, still named in its file and a filed one beside its task (`[[task:SLUG]]` on the line that
@@ -159,11 +161,11 @@ audit on main after the land's round files it within minutes
 A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turns on a
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
 link `serde_json` with `arbitrary_precision`, `float_roundtrip`, `preserve_order` and `raw_value`,
-as the server does, and so do the own runs of `symphony-board` and `symphony`, as the `tasks` and
+as the server does, and so do the own runs of `symphony-board` and `symphony-app`, as the `tasks` and
 `symphony` binaries do (the board's dependency asks for them), of `symphony-api`,
 `symphony-blocks` and `symphony-plugin` (a dev-dependency asks for them, which never reaches the
 client or a plugin's build) and of `symphony-schema` (`raw_value` aside, which changes no read),
-while the own runs of `symphony-ui` and `chrome-devtools` link it with none of them, so a test of
+while the own runs of `symphony-ui` and `symphony-chrome` link it with none of them, so a test of
 theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
 workspace's run.
 
@@ -435,7 +437,7 @@ module: every live symbol with its size and the object it came from. After `just
 touch the binary's own source file and run the recipe's build again, its packages and `--bin
 NAME`, with a `RUSTC_WRAPPER` that adds `-C link-arg=-Wl,-map,FILE` to that binary's link alone:
 Cargo relinks that binary and nothing else, its bytes as they were. Built with fewer packages
-(`-p symphony` alone, or `cargo rustc` of one), the dependencies take other features and the
+(`-p symphony-app` alone, or `cargo rustc` of one), the dependencies take other features and the
 binary is another one. `cargo bloat` needs an unstripped rebuild of everything.
 
 ## Checks with no reviewer

@@ -12,8 +12,10 @@ A consuming project owns its landing policy and shared-service safeguards.
 `Cargo.toml` and `Cargo.lock` belong to this workspace. Members inherit its package
 settings and dependency versions. The containing project's thin host and board-only
 packages consume these libraries through an immutable Git dependency pin. The plugin kit, the
-helpers and the app's wire types (`symphony-api`) are made to be published on crates.io as well,
-each by its version, and every other member keeps the workspace's `publish = false`
+helpers and the product (the library as `symphony-app`, its library still `symphony`, the board,
+the server, the Chrome driver as `symphony-chrome` and the app's wire types, `symphony-api`) are
+made to be published on crates.io as well, each by its version, and the client's sources and the
+tests' time keep the workspace's `publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
@@ -381,7 +383,7 @@ the order given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and
 reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
 folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
 The shot leashes Chrome by running its own program again, so a host binary that calls
-`symphony::cli` runs `chrome_devtools::leash_main()` first, as
+`symphony::cli` runs `symphony_chrome::leash_main()` first, as
 `crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
 before DevTools readiness".
 

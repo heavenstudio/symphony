@@ -108,7 +108,7 @@ size-check:
 
 [private]
 _size-check:
-    @tools/cargo.sh build --release --locked -p symphony-server -p symphony -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
+    @tools/cargo.sh build --release --locked -p symphony-server -p symphony-app -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
     @tools/rs-bin.sh symphony-build size-budget . "${CARGO_TARGET_DIR:-.target}/release"
 
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit

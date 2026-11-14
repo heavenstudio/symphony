@@ -1,16 +1,41 @@
+# The package is `symphony-app` on crates.io, where `symphony` is another project's; its library
+# keeps the name `symphony`, so a dependent writes `symphony = { package = "symphony-app", … }` and
+# every `symphony::` stays as it is. The binaries keep theirs: `symphony` is what is installed.
 [package]
-name = "symphony"
+name = "symphony-app"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Symphony's library and its `symphony` command: the owner's review of a project's documents, its decisions and asks, the project file and the plugins it selects."
+readme = "README.md"
+keywords = ["symphony", "review", "documentation", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+# What crates.io gets: the sources, the build script, what `symphony init` installs (shipped/), the
+# readme and the licence; never tests/ or fixtures, nor this repository's own binaries:
+# `symphony-build` (its build and release run) and `symphony-test-plugin` (the seam tests' plugin).
+include = [
+    "src/**",
+    "!src/bin/symphony-build.rs",
+    "!src/bin/symphony-test-plugin.rs",
+    "build.rs",
+    "shipped/**",
+    "README.md",
+    "LICENSE",
+]
+
+[lib]
+name = "symphony"
 
 # The Symphony library: the cards and callouts the owner leaves in docs/, read and written in the shapes
 # docs/workflow/REVIEW.md sets down. `symphony status` is `just symphony-status`, `symphony reply` is
 # `just symphony-reply`, and `symphony ask` is `just symphony-ask`.
-# `symphony serve` retains the line-oriented JSON command interface.
+# `symphony serve` retains the line-oriented JSON command interface. The product's packages
+# (this one, symphony-board, symphony-chrome, symphony-server and symphony-api) carry one version
+# and name each other exactly (`=`); the plugin kit and the helpers by their own lines (`^`).
 [dependencies]
 # The register's patterns (leftmost-first, like Python's re).
 regex = "1"
@@ -28,19 +53,19 @@ libc = "0.2"
 comrak.workspace = true
 fancy-regex.workspace = true
 sha2.workspace = true
-symphony-schema = { path = "../symphony-schema" }
-symphony-args = { path = "../symphony-args" }
-symphony-api = { path = "../symphony-api" }
+symphony-schema = { path = "../symphony-schema", version = "1.0.0" }
+symphony-args = { path = "../symphony-args", version = "1.0.0" }
+symphony-api = { path = "../symphony-api", version = "=0.1.0" }
 # The plugin seams the game modules implement, and the project file (symphony.toml) they are chosen by.
-symphony-plugin = { path = "../symphony-plugin" }
+symphony-plugin = { path = "../symphony-plugin", version = "1.0.0" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
-symphony-docs = { path = "../symphony-docs" }
+symphony-docs = { path = "../symphony-docs", version = "1.0.0" }
 # Its variables, each by its one SYMPHONY_ name.
-symphony-env = { path = "../symphony-env" }
+symphony-env = { path = "../symphony-env", version = "1.0.0" }
 toml.workspace = true
-symphony-board = { path = "../tasks" }
+symphony-board = { path = "../tasks", version = "=0.1.0" }
 # `symphony shot`: a page in a private headless Chrome, driven as the client's browser tests drive it.
-chrome-devtools = { path = "../chrome-devtools" }
+symphony-chrome = { path = "../chrome-devtools", version = "=0.1.0" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 [dev-dependencies]

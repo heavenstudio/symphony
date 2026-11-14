@@ -24,30 +24,72 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `git tag -l --format='%(contents)' NAME` prints a message. A project names the tag in its
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
   commit.
+- **What a project's manifest changes:** a release whose pin move needs a consuming project to
+  change more of its `Cargo.toml` than the tag says so here, with the line, until every project has
+  taken it. The first release that holds the library's package as `symphony-app` (renamed from
+  `symphony`, [the packages](#packages-on-cratesio)) needs the library's line to name it:
+  `symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag =
+  "release-…" }` in place of `symphony = { git = "https://github.com/heavenstudio/symphony", tag =
+  "release-…" }`. Until it does, the refresh's move of that project's pin is red
+  ([the refresh](#the-refresh)).
 
 ## Packages on crates.io
 
-The plugin kit, the helpers and the app's wire types a project links are made to be published on
-crates.io, each by its version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
+The plugin kit, the helpers and the product are made to be published on crates.io, each by its
+version, under MIT. The owner, 2026-11-13: "I would like to publish crates (MIT license) to
 crates.io as the pacakge manager" ([the card](DECISIONS.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
   ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0.
 - **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
   `repository-read`, each on a version line of its own from 1.0.0.
-- **The app's wire types,** `symphony-api`, at 0.1.0: they move with the server and the client, so
-  their version promises no name.
-- **The rest** (`symphony`, `symphony-board`, `symphony-server`, `chrome-devtools`, `symphony-ui`
-  and `test-time`) keep the workspace's `publish = false`.
+- **The product:** the library and its `symphony` command as `symphony-app`, the board
+  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy` and `tasks-reclaim`), the server
+  (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
+  wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
+  exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
+- **The rest,** the client's sources (`symphony-ui`, which the server embeds built) and the tests'
+  time (`test-time`), keep the workspace's `publish = false`.
+
+Two names were another project's on crates.io, so those two packages alone are renamed, the owner's
+choice (2026-11-13, on the board task `tools/publish-to-crates-io`): the library's package is
+`symphony-app`, its library still named `symphony` (`[lib] name`), and the Chrome driver's is
+`symphony-chrome`, its library `symphony_chrome`. Their folders keep their names
+(`crates/symphony`, `crates/chrome-devtools`), and so do the binaries. A dependent names the library
+`symphony = { package = "symphony-app", … }`, so its code says `symphony::` as before; Cargo's
+`-p` takes the package's name, `-p symphony-app`.
+
+The product's commands install from crates.io with:
+
+```sh
+cargo install --locked --config profile.release.strip=true symphony-app symphony-board symphony-server
+```
+
+The workspace's `[profile.release]` is read from its root manifest alone and is not in a published
+one, so the install line strips the symbol table itself, as the shipped binaries' size budgets
+assume ([CHECKS](CHECKS.md#size-budgets)); no member carries a profile of its own, which Cargo
+would ignore with a warning on every build here. The server embeds its client at build time from
+its package's `client/public`, so an installed server serves it with no build of the client; its
+package carries every build that folder keeps, as it stands (8.0 MiB compressed today, of the
+10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
+to the newest build: no include list can name it, as the server's `Cargo.toml` is a release input,
+so a list that followed each build would move the next build's asset names.
 
 A published package's manifest says `publish = true` with a description, the repository, a readme of
-its own, keywords, categories and an `include` list (its sources, readme and LICENSE: no `tests/`
-folder or fixtures). Its LICENSE is a copy of the root's, never a link, which the client's release
-inputs refuse (`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with
-no link into this repository, which is private. It names a published sibling by `path` and
-`version`, and an unpublished one only as a development dependency, by `path` alone, which
-publishing drops. `crates/symphony/tests/packages.rs` holds which members are published and that
-each carries all of this.
+its own, keywords, categories and an `include` list (its sources, its build script, what it embeds,
+readme and LICENSE: no `tests/` folder or fixtures, and none of the binaries only this repository
+runs: `symphony-build`, `symphony-test-plugin`, `fake-hc`, `symphony-shelf`, `symphony-ui-dev`).
+Its LICENSE is a copy of the root's, never a link, which the client's release inputs refuse
+(`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with no link into
+this repository, which is private; the server's is `CRATE.md`, as its `README.md` is its guide. It
+names a published sibling by `path` and `version`, and an unpublished one only as a development
+dependency, by `path` alone, which publishing drops. A file a package's code reads from outside it
+is a copy in the package, since the package must build alone: the server's `board.css` and
+`frame.css` of the client's (the client reads its own through `asset!`, which takes no file outside
+its crate) and the Chrome driver's `fixture_process.sh` of `tools/` (where the board's fixtures find
+the source root by it). `crates/symphony/tests/packages.rs` holds which members are published, that
+each carries all of this, that each copy is its file byte for byte, and that the server's `.crate`
+is one crates.io takes.
 
 A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
 publishes yet. The first publication is the owner's act, or runs on the owner's word, with the
@@ -56,15 +98,16 @@ one more answer of the owner's, asked on the board task `tools/publish-to-crates
 names this repository as its `repository`, which answers 404 to anyone but the owner while the
 repository is private, so either the repository is made public first or the packages are published
 with no `repository` line. Up to then, the packages are proven by `cargo publish --dry-run` naming
-the nine together, which packages them in dependency order and builds each against the others as
+the thirteen together, which packages them in dependency order and builds each against the others as
 packaged, before any is on crates.io.
 
 Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
-consuming project names each package with `branch = "main"` and its `Cargo.lock` binds a commit of
-main, which [the refresh](#the-refresh) moves to a release tag once there is one. Even once the kit
-and the helpers are published, it keeps that pin until the library, the board and the server are
-published too: a kit from crates.io beside a library from Git would be two copies of the kit, whose
-types do not match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
+consuming project names each package at a release tag (`tag = "release-…"`) and its `Cargo.lock`
+binds that tag's commit, which [the refresh](#the-refresh) moves to each new release. Its one line
+for the library changes with the rename, as [the refresh](#the-refresh) says. Once every package it
+names is published, it can take them all from crates.io in one edit; not before: a kit from
+crates.io beside a library from Git would be two copies of the kit, whose types do not match
+([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
 
 ## The release run
 
@@ -550,6 +593,27 @@ A step moves what it can and nothing more:
   names both commits, the pin's and the release's, and the run's record and `--status` repeat it
   (`consumer: its main's lock pins the Symphony at P, neither ahead of release-… (R) nor behind
   it: …`). The next release that descends from that pin moves it.
+
+  A package renamed here is a move the refresh does not make: it rewrites each line's tag and not
+  the package the line names, so `cargo update` finds no package of the old name at the new tag,
+  and the step is red for that project until its own manifest names the new one. The first
+  release that holds the library as `symphony-app` (the owner's names, 2026-11-13; [the
+  packages](#packages-on-cratesio)) is one: the consuming project's workspace manifest changes its
+  one line for the library from
+
+  ```toml
+  symphony = { git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
+  ```
+
+  to
+
+  ```toml
+  symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
+  ```
+
+  in the commit that moves its pin, landed through its own landing as any move its gate refuses,
+  and nothing else changes: the key stays `symphony`, and so does the library's name, so no
+  member's manifest and no `use` moves. It names no Chrome driver, the other package renamed.
 - **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
   full hash and never by a name a moved branch or a tag of the same name could answer, in its main
   checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all

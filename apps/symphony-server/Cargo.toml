@@ -3,21 +3,41 @@ name = "symphony-server"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+description = "Symphony's server: one per machine, serving each registered project's documents, review queue and task board to its web client, which it embeds."
+# README.md is this package's guide, which links into the repository: crates.io shows CRATE.md.
+readme = "CRATE.md"
+keywords = ["symphony", "server", "review", "tasks"]
+categories = ["web-programming::http-server", "development-tools"]
+# What crates.io gets: the sources, the build script, the client it embeds (client/public: the
+# three builds the folder keeps, as they stand), the readme and the licence; never tests/ or
+# fixtures, nor `symphony-shelf` (the browser tests' server) or `symphony-ui-dev` (the client's
+# development launcher). crates/symphony/tests/packages.rs holds its `.crate` within the 10 MiB
+# crates.io takes.
+include = [
+    "src/**",
+    "!src/bin/symphony-shelf.rs",
+    "!src/bin/symphony-ui-dev.rs",
+    "build.rs",
+    "client/public/**",
+    "CRATE.md",
+    "LICENSE",
+]
 
 # One native axum server per machine, with JSON contracts in symphony-api and the Dioxus shell at /.
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 libc = "0.2"
-symphony-api = { path = "../../crates/symphony-api" }
-symphony = { path = "../../crates/symphony" }
+symphony-api = { path = "../../crates/symphony-api", version = "=0.1.0" }
+symphony = { package = "symphony-app", path = "../../crates/symphony", version = "=0.1.0" }
 # The plugins a host binary installs before it serves (`binary::run`).
-symphony-plugin = { path = "../../crates/symphony-plugin" }
-symphony-board = { path = "../../crates/tasks" }
+symphony-plugin = { path = "../../crates/symphony-plugin", version = "1.0.0" }
+symphony-board = { path = "../../crates/tasks", version = "=0.1.0" }
 # Its variables, each by its one SYMPHONY_ name.
-symphony-env = { path = "../../crates/symphony-env" }
+symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }
 notify = "8"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # A client file's gzip, made once per content and kept (`src/api/client/gzipped.rs`).
