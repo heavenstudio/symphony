@@ -160,6 +160,21 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         assert!(!releases.holds_candidates(), "{off}");
     }
     assert!(refused("[releases]\ncandidate_hours = -1\n").contains("candidate_hours"));
+    // A green release publishes on crates.io only on the project's word.
+    assert!(!parsed("").unwrap().releases.publish);
+    assert!(
+        !parsed("[releases]\nrefresh = true\n")
+            .unwrap()
+            .releases
+            .publish
+    );
+    assert!(
+        parsed("[releases]\npublish = true\n")
+            .unwrap()
+            .releases
+            .publish
+    );
+    assert!(refused("[releases]\npublish = \"yes\"\n").contains("publish"));
 }
 
 #[test]

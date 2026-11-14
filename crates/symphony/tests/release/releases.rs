@@ -475,6 +475,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
          landings: 0 on origin/main since the line's start: no release and no run on record, so \
          every landing counts\n\
          next run: after 20 more landings (0 of 20), or the scheduled run\n\
+         last publish: none recorded\n\
          last refresh: none recorded\n"
     );
     fixture.night(NOW, 0);
@@ -511,8 +512,13 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
             &green[..12]
         )
     );
-    // The count starts again from the red run, which checked the tip, as from a release.
+    // The count starts again from the red run, which checked the tip, as from a release. The last
+    // publication is the last green release's, which publishes nothing while the project says not.
     let red = fixture.runs().pop().unwrap();
+    let published = format!(
+        "last publish: of release-2026-11-12.2 by the run {}, 2026-11-12 11:00 (4 h ago)",
+        fixture.runs()[1]["id"].as_str().unwrap()
+    );
     assert_eq!(
         lines[3..],
         [
@@ -525,6 +531,8 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
             )
             .as_str(),
             "next run: after 20 more landings (0 of 20), or the scheduled run",
+            published.as_str(),
+            "  not published: [releases] publish is off",
             "last refresh: none recorded",
         ]
     );

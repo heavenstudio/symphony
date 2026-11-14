@@ -439,6 +439,12 @@ impl Site {
         self.shared.lock().unwrap().retired.insert(path.to_owned());
     }
 
+    /// Answer the build file at `path` again, after [`Site::retire`]: a load that failed and works
+    /// later.
+    pub fn restore(&self, path: &str) {
+        self.shared.lock().unwrap().retired.remove(path);
+    }
+
     /// End each feed stream as soon as it opens, from now on.
     pub fn end_feeds_on_open(&self) {
         self.shared.lock().unwrap().ending_feeds = true;

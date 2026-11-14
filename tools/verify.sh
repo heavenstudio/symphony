@@ -8,6 +8,8 @@
 #                   compared with the committed distribution
 #     size-check    the size-check recipe: the shipped binaries' size budgets
 #     docs-audit    the docs audit, `symphony docs-audit --check`
+#     crates-check  the crates-check recipe: each published package whose version crates.io holds
+#                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
 #     tests         every test target of the workspace, the browser tests among them
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
@@ -36,7 +38,7 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit tests)
+steps=(lint client-check size-check docs-audit crates-check tests)
 chosen=()
 for arg in "$@"; do
     known=''
@@ -140,6 +142,11 @@ for step in "${chosen[@]}"; do
         run docs-audit "just symphony-cli docs-audit --check" \
             tools/record.sh --step docs-audit test "docs audit" \
             just --justfile "$justfile" symphony-cli docs-audit --check
+        ;;
+    crates-check)
+        run crates-check "just crates-check" \
+            tools/record.sh --step crates-check test "crates check" \
+            just --justfile "$justfile" crates-check
         ;;
     tests)
         tests=(tools/cargo.sh test --workspace --locked --no-fail-fast)

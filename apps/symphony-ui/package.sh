@@ -34,6 +34,9 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
 fi
 # The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
 program_kinds=(tasks reports panel overlay timeline)
+# Its chunks: the kinds' and the media layer's, which no kind is (the shell's manifest never names
+# it) and a kind's page loads once it shows media.
+program_chunks=("${program_kinds[@]}" media)
 # Whether the wasm module $1 holds custom sections alone (a name and its bytes, never code, data or
 # a table entry): past its 8-byte header, each section is its id, its size in LEB128 and its bytes.
 custom_only() {
@@ -85,6 +88,8 @@ for module_kind in board docs review queue program; do
         chunks='{}'
         for kind in "${program_kinds[@]}"; do
             ready="${ready}globalThis.reviewModuleReady_$kind="
+        done
+        for kind in "${program_chunks[@]}"; do
             chunk="$(find "$module/public/assets" -name "module_*_$kind-*.wasm" -exec basename {} \;)"
             if [ -z "$chunk" ] || [ "$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')" != 1 ]; then
                 echo "symphony-ui: expected one chunk of $kind in the program, found: ${chunk:-none}" >&2
@@ -192,4 +197,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: home, the board, the documents and the queue as modules of their own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, one SPA shell: $out/public" >&2
+echo "symphony-ui: home, the board, the documents and the queue as modules of their own, the program of the task pages, Reports, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
