@@ -1067,6 +1067,21 @@ mod tests {
         assert!(
             help_of(&["help", "claim"]).contains("\n\ntake a task as its executor.\n\npositional")
         );
+        // A new project has none of this repository's own files: staff names the setting it reads
+        // in any checkout, and the fast fix no rule of RULES.md.
+        assert!(help_of(&["help", "staff"]).contains(
+            "\n\nstaff ready work once, if tools/task_staff.json enables it.\n\noptions:"
+        ));
+        let fast_fix = [
+            "  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no",
+            "                        reviewer: its orchestrator approves it",
+            "  --no-role             file it for the orchestrator --for names, not for the",
+        ]
+        .join("\n");
+        assert!(help_of(&["help", "create"]).contains(&fast_fix));
+        for name in usage::COMMANDS.iter().map(|(n, _, _)| *n) {
+            assert!(!help_of(&["help", name]).contains("RULES.md"), "{name}");
+        }
         assert!(help_of(&["help", "run"]).starts_with("usage: tasks run --phase build|test"));
         // A command read before the table answers with its own help.
         assert_eq!(help_of(&["help", "migrate"]), crate::cli::migrate::HELP);

@@ -73,6 +73,58 @@ impl Project {
 }
 
 #[test]
+fn a_fresh_projects_just_list_says_what_each_installed_recipe_does_in_one_line() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    let listed = project.ok(&root, "just", &["--list"], None);
+    // `just --list` shows the comment line right above a recipe: each is the whole of what the
+    // recipe does, never the tail of a longer comment.
+    for (recipe, said) in [
+        (
+            "tasks",
+            "The task board: `just tasks help`. Every command of the board's but its recorder.",
+        ),
+        (
+            "agent-send",
+            "A message to an agent through its registered channel: `just agent-send HANDLE TEXT \
+             --as SENDER`.",
+        ),
+        (
+            "symphony",
+            "The machine's Symphony server, serving this project; `--port 0` runs one of its own.",
+        ),
+        (
+            "symphony-cli",
+            "The document CLI: `just symphony-cli help`.",
+        ),
+        (
+            "symphony-status",
+            "The review board in the terminal: `--open`, `--json`, `--tidy`, `--lint`.",
+        ),
+        (
+            "symphony-reply",
+            "An agent's line under a card: `just symphony-reply PATH SLUG TEXT [--question] [--as \
+             HANDLE]`.",
+        ),
+        (
+            "symphony-ask",
+            "The owner's asks: `list --open`, `show ID`, `answer ID TEXT --as HANDLE`.",
+        ),
+        (
+            "land",
+            "Land a task's approved branch: `just land SLUG --as HANDLE`.",
+        ),
+    ] {
+        let line = listed
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{recipe} *ARGS ")))
+            .unwrap_or_else(|| panic!("{recipe} in {listed}"));
+        assert!(line.ends_with(&format!("# {said}")), "{line}");
+    }
+}
+
+#[test]
 fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     let project = Project::new();
     let root = project.root.clone();

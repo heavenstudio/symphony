@@ -40,7 +40,7 @@ pub(super) fn run(parsed: &Parsed, env: &Env, out: &mut dyn Write, err: &mut dyn
     let mut warnings = match &report {
         Some(report) => report.read_warnings(now, sys::pid_alive),
         None => vec![format!(
-            "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`)",
+            "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`); a server of its own (`--port 0`) records none",
             file.display()
         )],
     };
@@ -200,8 +200,10 @@ mod tests {
             ("TASKS_SERVER", GONE),
             (disk::VAR, "0"),
         ];
+        // A private server, `--port 0`, serving the project records none: said, so its absence is
+        // not taken for a fault.
         let missing = format!(
-            "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`)",
+            "no board health is recorded in {}: the machine's Symphony server records it while it serves this project (`just symphony`); a server of its own (`--port 0`) records none",
             path.display()
         );
         assert_eq!(

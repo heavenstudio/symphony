@@ -20,18 +20,20 @@ fn shown(text: &str, running: Option<Result<usize, Error>>) -> Vec<String> {
 
 #[test]
 fn a_file_naming_nothing_prints_every_default_and_the_boards_own_models() {
+    // The board's own model is longer than the value column: the column widens to it, so every
+    // row's source starts at one place.
     assert_eq!(
         shown("[project]\nname = \"x\"\n", None),
         [
             "LIMITS from /repo/symphony.toml",
-            "orchestrator_slots       none    default",
-            "low_volume               4       default",
-            "machine_agents           none    default",
-            "review_alarm_ratio       2       default",
-            "review_alarm_hours       4       default",
-            "review_alarm_clear_hours 1       default",
+            "orchestrator_slots       none        default",
+            "low_volume               4           default",
+            "machine_agents           none        default",
+            "review_alarm_ratio       2           default",
+            "review_alarm_hours       4           default",
+            "review_alarm_clear_hours 1           default",
             "MODELS of codex",
-            "orchestrator             -       whoever starts one chooses",
+            "orchestrator             -           whoever starts one chooses",
             "executor                 gpt-6.1-sol the board's own for codex",
             "reviewer                 gpt-6.1-sol the board's own for codex",
         ]
@@ -84,7 +86,7 @@ fn the_cap_an_older_file_writes_in_board_is_named_there() {
     let text = "[board]\norchestrator_slots = 8\n";
     assert_eq!(
         shown(text, None)[1],
-        "orchestrator_slots       8       [board] orchestrator_slots, line 2"
+        "orchestrator_slots       8           [board] orchestrator_slots, line 2"
     );
 }
 
@@ -94,7 +96,7 @@ fn a_count_that_cannot_be_made_is_said_beside_the_limit() {
     let unknown = Err(Error::Refused("hc cannot be asked".into()));
     assert_eq!(
         shown(text, Some(unknown))[3],
-        "machine_agents           3       [limits] machine_agents, line 2; hc cannot be asked"
+        "machine_agents           3           [limits] machine_agents, line 2; hc cannot be asked"
     );
 }
 
@@ -104,7 +106,7 @@ fn a_bad_value_shows_the_default_in_force() {
     let text = "[limits]\nlow_volume = -1\n";
     assert_eq!(
         shown(text, None)[2],
-        "low_volume               4       default"
+        "low_volume               4           default"
     );
 }
 

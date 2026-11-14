@@ -207,7 +207,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "staff",
-                "one staffing pass over ready work (tools/task_staff.json)",
+                "staff ready work once, if tools/task_staff.json enables it",
             ),
             (
                 "sweep",
@@ -545,8 +545,7 @@ options:
   --link LINK           a document it implements, docs/X.md#Heading
                         (repeatable)
   --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
-                        reviewer: its orchestrator approves it (RULES.md
-                        workflow/fast-bugfixes)
+                        reviewer: its orchestrator approves it
   --no-role             file it for the orchestrator --for names, not for the
                         filer: else an orchestrator filing it takes the
                         role, and the board gives any other filer's task an

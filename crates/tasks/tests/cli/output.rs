@@ -31,7 +31,11 @@ fn each_command_says_what_it_did_in_one_line() {
         &["role", "sim/b", "orchestrator"],
         "orchestrator on sim/b\n",
     );
-    says(&exe, &["claim", "sim/a"], "claimed sim/a\n");
+    says(
+        &exe,
+        &["claim", "sim/a"],
+        "claimed sim/a: its work goes on the branch sim/a, which the land takes\n",
+    );
     says(&exe, &["reserve", "sim/b"], "reserved sim/b\n");
     says(&exe, &["release", "sim/b"], "released sim/b (design)\n");
     says(&exe, &["move", "sim/a", "review"], "sim/a is review\n");
@@ -45,7 +49,13 @@ fn each_command_says_what_it_did_in_one_line() {
         !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()),
         "{sent:?}"
     );
-    says(&rev, &["verdict", "sim/a", "approve"], "sim/a is done\n");
+    // Done is not landed: outside a checkout the default landing is named.
+    says(
+        &rev,
+        &["verdict", "sim/a", "approve"],
+        "sim/a is approved: done on the board, not on the default branch until it lands; `just \
+         land sim/a --as HANDLE` lands it\n",
+    );
     says(
         &orch,
         &["parent", "sim/b", "sim/a"],
@@ -67,7 +77,8 @@ fn each_command_says_what_it_did_in_one_line() {
             "--instruction",
         ],
     );
-    c.ok(&exe, &["claim", "sim/b/m"]);
+    // An instruction subtask's slug is never a branch: its claim names none.
+    says(&exe, &["claim", "sim/b/m"], "claimed sim/b/m\n");
     says(&exe, &["done", "sim/b/m", "4 ms"], "sim/b/m is done\n");
     says(&exe, &["next"], "sim/b  p2  B\n");
     says(&exe, &["leave"], "left\n");

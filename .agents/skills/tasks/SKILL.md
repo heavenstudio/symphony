@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 334bf5c0d978f8bb files=SKILL.md -->
+<!-- symphony-stamp: 5dd2e456eecb3e74 files=SKILL.md -->
 
 # Work from the task board
 
@@ -150,10 +150,11 @@ Act on requests without an acknowledgement post.
 
 ## Take work (worker)
 
-1. `just tasks next`. It offers concept, design and ready work. If it prints
-   nothing, there is nothing for you; say so. Concept or design work stays in
-   its stage while you hold it: move it on with `just tasks move SLUG design` or
-   `just tasks move SLUG ready` once the documents are written.
+1. `just tasks next`. It offers concept, design and ready work. If it says
+   `nothing to take`, there is nothing for you; say so. Concept or design
+   work stays in its stage while you hold it: move it on with
+   `just tasks move SLUG design` or `just tasks move SLUG ready` once the
+   documents are written.
 2. Carry it by the [work](../work/SKILL.md) skill from its start page, which
    claims it and questions it before any code, through to its finish; read the
    spec sections `just tasks show SLUG` links.
