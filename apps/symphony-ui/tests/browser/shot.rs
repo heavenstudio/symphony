@@ -2415,12 +2415,12 @@ fn shared_fetching(path: &str) -> Vec<u8> {
 #[test]
 fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming_each() {
     // A sandboxed frame whose document the stand-in never answers, a frame of another site whose
-    // stylesheet it never answers, and a dedicated and a shared worker of the page whose fetches it
-    // never answers: the page's own document waits for its frames, and the shot fails at its
-    // timeout naming each frame that never loaded, by its address, and what it still waits for in
-    // it, and each worker's fetch by the worker's script, never as a frame's. The timeout is the
-    // patient one, which only a stall reaches, so by then the page has gone as far as it ever will,
-    // however loaded the machine. No picture is left.
+    // stylesheet it never answers, and a dedicated worker of the page whose fetch it never answers:
+    // the page's own document waits for its frames, and the shot fails at its timeout naming each
+    // frame that never loaded, by its address, and what it still waits for in it, and the worker's
+    // fetch by the worker's script, never as a frame's. The timeout is the patient one, which only
+    // a stall reaches, so by then the page has gone as far as it ever will, however loaded the
+    // machine. No picture is left.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2431,20 +2431,13 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
     other.hold_route("/hung.css", true);
     site.hold_route("/hung.html", true);
     site.set_file("/hung-worker.js", fetching("/hung-data"), "text/javascript");
-    site.set_file(
-        "/hung-shared.js",
-        shared_fetching("/hung-shared-data"),
-        "text/javascript",
-    );
-    for path in ["/hung-data", "/hung-shared-data"] {
-        site.hold_route(path, true);
-    }
+    site.hold_route("/hung-data", true);
     let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
     site.set_file(
         "/hung-frames.html",
         format!(
             r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>
-<script>new Worker('/hung-worker.js'); new SharedWorker('/hung-shared.js').port.start();</script>"#
+<script>new Worker('/hung-worker.js');</script>"#
         )
         .into_bytes(),
         "text/html",
@@ -2471,11 +2464,6 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
                 "1 request(s) in flight in the worker {}: {}",
                 site.url("/hung-worker.js"),
                 site.url("/hung-data")
-            ),
-            format!(
-                "1 request(s) in flight in the worker {}: {}",
-                site.url("/hung-shared.js"),
-                site.url("/hung-shared-data")
             ),
         ]),
         "{}",
@@ -2864,12 +2852,14 @@ fn a_dialog_the_page_or_a_frame_opens_is_dismissed_and_the_report_names_each() {
 }
 
 #[test]
-fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_a_frame() {
-    // A dedicated and a shared worker of the page and a dedicated worker of a frame of another
-    // site, which Chrome runs in a process of its own, each fetching what it posts back, and a
-    // worker whose script is missing: the page marks its own part drawn once all four have
-    // answered, and the shot is taken with each answer, waiting on no worker's script as on a
-    // frame's document.
+fn a_page_with_workers_is_shot_once_they_have_answered_never_waiting_on_a_shared_workers_loads() {
+    // A dedicated worker of the page and one of a frame of another site, which Chrome runs in a
+    // process of its own, each fetching what it posts back, a worker whose script is missing, and
+    // a shared worker whose fetch the stand-in never answers: the page marks its own part drawn
+    // once the dedicated workers have answered, the missing one has failed and the shared one has
+    // started. The shot is taken with each answer, waiting on no worker's script as on a frame's
+    // document, nor on the shared worker's fetch: Chrome runs a shared worker in the browser,
+    // where the shot does not follow it.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2884,11 +2874,7 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
         shared_fetching("/shared-data"),
         "text/javascript",
     );
-    site.set_file(
-        "/shared-data",
-        b"from the shared worker".to_vec(),
-        "text/plain",
-    );
+    site.hold_route("/shared-data", true);
     other.set_file(
         "/frame-worker.js",
         fetching("/frame-data"),
@@ -2916,12 +2902,15 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
 <script>
   window.answers = {{}};
   const answered = (who, what) => {{
-    if (what === 'started') return;
     window.answers[who] = what;
     if (Object.keys(window.answers).length === 4) document.getElementById('loading').remove();
   }};
-  new Worker('/worker.js').onmessage = event => answered('dedicated', event.data);
-  new SharedWorker('/shared.js').port.onmessage = event => answered('shared', event.data);
+  new Worker('/worker.js').onmessage = event => {{
+    if (event.data !== 'started') answered('dedicated', event.data);
+  }};
+  new SharedWorker('/shared.js').port.onmessage = event => {{
+    if (!('shared' in window.answers)) answered('shared', event.data);
+  }};
   new Worker('/no-such-worker.js').onerror = () => answered('missing', 'failed');
   addEventListener('message', event => answered('framed', event.data));
 </script>
@@ -2949,7 +2938,7 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
         printed(&output),
         vec![json!({
             "dedicated": "from the worker",
-            "shared": "from the shared worker",
+            "shared": "started",
             "framed": "from the frame's worker",
             "missing": "failed",
         })]
@@ -2959,11 +2948,13 @@ fn a_page_with_workers_is_shot_once_they_have_answered_with_no_worker_taken_for_
 
 #[test]
 fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
-    // A button that opens a page of the page's own site with `window.open`, keeping its opener,
-    // and one that opens a page of another site (as `localhost`). While the browser's own
-    // auto-attach is on, as it is for shared workers, Chrome holds such a page as it starts, and
-    // the opener's script in that call, until the new page is let run: each click returns, the
-    // page goes on with the window it opened, and it is shot.
+    // A button that opens a page of the page's own site with `window.open`, keeping its opener; one
+    // that opens a page of another site (as `localhost`); and two that open a page of the page's
+    // own site, which Chrome runs in the opener's process, that alerts as it loads or once it has
+    // loaded, then marks the opener (`#after`). The shot leaves a page it did not open as Chrome
+    // leaves it: let start, and its dialog closed, its script going on. Each click returns, the
+    // page goes on with the window it opened and is shot, and the report has no dialog of the
+    // opened page's.
     let other = site();
     let site = site();
     let away = format!("http://localhost:{}", other.addr.port());
@@ -2974,6 +2965,22 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
             "text/html",
         );
     }
+    let marking = "opener.document.body.append(Object.assign(opener.document.createElement('p'), \
+                   {id: 'after'}))";
+    site.set_file(
+        "/alerting.html",
+        format!("<!doctype html><script>alert('as it loads'); {marking};</script>").into_bytes(),
+        "text/html",
+    );
+    site.set_file(
+        "/later.html",
+        format!(
+            "<!doctype html><script>onload = () => setTimeout(() => {{ alert('once loaded'); \
+             {marking}; }}, 100);</script>"
+        )
+        .into_bytes(),
+        "text/html",
+    );
     site.set_file(
         "/opening.html",
         format!(
@@ -2984,34 +2991,52 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
   const openPage = address => {{ window.opened = window.open(address); }};
 </script>
 <button id="same" type="button" onclick="openPage('/opened.html')">same site</button>
-<button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>"#
+<button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>
+<button id="alerting" type="button" onclick="openPage('/alerting.html')">alerting</button>
+<button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>"#
         )
         .into_bytes(),
         "text/html",
     );
-    for button in ["#same", "#cross"] {
+    let marked = ["--wait-for", "#after"];
+    for (button, waits) in [
+        ("#same", &[][..]),
+        ("#cross", &[][..]),
+        ("#alerting", &marked[..]),
+        ("#later", &marked[..]),
+    ] {
         let Some(chrome) = chrome::find() else {
             eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
             return;
         };
         let scratch = Scratch::new("opening");
         let out = scratch.join("opening.png");
+        let url = site.url("/opening.html");
         let output = shot(
             &chrome,
             &[
-                &site.url("/opening.html"),
-                "--out",
-                out.to_str().unwrap(),
-                "--click",
-                button,
-                "--eval",
-                "[!!window.opened, window.opened.closed]",
-            ],
+                &[
+                    url.as_str(),
+                    "--out",
+                    out.to_str().unwrap(),
+                    "--click",
+                    button,
+                ][..],
+                waits,
+                &[
+                    "--eval",
+                    "[!!window.opened, window.opened.closed]",
+                    "--report",
+                ][..],
+            ]
+            .concat(),
         )
         .output()
         .unwrap();
         assert!(output.status.success(), "{button}: {}", said(&output));
-        assert_eq!(printed(&output), vec![json!([true, false])], "{button}");
+        let [opened, report] = printed(&output).try_into().unwrap();
+        assert_eq!(opened, json!([true, false]), "{button}");
+        assert_eq!(report["dialogs"], json!([]), "{button}: {report}");
         assert!(Picture::read(&out).width > 0);
     }
 }

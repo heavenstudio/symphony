@@ -319,10 +319,10 @@ fn the_help_says_what_the_page_waits_for_what_a_dialog_gets_and_what_the_report_
         .collect::<Vec<_>>()
         .join(" ");
     for said in [
-        // Frames and workers are waited for, but none gone or left.
-        "its frames' and its workers' among them, those Chrome runs in a process of their own and \
-         a shared worker's too, but none of a frame since removed, or held by a document its frame \
-         has left, nor a document its frame went on from",
+        // Frames and workers are waited for, but none gone or left, nor a shared worker's loads.
+        "its frames' and its workers' among them, those Chrome runs in a process of their own \
+         too, but none of a frame since removed, or held by a document its frame has left, nor a \
+         document its frame went on from; a shared worker's own loads are not waited for",
         // A dialog is dismissed and named, never waited out.
         "A dialog the page or a frame opens is dismissed as it opens, and the page goes on: an \
          alert closed, a confirm or a prompt answered as by its Cancel, a beforeunload let leave; \
@@ -565,7 +565,7 @@ fn a_workers_requests_in_flight_are_said_last_by_its_script_never_as_a_frames() 
     let said = waiting(
         &loaded,
         &[
-            a_workers("http://b/shared.js", "Script", "http://b/shared.js"),
+            a_workers("http://b/v.js", "Script", "http://b/v.js"),
             a_workers("http://a/1.json", "Fetch", "http://a/w.js"),
             framed("http://b/p.png", "Image", "http://b/mock.html"),
             request("http://a/api", "Fetch"),
@@ -577,7 +577,7 @@ fn a_workers_requests_in_flight_are_said_last_by_its_script_never_as_a_frames() 
         [
             "1 request(s) in flight: http://a/api",
             "1 request(s) in flight in the frame http://b/mock.html: http://b/p.png",
-            "1 request(s) in flight in the worker http://b/shared.js: http://b/shared.js",
+            "1 request(s) in flight in the worker http://b/v.js: http://b/v.js",
             "2 request(s) in flight in the worker http://a/w.js: http://a/1.json, http://a/2.json",
         ]
     );

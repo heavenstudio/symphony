@@ -1934,8 +1934,7 @@ fn attached(session: &str, kind: &str, waiting: bool) -> Value {
 }
 
 #[test]
-fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_a_popup_only_runs()
-{
+fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_before_it_runs() {
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
         // Every command but the observer's turns and the page's probes: its session, its method and
         // its parameters.
@@ -1950,7 +1949,7 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_
                 command["method"].as_str().unwrap_or("").to_string(),
                 command["params"].clone(),
             ));
-            // The targets the page or the browser starts, told of before the reply, as Chrome does.
+            // The targets the page starts, told of before the reply, as Chrome does.
             match (command["method"].as_str(), command["sessionId"].as_str()) {
                 (Some("Fixture.before"), _) => {
                     peer.send(attached("unfollowed", "iframe", true));
@@ -1961,20 +1960,6 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_
                     peer.send(attached("worker", "worker", true));
                     peer.send(attached("running", "iframe", false));
                     peer.send(attached("service", "service_worker", true));
-                    peer.reply(&command, json!({}));
-                }
-                // The browser's own, each told of on no session: the page already open, a shared
-                // worker, and a page the page opened with its opener (a popup), held as it starts.
-                (Some("Target.setAutoAttach"), None) => {
-                    for (session, kind, waiting) in [
-                        ("open", "page", false),
-                        ("shared", "shared_worker", true),
-                        ("popup", "page", true),
-                    ] {
-                        let mut started = attached(session, kind, waiting);
-                        started.as_object_mut().unwrap().remove("sessionId");
-                        peer.send(started);
-                    }
                     peer.reply(&command, json!({}));
                 }
                 _ => {}
@@ -1994,25 +1979,10 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_
         .collect();
     assert_eq!(
         kept,
-        [
-            "unfollowed",
-            "frame",
-            "worker",
-            "running",
-            "service",
-            "open",
-            "shared",
-            "popup"
-        ]
+        ["unfollowed", "frame", "worker", "running", "service"]
     );
     drop(chrome);
     let follow = json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true});
-    let mut browsers = follow.clone();
-    browsers["filter"] = json!([
-        {"type": "shared_worker", "exclude": false},
-        {"type": "page", "exclude": false},
-        {"exclude": true}
-    ]);
     let command = |session: &str, method: &str, params: &Value| {
         (session.to_string(), method.to_string(), params.clone())
     };
@@ -2040,45 +2010,9 @@ fn a_followed_frame_or_worker_has_its_events_on_and_what_it_starts_followed_and_
             command("running", "Runtime.enable", &none),
             command("running", "Log.enable", &none),
             command("running", "Target.setAutoAttach", &follow),
-            // Any other target is only let run.
+            // Any other target is only let run. Nothing is asked of the browser's own session.
             command("service", "Runtime.runIfWaitingForDebugger", &none),
-            // Shared workers, the browser's own, followed through its auto-attach, filtered, and
-            // pages taken by it too: the one already open is left as it is, and a popup, held as
-            // it starts, is only let run.
-            command("", "Target.setAutoAttach", &browsers),
-            command("shared", "Network.enable", &none),
-            command("shared", "Target.setAutoAttach", &follow),
-            command("shared", "Runtime.runIfWaitingForDebugger", &none),
-            command("popup", "Runtime.runIfWaitingForDebugger", &none),
         ]
-    );
-}
-
-#[test]
-fn a_chrome_that_cannot_filter_what_it_attaches_still_follows_frames_and_follows_no_shared_worker()
-{
-    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
-        let mut asked = Vec::new();
-        while let Some(command) = peer.next() {
-            if marker(&command) || probe(&command) {
-                peer.reply(&command, json!({"result": {"value": 0}}));
-                continue;
-            }
-            asked.push(command["method"].as_str().unwrap_or("").to_string());
-            if command.get("sessionId").is_none() {
-                peer.send(json!({"id": command["id"], "error": {"code": -32602, "message": "Invalid parameters"}}));
-            } else {
-                peer.reply(&command, json!({}));
-            }
-        }
-        asked
-    });
-    chrome.follow_frames().unwrap();
-    assert!(chrome.following);
-    drop(chrome);
-    assert_eq!(
-        peer.join().unwrap(),
-        ["Target.setAutoAttach", "Target.setAutoAttach"]
     );
 }
 
@@ -3303,42 +3237,50 @@ fn a_frames_document_still_arriving_is_given_up_once_the_frame_goes_on_to_anothe
     assert_eq!(said(&requests, three), (Some(three), false, None, false));
 }
 
-/// `Target.attachedToTarget` on `on` (none for the browser's own) for target `target` of `kind`,
-/// on session `session`, its address `url`.
-fn started(on: Option<&str>, session: &str, target: &str, kind: &str, url: &str) -> Value {
-    let mut event = json!({"method": "Target.attachedToTarget", "params": {
+/// `Target.attachedToTarget` on `on` for target `target` of `kind`, on session `session`, its
+/// address `url`.
+fn started(on: &str, session: &str, target: &str, kind: &str, url: &str) -> Value {
+    json!({"method": "Target.attachedToTarget", "sessionId": on, "params": {
         "sessionId": session, "waitingForDebugger": true,
-        "targetInfo": {"targetId": target, "type": kind, "url": url}}});
-    if let Some(on) = on {
-        event["sessionId"] = json!(on);
-    }
-    event
+        "targetInfo": {"targetId": target, "type": kind, "url": url}}})
 }
 
 #[test]
-fn a_followed_workers_requests_are_its_own_by_its_script_and_end_with_it() {
+fn a_followed_workers_requests_are_its_own_by_its_script_and_an_unfollowed_workers_script_is_given_up()
+ {
     let [dedicated, framed, shared, service] = [
         "http://a/w.js",
         "http://b/v.js",
         "http://a/shared.js",
         "http://a/sw.js",
     ];
+    // The page fetching its own address: its document's, by its loader, never a worker's script.
+    let mut itself = sent(
+        "page",
+        "self",
+        "Fetch",
+        Some("top"),
+        "http://a/",
+        "http://a/",
+    );
+    itself["params"]["loaderId"] = json!("L");
     let events = [
         // A dedicated worker of the page: its script starts on the page's session, made for the
         // page's frame and named by the worker's target, and ends on the worker's own.
         sent("page", "W", "Script", Some("top"), dedicated, dedicated),
-        started(Some("page"), "ws", "W", "worker", dedicated),
+        started("page", "ws", "W", "worker", dedicated),
         finished("ws", "W"),
         sent("ws", "data", "Fetch", None, dedicated, "http://a/data.json"),
         // One of a frame in a process of its own (session `fs`): made for the frame, still a
         // worker's, never the frame named by the worker's script.
         sent("fs", "V", "Script", Some("inner"), framed, framed),
-        started(Some("fs"), "vs", "V", "worker", framed),
-        // A shared worker, which the browser starts and tells of on no session.
-        started(None, "ss", "S", "shared_worker", shared),
+        started("fs", "vs", "V", "worker", framed),
+        // A shared worker, which the browser runs and nothing follows: its script starts on the
+        // page's session, and its answer goes to the worker.
         sent("page", "S", "Script", Some("top"), shared, shared),
+        itself,
         // A service worker, not followed: its requests are its page's, as before.
-        started(Some("page"), "sws", "SW", "service_worker", service),
+        started("page", "sws", "SW", "service_worker", service),
         sent("sws", "cached", "Fetch", None, service, "http://a/cached"),
         // The dedicated worker ends with its fetch still open.
         detached("ws"),
@@ -3369,7 +3311,11 @@ fn a_followed_workers_requests_are_its_own_by_its_script_and_end_with_it() {
         )
     );
     assert_eq!(whose(framed), (Some(framed), None, false, None, false));
-    assert_eq!(whose(shared), (Some(shared), None, false, None, false));
+    assert_eq!(
+        whose(shared),
+        (None, None, false, Some(crate::WORKER_UNFOLLOWED), true)
+    );
+    assert_eq!(whose("http://a/"), (None, None, false, None, false));
     assert_eq!(whose("http://a/cached"), (None, None, false, None, false));
 }
 

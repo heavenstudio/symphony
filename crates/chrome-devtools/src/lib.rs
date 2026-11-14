@@ -362,8 +362,10 @@ pub struct Request {
     /// frame goes with the document that held it, when a frame around it goes to another
     /// document), and so does a frame's document still arriving when the frame went on to another
     /// document, one a followed frame's document ([`Chrome::follow_frames`]) made, still open when
-    /// the frame left that document's process, and one a followed worker made, still open when it
-    /// ended; never a frame's own document as it moves between processes, which it goes on loading.
+    /// the frame left that document's process, one a followed worker made, still open when it
+    /// ended, and the script of a worker no one follows (a shared worker's), whose answer goes to
+    /// the worker; never a frame's own document as it moves between processes, which it goes on
+    /// loading.
     pub canceled: bool,
     /// The frame it was made for, when that is not the page's own: the address of the document it
     /// was made for, a frame's own document request naming its own address (`about:srcdoc` for a
@@ -1067,34 +1069,20 @@ impl Chrome {
     }
 
     /// From now on, follow each frame of the page that Chrome runs in a process of its own (a
-    /// cross-site frame, a sandboxed one, and such frames within it), and each worker (a dedicated
-    /// worker of the page or of a frame, the workers it starts, and a shared worker, which the
-    /// browser runs): attached as it starts, and held there until its network events are on, so
-    /// the answer to its own document or script and every request it makes are kept with the
-    /// page's and end in [`Chrome::requests`] as the page's own do. Unfollowed, such a frame's
-    /// document request, or a worker's script, is seen to start, on the page, and never to end:
-    /// its answer goes to the frame's or the worker's own session. Anything else the page starts
-    /// that way is let run as it is, and so is a page it opens (a popup). What starts while nothing
-    /// is asked of the browser waits for the next call or [`Chrome::pump`], which reads of it and
-    /// lets it run. A Chrome that cannot attach shared workers alone follows none.
+    /// cross-site frame, a sandboxed one, and such frames within it), and each dedicated worker (of
+    /// the page, of a frame, and the workers it starts): attached as it starts, and held there until
+    /// its network events are on, so the answer to its own document or script and every request it
+    /// makes are kept with the page's and end in [`Chrome::requests`] as the page's own do.
+    /// Unfollowed, such a frame's document request, or a worker's script, is seen to start, on the
+    /// page, and never to end: its answer goes to the frame's or the worker's own session. Anything
+    /// else the page starts that way is let run as it is. What starts while nothing is asked of the
+    /// browser waits for the next call or [`Chrome::pump`], which reads of it and lets it run.
+    /// Only the page's own auto-attach is set, never the browser's: a page it opens (a popup) or a
+    /// shared worker, which the browser runs, is left as Chrome leaves it.
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
-        let mut shared = auto_attach();
-        // The browser's own auto-attach takes every target but those its filter leaves out, the
-        // first entry a target matches deciding: shared workers, and pages. While it is on, Chrome
-        // holds a page opened with its opener (`window.open`) as it starts, and the opener's
-        // script in that call, whatever the filter: only the new page's own session lets it run,
-        // so it is attached, and let run.
-        shared["filter"] = json!([
-            {"type": "shared_worker", "exclude": false},
-            {"type": "page", "exclude": false},
-            {"exclude": true}
-        ]);
-        match self.browser_call("Target.setAutoAttach", shared) {
-            Err(error) if error.past_deadline() => Err(error),
-            _ => Ok(()),
-        }
+        Ok(())
     }
 
     /// From now on, each frame followed ([`Chrome::follow_frames`]) that starts turns on `domains`
@@ -1307,7 +1295,7 @@ impl Chrome {
                 .into_iter()
                 .chain(self.frame_domains.iter().cloned())
                 .collect(),
-            Some(kind) if WORKERS.contains(&kind) => vec!["Network.enable".to_string()],
+            Some(WORKER) => vec!["Network.enable".to_string()],
             _ => Vec::new(),
         };
         for method in &domains {
@@ -1402,9 +1390,13 @@ const DOCUMENT_GONE: &str = "its document went with the process its frame left";
 /// Why a request a followed worker made, still open when the worker's session ended, never ends.
 const WORKER_ENDED: &str = "its worker ended";
 
-/// The kinds of target that are workers a page starts, which [`Chrome::follow_frames`] follows: a
-/// dedicated worker, of the page, a frame or a worker, and a shared one, which the browser runs.
-const WORKERS: [&str; 2] = ["worker", "shared_worker"];
+/// Why a worker's script that no followed worker answers (a shared worker's, which the browser
+/// runs) never ends where it is seen to start: its answer goes to the worker.
+const WORKER_UNFOLLOWED: &str = "its worker is not followed";
+
+/// The kind of target that is a worker a page starts, which [`Chrome::follow_frames`] follows: a
+/// dedicated worker, of the page, a frame or a worker.
+const WORKER: &str = "worker";
 
 /// The auto-attach that follows a page's, a followed frame's or a followed worker's frames in
 /// processes of their own and workers ([`Chrome::follow_frames`]): each held as it starts, on a
@@ -1478,7 +1470,9 @@ impl Navigated {
 ///
 /// A worker followed is known by its session and by its target, whose id names the request for its
 /// script: what is told of on its session, and its script, are its requests ([`Request::worker`]),
-/// not a frame's.
+/// not a frame's. A worker's script (a request with no loader whose document is itself) that no
+/// worker followed answers, a shared worker's, is given up while open ([`WORKER_UNFOLLOWED`]): its
+/// answer goes to the worker, and what the worker loads is told of nowhere followed.
 fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut requests: HashMap<String, Request> = HashMap::new();
     // The sessions each request was told of on, and the frame each was made for.
@@ -1488,9 +1482,11 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
     let mut parents: HashMap<String, String> = HashMap::new();
     let mut removed: Vec<String> = Vec::new();
     let mut navigations: Vec<Navigated> = Vec::new();
-    // The workers followed, each one's script's address, by its session and by its target.
+    // The workers followed, each one's script's address, by its session and by its target, and the
+    // requests for a worker's script, followed or not.
     let mut workers: HashMap<String, String> = HashMap::new();
     let mut scripts: HashMap<String, String> = HashMap::new();
+    let mut started: Vec<String> = Vec::new();
     let mut order = Vec::new();
     for event in events {
         let params = &event["params"];
@@ -1500,9 +1496,7 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
                 if let (Some(session), Some(id), true) = (
                     params["sessionId"].as_str(),
                     target["targetId"].as_str(),
-                    target["type"]
-                        .as_str()
-                        .is_some_and(|kind| WORKERS.contains(&kind)),
+                    target["type"] == WORKER,
                 ) {
                     let script = target["url"].as_str().unwrap_or("").to_string();
                     workers.insert(session.to_string(), script.clone());
@@ -1586,6 +1580,13 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             "Network.requestWillBeSent" => {
                 request.url = params["request"]["url"].as_str().unwrap_or("").to_string();
                 request.kind = params["type"].as_str().unwrap_or("").to_string();
+                // A worker's script: loaded for no document of the page's, its document itself.
+                if params["loaderId"].as_str().unwrap_or("").is_empty()
+                    && request.kind != "Document"
+                    && params["documentURL"] == params["request"]["url"]
+                {
+                    started.push(id.to_string());
+                }
                 request.prefetch |= prefetch(&params["request"]["headers"]);
                 if let Some(frame) = params["frameId"].as_str() {
                     made_for.insert(id.to_string(), frame.to_string());
@@ -1668,6 +1669,11 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             request.frame = None;
         }
         if request.finished || request.failed.is_some() {
+            continue;
+        }
+        if started.contains(id) && !scripts.contains_key(id) {
+            request.failed = Some(WORKER_UNFOLLOWED.to_string());
+            request.canceled = true;
             continue;
         }
         let (Some(frame), Some(at)) = (made_for.get(id), seen.get(id.as_str())) else {

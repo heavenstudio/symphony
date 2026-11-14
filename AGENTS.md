@@ -371,8 +371,8 @@ alone: with no link, or a link to a build older than the guard, the call goes th
 **Looking at a page.** An agent sees a page with `just symphony-cli shot URL --out FILE.png`:
 a private headless Chrome (`crates/chrome-devtools`, the driver the client's browser tests
 use, on a profile and process of its own that die with the run) opens URL, waits until
-the page has drawn, its frames' and workers' loads among it, dismissing each dialog as it
-opens (a confirm or a prompt as by its Cancel), runs the steps `--click CSS`,
+the page has drawn, its frames' and dedicated workers' loads among it, dismissing each dialog
+as it opens (a confirm or a prompt as by its Cancel), runs the steps `--click CSS`,
 `--type CSS=TEXT`, `--key NAME`, `--hover CSS`, `--eval JS` (its JSON on stdout),
 `--pause MS` and `--shot FILE.png` in the order given, then saves the PNG. `--phone`, `--size WxH`,
 `--full-page` and `--scheme dark` set the view, `--wait-for CSS` and `--timeout SECS`

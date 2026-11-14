@@ -20,12 +20,12 @@ const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
 and no request but a feed stream in flight for 300 ms, its frames' and its workers' among them,
-those Chrome runs in a process of their own and a shared worker's too, but none of a frame since
-removed, or held by a document its frame has left, nor a document its frame went on from), runs
-the steps in the order given, and saves a PNG. A dialog the page or a frame opens is dismissed as
-it opens, and the page goes on: an alert closed, a confirm or a prompt answered as by its Cancel,
-a beforeunload let leave; --report names each. It only reads the page: no server is started,
-stopped or changed.
+those Chrome runs in a process of their own too, but none of a frame since removed, or held by a
+document its frame has left, nor a document its frame went on from; a shared worker's own loads
+are not waited for), runs the steps in the order given, and saves a PNG. A dialog the page or a
+frame opens is dismissed as it opens, and the page goes on: an alert closed, a confirm or a prompt
+answered as by its Cancel, a beforeunload let leave; --report names each. It only reads the page:
+no server is started, stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
