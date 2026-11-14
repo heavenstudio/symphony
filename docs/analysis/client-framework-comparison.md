@@ -84,12 +84,19 @@ the trade like for like and the two readings of it, and settles neither
 
 **What Preact gains.** About 60 kB less on every first visit, all of it React's runtime (the
 board 44 kB against 104, a task's page 48 against 109, the guide 60 against 120), and about 200 kB
-less script to decode; nothing on a second page, where both send 23 kB. Neither leads in time
-throughout: slowed four times, Preact's board and guide are usable a little sooner and React's
-task page is; at full speed React opens a task from the board sooner and draws a card's move in
-30 ms against 43 ([the way back](#the-way-back)). The gain is a fixed amount, so its share falls
-as libraries are added: with the three probed, the board would be about 0.63 of React's bytes,
-not 0.42 (an estimate).
+less script to decode; nothing on a second page, where both send 23 kB. A cold visit spends about
+a tenth to a quarter less time running script, on every page and at every speed, every batch
+agreeing (the board 34 ms against 43 at full speed, 151 against 173 slowed four times, 113
+against 154 on a phone's screen; [Render](#render)), though its long tasks are no shorter (slowed,
+163 ms against 146 on the board, 90 against 66 on a phone's screen). Neither leads in when a page
+is usable: slowed four times, Preact's board and guide are usable a little sooner and React's task
+page is; at full speed React opens a task from the board sooner and draws a card's move in 30 ms
+against 43 ([the way back](#the-way-back)). The board is also read from a phone over the tailnet
+([the desktop client](desktop-client.md)), so a first visit can cross a network to a phone-class
+CPU, where the bytes and the script count for more than here: every visit here was served from
+the same machine with only the CPU slowed, so what 60 kB costs on a phone's network was not
+measured. The bytes saved are a fixed amount, so their share falls as libraries are added: with
+the three probed, the board would be about 0.63 of React's bytes, not 0.42 (an estimate).
 
 **What Preact costs.** React's code runs through a compatibility layer that trails React: React
 18's `createRoot` reached it in 11 weeks and its hooks in 14 to 24, its transitions only in name
@@ -105,28 +112,29 @@ build unless the browser tests also run on it; a lint rule that refuses Preact's
 well as `preact`; and every library driven on both builds before it is taken
 ([the way back](#the-way-back)).
 
-**What React costs.** The 60 kB on every first visit and the 200 kB of script. It needs no
-compatibility layer, none of the guards above, and takes the libraries and tools as their
-authors support them.
+**What React costs.** The 60 kB on every first visit, the 200 kB of script to decode and the
+tenth to a quarter more time running it. It needs no compatibility layer, none of the guards
+above, and takes the libraries and tools as their authors support them.
 
 **The reading for Preact.** What a port would reach for first runs on it: the probe drove Radix's
 six controls, TanStack Query and TanStack Virtual alike on both builds, each adding the same bytes
 on either, and the Markdown, the charts, the timeline and the blocks need no library at all. So
-the libraries' lead may never be drawn on, while the 60 kB is paid on every first visit for good.
-Its weakest point: the gain is bytes that bought no lead in time, held by guards that every
-gate pays for and that a library's next major can still defeat, sometimes only when a control is
-drawn, on a compat major six weeks old.
+the libraries' lead may never be drawn on, while the 60 kB and the script are paid on every first
+visit for good, a phone's over the network among them. Its weakest point: those gains bought no
+lead in when a page is usable, and they are held by guards that every gate pays for and that a
+library's next major can still defeat, sometimes only when a control is drawn, on a compat major
+six weeks old.
 
-**The reading for React.** The bytes are Preact's one measured gain, on a client the machine's own
-server serves, and they bought no lead in time, at full speed or slowed four times. Against
-them stand four libraries of the kinds a client reaches for that say they do not support Preact,
-a router whose newest major does not build on it, and guards that cost every gate and are not
-built. React carries none of that. Its weakest point: it pays about 60 kB more on every first
-visit, a board's 104 kB where Preact's is 44, and 200 kB more script, for a lead in libraries
-that the probe has not yet needed.
+**The reading for React.** Preact's gains, the bytes and the script time, bought no lead in when a
+page is usable, at full speed, slowed four times or on a phone's screen. Against them stand four
+libraries of the kinds a client reaches for that say they do not support Preact, a router whose
+newest major does not build on it, and guards that cost every gate and are not built. React
+carries none of that. Its weakest point: it pays about 60 kB more on every first visit, a board's
+104 kB where Preact's is 44, and more script, most where they count most, on a phone over a
+network that was not measured, for a lead in libraries that the probe has not yet needed.
 
-Which weighs more, the bytes or the libraries' support, is a matter of what the owner values
-more, and it is chosen after the move is, if the client moves to JSX.
+Which weighs more, the bytes and the script or the libraries' support, is a matter of what the
+owner values more, and it is chosen after the move is, if the client moves to JSX.
 
 ## The experiment
 
@@ -683,7 +691,7 @@ The Dioxus build's floor is high because each of its eight modules is a `dx` bui
 its wasm through `wasm-bindgen` and `wasm-opt`, whatever changed; a page's change costs the most
 of a minute on this machine either way. The JSX build is one Vite run of a second or two a
 target. That is three pages against a whole client: a whole JSX client would take longer and
-build to more than the three pages' 0.2 MB, perhaps twice both, as the other kinds are about half
+build to more than the three pages' 0.2 MB on Preact (0.4 MB on React), perhaps twice both, as the other kinds are about half
 the client; that is inferred, not measured. Built twice from the same lockfile on this machine,
 the JSX build's 22 files came out byte for byte the same. The first Dioxus build ran with the machine's `dx` and `wasm-bindgen` already built (in
 the git common dir, once a machine), and the first JSX one with npm's download already cached;
@@ -817,7 +825,7 @@ tracker, or by a build here; "works" is said only where one of those says it.
 | **React Aria** (`react-aria-components` 1.22.1): controls | supported | "not work that the team is able to take on in the near future" ([#781](https://github.com/adobe/react-spectrum/issues/781), closed 2024); its collections and keyboard handling are reported broken on Preact 11 ([#10755](https://github.com/adobe/react-spectrum/issues/10755), open since October 2026, a fix proposed) | by that report, not usable on Preact for now; not tried |
 | **Headless UI** (`@headlessui/react` 2.2.10): controls | supported | "we don't have Preact support" ([#1352](https://github.com/tailwindlabs/headlessui/issues/1352), 2022) | unsupported; not tried |
 | **Base UI** (`@base-ui/react` 1.9.0): controls | supported | no statement of support found; its maintainers merged "Restore Preact support" ([PR #2086](https://github.com/mui/base-ui/pull/2086), 2025) and Preact fixes since, and a crash under compat with server rendering is open ([#4670](https://github.com/mui/base-ui/issues/4670)) | likely usable, unconfirmed: not tried |
-| **TanStack Query** (`@tanstack/react-query` 5.107.1): data cache | supported | works in the probe; two reports under compat on its tracker were closed as Preact's or the test runner's to fix ([#3966](https://github.com/TanStack/query/issues/3966), 2022, which Preact 10.10.3 fixed; [#8555](https://github.com/TanStack/query/issues/8555), 2025, marked upstream and pointed at a Vitest issue). An official Preact adapter, `@tanstack/preact-query`, exists since February 2026 ([its docs](https://tanstack.com/query/latest/docs/framework/preact/overview)) | reads, paging and a feed event's re-read work alike on both in the probe |
+| **TanStack Query** (`@tanstack/react-query` 5.107.1): data cache | supported | works in the probe; two reports under compat on its tracker were closed as Preact's or the test runner's to fix ([#3966](https://github.com/TanStack/query/issues/3966), 2022, which a user there reported fixed by Preact 10.10.3, unconfirmed; [#8555](https://github.com/TanStack/query/issues/8555), 2025, marked upstream and pointed at a Vitest issue). An official Preact adapter, `@tanstack/preact-query`, exists since February 2026 ([its docs](https://tanstack.com/query/latest/docs/framework/preact/overview)) | reads, paging and a feed event's re-read work alike on both in the probe |
 | **SWR** 2.5.1: data cache | supported | "the basic preact example works with swr" (a maintainer, [#1649](https://github.com/vercel/swr/issues/1649), 2021); nothing since | not tried |
 | **React Router**: router | supported | 7.18.5 reads `useOptimistic` only if React has it, and on Preact a throwaway build here routed and followed a link. 8.x (since June 2026; 8.5.1 in November 2026) imports `useOptimistic` outright and asks for React 19.2.7 or later, and its Preact build fails: `"useOptimistic" is not exported by "node_modules/preact/compat/dist/compat.mjs"` | 7 works; 8 does not build on Preact |
 | **TanStack Router** 1.170: router | supported | "pretty much react-only" and "we are currently not supporting preact" (its maintainers, [#1741](https://github.com/TanStack/router/issues/1741), 2024 and 2025); a Preact adapter offered by a Preact maintainer was closed unmerged by its author ([PR #6700](https://github.com/TanStack/router/pull/6700), February 2026) | unsupported; not tried |
@@ -956,8 +964,11 @@ on two runtimes. React needs none of it.
 **What React costs instead,** from the tables above: about 60 kB more on every first visit, the
 board 103.8 kB against 43.5, a task's page 108.9 against 48.4, the guide 120.1 against 59.6, in
 React's runtime (its entry chunk 72 kB against 11); nothing more on a second page (23.0 against
-22.7), the runtime being in already; and about 200 kB more script decoded on every first visit.
-In time neither leads throughout: with the CPU slowed, Preact's board and guide are usable a
+22.7), the runtime being in already; about 200 kB more script decoded on every first visit; and
+a tenth to a quarter more time running script on a cold visit, every page, speed and batch (the
+board 43 ms against 34 at full speed, 173 against 151 slowed, 154 against 113 on a phone's
+screen), while Preact's long tasks are no shorter (slowed, 146 ms on React's board against 163).
+In when a page is usable neither leads throughout: with the CPU slowed, Preact's board and guide are usable a
 little sooner cold (0.49 and 0.81 of the Dioxus time, against React's 0.52 and 0.87) and React's
 task page is (0.60 against 0.70); at full speed, opening a task from the board is quicker on React
 (0.58 against Preact's undecided 1.00) and a card's move is drawn in 30 ms on React against 43 on
