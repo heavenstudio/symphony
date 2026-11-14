@@ -1,7 +1,7 @@
 //! A task whose work landed with another task's branch, closed as covered by that landing
 //! ([`Store::close_covered`]): by its executor or its orchestrator, with no reviewer's verdict, as
-//! nothing of its own is left to judge or to land. The owner, 2026-11-12, on a task whose fix
-//! landed with another's: "seems like a proccess bug. Should be able to close or cancel it".
+//! nothing of its own is left to judge or to land. A task whose fix landed with another's can be
+//! closed or cancelled, as one left open would be a fault of the process.
 //!
 //! The close is no approve. Its line is the task's last verdict, so no approve stands on the task
 //! once it is closed: a landing finds none to go by (`crate::land::approval`), a move back to review

@@ -15,8 +15,8 @@ categories = ["command-line-utilities", "development-tools"]
 # fixtures or examples, nor `fake-hc`, the tests' stand-in for the terminals the board drives.
 include = ["src/**", "!src/bin/fake-hc.rs", "build.rs", "README.md", "LICENSE"]
 
-# SurrealDB is the owner's choice for the board (card tasks-store-engine, 2026-10-06 22:09: "B. we need a
-# server anyway (just symphony), server should start the db"). It is reached over its JSON-RPC on plain HTTP
+# SurrealDB is the board's database: a server runs anyway (`just symphony`), and the server starts
+# the database. It is reached over its JSON-RPC on plain HTTP
 # (src/rpc.rs) rather than through the `surrealdb` client crate: serde and serde_json are already in that
 # crate's own tree, and the rest of it (tokio, the WebSocket stack) is ~260 CPU-s of build this does
 # without (docs/engineering/analysis/review-app-rust-port.md, "Clean release build").

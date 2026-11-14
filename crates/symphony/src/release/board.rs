@@ -1969,7 +1969,7 @@ mod tests {
              - `just test-rs -p symphony --test nightly`\n\n"
                 .into(),
             format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
-            // The owner's rule of 2026-11-13: a test red on load is discarded, not fixed.
+            // A test red on load is discarded, not fixed.
             "the code fixed, never a test or check loosened; a test red on the machine's load (it \
              passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under \
              load) is discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` \

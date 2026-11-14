@@ -58,7 +58,7 @@ sha2.workspace = true
 symphony-schema = { path = "../symphony-schema", version = "1.0.0" }
 symphony-args = { path = "../symphony-args", version = "1.0.0" }
 symphony-api = { path = "../symphony-api", version = "=0.1.0" }
-# The plugin seams the game modules implement, and the project file (symphony.toml) they are chosen by.
+# The plugin seams a project's plugins implement, and the project file (symphony.toml) they are chosen by.
 symphony-plugin = { path = "../symphony-plugin", version = "1.0.0" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
 symphony-docs = { path = "../symphony-docs", version = "1.0.0" }

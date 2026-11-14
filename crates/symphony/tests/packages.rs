@@ -355,6 +355,48 @@ fn every_copy_a_package_carries_is_the_file_it_copies() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// No file a published package carries, its manifest's comments among them, gives a rule as the
+/// owner's dated words: each says the rule it sets, without the quote, the date or the card. What
+/// each package carries is what `cargo package --list` names.
+#[test]
+fn no_published_package_carries_the_owners_dated_words() {
+    let dated = regex::Regex::new(r"(?i)owner('s (word|rule))?,? (of )?20\d\d-\d\d").unwrap();
+    let mut found = Vec::new();
+    for package in members().iter().filter(|package| published(package)) {
+        let out = Command::new(env!("CARGO"))
+            .args([
+                "package",
+                "--list",
+                "--allow-dirty",
+                "--offline",
+                "-p",
+                name(package),
+            ])
+            .current_dir(workspace())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for file in String::from_utf8_lossy(&out.stdout).lines() {
+            let text = std::fs::read_to_string(folder(package).join(file)).unwrap_or_default();
+            found.extend(
+                text.lines()
+                    .enumerate()
+                    .filter(|(_, line)| dated.is_match(line))
+                    .map(|(at, line)| format!("{}: {file}:{}: {line}", name(package), at + 1)),
+            );
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "the owner's dated words, to say as the rule they set:\n{}",
+        found.join("\n")
+    );
+}
+
 /// The server's package carries the client it embeds, every build its folder keeps: the day that
 /// grows past what crates.io takes is a red here, not an upload refused. Packaged by Cargo itself,
 /// into a target folder of the test's own, building nothing (`--no-verify`) and resolving none of
