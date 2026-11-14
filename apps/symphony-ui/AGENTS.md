@@ -310,11 +310,12 @@ never the whole target, which the release run runs.
   `/agents` and a task page to 548,597 and 549,190 (from 549,285 and 549,878) and the warmed chat
   and menus to 603,539 outside home's (from 604,282); every other page stays within 12 bytes of
   main's. The task board's move to the React client (`app/client-moves-to-react/task-board`,
-  against main's build at 8bd7918) takes `/tasks` to 112,538 bytes (from 281,188: its script
-  12,983 and the chunk it shares with the queue 77,233, where the board's WASM was 247,586 and
-  its glue 11,304) and its cap to 150,000; `/queue` to 103,340 (from 101,789: its script 3,626
-  beside that chunk, from 79,332 in one; a move between the two fetches the other's script
-  alone), `/` to 237,632 (from 237,724), and every other page within 50 bytes of main's. Each
+  against main's build at 2949ff8) takes `/tasks` to 113,550 bytes (from 281,185: its script
+  13,001, the chunk the three web kinds share 74,610 and the one it shares with the queue 3,625,
+  where the board's WASM was 247,583 and its glue 11,304) and its cap to 150,000; `/queue` to
+  104,360 (from 103,265: its script 3,652 beside both chunks, from 6,337 beside one),
+  `/reports` to 105,747 (from 105,591), `/` to 237,642 (from 237,723), and every other page
+  within 50 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

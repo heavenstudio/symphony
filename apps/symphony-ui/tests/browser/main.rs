@@ -76,8 +76,8 @@ use site::Site;
 
 const FIRST_VISIT_BYTES: f64 = 300_000.0;
 /// The task board's first-visit cap (`/tasks`), lowered from [`FIRST_VISIT_BYTES`] once the board
-/// moved to the React client: 112,538 bytes on the fixture then, the rest room for the code the
-/// kinds moving after it share with it.
+/// moved to the React client: 113,550 bytes on the fixture then, beside Reports and the queue, the
+/// rest room for the code the kinds moving after it share with it.
 const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
