@@ -1,7 +1,8 @@
 //! The pipeline alarm: review holding more than [`Thresholds::ratio`] times the work in progress for
 //! [`Thresholds::raise_hours`] raises it, and it stands until review holds no more than that for
-//! [`Thresholds::clear_hours`], so a short dip does not lower it. The owner, 2026-11-07: "31 tasks in
-//! review against 6 in progress (and 28 done in the last 24 hours) should be something alarming".
+//! [`Thresholds::clear_hours`], so a short dip does not lower it. Review that holds many times the
+//! work in progress is alarming: 31 tasks in review against 6 in progress (and 28 done in the last
+//! 24 hours), for one.
 //! The PULL digest says it ([`crate::cli::pull`]).
 //!
 //! The board keeps no history of its counts, but every change of a task's status writes a line on

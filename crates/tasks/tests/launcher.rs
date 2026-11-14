@@ -17,7 +17,7 @@
 )]
 
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
-#[path = "../../../tools/test-support/harness_scratch.rs"]
+#[path = "../../chrome-devtools/src/harness_scratch.rs"]
 mod harness_scratch;
 // `tools/seed-target.sh`, which `tools/cargo.sh` runs before Cargo.
 #[path = "launcher/seed.rs"]
