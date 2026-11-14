@@ -11,7 +11,7 @@
 //! role decides it (an orchestrator's, say): the board, which holds the roles, is not read while it
 //! is held. Each hold and release is a line of `symphony/tasks/hold.log`, which nothing removes.
 
-use super::{DATA, Doing, Home, LOG, REPLAY_THROUGH, Running, ServerError, Waited, io};
+use super::{DATA, Doing, Home, LOG, REPLAY_THROUGH, Running, ServerError, Waited, io, untold};
 use crate::sys::local_minute;
 use std::fmt;
 use std::fs;
@@ -195,11 +195,13 @@ impl Home {
 
     /// `running`, a server on this board's data, stopped cleanly once it answers ([`Home::end`]);
     /// one that does not answer within the patience is left as it is, and said, with how a replay
-    /// is told from a hang ([`Home::unanswered`]).
+    /// is told from a hang ([`Home::unanswered`]). One whose answer cannot be told for its own is
+    /// left running too, the stop refused naming why ([`untold`]).
     pub(super) fn stop_one(&self, running: &Running) -> Result<(), ServerError> {
-        match self.answers(running)? {
+        match self.answers(running) {
             Waited::Ended => Ok(()),
             Waited::Answers => self.end(running.pid),
+            Waited::Unsure(why) => Err(untold(running, &why)),
             Waited::Silent => Err(ServerError::NotUp(format!(
                 "the board's server (pid {}, {}) has not answered within {} s, so it is still \
                  starting (replaying its log) or stuck: it is left running, never signalled before \
