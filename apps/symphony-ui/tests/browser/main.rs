@@ -823,6 +823,45 @@ fn fetched(chrome: &mut Chrome, site: &Site, query: &str, what: &str) {
     }
 }
 
+/// The window of finished tasks already chosen, chosen again, reads the board again as the Dioxus
+/// page did: its columns never wait empty for the next event.
+#[test]
+fn task_controls_read_the_board_again_for_the_window_already_chosen() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
+    assert!(
+        chrome.wait_for(shown, SHOWN),
+        "the board never drew its card"
+    );
+    let reads = |site: &Site| {
+        site.targets()
+            .iter()
+            .filter(|url| url.contains("status=ready"))
+            .count()
+    };
+    let before = reads(&site);
+    components::choose(
+        &mut chrome,
+        ".filters button[aria-label='Finished tasks']",
+        "Last 24 hours",
+    );
+    if let Err(stall) = test_time::until_true("the column read again", STALL, || {
+        reads(&site) > before || {
+            chrome.pump(Duration::from_millis(25));
+            false
+        }
+    }) {
+        panic!("{stall}: {:?}", site.targets());
+    }
+    assert!(
+        chrome.wait_for(shown, SHOWN),
+        "the column was left without its card: {:?}",
+        chrome.eval("document.querySelector('.column[data-status=ready]')?.outerHTML")
+    );
+}
+
 #[test]
 fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();

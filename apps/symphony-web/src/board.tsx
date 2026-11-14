@@ -336,8 +336,9 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
   );
 }
 
-/** Build and Test of a project no machine reports for: one narrow rail where their columns go. */
-function UnreportedRail({ connected }: { connected: boolean }) {
+/** Build and Test of a project no machine reports for: one narrow rail where their columns go,
+ * drawn again only when the feed comes or goes. */
+const UnreportedRail = memo(function UnreportedRail({ connected }: { connected: boolean }) {
   return (
     <section className="column rail" data-status="build-test" aria-label="Build and test">
       <h2>build · test</h2>
@@ -349,7 +350,7 @@ function UnreportedRail({ connected }: { connected: boolean }) {
       <a href={href("/agents#machine-context")}>Machine details</a>
     </section>
   );
-}
+});
 
 /** What the Build column says of the machines: how sure their observation is, and where the
  * whole inventory is. */
