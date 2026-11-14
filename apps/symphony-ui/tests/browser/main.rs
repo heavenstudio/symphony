@@ -23,6 +23,7 @@
 
 mod assets;
 mod binaries;
+mod board_search;
 mod board_status;
 mod cache_ahead;
 mod cache_documents;

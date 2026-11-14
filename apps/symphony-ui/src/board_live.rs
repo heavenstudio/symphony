@@ -43,7 +43,17 @@ struct BoardData {
     pending_more: Vec<String>,
     requests: FewMap<String, u64>,
     count_request: u64,
+    /// Moves with every change the page reads again for: a new view, or a feed event that asks
+    /// for a refresh. A refresh whose counts answered at the generation it started at reads the
+    /// columns; one that did not reads the counts again.
     generation: u64,
+    /// Which view the page reads: its search, its window, the connection that places its stages
+    /// and the board's version its feed follows. An answer for another view is dropped, as is one
+    /// a newer read of the same counts or column replaced. One a feed event came during is drawn,
+    /// the events since its read began replayed onto it, and the refresh the event asked for
+    /// reads it again: dropped, a loaded machine's work, which the feed sends every second, would
+    /// drop every round of a search's columns before it answered.
+    view: u64,
     journal: Rc<RefCell<Journal>>,
     /// The copy of each of the default view's reads the page holds, by its part of `Item::board`
     /// (`counts`, `column:ready`): the next read of it names the copy's tag, and a `304` is that
@@ -351,7 +361,7 @@ fn keep_shape(d: &BoardData) {
 }
 
 async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
-    let (query, days, generation, request, since, activity, copy) = {
+    let (query, days, view, request, since, activity, copy) = {
         let mut d = data.write();
         d.count_request += 1;
         let activity = u8::from(d.connected);
@@ -363,7 +373,7 @@ async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
         (
             d.query.clone(),
             d.days,
-            d.generation,
+            d.view,
             d.count_request,
             ReadCursor::new(d.journal.clone()),
             activity,
@@ -376,7 +386,7 @@ async fn counts(mut data: Signal<BoardData>, mut freshness: Signal<Freshness>) {
         copy,
     )
     .await;
-    if data.read().generation != generation || data.read().count_request != request {
+    if data.read().view != view || data.read().count_request != request {
         return;
     }
     match result {
@@ -405,11 +415,12 @@ async fn filter(
     mut freshness: Signal<Freshness>,
 ) {
     // A -> B -> A is three searches, even though the first and last have the same text.
-    let generation = {
+    let view = {
         let mut d = data.write();
         d.query = query;
         d.days = days;
         d.generation += 1;
+        d.view += 1;
         d.tasks.clear();
         d.from_device.clear();
         d.cursors.clear();
@@ -419,10 +430,11 @@ async fn filter(
         for status in std::mem::take(&mut d.drawn) {
             shown.gone(&board::column(&status));
         }
-        d.generation
+        d.view
     };
+    // Typing on: a later key's search reads in its place. A feed event meanwhile does not.
     sleep(250).await;
-    if data.read().generation == generation {
+    if data.read().view == view {
         counts(data, freshness).await;
     }
 }
@@ -435,7 +447,7 @@ async fn column(
     mut data: Signal<BoardData>,
     freshness: Signal<Freshness>,
 ) {
-    let (generation, version) = {
+    let ticket = {
         let mut d = data.write();
         // A live refresh resets the first page's cursor, and a column drawn from this device has
         // only the device's until it is checked. Keep a Load more click behind that read instead
@@ -451,22 +463,13 @@ async fn column(
         if d.waiting || !more && d.checked.get(&status) == Some(&d.generation) {
             return;
         }
-        let generation = d.generation;
+        let view = d.view;
         let version = d.requests.or_default(status.clone());
         *version += 1;
-        (generation, *version)
+        (view, *version)
     };
     sleep(250).await;
-    read_column(
-        status,
-        more,
-        query,
-        days,
-        (generation, version),
-        data,
-        freshness,
-    )
-    .await;
+    read_column(status, more, query, days, ticket, data, freshness).await;
 }
 
 /// Check a column drawn from this device once the board's version is read: at once, not after
@@ -477,29 +480,31 @@ async fn check_column(status: String, mut data: Signal<BoardData>, freshness: Si
         let mut d = data.write();
         let generation = d.generation;
         d.checked.insert(status.clone(), generation);
+        let view = d.view;
         let version = d.requests.or_default(status.clone());
         *version += 1;
-        ((generation, *version), d.query.clone(), d.days)
+        ((view, *version), d.query.clone(), d.days)
     };
     if !read_column(status.clone(), false, query, days, ticket, data, freshness).await {
         data.write().checked.remove(&status);
     }
 }
 
-/// Read a page of `status`'s column, unless a later read of it or another generation supersedes
-/// it (`generation`, `version`: the read's). Whether the page shows the server's answer.
+/// Read a page of `status`'s column, unless a later read of it or another view supersedes it
+/// (`view`, `version`: the read's; [`BoardData::view`]). Whether the page shows the server's
+/// answer.
 async fn read_column(
     status: String,
     more: bool,
     query: String,
     days: u8,
-    (generation, version): (u64, u64),
+    (view, version): (u64, u64),
     mut data: Signal<BoardData>,
     mut freshness: Signal<Freshness>,
 ) -> bool {
     let current = |data: Signal<BoardData>| {
         let d = data.read();
-        d.generation == generation && d.requests.get(&status) == Some(&version)
+        d.view == view && d.requests.get(&status) == Some(&version)
     };
     if !current(data) {
         return false;
@@ -662,6 +667,14 @@ fn apply(value: &JsValue, mut data: Signal<BoardData>) -> Result<bool, String> {
     }
     let mut next = before.clone();
     let refresh = merge(value, &mut next)?;
+    if refresh {
+        // Every change affecting a query's complete totals invalidates older pages/counts.
+        // The pending refresh retries if another such event arrives while its read is held.
+        // Only the live event does: its replay onto an answer read meanwhile asks for nothing.
+        next.generation += 1;
+        next.cursors.clear();
+        next.pending_more.clear();
+    }
     if before != next {
         crate::viewport::hold_place("[data-slug]");
         data.set(next);
@@ -693,13 +706,16 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
             "machine-work" => {
                 let work: symphony_api::MachineWork =
                     serde_wasm_bindgen::from_value(value).map_err(|e| e.to_string())?;
+                // The listings leave the work out (`work=0`): only work that puts a task in
+                // another stage changes a count or a column. The machine sends its heartbeat
+                // every second, which moves none.
+                refresh |= !d.work.places_alike(&work);
                 d.work = work.into();
                 d.worked += 1;
                 // The feed's first word of the machine's work, when it beats the read.
                 if d.worked == 1 {
                     keep_shape(d);
                 }
-                refresh = true;
             }
             "task" | "task-summary" => {
                 let mut change: ItemChange<Task> =
@@ -747,13 +763,6 @@ fn merge(value: &JsValue, d: &mut BoardData) -> Result<bool, String> {
             _ => {}
         }
     }
-    if refresh {
-        // Every change affecting a query's complete totals invalidates older pages/counts.
-        // The pending refresh retries if another such event arrives while its read is held.
-        d.generation += 1;
-        d.cursors.clear();
-        d.pending_more.clear();
-    }
     Ok(refresh)
 }
 
@@ -790,6 +799,7 @@ async fn keep_live(
                 {
                     let mut d = data.write();
                     d.generation += 1;
+                    d.view += 1;
                     d.waiting = false;
                 }
                 freshness.write().answered(board::BOARD);
@@ -814,6 +824,7 @@ async fn keep_live(
                                         let mut d = data.write();
                                         d.connected = true;
                                         d.generation += 1;
+                                        d.view += 1;
                                         d.cursors.clear();
                                         d.pending_more.clear();
                                     }
@@ -895,6 +906,7 @@ async fn keep_live(
             let mut d = data.write();
             d.connected = false;
             d.generation += 1;
+            d.view += 1;
             d.cursors.clear();
             d.pending_more.clear();
             if !d.lifecycle_counts.is_empty() {

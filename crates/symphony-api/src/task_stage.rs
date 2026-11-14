@@ -61,37 +61,65 @@ impl MachineWork {
         }
         let mut stage = TaskStage::Lifecycle(&task.status);
         let mut priority = 0;
-        for machine in &self.machines {
-            if !matches!(
-                machine.freshness,
-                WorkFreshness::Fresh | WorkFreshness::Incomplete
-            ) {
-                continue;
-            }
-            for operation in &machine.operations {
-                if operation.machine_id.as_deref() != Some(&machine.machine_id)
-                    || !operation.is_for(&task.slug)
-                    || operation.operation_id.as_deref().is_none_or(str::is_empty)
-                    || !matches!(operation.kind, WorkKind::Build | WorkKind::Test)
-                    || self.conflicts(operation)
-                {
-                    continue;
-                }
-                // Queued Build < queued Test < running Build < running Test.
-                let candidate = 1
-                    + 2 * u8::from(operation.state == WorkState::Running)
-                    + u8::from(operation.kind == WorkKind::Test);
-                if candidate > priority {
-                    priority = candidate;
-                    stage = if operation.kind == WorkKind::Test {
-                        TaskStage::Test
-                    } else {
-                        TaskStage::Build
-                    };
-                }
+        for operation in self.placing(Some(&task.slug)) {
+            // Queued Build < queued Test < running Build < running Test.
+            let candidate = 1
+                + 2 * u8::from(operation.state == WorkState::Running)
+                + u8::from(operation.kind == WorkKind::Test);
+            if candidate > priority {
+                priority = candidate;
+                stage = if operation.kind == WorkKind::Test {
+                    TaskStage::Test
+                } else {
+                    TaskStage::Build
+                };
             }
         }
         stage
+    }
+
+    /// Whether `other` puts every task in the stage this work puts it in ([`Self::task_stage`]):
+    /// the same operations place tasks, in the same order, each for the same task and the tasks
+    /// it is under, of the same kind, running or queued alike. A machine's heartbeat, its age,
+    /// its sequence and its other operations move nothing on a board, whose listings are read
+    /// without the work (`work=0`), so the board reads its counts and columns again only when
+    /// this is false. Two works placing alike in another order count as different.
+    pub fn places_alike(&self, other: &MachineWork) -> bool {
+        fn key(op: &WorkOperation) -> (Option<&str>, &[String], bool, bool) {
+            (
+                op.task.as_deref(),
+                op.under.as_slice(),
+                op.kind == WorkKind::Test,
+                op.state == WorkState::Running,
+            )
+        }
+        self.placing(None).map(key).eq(other.placing(None).map(key))
+    }
+
+    /// The operations that can place a task in Build or Test, `slug`'s alone when it names one,
+    /// in the machines' order: current evidence on a fresh or partial machine, recorded by that
+    /// machine, with an operation id, of a build or a test, which no other report of the same
+    /// operation contradicts (looked for last, among every machine's).
+    fn placing<'a>(&'a self, slug: Option<&'a str>) -> impl Iterator<Item = &'a WorkOperation> {
+        self.machines
+            .iter()
+            .filter(|machine| {
+                matches!(
+                    machine.freshness,
+                    WorkFreshness::Fresh | WorkFreshness::Incomplete
+                )
+            })
+            .flat_map(|machine| {
+                machine.operations.iter().filter(move |operation| {
+                    operation.machine_id.as_deref() == Some(&machine.machine_id)
+                })
+            })
+            .filter(move |operation| {
+                slug.is_none_or(|slug| operation.is_for(slug))
+                    && !operation.operation_id.as_deref().is_none_or(str::is_empty)
+                    && matches!(operation.kind, WorkKind::Build | WorkKind::Test)
+                    && !self.conflicts(operation)
+            })
     }
 
     fn conflicts(&self, operation: &WorkOperation) -> bool {
