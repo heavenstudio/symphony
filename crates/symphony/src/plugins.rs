@@ -92,14 +92,77 @@ pub fn commands() -> Vec<&'static dyn Command> {
         .collect()
 }
 
-/// The command `name` of the first plugin this process holds that adds one, measured as the
-/// project at `root` says when there is one ([`Plugins::at`]). Its two settings are read alone and
-/// quietly first ([`PluginCalls::read`]): with both off, the command runs as it did before either
-/// setting existed, the project neither loaded nor checked and nothing said of its file.
+/// Every command `symphony` runs in the project at `root` ([`command`]): the commands of its
+/// plugins answering from a process, then those of the plugins this process holds that none of its
+/// processes answers for, each name once.
+pub fn commands_of(root: Option<&Path>) -> Vec<&'static dyn Command> {
+    let piped = piped(root);
+    let linked = compiled()
+        .iter()
+        .filter(|plugin| !piped.answers(plugin.name()))
+        .flat_map(|plugin| plugin.commands());
+    let mut found: Vec<&'static dyn Command> = Vec::new();
+    for command in piped.commands.iter().copied().chain(linked) {
+        if !found.iter().any(|held| held.name() == command.name()) {
+            found.push(command);
+        }
+    }
+    found
+}
+
+/// What a project has of plugins answering from a process, for its commands: their commands, run
+/// as their programs ([`process`]), and the names of the plugins its file gives a process.
+#[derive(Default)]
+struct Piped {
+    commands: Vec<&'static dyn Command>,
+    names: Vec<String>,
+}
+
+impl Piped {
+    /// Whether the plugin `name` answers from its process here, so a plugin of that name this
+    /// process holds does not.
+    fn answers(&self, name: &str) -> bool {
+        self.names.iter().any(|piped| piped == name)
+    }
+}
+
+/// The plugins answering from a process of the project at `root` ([`Piped`]): none without a root
+/// or when its file names no `[plugins.process]`, read alone and quietly first
+/// ([`PluginProcess::named_at`]).
+fn piped(root: Option<&Path>) -> Piped {
+    let Some(root) = root.filter(|root| crate::project::PluginProcess::named_at(root)) else {
+        return Piped::default();
+    };
+    let project = Project::of(root);
+    let plugins = Plugins::for_project(&project);
+    Piped {
+        commands: plugins
+            .list()
+            .iter()
+            .copied()
+            .filter(|plugin| process::remote(*plugin).is_some())
+            .flat_map(|plugin| plugin.commands())
+            .collect(),
+        names: project.plugin_processes.keys().cloned().collect(),
+    }
+}
+
+/// The command `name` `symphony` runs in the project at `root`: one of a plugin of the project
+/// answering from its process, run as its program; else that of the first plugin this process
+/// holds that adds one, measured as the project at `root` says when there is one
+/// ([`Plugins::at`]). Whether the project names a plugin's process, and its two settings, are read
+/// alone and quietly first ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at),
+/// [`PluginCalls::read`]): with none of them, the command runs as it did before either setting
+/// existed, the project neither loaded nor checked and nothing said of its file.
 pub fn command(name: &str, root: Option<&Path>) -> Option<&'static dyn Command> {
+    let piped = piped(root);
+    if let Some(found) = piped.commands.iter().copied().find(|c| c.name() == name) {
+        return Some(found);
+    }
     let plugin = compiled()
         .iter()
         .copied()
+        .filter(|plugin| !piped.answers(plugin.name()))
         .find(|plugin| plugin.commands().iter().any(|c| c.name() == name))?;
     let plugin = match root {
         Some(root) if PluginCalls::read(root).recorded() => {

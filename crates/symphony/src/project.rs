@@ -90,6 +90,29 @@ pub struct PluginProcess {
     pub log: PathBuf,
 }
 
+impl PluginProcess {
+    /// Whether the `symphony.toml` at `root` names a plugin's process, its `[plugins.process]`
+    /// read alone and quietly as [`PluginCalls::read`] reads its settings: a file that does not
+    /// parse, or no file, names none. What a plugin command reads before it runs
+    /// ([`crate::plugins::command`]), so a command of a plugin this process holds loads no project.
+    pub fn named_at(root: &Path) -> bool {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Settings {
+            plugins: PluginSettings,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PluginSettings {
+            process: BTreeMap<String, toml::Value>,
+        }
+        std::fs::read_to_string(root.join(FILE))
+            .ok()
+            .and_then(|text| toml::from_str::<Settings>(&text).ok())
+            .is_some_and(|settings| !settings.plugins.process.is_empty())
+    }
+}
+
 /// How a project's plugin calls are measured, both off unless its file turns them on
 /// (docs/PLUGIN_CALLS.md): `[plugins] timing` records each call's time, `[plugins] loopback` sends
 /// each call through a JSON round trip inside the process and records both times

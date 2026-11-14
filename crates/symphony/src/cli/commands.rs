@@ -198,14 +198,18 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
         return shot::main(args, out, err);
     }
     // Measured as the project the command runs in says, the nearest above the current folder.
-    let root = std::env::current_dir()
-        .ok()
-        .and_then(|here| crate::project::Project::find(&here));
-    if let Some(command) = crate::plugins::command(name, root.as_deref()) {
+    if let Some(command) = crate::plugins::command(name, here().as_deref()) {
         return command.run(args, out, err);
     }
     let _ = writeln!(err, "{}", unknown(&SYMPHONY, name));
     2
+}
+
+/// The project a command runs in: the nearest above the current folder.
+fn here() -> Option<std::path::PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|here| crate::project::Project::find(&here))
 }
 
 /// `symphony-build COMMAND ARGS…`: one of [`BUILD`]'s commands. Its exit code.
@@ -295,10 +299,12 @@ fn every(binary: &Binary) -> Vec<(String, String)> {
     let Some((last, own)) = binary.own.split_last() else {
         return Vec::new();
     };
-    let plugins = binary
-        .plugins
-        .then(crate::plugins::commands)
-        .unwrap_or_default();
+    // The plugins' commands of the project the binary runs in, as [`plugin`] runs them.
+    let plugins = if binary.plugins {
+        crate::plugins::commands_of(here().as_deref())
+    } else {
+        Vec::new()
+    };
     own.iter()
         .map(line)
         .chain(plugins.into_iter().map(|command| {

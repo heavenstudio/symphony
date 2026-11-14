@@ -26,14 +26,16 @@
 //!
 //! **Its seams.** What the plugin declared stands for it here: its components, card kinds,
 //! renderers, routes, home regions, board actions, watches and doc checks ([`seams`]), each
-//! forwarding its calls, and its navigation and theme, which are declaration alone. A plugin
-//! declaring any other seam is refused, naming it ([`unanswered`]). A call newer than the agreed
-//! minor is not sent: the seam's own default answers it. A call that gets no answer (the process down, no answer in time, a refusal, an answer
-//! that does not read) is shown where its answer would go: a component's in its place on the page
-//! ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing of the
-//! card, and each other seam's as [`seams`] says. A page's components share their `once` values in the plugin as they do linked: every call
-//! of one [`Page`] names its render ([`PageData::render`]). A register read asks every card kind of
-//! every card in one request ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
+//! forwarding its calls; its navigation and theme, which are declaration alone; and its commands,
+//! each run as its program ([`seams::RemoteCommand`]). A plugin declaring any other seam is refused,
+//! naming it ([`unanswered`]). A call newer than the agreed minor is not sent: the seam's own
+//! default answers it. A call that gets no answer (the process down, no answer in time, a refusal,
+//! an answer that does not read) is shown where its answer would go: a component's in its place on
+//! the page ([`super::error`]), a card kind's as the kind's default, as if the plugin said nothing
+//! of the card, and each other seam's as [`seams`] says. A page's components share their `once`
+//! values in the plugin as they do linked: every call of one [`Page`] names its render
+//! ([`PageData::render`]). A register read asks every card kind of every card in one request
+//! ([`Remote::read_cards`], [`ReadCards`]), its answers kept for that read.
 //!
 //! **Measured.** Under `[plugins] timing` or `loopback` each call writes its line to the project's
 //! record ([`super::measure`]) as a process call: the plugin's own time, as it says it, the host's
@@ -56,13 +58,16 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    BoardAction, Card, CardKind, Component, DocCheck, HomeRegion, Page, Plugin, Renderer, Route,
-    Theme, Watch,
+    BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin, Renderer,
+    Route, Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
-use seams::{RemoteAction, RemoteCheck, RemoteRegion, RemoteRenderer, RemoteRoute, RemoteWatch};
+use seams::{
+    RemoteAction, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer, RemoteRoute,
+    RemoteWatch,
+};
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -328,7 +333,6 @@ fn unanswered(declaration: &Declaration) -> Vec<&'static str> {
         ("gates", d.gates.is_empty()),
         ("prose rules", d.prose_rules.is_empty()),
         ("generators", d.generators.is_empty()),
-        ("commands", d.commands.is_empty()),
         ("transports", d.transports.is_empty()),
     ]
     .into_iter()
@@ -1160,6 +1164,9 @@ impl Plugin for Remote {
                 .collect()
         })
     }
+    fn commands(&self) -> Vec<&dyn Command> {
+        self.each(|d| d.commands.iter().map(|c| -> &dyn Command { c }).collect())
+    }
     fn theme(&self) -> Option<Theme> {
         self.declaration().ok()?.theme.clone()
     }
@@ -1176,6 +1183,7 @@ struct Declared {
     board_actions: Vec<RemoteAction>,
     watches: Vec<RemoteWatch>,
     doc_checks: Vec<RemoteCheck>,
+    commands: Vec<RemoteCommand>,
 }
 
 /// `text` kept for the process's life, as the declaration is: what a seam's object lends as a
@@ -1255,6 +1263,15 @@ impl Declared {
                     remote,
                     name: check.name.clone(),
                     inputs: check.inputs.clone(),
+                })
+                .collect(),
+            commands: declaration
+                .commands
+                .iter()
+                .map(|command| RemoteCommand {
+                    remote,
+                    name: command.name.clone(),
+                    summary: command.summary.clone(),
                 })
                 .collect(),
             declaration,

@@ -17,7 +17,7 @@ use symphony::project::{PluginCalls, PluginProcess, Project};
 use symphony::render::Render;
 use symphony_plugin::protocol::{Envelope, PageData, Request};
 use symphony_plugin::vocabulary::{Block, Span};
-use symphony_plugin::{CardKind, Docs, File, Page, Renderer, Submission, TaskRef};
+use symphony_plugin::{CardKind, Command, Docs, File, Page, Renderer, Submission, TaskRef};
 
 use super::Tree;
 use super::calls::{lines, median, with_card};
@@ -484,6 +484,85 @@ fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no
     assert_eq!(symphony::theme::Package::of(&project).name, "Every");
     assert!(symphony::theme::problems(&project).is_empty());
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
+}
+
+/// `command` run with `args`: its exit code and what it wrote to its stdout and stderr.
+fn ran(command: &dyn Command, args: &[&str]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|&arg| arg.into()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = command.run(&args, &mut out, &mut err);
+    let text = |bytes| String::from_utf8(bytes).unwrap();
+    (code, text(out), text(err))
+}
+
+#[test]
+fn a_plugins_process_runs_its_command_as_its_program_as_it_does_linked() {
+    let tree = Tree::new();
+    let (linked, piped, project) = linked_and_piped(&tree, true);
+    let (theirs, ours) = (linked.list()[0].commands(), piped.list()[0].commands());
+    let said = |commands: &[&dyn Command]| -> Vec<(String, String)> {
+        let said = |c: &&dyn Command| (c.name().to_string(), c.summary().to_string());
+        commands.iter().map(said).collect()
+    };
+    assert_eq!(said(&ours), said(&theirs));
+    assert_eq!(ours.len(), 1);
+    for args in [&[][..], &["--all", "a b", "", "ünï"]] {
+        assert_eq!(ran(ours[0], args), ran(theirs[0], args), "{args:?}");
+    }
+    // `symphony NAME` in the project finds the process's command, and its listing names it once.
+    let found = symphony::plugins::command("every", Some(&tree.root)).unwrap();
+    assert_eq!(
+        ran(found, &["x"]),
+        (1, "x\n".into(), "1 arguments\n".into())
+    );
+    let listed = symphony::plugins::commands_of(Some(&tree.root));
+    assert_eq!(listed.iter().filter(|c| c.name() == "every").count(), 1);
+    // A command is no call on the pipe, so none is recorded.
+    assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
+}
+
+#[test]
+fn symphony_runs_a_command_of_a_plugins_process_in_its_project() {
+    let tree = Tree::new();
+    project(&tree, "");
+    tree.write("docs/a/.keep", "");
+    let symphony = |args: &[&str]| {
+        let done = std::process::Command::new(env!("CARGO_BIN_EXE_symphony"))
+            .args(args)
+            .current_dir(tree.path("docs/a"))
+            .output()
+            .unwrap();
+        let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
+        (done.status.code(), text(done.stdout), text(done.stderr))
+    };
+    assert_eq!(
+        symphony(&["every", "--all", "a b"]),
+        (Some(2), "--all|a b\n".into(), "2 arguments\n".into())
+    );
+    // Its listing names the command with the summary the process declared.
+    let (code, listing, _) = symphony(&["help"]);
+    assert_eq!(code, Some(0));
+    let line = |line: &&str| line.split_whitespace().next() == Some("every");
+    let named: Vec<&str> = listing.lines().filter(line).collect();
+    assert_eq!(named.len(), 1, "{listing}");
+    assert!(named[0].ends_with("  print its arguments"), "{listing}");
+}
+
+#[test]
+fn a_plugin_the_project_gives_a_process_that_does_not_start_has_no_linked_command() {
+    // This process holds the plugin linked, and runs its command where no process answers for it.
+    let tree = super::compiled::naming(&["every"]);
+    let linked = symphony::plugins::command("every", Some(&tree.root)).unwrap();
+    let own = symphony_plugin::Plugin::commands(&super::every::EVERY)[0];
+    assert!(std::ptr::addr_eq(linked, own));
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n",
+    );
+    // A copy this process holds is not the project's plugin, so it does not stand in for it.
+    assert!(symphony::plugins::command("every", Some(&tree.root)).is_none());
+    let listed = symphony::plugins::commands_of(Some(&tree.root));
+    assert!(listed.iter().all(|c| c.name() != "every"));
 }
 
 #[test]

@@ -6,9 +6,12 @@
 //! drawing as its error in the file's place, a route's answer as not found and a home region as
 //! none (each failure in the plugin's log), a board action's offer or submission as its refusal, a
 //! watch's warming as the server's log line saying so, a doc check's as a problem naming it, and
-//! its components as none.
+//! its components as none. Its commands are no call: each runs as the plugin's program, a process
+//! of its own ([`RemoteCommand`]).
 
+use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::mpsc;
 
 use symphony_plugin::protocol::{
     Ask, Changed, CheckDocs, DocComponents, Draw, FileData, Forget, Offer, PageData, ProblemData,
@@ -16,8 +19,8 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Region, TaskOffer};
 use symphony_plugin::{
-    BoardAction, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem, Renderer, Reply, Route,
-    Submission, Submitted, TaskRef, Watch,
+    BoardAction, Command, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem, Renderer,
+    Reply, Route, Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -231,4 +234,104 @@ impl Watch for RemoteWatch {
         // it kept.
         let _ = self.remote.ask(&self.named(), asked);
     }
+}
+
+/// A command the remote declared: never a call on the pipe, but the plugin's program run alone as
+/// `PROGRAM ARGS… command NAME ARGS…`, as the SDK's `serve` runs one, its exit code the command's.
+pub(super) struct RemoteCommand {
+    pub(super) remote: &'static Remote,
+    pub(super) name: String,
+    pub(super) summary: String,
+}
+
+impl Command for RemoteCommand {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn summary(&self) -> &str {
+        &self.summary
+    }
+    fn run(&self, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+        use std::os::unix::process::ExitStatusExt as _;
+        let program = &self.remote.process().command;
+        let said = |err: &mut dyn Write, what: String| {
+            let what = format!("its command {} {what}", self.name);
+            let _ = writeln!(err, "{}", self.remote.failed(&what));
+        };
+        match run(program, &self.name, args, out, err) {
+            Ok(status) => match (status.code(), status.signal()) {
+                (Some(code), _) => code,
+                (None, signal) => {
+                    said(err, super::ended(status));
+                    128 + signal.unwrap_or(0)
+                }
+            },
+            Err(why) => {
+                said(err, format!("cannot start: {why}"));
+                1
+            }
+        }
+    }
+}
+
+/// The plugin's `command` (its program and its arguments) run as `command NAME ARGS…`, as a linked
+/// plugin's command runs: in this process's folder with its stdin, without the session, its stdout
+/// and stderr written to `out` and `err` as they come. How it ended.
+fn run(
+    command: &[String],
+    name: &str,
+    args: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> io::Result<std::process::ExitStatus> {
+    use symphony_board::sys::Stdio;
+    let (program, before) = command
+        .split_first()
+        .ok_or_else(|| io::Error::other("it names no program"))?;
+    let mut started = crate::children::command(program);
+    started
+        .args(before)
+        .arg("command")
+        .arg(name)
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = started.spawn()?;
+    // Each stream read on a thread of its own, and written here as it comes, in its order.
+    let (said, heard) = mpsc::channel::<(bool, Vec<u8>)>();
+    let streams: [(bool, Option<Box<dyn Read + Send>>); 2] = [
+        (false, child.stdout.take().map(|s| Box::new(s) as _)),
+        (true, child.stderr.take().map(|s| Box::new(s) as _)),
+    ];
+    let readers: Vec<_> = streams
+        .into_iter()
+        .filter_map(|(to_err, stream)| {
+            let (mut stream, said) = (stream?, said.clone());
+            Some(std::thread::spawn(move || {
+                let mut buffer = [0; 8192];
+                loop {
+                    match stream.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            if said.send((to_err, buffer[..read].to_vec())).is_err() {
+                                break;
+                            }
+                        }
+                        Err(why) if why.kind() == io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    }
+                }
+            }))
+        })
+        .collect();
+    drop(said);
+    for (to_err, bytes) in heard {
+        let to: &mut dyn Write = if to_err { &mut *err } else { &mut *out };
+        let _ = to.write_all(&bytes).and_then(|()| to.flush());
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+    child.wait()
 }

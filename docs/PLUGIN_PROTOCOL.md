@@ -81,16 +81,17 @@ fn main() -> std::process::ExitCode {
 ```
 
 What answers from a process here is a plugin's components, card kinds, renderers, routes, home
-regions, board actions, watches and doc checks, each call a request on the pipe, and its navigation
-and theme, which its declaration holds and which cost no call. A project that loads starts its
-plugins' processes for their declarations, as its navigation is among the routes an entrypoint's
-files must not meet. An entrypoint's `types` may name a renderer of a plugin's process; a project
-whose entrypoint names a type only a process could handle, and whose process cannot say its
-renderers, is refused, naming why. Its other seams (board fields, gates, prose rules, generators,
-commands and transports) are not asked of a process: a plugin that declares any of them is refused
-under `[plugins.process]`, naming them, rather than losing them without a word, and stays a linked
-plugin's to answer. Each is answered from a process once a plugin first declares it from one. So is
-a plugin refused that declares another name than the one `[plugins.process]` gives it.
+regions, board actions, watches and doc checks, each call a request on the pipe; its commands, each
+run as its program ([below](#its-commands)); and its navigation and theme, which its declaration
+holds and which cost no call. A project that loads starts its plugins' processes for their
+declarations, as its navigation is among the routes an entrypoint's files must not meet. An
+entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
+type only a process could handle, and whose process cannot say its renderers, is refused, naming
+why. Its other seams (board fields, gates, prose rules, generators and transports) are not asked of
+a process: a plugin that declares any of them is refused under `[plugins.process]`, naming them,
+rather than losing them without a word, and stays a linked plugin's to answer. Each is answered from
+a process once a plugin first declares it from one. So is a plugin refused that declares another
+name than the one `[plugins.process]` gives it.
 
 ## Its process
 
@@ -137,16 +138,28 @@ that does not read) is shown where its answer would go: a component's in its pla
 renderer's drawing the same way in the file's place, and a card kind's as the kind's default, as if
 the plugin said nothing of the card. A route answers not found and a home region shows nothing, why
 in the plugin's log. A board action's offer or submission is its error, naming why, as a linked
-action's error is shown, and a submission refused moves nothing. A watch that did not warm says so in the server's log,
-and one told to forget says nothing: a process that ends keeps nothing. A doc check that did not run is a problem of the project file naming the plugin
-and the check, so `symphony status --lint` fails rather than passes, and names no component. A call
-that had no answer fails alone: the calls after it start the process again once its pause is over.
+action's error is shown, and a submission refused moves nothing. A watch that did not warm says so
+in the server's log, and one told to forget says nothing: a process that ends keeps nothing. A doc
+check that did not run is a problem of the project file naming the plugin and the check, so
+`symphony status --lint` fails rather than passes, and names no component. A call that had no
+answer fails alone: the calls after it start the process again once its pause is over.
 
-A plugin's commands do not go on the pipe, and the host does not run them: `symphony NAME ARGS…`
-runs a linked plugin's command alone, so a plugin with commands is refused under
-`[plugins.process]`. The SDK's binary still runs one for whoever starts it as `PROGRAM command NAME
-ARGS…`, with streams of its own and the command's exit code as its own (its low byte, as an exit
-status holds it). `commands.run` is the loopback's alone.
+## Its commands
+
+A plugin's commands do not go on the pipe. `symphony NAME ARGS…`, run in a project whose plugin
+answers from a process and declared the command `NAME`, runs the plugin's program alone as `PROGRAM
+… command NAME ARGS…`, the words `[plugins.process]` gives it first: in the folder `symphony` runs
+in, with its stdin, without the session, its stdout and stderr written to `symphony`'s as they come,
+and its exit code `symphony`'s, which the SDK's `serve` gives as the command's (its low byte, as an
+exit status holds it). A program killed exits 128 and the signal's number, and one that cannot start
+exits 1, each saying so on stderr (`plugin NAME: its command C was killed by signal 9`). It is no
+call: it starts no process of the pipe's, waits on none, and is not measured. `symphony help` lists
+the commands the project's processes declared, each once, before those of the plugins linked in the
+binary; a linked plugin that the project's file gives a process adds none, even while that process
+does not start, so a copy built into the binary never stands in for the project's own. The project
+is found and its plugins started only when its file names a `[plugins.process]`, read alone and
+quietly first; a project with none runs its linked plugins' commands as before. `commands.run` is
+the loopback's alone.
 
 ## Card kinds in one request
 
@@ -285,9 +298,10 @@ plugin) shows each meter moves by it, and the test fails if one does not. Then a
 card-kind calls summed, and a page of ten components drawn whole, linked and from a process, neither
 page recorded. A second test reads registers of 50 and 500 cards linked, from a process card by
 card and from a process in one request, each read checked against the linked one, and prints the
-batch's lines ([above](#card-kinds-in-one-request)). Each is a measurement, not a check: a process call waits on two wake-ups across threads and processes and a
-linked one on none, so a loaded machine inflates the difference by an amount nobody knows. Take it on
-a quiet machine, in a release build, twice, with the load average before and after each run:
+batch's lines ([above](#card-kinds-in-one-request)). Each is a measurement, not a check: a process
+call waits on two wake-ups across threads and processes and a linked one on none, so a loaded
+machine inflates the difference by an amount nobody knows. Take it on a quiet machine, in a release
+build, twice, with the load average before and after each run:
 
 ```sh
 uptime
