@@ -323,15 +323,18 @@ fn load(ran: &Ran) -> String {
     }
 }
 
-/// Whether `command` runs a whole test run: `cargo test` (through `tools/cargo.sh` too) or
-/// `just test-rs`, whose rerun alone is a target of it, never all of it again.
+/// Whether `command` runs a whole test run: `cargo test` (through `tools/cargo.sh` too), `just
+/// test-rs` or the tests' lanes (`tools/test-lanes.sh`, verify's tests step), whose rerun alone is
+/// a target of it, never all of it again.
 fn runs_tests(command: &str) -> bool {
     let words: Vec<&str> = command.split_whitespace().collect();
-    words.windows(2).any(|pair| {
-        let [tool, what] = pair else { return false };
-        ((tool.ends_with("cargo") || tool.ends_with("cargo.sh")) && *what == "test")
-            || (*tool == "just" && *what == "test-rs")
-    })
+    let lanes = |word: &&str| *word == "test-lanes.sh" || word.ends_with("/test-lanes.sh");
+    words.iter().any(lanes)
+        || words.windows(2).any(|pair| {
+            let [tool, what] = pair else { return false };
+            ((tool.ends_with("cargo") || tool.ends_with("cargo.sh")) && *what == "test")
+                || (*tool == "just" && *what == "test-rs")
+        })
 }
 
 /// What a red task says reruns each target of a test run alone when its log names none failed.
@@ -2107,8 +2110,42 @@ mod tests {
             alone(&unbuilt, &night(&[])),
             "a target at a time"
         );
+        // Nor when the tests ran in lanes, the tests step's command since.
+        let lanes = Ran {
+            command: "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/test-lanes.sh"
+                .into(),
+            ..unbuilt.clone()
+        };
+        assert_eq!(alone(&lanes, &night(&[])), alone(&unbuilt, &night(&[])));
+        // A red lane that listed no target of its own is rerun whole, by the tests it named failed
+        // when it named any, and the run's list names it.
+        let dead = Ran {
+            command: "tools/test-lanes.sh".into(),
+            log: tree.write(
+                "lanes-dead.log",
+                include_str!("fixtures/tests-lanes-dead.log"),
+            ),
+            ..ran("verify/tests", 137)
+        };
+        assert!(
+            alone(&dead, &night(&[])).ends_with(
+                "(3):\n- `just test-rs --workspace --test sweep -- land::a --exact`\n- `just \
+                 test-rs --workspace --test browser`\n- `just test-rs -p symphony-board --test cli`"
+            ),
+            "{}",
+            alone(&dead, &night(&[]))
+        );
+        assert!(
+            quoted(&dead)
+                .contains("    `--workspace --test sweep`\n    `--workspace --test browser`\n"),
+            "{}",
+            quoted(&dead)
+        );
         assert!(runs_tests("just test-rs -p symphony") && runs_tests("cargo test --lib"));
+        assert!(runs_tests("tools/test-lanes.sh") && runs_tests("test-lanes.sh"));
         assert!(!runs_tests("just size-check") && !runs_tests("cargo build --tests"));
+        assert!(!runs_tests("tools/verify.sh") && !runs_tests("tools/test-lanes.sh.orig"));
+        assert!(!runs_tests("tools/my-test-lanes.sh"));
         // A verify that listed its steps never reads its own log, whose tails can quote a step's
         // recipe or test: its steps are each a task of their own.
         let quoting = Ran {

@@ -1,0 +1,45 @@
+   Compiling symphony-board v0.1.0 (/work/symphony-wt/release/crates/tasks)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 12s
+  Executable tests/sweep/main.rs (.target/debug/deps/sweep-1a2b3c4d5e6f7081)
+  Executable tests/browser/main.rs (.target/debug/deps/browser-5e6f7a8b9c0d1e2f)
+  Executable tests/cli/main.rs (.target/debug/deps/cli-2b3c4d5e6f708192)
+  Executable tests/server/main.rs (.target/debug/deps/server-3c4d5e6f70819203)
+test-lanes: lanes run at most 8 at once (16 processors online), each writing its log as it runs:
+test-lanes:     /work/symphony-wt/release/logs/7/verify.steps/tests-lanes/sweep.log (--test sweep)
+test-lanes:     /work/symphony-wt/release/logs/7/verify.steps/tests-lanes/browser.log (--test browser)
+test-lanes:     /work/symphony-wt/release/logs/7/verify.steps/tests-lanes/board.log (--test cli --test server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running tests/sweep/main.rs (.target/debug/deps/sweep-1a2b3c4d5e6f7081)
+
+running 2 tests
+test land::b ... ok
+test land::a ... FAILED
+error: the lane sweep is red (exit status 137) and listed no target that failed, to rerun pass `--workspace --test sweep`
+   Compiling symphony-ui v0.1.0 (/work/symphony-wt/release/apps/symphony-ui)
+error[E0599]: no method named `held` found for struct `Page` in the current scope
+  --> apps/symphony-ui/tests/browser/shot.rs:9:14
+error: could not compile `symphony-ui` (test "browser") due to 1 previous error
+error: the lane browser is red (exit status 101) and listed no target that failed, to rerun pass `--workspace --test browser`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running tests/cli/main.rs (.target/debug/deps/cli-2b3c4d5e6f708192)
+
+running 3 tests
+error: test failed, to rerun pass `-p symphony-board --test cli`
+
+Caused by:
+  process didn't exit successfully: `.target/debug/deps/cli-2b3c4d5e6f708192` (signal: 6, SIGABRT: process abort signal)
+     Running tests/server/main.rs (.target/debug/deps/server-3c4d5e6f70819203)
+
+running 1 test
+test serve::a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+error: 1 target failed:
+    `-p symphony-board --test cli`
+error: 3 targets failed:
+    `--workspace --test sweep`
+    `--workspace --test browser`
+    `-p symphony-board --test cli`
+
+verify: the tests ran against the client the client check built in this verify: /work/symphony-wt/release/build/verified-client/public
