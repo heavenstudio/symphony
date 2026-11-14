@@ -2061,22 +2061,63 @@ or a card in a document it links comes or goes; never for a plain post. The page
 feed counts those events for the task it shows, and the section reads again when
 the count grows. A newer read aborts the one before.
 
-The Symphony answers three of its own:
+The Symphony answers its own. A top-level task that is open, or that has an assessment
+([Needed stamps](#needed-stamps)), has a gate for each stamp of the project's catalogue, in
+its order (`crates/symphony/src/gates/stamps.rs`), each read at the branch's tip by its
+reader (`crates/tasks/src/stamps/read.rs`). A stamp the task needs there is met, missing
+or, for `owner`, held. A stamp its assessment left out is waived, the assessment's reason
+its why, its assessor the who and its line the link; with no assessment, a stamp the
+catalogue does not need by default is waived, saying so. A stamp stands on the tip alone:
+evidence naming another commit, a merge of the default branch included, is stale, not met,
+and the gate names the commit it stood on. A commit is named by a word of 7 to 40 hex
+digits, one digit at least, that the tip's id starts with. With no such branch in the
+repository a needed stamp is not met, saying so. A catalogue the board cannot read leaves the
+gates read as below, for a task with no stamps, and adds one gate, `stamps`, unknown, saying
+why.
 
 - **review**: the reviewer verdicts on the task's thread, one round each
   (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
   own commands in `crates/tasks` read the verdict words apart): met by an `approve`
-  in the last round, missing until then, the earlier rounds its past. A task done
-  with no round landed without review, as a bug fix may
-  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
-  has none: only its top-level task goes to review.
+  in the last round that names the tip, missing until then, the earlier rounds its
+  past; an approve naming another commit, or none, is missing, naming what it
+  approved. A task done with no round, its assessment not having waived `review`,
+  landed without review: missing. A task done by a covered close
+  ([below](#a-task-another-landing-covers)) says so.
+- **tests**: the board's recorder's runs ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests))
+  of the task and the work under it, at the tip: met when the newest run there of each
+  build and test command the task ran is green and one test run is among them; missing
+  while one is red, still going or queued, or when none ran at the tip, the last run
+  elsewhere named.
+- **pictures**: a post on the task's thread naming the tip and showing a picture (`png`,
+  `jpg`, `jpeg`, `gif` or `webp`) under the task's artifacts folder (`artifacts/SLUG/` by
+  default) or uploaded by the owner (`/artifacts/uploads/`): met; missing while the newest
+  such post names another commit or none, or there is none.
+- **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
+  `approve`: met; held until then. Needed or not, it is held while a card the task posted
+  waits on the owner, by the sign-off lane's rule above. Until the task page is ported
+  ([the design](analysis/needed-stamps.md#the-task-page)), its approval offers the stamp:
+  where no plugin's board action offers anything, the Symphony's own, `owner-approve`,
+  offers `Approve SHORT` while the task needs the stamp at its tip and has none there, and
+  posts the owner's line `approve TIP`, the whole tip, through `POST /api/task-action`,
+  refused unless its payload is one commit's id.
+
+A subtask, and a task done or cancelled with no assessment, keep the gates they had before
+stamps, so no task's history is judged again:
+
+- **review**: met by an `approve` in the last round, missing until then, the earlier
+  rounds its past. A task done with no round landed without review, as a bug fix may
+  (RULES.md `workflow/fast-bugfixes`): waived. A subtask has none: only its top-level
+  task goes to review.
+- **owner**: held while a card the task posted waits on the owner, by the sign-off
+  lane's rule above; absent otherwise.
+
+Every task has one more of the Symphony's:
+
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
   was red or is still going, unknown when none ran at the tip or the repository has
   no such branch. A project with no check has no check gate.
-- **owner**: held while a card the task posted waits on the owner, by the
-  sign-off lane's rule above; absent otherwise.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2096,9 +2137,10 @@ its own work.
 ## Needed stamps
 
 What a task needs to land is the stamps its risk calls for, named by an assessor from one
-catalogue ([the design](analysis/needed-stamps.md)). The board holds the catalogue's reading and
-each task's needs (`crates/tasks/src/stamps.rs`); nothing reads the needs to land yet, so the
-default landing still goes by a fresh reviewer's approve ([the default
+catalogue ([the design](analysis/needed-stamps.md)). The board holds the catalogue's reading,
+each task's needs (`crates/tasks/src/stamps.rs`) and each stamp's reader at a tip
+(`stamps/read.rs`); the task page's [gates](#gates) draw them, and nothing reads the needs to
+land yet, so the default landing still goes by a fresh reviewer's approve ([the default
 landing](#the-default-landing)).
 
 - **The catalogue** is the project's `[stamps]` ([PROJECT_FILE](PROJECT_FILE.md#stamps)), read

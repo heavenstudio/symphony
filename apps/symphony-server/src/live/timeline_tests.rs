@@ -202,6 +202,25 @@ fn gates() -> Value {
     ]}})
 }
 
+/// The lanes of the stamps a task no assessment has read leaves out by default (`symphony::gates::
+/// stamps`), made at `created`: the Symphony's `owner`, `pictures` and `tests`, waived since then.
+fn left_out_by_default(created: f64) -> Vec<Value> {
+    (["owner", "pictures", "tests"].into_iter())
+        .map(|name| {
+            json!({"name": name, "states": [{"state": "waived", "from": created,
+                "detail": "Not needed by default: no assessment yet"}]})
+        })
+        .collect()
+}
+
+/// `timeline` with the `lanes` added to its gates' lanes, by name as the timeline orders them.
+fn with_lanes(mut timeline: Value, lanes: Vec<Value>) -> Value {
+    let gates = timeline["gates"].as_array_mut().unwrap();
+    gates.extend(lanes);
+    gates.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    timeline
+}
+
 /// A hub over `root` and `f`'s board.
 fn hub(root: &Path, f: &Fixture) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
@@ -331,11 +350,18 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
                 .is_some_and(|offset| offset % 60 == 0)),
         "{zone}"
     );
-    assert_eq!(answer, expected(&zone));
+    // The pictures predate the stamps: the task, open and never assessed, has the lanes of the
+    // stamps the Symphony's catalogue leaves out by default as well, beside its plugin's gates.
+    let pictured = with_lanes(
+        expected(&zone),
+        left_out_by_default(shifted(1_794_380_520.0)),
+    );
+    assert_eq!(answer, pictured);
     assert!(answer.get("runs_from").is_none(), "nothing rotated out");
 
     // No run kept for it: no runs at all, not runs of nothing. Never in review, it has no review
-    // lane yet: the Symphony's own review gate, its only gate, starts at the move to review.
+    // lane yet: the Symphony's own review gate starts at the move to review. Its other stamps are
+    // left out by default since it was made.
     let (status, answer) = ask("/api/task-timeline?slug=tools/quiet");
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["runs"], json!([]));
@@ -345,7 +371,7 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         json!([{"status": "ready", "from": NOW}]),
         "made ready at the board's clock and waiting since"
     );
-    assert_eq!(answer["gates"], json!([]));
+    assert_eq!(answer["gates"], json!(left_out_by_default(NOW)));
 
     let (status, answer) = ask("/api/task-timeline?slug=tools/missing");
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");

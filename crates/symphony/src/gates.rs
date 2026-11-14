@@ -8,6 +8,10 @@
 //! [`Kept`] by the task and its branch's tip, and a plugin's gate replaces the Symphony's of its
 //! name ([`merged`]), also while the plugin cannot answer ([`failed`]).
 //!
+//! An open or assessed top-level task's own gates are its stamps ([`stamps`]): each stamp of the
+//! project's catalogue needed at the tip and read there, or waived by its assessment. A task done
+//! or cancelled with no assessment, and a subtask, keep the reading above.
+//!
 //! [`answer`] puts them together for the task page's `/api/task-gates`; the server's other readers
 //! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip.
 
@@ -22,10 +26,13 @@ use std::time::{Duration, Instant};
 use symphony_api::gates::{CHECK, OWNER, REVIEW, ranked};
 use symphony_api::{Gate, GatePast, GateState, GatesSeen, Pending, PendingItem, TaskGates};
 use symphony_board::cli::machine_work::recorded::{self, Record, Step};
+use symphony_board::stamps::{Catalogue, read};
 use symphony_plugin::{Gates, TaskRef};
 
 use crate::plugins::Plugins;
 use crate::project::Project;
+
+pub mod stamps;
 
 /// How long a page waits for a plugin's answer before it says the gate is unknown. The answer
 /// still arrives, and is kept, for the next read.
@@ -885,8 +892,9 @@ pub fn answer(
     kept: &Kept,
 ) -> Result<TaskGates, String> {
     let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
-    // The recorder's history is read only for a project whose gates check its runs.
-    let runs = if Project::of(root).verdicts.check.is_empty() {
+    // The recorder's history is read only for a task whose gates read its runs: the project's
+    // check, or the stamps' tests.
+    let runs = if Project::of(root).verdicts.check.is_empty() && !stamps::stamped(record) {
         Vec::new()
     } else {
         work_folder(root)
@@ -911,15 +919,51 @@ pub fn answer_from(
         crate::taskview::approval_branch(store, record).map_err(|error| error.to_string())?;
     let tip = tip(root, &branch);
     let project = Project::of(root);
-    let mut own = Vec::new();
-    if record.parent.is_none() {
-        own.push(review_of(
-            &record.slug,
-            &record.status,
-            &record.holders("reviewer"),
-            thread,
-        ));
-    }
+    let cards = linked_cards(&record.links, pending);
+    let texts = std::iter::once(record.body.as_str()).chain(thread.iter().map(|m| m.text.as_str()));
+    let posted = posted_cards(&cards, texts);
+    // As before stamps: the review rounds of a top-level task, and the cards it posted.
+    let before = || {
+        let mut own = Vec::new();
+        if record.parent.is_none() {
+            own.push(review_of(
+                &record.slug,
+                &record.status,
+                &record.holders("reviewer"),
+                thread,
+            ));
+        }
+        own.extend(owner(&posted));
+        own
+    };
+    let mut own = match stamps::stamped(record).then(|| Catalogue::at(root)) {
+        Some(Ok(catalogue)) => {
+            let needed = read::needed(&catalogue, record.needs().as_ref(), tip.as_deref());
+            // The work under the task is read only when its runs are.
+            let ours = if needed.iter().any(|need| need == stamps::TESTS) {
+                stamps::family(store, &record.slug)
+            } else {
+                vec![record.slug.clone()]
+            };
+            let folder = read::folder(&project.artifacts, &record.slug);
+            let evidence = stamps::Evidence {
+                thread,
+                runs,
+                ours: &ours,
+                folder: &folder,
+                branch: &branch,
+                tip: tip.as_deref(),
+                cards: &posted,
+            };
+            stamps::stamps(record, &catalogue, &evidence)
+        }
+        Some(Err(why)) => {
+            let mut own = before();
+            own.push(stamps::unreadable(&why));
+            own
+        }
+        None => before(),
+    };
     if !project.verdicts.check.is_empty() {
         own.push(check(
             &project.verdicts.check.join(" "),
@@ -928,9 +972,6 @@ pub fn answer_from(
             runs,
         ));
     }
-    let cards = linked_cards(&record.links, pending);
-    let texts = std::iter::once(record.body.as_str()).chain(thread.iter().map(|m| m.text.as_str()));
-    own.extend(owner(&posted_cards(&cards, texts)));
     let asked = Asked {
         slug: record.slug.clone(),
         status: record.status.clone(),
