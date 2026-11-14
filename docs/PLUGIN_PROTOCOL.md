@@ -13,16 +13,32 @@ with no rebuild of the server. The requests and answers are the serde types of
 A plugin, linked or a process, is built on the plugin kit: three crates that move together, as their
 types cross.
 
-- `symphony-plugin`: the seams a plugin implements, the data each call hands it, this protocol's
-  requests and answers, and `serve`.
+- `symphony-plugin`: the seams a plugin implements, the data each call hands it (a page's
+  artifacts folder among them, `Page::artifact`), this protocol's requests and answers, `serve`,
+  the block a component's problem is shown as (`error`), and the harness its tests ask it through
+  (`testing`, below).
 - `symphony-blocks`: the block vocabulary a plugin renders to and the data its seams return, as the
   server sends them and the client draws them; `symphony_plugin::vocabulary` re-exports it.
-- `symphony-docs`: the doc checks a plugin adds and the docs' syntax they read.
+- `symphony-docs`: the doc checks a plugin adds, the docs' syntax they read, and the text and
+  markup rules the Symphony reads files by (`text`: Python's whitespace, lines and `strip`, a file
+  read with universal newlines and written whole; `markup`: HTML escaping and URL quoting).
 
 The kit's crates depend on no other workspace crate but each other. They carry one version, 1.0.0
 now, and are made to be published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)). The
 app's own wire types, which move with the server and the client, are `symphony-api`'s, which
-re-exports the vocabulary under the same names.
+re-exports the vocabulary under the same names; the library re-exports the text, markup and `error`
+under its old names.
+
+Beside the kit, a plugin takes what it wants of the helpers, each on a version line of its own:
+`process-cwd` (children started without a fork, and without the session or the marks of the
+process that starts them, `process_cwd::session`), `symphony-schema` (JSON Schema checks, and
+`repr` and `os_error`, a value and an OS error printed as Python prints them), `symphony-args` (a
+command line's flags, and `refuse`, its usage and error), `symphony-env` and `repository-read`. A
+plugin built on these alone links no Symphony library.
+
+A plugin's tests ask its components and card kinds as a host does, through the protocol's requests
+and answers, with no host linked: `symphony_plugin::testing::Host` hands each request to the plugin
+as `serve` would, and its `render` shows a refusal as the host does, as `error`'s block.
 
 ## Turning it on
 
@@ -147,7 +163,7 @@ read ends the process that wrote it: the host ends a plugin's process for it, an
 stops reading and says so on stderr.
 
 ```json
-{"id":7,"request":{"components.render":{"component":"report","page":{"root":"/p","doc_path":"docs/A.md","render":3},"argument":"A-1","option":null}}}
+{"id":7,"request":{"components.render":{"component":"report","page":{"root":"/p","doc_path":"docs/A.md","render":3,"artifacts":"artifacts"},"argument":"A-1","option":null}}}
 {"id":7,"answered":{"answer":{"Ok":[{"type":"paragraph","spans":[{"type":"text","text":"A-1"}]}]}},"us":41.5}
 ```
 
@@ -164,21 +180,24 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":1}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":2}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.1.
+process is killed and not started again until its program changes. The protocol is 0.2.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
 as for a plugin that does not implement that method, and a call the seam requires (a component's
-`render`) is shown failed, naming the protocol the plugin speaks. Every call is 0.1's.
+`render`) is shown failed, naming the protocol the plugin speaks. Every call is 0.1's. 0.2 hands a
+page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts` unless
+`[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads as
+`artifacts` from a host of 0.1.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.
 - A field missing is refused, unless its type gives it a default (a gate's `by` or `at`, a viewer's
-  `views`, a page's `render`). A new field comes with a default, or with a new major.
+  `views`, a page's `render` or `artifacts`). A new field comes with a default, or with a new major.
 - A call the plugin does not know, a request missing a field, or a second member beside the call is
   answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
   place.

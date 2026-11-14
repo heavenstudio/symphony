@@ -2,6 +2,15 @@
 
 #![forbid(unsafe_code)]
 
+use std::io::Write;
+
+/// A refusal of the command line `symphony COMMAND …`, as argparse words one: the usage, then the
+/// error, written to `err`. Its exit code, 2.
+pub fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32 {
+    let _ = writeln!(err, "{usage}\nsymphony {command}: error: {problem}");
+    2
+}
+
 /// An option a command takes: its name, and whether a value follows it.
 pub struct Flag {
     pub name: &'static str,

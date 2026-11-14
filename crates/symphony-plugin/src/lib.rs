@@ -10,11 +10,13 @@
 //! project's client draws with the same generic components.
 //!
 //! This crate is one of the plugin kit's three, which move together as their types cross: this one
-//! (the seams, the data each call hands a plugin, the [`protocol`] and [`serve`]),
-//! `symphony-blocks` (the block vocabulary and the data the seams return, [`vocabulary`]) and
-//! `symphony-docs` (the doc checks, [`DocCheck`], and the docs' syntax they read). The kit's crates
-//! depend on no other workspace crate but each other, so a plugin built on the kit links nothing of
-//! the Symphony's library, board or server (docs/PLUGIN_PROTOCOL.md, "The kit").
+//! (the seams, the data each call hands a plugin, a component's [`error`], the [`protocol`],
+//! [`serve`] and the host a plugin's tests ask its seams through, [`testing`]), `symphony-blocks`
+//! (the block vocabulary and the data the seams return, [`vocabulary`]) and `symphony-docs` (the doc
+//! checks, [`DocCheck`], the docs' syntax they read, and the text and markup rules a plugin reads
+//! and writes by). The kit's crates depend on no other workspace crate but each other, so a plugin
+//! built on the kit links nothing of the Symphony's library, board or server
+//! (docs/PLUGIN_PROTOCOL.md, "The kit").
 
 #![forbid(unsafe_code)]
 
@@ -43,7 +45,30 @@ pub mod protocol;
 mod serve;
 pub use serve::{ENDING, WORKERS, serve, serve_on};
 
-use vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
+pub mod testing;
+
+use vocabulary::{
+    Block, FieldValue, Gate, InlineKind, NavItem, Picture, Presentation, Region, Span, TaskOffer,
+};
+
+/// What a host shows in a component's place for its error `problem`: one span of the class
+/// `component-error`, `⚠ problem`. A plugin shows a problem of its own the same way with it, and its
+/// tests compare a host's answer with it.
+pub fn error(problem: &str) -> Block {
+    Block::Paragraph {
+        spans: vec![Span::Styled {
+            tag: InlineKind::Span,
+            presentation: Presentation {
+                class: "component-error".into(),
+                title: "component error".into(),
+                ..Presentation::default()
+            },
+            spans: vec![Span::Text {
+                text: format!("⚠ {problem}"),
+            }],
+        }],
+    }
+}
 
 /// A plugin: its name (the one `[plugins] crates` lists) and what it adds at each seam. Every seam
 /// but the name defaults to adding nothing.
@@ -106,25 +131,47 @@ pub trait Plugin: Send + Sync {
     }
 }
 
-/// One render of one document: the project's root, the page, and what the page's components have
-/// loaded so far, so data several components read is read once per render.
+/// One render of one document: the project's root, the page, the project's artifacts folder, and
+/// what the page's components have loaded so far, so data several components read is read once per
+/// render.
 pub struct Page<'a> {
     pub root: &'a Path,
     /// The document being rendered, project-relative (empty outside a document).
     pub doc_path: &'a str,
+    /// The project's artifacts folder, relative to its root: [`ARTIFACTS`] unless its
+    /// `symphony.toml` names another (`[project] artifacts`). What its tools leave there a component
+    /// finds by [`Page::artifact`].
+    pub artifacts: &'a str,
     loaded: Loaded,
     /// The render this page is, unique in the process: what a request names it by
     /// ([`protocol::PageData::render`]).
     render: u64,
 }
 
+/// A project's artifacts folder when its `symphony.toml` names none, and on a page a host older than
+/// protocol 0.2 asked for ([`protocol::PageData::artifacts`]).
+pub const ARTIFACTS: &str = "artifacts";
+
 /// What a page's components have loaded, by key: shared by the pages a plugin's process makes for
 /// one render's requests ([`serve`]).
 type Loaded = Arc<Mutex<BTreeMap<&'static str, Arc<dyn Any + Send + Sync>>>>;
 
 impl<'a> Page<'a> {
+    /// A page of the document `doc_path` in the project at `root`, its artifacts folder
+    /// [`ARTIFACTS`] ([`Page::in_artifacts`] names another).
     pub fn new(root: &'a Path, doc_path: &'a str) -> Self {
         Self::sharing(root, doc_path, Loaded::default())
+    }
+
+    /// This page in a project whose artifacts folder is `artifacts`, relative to its root.
+    #[must_use]
+    pub fn in_artifacts(self, artifacts: &'a str) -> Self {
+        Self { artifacts, ..self }
+    }
+
+    /// `rel` under the project's artifacts folder, relative to its root (`artifacts/screens`).
+    pub fn artifact(&self, rel: &str) -> String {
+        format!("{}/{rel}", self.artifacts)
     }
 
     /// A page whose components share what `loaded` holds with every other page made with it.
@@ -133,6 +180,7 @@ impl<'a> Page<'a> {
         Self {
             root,
             doc_path,
+            artifacts: ARTIFACTS,
             loaded,
             render: RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
