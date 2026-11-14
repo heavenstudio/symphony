@@ -224,8 +224,8 @@ pub const CODEX_CUA_NODE: &str = "/Applications/ChatGPT.app/Contents/Resources/c
 /// [`CODEX_CUA_NODE`] in every session, and it starts its own [`CODEX_REPL`].
 pub const CODEX_CUA_REPL: &str = "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs";
 
-/// The helper Codex runs under each session from its standalone release (0.167.0 on: the owner's
-/// board, 2026-11-08, found twelve idle Codex agents kept for it), by the release's layout:
+/// The helper Codex runs under each session from its standalone release (0.167.0 on: twelve idle
+/// Codex agents were found kept for it), by the release's layout:
 /// `HOME/.codex/packages/standalone/releases/VERSION/bin/codex-code-mode-host`
 /// ([`codex_release_helper`]). The name alone, or anywhere else on a path, is no helper.
 pub const CODEX_CODE_MODE_HOST: &str = "codex-code-mode-host";

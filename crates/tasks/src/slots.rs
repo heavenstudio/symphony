@@ -1,7 +1,6 @@
-//! The cap on each orchestrator's open work: its slots. The owner, 2026-11-07: "a given maximum
-//! slot per orchestrator, so that orchestrators are incentivized to push work to done (as new work
-//! won't be able to start until other tasks truly finish)", and "this max slot can disconsider
-//! tasks that are blocked and not started (before in progress)".
+//! The cap on each orchestrator's open work: its slots. Each orchestrator has a maximum of slots,
+//! so that it pushes work to done, as new work cannot start until other tasks truly finish; the
+//! cap need not count tasks that are blocked or not started (before in progress).
 //!
 //! A task is **open** while it is in progress or in review ([`OPEN`]), or blocked under a hold that
 //! keeps its slot (`Store::hold_blocked`, a landing waiting on its stamps: [`Entry::held`]); other blocked
@@ -14,10 +13,10 @@
 //! - a review mirror counts with the task it reviews: `review/BRANCH` (`review-N/BRANCH`) with the
 //!   task whose slug or recorded executor branch is `BRANCH`, and `SLUG/review` with `SLUG`.
 //!
-//! Work in review takes no slot ([`Ledger::reviewing`], [`Ledger::reviews`]). The owner,
-//! 2026-11-13: "reviewer should not count as a slot. It's task based". The cap counts the tasks
-//! being built: a task frees its slot when it moves to review, and the work under it goes with it,
-//! a reviewer's mirror or instruction subtask in progress included, which so starts at any count.
+//! Work in review takes no slot ([`Ledger::reviewing`], [`Ledger::reviews`]). The cap counts the
+//! tasks being built, not the review of them: a task frees its slot when it moves to review, and
+//! the work under it goes with it, a reviewer's mirror or instruction subtask in progress
+//! included, which so starts at any count.
 //! A refusal names the work in review apart, as not counted. The task's return to in progress, on a
 //! changes verdict or a move, goes between open statuses and so starts nothing: never refused, it
 //! counts again from then, as it was being worked already.

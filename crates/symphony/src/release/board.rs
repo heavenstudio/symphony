@@ -582,24 +582,24 @@ fn refresh_why(ran: &Ran) -> String {
 }
 
 /// A red refresh step's body: what it was refreshing and why it is red, its log, what it left as
-/// it was, who fixes it and what closes it.
+/// it was, who fixes it and what closes it. Only the refresh's own work is red: a step its
+/// project's own gate, hooks or main checkout stopped is that project's to finish, filed nowhere.
 fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
     format!(
         "The Symphony release run's {command} is red (run {id}, {when}, the release of {commit}): \
          {why}\n\n\
          Log: {log}\n\n\
          {tail}\n\n\
-         What it left as it was: what the step had not reached. A red commit gate makes no \
-         branch; a main checkout off its default branch, with tracked edits, or whose hooks \
-         refuse the fast-forward keeps its main where it was, the pin's branch left for it; a red \
-         board move moves no schema; the shared server keeps serving what it served. Nothing of \
-         the release is undone: it is tagged and pushed, and other projects refreshed on their \
-         own.\n\n\
-         Who fixes: what the line above names. A red in the project's own gate, hooks or code is \
-         that project's, a task on its own board; a main checkout to put right is its owner's; \
-         one of the Symphony's is fixed here. {APPROVED} Then an orchestrator reruns the refresh, \
-         `just release --refresh` in the Symphony's main checkout, which finishes what this step \
-         did not; a green refresh of it closes this task.\n\n\
+         What it left as it was: what the step had not reached. A red before the project's main \
+         moved keeps that main where it was, a pin's branch made left as it is; a red board move \
+         moves no schema, the snapshot before it kept; the shared server keeps serving what it \
+         served. Nothing of the release is undone: it is tagged and pushed, and other projects \
+         refreshed on their own.\n\n\
+         Who fixes: what the line above names. A red here is the refresh's own work that failed, \
+         fixed here; a project's own gate, hooks or main checkout that stopped the move is that \
+         project's to finish and is never filed here. {APPROVED} Then an orchestrator reruns the \
+         refresh, `just release --refresh` in the Symphony's main checkout, which finishes what \
+         this step did not; a green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
         id = night.id,
@@ -1505,15 +1505,25 @@ mod tests {
     #[test]
     fn a_red_refresh_is_filed_as_the_refresh_it_is_and_a_green_one_closes_it() {
         let board = Fake::default();
-        let gate = "its commit gate refused the move to release-2026-11-12 (`git commit` exited 1)";
-        let done = report(&board, &night(&[]), &[refresh_red("alpha", gate)]);
+        let migrate = "`just tasks migrate` in /work/alpha failed (`just tasks migrate` exited 1)";
+        let done = report(&board, &night(&[]), &[refresh_red("alpha", migrate)]);
         assert_eq!(done.filed, ["tests/release-red-refresh-alpha"]);
         let filed = board.thread("tests/release-red-refresh-alpha").join("\n");
         assert!(
             filed.starts_with(
                 "Release red: the refresh of alpha to release-2026-11-12\nThe Symphony release run's \
                  the refresh of alpha to release-2026-11-12 is red (run 2026-11-12T0300-1, \
-                 2026-11-12 03:00, the release of cafe01234567): its commit gate refused"
+                 2026-11-12 03:00, the release of cafe01234567): `just tasks migrate` in \
+                 /work/alpha failed"
+            ),
+            "{filed}"
+        );
+        // Its own work's red is fixed here; a project's own refusal is never filed.
+        assert!(
+            filed.contains(
+                "A red here is the refresh's own work that failed, fixed here; a project's own \
+                 gate, hooks or main checkout that stopped the move is that project's to finish \
+                 and is never filed here."
             ),
             "{filed}"
         );
@@ -1969,7 +1979,7 @@ mod tests {
              - `just test-rs -p symphony --test nightly`\n\n"
                 .into(),
             format!("Who fixes: any free executor takes this from the board. {FIRST} {APPROVED}"),
-            // The owner's rule of 2026-11-13: a test red on load is discarded, not fixed.
+            // A test red on load is discarded, not fixed.
             "the code fixed, never a test or check loosened; a test red on the machine's load (it \
              passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under \
              load) is discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` \

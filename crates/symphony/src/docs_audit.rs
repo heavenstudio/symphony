@@ -557,8 +557,8 @@ fn written_lines(base: &str, lines: &[&str]) -> HashSet<usize> {
 
 /// The pictures the document `rel` shows of its own (outside its cards and the owner's callouts,
 /// [`not_the_documents`]), in every form ([`pictures::pictures`]), that a clone lacks
-/// ([`unclonable`]), on disk or not: the owner's "a git clone should be able to see the images,
-/// specially the ones that are referenced in the docs". On a branch, those on lines it wrote (or
+/// ([`unclonable`]), on disk or not: a git clone shows a document's pictures, those the docs
+/// reference above all. On a branch, those on lines it wrote (or
 /// shown by a definition it wrote) are refused; on main itself or with no fork every one is warned
 /// of, the ones in the artifacts folder left to the page's own warning ([`artifacts`]).
 fn document_pictures(
