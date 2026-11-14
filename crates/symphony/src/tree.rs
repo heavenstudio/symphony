@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::clock::now_stamp;
 use crate::edit::{frontmatter_end, heading_anchor};
-use crate::entrypoint::join;
+use crate::entrypoint::{HTML, MARKDOWN, join};
 use crate::markup::normpath;
 use crate::project::{Entrypoint, Project};
 use crate::register::{Group, REGION_END, REGION_START, State, parse_decisions, supersede};
@@ -85,18 +85,46 @@ fn folder_title(name: &str) -> String {
     })
 }
 
-/// A document's first heading, or its file name; a folder's README heading, or its name as a
-/// title ([`folder_title`]).
+/// The words of an HTML page's first `<title>`, its tags dropped, the common entities read and its
+/// white space folded; none when it has none, or an empty one.
+pub(crate) fn html_title(text: &str) -> Option<String> {
+    static TITLE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?is)<title(?:\s[^>]*)?>(.*?)</title\s*>").expect("the title pattern")
+    });
+    static TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<[^>]*>").expect("the tag pattern"));
+    let inner = TITLE.captures(text)?.get(1)?.as_str();
+    let words = TAG
+        .replace_all(inner, "")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&");
+    let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!words.is_empty()).then_some(words)
+}
+
+/// A document's first heading (an HTML page's `<title>`), or its file name; a folder's README
+/// heading, or its name as a title ([`folder_title`]).
 pub fn title(path: &Path) -> String {
     let doc = if path.is_dir() {
         path.join("README.md")
     } else {
         path.to_path_buf()
     };
+    let heading = |text: String| {
+        if crate::entrypoint::is_html(&doc.to_string_lossy()) {
+            html_title(&text)
+        } else {
+            first_heading(&text)
+        }
+    };
     if let Some(found) = read_text(&doc)
         .ok()
         .filter(|_| doc.is_file())
-        .and_then(|text| first_heading(&text))
+        .and_then(heading)
     {
         return found;
     }
@@ -209,7 +237,9 @@ impl Place<'_> {
         self.shown()
             .iter()
             .filter(|inside| {
-                self.entry.page(inside)
+                self.entry
+                    .renderer(inside)
+                    .is_some_and(|renderer| renderer == MARKDOWN || renderer == HTML)
                     && (history || !self.entry.in_history(inside))
                     && file_name(Path::new(inside)) != "README.md"
             })
@@ -244,10 +274,21 @@ impl Place<'_> {
         found
     }
 
-    /// The folder's own documents but the README, by lowercase title.
+    /// The folder's own Markdown documents but the README, by lowercase title: those that can hold
+    /// cards, in the order the queue takes them ([`index_order`]).
     pub(crate) fn documents(&self) -> Vec<String> {
+        self.titled(|renderer| renderer == MARKDOWN)
+    }
+
+    /// The folder's own documents but the README, Markdown and HTML together, by lowercase title:
+    /// what its page lists as documents.
+    pub(crate) fn listed(&self) -> Vec<String> {
+        self.titled(|renderer| renderer == MARKDOWN || renderer == HTML)
+    }
+
+    fn titled(&self, wanted: impl Fn(crate::entrypoint::Renderer) -> bool) -> Vec<String> {
         let mut docs: Vec<String> = self
-            .files(|renderer| renderer == crate::entrypoint::MARKDOWN)
+            .files(wanted)
             .into_iter()
             .filter(|name| name != "README.md")
             .collect();
@@ -258,7 +299,7 @@ impl Place<'_> {
     /// The folder's own files shown as they are (pictures, mockups and the files a plugin's
     /// renderer draws), by lowercase name.
     pub(crate) fn media(&self) -> Vec<String> {
-        let mut media = self.files(|renderer| renderer != crate::entrypoint::MARKDOWN);
+        let mut media = self.files(|renderer| renderer != MARKDOWN && renderer != HTML);
         media.sort_by_key(|name| name.to_lowercase());
         media
     }

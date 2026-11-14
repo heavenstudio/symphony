@@ -104,9 +104,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|s| s.contains("application/json"));
     let alias = if json_queue { None } else { legacy_page(path) };
-    let static_file = client_page(&project_view(&shared.root), path)
-        || path.starts_with("/assets/")
-        || alias.is_some();
+    let view = project_view(&shared.root);
+    // An HTML document's route is the app's page where a page is opened, and the file itself in
+    // its sandbox to the frame that draws it and to any other read (`media_files::html_document`).
+    let html_route = view.is_html_route(path.trim_start_matches('/'));
+    let html_file = html_route && !crate::media_files::navigation(&request);
+    let static_file =
+        !html_file && (client_page(&view, path) || path.starts_with("/assets/") || alias.is_some());
     // Typed document links can point to any project source or data file. Keep those raw downloads
     // behind the same canonical containment, metadata exclusion and sandbox as embedded media.
     let media_file = crate::media_files::handles(path)
@@ -259,7 +263,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         return Some(axum::response::Redirect::permanent(&location).into_response());
     }
     if static_file && !json_queue {
-        return Some(static_response(shared, path, &request).await);
+        let mut response = static_response(shared, path, &request).await;
+        if html_route {
+            crate::media_files::varies_by_destination(&mut response);
+        }
+        return Some(response);
     }
     let hub = match warm(shared).await {
         Ok(hub) => hub,
@@ -294,6 +302,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         } else {
             hub.tree(scope).expect("scope was checked")
         };
+        if html_file {
+            return Some(
+                crate::media_files::html_document(shared, &root, path, scope, &request).await,
+            );
+        }
         return Some(crate::media_files::answer(shared, &root, path, &request).await);
     }
     if plugin_route {

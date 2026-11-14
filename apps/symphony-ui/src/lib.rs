@@ -37,6 +37,9 @@ pub mod components;
 pub mod doc_components;
 pub mod docs;
 pub(crate) mod entry_events;
+/// An HTML document's page: the file in a sandboxed frame, in the documents' kind.
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-docs"))]
+pub mod html_page;
 pub(crate) mod machine_work;
 pub mod media;
 pub mod platform;

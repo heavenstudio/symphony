@@ -40,6 +40,7 @@ mod feed_deltas;
 mod fixture_script;
 mod floating_controls;
 mod header;
+mod html_documents;
 mod kept_pages;
 mod landmarks;
 mod layout_shift;

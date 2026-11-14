@@ -139,7 +139,9 @@ pub fn App() -> Element {
         #[cfg(feature = "page-docs")]
         _ if current.document => {
             rsx! { main {
-                if !current.folder {
+                if current.html {
+                    crate::html_page::HtmlPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
+                } else if !current.folder {
                     crate::docs_live::DocumentPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }
                 } else {
                     crate::docs_live::FolderPage { key: "{current.scope}/{current.path}", path: current.path.clone(), scope: current.scope.clone() }

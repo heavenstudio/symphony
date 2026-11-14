@@ -525,7 +525,17 @@ never the whole target, which the release run runs.
   request `format=blocks` too; reads without it retain the legacy HTML/media
   response for compatible API callers. Canonical `/docs/` pages use the client;
   old `/app/docs/` and `/doc/docs/` bookmarks redirect there.
-  Only Markdown files and folders are client routes; raw files keep normal links.
+  Only Markdown files, HTML documents and folders are client routes; raw files keep normal links.
+  An HTML document (`html_page`, docs/PROJECT_FILE.md "HTML documents") is no fragment: its
+  page loads the file whole, by its own route, into one frame whose sandbox allows its scripts
+  alone (`html_page::SANDBOX`; never `allow-same-origin`, top navigation, forms or popups), so
+  it runs in an opaque origin with no reach into the app's storage, cookies, feed, API or page.
+  The server answers the page's own load of the route with the shell and the frame's with the
+  file, under a policy that keeps its loads to its entrypoint and opens no connection
+  (`html_document`, `apps/symphony-server/src/media_files.rs`). The frame is as wide as the page
+  and as tall as the window below the header, scrolling inside itself; the page has the header
+  and nothing of the Markdown view (outline, cards, notes, editing, versions, cache or feed), and
+  a `HEAD` of the route says when there is no such document.
   The feed opts into
   one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
   a document receives no document payloads. Changing the requested keys reopens

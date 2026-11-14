@@ -1,10 +1,11 @@
-//! The file types a project shows: the Symphony's own two ([`MARKDOWN`], [`MEDIA`]) and the
-//! renderers of the plugins it uses, never another project's. An entrypoint's `types` names them; a
-//! type none of them handles, or two of them sharing a name, is refused when the project loads.
+//! The file types a project shows: the Symphony's own three ([`RENDERERS`]: Markdown, HTML and
+//! media) and the renderers of the plugins it uses, never another project's. An entrypoint's
+//! `types` names them; a type none of them handles, or two of them sharing a name, is refused when
+//! the project loads.
 
 use symphony_plugin::Renderer as PluginRenderer;
 
-use crate::entrypoint::{MARKDOWN, MEDIA, RENDERERS, Renderer};
+use crate::entrypoint::{RENDERERS, Renderer};
 use crate::plugins::{Plugins, compiled};
 
 /// One renderer a project has, with the plugin that gives it (none for the Symphony's own).
@@ -88,7 +89,7 @@ pub fn extension(src: &str) -> Option<String> {
 /// A file the Symphony's own renderers show is never a plugin's.
 pub fn renderer_of(plugins: &Plugins, src: &str) -> Option<&'static dyn PluginRenderer> {
     let extension = extension(src)?;
-    if [MARKDOWN, MEDIA]
+    if RENDERERS
         .iter()
         .any(|own| own.extensions.contains(&extension.as_str()))
     {

@@ -302,3 +302,9 @@ figcaption p { margin: 0; }
   .ghost-toc { display:block; width:fit-content; margin-bottom:16px; padding:5px 14px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-sm); }
   .ghost-toc > div:first-child { padding:0; font-size:inherit; line-height:inherit; } .ghost-toc > div + div { display:none; }
 }
+/* An HTML document (html_page.rs): its path, then its frame at the page's full width, as tall as the
+   window below the header and scrolling inside itself; the framed page draws its own look. */
+.html-document .eyebrow { text-transform:none; letter-spacing:0; font-family:var(--font-mono); font-size:var(--fs-xs); font-weight:500; margin:8px 0 10px; overflow-wrap:anywhere; }
+.html-frame { display:block; box-sizing:border-box; width:100%; height:calc(100dvh - 128px); min-height:320px; border:1px solid var(--border); border-radius:var(--r-lg); }
+/* A phone's header scrolls away: the frame then fills the screen but its path line. */
+@media (max-width:760px) { .html-frame { height:calc(100dvh - 48px); } }

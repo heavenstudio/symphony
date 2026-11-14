@@ -180,6 +180,8 @@ struct Shared {
     retired: BTreeSet<String>,
     /// Documents read as the server reads them, by their path ([`Site::set_document`]).
     documents: HashMap<String, serde_json::Value>,
+    /// HTML documents by their route ([`Site::set_html_page`]).
+    html_pages: HashMap<String, Body>,
 }
 
 pub struct Site {
@@ -291,6 +293,7 @@ impl Site {
             silent: false,
             retired: BTreeSet::new(),
             documents: HashMap::new(),
+            html_pages: HashMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -387,6 +390,17 @@ impl Site {
             .unwrap()
             .documents
             .insert(path.to_string(), document.clone());
+    }
+
+    /// Serve `html` as the HTML document at the route `path`, as the server does: a navigation to
+    /// the route gets the app's page, any other load of it (its frame's) the file. The stand-in
+    /// sends no policy of its own with the file, so what a page sees of it is its frame's sandbox
+    /// alone (the server's policy on it is its own test, apps/symphony-server/src/media_files.rs).
+    pub fn set_html_page(&self, path: &str, html: &str) {
+        self.shared.lock().unwrap().html_pages.insert(
+            path.into(),
+            body(html.as_bytes().to_vec(), content_type(path), "no-cache"),
+        );
     }
 
     pub fn set_file(&self, path: &str, bytes: Vec<u8>, mime: &'static str) {
@@ -1006,6 +1020,11 @@ fn serve(
             }
         }
         let path = route_of(&target);
+        // A top-level load of a page, which a route of the app answers with its shell.
+        let navigation = headers
+            .get("sec-fetch-dest")
+            .is_some_and(|destination| destination == "document");
+        let head_only = line.starts_with("HEAD ");
         let named = headers.get("if-none-match").cloned();
         // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
         // the shell's warmed modules are prefetches too, but no reads of the API.
@@ -1130,6 +1149,7 @@ fn serve(
             return;
         }
         let board;
+        let html_page;
         let overridden = turn.or_else(|| {
             let shared = shared.lock().unwrap();
             shared
@@ -1162,6 +1182,12 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if let Some(page) = (!navigation)
+            .then(|| shared.lock().unwrap().html_pages.get(&path).cloned())
+            .flatten()
+        {
+            html_page = page;
+            Some(&html_page)
         } else if shared.lock().unwrap().retired.contains(&path) {
             None
         } else {
@@ -1172,7 +1198,9 @@ fn serve(
                     let last = path.rsplit('/').next().unwrap_or("");
                     (!path.starts_with("/api/")
                         && (!last.contains('.')
-                            || path.starts_with("/docs/") && path.ends_with(".md")))
+                            || path.starts_with("/docs/")
+                                && (path.ends_with(".md")
+                                    || navigation && symphony_api::is_html(&path))))
                     .then(|| files.get("/"))
                     .flatten()
                 })
@@ -1212,26 +1240,43 @@ fn serve(
                     body.etag,
                     body.headers
                 );
-                let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
-                    body.bytes.len() / 2
+                if head_only {
+                    // A `HEAD` is answered with the head alone, its length the body's.
+                    out.write_all(head.as_bytes())
                 } else {
-                    body.bytes.len()
-                };
-                let sent = out
-                    .write_all(head.as_bytes())
-                    .and_then(|_| out.write_all(&body.bytes[..half]))
-                    .and_then(|_| out.flush());
-                if half < body.bytes.len() && sent.is_ok() {
-                    let mut pending = shared.lock().unwrap();
-                    while pending.stalled_bodies.contains(&path) {
-                        pending = released.wait(pending).unwrap();
-                    }
+                    sent_whole(&mut out, &head, body, &path, shared, released)
                 }
-                sent.and_then(|_| out.write_all(&body.bytes[half..]))
             }
         };
         if written.and_then(|_| out.flush()).is_err() {
             return;
         }
     }
+}
+
+/// `head` and `body` sent, the body's second half held while `path` is stalled.
+fn sent_whole(
+    out: &mut TcpStream,
+    head: &str,
+    body: &Body,
+    path: &str,
+    shared: &Mutex<Shared>,
+    released: &Condvar,
+) -> std::io::Result<()> {
+    let half = if shared.lock().unwrap().stalled_bodies.contains(path) {
+        body.bytes.len() / 2
+    } else {
+        body.bytes.len()
+    };
+    let sent = out
+        .write_all(head.as_bytes())
+        .and_then(|_| out.write_all(&body.bytes[..half]))
+        .and_then(|_| out.flush());
+    if half < body.bytes.len() && sent.is_ok() {
+        let mut pending = shared.lock().unwrap();
+        while pending.stalled_bodies.contains(path) {
+            pending = released.wait(pending).unwrap();
+        }
+    }
+    sent.and_then(|_| out.write_all(&body.bytes[half..]))
 }

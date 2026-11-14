@@ -200,6 +200,47 @@ async fn gzip_is_taken_exactly_when_the_routers_compression_layer_takes_it() {
     }
 }
 
+/// An HTML document's route opened as a page, by its fetch metadata or, from a browser that sends
+/// none, its Accept, is the app's page, which says it varies by the request's destination: the
+/// frame's load of the same route is the file (`media_files::html_document`). A Markdown
+/// document's route is the page however it is asked for.
+#[tokio::test]
+async fn an_html_documents_route_opened_as_a_page_is_the_app_varying_by_destination() {
+    let (_tree, app) = serving(&[(
+        "index.html",
+        b"<html><head></head><body>shell</body></html>",
+    )]);
+    for (path, headers, varies) in [
+        (
+            "/docs/analysis/readout.html",
+            &[("Sec-Fetch-Dest", "document")][..],
+            true,
+        ),
+        (
+            "/docs/analysis/readout.HTM",
+            &[("Accept", "text/html,*/*;q=0.8")],
+            true,
+        ),
+        (
+            "/docs/analysis/readout.md",
+            &[("Sec-Fetch-Dest", "document")],
+            false,
+        ),
+    ] {
+        let got = send(&app, Method::GET, path, headers).await;
+        assert_eq!(got.status, StatusCode::OK, "{path}");
+        let page = String::from_utf8_lossy(&got.body);
+        assert!(page.ends_with("shell</body></html>"), "{path}: {page}");
+        let vary: Vec<&str> = got
+            .headers
+            .get_all(header::VARY)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(vary.contains(&"sec-fetch-dest"), varies, "{path}: {vary:?}");
+    }
+}
+
 #[tokio::test]
 async fn hashed_files_are_cached_for_good_and_the_page_and_unhashed_files_revalidate() {
     let (_tree, app) = serving(&[

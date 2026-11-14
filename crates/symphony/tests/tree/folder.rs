@@ -23,6 +23,70 @@ fn a_folder_lists_its_subfolders_then_its_documents_by_title_and_summary() {
     assert_eq!(folder.entries[1].summary, "What the game is, in one place.");
 }
 
+/// An HTML page in a documents folder is a document like any other under the convention: listed
+/// beside the Markdown ones by its `<title>` (its file name's stem with none), counted among its
+/// folder's documents, with no summary and nothing waiting, and named by its title on its way back
+/// up; never in the queue's document order, which holds the pages that can carry cards.
+#[test]
+fn an_html_page_is_listed_beside_the_markdown_documents_by_its_title() {
+    let tree = docs();
+    tree.write(
+        "docs/readout.html",
+        "<!doctype html><html><head><TITLE lang=\"en\">\n  Client  <b>readout</b> &amp; more \
+         </TITLE></head><body><h1>Not the title</h1><p>Not a summary.</p></body></html>",
+    );
+    tree.write("docs/lamps/bare.HTM", "<p>No title here.</p>");
+    tree.write("docs/lamps/empty.html", "<title> </title>");
+    tree.write("docs/lamps/picture.png", "not shown");
+    tree.write("docs/only-html/page.html", "<title>Alone</title>");
+    let before = index_order(&tree.root, "docs");
+    let render = Render::new(&tree.root);
+    let folder = render.folder("docs").unwrap();
+    assert_eq!(
+        names(&folder.entries),
+        [
+            "docs/lamps",
+            "docs/only-html",
+            "docs/readout.html",
+            "docs/SPEC.md"
+        ]
+    );
+    let readout = entry(&folder, "docs/readout.html");
+    assert_eq!(
+        (
+            readout.kind,
+            readout.title.as_str(),
+            readout.summary.as_str(),
+            readout.waiting
+        ),
+        (EntryKind::Doc, "Client readout & more", "", 0)
+    );
+    // SPEC.md, east.md, old/notes.md, readout.html, bare.HTM, empty.html and page.html.
+    assert_eq!((folder.docs, count_documents(&tree.root, "docs")), (7, 7));
+    assert_eq!(entry(&folder, "docs/lamps").docs, 4);
+    assert_eq!(entry(&folder, "docs/only-html").docs, 1);
+    let lamps = render.folder("docs/lamps").unwrap();
+    assert_eq!(
+        lamps
+            .entries
+            .iter()
+            .map(|e| (e.path.as_str(), e.title.as_str(), e.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("docs/lamps/old", "Old", EntryKind::Folder),
+            ("docs/lamps/bare.HTM", "bare", EntryKind::Doc),
+            ("docs/lamps/east.md", "East lamps", EntryKind::Doc),
+            ("docs/lamps/empty.html", "empty", EntryKind::Doc),
+        ],
+        "titled by file name without one, and no picture under the convention"
+    );
+    assert_eq!(
+        crumbs(&tree.root, "docs/readout.html").last().unwrap().name,
+        "Client readout & more"
+    );
+    assert_eq!(index_order(&tree.root, "docs"), before, "no card is in one");
+}
+
 #[test]
 fn a_folder_shows_its_readme_as_the_intro_and_does_not_list_it_again() {
     let tree = docs();

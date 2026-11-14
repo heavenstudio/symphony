@@ -17,6 +17,9 @@ pub struct Route {
     /// Whether that page is a folder's rather than a document's
     /// ([`symphony_api::ProjectView::is_folder_route`]).
     pub folder: bool,
+    /// Whether that document is an HTML page, drawn in its frame
+    /// ([`symphony_api::ProjectView::is_html_route`]).
+    pub html: bool,
 }
 
 impl Route {
@@ -48,9 +51,10 @@ impl Route {
             None if path == "task" => "tasks",
             None => slashed,
         };
-        let (document, folder) = (
+        let (document, folder, html) = (
             project.is_document_route(named),
             project.is_folder_route(named),
+            project.is_html_route(named),
         );
         let path = named.strip_suffix('/').unwrap_or(named);
         (path.is_empty()
@@ -65,6 +69,7 @@ impl Route {
                 scope,
                 document,
                 folder,
+                html,
             })
     }
     pub fn current() -> Self {

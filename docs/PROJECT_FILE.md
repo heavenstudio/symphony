@@ -45,8 +45,24 @@ refuses the file, as a misspelt one would change what is served.
 | `folder` | (required) | the folder it reads; `"."` is the project's root |
 | `include` | `["**"]` | the files shown, as patterns over their path in the folder |
 | `exclude` | `[]` | the files left out of those |
-| `types` | `["markdown"]` | the renderers that show its files: `markdown`, `media` (pictures and `.html` mockups) and the plugins' |
+| `types` | `["markdown", "html"]` | the renderers that show its files, the first that takes a file's extension drawing it: `markdown`, `html` (HTML documents, below), `media` (pictures, and `.html` files listed by name) and the plugins' |
 | `history` | `[]` | folders inside it served and listed but never read as documents |
+
+**HTML documents.** An `.html` or `.htm` file the `html` renderer shows is a document beside the
+Markdown ones: listed in its folder by its `<title>` (else its name), counted, and opened at its
+route inside the app's page, under its header. The page draws the file as written, as wide as the
+page and as tall as the window below the header, scrolling inside itself, in the app's light or
+dark as the file's own styles follow them. It runs in a sandboxed frame whose scripts run in an
+origin of their own, never the app's: the app's storage, cookies, feed, API and page are out of
+its reach, and it cannot navigate the app away, submit a form or open a window, so a link in it
+opens in the frame or not at all. The files beside it (stylesheets, scripts, pictures) load from
+its entrypoint and from nowhere else, and it opens no connection, a fetch of its own files among
+them. The file itself, asked for by anything but a page's own load, is served under that same
+sandbox, so no address of it runs with the app's origin. An HTML document has none of a Markdown
+document's outline, sections, cards, verdicts, notes, editing, versions or search. An entrypoint
+whose `types` name `media` before `html`, or `media` without it, keeps listing its `.html` files
+by name among its pictures; opened, each is drawn in the same frame. One whose `types` name
+neither serves no `.html` file, as its patterns serve none they leave out.
 
 ## `[plugins]`
 

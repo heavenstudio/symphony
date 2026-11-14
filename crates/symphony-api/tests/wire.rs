@@ -506,6 +506,50 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     assert_eq!(spec.readme_route(), "README.md");
 }
 
+/// An HTML page under an entrypoint is a document route, drawn in its frame, whatever the case of
+/// its extension; with a slash it names a folder, as any name does, and outside every entrypoint, or
+/// on a route the Symphony answers, it is a file served as itself.
+#[test]
+fn an_html_page_under_an_entrypoint_is_a_document_drawn_in_its_frame() {
+    let project: symphony_api::ProjectView =
+        serde_json::from_str(&fixture("project.json")).unwrap();
+    for (path, document, folder, html) in [
+        ("docs/analysis/readout.html", true, false, true),
+        ("docs/A.HTM", true, false, true),
+        ("docs/a.htm", true, false, true),
+        ("docs/game/SPEC.md", true, false, false),
+        ("docs/analysis/readout.html/", true, true, false),
+        ("docs/a.html.md", true, false, false),
+        ("docs/a.xhtml", false, false, false),
+        ("docs/a.html5", false, false, false),
+        ("docs/html", true, true, false),
+        ("readout.html", false, false, false),
+        ("artifacts/readout.html", false, false, false),
+        ("tasks/a.html", false, false, false),
+    ] {
+        assert_eq!(
+            (
+                project.is_document_route(path),
+                project.is_folder_route(path),
+                project.is_html_route(path)
+            ),
+            (document, folder, html),
+            "{path}"
+        );
+    }
+    for (name, html) in [
+        ("a.html", true),
+        ("A.HTML", true),
+        ("a.Htm", true),
+        ("docs/a.htm", true),
+        ("a.md", false),
+        ("html", false),
+        (".html", false),
+    ] {
+        assert_eq!(symphony_api::is_html(name), html, "{name}");
+    }
+}
+
 /// A project's day file (`symphony/reports/YYYY-MM-DD.json` in its git common dir), as the hourly
 /// roll-up writes it and the Reports page reads it: every figure of the hours and the day reads and
 /// writes back, each hour is named by its first second, and the hours sum to a span's figure.

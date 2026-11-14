@@ -19,7 +19,7 @@ const TEXT: &str = "text/plain; charset=utf-8";
 /// Whether `request` opens a page: a link followed or an address typed (`Sec-Fetch-Dest:
 /// document`), or, from a browser that sends no fetch metadata, a request asking for HTML. A fetch,
 /// a picture or a frame is none.
-fn navigation(request: &axum::http::Request<()>) -> bool {
+pub(crate) fn navigation(request: &axum::http::Request<()>) -> bool {
     let headers = request.headers();
     match headers.get("sec-fetch-dest") {
         Some(destination) => destination == "document",
@@ -90,6 +90,92 @@ const FILE_POLICY: &str = "sandbox allow-scripts";
 /// `<script>`, an `onerror`, a `javascript:` link) runs nothing, as the file served as text ran
 /// nothing. The page needs no script of its own; its data block is read, never run.
 const PAGE_POLICY: &str = "sandbox allow-scripts; script-src 'none'";
+
+/// The policy an HTML document's file is served under ([`html_document`]): the frame's sandbox,
+/// its scripts run in an opaque origin, never the app's; its own inline scripts and styles, `data:`
+/// and `blob:` URLs, and the files of its entrypoint (`within`, `HOST/BASE/URL/`), from nowhere
+/// else, so a picture or a stylesheet beside it loads and nothing outside its entrypoint or on
+/// another site does; and no connection at all: no fetch, XHR, EventSource, WebSocket or beacon.
+/// Without `within` (a host the policy cannot name) it loads nothing but itself.
+fn html_policy(within: Option<&str>) -> String {
+    let within = within.map_or_else(String::new, |within| format!(" {within}"));
+    format!(
+        "sandbox allow-scripts; default-src 'unsafe-inline' 'unsafe-eval' data: blob:{within}; \
+         connect-src 'none'"
+    )
+}
+
+/// The source an HTML document's policy names its entrypoint's files by: `host` (the request's,
+/// which the server checked names this machine) and the entrypoint's path, `prefix`, its every
+/// byte but letters, digits and `/-._~@` escaped. None for a host a source cannot spell (an IPv6
+/// address, a stray character), which then loads nothing beside the document.
+fn entrypoint_source(host: &str, prefix: &str) -> Option<String> {
+    let (name, port) = host.rsplit_once(':').unwrap_or((host, ""));
+    let named = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+        && port.bytes().all(|byte| byte.is_ascii_digit());
+    named.then(|| format!("{host}{}", crate::api::encode_location(prefix)))
+}
+
+/// Marks a response to an HTML document's route as one of two by the request's destination: the
+/// app's page to a page's load, the file to anything else ([`navigation`]), so no cache gives one
+/// for the other.
+pub(crate) fn varies_by_destination(response: &mut Response) {
+    response.headers_mut().append(
+        header::VARY,
+        axum::http::HeaderValue::from_static("sec-fetch-dest"),
+    );
+}
+
+/// The file of the HTML document at the route `path` in the checkout at `root` (`scope` its
+/// worktree's, empty for the main checkout), to any read but a page's own load: the frame that
+/// draws it in the app, a fetch, a picture. Only a page its entrypoint shows and its walk reaches
+/// ([`symphony::project::Project::html_page`]) is served, under [`html_policy`]; any other route is
+/// not found, a file outside its entrypoint included.
+pub(crate) async fn html_document(
+    shared: &crate::front::Shared,
+    root: &Path,
+    path: &str,
+    scope: &str,
+    request: &axum::http::Request<()>,
+) -> Response {
+    let project = symphony::project::Project::of(root);
+    let found = project.html_page(root, path.trim_start_matches('/'));
+    let canonical = tokio::fs::canonicalize(root).await;
+    let mut response = match (found, canonical) {
+        (Some((entry, file)), Ok(canonical)) => {
+            let scope = if scope.is_empty() {
+                String::new()
+            } else {
+                format!("/@{scope}")
+            };
+            let prefix = format!(
+                "{}{scope}/{}",
+                shared.base,
+                entry.label().trim_start_matches('/')
+            );
+            let host = request
+                .headers()
+                .get(header::HOST)
+                .and_then(|host| host.to_str().ok())
+                .unwrap_or_default();
+            let policy = html_policy(entrypoint_source(host, &prefix).as_deref());
+            let mut response = contained(shared, &canonical, &canonical, &file, request).await;
+            if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {
+                response.headers_mut().insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    policy.parse().expect("an HTML document's policy"),
+                );
+            }
+            response
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
+    };
+    varies_by_destination(&mut response);
+    response
+}
 
 /// The script-free sandbox every stored upload is served in, whether it opens or downloads: no
 /// script, plugin, form or navigation, nothing loaded but itself.
@@ -418,5 +504,162 @@ mod tests {
             handles("/a.png") && !handles("/a.item"),
             "the Symphony's own kinds"
         );
+    }
+
+    /// An HTML document's file, as its frame loads it: the file as written, under the frame's
+    /// sandbox, loading only its entrypoint's files and connecting nowhere, and varying by the
+    /// request's destination; any route that is no page its entrypoint shows and reaches is not
+    /// found, a file outside the entrypoint, behind a link out of the project or in a dot folder
+    /// among them.
+    #[tokio::test]
+    async fn an_html_documents_file_is_served_sandboxed_to_its_entrypoint_and_nothing_else() {
+        let tree = Tree::new();
+        let root = crate::testing::repository(&tree);
+        let page = "<!doctype html><title>Readout</title><script>document.title = 'ran'</script>";
+        for (path, text) in [
+            ("docs/analysis/readout.html", page),
+            ("docs/analysis/board.css", "body { margin: 0 }"),
+            ("docs/.drafts/hidden.html", page),
+            ("outside.html", page),
+        ] {
+            tree.write(&format!("main/{path}"), text);
+        }
+        let away = Tree::new();
+        away.write("away.html", page);
+        std::os::unix::fs::symlink(away.path("away.html"), root.join("docs/leak.html")).unwrap();
+        let gate = crate::gate::Gate::new(
+            std::sync::Arc::new(|_| Ok(None)),
+            std::sync::Arc::new(std::time::Instant::now),
+        );
+        let shared = crate::front::Shared::project(1, 1234, &root, None, gate, "/alpha");
+        let ask = |path: &str, scope: &str, headers: &[(&str, &str)]| {
+            let mut request = Request::builder().uri(path);
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
+            let request = request.body(()).unwrap();
+            let (shared, root, path, scope) = (
+                shared.clone(),
+                root.clone(),
+                path.to_string(),
+                scope.to_string(),
+            );
+            async move {
+                let response = super::html_document(&shared, &root, &path, &scope, &request).await;
+                let status = response.status().as_u16();
+                let head = response.headers().clone();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let said = |name: header::HeaderName| {
+                    head.get_all(name)
+                        .iter()
+                        .map(|value| value.to_str().unwrap())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let said = [
+                    said(header::CONTENT_TYPE),
+                    said(header::CONTENT_SECURITY_POLICY),
+                    said(header::X_CONTENT_TYPE_OPTIONS),
+                    said(header::VARY),
+                    said(header::ETAG),
+                ];
+                (status, said, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let framed = [("Sec-Fetch-Dest", "iframe"), ("Host", "127.0.0.1:1234")];
+        let policy = |within: &str| {
+            format!(
+                "sandbox allow-scripts; default-src 'unsafe-inline' 'unsafe-eval' data: blob:{within}; \
+                 connect-src 'none'"
+            )
+        };
+        for (scope, within) in [
+            ("", " 127.0.0.1:1234/alpha/docs/"),
+            ("feature-x", " 127.0.0.1:1234/alpha/@feature-x/docs/"),
+        ] {
+            let (status, said, body) = ask("/docs/analysis/readout.html", scope, &framed).await;
+            assert_eq!((status, body.as_str()), (200, page), "{scope}");
+            let [kind, csp, sniff, vary, _] = said;
+            assert_eq!(
+                [kind, csp, sniff, vary],
+                [
+                    "text/html; charset=utf-8".to_string(),
+                    policy(within),
+                    "nosniff".into(),
+                    "sec-fetch-dest".into()
+                ],
+                "{scope}"
+            );
+        }
+        // A host a source cannot spell: the document loads nothing beside itself.
+        let ipv6 = [("Sec-Fetch-Dest", "iframe"), ("Host", "[::1]:1234")];
+        let (status, said, _) = ask("/docs/analysis/readout.html", "", &ipv6).await;
+        assert_eq!((status, said[1].clone()), (200, policy("")));
+        // Asked again naming its tag: unchanged, under the same policy.
+        let (_, said, _) = ask("/docs/analysis/readout.html", "", &framed).await;
+        let tagged = [framed[0], framed[1], ("If-None-Match", said[4].as_str())];
+        let (status, again, body) = ask("/docs/analysis/readout.html", "", &tagged).await;
+        assert_eq!(
+            (status, again[1].clone(), again[3].as_str(), body.as_str()),
+            (
+                304,
+                policy(" 127.0.0.1:1234/alpha/docs/"),
+                "sec-fetch-dest",
+                ""
+            )
+        );
+        for refused in [
+            "/docs/analysis/missing.html",
+            "/docs/.drafts/hidden.html",
+            "/docs/leak.html",
+            "/outside.html",
+            "/docs/../outside.html",
+            "/docs/analysis/board.css",
+            "/docs/TOPIC.md",
+            "/docs/analysis",
+        ] {
+            let (status, said, _) = ask(refused, "", &framed).await;
+            assert_eq!(
+                (status, said[1].as_str(), said[3].as_str()),
+                (404, "", "sec-fetch-dest"),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_html_documents_entrypoint_is_named_by_its_host_and_escaped_path_or_not_at_all() {
+        for (host, prefix, source) in [
+            (
+                "127.0.0.1:8765",
+                "/alpha/docs/",
+                Some("127.0.0.1:8765/alpha/docs/"),
+            ),
+            ("localhost", "/docs/", Some("localhost/docs/")),
+            (
+                "my-mac.tail.ts.net:80",
+                "/a/@wt/design docs/",
+                Some("my-mac.tail.ts.net:80/a/@wt/design%20docs/"),
+            ),
+            (
+                "box:8765",
+                "/a/docs;script-src */",
+                Some("box:8765/a/docs%3Bscript-src%20%2A/"),
+            ),
+            ("[::1]:8765", "/docs/", None),
+            ("", "/docs/", None),
+            (":8765", "/docs/", None),
+            ("box:87x", "/docs/", None),
+            ("a b", "/docs/", None),
+            ("box;", "/docs/", None),
+        ] {
+            assert_eq!(
+                super::entrypoint_source(host, prefix).as_deref(),
+                source,
+                "{host} {prefix}"
+            );
+        }
     }
 }

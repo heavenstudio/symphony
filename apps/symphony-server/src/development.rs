@@ -309,6 +309,20 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
     })
 }
 
+/// Whether the request for `path` (its checkout's scope taken off), whose `Sec-Fetch-Dest` is
+/// `destination`, goes to the page server: the app's pages and the client's files. The rest go to
+/// the API, an HTML document's file among them, which the frame that draws it and any other read
+/// but a page's own load ask for (`media_files::html_document`).
+fn to_page_server(nav: &symphony_api::ProjectView, path: &str, destination: Option<&str>) -> bool {
+    let html_file = nav.is_html_route(path.trim_start_matches('/'))
+        && destination.is_some_and(|destination| destination != "document");
+    !html_file
+        && (crate::api::client_page(nav, path)
+            || path.starts_with("/assets/")
+            || path.starts_with("/wasm/")
+            || path.starts_with("/_dioxus"))
+}
+
 async fn forward(
     mut stream: TcpStream,
     api: u16,
@@ -346,11 +360,13 @@ async fn forward(
     let path = crate::api::decode_path(target.split('?').next().unwrap_or(target))
         .ok_or("bad request path")?;
     let (_, path) = crate::api::scope_path(&path);
-    let port = if crate::api::client_page(nav, path)
-        || path.starts_with("/assets/")
-        || path.starts_with("/wasm/")
-        || path.starts_with("/_dioxus")
-    {
+    let destination = headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("sec-fetch-dest")
+            .then(|| value.trim().to_ascii_lowercase())
+    });
+    let port = if to_page_server(nav, path, destination.as_deref()) {
         web
     } else {
         api
@@ -427,6 +443,35 @@ mod tests {
             assert!(
                 !crate::sys::group_runs(pid),
                 "owned child group {pid} leaked"
+            );
+        }
+    }
+
+    /// The page server takes the app's pages, an HTML document's opened as a page among them, and
+    /// the client's files; the API takes an HTML document's file, which a frame, a fetch or any
+    /// other read but a page's own load asks for, and everything else.
+    #[test]
+    fn an_html_documents_file_goes_to_the_api_and_its_page_to_the_page_server() {
+        let nav = symphony_api::ProjectView {
+            entrypoints: vec!["docs".into()],
+            ..Default::default()
+        };
+        for (path, destination, page_server) in [
+            ("/docs/a/readout.html", Some("document"), true),
+            ("/docs/a/readout.html", None, true),
+            ("/docs/a/readout.html", Some("iframe"), false),
+            ("/docs/a/readout.HTM", Some("empty"), false),
+            ("/docs/a/notes.md", Some("iframe"), true),
+            ("/docs/a/", Some("iframe"), true),
+            ("/tasks", Some("document"), true),
+            ("/assets/app.js", Some("script"), true),
+            ("/outside.html", Some("iframe"), false),
+            ("/api/board", Some("empty"), false),
+        ] {
+            assert_eq!(
+                to_page_server(&nav, path, destination),
+                page_server,
+                "{path} {destination:?}"
             );
         }
     }
