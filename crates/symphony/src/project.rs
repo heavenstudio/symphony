@@ -36,6 +36,11 @@ pub const FILE: &str = "symphony.toml";
 /// after which that process is started again, so each read again may start it.
 pub const AGAIN: Duration = crate::plugins::process::PAUSE;
 
+/// How long a read again keeps its claim at most ([`Project::of`]): past any wait of its load (a
+/// plugin's declaration waits [`crate::plugins::process::WAIT`]), so the read's own result sets the
+/// next; only a read that never ended (its thread panicked) is claimed again after it.
+const HELD: Duration = Duration::from_secs(60);
+
 /// A project as [`Project::of`] read it: each file its load looked at, as it was, the project, why
 /// it is the plain project when it is, and when its load is read again, for a plugin's process.
 struct Seen {
@@ -113,11 +118,13 @@ pub struct PluginProcess {
 }
 
 impl PluginProcess {
-    /// Whether the `symphony.toml` at `root` names a plugin's process, its `[plugins.process]`
-    /// read alone and quietly as [`PluginCalls::read`] reads its settings: a file that does not
-    /// parse, or no file, names none. What a plugin command reads before it runs
-    /// ([`crate::plugins::command`]), so a command of a plugin this process holds loads no project.
-    pub fn named_at(root: &Path) -> bool {
+    /// The plugins the `symphony.toml` at `root` names a process for, its `[plugins.process]` read
+    /// alone and quietly as [`PluginCalls::read`] reads its settings: a file that does not parse,
+    /// or no file, names none. What a plugin command reads before it runs
+    /// ([`crate::plugins::command`]), so a command of a plugin this process holds loads no project,
+    /// and a linked copy of a plugin named here never answers for it, even while the project does
+    /// not load.
+    pub fn named_at(root: &Path) -> Vec<String> {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
         struct Settings {
@@ -126,13 +133,15 @@ impl PluginProcess {
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
         struct PluginSettings {
-            // Each plugin's command is the project's to read: here only whether one is named.
+            // Each plugin's command is the project's to read: here only which are named.
             process: BTreeMap<String, serde::de::IgnoredAny>,
         }
         std::fs::read_to_string(root.join(FILE))
             .ok()
             .and_then(|text| toml::from_str::<Settings>(&text).ok())
-            .is_some_and(|settings| !settings.plugins.process.is_empty())
+            .map_or_else(Vec::new, |settings| {
+                settings.plugins.process.into_keys().collect()
+            })
     }
 }
 
@@ -402,9 +411,11 @@ impl Project {
     /// settings; a project that does not load leaves the plain project in its place, reported the
     /// same way, and says why while it does ([`Project::problem`]). A load refused while a plugin of
     /// the project answering from its process has not declared (its program missing, or slow to
-    /// declare at a start) is no setting of the project's: it is read again [`AGAIN`] after, by one
-    /// reader while the others keep the plain project, until it loads. `symphony-status --lint`
-    /// refuses each ([`crate::lint::project_problems`]).
+    /// declare at a start) is no setting of the project's: it is read again [`AGAIN`] after, until
+    /// it loads, by one read at a time on a thread of its own, the claim held until that read ends
+    /// ([`HELD`] at most), so every reader keeps the plain project meanwhile and none waits on the
+    /// process: a server's live loop no more than a request. `symphony-status --lint` refuses each
+    /// ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
         Self::seen(root).0
     }
@@ -417,23 +428,31 @@ impl Project {
 
     /// [`Project::of`], and why it is the plain project when it is.
     fn seen(root: &Path) -> (Arc<Project>, Option<String>) {
-        let mut said = None;
         if let Some(held) = lock(&SEEN).get_mut(root)
             && held
                 .stamps
                 .iter()
                 .all(|(path, held)| *held == Stamp::of(path))
         {
-            match held.again {
-                // This reader reads it again; the others keep what was read meanwhile, so a
-                // process slow to declare holds one reader, never each.
-                Some(at) if Instant::now() >= at => {
-                    held.again = Some(Instant::now() + AGAIN);
-                    said = held.problem.clone();
-                }
-                _ => return (held.project.clone(), held.problem.clone()),
+            if held.again.is_some_and(|at| Instant::now() >= at) {
+                // Read again on a thread of its own, which may wait on a process's declaration:
+                // every reader, this one too, keeps what was read meanwhile, none waits.
+                let (again, said) = (root.to_path_buf(), held.problem.clone());
+                let reading = std::thread::Builder::new()
+                    .name("project read again".into())
+                    .spawn(move || drop(Self::read_seen(&again, said.as_deref())));
+                // Claimed until that read ends, its own result setting the next; a read that
+                // cannot start is left to the next pause.
+                held.again = Some(Instant::now() + if reading.is_ok() { HELD } else { AGAIN });
             }
+            return (held.project.clone(), held.problem.clone());
         }
+        Self::read_seen(root, None)
+    }
+
+    /// The project at `root` read and kept for [`Project::of`], and why it is the plain project when
+    /// it is; `said`, the problem a read before said, is not said again.
+    fn read_seen(root: &Path, said: Option<&str>) -> (Arc<Project>, Option<String>) {
         let stamped = |path: PathBuf| {
             let stamp = Stamp::of(&path);
             (path, stamp)
@@ -459,7 +478,7 @@ impl Project {
             Err(problem) => {
                 // A load read again for a plugin's process says its problem again only when it
                 // changed.
-                if said.as_ref() != Some(&problem) {
+                if said != Some(problem.as_str()) {
                     eprintln!("{}: {problem}; using the defaults", root.display());
                 }
                 let again =
@@ -1406,3 +1425,7 @@ impl Stamp {
         ])
     }
 }
+
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;

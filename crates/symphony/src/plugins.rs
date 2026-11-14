@@ -142,15 +142,27 @@ impl Piped {
 }
 
 /// The plugins answering from a process of the project at `root` ([`Piped`]): none without a root
-/// or when its file names no `[plugins.process]`, read alone and quietly first
-/// ([`PluginProcess::named_at`]).
+/// or when its file names no `[plugins.process]`, whose names are read alone and quietly first
+/// ([`PluginProcess::named_at`](crate::project::PluginProcess::named_at)), so they hold even while
+/// the project does not load. A project that does not load, as when a process it needs for a
+/// renderer did not declare, has no plugin's command: why is among the failed lines.
 fn piped(root: Option<&Path>) -> Piped {
-    let Some(root) = root.filter(|root| crate::project::PluginProcess::named_at(root)) else {
+    let Some(root) = root else {
         return Piped::default();
     };
+    let names = crate::project::PluginProcess::named_at(root);
+    if names.is_empty() {
+        return Piped::default();
+    }
     let project = Project::of(root);
     let mut piped = Piped {
-        names: project.plugin_processes.keys().cloned().collect(),
+        names,
+        failed: Project::problem(root)
+            .map(|why| {
+                format!("the project does not load, so its plugins' commands are not known: {why}")
+            })
+            .into_iter()
+            .collect(),
         ..Piped::default()
     };
     for plugin in Plugins::for_project(&project).list() {

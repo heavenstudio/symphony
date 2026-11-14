@@ -682,22 +682,30 @@ fn a_plugins_process_is_named_by_any_entry_of_its_table_and_a_file_it_cannot_be_
         tree.write(symphony::project::FILE, file);
         symphony::project::PluginProcess::named_at(&tree.root)
     };
-    assert!(
-        !symphony::project::PluginProcess::named_at(&tree.root),
+    let none: Vec<String> = Vec::new();
+    assert_eq!(
+        symphony::project::PluginProcess::named_at(&tree.root),
+        none,
         "no file"
     );
-    assert!(!named(""));
-    assert!(!named("[plugins]\ntiming = true\n"));
-    assert!(!named("[plugins.process]\n"), "an empty table");
+    assert_eq!(named(""), none);
+    assert_eq!(named("[plugins]\ntiming = true\n"), none);
+    assert_eq!(named("[plugins.process]\n"), none, "an empty table");
     // Whatever an entry holds: the project reads and checks it, not this.
-    assert!(named(
-        "[project]\nlost = 1\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n"
-    ));
-    assert!(named(
-        "[plugins.process]\nevery = 3\nother = { a = [1, \"b\"] }\n"
-    ));
-    assert!(!named("[plugins.process\nevery = [\"p\"]\n"), "no parse");
-    assert!(!named("[plugins]\nprocess = 3\n"), "not a table");
+    assert_eq!(
+        named("[project]\nlost = 1\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n"),
+        ["every"]
+    );
+    assert_eq!(
+        named("[plugins.process]\nevery = 3\nother = { a = [1, \"b\"] }\n"),
+        ["every", "other"]
+    );
+    assert_eq!(
+        named("[plugins.process\nevery = [\"p\"]\n"),
+        none,
+        "no parse"
+    );
+    assert_eq!(named("[plugins]\nprocess = 3\n"), none, "not a table");
 }
 
 /// Each `pub trait` of `source` and the methods it declares.

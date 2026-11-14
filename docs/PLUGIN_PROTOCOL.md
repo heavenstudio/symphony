@@ -95,13 +95,15 @@ entrypoint's `types` may name a renderer of a plugin's process; a project whose 
 type only a process could handle, and whose process cannot say its renderers, is refused, naming
 why and the plugin's log. A server serves a project refused with the defaults, and every page of it
 says so and why until it loads. While that refusal is a process that has not declared (its program
-missing, or slow to declare when the server starts), the project is read again each second, the
-process's pause, by one read while the others keep the defaults: once the process declares, the
-project is served as its file says, with no change to the file. Its other seams (board fields, gates, prose rules, generators and transports) are not asked of
-a process: a plugin that declares any of them is refused under `[plugins.process]`, naming them,
-rather than losing them without a word, and stays a linked plugin's to answer. Each is answered from
-a process once a plugin first declares it from one. So is a plugin refused that declares another
-name than the one `[plugins.process]` gives it.
+missing, or slow to declare when the server starts), the project is read again a second after each
+read that failed (the process's pause), one read at a time on a thread of its own: every reader
+keeps the defaults meanwhile, and none waits on the process. Once the process declares, the project
+is served as its file says, with no change to the file. A command of such a project says why it is
+not known ([below](#its-commands)). Its other seams (board fields, gates, prose rules, generators
+and transports) are not asked of a process: a plugin that declares any of them is refused under
+`[plugins.process]`, naming them, rather than losing them without a word, and stays a linked
+plugin's to answer. Each is answered from a process once a plugin first declares it from one. So is
+a plugin refused that declares another name than the one `[plugins.process]` gives it.
 
 ## Its process
 
@@ -183,7 +185,11 @@ symphony: unknown command "render-models" (`just symphony-cli help` lists them)
 ```
 
 `symphony help` lists the commands there are and then the same line for each such plugin, and
-`symphony help NAME` refuses such a name as `symphony NAME` does.
+`symphony help NAME` refuses such a name as `symphony NAME` does. A project that does not load
+because of such a process (an entrypoint whose renderer it was to declare) has the defaults and so
+no plugin: its first line is `the project does not load, so its plugins' commands are not known:`
+and why, its log named, and a linked copy of a plugin its `[plugins.process]` names still answers
+for none of its commands.
 
 ## Card kinds in one request
 

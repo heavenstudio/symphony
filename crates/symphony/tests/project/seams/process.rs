@@ -629,6 +629,28 @@ fn a_plugin_the_project_gives_a_process_that_does_not_start_has_no_linked_comman
     assert!(listed.listed.iter().all(|c| c.name() != "every"));
     assert_eq!(listed.failed.len(), 1, "{:?}", listed.failed);
     assert!(listed.failed[0].starts_with(said), "{:?}", listed.failed);
+    // Nor while the project does not load, an entrypoint needing a renderer of that process: the
+    // command is not found, the project's problem saying why, naming the plugin and its log.
+    tree.write("models/a.md", "# A\n");
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"every\"]\n\n[plugins.process]\nevery = [\"/no/such/plugin\"]\n\n\
+         [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [\"markdown\", \"every\"]\n",
+    );
+    let failed = symphony::plugins::command("every", Some(&tree.root))
+        .err()
+        .unwrap();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(
+        failed[0].starts_with(
+            "the project does not load, so its plugins' commands are not known: symphony.toml: \
+             [plugins.process] every cannot say its renderers: /no/such/plugin cannot start: "
+        ) && failed[0].ends_with(&log),
+        "{failed:?}"
+    );
+    let listed = symphony::plugins::commands_of(Some(&tree.root));
+    assert!(listed.listed.iter().all(|c| c.name() != "every"));
+    assert_eq!(listed.failed.len(), 1, "{:?}", listed.failed);
 }
 
 #[test]
@@ -684,6 +706,42 @@ fn symphony_names_a_plugins_process_that_failed_for_a_command_it_does_not_know()
     let (code, _, err) = symphony(&["help", "render-models"]);
     assert_eq!(code, 1);
     assert!(err.starts_with(&failed), "{err}");
+    // A project that does not load, an entrypoint needing a renderer of that process, has no
+    // plugin's command: the refusal says why, naming the plugin and its log, and exits 1; `help`
+    // says the same.
+    tree.write("models/a.md", "# A\n");
+    tree.write(
+        symphony::project::FILE,
+        "[plugins]\ncrates = [\"shelf\"]\n\n[plugins.process]\nshelf = [\"./bin/shelf-plugin\"]\n\n\
+         [[entrypoints]]\nurl = \"/models/\"\nfolder = \"models\"\ntypes = [\"markdown\", \"shelf\"]\n",
+    );
+    let refused = format!(
+        "symphony: the project does not load, so its plugins' commands are not known: \
+         symphony.toml: [plugins.process] shelf cannot say its renderers: {} cannot start: ",
+        root.join("bin/shelf-plugin").display()
+    );
+    let (code, _, err) = symphony(&["render-models", "a", "b"]);
+    assert_eq!(code, 1, "{err}");
+    let said: Vec<&str> = err
+        .lines()
+        .filter(|line| line.starts_with("symphony: "))
+        .collect();
+    assert_eq!(said.len(), 2, "{err}");
+    assert!(
+        said[0].starts_with(&refused) && format!("{}\n", said[0]).ends_with(&log),
+        "{err}"
+    );
+    assert!(
+        said[1].starts_with("symphony: unknown command \"render-models\""),
+        "{err}"
+    );
+    let (code, listing, _) = symphony(&["help"]);
+    assert_eq!(code, 0);
+    let note = listing.rsplit_once("\n\n").unwrap().1;
+    assert!(
+        note.starts_with(&refused) && note.ends_with(&log),
+        "{listing}"
+    );
     // A project whose processes all declared refuses an unknown command naming no plugin: exit 2.
     project(&tree, "");
     let (code, _, err) = symphony(&["render-models"]);
