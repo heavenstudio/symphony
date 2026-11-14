@@ -565,11 +565,12 @@ its main, fast-forwarded only where its hooks allow (a project whose guard lets 
 landing move its main takes that branch through its landing); its board, moved to the schema of
 the pin its main locks; and the wait for the shared server's own reload, since the machine's
 server is built from a project's checkout. A Symphony change that breaks that project's build or
-tests is found by its own gate when it takes the branch, not by the release. That holds until the
-release is installed on the machine (`tools/machine-runs-the-release`); from then the refresh
-installs the release and moves each board, and moves no project's pin, makes no branch in a
-project and fast-forwards no main: a project moves its tags through its own landing, when it
-chooses.
+tests is found by its own gate when it takes the branch, not by the release, and is the project's
+to meet: a step its own gate, hooks or main checkout stops is the project's to finish, never red
+here (below). That holds until the release is installed on the machine
+(`tools/machine-runs-the-release`); from then the refresh installs the release and moves each
+board, and moves no project's pin, makes no branch in a project and fast-forwards no main: a
+project moves its tags through its own landing, when it chooses.
 
 A step moves what it can and nothing more:
 
@@ -581,10 +582,11 @@ A step moves what it can and nothing more:
   or `rev`), and `cargo update --workspace` moves the lock. Only `Cargo.toml` and `Cargo.lock`
   files may change, and each Symphony package must end at the release's commit. That is committed
   through the project's own hooks, its commit gate, never past them, on the branch
-  `symphony/RELEASE` of its repository, never pushed. A red gate makes no branch. The worktree is
-  removed either way. A branch made before is kept while it is a fast-forward of the default
-  branch, and made again on its tip once that moved past it, when it is the refresh's own one
-  commit; one that holds more is left as it is.
+  `symphony/RELEASE` of its repository, never pushed. A gate that refuses it makes no branch, and
+  its last lines are kept in the step's log. The worktree is removed either way. A branch made
+  before is kept while it is a fast-forward of the default branch, and made again on its tip once
+  that moved past it, when it is the refresh's own one commit; one that holds more is left as it
+  is.
 
   A pin moves only forward, to a release that descends from it. A lock at the release or past it
   takes it already. One beside it, neither ahead nor behind, such as a pin moved by hand to a
@@ -628,25 +630,27 @@ A step moves what it can and nothing more:
     writes nothing into its checkout, whose `Cargo.lock` the shared server's reload may watch.
 
   It is never pushed (the project's own next push carries it), no hook is passed by, and no merge
-  commit is made there. Otherwise the branch is left, the step is red and its main stays where it
-  was. When git refuses the move itself after the ask passed, it has already written the move's
-  files into the checkout: the run reads where the default branch is, never assuming it, and puts
+  commit is made there. Otherwise the branch is left and its main stays where it was. When git
+  refuses the move itself after the ask passed, it has already written the move's files into the
+  checkout: the run reads where the default branch is, never assuming it, and puts
   each of those files back to the default branch's tip by itself (`git restore --source=TIP
   --staged --worktree -- PATH`) when and only when its index entry and its file still hold exactly
   what the move wrote, so nothing of its owner's, staged or not, is touched. One that holds
   anything else is left and named, with the command that puts that one path back (`git -C ROOT
-  restore --staged --worktree -- PATH`).
-- **Its board.** In every refresh but one that leaves its pin beside the release, the project's
-  live board is moved to the schema of the pin its main locks then: the release once its main took
-  it, or an older pin whose schema it is still behind, so a refresh finishes what an earlier one
-  left, whatever release is newest. The store is snapshotted first, as it runs
-  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the newest
-  5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in its main checkout, the
-  one command that moves a project's board, and the schema is read again. A board whose database
-  is not running is refused, since nothing here starts, signals or stops a database. So is one
-  running an older SurrealDB than the pin names, which the move would replace, and one whose
-  versions cannot be read, the pin's or the database's: the guard fails closed. A project with no
-  board folder has nothing to move.
+  restore --staged --worktree -- PATH`). One that holds what the move wrote and that the run could
+  not put back, or could not read, is named with the command that puts it back (`git -C ROOT
+  restore --source=TIP --staged --worktree -- PATH`), and the step is red.
+- **Its board.** In every refresh but one that leaves its pin beside the release or whose commit
+  gate refused the move, the project's live board is moved to the schema of the pin its main locks
+  then: the release once its main took it, or an older pin whose schema it is still behind, so a
+  refresh finishes what an earlier one left, whatever release is newest. The store is snapshotted
+  first, as it runs (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git
+  common dir, the newest 5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in
+  its main checkout, the one command that moves a project's board, and the schema is read again. A
+  board whose database is not running is refused, since nothing here starts, signals or stops a
+  database. So is one running an older SurrealDB than the pin names, which the move would replace,
+  and one whose versions cannot be read, the pin's or the database's: the guard fails closed. A
+  project with no board folder has nothing to move.
 - **The shared server.** Last, the run says which server answers on the machine's record, what it
   is built from and where that checkout's main stands. Nothing here stops, signals or restarts it.
   Its own reload (`apps/symphony-server/src/reload.rs`) fingerprints the checkout it serves, its
@@ -657,27 +661,49 @@ A step moves what it can and nothing more:
   answered before the move, the run waits, 20 minutes at most, until another process answers for
   it, and says which; or that none has yet, and that `just symphony-status` says which answers
   later. With none answering for it before, it waits for none: which build answers after cannot
-  be told against one before it, and it says so.
+  be told against one before it, and it says so. The wait is said, never red.
 
-A step that is red says what it found, the release stands (its tag is pushed), and the run exits
-1. A red before its main moved leaves that main as it was, with the
-branch made and its board moved only to the pin that main already locks; a migrate that fails
-leaves the snapshot taken before it. It is filed as
-`tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be read),
-saying what was left as it was and who fixes it, and filed as a fast fix as a check's red is: the
-bound holds for a fix of the Symphony's landed on it, while a red in a consuming project's own
-gate, hooks or code is fixed by a task on that project's board. A refresh green for it closes the
-task.
+Each step ends in one of three:
 
-What stays by hand, said under a red refresh in `--status` too:
+- **Moved**: all its project could take, it took. Green.
+- **The project's to finish**: its own commit gate refused the move (its hook made `git commit`
+  exit 1; no branch made, the gate's last lines kept in the step's log); or its hooks refused the
+  fast-forward with its main still where it was read, or its main checkout
+  is off its default branch or holds tracked edits (the branch `symphony/RELEASE` left for its own
+  landing or its owner, its main as it was, its board moved only to the schema of the pin that main
+  locks). What stopped it is the project's own, a Symphony change its gate refuses among it, met
+  through its own landing as any change it takes is. Green here and filed nowhere: it files no task
+  and closes none, and the run's exit is not changed by it. The step says which, with what finishes
+  it, in the run's output (`release: refresh: ID: the project's to finish: …`, then `release:
+  refresh-ID the project's to finish`), the run's record (the step named in `refreshed.theirs`, its
+  line in `refreshed.said`) and `--status`.
+- **Red**: the refresh's own work failed. The registry or the release's packages cannot be read, a
+  worktree cannot be made, a lock cannot be moved to the release, the move's commit fails otherwise
+  than by its gate's exit 1 (git's own failure, exit 128, or a commit that could not run), a branch
+  is found changed under it (more than the move, or its main moved on while the move was made or
+  asked for), where its main checkout stands cannot be read, a file the move wrote into that
+  checkout cannot be put back, a snapshot or a migrate fails, or a board's database is not running
+  or could be replaced by the move. A refusal met once the run's time was up or it was told to stop
+  is red, as the run's own, and so is a move its project stopped whose board then fails to move.
 
-- a project whose own gate or hooks refuse the move (the consuming project's guard lets only its
-  own landing move its main): it lands `symphony/RELEASE` through its own landing;
+A red step says what it found, the release stands (its tag is pushed), and the run exits 1. A red
+before its main moved leaves that main as it was, with the branch made and its board moved only to
+the pin that main already locks; a migrate that fails leaves the snapshot taken before it. It is
+filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
+read), saying what was left as it was and who fixes it, and filed as a fast fix as a check's red
+is. A refresh green for it closes the task.
+
+What stays by hand, said in `--status` under a refresh with a step that is its project's to
+finish:
+
+- a project whose own gate refused the move: it meets that itself, on its own board;
+- a project whose hooks kept the move from its main: it lands `symphony/RELEASE` through its own
+  landing;
 - a main checkout off its default branch or with tracked edits: its owner puts it right;
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
-  refresh itself. It runs the refresh again for the newest release here, as a run of its own under
-  the lock, checking nothing, and finishes what the red step did not: the fast-forward, the board's
-  move and the wait for the server.
+  refresh itself, as it is after a red step's fix. It runs the refresh again for the newest release
+  here, as a run of its own under the lock, checking nothing, and finishes what the step did not:
+  the move, the fast-forward, the board's move and the wait for the server.
 
 A refresh has 2 hours past the run's checks. `[releases] refresh = false` turns it off. Each
 project's step logs every command it ran (`logs/ID/refresh-ID.log`).
@@ -691,7 +717,8 @@ cannot be taken back once a project fetches it, so running `just release` or
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
 land starts `--due` without asking, and the release it runs is automatic. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
-run on a red refresh's task without asking.
+run without asking on a red refresh's task once it is fixed, or once a project finished what its
+step left to it.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -714,7 +741,7 @@ the candidate to …`, `answered: its task closed as covered by …`), and what 
 ended, how and when, its red runs, and whether the run of main's tip its drop made due has reached
 its checks; `none held`, or `off` while a bound is 0. Then it
 prints the cadence, the landings since what it counts from and what the next run waits for, and
-the last refresh, with each line it said and each red step:
+the last refresh, with each line it said and each step red or its project's to finish:
 
 ```text
 landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
@@ -726,12 +753,14 @@ last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 202
   the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
 ```
 
-Under a red refresh it names each red step and its log, then what stays by hand (*The refresh*,
-above). The next run is `due` once the count is reached, or the release candidate's rerun or drop
-makes it so, `held for the release candidate` while a red of it waits, `in progress` while a run
-holds the lock, or `off` when `every_landings` is 0. It reads the record and this checkout's tags
-and refs, fetches nothing and writes nothing, so a land the candidate has not been settled with
-yet is the next count's or run's to read.
+It names each red step and its log, and each step that is its project's to finish (`refresh-ID
+the project's to finish, filed nowhere here; log …`), counted on its first line (`last refresh:
+green, 1 step left to its project, of …`), then, under one of those, what stays by hand (*The
+refresh*, above). The next run is `due` once the count is reached, or the release
+candidate's rerun or drop makes it so, `held for the release candidate` while a red of it waits,
+`in progress` while a run holds the lock, or `off` when `every_landings` is 0. It reads the record
+and this checkout's tags and refs, fetches nothing and writes nothing, so a land the candidate has
+not been settled with yet is the next count's or run's to read.
 
 ## The schedule
 

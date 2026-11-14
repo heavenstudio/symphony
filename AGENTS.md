@@ -226,11 +226,13 @@ the schema of the pin its main locks, after a snapshot. The shared server takes 
 reload once the main
 checkout it is built from has the new `Cargo.lock` (`apps/symphony-server/src/reload.rs`, which
 builds the new server through `crates/symphony/src/reload.rs` and hands it its sockets), and the
-refresh waits for that, bounded. What stays by hand: a consumer whose gate or hooks refuse the move
-lands `symphony/RELEASE` through its own landing, and a main checkout off its default branch or with
-tracked edits is its owner's to put right; then an orchestrator reruns `just release --refresh`
-without asking. Pushing a consumer's branch and restarting the shared server stay separate acts
-that need their own word. A pin moved by hand to a commit of main waits until `just tasks
+refresh waits for that, bounded. What stays by hand is the project's to finish, never a red here
+and filed nowhere: a consumer whose gate refuses the move meets that itself, one whose hooks refuse
+the fast-forward lands `symphony/RELEASE` through its own landing, and a main checkout off its
+default branch or with tracked edits is its owner's to put right; then an orchestrator reruns `just
+release --refresh` without asking. Only the refresh's own work that fails is red, filed here.
+Pushing a consumer's branch and restarting the shared server stay separate acts that need their
+own word. A pin moved by hand to a commit of main waits until `just tasks
 regenerate --status --wait` exits 0 and takes the commit it names, so it never carries a client
 older than its sources ([TASKS](docs/TASKS.md#the-regenerator)); a release run waits for the
 regenerator and releases only a main its own `just client-check` (in `just verify`) passes, so a
