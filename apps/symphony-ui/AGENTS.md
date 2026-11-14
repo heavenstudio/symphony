@@ -303,12 +303,12 @@ never the whole target, which the release run runs.
   7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task
   pages' chunk 18 KB less) and `/reports` to 298,951 (from 298,790), the program's script now
   holding the notice; every other page stays within 50 bytes of main's. Reports moving to the
-  web client (`app/client-moves-to-react/reports`, against main's build at ca3b1c1) takes
-  `/reports` to 105,590 bytes (from 302,187), its entry and the chunk of what it shares with the
-  queue's (React and the frame, 74,459 on the wire), so `/queue` takes 103,263 (from 101,787) and
+  web client (`app/client-moves-to-react/reports`, against main's build at 8bd7918) takes
+  `/reports` to 105,591 bytes (from 302,156), its entry and the chunk of what it shares with the
+  queue's (React and the frame, 74,471 on the wire), so `/queue` takes 103,264 (from 101,789) and
   a move between the two fetches the other's entry alone; the program, Reports' chunk gone, takes
-  `/agents` and a task page to 548,634 and 549,227 (from 549,291 and 549,884) and the warmed chat
-  and menus to 603,631 outside home's (from 604,269); every other page stays within 30 bytes of
+  `/agents` and a task page to 548,597 and 549,190 (from 549,285 and 549,878) and the warmed chat
+  and menus to 603,539 outside home's (from 604,282); every other page stays within 12 bytes of
   main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
