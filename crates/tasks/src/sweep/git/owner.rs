@@ -194,4 +194,99 @@ mod tests {
         }
         assert_eq!(pathspecs(&folders(&["", "docs"])), [".", "docs"]);
     }
+
+    /// `git ARGS` in `root`, which must succeed.
+    fn git(root: &Path, args: &[&str]) {
+        let done = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(done.status.success(), "git {args:?}: {done:?}");
+    }
+
+    /// A scratch repository named `name` under the system's temporary folder, with `files`
+    /// committed.
+    fn repository(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("symphony-owner-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for (file, text) in files {
+            write(&root, file, text);
+        }
+        git(&root, &["init", "-q"]);
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "init"]);
+        root
+    }
+
+    fn write(root: &Path, file: &str, text: &str) {
+        let at = root.join(file);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+
+    #[test]
+    fn a_batch_reads_each_blob_and_none_where_a_name_holds_no_text() {
+        let root = repository("blobs", &[("docs/A.md", "a\n"), ("docs/B b.md", "b\n")]);
+        let specs = [
+            "HEAD:docs/A.md",
+            "HEAD:docs/B b.md",
+            "HEAD:docs",
+            "HEAD:docs/none.md",
+        ]
+        .map(String::from);
+        assert_eq!(
+            blobs(&root, &specs).unwrap(),
+            [Some("a\n".into()), Some("b\n".into()), None, None]
+        );
+        assert!(blobs(&root, &[]).unwrap().is_empty());
+        let failed = told(&root, &["rev-parse", "--verify", "nowhere"]).unwrap_err();
+        assert!(failed.starts_with("git rev-parse failed in "), "{failed}");
+        let gone = root.join("gone");
+        let unrun = told(&gone, &["status"]).unwrap_err();
+        assert!(unrun.starts_with("git status could not run in "), "{unrun}");
+        assert!(blobs(&gone, &specs).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_answer_is_a_line_no_copy_holds_counted_per_copy_in_the_folders_read() {
+        let register = "# D\n\n- [x] **x** — X.\n  [2026-11-14 01:52] owner · approved — go\n";
+        let root = repository("answers", &[("docs/D.md", register)]);
+        let docs = vec!["docs".to_string()];
+        // The register moved to a file of its own: its old name is gone, its line is no answer.
+        std::fs::remove_file(root.join("docs/D.md")).unwrap();
+        write(&root, "docs/E.md", register);
+        // A nested checkout under the folder holds no document; a note outside it is not read.
+        let nested = root.join("docs/sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        git(&nested, &["init", "-q"]);
+        write(&nested, "S.md", register);
+        let note = "- [ ] **y** — Y.\n  [2026-11-14 02:00] owner — why?\n";
+        write(&root, "notes/N.md", note);
+        assert_eq!(answers(&root, &docs, None).unwrap(), []);
+        let answer = |file: &str, card: &str| Answer {
+            file: file.into(),
+            card: card.into(),
+        };
+        // The root's folder reads every file.
+        assert_eq!(
+            answers(&root, &[String::new()], None).unwrap(),
+            [answer("notes/N.md", "y")]
+        );
+        // A second copy of the line is one no commit holds.
+        write(
+            &root,
+            "docs/E.md",
+            &format!("{register}  [2026-11-14 01:52] owner · approved — go\n"),
+        );
+        assert_eq!(
+            answers(&root, &docs, None).unwrap(),
+            [answer("docs/E.md", "x")]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
