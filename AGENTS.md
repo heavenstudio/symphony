@@ -146,12 +146,12 @@ can read (below), and `.claude/settings.json` denies Edit there as well.
 **Models.** The model each role runs on is a setting, so a change of mind is one edit:
 `[agents] launch` and `[agents.models]` in `symphony.toml` (`orchestrator`, `executor`,
 `reviewer`, `assessor`), which a board launch takes and `just tasks limits` prints with where
-each came from ([TASKS](docs/TASKS.md#limits-and-models)). The orchestrator may run on the most
-capable model, for diagnosis and design; executors, reviewers and assessors run on Fable, as
-`[agents] launch` and the table's `assessor` say. An Agent launch passes the model
-`just tasks limits` names for the role, `model: "fable"` today (a subagent otherwise inherits
-its orchestrator's model). A resumed agent keeps the model it started on. The work-in-progress
-limits are settings the same way, in `[limits]`.
+each came from ([TASKS](docs/TASKS.md#limits-and-models)). The orchestrator runs on Fable, for
+diagnosis and design; executors and reviewers run on Opus and the assessor on Haiku, as
+`[agents] launch` and the table's `orchestrator` and `assessor` say. An Agent launch passes the
+model `just tasks limits` names for the role (a subagent otherwise inherits its orchestrator's
+model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
+the same way, in `[limits]`.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
 HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
