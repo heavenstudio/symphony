@@ -215,9 +215,12 @@ sections near the screen read and kept, and the document's feed followed. A sect
 not change draws nothing again, and typed words live outside the page's markup: a section's
 editor (`editor.tsx`: a card's verdict under its tap, a message, a comment), a question and its
 follow-ups (`asks.tsx`), each draft saved on this device on every input with its files
-(`attach.tsx`, the same rows the Dioxus composers keep). A card's Later is the queue's
-(`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s. Its own
-styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
+(`attach.tsx`, the same rows the Dioxus composers keep). A link's excerpt, once opened, draws its
+blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of it waiting to come
+near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
+look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
+is the queue's (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s.
+Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
 
 ## Moving a page kind
 
