@@ -360,10 +360,11 @@ a.bar:hover { background:var(--background); }
 /* A phone, held upright: no phone is wider. */
 @media (max-width: 600px) {
   /* One column on the screen at a time: each as wide as the board's scroller (the rail too), and a
-     swipe lands on the next one whole. apps/symphony-web/src/cardheight.ts repeats the width. */
+     swipe lands on the next one whole. apps/symphony-web/src/cardheight.ts repeats the width. Each
+     selector is as specific as the narrow window's above, its ghost's by `[data-for]`. */
   .board-scroll, .ghost-pipeline { container-type:inline-size; }
   .board-scroll { scroll-snap-type:x mandatory; }
-  .pipeline > .column, .pipeline > .column.rail, .ghost-pipeline > .ghost-column { flex-basis:100cqi; width:100cqi; scroll-snap-stop:always; }
+  .pipeline > .column, .pipeline > .column.rail, .ghost-pipeline > .ghost-column[data-for] { flex-basis:100cqi; width:100cqi; scroll-snap-stop:always; }
   /* The search and the filters are behind their button, shown only while it is pressed. */
   .dx-button.board-filters-toggle, .ghost-field.ghost-filters-toggle { display:flex; width:fit-content; margin:0 0 16px; }
   .ghost-field.ghost-filters-toggle { width:143px; }
