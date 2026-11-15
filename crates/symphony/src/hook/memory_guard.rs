@@ -14,7 +14,9 @@
 //! given or runs anything ([`WRITER`], [`EDITOR`]). So a command that reads the folder and writes
 //! elsewhere in the same call is refused too (Read and Write copy out of it), and so is one that
 //! only mentions the folder in text beside a write; a write that never names the folder, from a
-//! folder outside it, passes.
+//! folder outside it, passes. Writers it does not know pass too: `git clone` or `git -C … init`,
+//! `sort -o`, `uniq IN OUT`, `mktemp`, `ed`, `awk -i inplace`, `xattr -w`, and a write through a
+//! link made before. A Codex session runs no Claude hook, so nothing guards it.
 
 use std::sync::LazyLock;
 

@@ -441,7 +441,7 @@ export async function readTree(
   scope: string,
   parent: string | null,
   cursor: string | null,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<TaskListing | string> {
   const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
   const selection = parent === null ? "roots=1" : `parent=${encodeURIComponent(parent)}`;
