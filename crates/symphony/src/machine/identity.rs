@@ -9,8 +9,15 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use symphony_board::project::{MACHINE_ID as FILE, machine_id as read};
 
+/// The installation id of this machine's folder ([`super::dir`]), made there once when it has none.
 pub fn installation_id() -> Result<String, String> {
-    in_folder(&super::dir()?).map_err(|error| format!("machine identity unknown: {error}"))
+    installation_id_in(&super::dir()?)
+}
+
+/// The installation id of the machine folder `folder`, made there once when it has none: the one
+/// server's, whose registry it serves, or a test's own.
+pub fn installation_id_in(folder: &Path) -> Result<String, String> {
+    in_folder(folder).map_err(|error| format!("machine identity unknown: {error}"))
 }
 
 struct Pending(PathBuf);
@@ -77,6 +84,20 @@ mod tests {
         assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
         let other = in_folder(&tree.path("other-machine")).unwrap();
         assert_ne!(other, ids[0], "independent installations reused identity");
+    }
+
+    #[test]
+    fn a_named_folders_id_is_the_one_made_there_and_a_bad_one_is_said() {
+        let tree = Tree::new();
+        let folder = tree.path("machine");
+        let made = installation_id_in(&folder).unwrap();
+        assert_eq!(made.len(), 32, "{made}");
+        assert_eq!(in_folder(&folder).unwrap(), made);
+        let corrupt = tree.path("corrupt");
+        fs::create_dir(&corrupt).unwrap();
+        fs::write(corrupt.join(FILE), "").unwrap();
+        let said = installation_id_in(&corrupt).unwrap_err();
+        assert!(said.starts_with("machine identity unknown: "), "{said}");
     }
 
     #[test]

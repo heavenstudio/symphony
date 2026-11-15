@@ -106,7 +106,8 @@ A native Mac app whose windows show the pages each server already serves, one we
   The live counts come from each project's existing feed (`/<id>/api/feed`), with the feed's own
   loss rules (`crates/symphony-api/src/lib.rs`, the module docs).
 - **Wire.** The follower reads only `/api/projects`, `Board.counts.waiting`, `Board.next`'s first
-  card, the new counts of questions and verdicts, and the feed's `counts` and `queue` changes. A fixture test in `crates/symphony-api` pins
+  card, the new counts of questions and verdicts, and the feed's `counts` and `queue` changes and
+  its `task-asks` region, which carries those counts. A fixture test in `crates/symphony-api` pins
   those few fields, added to and never renamed. Everything else stays free to change with each
   release, as now.
 - **Budget.** Nothing is added to any page kind: the 250 KB first visit is untouched.
