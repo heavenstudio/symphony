@@ -1351,6 +1351,11 @@ figcaption p {
 .postponed {
   color: var(--muted-foreground);
 }
+/* Later on its way keeps the focus (LaterButton, postpone.tsx), drawn as a disabled button is. */
+.postpone-controls > .dx-button[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
 /* A document's ghost (docs_live::GhostDocument) draws the boxes of .doc-head, .doc-toc and a
    .doc-part; a card section still loading draws a card's box. */
 .ghost-doc-head {

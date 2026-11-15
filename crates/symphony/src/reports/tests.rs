@@ -249,6 +249,70 @@ fn without_git_the_files_are_written_with_no_git_figures_and_say_why() {
     assert!(day.decisions.is_some(), "the documents still count");
 }
 
+/// A board read whose one task is the red `slug`, filed at 06:00 and open, its body naming
+/// `between`.
+fn red_read(slug: &str, between: &str) -> ReportRead {
+    ReportRead {
+        tasks: vec![symphony_board::ReportTask {
+            slug: slug.into(),
+            status: "ready".into(),
+            created: today() + 6.0 * HOUR,
+            updated: today() + 6.0 * HOUR,
+            parent: None,
+            instruction: false,
+            marked_red: true,
+            between: Some(between.into()),
+            lines: Vec::new(),
+        }],
+    }
+}
+
+#[test]
+fn a_red_that_names_its_commits_has_the_landings_between_them_and_one_git_cannot_read_says_why() {
+    let tree = Tree::new();
+    repository(&tree);
+    let folder = tree.path("reports");
+    let roll = |read: &ReportRead| {
+        roll_up(
+            &tree.root,
+            "sim",
+            NOW,
+            &folder,
+            &[today()],
+            read,
+            &[],
+            &Gate::default(),
+        )
+        .unwrap()
+    };
+    let tip = git::read(&tree.root, "main", today(), &[]).unwrap().line[0]
+        .hash
+        .clone();
+    let rolled = roll(&red_read(
+        "tests/release-red-verify",
+        &format!("{tip}..{tip}"),
+    ));
+    assert_eq!(rolled.problems, Vec::<String>::new());
+    let red = &written(&folder, today()).reds[0];
+    assert_eq!(
+        (red.between.as_deref(), red.landed.as_deref()),
+        (Some(format!("{tip}..{tip}").as_str()), Some(&[][..])),
+        "red where it was green: no landing to trace it to"
+    );
+    let unknown = format!("{0}..{0}", "0".repeat(40));
+    let rolled = roll(&red_read("tests/release-red-lint", &unknown));
+    assert_eq!(rolled.written.len(), 1, "the file is written all the same");
+    assert!(
+        rolled.problems.len() == 1
+            && rolled.problems[0].starts_with("git: tests/release-red-lint: "),
+        "{:?}",
+        rolled.problems
+    );
+    let day = written(&folder, today());
+    assert_eq!(day.reds[0].landed, None);
+    assert!(day.git.is_some(), "the branch's own figures still count");
+}
+
 #[test]
 fn a_folder_that_cannot_be_written_is_the_error() {
     let tree = Tree::new();

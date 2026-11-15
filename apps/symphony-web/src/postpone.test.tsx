@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PostponeControls, postpone, press, seen } from "./postpone";
+import { LaterButton, PostponeControls, postpone, press, seen } from "./postpone";
 import { STALE } from "./shared";
 import { asking, reply, server } from "./testing";
 
@@ -19,6 +19,44 @@ describe("a card's Later", () => {
   it("waits, saying so, while the page may show what is out of date", () => {
     STALE.set(true);
     expect(controls(false)).toMatch(/disabled="".*>Checking…<\/button>/);
+  });
+});
+
+describe("the button of Later", () => {
+  const button = (pending: boolean, checking: boolean, postponed = false) =>
+    renderToStaticMarkup(
+      <LaterButton
+        pending={pending}
+        checking={checking}
+        postponed={postponed}
+        onPress={() => {}}
+      />,
+    );
+
+  it("takes a press: Later, or Undo Later on a postponed card", () => {
+    for (const [postponed, label] of [
+      [false, "Later"],
+      [true, "Undo Later"],
+    ] as const) {
+      const html = button(false, false, postponed);
+      expect(html).toContain(`>${label}</button>`);
+      expect(html).not.toContain("disabled");
+    }
+  });
+
+  it("on its way says so and takes no press, but keeps the focus: never disabled", () => {
+    for (const checking of [false, true]) {
+      const html = button(true, checking);
+      expect(html).toContain('aria-disabled="true"');
+      expect(html).not.toContain('disabled=""');
+      expect(html).toContain(">Saving…</button>");
+    }
+  });
+
+  it("is disabled while the page may show what is out of date", () => {
+    const html = button(false, true, true);
+    expect(html).toMatch(/disabled="".*>Checking…<\/button>/);
+    expect(html).not.toContain("aria-disabled");
   });
 });
 

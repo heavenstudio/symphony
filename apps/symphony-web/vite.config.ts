@@ -5,7 +5,8 @@ import { defineConfig } from "vitest/config";
 const KINDS = ["agents", "board", "docs", "queue", "reports", "review"];
 
 export default defineConfig({
-  // No dev server and no public folder: the server serves the files package.sh publishes.
+  // No public folder: the server serves the files package.sh publishes (the dev server's own
+  // settings, src/dev-server.ts, go over these).
   publicDir: false,
   // No `.env` file is read, so none can change the bytes (its NODE_ENV would make React's
   // development build). The build's own NODE_ENV is production, set by its script (package.json).

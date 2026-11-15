@@ -4,8 +4,10 @@
 
 import {
   type CSSProperties,
+  createContext,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -47,6 +49,13 @@ export function Skeleton({ lines = 3, label = "" }: SkeletonProps) {
   );
 }
 
+/**
+ * Whether what is drawn inside mounts at once rather than as it nears the screen: content the
+ * reader asked for by opening it (a link's excerpt), whose scrolling box would clip the sentinel's
+ * look-ahead and leave it waiting until the box itself is on screen.
+ */
+export const AtOnce = createContext(false);
+
 export interface NearViewportProps {
   children: ReactNode;
   /** The box's height until its content mounts, in px. */
@@ -67,7 +76,8 @@ export interface NearViewportProps {
 
 /**
  * `children` mounted once they come near the screen, or once `eager`; until then `ghost`, in a box
- * of `height` px. A part the address's fragment names mounts at once, and is scrolled to.
+ * of `height` px. A part the address's fragment names mounts at once, and is scrolled to; so does
+ * one under `AtOnce`, which is not.
  */
 export function NearViewport({
   children,
@@ -84,7 +94,8 @@ export function NearViewport({
     const target = anchor();
     return target !== "" && (anchors.includes(target) || target === id);
   });
-  const [latched, setShown] = useState(addressed);
+  const atOnce = useContext(AtOnce);
+  const [latched, setShown] = useState(addressed || atOnce);
   // An eager part draws its content in the very draw that made it eager, and stays drawn after.
   const shown = latched || eager;
   const sentinel = useRef<HTMLDivElement>(null);
@@ -218,11 +229,15 @@ export function Settle({ children, cover, failed = false }: SettleProps) {
 /**
  * The latch of a part that keeps its own box until it comes into view (a picture, a mockup, a
  * viewer, a table's row): whether it has, and the ref that names the element to watch. Once shown
- * it stays shown, and a new element in its place is watched in turn. Where there is no
- * IntersectionObserver (a browser without one, or the unit tests' Node) it shows at once.
+ * it stays shown, and a new element in its place is watched in turn. Under `AtOnce`, or where
+ * there is no IntersectionObserver (a browser without one, or the unit tests' Node), it shows at
+ * once.
  */
 export function useVisibility(initial = false): [boolean, (node: Element | null) => () => void] {
-  const [shown, setShown] = useState(() => initial || typeof IntersectionObserver === "undefined");
+  const atOnce = useContext(AtOnce);
+  const [shown, setShown] = useState(
+    () => initial || atOnce || typeof IntersectionObserver === "undefined",
+  );
   const watch = useCallback(
     (node: Element | null) =>
       node === null || shown ? () => {} : watchUntilShown(node, () => setShown(true)),

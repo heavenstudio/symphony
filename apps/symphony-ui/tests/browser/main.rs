@@ -153,6 +153,27 @@ fn visible(selector: &str) -> String {
     )
 }
 
+/// Whether the focus is on the element `selector` names, once two frames and a task have passed
+/// (Chrome takes the focus from a button disabled under it at its next rendering update, not at
+/// once); else what holds it, for the failure.
+fn focus_on(chrome: &mut Chrome, selector: &str) -> serde_json::Value {
+    chrome.eval(&format!(
+        "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done)))).then(() => \
+         document.activeElement === document.querySelector({}) || (document.activeElement?.outerHTML ?? 'nothing').slice(0, 120))",
+        json!(selector)
+    ))
+}
+
+/// A script true once the element `selector` names is drawn as the shared sheet draws a disabled
+/// button (`.dx-button:disabled`: half its opacity, which the button's transition reaches in its
+/// own time, and no pointer events).
+fn drawn_disabled(selector: &str) -> String {
+    format!(
+        "(style => style.opacity === '0.5' && style.pointerEvents === 'none')(getComputedStyle(document.querySelector({})))",
+        json!(selector)
+    )
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
