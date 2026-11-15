@@ -96,8 +96,9 @@ pub(crate) fn restorable(launch: &TaskSessionRow) -> bool {
     !launch.claude_session.is_empty() && launch.claude_session != "codex:"
 }
 
-/// Review instructions launch on the child but review the parent. On the child itself the same
-/// agent executes the instruction, as `launch::take_up` records its reservation there.
+/// A reviewer's record on a review instruction, a child a launch starts no reviewer on (it sends
+/// the reviewer to the task itself), reviews the parent. On the child itself the same agent
+/// executes the instruction, holding its reservation there.
 fn recorded_role<'a>(
     launch: &'a TaskSessionRow,
     task: &Task,

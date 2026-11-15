@@ -24,6 +24,16 @@ export function boardItem(scope: string): Item {
   return { kind: "board", id: `board:${scope === "" ? "" : `@${scope}/`}`, pinned: false };
 }
 
+/** The task `slug`'s page of the checkout `scope` names. */
+export function taskItem(scope: string, slug: string): Item {
+  return { kind: "task", id: `task:${scope === "" ? "" : `@${scope}/`}${slug}`, pinned: false };
+}
+
+/** The parts of a task item: its page (`/api/task-page`), and its thread's newest page
+ * (`/api/task-history` without `before`). */
+export const PAGE = "page";
+export const THREAD = "thread";
+
 /** The parts of a board item: `/api/board`, as home and the queue drew it, and `/api/queue`. */
 export const BOARD = "board";
 export const QUEUE = "queue";
