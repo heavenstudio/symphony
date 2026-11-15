@@ -1,5 +1,6 @@
 //! What a page's read costs the hub: a document's render holds no lock the board, the feed and the
-//! project list read under, and still publishes what it finds before handing out its version; a
+//! project list read under, waits on no refresh's renders, and still publishes what it finds
+//! before handing out its version, the copy kept being the one whose read began last; a
 //! document, folder or agents read reads no board; the task pages' reads and the task board's
 //! search share one store of the board; a document read ahead (`view=first`) is neither followed
 //! nor published.
@@ -181,6 +182,78 @@ fn a_document_render_holds_no_lock_the_board_the_feed_and_the_project_list_read_
         .back()
         .expect("the refresh published its change");
     assert!(published.json.contains("later.png"), "{}", published.json);
+}
+
+/// Whether a section of `doc` says `words`.
+fn says(doc: &symphony_api::Document, words: &str) -> bool {
+    doc.sections
+        .iter()
+        .any(|section| section.html.contains(words))
+}
+
+#[test]
+fn a_document_read_waits_on_no_refreshs_renders_and_the_copy_whose_read_began_last_is_kept() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/QUICK.md", "# Quick\n\nThe quick words.\n");
+    tree.write("main/docs/SLOW.md", "# Slow\n\nThe first words.\n");
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    hub.document("", "docs/QUICK.md").unwrap();
+    hub.document("", "docs/SLOW.md").unwrap();
+    // The watcher's refresh renders both again, SLOW last, and waits in its read of SLOW's picture.
+    tree.write("main/docs/SLOW.md", "# Slow\n\n![Held](held.png)\n");
+    let picture = root.join("docs/held.png");
+    fifo(&picture);
+    // Each wait is on its event; only a stall reaches this backstop.
+    let backstop = test_time::backstop(Duration::from_secs(60));
+    let (read_while_held, slow) = std::thread::scope(|scope| {
+        let refreshing =
+            scope.spawn(|| hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/SLOW.md")]))));
+        let mut opened = test_time::until("the refresh to read the picture", backstop, || {
+            writer(&picture)
+        })
+        .unwrap();
+        // While it waits there, a reader reads the other document, and SLOW, edited since.
+        tree.write("main/docs/SLOW.md", "# Slow\n\nThe later words.\n");
+        let reading = scope.spawn(|| {
+            (
+                hub.document("", "docs/QUICK.md"),
+                hub.document("", "docs/SLOW.md"),
+            )
+        });
+        let read_while_held =
+            test_time::until_true("the reads to end", backstop, || reading.is_finished()).is_ok()
+                && !refreshing.is_finished();
+        // The picture's bytes let the refresh end, the reads too had they waited on it.
+        opened.write_all(&PNG).unwrap();
+        drop(opened);
+        test_time::until_true("the refresh to end", backstop, || {
+            if let Some(mut again) = writer(&picture) {
+                let _ = again.write_all(&PNG);
+            }
+            refreshing.is_finished()
+        })
+        .unwrap();
+        refreshing.join().unwrap().unwrap();
+        let (quick, slow) = reading.join().unwrap();
+        assert!(says(&quick.unwrap(), "The quick words."));
+        (read_while_held, slow.unwrap())
+    });
+    assert!(read_while_held, "a reader's render waited on the refresh's");
+    assert!(says(&slow, "The later words."));
+    let pages = hub.pages.read().unwrap();
+    let page = &pages[""];
+    assert!(
+        says(&page.documents["docs/SLOW.md"], "The later words."),
+        "the refresh's copy, read before the reader's, replaced it"
+    );
+    assert!(
+        page.history
+            .iter()
+            .all(|event| !event.json.contains("held.png")),
+        "the refresh published the copy it read before the reader's"
+    );
 }
 
 #[test]

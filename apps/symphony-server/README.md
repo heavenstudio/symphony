@@ -255,8 +255,8 @@ read, the agents views answer unavailable, as its tasks do. The task page's read
 board, opened by the first and kept until the board fails a read on it, so no read finds the
 board's server and asks `ps` and `lsof` about it again. A document renders without the lock the
 board, the feed and the project list read under, which it takes only to place its copy in its
-page; renders take turns, each from its read of the file to that placement, so the copy kept is
-the last read.
+page. Renders run side by side, so a reader's waits on no refresh's, and a copy is placed only
+over one whose read began before its own, so the copy kept is the last read begun.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board

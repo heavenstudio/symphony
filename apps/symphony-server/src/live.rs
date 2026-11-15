@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,9 @@ pub(crate) struct Page {
     order: Arc<symphony::postpone::View>,
     pub history: VecDeque<Event>,
     pub documents: BTreeMap<String, symphony_api::Document>,
+    /// The read ([`Hub::reads`]) each document's copy in `documents`, or its removal, came from: a
+    /// render begun before it places nothing.
+    copied: BTreeMap<String, u64>,
     missing: BTreeSet<String>,
     /// When the documents its queue came from began to be read, in seconds since the epoch: an
     /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
@@ -198,11 +202,11 @@ pub(crate) struct Hub {
     /// machine's, or a test's.
     pub(crate) low_disk:
         Box<dyn Fn() -> Option<symphony_board::board_health::disk::Low> + Send + Sync>,
-    /// Held by a document's render from its read of the file until its copy is in its page, so the
-    /// copy a page keeps is the last one read. It is never taken with `pages` held, and `pages` is
-    /// taken only to place the copy, so the board, the feed and the project list, which read
-    /// `pages`, never wait on a render.
-    rendering: Mutex<()>,
+    /// Numbers each document's render as its read begins ([`Page::copied`]), so renders run side by
+    /// side and the copy a page keeps is the last one begun: a reader waits on no refresh's
+    /// renders. `pages` is taken only to place a copy, so the board, the feed and the project
+    /// list, which read `pages`, never wait on a render either.
+    reads: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
@@ -342,7 +346,7 @@ impl Hub {
             asks: Mutex::new(asks::AskWatch::default()),
             chat: Mutex::new(None),
             low_disk: health::low_disk(root),
-            rendering: Mutex::new(()),
+            reads: AtomicU64::new(0),
             reader: Mutex::new(None),
             connect_reader: Box::new(move |root| {
                 taskview::connect_held(root, repository.as_deref())
@@ -623,8 +627,7 @@ impl Hub {
         {
             return Err(removed());
         }
-        // A panic under this lock leaves nothing half done: it guards no data.
-        let _rendering = self.rendering.lock().unwrap_or_else(|e| e.into_inner());
+        let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut doc = self.render_document(&root, rel, scope)?;
         if !follow {
             let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
@@ -633,13 +636,21 @@ impl Hub {
         }
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
         let page = pages.get_mut(scope).ok_or_else(removed)?;
-        // A GET can observe an edit before the watcher. Publish it before handing out its cursor,
-        // so existing subscribers also receive that edit.
-        if let Some(delta) = document_change(page, rel, &doc) {
-            self.publish(page, vec![json!({"region":"document","data":delta})]);
+        // A render begun after this one placed its copy first: that copy is the newer.
+        if page.copied.get(rel).is_some_and(|copied| *copied > read)
+            && let Some(newer) = page.documents.get(rel)
+        {
+            doc = newer.clone();
+        } else {
+            // A GET can observe an edit before the watcher. Publish it before handing out its
+            // cursor, so existing subscribers also receive that edit.
+            if let Some(delta) = document_change(page, rel, &doc) {
+                self.publish(page, vec![json!({"region":"document","data":delta})]);
+            }
+            page.documents.insert(rel.into(), doc.clone());
+            page.copied.insert(rel.into(), read);
         }
         doc.version = page.board.version;
-        page.documents.insert(rel.into(), doc.clone());
         Ok(doc)
     }
 
@@ -1020,17 +1031,13 @@ impl Hub {
                     .collect()
             })
             .unwrap_or_default();
-        // They are read again before `pages` is taken, under `rendering` until their copies are in
-        // the page.
-        let _rendering = (!followed.is_empty()).then(|| {
-            // A panic under this lock leaves nothing half done: it guards no data.
-            self.rendering.lock().unwrap_or_else(|e| e.into_inner())
-        });
+        // They are read again before `pages` is taken, each numbered as its read begins.
         let rendered: Vec<_> = followed
             .into_iter()
             .map(|rel| {
+                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let doc = self.render_document(root, &rel, scope);
-                (rel, doc)
+                (rel, read, doc)
             })
             .collect();
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
@@ -1072,7 +1079,12 @@ impl Hub {
             }
             sort_activity(&mut combined);
             let mut changes = board_changes(&page.board, &snapshot.board);
-            for (rel, rendered) in rendered {
+            for (rel, read, rendered) in rendered {
+                // A reader's render begun after this one placed the newer copy meanwhile.
+                if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
+                    continue;
+                }
+                page.copied.insert(rel.clone(), read);
                 match rendered {
                     Ok(doc) => {
                         if let Some(delta) = document_change(page, &rel, &doc) {
@@ -1154,6 +1166,7 @@ impl Hub {
                     order: snapshot.order,
                     history: VecDeque::new(),
                     documents: BTreeMap::new(),
+                    copied: BTreeMap::new(),
                     missing: BTreeSet::new(),
                     read_at,
                     held: snapshot.held,
