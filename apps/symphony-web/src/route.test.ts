@@ -14,6 +14,7 @@ describe("a route", () => {
     ["/task", "tasks", ""],
     ["/task/app/x", "task/app/x", ""],
     ["/reports", "reports", ""],
+    ["/runs", "runs", ""],
     ["/agents", "agents", ""],
     ["/@proposal~x/queue", "queue", "proposal~x"],
     ["/@proposal~x/app/queue", "queue", "proposal~x"],

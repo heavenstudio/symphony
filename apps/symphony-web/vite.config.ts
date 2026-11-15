@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 // The web client's kinds, each an entry the shell imports by the name the shell's manifest gives it
 // (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The
 // overlay is no page's but the shell's persistent kind every page mounts beside its own.
-const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "task"];
+const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "task"];
 const KINDS = [...PAGES, "overlay"].sort();
 
 export default defineConfig({

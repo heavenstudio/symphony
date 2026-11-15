@@ -339,6 +339,10 @@ fn an_entrypoint_that_cannot_serve_is_refused_by_name() {
             "[[entrypoints]] /reports/ lies on /reports, a route the Symphony answers",
         ),
         (
+            entry("/runs/", "spec"),
+            "[[entrypoints]] /runs/ lies on /runs, a route the Symphony answers",
+        ),
+        (
             entry("/artifacts/uploads/x/", "spec"),
             "lies on /artifacts/uploads,",
         ),
