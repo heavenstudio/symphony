@@ -386,7 +386,9 @@ fn a_reviewer_there_with_nothing_to_resume_refuses_the_launch_naming_its_own_bes
     assert!(w.store().task_sessions("sim/jump").unwrap().is_empty());
     let task = w.store().get("sim/jump").unwrap();
     assert_eq!(task.holders("reviewer"), [there.as_str()]);
-    // Saying why, it joins beside it.
+    // Saying why, it joins beside it. Roles are read by when they were taken, then by handle: the
+    // fake clock stands still between writes, so the second joins later.
+    w.f.advance(60.0);
     let again = w
         .try_launch(&Ask {
             beside: Some("a second stamp".into()),
