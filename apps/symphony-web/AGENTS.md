@@ -89,9 +89,9 @@ draws, each of its type, and nothing else, so a field a newer server adds, or on
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
-`skip-board-fields` is the Dioxus client's: it leaves fields out of its wasm's reader to save
-code, and `JSON.parse` costs no code per field, so this client has no such feature: its types say
-what the server sends, and its guards read what it draws.
+`JSON.parse` costs no code per field, so a field the page does not draw, a task's plugins' board
+fields among them, costs it nothing to receive: its types say what the server sends, and its
+guards read what it draws.
 
 ## The tests
 

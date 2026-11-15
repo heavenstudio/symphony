@@ -360,11 +360,7 @@ export type Task = {
   roles: Array<Role>;
   instruction: boolean;
   /**
-   * The plugins' board fields: plugin name, then field name, then its value. With the feature
-   * `skip-board-fields` a task is read without them, whatever the wire holds, and the map stays
-   * empty, so a task written back carries none: the browser's client turns it on, as it draws
-   * no field, and so leaves out the reader of the two maps and of their values (a number's text
-   * parser among it), about 18 KB gzipped of the board's first visit.
+   * The plugins' board fields: plugin name, then field name, then its value.
    */
   fields?: { [key in string]: { [key in string]: FieldValue } };
 };

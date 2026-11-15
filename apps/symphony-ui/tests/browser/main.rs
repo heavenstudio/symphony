@@ -1189,11 +1189,12 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
 }
 
 /// A task the server sends with its plugins' board fields draws on the board as one without them
-/// does, whatever their values: the client draws no field, so it reads none (the feature
-/// `skip-board-fields` of `symphony_api`), not even a value the fields' own reader refuses (a
-/// boolean: `symphony_blocks::FieldValue` is a number or text). That is the client's to accept:
-/// a page one build behind a server whose plugins write a new kind of value still draws the
-/// board, where a reader of the fields would lose the whole listing to the one value.
+/// does, whatever their values: the board draws no field, so its guard (`readTask` in the web
+/// client's `task.ts`) checks only what a card draws and leaves the fields as `JSON.parse` read
+/// them, not even refusing a value the fields' own reader refuses (a boolean:
+/// `symphony_blocks::FieldValue` is a number or text). That is the client's to accept: a page one
+/// build behind a server whose plugins write a new kind of value still draws the board, where a
+/// reader of the fields would lose the whole listing to the one value.
 #[test]
 fn a_task_with_plugin_board_fields_draws_on_the_board() {
     let site = site();

@@ -8,8 +8,8 @@
 // `seenOf`, `countOf` and `waitingGates` carry crates/symphony-api's own (gates.rs: `TaskGates::seen`,
 // `count`, `waiting`), and `unsaidCommit`, `signed` and `waits` crates/symphony-blocks' (gates.rs:
 // `Gate::unsaid_commit`, `Gate::signed`, `GateState::waits`); the rest carries the Dioxus client's
-// (apps/symphony-ui/src/task_gates.rs), whose unit tests gates-model.test.ts and gates.test.tsx
-// port, and which the browser tests hold.
+// (its `task_gates.rs`, gone with its task page), whose unit tests gates-model.test.ts and
+// gates.test.tsx port, and which the browser tests hold.
 
 import { NO_ANSWER } from "./request";
 import { field } from "./shared";

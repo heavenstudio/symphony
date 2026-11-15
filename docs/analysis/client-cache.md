@@ -70,8 +70,8 @@ the page draws comes before its first API answer.
   reopens it when the set of sections changes (`apps/symphony-ui/src/docs_live.rs`,
   `document_live`, `load_sections`, `follow_document`).
 - **Every page** also reads `/api/activity` and `/api/pending` for its header, and again each
-  time its feed opens after the first (`apps/symphony-ui/src/frame.rs`, `FrameRefresh::connected`;
-  `apps/symphony-ui/src/state.rs`, `MetadataReads::connected`): a document's feed reopens once its
+  time its feed opens after the first (`apps/symphony-web/src/frame.tsx`, `FrameRefresh.connected`;
+  `apps/symphony-web/src/state.ts`, `MetadataReads.connected`): a document's feed reopens once its
   sections are known, so a document reads them twice, and `/api/postponed` with them
   (`docs_live.rs`, `document_live`).
 
@@ -280,7 +280,7 @@ Sizes are the raw JSON of each read, measured on the private server.
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
 | task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
 | document | its outline, and the section bodies it drew, each under its `hash` (a card's with its thread's hash, which the outline names), for the 20 documents visited most; a project's entrypoint page, its folder and its intro, pinned | versions, diffs, asks, other folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
-| header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
+| header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-web/src/state.ts`, `keepsPanelBaseline`) | |
 
 **Caps.** At most 8 MB a project: 2 MB for tasks, 6 MB for documents, and the board and queue
 outside both, at well under 100 KB here (each column's first read is one page, so a larger board

@@ -1,4 +1,4 @@
-//! A task page's gates (src/task_gates.rs) in the release client: three lines a gate on a phone
+//! A task page's gates (apps/symphony-web/src/gates.tsx) in the release client: three lines a gate on a phone
 //! and bounded columns wide, every word of long text shown at 1280, 1000 and 820 px with none
 //! kept for a hover; the theme's colours for each state; the room the card holds before its
 //! answer, so the brief does not move, a gate with no who and when included; a read asked only

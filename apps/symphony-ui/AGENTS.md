@@ -308,9 +308,10 @@ never the whole target, which the release run runs.
   in the main module: dioxus-web makes at launch the event converter and the document that
   reach them, and the splitter keeps there every function of a table the main module reaches
   ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). The
-  client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it does
-  not draw: `symphony-api`'s feature `skip-board-fields`, which `Cargo.toml` turns on for the
-  wasm32 build alone) and the media layer's notice moving to the program's script
+  client reading none of a task's plugin fields (`symphony_api::Task::fields`, which it did
+  not draw: a feature of `symphony-api`'s that `Cargo.toml` turned on for the wasm32 build
+  alone, gone with the task page's move, when no page of the program read a task) and the media
+  layer's notice moving to the program's script
   (`perf/tasks-first-visit-gets-room`, against main's build at 029d581) take `/tasks` to
   281,222 bytes (from 299,662: the board's WASM 247,735 from 266,112, the shell 7,880 from
   7,928), `/agents` and a task page to 548,973 and 549,566 (from 567,204 and 567,797, the task

@@ -53,10 +53,6 @@ futures-util = { version = "0.3", default-features = false }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-# The client draws no task's plugin board fields, so its tasks are read without them: their reader
-# is about 18 KB gzipped of the board's first visit. In this table alone, so the host's builds (its
-# tests, and the server's in one workspace run) keep the reader (crates/symphony-api, the feature).
-symphony-api = { path = "../../crates/symphony-api", features = ["skip-board-fields"] }
 # Configure Dioxus's existing tracing dependency for the shipped browser build. Warning/error
 # diagnostics remain; trace/debug/info spans otherwise retain large VDOM debug formatters.
 tracing = { version = "0.1", default-features = false, features = ["release_max_level_warn"] }

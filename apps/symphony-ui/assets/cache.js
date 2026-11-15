@@ -1,6 +1,7 @@
 // The client cache (docs/analysis/client-cache.md): what a page drew, kept on this device in
 // IndexedDB, so a return visit draws at once and then asks the server only whether it changed.
-// The page kinds reach it as `symphonyCache` (src/cache.rs): no kind's wasm carries IndexedDB.
+// The page kinds reach it as `symphonyCache` (apps/symphony-web/src/cache.ts): no kind's entry
+// carries IndexedDB.
 //
 // An item is what one visit opens (the board, a task, a document) and goes whole; its parts are
 // the reads it drew, each kept with the tag the server answered it with. Every call names the
@@ -30,7 +31,7 @@ window.symphonyCache = (() => {
     // as soon as another page of the origin asks for a lock it holds: Back would load it again
     // (the next page's first call asks for every store). So a page going away aborts every
     // transaction it has open and starts none until it is back, as it closes its feed's stream
-    // (src/live/feed.rs). What an aborted keep would have kept the next keep of it keeps; a page
+    // (apps/symphony-web/src/feed.ts). What an aborted keep would have kept the next keep of it keeps; a page
     // back checks the format again, as a check cut short by its going, or asked while it was away,
     // gave it no store.
     const running = new Set();

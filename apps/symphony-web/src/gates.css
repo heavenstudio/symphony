@@ -1,6 +1,7 @@
-/* A task's gates (gates.tsx), the Dioxus client's sheet (task-gates.css) as Biome formats it, every
-   rule under .task-gates. Each state takes its colour from the theme's tokens: met like, missing question,
-   waived resolved, held decision, unknown muted. Wide, a gate is one row of bounded columns, a
+/* A task's gates (gates.tsx), the Dioxus client's sheet (task-gates.css, gone with its task page)
+   as Biome formats it, every rule under .task-gates. Each state takes its colour from the theme's
+   tokens: met like, missing question, waived resolved, held decision, unknown muted. Wide, a gate
+   is one row of bounded columns, a
    part whose words need more room wrapping within its own, so every word shows and none waits on a
    hover; on a phone, three lines. Until the gates are read, the card is its own outline: the same
    boxes, a shadow bar for each text, at the height it was drawn at before when that is known. */
