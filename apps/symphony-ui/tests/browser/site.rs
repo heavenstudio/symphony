@@ -132,6 +132,85 @@ fn runs(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
+/// One open feed stream: its number, its socket, and whether it is a WebSocket.
+struct Stream {
+    id: u64,
+    out: TcpStream,
+    socket: bool,
+}
+
+/// One thing the feed says, as the server says it in either of its forms
+/// (apps/symphony-server/src/api/feed_socket.rs): a Server-Sent Event, or a WebSocket's text
+/// message, its name, a line feed and its data.
+#[derive(Clone, Debug)]
+pub struct Said {
+    name: &'static str,
+    id: Option<u64>,
+    data: String,
+}
+
+impl Said {
+    /// The board's event `data` at version `id`.
+    pub fn delta(id: u64, data: &str) -> Said {
+        Said {
+            name: symphony_api::FEED_EVENT,
+            id: Some(id),
+            data: data.to_owned(),
+        }
+    }
+
+    /// The keep-alive ping.
+    pub fn ping() -> Said {
+        Said {
+            name: symphony_api::PING_EVENT,
+            id: None,
+            data: String::new(),
+        }
+    }
+
+    /// The server's `message` to every page.
+    pub fn notice(message: &str) -> Said {
+        Said {
+            name: symphony_api::SERVER_EVENT,
+            id: None,
+            data: serde_json::json!(message).to_string(),
+        }
+    }
+
+    /// As a Server-Sent Event.
+    pub fn sse(&self) -> String {
+        let id = self.id.map(|id| format!("id: {id}\n")).unwrap_or_default();
+        if self.data.is_empty() {
+            format!("event: {}\n{id}data:\n\n", self.name)
+        } else {
+            format!("event: {}\n{id}data: {}\n\n", self.name, self.data)
+        }
+    }
+
+    /// As the server's WebSocket frame: one text frame, unmasked, its length in the shortest field
+    /// that holds it (RFC 6455, 5.2).
+    pub fn frame(&self) -> Vec<u8> {
+        let text = format!("{}\n{}", self.name, self.data);
+        let mut frame = vec![0x81];
+        match text.len() {
+            length @ 0..=125 => frame.push(length as u8),
+            length @ 126..=65_535 => {
+                frame.push(126);
+                frame.extend_from_slice(&(length as u16).to_be_bytes());
+            }
+            length => {
+                frame.push(127);
+                frame.extend_from_slice(&(length as u64).to_be_bytes());
+            }
+        }
+        frame.extend_from_slice(text.as_bytes());
+        frame
+    }
+}
+
+/// A WebSocket's close frame from the server, with no status: the answer to a page's close.
+const CLOSE: [u8; 2] = [0x88, 0x00];
+
 struct Shared {
     replies: HashMap<String, Body>,
     posts: Vec<(String, serde_json::Value)>,
@@ -145,7 +224,7 @@ struct Shared {
     ahead: Vec<String>,
     /// The open feed streams, by the number each was given, written to by `push`. A stream the
     /// page closes leaves at once ([`hold_feed`]).
-    feeds: Vec<(u64, TcpStream)>,
+    feeds: Vec<Stream>,
     /// How many feed streams were opened.
     opened_feeds: u64,
     /// The board as its route answers it now, but for its build.
@@ -585,30 +664,29 @@ impl Site {
     }
 
     pub fn server_notice(&self, message: &str) {
-        self.send(&format!(
-            "event: {}\ndata: {}\n\n",
-            symphony_api::SERVER_EVENT,
-            serde_json::json!(message)
-        ));
+        self.send(&Said::notice(message));
     }
 
     /// End every open feed stream, as a server that stops does.
     pub fn drop_feeds(&self) {
-        for (_, stream) in self.shared.lock().unwrap().feeds.drain(..) {
-            let _ = stream.shutdown(Shutdown::Both);
+        for stream in self.shared.lock().unwrap().feeds.drain(..) {
+            let _ = stream.out.shutdown(Shutdown::Both);
         }
     }
 
     /// Send one feed event to every open stream; the streams that are gone are dropped.
     pub fn push(&self, id: u64, data: &str) {
-        self.send(&format!(
-            "event: {}\nid: {id}\ndata: {data}\n\n",
-            symphony_api::FEED_EVENT
-        ));
+        self.send(&Said::delta(id, data));
     }
 
-    fn send(&self, event: &str) {
-        send(&self.shared, event);
+    /// How many of the open feed streams are on a WebSocket.
+    pub fn socket_feeds(&self) -> usize {
+        let shared = self.shared.lock().unwrap();
+        shared.feeds.iter().filter(|stream| stream.socket).count()
+    }
+
+    fn send(&self, said: &Said) {
+        send(&self.shared, said);
     }
 
     /// The size every file of the build is sent at (gzipped when its type compresses), by path.
@@ -664,28 +742,73 @@ impl Drop for Site {
     }
 }
 
-/// Write `event` to every open feed stream; the streams that are gone are dropped.
-fn send(shared: &Mutex<Shared>, event: &str) {
+/// Say `said` on every open feed stream, in its form; the streams that are gone are dropped.
+fn send(shared: &Mutex<Shared>, said: &Said) {
+    let (sse, frame) = (said.sse(), said.frame());
     let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|(_, stream)| {
+    shared.feeds.retain_mut(|stream| {
+        let bytes = if stream.socket {
+            &frame[..]
+        } else {
+            sse.as_bytes()
+        };
         stream
-            .write_all(event.as_bytes())
-            .and_then(|_| stream.flush())
+            .out
+            .write_all(bytes)
+            .and_then(|_| stream.out.flush())
             .is_ok()
     });
 }
 
-/// Keep feed stream `id` open until the page closes its socket, then count it no more: a page
-/// sends nothing on its stream after the request, so the first read that ends is the close.
+/// Keep feed stream `id` open until the page closes it, then count it no more: a page sends
+/// nothing on its stream after the request, so the first read that ends is the close, and nothing
+/// on its WebSocket but its close frame, which is answered with the server's.
 fn hold_feed(mut reader: impl Read, shared: &Mutex<Shared>, id: u64) {
     let mut sent = [0; 64];
-    while matches!(reader.read(&mut sent), Ok(read) if read > 0) {}
-    shared.lock().unwrap().feeds.retain(|(open, _)| *open != id);
+    let closed = loop {
+        match reader.read(&mut sent) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) => {
+                let socket = shared
+                    .lock()
+                    .unwrap()
+                    .feeds
+                    .iter()
+                    .any(|open| open.id == id && open.socket);
+                if socket {
+                    break true;
+                }
+            }
+        }
+    };
+    let mut shared = shared.lock().unwrap();
+    if let Some(at) = shared.feeds.iter().position(|open| open.id == id) {
+        let mut stream = shared.feeds.remove(at);
+        if closed {
+            let _ = stream.out.write_all(&CLOSE);
+            let _ = stream.out.shutdown(Shutdown::Both);
+        }
+    }
 }
 
-/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
-pub fn ping() -> String {
-    format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)
+/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) say it.
+pub fn ping() -> Said {
+    Said::ping()
+}
+
+/// Whether a request's `headers` ask for a WebSocket.
+fn asks_socket(headers: &HashMap<String, String>) -> bool {
+    headers
+        .get("upgrade")
+        .is_some_and(|upgrade| upgrade.eq_ignore_ascii_case("websocket"))
+}
+
+/// The head that answers a WebSocket handshake whose key is `key`.
+pub fn socket_head(key: &str) -> String {
+    format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+        tungstenite::handshake::derive_accept_key(key.as_bytes())
+    )
 }
 
 /// Ping every open stream each `ping_ms` the board now names, until the site stops or falls
@@ -1137,6 +1260,8 @@ fn serve(
             return;
         }
         if path == symphony_api::FEED_PATH {
+            // The web client's kinds follow the feed on a WebSocket, the task pages as events.
+            let socket = asks_socket(&headers);
             let held = {
                 let mut shared = shared.lock().unwrap();
                 if shared.failing_feeds > 0 {
@@ -1144,7 +1269,11 @@ fn serve(
                     let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                     return;
                 }
-                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
+                let head = if socket {
+                    socket_head(headers.get("sec-websocket-key").map_or("", String::as_str))
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n".to_owned()
+                };
                 if out.write_all(head.as_bytes()).is_err() {
                     return;
                 }
@@ -1155,7 +1284,7 @@ fn serve(
                 }
                 shared.opened_feeds += 1;
                 let id = shared.opened_feeds;
-                shared.feeds.push((id, out));
+                shared.feeds.push(Stream { id, out, socket });
                 id
             };
             hold_feed(reader, shared, held);

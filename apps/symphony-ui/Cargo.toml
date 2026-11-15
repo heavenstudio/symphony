@@ -134,3 +134,6 @@ libc.workspace = true
 serde_json = "1"
 # The browser tests' waits on a condition (RULES.md `tests/no-test-fails-on-load`).
 test-time = { path = "../../crates/test-time" }
+# The stand-in's WebSocket handshake for the feed (tests/browser/site.rs), as the Chrome driver
+# builds it.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

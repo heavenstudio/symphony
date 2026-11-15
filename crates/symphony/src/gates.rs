@@ -14,7 +14,9 @@
 //! or cancelled with no assessment, and a subtask, keep the reading above.
 //!
 //! [`answer`] puts them together for the task page's `/api/task-gates`; the server's other readers
-//! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip.
+//! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip. A
+//! reader that must ask nothing (the sign-off lane, `taskview::signoff`) reads only what is kept
+//! and known ([`kept_theirs`]) and merges it the same way.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -602,6 +604,8 @@ pub struct Kept {
     /// The shape of the last whole answer given for each task, by its checkout and slug.
     seen: Mutex<HashMap<(PathBuf, String), GatesSeen>>,
     limits: Limits,
+    /// How many answers have come back, whichever call made them ([`Kept::answered`]).
+    answered: Arc<AtomicUsize>,
 }
 
 impl Default for Kept {
@@ -617,7 +621,16 @@ impl Kept {
             ledgers: Mutex::new(HashMap::new()),
             seen: Mutex::new(HashMap::new()),
             limits,
+            answered: Arc::default(),
         }
+    }
+
+    /// How many answers have come back so far, by any call, an error among them: a reader of what
+    /// is kept ([`Kept::kept`], [`kept_theirs`]) that counted before it read reads again once the
+    /// count moved, as an answer it found missing may be there now. An answer is counted before any
+    /// read can find it.
+    pub fn answered(&self) -> usize {
+        self.answered.load(Ordering::SeqCst)
     }
 
     /// The answer of `answerer`, of the plugin `plugin`, for `asked` in the project at `root`:
@@ -748,8 +761,9 @@ impl Kept {
             done: Mutex::new(None),
             ready: Condvar::new(),
         });
-        if let Err(why) = start(&slot, root, answerer, &ledger.running) {
+        if let Err(why) = start(&slot, root, answerer, &ledger.running, &self.answered) {
             *lock(&slot.done) = Some((Err(why), Instant::now()));
+            self.answered.fetch_add(1, Ordering::SeqCst);
         }
         ledger.slots.insert(asked.slug.clone(), Arc::clone(&slot));
         Waiting::For(slot)
@@ -807,6 +821,46 @@ pub fn theirs(
         .collect()
 }
 
+/// The known gates `answerers` have answered for `asked`, as `kept` holds them now, asking nothing,
+/// for a reader that must start no answerer's work (the sign-off lane). An answerer with nothing
+/// kept for the task as it is now, or an error kept, gives none, and neither does a gate answered
+/// `unknown`: what a reader that never asks cannot know leaves the Symphony's gate of its name to
+/// decide, never a stand-in made of the names the answerer gave other tasks.
+pub fn kept_theirs(
+    kept: &Kept,
+    root: &Path,
+    answerers: &[(&str, &'static dyn Gates)],
+    asked: &Asked,
+) -> Vec<Gate> {
+    answerers
+        .iter()
+        .filter_map(
+            |(plugin, answerer)| match kept.kept(root, plugin, *answerer, asked) {
+                Some(Ok(gates)) => Some(gates),
+                Some(Err(_)) | None => None,
+            },
+        )
+        .flatten()
+        .filter(|gate| gate.state != GateState::Unknown)
+        .collect()
+}
+
+/// The gates answerers of the project at `root`, `project` its file, each with its plugin's name,
+/// in the plugins' order.
+pub fn answerers(project: &Project, root: &Path) -> Vec<(&'static str, &'static dyn Gates)> {
+    Plugins::at(project, root)
+        .list()
+        .iter()
+        .flat_map(|plugin| {
+            let plugin: &'static dyn symphony_plugin::Plugin = *plugin;
+            plugin
+                .gates()
+                .into_iter()
+                .map(move |answerer| (plugin.name(), answerer))
+        })
+        .collect()
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -830,14 +884,15 @@ fn panicked(name: &str, doing: &str, payload: &(dyn Any + Send)) -> String {
 }
 
 /// Run `answerer` for `slot`'s task on a thread of its own, counted in `running` until it ends,
-/// its answer (a panic an error) put in `slot`.
+/// its answer (a panic an error) put in `slot` and counted in `answered`.
 fn start(
     slot: &Arc<Slot>,
     root: &Path,
     answerer: &'static dyn Gates,
     running: &Arc<AtomicUsize>,
+    answered: &Arc<AtomicUsize>,
 ) -> Result<(), String> {
-    let (slot, root) = (Arc::clone(slot), root.to_path_buf());
+    let (slot, root, answered) = (Arc::clone(slot), root.to_path_buf(), Arc::clone(answered));
     running.fetch_add(1, Ordering::SeqCst);
     let counted = Running(Arc::clone(running));
     std::thread::Builder::new()
@@ -848,7 +903,11 @@ fn start(
                 answerer.answer(&root, &slot.asked.task(), slot.asked.tip.as_deref())
             }))
             .unwrap_or_else(|panic| Err(panicked(answerer.name(), "answering", &*panic)));
-            *lock(&slot.done) = Some((answer, Instant::now()));
+            // Counted under the answer's lock, so a read that finds the answer finds it counted.
+            let mut done = lock(&slot.done);
+            *done = Some((answer, Instant::now()));
+            answered.fetch_add(1, Ordering::SeqCst);
+            drop(done);
             slot.ready.notify_all();
         })
         .map(drop)
@@ -1003,17 +1062,7 @@ pub fn answer_from(
         branch: branch.clone(),
         tip: tip.clone(),
     };
-    let answerers: Vec<(&str, &'static dyn Gates)> = Plugins::at(&project, root)
-        .list()
-        .iter()
-        .flat_map(|plugin| {
-            let plugin: &'static dyn symphony_plugin::Plugin = *plugin;
-            plugin
-                .gates()
-                .into_iter()
-                .map(move |answerer| (plugin.name(), answerer))
-        })
-        .collect();
+    let answerers = answerers(&project, root);
     let answer = TaskGates {
         slug: record.slug.clone(),
         branch,

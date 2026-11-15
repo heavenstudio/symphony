@@ -5,7 +5,11 @@
 //! settings changes folded past the newest three so its first chart shows on a phone's first
 //! screen, two columns on a wide screen, the dark scheme's own colours, the empty state saying when
 //! the first roll-up comes, the last 24 hours with nothing chosen, and the window and the series
-//! hidden kept for the next visit, a hidden series' room given to the rest.
+//! hidden kept for the next visit, a hidden series' room given to the rest. A chart's address
+//! (`#chart-ID`) lands that chart just below the header, opened fresh (its charts drawn after the
+//! shell looked for it) or followed in place from its figure, on a desk and a phone, and a reader
+//! who scrolls away from it is left there as the hour slides and a new window draws.
+use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
 use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
 use serde_json::{Value, json};
 
@@ -499,4 +503,233 @@ fn with_no_roll_up_yet_the_reports_page_says_when_the_first_comes() {
         json!(0),
         "no chart of nothing"
     );
+}
+
+/// The chart the address names: Decisions, the first of the page's fourth section, eight charts
+/// above it, so the scroll to it brings charts near that draw after it.
+const ADDRESSED: &str = "chart-decisions";
+
+/// `page` as the last 24 hours answer it, the window a browser that chose none opens on: its
+/// periods under that window's name, so the page rests on it.
+fn as_hours(page: &Value) -> Value {
+    let mut hours = page.clone();
+    hours["grain"] = json!("hour");
+    hours["days"] = json!(1);
+    hours
+}
+
+/// The target of the last 24 hours' read.
+fn hours_read() -> String {
+    format!("{}?grain=hour&days=1", symphony_api::REPORTS_PATH)
+}
+
+/// [`fortnight`] served as the last 24 hours ([`as_hours`]) and as Days' fortnight.
+fn both_windows() -> Site {
+    let site = served(&fortnight());
+    site.set_json(&hours_read(), &as_hours(&fortnight()));
+    site
+}
+
+/// `page` once the hour slid, as the next read of the same window answers it: every period, the
+/// window's ends and its settings change an hour on, the change's subject saying so. Its first
+/// period starts at another second, so the page draws it as a window of its own, every chart
+/// mounted again.
+fn slid(page: &Value) -> Value {
+    let later = |value: &Value| json!(value.as_f64().expect("a second") + 3600.0);
+    let mut next = page.clone();
+    for key in ["from", "to"] {
+        next[key] = later(&next[key]);
+    }
+    for bucket in next["buckets"].as_array_mut().expect("its periods") {
+        for key in ["start", "end"] {
+            bucket[key] = later(&bucket[key]);
+        }
+    }
+    let at = later(&page["marks"][0]["at"]);
+    next["marks"] =
+        json!([{"at": at, "commit": "5a2b3c4d5e6f", "subject": "settings: the hour slid"}]);
+    next
+}
+
+/// Where the addressed chart sits: the top of the element its id names (the chart once drawn, its
+/// ghost's mark before), whether that is the chart drawn, the header's bottom, the page's scroll
+/// padding, how far down the page the chart is, the page's scroll and the address's fragment.
+fn place() -> String {
+    format!(
+        "(() => {{ const chart = document.getElementById({id});
+        return {{top: chart?.getBoundingClientRect().top ?? null, drawn: chart?.matches('figure.chart') ?? false,
+            header: document.querySelector('.app-header').getBoundingClientRect().bottom,
+            padding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop),
+            down: chart ? chart.getBoundingClientRect().top + scrollY : null, y: scrollY, hash: location.hash}}; }})()",
+        id = json!(ADDRESSED)
+    )
+}
+
+/// True once the addressed chart is drawn and has held still for ten frames with nothing near the
+/// screen still to draw (a reserved box within its sentinel's 600 px) and nothing busy; false after
+/// sixty frames without that, for the wait to look again.
+fn still() -> String {
+    format!(
+        "new Promise(done => {{
+        let last = null, still = 0, frames = 0;
+        const near = box => {{ const r = box.getBoundingClientRect(); return r.bottom > -600 && r.top < innerHeight + 600; }};
+        const look = () => {{
+            const chart = document.querySelector({chart});
+            const top = chart ? chart.getBoundingClientRect().top : null;
+            const waiting = document.querySelector('[aria-busy=true]') !== null || [...document.querySelectorAll('[data-pending=true]')].some(near);
+            still = top !== null && top === last && !waiting ? still + 1 : 0;
+            last = top;
+            if (still >= 10) return done(true);
+            if (++frames >= 60) return done(false);
+            requestAnimationFrame(look);
+        }};
+        requestAnimationFrame(look);
+    }})",
+        chart = json!(format!("figure.chart#{ADDRESSED}"))
+    )
+}
+
+/// Arrive at the addressed chart in a browser `width` by `height`: opened at its address with the
+/// reports' read held until the shell has looked for it (`in_place` false), or by a click on its
+/// figure's link once the page is drawn. Says where the chart is once the page around it has drawn,
+/// and a moment later.
+fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value; 2]> {
+    let mut chrome = chrome()?;
+    screen(&mut chrome, width, height, width < 600);
+    let way = if in_place { "in place" } else { "opened" };
+    if in_place {
+        let link = format!("a[href=\"#{ADDRESSED}\"]");
+        chrome.open(&site.url("/reports"));
+        assert!(
+            chrome.wait_for(
+                &format!(
+                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null",
+                    json!(format!(".reports[aria-busy=false] {link}"))
+                ),
+                SHOWN
+            ),
+            "{width}px {way}: the figure's link is drawn: {}",
+            chrome.eval(&place())
+        );
+        chrome.eval(&format!("document.querySelector({}).click()", json!(link)));
+    } else {
+        site.hold_route(symphony_api::REPORTS_PATH, true);
+        chrome.open(&site.url(&format!("/reports#{ADDRESSED}")));
+        // The shell has looked for the chart (the navigation is ready once it has) while the page
+        // shows its ghost: its charts come after.
+        assert!(
+            chrome.wait_for(
+                "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.reports[aria-busy=true] .ghost-chart') !== null",
+                SHOWN
+            ),
+            "{width}px {way}: the shell is ready over the page's ghost: {}",
+            chrome.eval(&place())
+        );
+        site.hold_route(symphony_api::REPORTS_PATH, false);
+    }
+    assert!(
+        chrome.wait_for(&still(), SHOWN),
+        "{width}px {way}: the chart and the page around it draw and hold still: {}",
+        chrome.eval(&place())
+    );
+    let drawn = chrome.eval(&place());
+    chrome.pump(std::time::Duration::from_millis(600));
+    Some([drawn, chrome.eval(&place())])
+}
+
+#[test]
+fn a_chart_s_address_lands_it_below_the_header_opened_fresh_or_followed_from_its_figure() {
+    let site = both_windows();
+    for (width, height) in [(1280, 900), (390, 844)] {
+        for in_place in [false, true] {
+            let Some([drawn, later]) = arrive(&site, width, height, in_place) else {
+                return;
+            };
+            let way = if in_place { "in place" } else { "opened" };
+            eprintln!("REPORTS LANDING {width}px {way}: drawn {drawn}, later {later}");
+            let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+            for place in [&drawn, &later] {
+                assert_eq!(
+                    (&place["hash"], &place["drawn"]),
+                    (&json!(format!("#{ADDRESSED}")), &json!(true)),
+                    "{width}px {way}: at the chart's address, the chart drawn: {place}"
+                );
+                assert!(
+                    (number(place, "top") - number(place, "padding")).abs() <= 1.0
+                        && number(place, "top") >= number(place, "header"),
+                    "{width}px {way}: the chart's top sits at the scroll padding, below the header: drawn {drawn}, a moment later {later}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_reader_who_scrolls_away_from_a_landed_chart_is_left_there_as_the_hour_slides_and_a_new_window_draws()
+ {
+    let site = both_windows();
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1280, 900, false);
+    chrome.open(&site.url(&format!("/reports#{ADDRESSED}")));
+    assert!(
+        chrome.wait_for(&still(), SHOWN),
+        "the page lands on the chart and holds still: {}",
+        chrome.eval(&place())
+    );
+    let landed = chrome.eval(&place());
+    let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+    assert!(
+        (number(&landed, "top") - number(&landed, "padding")).abs() <= 1.0,
+        "the chart is at the scroll padding: {landed}"
+    );
+    chrome.call(
+        "Input.dispatchMouseEvent",
+        json!({"type": "mouseWheel", "x": 640, "y": 450, "deltaX": 0, "deltaY": -500}),
+    );
+    assert!(
+        chrome.wait_for(&format!("scrollY < {} - 250", number(&landed, "y")), SHOWN),
+        "the reader scrolls up from the chart: {}",
+        chrome.eval(&place())
+    );
+    chrome.eval(TWO_FRAMES);
+    let left = chrome.eval(&place());
+    chrome.eval(COUNT_SCROLLS);
+    // The hour slides: the same window read again answers its next hour, a window of its own.
+    site.set_json(&hours_read(), &slid(&as_hours(&fortnight())));
+    chrome.eval("document.querySelector('.reports-controls [data-days=\"1\"]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.reports-marks')?.textContent.includes('the hour slid') === true",
+            SHOWN
+        ) && chrome.wait_for(&still(), SHOWN),
+        "the slid hour draws and the page holds still: {}",
+        chrome.eval(&place())
+    );
+    let slide = chrome.eval(&place());
+    // A new window: Days, its fortnight.
+    chrome.eval("document.querySelector('.reports-controls [data-grain=day]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.reports[aria-busy=false] [data-grain=day][aria-pressed=true]') !== null",
+            SHOWN
+        ) && chrome.wait_for(&still(), SHOWN),
+        "Days draws and the page holds still: {}",
+        chrome.eval(&place())
+    );
+    chrome.pump(std::time::Duration::from_millis(600));
+    let later = chrome.eval(&place());
+    eprintln!(
+        "REPORTS LEFT: landed {landed}, left {left}, the hour slid {slide}, a new window {later}"
+    );
+    assert_eq!(
+        chrome.eval("window.pageScrolls"),
+        json!(0),
+        "nothing scrolls the page once the reader left the chart: left {left}, the hour slid {slide}, a new window {later}"
+    );
+    for place in [&slide, &later] {
+        assert!(
+            (number(place, "top") - number(place, "padding")).abs() > 100.0,
+            "the chart is not brought back to the scroll padding: left {left}, the hour slid {slide}, a new window {later}"
+        );
+    }
 }

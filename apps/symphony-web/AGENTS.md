@@ -95,6 +95,15 @@ event of a region or kind the page does not know is not its own, and is left alo
 fields among them, costs it nothing to receive: its types say what the server sends, and its
 guards read what it draws.
 
+The feed is followed on a WebSocket (`feed.ts`): the events the server sends any other request of
+the feed's as Server-Sent Events, each one message, its name, a line feed and its data (the feed
+contract, `crates/symphony-api`). A browser keeps six HTTP/1.1 connections to a host, and an event
+stream holds one for as long as it is open, so six tabs following the board would leave a seventh
+none for its reads; it counts its WebSockets apart. The socket's open is the stream's, its failure
+or close a lost stream, and a message the page cannot read lost too, as an event it cannot read
+is; a socket the page closed says nothing more. The tests fake it with `testing.ts`'s `feeds` and
+`say`.
+
 ## The tests
 
 Unit tests sit beside their module (`queue.test.tsx` beside `queue.tsx`) and run in Node, with no
@@ -209,7 +218,8 @@ prints (`--root DIR` another project's). It refuses 8765, the shared server's, a
 starts nothing: Ctrl-C, or a kill of the recipe's process, ends it. Every request but those for
 Vite's own files (under `/@symphony-web/`) goes to that server through Vite's proxy, its Host and
 Origin as the browser sent them, so a save meets the server's origin check as on the server itself:
-the pages, the API, the feed and the files of the Dioxus program's kind. It sends no CORS header
+the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the files of the Dioxus
+program's kind. It sends no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
 shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,
@@ -241,8 +251,10 @@ choice and every five minutes with the last answer's tag (`followReports`, under
 own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
 record of a period is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
-links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart not mounted yet
-holds that id in its ghost.
+links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
+anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
+once and is landed as a document's part is (the shell's `land`, once a navigation), so a fresh
+load's charts, which come after the shell looked for it, land too.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's

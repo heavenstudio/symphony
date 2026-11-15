@@ -16,8 +16,9 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, Leash, Owner, POLL, PROTOCOL_CPU,
-    WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, process, signal_group,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
+    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, load_said,
+    process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -194,6 +195,17 @@ fn the_tests_waits_and_the_driver_share_one_backstop_rule() {
         );
     }
     assert_eq!(test_time::FLOOR, BACKSTOP_FLOOR);
+    // The launch's wait for DevTools keeps the rule on its CPU allowance.
+    assert_eq!(LAUNCH_BACKSTOP, test_time::backstop(PROTOCOL_CPU));
+    assert_eq!(
+        LAUNCH_BACKSTOP,
+        WaitBudget::new(PROTOCOL_CPU, &[]).backstop()
+    );
+    assert_eq!(LAUNCH_BACKSTOP, Duration::from_secs(360));
+    // And a stall says the load in the tests' own words.
+    for load in [Some([0.5, 12.25, 250.0]), None] {
+        assert_eq!(load_said(load), test_time::Load(load).to_string());
+    }
 }
 
 #[test]
@@ -432,6 +444,14 @@ fn cpu_watchdog(
     (done, watcher)
 }
 
+/// A stand-in browser: `script`, written to a path of its own and made executable.
+fn stand_in_binary(script: &str) -> PathBuf {
+    let binary = next_profile().unwrap();
+    std::fs::write(&binary, script).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    binary
+}
+
 struct StandIn {
     owner: Owner,
     binary: PathBuf,
@@ -444,9 +464,7 @@ impl StandIn {
     }
 
     fn under(script: &str, leash: &Leash) -> Self {
-        let binary = next_profile().unwrap();
-        std::fs::write(&binary, script).unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let binary = stand_in_binary(script);
         let owner = Owner::launch(binary.to_str().unwrap(), leash).unwrap();
         Self {
             owner,
@@ -458,13 +476,18 @@ impl StandIn {
     fn group(&mut self) -> u32 {
         let group = self
             .owner
-            .ready("recorded stand-in PID", PROTOCOL_CPU, |profile| {
-                let pid = std::fs::read_to_string(profile.join("browser.pid")).ok()?;
-                if !pid.ends_with('\n') {
-                    return None;
-                }
-                pid.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
-            })
+            .ready(
+                "recorded stand-in PID",
+                PROTOCOL_CPU,
+                LAUNCH_BACKSTOP,
+                |profile| {
+                    let pid = std::fs::read_to_string(profile.join("browser.pid")).ok()?;
+                    if !pid.ends_with('\n') {
+                        return None;
+                    }
+                    pid.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+                },
+            )
             .unwrap();
         self.group = Some(group);
         group
@@ -556,6 +579,150 @@ fn a_browser_that_cannot_start_fails_the_launch_promptly_with_why() {
     assert!(failure.contains(missing.to_str().unwrap()), "{failure}");
 }
 
+/// A browser that starts and exits at once fails its launch as soon as its leash has ended it,
+/// with how it ended and what it wrote, long before the launch's backstop.
+#[test]
+fn a_browser_that_exits_at_once_fails_the_launch_with_its_exit() {
+    let binary = stand_in_binary("#!/bin/sh\nprintf 'early exit detail\\n' >&2\nexit 3\n");
+    let failure = Chrome::launch(binary.to_str().unwrap(), &leash())
+        .err()
+        .expect("a browser that exits must fail its launch");
+    std::fs::remove_file(&binary).unwrap();
+    let failure = failure.to_string();
+    assert!(
+        failure.starts_with(
+            "Chrome DevTools readiness: Chrome's leash exited exit status: 3 before DevTools port \
+             readiness; "
+        ),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("shutdown=browser exited: exit status: 3"),
+        "{failure}"
+    );
+    assert!(failure.contains("early exit detail"), "{failure}");
+}
+
+/// What a browser that never opens DevTools does: it sleeps, spending nothing.
+const ASLEEP: &str = "#!/bin/sh\nexec /bin/sleep 3600\n";
+
+/// A browser alive that never opens DevTools and spends no CPU, asleep, stalls its launch: the
+/// wait ends at its wall-clock backstop, not before, saying it stalled, the browser's pid, its
+/// group's processes alive, the CPU they spent, how long it waited and the machine's load. The
+/// backstop here is half a second; a launch's own is six minutes ([`LAUNCH_BACKSTOP`]).
+#[test]
+fn a_browser_that_never_opens_devtools_stalls_its_wait_at_the_backstop() {
+    let mut stand_in = StandIn::new(ASLEEP);
+    let group = stand_in.group();
+    let backstop = Duration::from_millis(500);
+    let began = Instant::now();
+    let error = stand_in
+        .owner
+        .ready(
+            "DevTools port readiness",
+            PROTOCOL_CPU,
+            backstop,
+            devtools_endpoint,
+        )
+        .expect_err("a browser that never opens DevTools must fail its wait");
+    let waited = began.elapsed();
+    // Asleep, so alive as the wait ends, in a group of one; the fixture's drop ends it.
+    let alive = process::members(group).unwrap();
+    drop(stand_in);
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
+    assert!(waited >= backstop, "it gave up after {waited:?}");
+    assert_eq!(
+        alive.iter().map(|member| member.pid).collect::<Vec<_>>(),
+        [group]
+    );
+    let said = error.to_string();
+    let stalled = format!(
+        "Chrome stalled before DevTools port readiness: Chrome (pid {group}) has 1 process alive \
+         in its group, which spent "
+    );
+    assert!(said.starts_with(&stalled), "{said}");
+    assert!(
+        said.contains(
+            " CPU in the wait, and the launch's wall-clock backstop of 500.0ms ran out after "
+        ),
+        "{said}"
+    );
+    assert!(said.contains("; load average "), "{said}");
+    assert!(said.ends_with(" over 1, 5 and 15 minutes"), "{said}");
+    eprintln!("stalled wait group={group}: {said}");
+
+    // A leash that stalls before it records a browser is named instead: an idle owned process.
+    let profile = next_profile().unwrap();
+    std::fs::create_dir(&profile).unwrap();
+    let idle = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let leash = idle.id();
+    let mut owner = Owner {
+        leash: idle,
+        profile: profile.clone(),
+        stderr: std::fs::File::open("/dev/null").unwrap(),
+        shutdown: std::fs::File::open("/dev/null").unwrap(),
+    };
+    let error = owner
+        .ready(
+            "DevTools port readiness",
+            PROTOCOL_CPU,
+            Duration::from_millis(100),
+            devtools_endpoint,
+        )
+        .expect_err("a leash that never records a browser must fail its wait");
+    drop(owner);
+    assert!(!profile.exists());
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
+    let said = error.to_string();
+    let stalled = format!(
+        "Chrome stalled before DevTools port readiness: its leash (pid {leash}) had not recorded \
+         Chrome's pid, and spent "
+    );
+    assert!(said.starts_with(&stalled), "{said}");
+    assert!(
+        said.contains("the launch's wall-clock backstop of 100.0ms ran out after "),
+        "{said}"
+    );
+}
+
+/// The same stall through a whole launch: it fails with the stall first and the launch's
+/// diagnostics after, and leaves no browser, leash or profile behind.
+#[test]
+fn a_launch_whose_browser_never_opens_devtools_fails_as_a_stall() {
+    let binary = stand_in_binary(ASLEEP);
+    let failure = Chrome::launch_within(binary.to_str().unwrap(), &leash(), Duration::from_secs(1))
+        .err()
+        .expect("a browser that never opens DevTools must fail its launch");
+    std::fs::remove_file(&binary).unwrap();
+    let failure = failure.to_string();
+    assert!(
+        failure.starts_with(
+            "Chrome DevTools readiness: Chrome stalled before DevTools port readiness: "
+        ),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("the launch's wall-clock backstop of 1.0s ran out after "),
+        "{failure}"
+    );
+    assert!(failure.contains("; load average "), "{failure}");
+    assert!(failure.contains("; leash="), "{failure}");
+    // The pid it names, Chrome's or, on a machine too loaded to have started it, its leash's,
+    // leads a group no process is left in: the launch ended them before it returned.
+    let pid: u32 = failure
+        .split_once("(pid ")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .and_then(|(pid, _)| pid.parse().ok())
+        .unwrap_or_else(|| panic!("no pid in {failure}"));
+    assert!(process::members(pid).unwrap().is_empty(), "{failure}");
+    eprintln!("stalled launch: {failure}");
+}
+
 /// Set on the run of [`a_quiet_leash_keeps_its_reports_off_the_launchers_stderr`] that launches.
 const QUIET: &str = "SYMPHONY_CHROME_QUIET_LEASH";
 
@@ -592,13 +759,7 @@ fn a_quiet_leash_keeps_its_reports_off_the_launchers_stderr() {
 
 #[test]
 fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
-    let binary = next_profile().unwrap();
-    std::fs::write(
-        &binary,
-        "#!/bin/sh\nprintf 'reset exit detail\\n' >&2\nexit 47\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let binary = stand_in_binary("#!/bin/sh\nprintf 'reset exit detail\\n' >&2\nexit 47\n");
     let mut owner = Owner::launch(binary.to_str().unwrap(), &leash()).unwrap();
     let lifetime = owner.leash.stdin.take();
     assert_eq!(owner.leash.wait().unwrap().code(), Some(47));
@@ -700,18 +861,23 @@ wait "$helper"
     let group = stand_in.group();
     let (main, helper) = stand_in
         .owner
-        .ready("spinning helper", PROTOCOL_CPU, |profile| {
-            let ready = std::fs::read_to_string(profile.join("spinner-ready")).ok()?;
-            if !ready.ends_with('\n') {
-                return None;
-            }
-            let pids: Vec<u32> = ready
-                .split_whitespace()
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            (pids.len() == 2 && pids.iter().all(|pid| *pid > 0)).then(|| (pids[0], pids[1]))
-        })
+        .ready(
+            "spinning helper",
+            PROTOCOL_CPU,
+            LAUNCH_BACKSTOP,
+            |profile| {
+                let ready = std::fs::read_to_string(profile.join("spinner-ready")).ok()?;
+                if !ready.ends_with('\n') {
+                    return None;
+                }
+                let pids: Vec<u32> = ready
+                    .split_whitespace()
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+                (pids.len() == 2 && pids.iter().all(|pid| *pid > 0)).then(|| (pids[0], pids[1]))
+            },
+        )
         .unwrap();
     // SAFETY: the owned fixture announced this positive main PID; killing it leaves
     // its helper running in the recorded group, under the separate leash's ownership.
@@ -929,24 +1095,29 @@ fn chrome_dies_with_its_suite() {
             .clone();
         let helper = fake.as_mut().map(|owner| {
             owner
-                .ready("stand-in helper handshake", PROTOCOL_CPU, |profile| {
-                    if let Ok(ready) = std::fs::read_to_string(profile.join("fake-ready"))
-                        && ready.ends_with('\n')
-                    {
-                        let pids: Vec<u32> = ready
-                            .split_whitespace()
-                            .filter_map(|pid| pid.parse().ok())
-                            .collect();
-                        let recorded = std::fs::read_to_string(profile.join("browser.pid"))
-                            .ok()
-                            .filter(|text| text.ends_with('\n'))
-                            .and_then(|text| text.trim().parse::<u32>().ok());
-                        if pids.len() == 2 && recorded == Some(pids[0]) {
-                            return Some(pids[1]);
+                .ready(
+                    "stand-in helper handshake",
+                    PROTOCOL_CPU,
+                    LAUNCH_BACKSTOP,
+                    |profile| {
+                        if let Ok(ready) = std::fs::read_to_string(profile.join("fake-ready"))
+                            && ready.ends_with('\n')
+                        {
+                            let pids: Vec<u32> = ready
+                                .split_whitespace()
+                                .filter_map(|pid| pid.parse().ok())
+                                .collect();
+                            let recorded = std::fs::read_to_string(profile.join("browser.pid"))
+                                .ok()
+                                .filter(|text| text.ends_with('\n'))
+                                .and_then(|text| text.trim().parse::<u32>().ok());
+                            if pids.len() == 2 && recorded == Some(pids[0]) {
+                                return Some(pids[1]);
+                            }
                         }
-                    }
-                    None
-                })
+                        None
+                    },
+                )
                 .expect("stand-in helper handshake")
         });
         let endpoint = real
@@ -1217,7 +1388,12 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     let waiter = std::thread::spawn(move || {
         let mut owner = owner;
         let endpoint = owner
-            .ready("complete test port", PROTOCOL_CPU, devtools_endpoint)
+            .ready(
+                "complete test port",
+                PROTOCOL_CPU,
+                LAUNCH_BACKSTOP,
+                devtools_endpoint,
+            )
             .unwrap();
         (owner, endpoint)
     });
@@ -1238,7 +1414,12 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     drop(release);
     assert!(!owner.leash.wait().unwrap().success());
     let error = owner
-        .ready("missing port after exit", PROTOCOL_CPU, devtools_endpoint)
+        .ready(
+            "missing port after exit",
+            PROTOCOL_CPU,
+            LAUNCH_BACKSTOP,
+            devtools_endpoint,
+        )
         .unwrap_err();
     assert!(error.to_string().contains("exited"), "{error}");
     drop(owner);
@@ -1251,6 +1432,7 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     let result = stand_in.owner.ready(
         "missing stand-in port",
         Duration::from_millis(50),
+        LAUNCH_BACKSTOP,
         devtools_endpoint,
     );
     let _ = done.send(());
@@ -4069,6 +4251,89 @@ fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
     );
     assert!(!feed.finished);
     assert_eq!((glue.bytes, glue.pings, glue.finished), (512.0, 0, true));
+}
+
+#[test]
+fn a_websocket_counts_its_handshake_and_every_frame_and_names_its_pings() {
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let frame = |id: &str, payload: &str| {
+        event(
+            "Network.webSocketFrameReceived",
+            json!({"requestId": id, "response": {"opcode": 1, "mask": false, "payloadData": payload}}),
+        )
+    };
+    let delta = format!(
+        "{}\n{{\"version\":{}}}",
+        symphony_api::FEED_EVENT,
+        "9".repeat(200)
+    );
+    let ping = format!("{}\n", symphony_api::PING_EVENT);
+    let events = [
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "feed", "url": "ws://h/api/feed?since=3"}),
+        ),
+        event(
+            "Network.webSocketWillSendHandshakeRequest",
+            json!({"requestId": "feed", "request": {"headers": {}}}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "feed", "response": {"status": 101, "statusText": "Switching Protocols", "headersText": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"}}),
+        ),
+        frame(
+            "feed",
+            &format!("{}\n\"Serving\"", symphony_api::SERVER_EVENT),
+        ),
+        frame("feed", &ping),
+        frame("feed", &delta),
+        frame("feed", &ping),
+        // Another, told no text of its head, which is closed.
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "gone", "url": "ws://h/api/feed?since=4"}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "gone", "response": {"status": 101, "statusText": "Switching Protocols", "headers": {"Upgrade": "websocket", "Vary": "a\nb"}}}),
+        ),
+        frame("gone", &"x".repeat(70_000)),
+        event("Network.webSocketClosed", json!({"requestId": "gone"})),
+    ];
+    let requests = crate::requests(&events, None);
+    let [feed, gone] = requests.as_slice() else {
+        panic!("two sockets: {requests:#?}")
+    };
+    let head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n".len();
+    // A frame's head is 2 bytes up to 125 bytes of payload, 4 up to 65,535, 10 beyond.
+    let frames = (2 + 16) + 2 * (2 + ping.len()) + (4 + delta.len());
+    assert_eq!(
+        (
+            feed.url.as_str(),
+            feed.kind.as_str(),
+            feed.status,
+            feed.bytes,
+            feed.pings,
+            feed.finished
+        ),
+        (
+            "ws://h/api/feed?since=3",
+            crate::WEB_SOCKET,
+            101,
+            (head + frames) as f64,
+            2,
+            false
+        )
+    );
+    // Its status line, each header (a repeated one on each of its lines) and the blank line.
+    let head = "HTTP/1.1 101 Switching Protocols\r\n".len()
+        + "Upgrade: websocket\r\n".len()
+        + "Vary: a\r\nVary: b\r\n".len()
+        + 2;
+    assert_eq!(
+        (gone.bytes, gone.pings, gone.finished),
+        ((head + 10 + 70_000) as f64, 0, true)
+    );
 }
 
 #[test]
