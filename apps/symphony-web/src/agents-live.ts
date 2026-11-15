@@ -6,12 +6,12 @@
 // brings a task in, or the board back, reads the first page again, merged into what is drawn.
 
 import type { FrameRefresh } from "./frame";
-import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
-import { field, list as items } from "./shared";
+import { field, holdPlace, list as items } from "./shared";
 import {
   byPriority,
   holderHealth,

@@ -4836,8 +4836,35 @@
       ]
     },
     {
+      "rust": "crates/symphony-api/src/report_page.rs parse",
+      "typescript": "parseGrain, src/reports.tsx",
+      "source": [
+        "    pub fn parse(word: &str) -> Option<Grain> {",
+        "        match word {",
+        "            \"hour\" => Some(Grain::Hour),",
+        "            \"day\" => Some(Grain::Day),",
+        "            \"week\" => Some(Grain::Week),",
+        "            _ => None,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/report_page.rs default_days",
+      "typescript": "defaultDays, src/reports.tsx",
+      "source": [
+        "    pub fn default_days(self) -> u32 {",
+        "        match self {",
+        "            Grain::Hour => 2,",
+        "            Grain::Day => 14,",
+        "            Grain::Week => 84,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
       "rust": "crates/symphony-api/src/agents.rs web_address",
-      "typescript": "webAddress, src/session.tsx",
+      "typescript": "webAddress, src/links.ts",
       "source": [
         "pub fn web_address(url: &str) -> bool {",
         "    let after = |scheme: &str| {",
@@ -4873,7 +4900,7 @@
     },
     {
       "rust": "crates/symphony-api/src/agents.rs via_parent",
-      "typescript": "sessionControl, src/session.tsx",
+      "typescript": "viaParent, src/session.tsx",
       "source": [
         "    pub fn via_parent(&self, handle: &str) -> bool {",
         "        self.handle != handle",
@@ -4881,29 +4908,173 @@
       ]
     },
     {
-      "rust": "crates/symphony-api/src/report_page.rs parse",
-      "typescript": "parseGrain, src/reports.tsx",
+      "rust": "crates/symphony-api/src/links.rs app_path",
+      "typescript": "appPath, src/links.ts",
       "source": [
-        "    pub fn parse(word: &str) -> Option<Grain> {",
-        "        match word {",
-        "            \"hour\" => Some(Grain::Hour),",
-        "            \"day\" => Some(Grain::Day),",
-        "            \"week\" => Some(Grain::Week),",
-        "            _ => None,",
+        "pub fn app_path(path: &str) -> bool {",
+        "    path.starts_with('/')",
+        "        && !path.starts_with(\"//\")",
+        "        && !path.chars().any(|c| c.is_control() || c == '\\\\')",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/links.rs linkable",
+      "typescript": "linkable, src/links.ts",
+      "source": [
+        "pub fn linkable(link: &str) -> bool {",
+        "    app_path(link) || web_address(link)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs count",
+      "typescript": "countOf, src/gates-model.ts",
+      "source": [
+        "    pub fn count(&self, state: GateState) -> usize {",
+        "        self.gates.iter().filter(|gate| gate.state == state).count()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs waiting",
+      "typescript": "waitingGates, src/gates-model.ts",
+      "source": [
+        "    pub fn waiting(&self) -> impl Iterator<Item = &Gate> {",
+        "        self.gates.iter().filter(|gate| gate.state.waits())",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs seen",
+      "typescript": "seenOf, src/gates-model.ts",
+      "source": [
+        "    pub fn seen(&self) -> GatesSeen {",
+        "        GatesSeen {",
+        "            count: self.gates.len(),",
+        "            waiting: self.waiting().count(),",
+        "            unsigned: self.gates.iter().filter(|gate| !gate.signed()).count(),",
         "        }",
         "    }"
       ]
     },
     {
-      "rust": "crates/symphony-api/src/report_page.rs default_days",
-      "typescript": "defaultDays, src/reports.tsx",
+      "rust": "crates/symphony-blocks/src/gates.rs unsaid_commit",
+      "typescript": "unsaidCommit, src/gates-model.ts",
       "source": [
-        "    pub fn default_days(self) -> u32 {",
-        "        match self {",
-        "            Grain::Hour => 2,",
-        "            Grain::Day => 14,",
-        "            Grain::Week => 84,",
+        "    pub fn unsaid_commit(&self) -> Option<String> {",
+        "        let commit = self.commit.as_deref().filter(|commit| !commit.is_empty())?;",
+        "        let short: String = commit.chars().take(7).collect();",
+        "        let said = |text: &str| text.contains(&short);",
+        "        (!said(&self.detail) && !self.why.as_deref().is_some_and(said)).then_some(short)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/gates.rs signed",
+      "typescript": "signed, src/gates-model.ts",
+      "source": [
+        "    pub fn signed(&self) -> bool {",
+        "        self.by.as_deref().is_some_and(|by| !by.is_empty())",
+        "            || self.at.is_some()",
+        "            || self.unsaid_commit().is_some()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/gates.rs waits",
+      "typescript": "waits, src/gates-model.ts",
+      "source": [
+        "    pub const fn waits(self) -> bool {",
+        "        matches!(self, Self::Missing | Self::Held)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs offset_at",
+      "typescript": "offsetAt, src/timeline-layout.ts",
+      "source": [
+        "    pub fn offset_at(&self, at: f64) -> i64 {",
+        "        self.zone",
+        "            .iter()",
+        "            .take_while(|change| change.from <= at)",
+        "            .last()",
+        "            .or(self.zone.first())",
+        "            .map_or(0, |change| change.seconds)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs every_seconds",
+      "typescript": "everySeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn every_seconds(&self) -> u32 {",
+        "        if self.every == 0 {",
+        "            TIMELINE_EVERY",
+        "        } else {",
+        "            self.every",
         "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs end",
+      "typescript": "timelineEnd, src/timeline-layout.ts",
+      "source": [
+        "    pub fn end(&self) -> f64 {",
+        "        let close = self.closed.unwrap_or(self.now);",
+        "        self.runs",
+        "            .iter()",
+        "            .map(|run| run.ended.unwrap_or(self.now))",
+        "            .fold(close, f64::max)",
+        "            .max(self.created)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs machine_seconds",
+      "typescript": "machineSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn machine_seconds(&self) -> f64 {",
+        "        self.runs.iter().map(|run| run.ran(self.now)).sum()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs queued_seconds",
+      "typescript": "queuedSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn queued_seconds(&self) -> f64 {",
+        "        self.runs.iter().map(|run| run.waited(self.now)).sum()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs seconds",
+      "typescript": "stageSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn seconds(&self, now: f64) -> f64 {",
+        "        (self.to.unwrap_or(now) - self.from).max(0.0)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs waited",
+      "typescript": "waited, src/timeline-layout.ts",
+      "source": [
+        "    pub fn waited(&self, now: f64) -> f64 {",
+        "        (self.started.or(self.ended).unwrap_or(now) - self.queued).max(0.0)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs ran",
+      "typescript": "ran, src/timeline-layout.ts",
+      "source": [
+        "    pub fn ran(&self, now: f64) -> f64 {",
+        "        self.started.map_or(0.0, |started| {",
+        "            (self.ended.unwrap_or(now) - started).max(0.0)",
+        "        })",
         "    }"
       ]
     }

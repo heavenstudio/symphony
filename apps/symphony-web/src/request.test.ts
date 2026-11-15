@@ -59,7 +59,7 @@ describe("a read", () => {
   it("says the server's own error with its status", async () => {
     fetched.mockResolvedValue(answer(400, { error: "No such card." }));
     await expect(getJson("/api/x")).rejects.toEqual(
-      new Failure("known", "No such card (the server answered 400)"),
+      new Failure("known", "No such card (the server answered 400)", "No such card."),
     );
   });
 
@@ -75,7 +75,9 @@ describe("a read", () => {
 
   it("says the server could not be reached when the fetch fails", async () => {
     fetched.mockRejectedValue(new TypeError("Failed to fetch"));
-    await expect(getJson("/api/x")).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    await expect(getJson("/api/x")).rejects.toEqual(
+      new Failure("uncertain", UNREACHABLE, "Failed to fetch"),
+    );
   });
 
   it("fails as unknown when its body does not parse", async () => {
@@ -108,7 +110,7 @@ describe("a read", () => {
     const read = getJson("/api/x", replaced.signal);
     expect(signals[0]?.aborted).toBe(false);
     replaced.abort();
-    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE, "aborted"));
     expect(signals[0]?.aborted).toBe(true);
     const gone = new AbortController();
     gone.abort();
@@ -148,7 +150,7 @@ describe("a read of what this device kept", () => {
     const read = getIf("/api/queue", '"e1"', page.signal);
     expect(signals[0]?.aborted).toBe(false);
     page.abort();
-    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE, "aborted"));
     expect(signals[0]?.aborted).toBe(true);
     await expect(getIf("/api/queue", "", page.signal)).rejects.toMatchObject({
       kind: "uncertain",
@@ -183,7 +185,7 @@ describe("a document's read", () => {
     await expect(getDocument("/api/document", "")).rejects.toMatchObject({ kind: "uncertain" });
     fetched.mockRejectedValue(new TypeError("Failed to fetch"));
     await expect(getDocument("/api/document", "")).rejects.toEqual(
-      new Failure("uncertain", UNREACHABLE),
+      new Failure("uncertain", UNREACHABLE, "Failed to fetch"),
     );
   });
 
@@ -193,7 +195,7 @@ describe("a document's read", () => {
     const read = getDocument("/api/document", '"e1"', page.signal);
     expect(signals[0]?.aborted).toBe(false);
     page.abort();
-    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE, "aborted"));
     expect(signals[0]?.aborted).toBe(true);
   });
 
@@ -240,14 +242,14 @@ describe("a post", () => {
     );
     fetched.mockResolvedValue(answer(500));
     await expect(post("/api/postpone", {})).rejects.toEqual(
-      new Failure("uncertain", "The server answered 500"),
+      new Failure("uncertain", "The server answered 500", "the server answered 500"),
     );
   });
 
   it("says why the fetch failed, as the server may have acted", async () => {
     fetched.mockRejectedValue(new TypeError("Load failed"));
     await expect(post("/api/postpone", {})).rejects.toEqual(
-      new Failure("uncertain", "TypeError: Load failed"),
+      new Failure("uncertain", "TypeError: Load failed", "Load failed"),
     );
   });
 });
