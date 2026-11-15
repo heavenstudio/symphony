@@ -26,6 +26,7 @@ fn row(slug: &str, status: &str, made: f64, since: f64, held: &[(&str, f64)]) ->
         status: status.into(),
         created: at(made),
         executing: false,
+        arm: None,
         stages: Stages {
             stages: held.iter().map(|(s, h)| stage(s, made, *h, 1)).collect(),
             segments: Vec::new(),
@@ -212,6 +213,7 @@ fn one_done_tasks_status_rows_add_up_to_its_lead_time() {
         status: "done".into(),
         created: T0,
         executing: false,
+        arm: None,
         stages: straight_through_stages(),
     };
     let found = summarize(&[row], &[at(3.0)], at(24.0), 1, &day);
@@ -246,4 +248,51 @@ fn a_day_an_hour_short_or_long_is_named_once_and_none_is_skipped() {
         .map(|(day, done)| (day.as_str(), *done))
         .collect();
     assert_eq!(per_day, [("d0", 0), ("d1", 2), ("d2", 1), ("d3", 0)]);
+}
+
+#[test]
+fn each_arm_has_its_own_tasks_figures_and_a_task_on_none_is_in_none() {
+    let done = |slug: &str, arm: &str, took: f64, review: Option<f64>, bounces: u32| {
+        let mut held = vec![
+            ("ready", 1.0),
+            ("in_progress", took - 1.0 - review.unwrap_or(0.0)),
+        ];
+        held.extend(review.map(|hours| ("review", hours)));
+        let mut row = row(slug, "done", 0.0, took, &held);
+        (row.arm, row.stages.bounces) = (Some(arm.into()), bounces);
+        row
+    };
+    let mut open = row("sim/open", "in_progress", 0.0, 2.0, &[("in_progress", 9.0)]);
+    (open.arm, open.stages.bounces) = (Some("b".into()), 3);
+    let mut waiting = row("sim/waiting", "review", 0.0, 2.0, &[("review", 9.0)]);
+    waiting.arm = Some("c".into());
+    let rows = [
+        done("sim/b1", "b", 6.0, Some(2.0), 1),
+        row("sim/none", "done", 0.0, 50.0, &[("review", 50.0)]),
+        done("sim/a1", "a", 4.0, Some(1.0), 0),
+        done("sim/a2", "a", 8.0, None, 0),
+        done("sim/a3", "a", 12.0, Some(3.0), 2),
+        open,
+        waiting,
+    ];
+    let found = summarize(&rows, &[], at(72.0), 3, &day).arms;
+    let figures: Vec<(&str, usize, usize, u32)> = (found.iter())
+        .map(|arm| (arm.name.as_str(), arm.tasks, arm.done, arm.bounces))
+        .collect();
+    // By name, whatever order the rows come in; the open task's bounces count, its time does not.
+    assert_eq!(figures, [("a", 3, 3, 2), ("b", 2, 1, 4), ("c", 1, 0, 0)]);
+    spread_is(found[0].lead, 3, 8.0, 10.0, 11.2);
+    // Two of the three were reviewed.
+    spread_is(found[0].review, 2, 2.0, 2.5, 2.8);
+    spread_is(found[1].lead, 1, 6.0, 6.0, 6.0);
+    spread_is(found[1].review, 1, 2.0, 2.0, 2.0);
+    // An arm with nothing done has no time to give: its task in review is still there.
+    assert_eq!((found[2].lead, found[2].review), (None, None));
+    // The whole window's figures hold every task, on an arm or not.
+    assert_eq!(summarize(&rows, &[], at(72.0), 3, &day).tasks, 7);
+    assert!(
+        summarize(&window(), &CLOSES, at(72.0), 3, &day)
+            .arms
+            .is_empty()
+    );
 }
