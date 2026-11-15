@@ -7,10 +7,11 @@ review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the se
 (`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
 document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, the kind
 `board`) the fifth, the agents page (`/agents`, the kind `agents`) the sixth and a task's page with
-its timeline (`/task/SLUG`, the kind `task`) the seventh: no page is left the Dioxus program's,
-which keeps the chat and its media layer, mounted beside every page. The menus (a select's popup
-and the picture viewer, the persistent kind `overlay`) are the eighth, mounted beside every page as
-well. Runs (`/runs`, the kind `runs`) was built here from the start, with no Dioxus page before
+its timeline (`/task/SLUG`, the kind `task`) the seventh. The menus (a select's popup and the
+picture viewer, the persistent kind `overlay`) are the eighth and the panel (the chat and its
+sheets, the toasts and the pending bar, the persistent kind `panel`) the ninth, each mounted beside
+every page: no kind is left the Dioxus client's, whose build is the stylesheets every page shares.
+Runs (`/runs`, the kind `runs`) was built here from the start, with no Dioxus page before
 it. The board's task card is a
 component of its own (`src/taskcard.tsx`), which the agents page draws too, and whose status words
 and machine work a task's page draws. Like that
@@ -138,11 +139,11 @@ prints.
 ## The build and the distribution
 
 `apps/symphony-ui/bundle.sh` builds this client as its kind `web` (`npm.sh run build`, into the
-build's own folder), beside the Dioxus kinds, and `package.sh` puts both in one distribution: it
-copies Vite's assets into the stage, so one `builds.json` names every file of the build, and adds
-each kind to the shell's manifest from Vite's (`.vite/manifest.json`): its script and its styles,
-the shared sheet first and then the CSS its entry imports, and no wasm. It refuses a kind both
-clients build, and a build whose web kind left no Vite manifest. Files are named `NAME-HASH16.EXT`
+build's own folder), beside the shared stylesheets dx builds (`styles`), and `package.sh` puts
+both in one distribution: it copies Vite's assets into the stage, so one `builds.json` names every
+file of the build, and adds each kind to the shell's manifest from Vite's (`.vite/manifest.json`):
+its script and its styles, the shared sheet first and then the CSS its entry imports, and no wasm.
+It refuses a build whose web kind left no Vite manifest. Files are named `NAME-HASH16.EXT`
 with a hex hash, as the server caches such a name for good. No path, clock or environment enters
 the bytes: the build script sets `NODE_ENV=production` (a shell's `development` would build
 React's development code) and Vite reads no `.env` file (`envDir: false`), which
@@ -177,10 +178,10 @@ its framework, a spawned task dying with its component; here each such wait says
 cache's store is the shell's (`assets/cache.js`, `symphonyCache`, which `src/cache.ts` names what
 to keep in), and it opens every IndexedDB transaction: this client opens none of its own.
 
-A move between a kind of this client and a Dioxus kind stops one and runs the other as between
-two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
-and the feed are drawn here as the Dioxus frame draws them; the panel and its sheets stay the
-Dioxus program's kind, which the shell mounts beside any page.
+A move between two kinds stops one and runs the other; a move within a kind is the shell's
+`review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell and the feed are
+the frame's (`src/frame.tsx`), which every page kind draws; the panel and its sheets are this
+client's persistent kind `panel` ([The panel](#the-panel)), which the shell mounts beside any page.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
 which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every
@@ -210,10 +211,12 @@ server, the shared sheet of the Dioxus build (the frame, the components, the boa
 class names this client's markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`; the menus' `src/overlay.css`: the popup's and the dialog's rules
 as the components' sheets wrote them, their CSS-module suffixes gone, and the picture viewer's,
-moved there from the media sheet). The Dioxus client's media sheet,
-`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's media
-layer loads as well, is the media layer's, imported by `media-layer.ts`, so home, the documents and
-a task's page take it as one file under the layer's name. The task board and the agents page have
+moved there from the media sheet; the panel's `src/panel.css`: the `+` sheet's tabs and its
+collapse button's tip as the components' tabs and tooltip sheets write them, the sheets' own rules
+being the shared sheet's). The media sheet,
+`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out, is the media layer's,
+imported by `media-layer.ts`, so home, the documents, a task's page and the chat take it as one
+file under the layer's name. The task board and the agents page have
 no sheet of their own: their rules are the shared sheet's (`apps/symphony-ui/assets/board.css`),
 whose task card rules the agents page's cards use too. A component drawn by a Dioxus component
 library keeps its markup and class
@@ -237,15 +240,15 @@ prints (`--root DIR` another project's). It refuses 8765, the shared server's, a
 starts nothing: Ctrl-C, or a kill of the recipe's process, ends it. Every request but those for
 Vite's own files (under `/@symphony-web/`) goes to that server through Vite's proxy, its Host and
 Origin as the browser sent them, so a save meets the server's origin check as on the server itself:
-the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the files of the Dioxus
-program's kind. It sends no CORS header
+the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the build's files. It sends
+no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
 shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,
-unminified) with Vite's client first, the program's kind (the chat) as the server's build names
-it, and each of `KINDS` as its entry under Vite (one an older build has as the program's, the
-menus, among them) with the server's shared stylesheet, each kind's own styles
-kept before the project's theme as the built shell keeps them. So a kind added on a branch, or a
+unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
+server's build has as another client's or not at all among them) with the server's shared
+stylesheet, each kind's own styles kept before the project's theme as the built shell keeps them;
+a kind the server's build has and this checkout does not is left out. So a kind added on a branch, or a
 change to the shell, shows with no build too. A save to a kind's module or to the shell's sources
 loads the page again, a style sheet's change applies in place, and an error in a module is drawn
 over the page.
@@ -254,7 +257,7 @@ A reload, not React's Fast Refresh (`@vitejs/plugin-react`): that would be a dep
 one more script put in a page Vite does not serve, and it keeps a component's state only across an
 edit to a module that exports components alone, which few of these do, and most pages here draw
 again at once from the device's cache and keep their drafts on every input. What only a build
-makes it does not show: the shared stylesheet and the program's kind are the server's build's (an edit to the
+makes it does not show: the shared stylesheet is the server's build's (an edit to the
 Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
 and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
 React is its development build, and the bytes are no build's. No build, regenerator or check runs
@@ -372,8 +375,8 @@ beside code, a quote, a mockup, a picture, a heading, a table and a title, on a 
 ## A task's page
 
 The kind `task` (`src/kinds/task.tsx`) draws `/task/SLUG`: one live task per checkout, which
-follows the route from task to task within the kind (`review:navigate`) and keeps one feed, as the
-Dioxus program's page did. `src/task-live.ts` holds what it reads and follows (`LiveTask`, on
+follows the route from task to task within the kind (`review:navigate`) and keeps one feed.
+`src/task-live.ts` holds what it reads and follows (`LiveTask`, on
 `live.tsx`'s `keepBoard`): the page and the thread's newest page kept on this device
 (`taskItem`) and drawn at once on a return, each checked with its copy's tag once the board's
 version is read and asked again until it answers, the feed opened beside those checks and never
@@ -392,6 +395,33 @@ the height this browser last drew it. The timeline (`src/timeline.tsx`, its layo
 once it nears the screen and the page has settled (the shell's `reviewSettled`), so a first visit
 carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
 `src/timeline-slot.css`) are the kind's own.
+
+## The panel
+
+The kind `panel` (`src/kinds/panel.tsx`, `src/panel.tsx`) is the shell's persistent kind, which it
+mounts in `#quick-root` on the first click of `+`, the bell or Appearance, a toast's arrival or a
+pending step (its files warmed ahead once the page is idle) and keeps beside every page after, so
+the conversation, the task form and their places stay. It draws the `+` sheet (`src/quick.tsx`:
+its Chat and Add task tabs, `src/tabs.tsx`; the conversation, read again when the page's feed says
+its thread moved; the composer with its attachments; the new task's form, its priority the menus'
+select, its save asked again until the server knows the outcome), the activity list, unread
+against what was seen, and its toasts, the pending bar, and the header's Appearance
+(`src/appearance.tsx`, the theme file read by `src/theme.ts`). Its pure parts are
+`src/panel-model.ts` (the snapshots' readers, the draft, the toasts, a save's outcome, what was
+read) and `src/panel-focus.ts` (the focus taken on open, Escape giving it back to the opener). Until it mounts, the shell draws the
+sheet a click opened at once (`#panel-loading`), and the panel's own sheet takes the focus over.
+
+It has no feed of its own: the frame (`src/frame.tsx`) reads the activity and the pending cards
+and the two speak through the window, as the frame and the shell do: the snapshots
+(`reviewQuickDraft`, `reviewActivityOpen`, `reviewAppearanceOpen`, `reviewPanelFocus`,
+`reviewPanelOpener`, `reviewActivitySnapshot`, `reviewPendingSnapshot`, `reviewFrameError`,
+`reviewKnownIds`, `reviewPreviousIds`) and their events (`review:quick`, `review:activity`,
+`review:appearance`, `review:frame`, `review:frame-seen`, `review:activity-arrived`,
+`review:asks`). What it keeps in the browser is under its keys (`review-quick-draft`,
+`docs-review-seen`, `studio.cssVars`), the ones a reader's draft, what they saw and their theme are
+already kept under, so all three stay. Its media layer (`reachOf`) takes the chat's pictures up on every page,
+each opening in the menus' viewer, and on the task board and the agents page, which mount none of
+their own, the page's media too.
 
 ## Moving a page kind
 

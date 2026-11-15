@@ -8,7 +8,9 @@
 //! stamp, an edit since, is written over all the same, and the run says so and where the
 //! project's own goes ([`Outcome::Replaced`]). Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
-//! touched. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
+//! touched, and so is a file of the project's in a shipped skill's folder that the stamp does not
+//! name: `project.md` there is the project's standing instructions for that skill's role, which
+//! the `work`, `review-task` and `assess-task` skills read first. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
 //! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
 //! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
 //! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
