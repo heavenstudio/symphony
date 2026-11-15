@@ -316,7 +316,7 @@ fn a_day_file_not_read_is_named_and_days_past_the_window_are_never_read() {
         runs.join(format!("{}.jsonl", run_day(TODAY - DAY))),
     )
     .unwrap();
-    write_day(&runs, TODAY - 10.0 * DAY, &[old.clone()], "");
+    write_day(&runs, TODAY - 10.0 * DAY, std::slice::from_ref(&old), "");
     write_day(
         &runs,
         TODAY - f64::from(RUNS_DAYS) * DAY,
