@@ -24,7 +24,7 @@ import {
 import { Button } from "./button";
 import { sleep, whenShown } from "./feed";
 import { scoped } from "./project";
-import { Failure, getIf, NO_ANSWER as SLOW, said } from "./request";
+import { Failure, getIf, said } from "./request";
 import { currentRoute } from "./route";
 import STYLE from "./timeline.css?inline";
 import {
@@ -49,6 +49,7 @@ import {
   stops,
   totals,
 } from "./timeline-layout";
+import { NOT_IN_TIME } from "./trouble";
 import { TASK_TIMELINE_PATH, type TaskTimeline } from "./wire";
 import { fixed } from "./words";
 
@@ -59,8 +60,8 @@ const BODY = "tl-body";
 /** The id of the timeline's style element, put in the page once. */
 const STYLE_ID = "timeline-style";
 
-/** What a read says when the server gave no answer in time. */
-export const NO_ANSWER = "no answer from the server";
+/** What a read says when the server gave no answer in time: the shared words, within a sentence. */
+export const NO_ANSWER = "the server did not answer in time";
 /** What a read says of an answer that is no timeline this client can read. */
 export const NOT_A_TIMELINE = "the server's answer is not a timeline";
 
@@ -112,7 +113,7 @@ export function timelineUrl(slug: string): string {
  */
 export function readFailed(failure: unknown): string {
   if (!(failure instanceof Failure)) return said(failure);
-  return failure.text === SLOW ? NO_ANSWER : failure.own;
+  return failure.text === NOT_IN_TIME ? NO_ANSWER : failure.own;
 }
 
 /**
