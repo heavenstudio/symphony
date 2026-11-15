@@ -1519,6 +1519,7 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
             let before = tree.read(DOC);
             let main_tip = command(&tree.root, &["rev-parse", "main"], 3);
             let saves = symphony::save::Saves::start(&tree.root);
+            let first = symphony::clock::now_stamp();
             assert_eq!(
                 post(
                     &saves,
@@ -1528,6 +1529,7 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
                 ),
                 json!({"ok":true})
             );
+            let last = symphony::clock::now_stamp();
             saves.close();
             let written = std::fs::read_to_string(path.join(DOC)).unwrap();
             assert!(written.contains("owner · rejected — too dark"));
@@ -1545,7 +1547,15 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
             let journal = journalled(&tree.root);
             assert_eq!(journal.len(), 1, "{journal:?}");
             let (text, ask) = &journal[0];
-            assert!(text.starts_with("OWNER /api/decision "), "{text}");
+            // The line says the minute the owner said it, as a card's stamp does.
+            let said = text
+                .strip_prefix("OWNER /api/decision at ")
+                .and_then(|rest| rest.split_once(" scope="))
+                .map_or("", |(stamp, _)| stamp);
+            assert!(
+                (first.as_str()..=last.as_str()).contains(&said),
+                "{first}..{last}: {text}"
+            );
             let mut ask = ask.clone().expect("the verdict waits on an agent");
             assert!(ask["at"].as_f64().is_some(), "{ask}");
             ask["at"] = serde_json::Value::Null;
