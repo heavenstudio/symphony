@@ -326,6 +326,9 @@ fn a_phone_shot_is_a_phone_screen_at_three_times_and_the_report_says_what_the_pa
             "--report",
             "--eval",
             "[innerWidth, devicePixelRatio, matchMedia('(prefers-color-scheme: dark)').matches]",
+            // A phone's board keeps its search behind this button.
+            "--click",
+            ".board-filters-toggle",
             "--type",
             "input[type=search]=Example",
             "--key",
