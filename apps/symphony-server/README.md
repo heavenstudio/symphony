@@ -50,9 +50,16 @@ Unadmitted sockets receive 503, then close their write side and drain input to E
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
-The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as the feed's named `server` event containing a
-JSON string; a fresh stream receives the current notice too. Editing the sources retries the build.
+The startup lock serializes publication with starters and stops. A failed update, its build or
+its hand-over, is logged and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. The notice says when that source
+fingerprint is built and handed over again: 5 min after its first failure, the wait doubling with
+each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, so the machine
+never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
+at its first check, whatever that wait. A build whose sources changed or could not be read while
+it ran is dropped and waits the same way, said in the log alone, as the version read next is
+usually another and is built at once. A starter's hand-off that fails is not tried again (the
+starter asks again), and its notice keeps the time of a retry that still waits.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -93,7 +100,7 @@ cannot keep installing after `--stop` returns.
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
-| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`) |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -227,7 +234,11 @@ open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
 contract: at most five seconds of silence.
 
-Worktree index locks and reflogs do not invalidate document snapshots. Text and
+Worktree index locks and reflogs do not invalidate document snapshots. A page follows each
+document a visit read, and a refresh renders those again only once the page's own files changed
+(main's: a file below its documents' folders or what its plugins watch, a lost event, or its
+project file edited, whether its settings still load or not): a ref, a worktree's record or a
+branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff
@@ -247,11 +258,14 @@ sequenced board snapshot also supplies the board and agents views. Unchanged raw
 That snapshot also names the tasks that link a document or a folder's introduction, and the
 work beside each agent on the agents page, so those reads read no board; while the board cannot be
 read, the agents views answer unavailable, as its tasks do. The task page's reads (`task-page`, `task-offer`,
-`task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
-first and kept until the board fails a read on it, so no read finds the board's server and
-asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and
-the project list read under, which it takes only to place its copy in its page; renders take
-turns, each from its read of the file to that placement, so the copy kept is the last read.
+`task-history`, `task-brief`, `task-thread`) and the task board's search share one store of the
+board, opened by the first and kept until the board fails a read on it, so no read finds the
+board's server and asks `ps` and `lsof` about it again. A document renders without the lock the
+board, the feed and the project list read under, which it takes only to place its copy in its
+page. Renders run side by side, a visit's on tokio's blocking pool, which bounds how many run at
+once, so a reader's waits on no refresh's; a copy is placed only over one whose read began before
+its own, so the copy kept is the last read begun, and a visit's first read of a document begun
+before a refresh that renders anew reads again, as that refresh rendered only what was followed.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board

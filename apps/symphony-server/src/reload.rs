@@ -17,7 +17,9 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{self, Stdio};
 
+mod retry;
 mod stamp;
+use retry::Retry;
 use stamp::{RunningImage, installed_source, stamp_install};
 
 /// What a serving server hands its successor; no person sets it.
@@ -422,16 +424,25 @@ pub(crate) fn watch(
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
 ) -> Option<std::thread::JoinHandle<()>> {
-    watch_with::<notify::RecommendedWatcher>(serve, setup, shared, sockets, backstop::PERIOD)
+    watch_with::<notify::RecommendedWatcher>(
+        serve,
+        setup,
+        shared,
+        sockets,
+        backstop::PERIOD,
+        Retry::new(),
+    )
 }
 
-/// [`watch`] with watcher `W`, checking the sources on its own every `period`.
+/// [`watch`] with watcher `W`, checking the sources on its own every `period`, and trying a version
+/// whose update failed again when `retry` says.
 fn watch_with<W: Watcher + Send + 'static>(
     serve: Serve,
     setup: Setup,
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
     period: Duration,
+    mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
     let reload = move || {
@@ -488,6 +499,8 @@ fn watch_with<W: Watcher + Send + 'static>(
                         };
                         let fingerprint =
                             symphony::reload::fingerprint(&request.root).unwrap_or_default();
+                        // This hand-off is the starter's to ask again; a retry of the sources'
+                        // own update that waits still comes, and the notice keeps its time.
                         let result = replace(
                             &successor,
                             &request.exe,
@@ -496,7 +509,15 @@ fn watch_with<W: Watcher + Send + 'static>(
                             &fingerprint,
                             &shared,
                             None,
-                        );
+                        )
+                        .map_err(|why| match retry.waiting() {
+                            Some(again) => format!(
+                                "{}. The version whose update failed before is tried again at \
+                                 about {again}.",
+                                reason(&why)
+                            ),
+                            None => why,
+                        });
                         if replaced(&shared, result) {
                             return;
                         }
@@ -540,7 +561,9 @@ fn watch_with<W: Watcher + Send + 'static>(
                     continue;
                 }
             };
-            if attempted.as_deref() == Some(&fingerprint) {
+            // A version tried before is built again only once its update failed and the wait
+            // after that failure is over ([`retry`]); any other is built now.
+            if attempted.as_deref() == Some(&fingerprint) && !retry.again(&fingerprint) {
                 continue;
             }
             attempted = Some(fingerprint.clone());
@@ -559,30 +582,53 @@ fn watch_with<W: Watcher + Send + 'static>(
             }
             // An edit during compilation may have produced a mixed binary. Build again for the
             // stable source set instead of installing a generation labelled with the wrong code.
+            // That result is dropped, and counts as a failure of this version: were the sources to
+            // read as it again (a read that failed in passing, an edit undone), it is built again
+            // once that failure's wait is over, and any other version at its first check.
             if symphony::reload::fingerprint(&serve.root).ok().as_deref() != Some(&fingerprint) {
+                let again = retry.failed(&fingerprint);
+                eprintln!(
+                    "· Symphony reload: the sources changed or could not be read during the \
+                     build; its result is dropped, and that version is tried again at about \
+                     {again} if they read as it again"
+                );
                 continue;
             }
             if matches!(result, Ok(None)) && kept(running.as_ref(), install, &fingerprint, &shared)
             {
                 continue;
             }
-            let result = result.and_then(|client| {
-                replace(
-                    &serve,
-                    &exe,
-                    &sockets,
-                    &lease,
-                    &fingerprint,
-                    &shared,
-                    client,
-                )
-            });
+            let result = result
+                .and_then(|client| {
+                    replace(
+                        &serve,
+                        &exe,
+                        &sockets,
+                        &lease,
+                        &fingerprint,
+                        &shared,
+                        client,
+                    )
+                })
+                .map_err(|why| {
+                    let again = retry.failed(&fingerprint);
+                    format!(
+                        "{}. It tries this version again at about {again}.",
+                        reason(&why)
+                    )
+                });
             if replaced(&shared, result) {
                 return;
             }
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
+}
+
+/// Why an update failed, ending where the notice's next sentence starts: a build that said nothing
+/// leaves its separator, and diagnostics may end a sentence.
+fn reason(why: &str) -> &str {
+    why.trim_end_matches([' ', ':', '.'])
 }
 
 /// After a build of `fingerprint` into `install` with no client to publish: whether the installed

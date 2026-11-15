@@ -289,8 +289,12 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major
   of the protocol, and `Lined` never goes on the wire. The seam types and the vocabulary (`Card`,
   `Picture`, `TaskOffer`, `Submission`, `Theme`, `Block`…) are not marked, as a plugin and its
-  tests build them by their fields: a field or a variant added to one is a new major of the kit,
-  whichever minor of the protocol carries it.
+  tests build them by their fields: a field added to one is a new major of the kit, whichever
+  minor of the protocol carries it. A new kind of block, text span or media is to be a new minor
+  of the kit ([its card](DECISIONS.md#kit-new-block-version)), as a plugin makes blocks and never
+  lists them: `Block`, `Span` and `Media` get `#[non_exhaustive]` before the kit's first
+  publication, and a test that the client draws every kind takes the place of the compiler's
+  refusal. They are not marked yet, so until then a variant added to one is still a new major.
 - A call the plugin does not know, a request missing a field, or a second member beside the call is
   answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
   place.

@@ -55,7 +55,10 @@ const OWN: [Own; 4] = [
               them; the executor's to produce",
         applies: "any change to code, scripts, recipes, build settings, or a file a test reads (a \
                   fixture, a shipped skill whose install is tested): the tests closest to a change \
-                  are what proves it works",
+                  are what proves it works; a change of the values the project file gives its \
+                  settings, which the settings check proves alone (`symphony settings-check`, \
+                  recorded as a test run: every table and key known, each value of its type, no \
+                  name judged against a list), with no other suite",
         skips: "documents and guides alone; pictures and other files nothing tests; a hotfix whose \
                 break no test shows in the time it has, its tests coming with its postmortem",
     },
@@ -69,9 +72,17 @@ const OWN: [Own; 4] = [
                   hook, a recipe, a wire type, a route, a shared component); a change to a test, a \
                   check, a budget or a run step, which is any path [land] check_paths names, since \
                   a loosened test is how a red turns green unfixed; a shipped skill or a rule every \
-                  agent follows; a change that does more than one thing, or one the assessor \
-                  cannot place",
-        skips: "documents alone (a design, a reference page, a record); a fix of a few lines that \
+                  agent follows; a setting the Symphony does not read yet or reads another way, \
+                  which is code; a value of the project file that is a command or a program the \
+                  Symphony runs or that decides what lands ([project] cargo and default_branch, \
+                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
+                  on_review, on_land, machine_work_reader and assessments); a change that does \
+                  more than one thing, or one the assessor cannot place",
+        skips: "documents alone (a design, a reference page, a record); the values the project \
+                file gives settings the Symphony already reads (a model, an agent, a limit, a \
+                count, a name), written, changed or removed, with the guide's and the rules' \
+                words that repeat those values and nothing else: the settings check green at the \
+                tip stands in the reviewer's place, as `tests`; a fix of a few lines that \
                 leaves the failing test its task names unchanged; a hotfix restoring something \
                 wholly broken, read afterwards as its postmortem",
     },

@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  choosesOnClick,
   nextIndex,
   previousIndex,
   SelectPopup,
@@ -360,10 +361,49 @@ describe("a select's popup used", () => {
     handler(element, option(1), "onPointerCancel")({});
     handler(element, option(1), "onPointerUp")(pointer(10, 10, 0, "touch"));
     expect(given.onChange).not.toHaveBeenCalled();
-    // A touch that stayed is a tap.
+    // A touch that stayed is a tap, chosen on its click.
     handler(element, option(1), "onPointerDown")(pointer(10, 10, 0, "touch"));
     handler(element, option(1), "onPointerUp")(pointer(12, 13, 0, "touch"));
+    handler(element, option(1), "onClick")({});
     expect(given.onChange).toHaveBeenCalledWith("1");
+  });
+
+  it("chooses a finger's or a pen's tap on the option's own click, so it lands on nothing under it", () => {
+    expect(["mouse", "touch", "pen", ""].map(choosesOnClick)).toEqual([false, true, true, false]);
+    for (const pointerType of ["touch", "pen"]) {
+      const given = props();
+      const { element } = draw(given, [true, null]);
+      handler(element, option(1), "onPointerDown")(pointer(10, 40, 0, pointerType));
+      handler(element, option(1), "onPointerUp")(pointer(11, 41, 0, pointerType));
+      // Released, the popup stays open for the tap's click, which another option's is not.
+      expect(given.onChange).not.toHaveBeenCalled();
+      expect(given.onClose).not.toHaveBeenCalled();
+      handler(element, option(0), "onClick")({});
+      expect(given.onChange).not.toHaveBeenCalled();
+      handler(element, option(1), "onClick")({});
+      expect(given.onChange).toHaveBeenCalledExactlyOnceWith("1");
+      expect(given.onClose).toHaveBeenCalledOnce();
+      // The tap's click is spent: another click is nothing.
+      handler(element, option(1), "onClick")({});
+      expect(given.onChange).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("takes a click with no tap before it, or after a press since, for nothing", () => {
+    const given = props();
+    const { element } = draw(given, [true, null]);
+    // A script's click, or a mouse's after its release chose.
+    handler(element, option(1), "onClick")({});
+    expect(given.onChange).not.toHaveBeenCalled();
+    // A tap whose click never came, then a press on another option that scrolled away.
+    handler(element, option(1), "onPointerDown")(pointer(10, 40, 0, "touch"));
+    handler(element, option(1), "onPointerUp")(pointer(10, 40, 0, "touch"));
+    handler(element, option(2), "onPointerDown")(pointer(10, 70, 0, "touch"));
+    handler(element, option(2), "onPointerUp")(pointer(10, 120, 0, "touch"));
+    handler(element, option(1), "onClick")({});
+    handler(element, option(2), "onClick")({});
+    expect(given.onChange).not.toHaveBeenCalled();
+    expect(given.onClose).not.toHaveBeenCalled();
   });
 
   it("closes once the focus leaves the list, or the option that held it", () => {

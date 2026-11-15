@@ -50,7 +50,9 @@ orchestrator the board gives, covered closes), `messages.rs` threads, inboxes an
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
 status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
-the schema rule, `transaction.rs` the schema guard every write starts with. `lib.rs`'s doc states
+the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
+each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
+([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
 the rule of every write. `schema.rs` is the tables, the indexes, the version and its migration
 steps; `live.rs` which builds may move a project's live board, and `live/seen.rs` the highest schema
 it was seen at. `rpc.rs` (with `rpc/read.rs`) and `cbor.rs` are the client: SurrealDB's RPC in CBOR
@@ -116,7 +118,8 @@ changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
-([TASKS](../../docs/TASKS.md#where-the-time-goes)); `reports.rs` the board's part of the day files.
+([TASKS](../../docs/TASKS.md#where-the-time-goes)), `arm.rs` the arm a task is filed on, which
+`stats` groups by; `reports.rs` the board's part of the day files.
 
 ### The database server
 
@@ -142,6 +145,11 @@ network. `examples/search_bench.rs` (`--database NAME --out DIR`, run through
 `tools/cargo.sh run --release`) copies a board only into the named scratch database and measures
 catch-up and the queries; `examples/embedding_cpu.rs` measures inference CPU on a frozen snapshot
 with no database. Neither estimates the database's CPU from the client's.
+
+Search by meaning is to be deleted, and the board searches by words alone
+([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the board task
+`tools/board-search-by-words-alone` removes the model, the three modes, `tasks embed` and the
+server's pass. Until it lands, build nothing on any of them.
 
 ### Children
 
@@ -198,6 +206,12 @@ keeps running against a newer board for a while, and a change keeps what it read
   names a task takes its test of whom to tell from `store/queued_lines.rs`;
 - a counter an older reader caches is retired where it refuses it, never removed (`counter:board` at
   the smallest signed integer, `schema::BOARD_MARKER`).
+- the `writer` table stays schemaless with no event, its line written without the schema guard, as
+  builds of other schemas write it and a line must move no marker; an opening reads its line in its
+  one read and never reads the store's `Clock` (a line's time is the machine's, so a test ages one
+  by moving its `seen` back by hand); and the Symphony, which opens its board to read, stays
+  uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
+  every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
 
 ### Its contracts
 
@@ -380,5 +394,12 @@ here, so a change to the board's queries, its indexes or the api runs it by hand
 `just test-rs -p symphony-board --test perf`; `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build
 on the same board. `tests/child_guard` is a nested build, the release run's alone.
 `examples/dispatch_load.rs` measures concurrent writes against a scratch database seeded from a
-dump. Which tests a change runs, and the evidence its kind asks for:
+dump. `examples/board_load.rs` is the store's meter: a fixed amount of the agents' work (beats and
+the board commands they run, as the `tasks` binary) on a scratch board whose server `server::Home`
+starts, reporting each command's cost and the server's CPU, memory and bytes; a change of the
+store, its settings or its engine runs it on both sides the same day, from one export and one
+build of `tasks`, and what the store cost before any such change is
+[the store's baseline](../../docs/analysis/board-store-baseline.md). An example's tests run only
+when named: `just test-rs -p symphony-board --example board_load`. Which tests a change runs, and
+the evidence its kind asks for:
 [CHECKS](../../docs/CHECKS.md#picking-the-focused-set).

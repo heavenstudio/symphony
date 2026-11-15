@@ -691,9 +691,14 @@ A step moves what it can and nothing more:
   symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
   ```
 
-  in the commit that moves its pin, landed through its own landing as any move its gate refuses,
-  and nothing else changes: the key stays `symphony`, and so does the library's name, so no
-  member's manifest and no `use` moves. It names no Chrome driver, the other package renamed.
+  in the commit that moves its pin, and nothing else changes: the key stays `symphony`, and so
+  does the library's name, so no member's manifest and no `use` moves. It names no Chrome driver,
+  the other package renamed. For this rename an orchestrator makes that commit once, by hand, in
+  the consuming project's checkout ([its card](DECISIONS.md#consumer-manifest-line)): the line,
+  the release's tag on each of that project's Symphony lines and its lock, committed on its
+  default branch through its own commit gate. `just release --refresh` then finds the pin at the
+  release and goes on to the project's board and the server. Pushing that project's branch stays
+  a separate act that needs its own word.
 - **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
   full hash and never by a name a moved branch or a tag of the same name could answer, in its main
   checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all
@@ -724,18 +729,27 @@ A step moves what it can and nothing more:
   refresh finishes what an earlier one left, whatever release is newest. The store is snapshotted
   first, as it runs (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git
   common dir, the newest 5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in
-  its main checkout, the one command that moves a project's board, and the schema is read again. A
-  board whose database is not running is refused, since nothing here starts, signals or stops a
-  database. So is one running an older SurrealDB than the pin names, which the move would replace,
-  and one whose versions cannot be read, the pin's or the database's: the guard fails closed. A
-  project with no board folder has nothing to move.
+  its main checkout, the one command that moves a project's board, and the schema is read again. On
+  a board at schema 18 or later, a writer seen there in the last week that the move would leave
+  behind stops it: the migrate names each and moves nothing, and the step is red until each is
+  rebuilt and run once. The move to 18 itself names no one, as no build below 18 keeps a line: it
+  moves the board, and the project's programs still at its old pin are refused from then on, each
+  naming itself to rebuild. The machine's server is never counted, as it takes the new schema only
+  by its reload after the move ([who writes a board](TASKS.md#who-writes-a-board)). A board whose
+  database is not running is refused, since nothing here starts, signals or stops a database. So is
+  one running an older SurrealDB than the pin names, which the move would replace, and one whose
+  versions cannot be read, the pin's or the database's: the guard fails closed. A project with no
+  board folder has nothing to move.
 - **The shared server.** Last, the run says which server answers on the machine's record, what it
   is built from and where that checkout's main stands. Nothing here stops, signals or restarts it.
   Its own reload (`apps/symphony-server/src/reload.rs`) fingerprints the checkout it serves, its
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
-  hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. A build that installs the very bytes the serving one runs, with no client to
+  hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
+  serving and says on its notice why, and when it tries that version again: 5 minutes after its
+  first failure, the wait doubling with each failure of it in a row up to an hour, so a hand-over
+  that failed under load is tried again though the sources do not change again. A build that
+  installs the very bytes the serving one runs, with no client to
   publish, hands over to nothing: the serving server stamps the install as that build's and keeps
   serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for

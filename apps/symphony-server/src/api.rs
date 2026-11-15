@@ -227,7 +227,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     // The reports are the project's day files and its git alone, the board never read: a board
-    // slow or down leaves them as they are.
+    // slow or down leaves them as they are. The answer is the hub's kept one while neither moved,
+    // sent with the tag kept beside it.
     if path == symphony_api::REPORTS_PATH {
         let asked = reports::asked(
             query(&request, "grain").as_deref(),
@@ -245,7 +246,14 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         };
         return Some(
             match tokio::task::spawn_blocking(move || reports::answer(&hub, grain, days)).await {
-                Ok(page) => no_store(Json(page)),
+                Ok(answer) => {
+                    let mut response =
+                        no_store(([(header::CONTENT_TYPE, "application/json")], answer.body));
+                    response
+                        .extensions_mut()
+                        .insert(validated::Content(answer.tag));
+                    response
+                }
                 Err(e) => error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("the reports could not be read: {e}"),
@@ -452,11 +460,18 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 .trim()
                 .to_lowercase();
             let scores = if path == "/api/task-board" && !search.is_empty() {
-                let root = hub.root.clone();
+                let reading = hub.clone();
                 let needle = search.clone();
                 match tokio::task::spawn_blocking(move || {
-                    let store = symphony::taskview::connect(&root)?;
-                    store.search(&needle).map_err(|error| error.to_string())
+                    // On the store the task pages' reads share, never a board opened anew.
+                    let store = reading.reader()?;
+                    let hits = store.search(&needle);
+                    // Dropped only where the board failed the read, as the task pages drop it: a
+                    // query the search refuses (too long, too many terms) sent none.
+                    if matches!(hits, Err(symphony_board::Error::Db(_))) {
+                        reading.reader_failed(&store);
+                    }
+                    hits.map_err(|error| error.to_string())
                 })
                 .await
                 {

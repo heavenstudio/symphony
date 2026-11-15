@@ -1,14 +1,15 @@
 //! Snapshot queries and their shared indexed presence reads, and the health a native registration
 //! gives a session ([`native_health`]).
 
-use super::{EXECUTING, PULLABLE, Store, Which, cap};
+use super::{EXECUTING, PULLABLE, Sessions, Store, Which, cap};
 use crate::health::{self, Health};
 use crate::rows::SessionRow;
 use serde_json::{Value, json};
 
 impl Store {
-    /// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, and their variables.
-    pub(super) fn reading(which: &Which) -> (String, Value) {
+    /// The statements that read `which`, ending in the `RETURN` of a `Snapshot`, and their
+    /// variables, with the sessions `sessions` asks for.
+    pub(super) fn reading(which: &Which, sessions: Sessions) -> (String, Value) {
         const SCOPED: &str = " WHERE slug IN $slugs";
         const KNOWN: &str = "record::exists(type::record('task', $slug))";
         let (pick, scope, known, mut vars) = match which {
@@ -82,20 +83,30 @@ impl Store {
         } else {
             (String::new(), String::new())
         };
+        let (shown, sessions) = match (sessions, which) {
+            (Sessions::Whole, _) => ("[]", "session"),
+            (Sessions::Shown, Which::Pullable(_)) => (
+                "array::distinct(array::concat($view_roles.handle, [$handle]))",
+                SHOWN,
+            ),
+            (Sessions::Shown, _) => ("array::distinct($view_roles.handle)", SHOWN),
+        };
         vars["executing"] = json!(EXECUTING);
         native_bounds(&mut vars);
         let read = format!(
             "LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
              LET $slot_wanted = $slugs;
+             LET $view_roles = (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle);
+             LET $shown_sessions = {shown};
              {HELD}
              {slot_lets}
              RETURN {{
                  tasks: $tasks,
                  branches: ({}),
                  links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
-                 roles: (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle),
-                 sessions: (SELECT * OMIT id FROM session ORDER BY connected, handle),
+                 roles: $view_roles,
+                 sessions: (SELECT * OMIT id FROM {sessions} ORDER BY connected, handle),
                  held: $held,
                  latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
                  callback_sequence: $callback_sequence ?? 0,
@@ -110,6 +121,10 @@ impl Store {
         (read, vars)
     }
 }
+
+/// The sessions a read's answer can show ([`Sessions::Shown`]), each by its id, never a scan of
+/// the table: a handle the board holds no session of gives no row, as the whole list has none.
+const SHOWN: &str = "$shown_sessions.map(|$h| type::record('session', $h))";
 
 /// `$held`: every session holding work another could take over (`CLAIMABLE`, for everyone), for
 /// the `lost` line of health. Needs `$executing`. The roles are read by their tasks' slugs, through

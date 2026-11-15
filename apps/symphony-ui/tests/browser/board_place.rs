@@ -621,8 +621,10 @@ fn a_refresh_that_changed_nothing_in_a_deep_column_transfers_no_body() {
 const TAPPED: &str = "document.querySelector('.column[data-status=in_progress]:hover') !== null";
 
 /// On a touch screen the pointer stays where the reader last tapped, not where they are: on a
-/// phone, a tap on a card of In progress, a swipe back to Ready, In progress still peeking in
-/// beside it under the tap, and a task filed at Ready's top moves nothing of Ready on the screen.
+/// narrow one, whose columns stand side by side (a phone's show one at a time), a tap on a card of
+/// In progress, a swipe back to Ready in the middle of the board, Design before it and In progress
+/// still peeking in beside it under the tap, and a task filed at Ready's top moves nothing of Ready
+/// on the screen.
 #[test]
 fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
     let mut board = tasks();
@@ -641,7 +643,7 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    open(&mut page, &served, 390, 844);
+    open(&mut page, &served, 700, 1000);
     assert_eq!(
         page.eval("matchMedia('(hover: none)').matches"),
         json!(true),
@@ -668,15 +670,17 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         page.wait_for(TAPPED, SHOWN),
         "the tap never left the pointer over In progress"
     );
-    scroll_board(&mut page, "ready", 900);
-    // In progress peeks in beside Ready, the pointer still over it where the reader tapped.
-    let peeks = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
+    scroll_board(&mut page, "design", 900);
+    // Ready across the board's middle, In progress peeking in beside it, the pointer still over it
+    // where the reader tapped.
+    let peeks = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect(), middle = (box.left + box.right) / 2;
         const r = document.querySelector('.column[data-status=in_progress]').getBoundingClientRect();
-        return r.left < box.right && r.right > box.left; })()";
+        const ready = document.querySelector('.column[data-status=ready]').getBoundingClientRect();
+        return r.left < box.right && r.right > box.left && ready.left < middle && ready.right > middle; })()";
     assert_eq!(
         page.eval(&format!("{TAPPED} && {peeks}")),
         json!(true),
-        "the setup swipes to Ready, In progress beside it under the tap"
+        "the setup swipes back to Ready in the board's middle, In progress beside it under the tap"
     );
     let slug = "place/filed-after-a-tap";
     let before = page.eval(&first_on_screen("ready"));

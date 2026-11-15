@@ -58,6 +58,7 @@ mod owner_note;
 mod owner_save;
 mod panel_open;
 mod phone;
+mod phone_board;
 mod polish;
 mod preload;
 mod program;
