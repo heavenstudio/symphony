@@ -103,17 +103,25 @@ impl Hub {
     /// Tell every page, on the server's notice, whether the project's settings load, when that
     /// changes: while they do not, the project is served with the defaults
     /// ([`symphony::project::Project::problem`]). A change asks the loop to read the documents
-    /// again, as one a plugin's process makes comes with no file event.
+    /// again, as one a plugin's process makes comes with no file event; once they load, what the
+    /// defaults' read left of the plugins' watches is forgotten, so that read warms them as it
+    /// would a project's first, with no file they watch changed.
     pub(crate) fn tell_project(&self) {
         let said = symphony::project::Project::problem(&self.root)
             .map(|why| project(&why))
             .unwrap_or_default();
         let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
-        if notices.project != said {
-            notices.project = said;
-            self.server_notice.send_replace(notices.said());
-            self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+        if notices.project == said {
+            return;
         }
+        let loads = said.is_empty();
+        notices.project = said;
+        self.server_notice.send_replace(notices.said());
+        drop(notices);
+        if loads {
+            self.forget_watched(&self.root);
+        }
+        self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Tell every page, on the server's notice, that the server's update failed, `message`
