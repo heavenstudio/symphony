@@ -284,7 +284,7 @@ pub(crate) fn page(
             .filter(|mark| from <= mark.at && mark.at < to)
             .collect(),
         Err(why) => {
-            unread.push(format!("settings marks: {why}"));
+            unread.push(format!("settings and instructions marks: {why}"));
             Vec::new()
         }
     };

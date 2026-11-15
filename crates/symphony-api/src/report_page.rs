@@ -109,7 +109,7 @@ pub struct ReportsPage {
     pub first: Option<f64>,
     /// The commits on the default branch's line of first parents in the window that changed the
     /// project's settings file, where its gates and limits are set, or the instructions its agents
-    /// work under (a skill, the rules, a guide), oldest first.
+    /// work under (a skill, the rules), oldest first.
     #[serde(default)]
     pub marks: Vec<ReportMark>,
     /// What was not read, each in a sentence naming its file or folder and why: an hour it held is
@@ -292,9 +292,8 @@ pub struct ReportMark {
     /// Its hash, abbreviated.
     pub commit: String,
     pub subject: String,
-    /// What it changed, each once: `settings`, `rules`, `guide PATH` (a guide an agent is told to
-    /// read, by its path) and `skill NAME`. A server from before the instructions were marked
-    /// names none, and its marks are settings changes.
+    /// What it changed, each once: `settings`, `rules` and `skill NAME`. A server from before the
+    /// instructions were marked names none, and its marks are settings changes.
     #[serde(default)]
     pub changed: Vec<String>,
 }

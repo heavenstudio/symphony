@@ -209,7 +209,7 @@ fn an_answer_whose_marks_could_not_be_read_is_not_kept() {
         first
             .unread
             .iter()
-            .any(|line| line.starts_with("settings marks: ")),
+            .any(|line| line.starts_with("settings and instructions marks: ")),
         "{:?}",
         first.unread
     );

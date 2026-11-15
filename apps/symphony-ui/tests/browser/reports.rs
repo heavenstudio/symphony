@@ -2,7 +2,7 @@
 //! release client against the stand-in server answering `/api/reports` with a fortnight by the
 //! day: a phone's width held, one tap showing a period's every value on every chart, a day no file
 //! recorded told apart from a zero, the arrow keys moving between periods, a window's many
-//! changes of the settings and the agents' instructions (a skill, the rules, a guide), each marked
+//! changes of the settings and the agents' instructions (a skill, the rules), each marked
 //! alike, folded past the newest three so its first chart shows on a phone's first screen, two
 //! columns on a wide screen, the dark scheme's own colours, the empty state saying when
 //! the first roll-up comes, the last 24 hours with nothing chosen, and the window and the series
@@ -291,11 +291,11 @@ fn changed_often() -> Value {
 }
 
 /// What the `n`th change of [`changed_often`] changed, as the page says it: the settings, but the
-/// work skill with the rules for the eighth and a guide for the ninth, the two newest but one.
+/// work skill with the rules for the eighth and two skills for the ninth, the two newest but one.
 fn what(n: u32) -> &'static str {
     match n {
         7 => "rules, skill work",
-        8 => "guide crates/tasks/AGENTS.md",
+        8 => "skill review-task, skill tasks",
         _ => "settings",
     }
 }
@@ -342,7 +342,7 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
         json!({"listed": [mark(9, "Thu 14 Jan"), mark(8, "Thu 14 Jan"), mark(7, "Wed 13 Jan")],
             "whole": false, "more": "7 more changes", "open": false, "folded": folded,
             "drawn": false, "overflow": 0}),
-        "the newest three, newest first and cut to a line each, a settings change, a guide's \
+        "the newest three, newest first and cut to a line each, a settings change, two skills' \
          and a skill's with the rules' each saying what it changed, and the other seven, newest \
          first, folded"
     );

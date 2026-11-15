@@ -448,7 +448,7 @@ fn marks(tree: &Tree, since: f64) -> Vec<(f64, String, String)> {
 }
 
 #[test]
-fn a_skill_a_rule_a_guide_and_a_setting_are_a_mark_each_at_their_hour_and_another_file_is_none() {
+fn a_skill_a_rule_and_a_setting_are_a_mark_each_at_their_hour_and_another_file_is_none() {
     let tree = repository();
     commit(
         &tree,
@@ -469,8 +469,8 @@ fn a_skill_a_rule_a_guide_and_a_setting_are_a_mark_each_at_their_hour_and_anothe
         "guide: the board's",
         &[("crates/tasks/AGENTS.md", "# The board\n")],
     );
-    // None of them: a source file, a document beside a guide, a file named like the skills'
-    // folder and a link's own path under it, which is no file of a skill.
+    // None of them: a guide alone (the commit above), a source file, a document, a file named
+    // like the skills' folder and a link's own path under it, which is no file of a skill.
     commit(
         &tree,
         8.0,
@@ -486,7 +486,6 @@ fn a_skill_a_rule_a_guide_and_a_setting_are_a_mark_each_at_their_hour_and_anothe
     assert_eq!(
         marks(&tree, midnight()),
         [
-            (7.0, "guide: the board's", "guide crates/tasks/AGENTS.md"),
             (6.0, "settings: limits", "settings"),
             (5.0, "rules: one more", "rules"),
             (4.0, "skills: the work skill asks first", "skill work"),
@@ -549,21 +548,23 @@ fn a_landing_is_one_mark_naming_each_thing_its_branch_changed_once() {
         [(
             4.5,
             "Merge instructions".to_string(),
-            "settings, rules, guide AGENTS.md, guide CLAUDE.md, skill tasks, skill work"
-                .to_string()
+            "settings, rules, skill tasks, skill work".to_string()
         )],
-        "the merge alone, at its own hour: the settings and the rules, then the rest by name"
+        "the merge alone, at its own hour: the settings and the rules, then the skills by name, \
+         the guides it changed unnamed"
     );
 }
 
 #[test]
-fn the_instructions_are_the_settings_the_rules_the_guides_and_each_skill_s_files() {
+fn the_instructions_are_the_settings_the_rules_and_each_skill_s_files_and_no_guide() {
     for (path, named) in [
         ("symphony.toml", Some("settings")),
         ("RULES.md", Some("rules")),
-        ("AGENTS.md", Some("guide AGENTS.md")),
-        ("CLAUDE.md", Some("guide CLAUDE.md")),
-        ("apps/web/AGENTS.md", Some("guide apps/web/AGENTS.md")),
+        (".agents/skills/work/project.md", Some("skill work")),
+        // A guide is none, at the root or in a package.
+        ("AGENTS.md", None),
+        ("CLAUDE.md", None),
+        ("apps/web/AGENTS.md", None),
         (".agents/skills/work/SKILL.md", Some("skill work")),
         (".agents/skills/work/notes/deep.md", Some("skill work")),
         (".claude/skills/review/SKILL.md", Some("skill review")),
@@ -572,7 +573,7 @@ fn the_instructions_are_the_settings_the_rules_the_guides_and_each_skill_s_files
             Some("skill tasks"),
         ),
         ("skills/triage/SKILL.md", Some("skill triage")),
-        // A guide a skill's folder holds is the skill's.
+        // Whatever a skill's folder holds is the skill's.
         (".agents/skills/work/AGENTS.md", Some("skill work")),
         // No file of a skill: the folder's own files and links.
         (".claude/skills/work", None),

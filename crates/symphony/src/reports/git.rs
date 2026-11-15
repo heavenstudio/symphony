@@ -188,18 +188,17 @@ pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Resul
 /// The rules every agent of a project follows, at its root.
 pub const RULES: &str = "RULES.md";
 
-/// A guide an agent is told to read, by file name, at the root or in any package.
-pub const GUIDES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
-
 /// The folder that holds a skill a folder, wherever it is: the project's installed ones
 /// (`.agents/skills`), a package's shipped ones.
 pub const SKILLS: &str = "skills";
 
 /// What a change of `path` changes of what the agents of a project work under, the one list of the
 /// files whose changes the Reports page marks: `settings` for the project's settings file
-/// ([`crate::project::FILE`]), `rules` for [`RULES`], `skill NAME` for a file of the skill NAME
-/// (anything under a `skills/NAME/` folder) and `guide PATH` for a guide ([`GUIDES`]); none for
-/// every other path, a link to a skill's folder (`.claude/skills/NAME`) among them.
+/// ([`crate::project::FILE`]), `rules` for [`RULES`] and `skill NAME` for a file of the skill NAME
+/// (anything under a `skills/NAME/` folder, its role pages among them); none for every other path,
+/// a link to a skill's folder (`.claude/skills/NAME`) among them. A guide (`AGENTS.md`,
+/// `CLAUDE.md`) is none: here a third of the landings change one, 69 names in a day beside 12 of
+/// skills and one of the settings (2026-11-15), which buried the marks the page is read for.
 pub fn instruction(path: &str) -> Option<String> {
     if path == crate::project::FILE {
         return Some("settings".to_string());
@@ -207,24 +206,22 @@ pub fn instruction(path: &str) -> Option<String> {
     if path == RULES {
         return Some("rules".to_string());
     }
+    // The folders alone: the path's last part is the file.
     let mut folders: Vec<&str> = path.split('/').collect();
-    let name = folders.pop()?;
-    let skills = folders.iter().position(|folder| *folder == SKILLS);
-    if let Some(skill) = skills.and_then(|at| folders.get(at + 1)) {
-        return Some(format!("skill {skill}"));
-    }
-    GUIDES.contains(&name).then(|| format!("guide {path}"))
+    folders.pop()?;
+    let skills = folders.iter().position(|folder| *folder == SKILLS)?;
+    folders
+        .get(skills + 1)
+        .map(|skill| format!("skill {skill}"))
 }
 
 /// The pathspecs of every path [`instruction`] names, so git reads no other.
 fn instructions() -> Vec<String> {
-    let mut specs = vec![
+    vec![
         format!(":(literal){}", crate::project::FILE),
         format!(":(literal){RULES}"),
         format!(":(glob)**/{SKILLS}/*/**"),
-    ];
-    specs.extend(GUIDES.iter().map(|guide| format!(":(glob)**/{guide}")));
-    specs
+    ]
 }
 
 /// A commit that changed what the agents of a project work under.
@@ -232,14 +229,14 @@ fn instructions() -> Vec<String> {
 pub struct Change {
     pub commit: Commit,
     /// What it changed, as [`instruction`] names each, once: the settings, the rules, then the
-    /// guides and the skills by name.
+    /// skills by name.
     pub changed: Vec<String>,
 }
 
 /// The commits on `branch`'s line of first parents since `since` that changed the project's
 /// settings or the instructions its agents work under ([`instruction`]), a merge by what it brought
 /// against its first parent, tip first: where the Reports page marks a change of the gates and
-/// limits the settings file sets, of a skill, of the rules or of a guide. One `git log`.
+/// limits the settings file sets, of a skill or of the rules. One `git log`.
 pub fn changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Change>, String> {
     let since = format!("--since=@{}", since.floor());
     let tip = format!("refs/heads/{branch}");

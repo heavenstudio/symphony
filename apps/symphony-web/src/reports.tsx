@@ -998,7 +998,7 @@ const MARKS_SHOWN = 3;
 
 /**
  * The window's changes of the settings and of the instructions the agents work under (a skill, the
- * rules, a guide), newest first: the newest MARKS_SHOWN, a line each while the rest are folded
+ * rules), newest first: the newest MARKS_SHOWN, a line each while the rest are folded
  * behind "N more changes" (reports.css), so a window of many still shows its first chart on a
  * phone's first screen.
  */

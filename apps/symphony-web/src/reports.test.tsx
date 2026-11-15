@@ -457,13 +457,13 @@ describe("the axis", () => {
     expect(
       said(
         mark(["skill work"]),
-        mark(["settings", "rules", "guide crates/tasks/AGENTS.md", "skill work"]),
+        mark(["settings", "rules", "skill tasks", "skill work"]),
         mark([]),
         mark(),
       ),
     ).toEqual([
       "skill work changed, s (c)",
-      "settings, rules, guide crates/tasks/AGENTS.md, skill work changed, s (c)",
+      "settings, rules, skill tasks, skill work changed, s (c)",
       "settings changed, s (c)",
       "settings changed, s (c)",
     ]);

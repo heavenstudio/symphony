@@ -679,7 +679,7 @@ fn with_no_file_yet_every_period_is_missing_and_the_first_roll_up_is_none() {
     });
     assert_eq!(
         page.unread,
-        ["settings marks: git log of main failed: no such branch"]
+        ["settings and instructions marks: git log of main failed: no such branch"]
     );
 }
 
