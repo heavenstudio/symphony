@@ -49,9 +49,9 @@ symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     if [[ "$out" != /* ]]; then out="$PWD/$out"; fi
     PATH="$PWD/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dist "$out" {{quote(KIND)}} {{quote(OPT)}}
 
-# The web client's dev server (apps/symphony-web/dev.js, its guide's "The dev server"): its kinds
-# from their sources, the page loaded again on each save, at a loopback port of its own (PORT, 0 for
-# any) over a server of your own on port SERVER (`just symphony --port 0`). 8765 it refuses.
+# apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
+# a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
+# The web client's dev server: its kinds from their sources, the page loaded again on each save.
 [no-exit-message]
 symphony-ui-dev SERVER PORT="0":
     @bash apps/symphony-web/npm.sh run --silent dev -- {{quote(SERVER)}} {{quote(PORT)}}
