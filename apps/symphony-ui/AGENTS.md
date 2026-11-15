@@ -52,7 +52,7 @@ never the whole target, which the release run runs.
   script and main module, and a chunk for it and one for the media
   layer (no kind: the chat loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
-  (crates/symphony/src/cli/commands/split_repair.rs)
+  (crates/symphony-build/src/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
   the shell's `gone` state, never a page left waiting, follows. dx runs with a DX_HOME of
   `bundle.sh`'s own under the held target, the machine's tools linked but for wasm-opt,
@@ -81,7 +81,7 @@ never the whole target, which the release run runs.
   `dx-path.sh` keeps there a hard link of the installed dx (a copy across volumes),
   replaced whole when it is not that file or its bytes (`tests/tools.rs`).
   The Rust build runs in a release snapshot under `/private/tmp` (`symphony-build release-inputs`,
-  `crates/symphony/src/cli/commands/release_inputs.rs`), named by the bytes of what the client's
+  `crates/symphony-build/src/commands/release_inputs.rs`), named by the bytes of what the client's
   build reads alone, so a change anywhere else needs no new distribution: the locked component
   source copied without changing its version or features, the caller's compiler flags, wrappers
   and resource settings kept, its configuration patches and lock accounting made in that private

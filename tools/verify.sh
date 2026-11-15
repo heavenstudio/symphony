@@ -19,7 +19,7 @@
 # each check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
 # status, seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
 # and 15 minutes and its processors, space-separated; empty where the system does not say),
-# tab-separated (crates/symphony/src/release/steps.rs reads it). Named STEPs run alone, in the
+# tab-separated (crates/symphony-build/src/release/steps.rs reads it). Named STEPs run alone, in the
 # order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
 #
 # The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The

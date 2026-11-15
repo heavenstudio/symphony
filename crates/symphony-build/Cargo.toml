@@ -1,0 +1,42 @@
+# `symphony-build`: the commands only this repository's own build and release run use
+# (`publish-client`, `release-inputs`, `size-budget`, `crates-check`, `split-repair`, `synced` and
+# `release`, docs/RELEASES.md and docs/CHECKS.md), run as `tools/rs-bin.sh symphony-build COMMAND`.
+# A package of its own, never published (the workspace's `publish = false`) and never shipped: no
+# project is given it (`init::BUILDS` does not name it), and neither the library every project
+# links nor its `symphony` binary compiles any of it. It lints as the library does.
+[package]
+name = "symphony-build"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The library, whose project file, machine registry, board session and text rules the release run
+# reads by; `symphony-app` on crates.io, its library `symphony`.
+symphony = { package = "symphony-app", path = "../symphony" }
+symphony-board = { path = "../tasks" }
+symphony-api = { path = "../symphony-api" }
+# A mistyped command's nearest names, as the shipped `symphony` ranks its own.
+symphony-args = { path = "../symphony-args" }
+# The private headless Chrome `synced` times the pages in, the shot's driver.
+symphony-chrome = { path = "../chrome-devtools" }
+symphony-env = { path = "../symphony-env" }
+serde = { version = "1", features = ["derive"] }
+# The features the library's serde_json takes, which the release run's JSON is read and written
+# under (an object keeps its members in order; an integer keeps its value).
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+toml.workspace = true
+libc.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+# The tests' CPU meters and waits (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../test-time" }
+# What the library's shared test helpers build with (crates/symphony/tests/common), which the
+# release tests take whole: its project tree, its older boards and its scratch board's CLI.
+regex.workspace = true
+symphony-plugin = { path = "../symphony-plugin" }
