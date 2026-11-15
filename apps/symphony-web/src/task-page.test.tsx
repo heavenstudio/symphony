@@ -26,6 +26,7 @@ import {
   TaskPageView,
 } from "./task-page";
 import { aRole, aTask, memoryStorage } from "./testing";
+import { NOT_IN_TIME } from "./trouble";
 import type { Block, TaskBrief, TaskEntry, TaskPage } from "./wire";
 import { CHECKING } from "./words";
 import { NO_WORK } from "./work";
@@ -489,11 +490,20 @@ describe("the route's task as its read stands", () => {
     const none = html(<LiveTaskPage live={missing} connected />);
     expect(none).toContain("No task fixture/task");
     expect(none).toContain('href="/tasks"');
+    // The server has no such task: nothing is tried again, nor said to be.
+    expect(none).not.toContain("Trying again");
     const failing = live();
     failing.d.error = "The server answered 500";
-    expect(html(<LiveTaskPage live={failing} connected />)).toContain(
-      "The task could not be loaded",
-    );
+    const failed = html(<LiveTaskPage live={failing} connected />);
+    expect(failed).toContain("The task could not be loaded");
+    // The page reads it again by itself, and says so, the Retry kept.
+    expect(failed).toContain("<p>The server answered 500. Trying again…</p>");
+    expect(failed).toContain(">Retry</button>");
+    // A read with no answer in time says so in a read's words, never a write's.
+    failing.d.error = NOT_IN_TIME;
+    const late = html(<LiveTaskPage live={failing} connected />);
+    expect(late).toContain("<p>The server did not answer in time. Trying again…</p>");
+    expect(late).not.toContain("sending");
   });
 
   it("under the board's notices, waits for the board, or says it could not be read", () => {
@@ -504,7 +514,7 @@ describe("the route's task as its read stands", () => {
     task.trouble = "The server answered 503";
     const trouble = html(<TaskPageView live={task} stale freshness={FRESH} />);
     expect(trouble).toContain("The board could not be loaded");
-    expect(trouble).toContain("It is also tried again on its own.");
+    expect(trouble).toContain("<p>The server answered 503. Trying again…</p>");
     expect(trouble).toContain('data-feed="stale"');
   });
 

@@ -1029,6 +1029,12 @@ export type Section = {
   part: number | null;
   blocks: Array<Block>;
   comparison?: SectionComparison | null;
+  /**
+   * The kinds of the first and last blocks the section draws ([`Section::ends_of`]), so the
+   * outline tells a page how a section it has not read yet will meet its neighbours. Left out
+   * for a section that draws nothing.
+   */
+  ends?: [string, string] | null;
 };
 
 export type Difference = "added" | "changed" | "removed";

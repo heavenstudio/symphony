@@ -12,6 +12,7 @@ import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
 import { field, holdPlace, list as items } from "./shared";
+import { tryAgain } from "./state";
 import {
   byPriority,
   holderHealth,
@@ -513,6 +514,8 @@ export class LiveAgents {
   /** A read of the first page again is under way, and another was asked for meanwhile. */
   private reading = false;
   private again = false;
+  /** The board reads so far: each starts the first page's reads anew (`first`). */
+  private round = 0;
   /** The next page of the connected agents, or of the lost ones: one function for the page's life. */
   readonly more = (lost: boolean): void => {
     void this.next(lost);
@@ -544,7 +547,7 @@ export class LiveAgents {
       views: {
         // The page keeps nothing on this device.
         freshen: () => {},
-        read: () => this.load(),
+        read: () => this.first(),
         heard: (value) => this.heard(value),
         frame,
       },
@@ -559,6 +562,19 @@ export class LiveAgents {
     } catch (failure) {
       return said(failure);
     }
+  }
+
+  /**
+   * The board was read: read the first page afresh and, while the page has no agents to show (the
+   * read failed), again, waiting longer after each failure (`tryAgain`), until it has them, the
+   * next board read starts again or the page stops. Settles once the first read is done.
+   */
+  async first(): Promise<void> {
+    this.round += 1;
+    const round = this.round;
+    await this.load();
+    const unanswered = () => this.round === round && this.d.view === null;
+    void tryAgain(unanswered, () => this.load(), this.signal);
   }
 
   /** Read the first page afresh: the agents, the tasks, the counts and both cursors as it says. */
