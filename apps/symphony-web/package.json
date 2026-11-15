@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "NODE_ENV=production vite build",
+    "dev": "node dev.js",
     "lint": "biome ci --error-on-warnings . && tsc --noEmit",
     "test": "vitest run --coverage"
   },

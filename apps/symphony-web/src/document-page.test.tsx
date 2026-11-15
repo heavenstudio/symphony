@@ -5,6 +5,7 @@ import {
   DocumentBody,
   DocumentPage,
   Excerpt,
+  ExcerptBody,
   FolderPage,
   GhostDocument,
   HtmlPage,
@@ -271,6 +272,53 @@ describe("a link's excerpt", () => {
     expect(html).toBe(
       '<div class="excerpt-box" role="region" aria-label="Excerpt of /docs/NOTES.md#open" data-busy="true"><p class="excerpt-title">/docs/NOTES.md#open</p><p role="status">Loading the excerpt…</p></div>',
     );
+  });
+
+  it("says a read that failed, and a section with nothing in it", () => {
+    expect(renderToStaticMarkup(<ExcerptBody read={{ error: "Not found" }} />)).toBe(
+      '<p role="alert">Not found</p>',
+    );
+    expect(renderToStaticMarkup(<ExcerptBody read={{ fragment: { blocks: [] } }} />)).toBe(
+      "<p>This section is empty.</p>",
+    );
+  });
+
+  it("draws every block it read at once, where the browser could wait for each to come near", () => {
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        disconnect() {}
+        takeRecords() {
+          return [];
+        }
+      },
+    );
+    const item: Block[] = [paragraph("Is it red?")];
+    const html = renderToStaticMarkup(
+      <ExcerptBody
+        read={{
+          fragment: {
+            blocks: [
+              { type: "list", ordered: true, start: 1, items: [item] },
+              { type: "details", open: true, summary: [], blocks: [paragraph("Folded words.")] },
+              {
+                type: "table",
+                head: [],
+                rows: [
+                  [{ header: false, spans: [{ type: "text", text: "A row" }], presentation: {} }],
+                ],
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(html).toContain("<p>Is it red?</p>");
+    expect(html).toContain("<p>Folded words.</p>");
+    expect(html).toContain("<td>A row</td>");
+    expect(html).not.toContain("viewport-sentinel");
+    expect(html).not.toContain('data-pending="true"');
   });
 });
 

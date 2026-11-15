@@ -79,6 +79,11 @@
 .postponed {
   color: var(--muted-foreground);
 }
+/* Later on its way keeps the focus (LaterButton, postpone.tsx), drawn as a disabled button is. */
+.postpone-controls > .dx-button[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
 .queue-categories,
 .ghost-chips {
   display: flex;

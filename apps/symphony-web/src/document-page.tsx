@@ -39,7 +39,7 @@ import { ComparisonNote, DocumentWithTasks, SectionDifference } from "./related"
 import { getJson, said } from "./request";
 import { anchor, scrollAnchor, useAnchor } from "./route";
 import { failed as failedRead, ready as readyWord, Trouble } from "./trouble";
-import { NearViewport, Settle, Skeleton } from "./viewport";
+import { AtOnce, NearViewport, Settle, Skeleton } from "./viewport";
 import type {
   Document,
   DocumentCard,
@@ -668,7 +668,7 @@ function DocSection({
  * section once and nothing nests. It holds its section's markup while it is open.
  */
 export function Excerpt({ target }: { target: LinkTarget }) {
-  const [read, setRead] = useState<{ fragment: Fragment } | { error: string } | null>(null);
+  const [read, setRead] = useState<ExcerptRead>(null);
   const name = target.anchor ?? "";
   const title = `${target.path}#${name}`;
   useEffect(() => {
@@ -688,17 +688,31 @@ export function Excerpt({ target }: { target: LinkTarget }) {
     );
     return () => reading.abort();
   }, [target.path, name]);
-  let shownRead: ReactNode;
-  if (read === null) shownRead = <p role="status">Loading the excerpt…</p>;
-  else if ("error" in read) shownRead = <p role="alert">{read.error}</p>;
-  else if (read.fragment.blocks.length === 0) shownRead = <p>This section is empty.</p>;
-  else shownRead = <HistoricalBlocks blocks={read.fragment.blocks} />;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a region of its own, as the Dioxus page draws it
     <div className="excerpt-box" role="region" aria-label={`Excerpt of ${title}`} data-busy="true">
       <p className="excerpt-title">{title}</p>
-      {shownRead}
+      <ExcerptBody read={read} />
     </div>
+  );
+}
+
+/** An excerpt's read: its section, or why it could not be read; null until it answers. */
+export type ExcerptRead = { fragment: Fragment } | { error: string } | null;
+
+/**
+ * What an excerpt's box shows of its read. Its blocks are drawn whole at once (`AtOnce`): opening
+ * the excerpt asked for them, and the box, which scrolls, would clip their look-ahead, so a box
+ * opened below the screen would stay empty until it was scrolled to.
+ */
+export function ExcerptBody({ read }: { read: ExcerptRead }) {
+  if (read === null) return <p role="status">Loading the excerpt…</p>;
+  if ("error" in read) return <p role="alert">{read.error}</p>;
+  if (read.fragment.blocks.length === 0) return <p>This section is empty.</p>;
+  return (
+    <AtOnce.Provider value={true}>
+      <HistoricalBlocks blocks={read.fragment.blocks} />
+    </AtOnce.Provider>
   );
 }
 

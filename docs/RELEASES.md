@@ -371,7 +371,11 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
-   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
+     range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
+     (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
+     may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
+     no green run on record the range starts at the release before; with neither there is none.
 
    **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
    (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
@@ -728,7 +732,9 @@ A step moves what it can and nothing more:
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
   hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. When this refresh moved that checkout's main and a server built from it
+  why on its notice. A build that installs the very bytes the serving one runs, with no client to
+  publish, hands over to nothing: the serving server stamps the install as that build's and keeps
+  serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for
   it, and says which; or that none has yet, and that `just symphony-status` says which answers
   later. With none answering for it before, it waits for none: which build answers after cannot

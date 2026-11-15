@@ -1,10 +1,11 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
-//! Escape closing the editor, a link's excerpt opens beside the link's own button, callouts are
-//! as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
+//! Escape closing the editor and Later and its Undo keeping the focus on their button, a link's
+//! excerpt opens beside the link's own button and fills even opened below a short window's fold,
+//! callouts are as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
 //! picture in its history.
 use super::components::key;
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
+use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/PROBE.md";
@@ -395,6 +396,77 @@ fn document_card_escape_closes_the_editor_and_returns_focus_to_its_opener() {
     );
 }
 
+/// A card's Later and its Undo, pressed from the keyboard in its editor, keep the focus on their
+/// button while the server saves and once the card's new state is drawn: Undo Later after Later,
+/// Later after Undo. The server names no card next, so the reader stays on this one.
+#[test]
+fn document_card_later_and_undo_keep_the_focus_on_their_button() {
+    let site = probe_site();
+    site.set_json("/api/postponed", &json!([]));
+    site.set_json(
+        "/api/postpone",
+        &json!({"ok":true,"changed":false,"next":null}),
+    );
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url(&format!("/{DOC}")));
+    open_editor(&mut page, "alpha");
+    let later = "[data-doc-key=\"card:alpha\"] .verdict-choices .postpone-controls button";
+    for (pressed, postponed, label) in [
+        (("Enter", "Enter", 13), json!(["alpha"]), "Undo Later"),
+        ((" ", "Space", 32), json!([]), "Later"),
+    ] {
+        page.eval(&format!("document.querySelector({}).focus()", json!(later)));
+        site.hold_route("/api/postpone", true);
+        key(&mut page, pressed.0, pressed.1, pressed.2);
+        assert!(
+            page.wait_for(
+                &format!(
+                    "document.querySelector({})?.textContent === 'Saving…'",
+                    json!(later)
+                ),
+                SHOWN
+            ),
+            "{} says it saves",
+            pressed.0
+        );
+        assert_eq!(
+            focus_on(&mut page, later),
+            json!(true),
+            "the focus stays on the button while it saves"
+        );
+        assert!(
+            page.wait_for(&crate::drawn_disabled(later), SHOWN),
+            "it looks as a disabled button does while it saves"
+        );
+        site.set_json("/api/postponed", &postponed);
+        site.hold_route("/api/postpone", false);
+        assert!(
+            page.wait_for(
+                &format!(
+                    "document.querySelector({})?.textContent === {}",
+                    json!(later),
+                    json!(label)
+                ),
+                SHOWN
+            ),
+            "the card's button says {label} once the server answered"
+        );
+        assert_eq!(
+            focus_on(&mut page, later),
+            json!(true),
+            "once the server answered, the focus is on {label}"
+        );
+    }
+    let actions: Vec<_> = site
+        .posts()
+        .into_iter()
+        .filter(|(path, body)| path == "/api/postpone" && body["action"] != "seen")
+        .map(|(_, body)| body["action"].clone())
+        .collect();
+    assert_eq!(actions, [json!("later"), json!("undo")]);
+}
+
 /// The card `alpha`'s show button and its excerpt: the button's label and state, the gap between
 /// the button and the excerpt, whether the excerpt's own words show, how many elements own the
 /// card's anchor, and whether the excerpt offers excerpts of its own.
@@ -486,6 +558,63 @@ fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() 
         [&closed["label"], &closed["expanded"]],
         [&json!("▸ show"), &json!("false")],
         "{closed}"
+    );
+}
+
+/// Where the card `alpha`'s open excerpt is: the page's scroll, whether its box's top is below the
+/// window, and how many of its regions still wait to come near the screen.
+const EXCERPT_PLACE: &str = r#"(() => {
+    const box = document.querySelector('[data-doc-key="card:alpha"] .excerpt-box');
+    return {scrollY, below: box.getBoundingClientRect().top >= innerHeight,
+        waiting: box.querySelectorAll('[data-pending=true]').length};
+})()"#;
+
+/// On a short window (a laptop's browser, a phone) the owner opens a card's excerpt from a button at
+/// the window's bottom edge, its box opening below the screen: the excerpt fills without being
+/// scrolled to. Its box scrolls, and so clipped the look-ahead of the parts of it that waited to
+/// come near the screen (the copied card's history, the list item): opening it is the ask.
+#[test]
+fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scroll() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 756, 469);
+    // Room above the card, so its button can sit at the window's bottom edge.
+    page.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
+        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '[data-doc-key=\"intro\"] { margin-bottom: 900px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
+    }));
+    page.open(&site.url(&format!("/{DOC}#alpha")));
+    let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
+    assert!(
+        page.wait_for(&crate::visible(show), SHOWN),
+        "the card alpha is drawn"
+    );
+    page.eval(&format!(
+        "(() => {{ const show = document.querySelector({0}); scrollBy(0, Math.ceil(show.getBoundingClientRect().bottom - innerHeight)); show.click(); }})()",
+        json!(show)
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box h2') !== null",
+            SHOWN
+        ),
+        "the excerpt is read"
+    );
+    let opened = page.eval(EXCERPT_PLACE);
+    assert_eq!(
+        opened["below"],
+        json!(true),
+        "the excerpt's box opens below the window, so the case tests a box off screen: {opened}"
+    );
+    assert!(
+        page.wait_for(&format!("{PARAGRAPHS}.pairs === 4"), SHOWN),
+        "the excerpt draws its copied history and list item where it opened, below the window: {} {}",
+        page.eval(PARAGRAPHS),
+        page.eval(EXCERPT_PLACE)
+    );
+    assert_eq!(
+        page.eval(EXCERPT_PLACE),
+        json!({"scrollY": opened["scrollY"], "below": true, "waiting": 0}),
+        "it filled with nothing scrolled and nothing left waiting in it"
     );
 }
 

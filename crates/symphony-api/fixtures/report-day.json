@@ -167,7 +167,21 @@
       "series": "main",
       "filed": 1799972100.0,
       "closed": 1799975400.0,
-      "status": "done"
+      "status": "done",
+      "between": null,
+      "landed": null
+    },
+    {
+      "slug": "tests/release-red-verify-tests",
+      "series": "release",
+      "filed": 1799974800.0,
+      "closed": null,
+      "status": "in_progress",
+      "between": "1a5037fc9e2b4d6a8c0e1f3a5b7c9d0e2f4a6b8c..fd70821942b4c97d1e17b420217ada28988e27da",
+      "landed": [
+        "tests/release-red-verify-lint",
+        "app/board-filter"
+      ]
     }
   ],
   "decisions": {

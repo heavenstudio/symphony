@@ -24,7 +24,7 @@ pub(crate) use warm::{start, warm};
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
-const READS: &[&str] = &[
+pub(crate) const READS: &[&str] = &[
     "/api/board",
     "/api/queue",
     "/api/postponed",
