@@ -16,6 +16,7 @@ import {
   fromFirstRecord,
   HIDDEN,
   hiddenSeries,
+  linkedFigures,
   type Page,
   parseGrain,
   paths,
@@ -25,6 +26,7 @@ import {
   rangeName,
   ranges,
   readReports,
+  SECTIONS,
   toggle,
 } from "./reports";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
@@ -535,6 +537,47 @@ describe("the figures", () => {
     ]);
     expect(figures({ ...page(), grain: "hour" })[1].detail).toBe("kept by the day");
   });
+
+  it("each name the chart it sums up, one the page draws", () => {
+    const linked = linkedFigures(page());
+    expect(linked.map(([figure, chart]) => [figure.label, chart])).toEqual([
+      ["Done", "done"],
+      ["Lead time", "lead"],
+      ["Agents at work", "agents"],
+      ["Open decisions", "decisions"],
+    ]);
+    expect(linked.map(([figure]) => figure)).toEqual(figures(page()));
+    const titles = new Map(
+      SECTIONS.flatMap(([, specs]) => specs.map((spec): [string, string] => [spec.id, spec.title])),
+    );
+    expect(linked.map(([, chart]) => titles.get(chart))).toEqual([
+      "Tasks done",
+      "Lead time",
+      "Agents at work",
+      "Decisions",
+    ]);
+  });
+});
+
+describe("a figure's link", () => {
+  it("opens the chart it sums up, and none while no chart is drawn", () => {
+    const html = view(page());
+    expect(html.match(/<dt><a href="#chart-[a-z]+">/g)).toEqual([
+      '<dt><a href="#chart-done">',
+      '<dt><a href="#chart-lead">',
+      '<dt><a href="#chart-agents">',
+      '<dt><a href="#chart-decisions">',
+    ]);
+    // A chart still to mount holds its id in its ghost, so the link finds its place.
+    expect(html).toContain('<span id="chart-decisions"></span><div class="ghost-chart"');
+    for (const [, chart] of linkedFigures(page())) {
+      expect(html.match(new RegExp(`id="chart-${chart}"`, "g"))).toHaveLength(1);
+    }
+    const nothing = view(read(unrecorded(wire())));
+    expect(nothing).toContain("<dt>Done</dt>");
+    expect(nothing).not.toContain("href=");
+    expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
+  });
 });
 
 describe("the page's view", () => {
@@ -583,7 +626,7 @@ describe("the page's view", () => {
     const html = view(page());
     expect(html).toContain('aria-busy="false"');
     expect(html).toContain('data-ready="reports"');
-    expect(html).toContain('<dt>Done</dt><dd class="value">7</dd>');
+    expect(html).toContain('<dt><a href="#chart-done">Done</a></dt><dd class="value">7</dd>');
     expect(html).toContain(
       '<ul class="reports-marks" aria-label="Settings changes in the window">',
     );
