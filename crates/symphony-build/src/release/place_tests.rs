@@ -42,16 +42,6 @@ fn repo(tree: &Tree) -> (PathBuf, PathBuf, String) {
 }
 
 #[test]
-fn the_board_sweep_knows_the_checkouts_lock_and_how_long_its_build_is_kept() {
-    // The sweep keeps the checkout this lock marks, and clears its build only once it is older
-    // than the release run would keep it: both say the same, or the sweep removes what the release run
-    // builds on.
-    use symphony_board::sweep::holder::{RELEASE_BUILD_DAYS, RELEASE_LOCK};
-    assert_eq!(RELEASE_LOCK, LOCK_REASON);
-    assert_eq!(RELEASE_BUILD_DAYS, BUILD_KEPT_DAYS);
-}
-
-#[test]
 fn a_path_is_folded_as_written() {
     assert_eq!(normal(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
     assert_eq!(
@@ -247,7 +237,7 @@ fn a_git_lock_no_process_holds_is_removed_and_one_held_stops_the_run() {
     );
     assert!(!lock.exists());
     let lock = tree.write("admin/HEAD.lock", "");
-    let mut holder = crate::children::command("sleep")
+    let mut holder = symphony::children::command("sleep")
         .arg("30")
         .stdin(fs::File::open(&lock).unwrap())
         .spawn()

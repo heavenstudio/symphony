@@ -16,7 +16,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::init::BUILDS;
+use symphony::init::BUILDS;
 
 /// The budget, under the checkout.
 const BUDGET: &str = "tools/size-budget.toml";

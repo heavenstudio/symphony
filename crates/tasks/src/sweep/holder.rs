@@ -14,11 +14,12 @@
 
 use super::process::{self, Claude};
 
-/// The reason the release run's checkout is locked with (`symphony::release::place::LOCK_REASON`).
+/// The reason the release run's checkout is locked with, which the release run locks it with
+/// (`symphony-build release`, crates/symphony-build/src/release/place.rs).
 pub const RELEASE_LOCK: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
-/// How long the release run builds incrementally in its checkout before it clears the build itself
-/// (`symphony::release::place::BUILD_KEPT_DAYS`): the sweep clears it once nothing touched the
-/// checkout for that long, a release run no longer running.
+/// How long the release run builds incrementally in its checkout before it clears the build itself,
+/// which the release run reads too: the sweep clears it once nothing touched the checkout for that
+/// long, a release run no longer running.
 pub const RELEASE_BUILD_DAYS: f64 = 7.0;
 
 /// A worktree's holder, as its lock says.

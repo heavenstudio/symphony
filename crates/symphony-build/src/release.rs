@@ -64,8 +64,8 @@ use record::{Checking, Run, Running, local};
 use symphony_board::sys::{Interrupts, pid_alive};
 use tags::Release;
 
-use crate::cli::{Flag, parse};
-use crate::project::Project;
+use symphony::cli::{Flag, parse};
+use symphony::project::Project;
 
 /// A refusal of the command line, as `symphony::cli::refuse` words one but under the binary that
 /// runs it: the usage, then the error. Exit 2.
@@ -215,7 +215,7 @@ fn clock() -> Result<f64, String> {
 
 /// `symphony-build release ARGS`: its exit code. 0 is green (or nothing new to release), 1 a red or
 /// a run that could not finish, 2 a command line refused.
-pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let flag = |name, value| Flag { name, value };
     let flags = [
         flag("--root", true),
@@ -554,7 +554,7 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         return Ok(None);
     }
     let tree = place.checkout.display();
-    let mut build = crate::children::command(&launcher);
+    let mut build = symphony::children::command(&launcher);
     build
         .args(["--build", "symphony-build"])
         .current_dir(&place.checkout)
@@ -800,7 +800,7 @@ fn settle_held(
         local: local.as_deref(),
         newest: (newest.as_ref()).map(|(name, commit)| (name.as_str(), commit.as_str())),
     };
-    let board = crate::taskcli::CliBoard::new(&repo.main);
+    let board = symphony::taskcli::CliBoard::new(&repo.main);
     let bounds = candidate::Bounds::of(&repo.project.releases);
     noted.extend(candidate::settle(held, &line, &board, now, bounds));
     noted.extend(candidate::steer(&repo.root, held));
@@ -961,7 +961,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             let _ = writeln!(
                 err,
                 "symphony-build release: {}",
-                crate::text::os_error(e, &lock_path)
+                symphony::text::os_error(e, &lock_path)
             );
             return 1;
         }
@@ -1648,7 +1648,7 @@ fn tell(
         candidate: holding,
         rerun: record.rerun.is_some(),
     };
-    let board = crate::taskcli::CliBoard::new(&repo.main);
+    let board = symphony::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
     // A refresh step its project stopped is its project's to finish: filed nowhere, closing none.
     steps.extend((record.refreshed.iter()).flat_map(|refresh| refresh.told().cloned()));
@@ -1847,7 +1847,7 @@ fn night(
         let _ = writeln!(out, "release: {noted}");
     }
     let logs = record::logs(folder, &record.id);
-    fs::create_dir_all(&logs).map_err(|e| Stop::Error(crate::text::os_error(&e, &logs)))?;
+    fs::create_dir_all(&logs).map_err(|e| Stop::Error(symphony::text::os_error(&e, &logs)))?;
     record::so_far(&logs, record);
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
     let mut carried: Vec<record::Carried> = Vec::new();

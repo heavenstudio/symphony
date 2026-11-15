@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use super::checks::{Ran, tail};
 use super::git::short;
 use super::record::{Board, Held};
-use crate::taskcli::CliBoard;
+use symphony::taskcli::CliBoard;
 
 /// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
 pub(crate) const SERIES: &str = "tests/release-red-";
