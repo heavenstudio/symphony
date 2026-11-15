@@ -1,9 +1,8 @@
 //! Seven tabs of one server, each following the feed. A browser keeps six HTTP/1.1 connections to a
 //! host, and a stream of Server-Sent Events holds one for as long as it is open, so six tabs on
 //! event streams would leave a seventh none for its reads: its page would never load. The web
-//! client's kinds follow the feed on a WebSocket, which the browser counts apart, so a seventh tab
-//! draws and follows the feed as the first did; the task page, still the Dioxus program's, follows
-//! it as events, on one of the six.
+//! client follows the feed on a WebSocket, which the browser counts apart, so a seventh tab draws
+//! and follows the feed as the first did.
 
 use std::time::Duration;
 
@@ -25,8 +24,8 @@ const TABS: [(&str, &str); 7] = [
     ("/tasks", "[data-slug='tools/example']"),
 ];
 
-/// Run in each tab before its page: the feed's events each stream hears, by name, whether on a
-/// WebSocket or as events, and the notifications the page shows, the owner having allowed them.
+/// Run in each tab before its page: the feed's events its sockets hear, by name, and the
+/// notifications the page shows, the owner having allowed them.
 const HEARD: &str = r"(() => {
   window.__heard = {};
   const heard = (name) => { window.__heard[name] = (window.__heard[name] ?? 0) + 1; };
@@ -35,13 +34,6 @@ const HEARD: &str = r"(() => {
     constructor(...args) {
       super(...args);
       this.addEventListener('message', (message) => heard(String(message.data).split('\n')[0]));
-    }
-  };
-  const Source = window.EventSource;
-  window.EventSource = class extends Source {
-    constructor(...args) {
-      super(...args);
-      for (const name of ['delta', 'ping', 'server']) this.addEventListener(name, () => heard(name));
     }
   };
   window.__notified = [];
@@ -205,8 +197,8 @@ fn seven_tabs_of_one_server_each_draw_follow_the_feed_hear_one_event_and_let_go_
         site.feeds(),
         site.socket_feeds()
     );
-    // Every tab follows the feed: the task page as events, every other on a WebSocket.
-    holding(&site, 7, 6);
+    // Every tab follows the feed, each on a WebSocket.
+    holding(&site, 7, 7);
 
     // One event reaches every tab, and the home page behind the others tells the owner of it.
     let (version, waiting, event) = more_waiting();
@@ -232,5 +224,5 @@ fn seven_tabs_of_one_server_each_draw_follow_the_feed_hear_one_event_and_let_go_
 
     // A tab closed stops counting.
     chrome.browser_call("Target.closeTarget", json!({ "targetId": tabs[1].target }));
-    holding(&site, 6, 5);
+    holding(&site, 6, 6);
 }
