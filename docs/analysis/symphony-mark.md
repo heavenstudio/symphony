@@ -25,8 +25,10 @@ main at 3f3d9186.
   `tools/static/icon.svg` of a project (`apps/symphony-server/src/projects.rs`, where a path
   outside any project finds its owner): the project the request's Referer names, a page of the
   same server under `/ID/`, else the project the machine's server was started from. On this
-  machine that last is the consuming project, so a page with no Referer of a project's, the
-  project list among them, gets that project's star.
+  machine that last is the consuming project, so a request no project's page sent, such as a file
+  opened raw (an image or a text served as itself, with no icon link of its own) or anything
+  asking the address itself, gets that project's star. A page with an icon link of its own, the
+  project list among them, is not asked for it.
 - **The header** shows no mark and no name: it opens with Projects, then the pages. The project
   file's reference says a theme's name and icon are the header's and the tab's; only the tab
   shows them.
@@ -67,7 +69,9 @@ The follow-up, once the owner has chosen:
   on the server's own pages (in place of the beamed notes), and the answer to `/favicon.ico`
   outside any project. Its place in that answer's order is the follow-up's to set in
   `projects.rs` (the Referer's project, then the started one): after the Referer's project and
-  before the started one, so the project list gets Symphony's icon and a project's page its own.
+  before the started one. That order decides only what the address answers when no project's
+  page asked; the project list's tab gets Symphony's icon by its own icon link, the beamed notes
+  replaced.
 - **The scheme.** The icon files choose their light and dark colours by the system's scheme
   (`prefers-color-scheme` inside the file), not by the app's Appearance choice, which a browser
   does not pass to a tab's icon; the header's mark, drawn in `--primary`, follows Appearance.
