@@ -97,7 +97,7 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
             &planted[..12],
             git(&fixture.main, &["rev-parse", "--short", &planted])
         ),
-        "key: verify\ncheck: verify".into(),
+        format!("\nbetween: {green}..{planted}\nkey: verify\ncheck: verify"),
     ] {
         assert!(red.body.contains(&said), "{said:?} in:\n{}", red.body);
     }

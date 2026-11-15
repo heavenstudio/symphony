@@ -24,7 +24,10 @@ import { PAGE_NAMES } from "./wire";
 /** What a page's feed tells the frame: read the metadata again, or what moved. */
 export interface FrameRefresh {
   refresh(): void;
-  /** The stream opened (again): an open chat reads once, and the metadata maybe. */
+  /**
+   * The stream opened, first or after a loss: an open chat reads once, and the metadata maybe. A
+   * stream a page opened again from the last event it heard missed nothing, and says nothing.
+   */
   connected(): void;
   /** An event the feed heard: the regions that move the frame's metadata or the asks. */
   heard(delta: unknown): void;
@@ -174,7 +177,7 @@ function useMetadata(): [FrameRefresh, number] {
     return {
       refresh,
       connected() {
-        // A stream that opens again may have missed an answer: every open chat reads once.
+        // A stream opened after a loss may have missed an answer: every open chat reads once.
         asksMoved(true);
         if (reads.current.connected()) refresh();
       },

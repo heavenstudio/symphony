@@ -33,7 +33,7 @@ impl Clock {
 /// its server generation's gate not given yet.
 fn ungated(root: &Path, folder: &Path, clock: &Clock) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
-    *hub.reports.get_mut().unwrap() = Some(Rollup::new(folder.to_path_buf()));
+    *hub.reports.get_mut().unwrap() = Some(Rollup::new(folder.to_path_buf(), None));
     let clock = clock.clone();
     hub.clock = Box::new(move || *clock.0.lock().unwrap());
     hub
@@ -285,16 +285,22 @@ fn a_private_server_keeps_no_day_files_and_the_shared_one_keeps_them_in_the_comm
     private.stop();
     let common = root.join(".git/symphony");
     assert!(
-        !common.join("reports").exists(),
-        "a private server writes no day file"
+        !common.join("reports").exists() && !common.join("runs/rollup").exists(),
+        "a private server writes no day file, and rolls no runs up"
     );
     let shared = start(true);
-    let folder = shared
+    let (folder, runs) = shared
         .reports
         .lock()
         .unwrap()
         .as_ref()
-        .map(|rollup| rollup.folder.clone());
+        .map(|rollup| (rollup.folder.clone(), rollup.runs.clone()))
+        .unzip();
+    assert_eq!(
+        runs.flatten(),
+        Some(common.join("runs")),
+        "the runs it rolls up are the recorder's, in the same folder"
+    );
     // A roll-up that has not ended, as one stuck in git would be: the stop waits on none of it.
     let (release, held) = mpsc::channel::<()>();
     let stuck = std::thread::spawn(move || {
@@ -414,6 +420,92 @@ fn the_roll_up_keeps_to_its_generation_s_gate_as_a_reload_moves_it() {
         today,
         "the generation a reload replaced writes nothing more"
     );
+}
+
+/// A day file of runs in `runs` for the day from `start`, holding one green run of the task `task`
+/// that ended at `ended` after 60 s and `cpu` CPU seconds.
+fn run_day_file(runs: &Path, start: f64, task: &str, ended: f64, cpu: f64) {
+    let line = serde_json::json!({
+        "schema": 1, "run": format!("{task}-run"), "pipeline": "test", "label": "just test-rs",
+        "trigger": "owner", "task": task, "queued": ended - 60.0, "started": ended - 60.0,
+        "ended": ended, "end": "green", "exit": 0, "cpu_s": cpu,
+    });
+    std::fs::create_dir_all(runs).unwrap();
+    std::fs::write(
+        runs.join(format!("{}.jsonl", symphony_api::run_day(start))),
+        format!("{line}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_runs_roll_up_each_hour_beside_their_day_files_whether_the_board_is_reached_or_not() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let folder = tree.path("reports");
+    let runs = tree.path("runs");
+    let today = midnight();
+    run_day_file(&runs, today - DAY, "old", today - HOUR, 5.0);
+    run_day_file(&runs, today, "new", today + HOUR, 3.0);
+    let clock = Clock(Arc::new(Mutex::new(today + 10.0 * HOUR)));
+    let hub = shared(&root, &folder, &clock);
+    hub.reports.lock().unwrap().as_mut().unwrap().runs = Some(runs.clone());
+    let said = || hub.reports.lock().unwrap().as_ref().unwrap().said_runs();
+    let rolled_up = |start: f64| {
+        std::fs::read(
+            runs.join("rollup")
+                .join(symphony_api::report_file(&symphony_api::run_day(start))),
+        )
+        .ok()
+    };
+    let day = |start: f64| -> symphony_api::RunsDay {
+        serde_json::from_slice(&rolled_up(start).unwrap()).unwrap()
+    };
+
+    tick(&hub, None);
+    assert_eq!(bytes(&folder, today), None, "no board: no board day file");
+    let (ended, under_way) = (day(today - DAY), day(today));
+    assert!(ended.closed && !under_way.closed && under_way.project == "main");
+    assert_eq!(
+        (ended.cost.cpu_s, under_way.cost.cpu_s),
+        (5.0, 3.0),
+        "each day's runs, yesterday's made final"
+    );
+    assert_eq!(under_way.tasks[0].task, "new");
+    assert_eq!(said(), None);
+    let before = (rolled_up(today - DAY), rolled_up(today));
+
+    // Today's day file is a folder: no roll-up of runs written, said once; the board's go on.
+    let file = runs.join(format!("{}.jsonl", symphony_api::run_day(today)));
+    let aside = runs.join("aside");
+    std::fs::rename(&file, &aside).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    clock.set(today + 11.0 * HOUR);
+    let fixture = report_board();
+    tick(&hub, Some(&fixture.store));
+    let why = said().unwrap();
+    assert!(
+        why.starts_with("runs: no roll-up written (")
+            && why.ends_with("); the last ones stay, and the next hour tries again"),
+        "{why}"
+    );
+    assert_eq!((rolled_up(today - DAY), rolled_up(today)), before);
+    assert!(
+        bytes(&folder, today).is_some(),
+        "the board's figures are written all the same"
+    );
+
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::rename(&aside, &file).unwrap();
+    clock.set(today + 12.0 * HOUR);
+    tick(&hub, None);
+    assert_eq!(said(), None, "right again");
+    assert_eq!(
+        day(today).until,
+        today + 12.0 * HOUR,
+        "today's written again"
+    );
+    assert_eq!(rolled_up(today - DAY), before.0, "yesterday's stays final");
 }
 
 #[test]

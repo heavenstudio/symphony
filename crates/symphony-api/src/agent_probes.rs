@@ -16,9 +16,11 @@ pub struct AgentProbes {
 }
 
 /// [`AgentProbes`] as the wire carries it: `herdr` is the panes probe's earlier name. A field
-/// serde reads by either name would refuse a payload holding both as a duplicate.
+/// serde reads by either name would refuse a payload holding both as a duplicate. The web client's
+/// wire types declare [`AgentProbes`] as this (`Agents::probes`).
 #[derive(Serialize, Deserialize)]
-struct ProbesWire {
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub(crate) struct ProbesWire {
     panes: Option<String>,
     herdr: Option<String>,
     slots: String,

@@ -132,6 +132,65 @@ fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_co
     assert_eq!(waited, [("sim/late", 0.75)]);
 }
 
+/// A red's filer names the commits it came between in its body, and the read takes them back to
+/// the red's day file; a red that names none, and a task not marked red whose body names some,
+/// read none.
+#[test]
+fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its_day_file() {
+    let f = Fixture::empty();
+    f.at_hour(1.0);
+    let filer = f.session("filer");
+    let orch = f.session("orchestrator");
+    let range =
+        "1a5037fc9e2b4d6a8c0e1f3a5b7c9d0e2f4a6b8c..fd70821942b4c97d1e17b420217ada28988e27da";
+    let body = format!("The release run is red.\n\nbetween: {range}\nkey: verify\ncheck: verify");
+    let red = |slug: &str, body: &str| {
+        f.task_with(NewTask {
+            red: Some("release".into()),
+            body: body.into(),
+            ..NewTask::new(slug, "Release red", &filer)
+        });
+    };
+    red("tests/release-red-verify", &body);
+    red(
+        "tests/release-red-lint",
+        "The release run is red.\n\nkey: lint",
+    );
+    f.task_with(NewTask {
+        body: body.clone(),
+        ..NewTask::new("sim/quoting", "Work", &orch)
+    });
+    f.at_hour(2.0);
+    let read = f.store.report_records(midnight()).unwrap();
+    let between: Vec<(&str, Option<&str>)> = (read.tasks.iter())
+        .map(|task| (task.slug.as_str(), task.between.as_deref()))
+        .collect();
+    assert_eq!(
+        between,
+        [
+            ("tests/release-red-verify", Some(range)),
+            ("tests/release-red-lint", None),
+            ("sim/quoting", None),
+        ],
+        "a body is read for a red alone"
+    );
+    let day = day("sim", midnight(), f.now(), f.now(), &read);
+    let reds: Vec<(&str, Option<&str>)> = (day.reds.iter())
+        .map(|red| (red.slug.as_str(), red.between.as_deref()))
+        .collect();
+    assert_eq!(
+        reds,
+        [
+            ("tests/release-red-verify", Some(range)),
+            ("tests/release-red-lint", None),
+        ]
+    );
+    assert!(
+        day.reds.iter().all(|red| red.landed.is_none()),
+        "the landings in a range are the roll-up's to read from git"
+    );
+}
+
 #[test]
 fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits() {
     let f = board();

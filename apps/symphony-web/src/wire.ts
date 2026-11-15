@@ -18,6 +18,8 @@ export const UPLOAD_PATH = "/api/upload";
 export const UPLOAD_MAX_BYTES = 10485760;
 export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
+export const AGENT_FOCUS_PATH = "/api/agent-focus";
+export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -464,6 +466,107 @@ export type WorkFreshness =
 export type WorkKind = "build" | "test" | "command" | "setup" | "reservation";
 
 export type WorkState = "queued" | "running";
+
+export type AgentPage = {
+  view: Agents;
+  tasks: Array<Task>;
+  total: number;
+  next: string | null;
+  /**
+   * The page was asked from the server's own machine ([`SessionGo::control`]).
+   */
+  local: boolean;
+};
+
+export type Agents = {
+  machine_work: MachineWork;
+  generated: number;
+  /**
+   * Written as the wire carries it, the panes probe under both its names.
+   */
+  probes: { panes: string | null; herdr: string | null; slots: string };
+  agents: Array<Agent>;
+};
+
+export type Agent = {
+  handle: string;
+  kind: string;
+  model: string;
+  parent: string | null;
+  task: string | null;
+  role: string | null;
+  tasks: Array<HeldTask>;
+  worktree: string;
+  branch: string;
+  agent: string | null;
+  session_id: string | null;
+  pane: string | null;
+  callback: string | null;
+  chat: boolean;
+  state: string;
+  state_detail: AgentRun | null;
+  health: string;
+  last_tool_call: number | null;
+  last_message: AgentSaid | null;
+  /**
+   * The open tasks it holds against the board's cap on an orchestrator's, when one is set.
+   */
+  slots: AgentSlots | null;
+  /**
+   * The web address its session gave (`tasks register --session-url`, `tasks callback
+   * --session-url`), when it gave one.
+   */
+  session_url: string | null;
+  /**
+   * It runs inside another session (a subagent), so it has no pane of its own.
+   */
+  in_process: boolean;
+  /**
+   * Where its Go to session control goes, as the server resolved it ([`resolve_sessions`]):
+   * none when nothing is known.
+   */
+  go: SessionGo | null;
+};
+
+export type HeldTask = { slug: string; role: string; status: string };
+
+export type AgentRun = { recipe: string; phase: string; since: number | null };
+
+export type AgentSaid = { slug: string; ts: number; text: string };
+
+export type AgentSlots = { open: number; cap: number };
+
+export type SessionGo = {
+  /**
+   * Whose session it reaches: the agent's own, or for a subagent with no way in of its own,
+   * the parent session that runs it.
+   */
+  handle: string;
+  /**
+   * That session's web address: the control links to it.
+   */
+  url: string | null;
+  /**
+   * The hc terminal that shows that session on the server's machine, offered only when the
+   * project addresses its panes (`[agents] panes = "hc"`).
+   */
+  pane: string | null;
+};
+
+export type AgentFocus = { said: string };
+
+export type AgentScreen = {
+  /**
+   * Whose session it shows: the agent's own, or its parent's.
+   */
+  handle: string;
+  pane: string;
+  text: string;
+  /**
+   * When it was read, in seconds since the epoch.
+   */
+  read_at: number;
+};
 
 export type Block =
   | { type: "heading"; level: number; anchor: string; spans: Array<Span> }

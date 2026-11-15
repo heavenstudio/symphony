@@ -154,8 +154,8 @@ done
 # shared file is the pages' (its own few styles do not narrow it), and it names that file too, so
 # it loads only what the page has not. The pictures' styles (`media-`) stay out of it, though every
 # program kind loads them: the web client's kinds take the shared file and their own, home and the
-# documents with their own copy of them (their media layer's), and the queue, Reports and the task
-# board, which show no picture, with none.
+# documents with their own copy of them (their media layer's), and the queue, Reports, the task
+# board and the agents page, which show no picture, with none.
 shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
@@ -232,4 +232,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the documents) as its own build, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents) as its own build, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

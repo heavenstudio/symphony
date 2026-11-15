@@ -5,7 +5,10 @@
 //!   commit there changed, a merge by what it brought against its first parent: a merge there is a
 //!   landing, and those lines are the lines that reached the branch;
 //! - every commit that reached it since the commit that line starts from, by its parents, subject
-//!   and the paths it changed, no diff.
+//!   and the paths it changed, no diff;
+//!
+//! and, for each red that names the commits it came between, the merges on the line of first
+//! parents in that range, the landings it may trace back to ([`trace`]).
 //!
 //! Each commit counts in the hour it reached the branch ([`reached`]): the hour of the commit on
 //! the line of first parents that brought it there, itself or the merge that landed it, so a
@@ -295,6 +298,44 @@ pub fn reached(read: &Read) -> Vec<Reached> {
             reached
         })
         .collect()
+}
+
+/// The tasks that landed on `branch` in `range` (`GOOD..BAD`, the commits a red came between,
+/// [`symphony_board::red::between`]), newest first: each merge on the line of first parents from
+/// `BAD` back to `GOOD` that the land made, by the slug it landed, as the release cadence counts
+/// landings ([`crate::release::cadence::landed`]). A commit the repository does not hold is the
+/// error.
+pub fn landed(root: &Path, branch: &str, range: &str) -> Result<Vec<String>, String> {
+    let merges = log(
+        root,
+        &["--first-parent", "--merges"],
+        &[range.to_string()],
+        &[],
+    )?;
+    Ok(parse(&merges)
+        .iter()
+        .filter_map(|merge| crate::release::cadence::landed(&merge.subject, branch))
+        .map(str::to_string)
+        .collect())
+}
+
+/// Each red of `day` that names the commits it came between gets the tasks that landed in them
+/// ([`landed`]); one whose range git cannot read keeps none, and `problems` says why, once.
+pub fn trace(day: &mut ReportDay, root: &Path, branch: &str, problems: &mut Vec<String>) {
+    for red in &mut day.reds {
+        let Some(range) = &red.between else {
+            continue;
+        };
+        match landed(root, branch, range) {
+            Ok(slugs) => red.landed = Some(slugs),
+            Err(why) => {
+                let said = format!("git: {}: {why}", red.slug);
+                if !problems.contains(&said) {
+                    problems.push(said);
+                }
+            }
+        }
+    }
 }
 
 /// Fill `day`'s hours from `read` ([`read`]), `from` naming what it was read from.

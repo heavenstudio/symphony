@@ -2,8 +2,9 @@
 //! docs/analysis/reports-and-monitoring.md, *The day files*):
 //! today's file written again with what the day held up to now, and yesterday's made final once,
 //! from one read of the board ([`symphony_board::reports`] counts it), two cheap reads of the
-//! default branch's history ([`git`]) and the decision cards of the project's documents with a
-//! live branch's posted cards ([`decisions`]).
+//! default branch's history ([`git`]), one more for each red that names the commits it came
+//! between ([`git::trace`]), and the decision cards of the project's documents with a live
+//! branch's posted cards ([`decisions`]).
 //!
 //! Only the machine's one server rolls a project up, once an hour (apps/symphony-server,
 //! `live/reports.rs`): it reads the board for the days [`due`] names and hands that read here, off
@@ -87,6 +88,12 @@ pub fn roll_up(
     for start in days {
         let until = now.min(start + DAY);
         let mut day = symphony_board::reports::day(project, *start, until, now, read);
+        git::trace(
+            &mut day,
+            root,
+            &settings.default_branch,
+            &mut rolled.problems,
+        );
         if let Ok(docs) = &docs {
             decisions::fill(&mut day, docs, &plugins);
         }
