@@ -50,9 +50,9 @@ version, under MIT: crates.io is the package manager their versions live in
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
-- **The rest,** the client's sources (`symphony-ui`, which the server embeds built), this
-  repository's own build and release commands (`symphony-build`) and the tests' time
-  (`test-time`), keep the workspace's `publish = false`.
+- **The rest,** the client's sources (`symphony-ui`, which the server embeds built), the Mac app
+  (`symphony-desktop`), this repository's own build and release commands (`symphony-build`) and
+  the tests' time (`test-time`), keep the workspace's `publish = false`.
 
 Two names were another project's on crates.io, so those two packages alone are renamed (the board
 task `tools/publish-to-crates-io`): the library's package is

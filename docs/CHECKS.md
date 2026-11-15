@@ -162,7 +162,8 @@ audit on main after the land's round files it within minutes
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
    `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   and any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
+   `apps/symphony-desktop` is `symphony-desktop` (the Mac app, whose windows no test opens), and
+   any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
    package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
