@@ -7,7 +7,7 @@ use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
 const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
 
 /// The tasks a listing's page holds. The board's client reserves a page's rows of a column while
-/// it loads (`PAGE` in `apps/symphony-ui/src/tasks.rs`), so the two change together.
+/// it loads (`PAGE` in `apps/symphony-web/src/board.tsx`), so the two change together.
 const PAGE: usize = 30;
 
 /// A listing's `status`, when it names one: a board status or one of [`SELECTABLE`].

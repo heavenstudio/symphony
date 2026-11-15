@@ -27,6 +27,7 @@ mod procs;
 mod reap;
 mod reap_unread;
 mod restore;
+mod review_resume;
 mod screen;
 mod thread;
 

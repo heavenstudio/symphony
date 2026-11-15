@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: rerun its focused tests, judge its evidence and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 0e12501c6db2cefa files=SKILL.md -->
+<!-- symphony-stamp: 153b00f64a84c204 files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -16,7 +16,8 @@ assumes no certificate or landing system.
    Pass it on every board command as `just tasks … --as HANDLE`, the handle last. A session with
    its own channel (a terminal of its own) registers it: `just tasks callback --as HANDLE`.
 2. SLUG is the task to judge, itself, never a subtask: take the reviewer role on it, unless you
-   hold it already: `just tasks role SLUG reviewer --as HANDLE`.
+   hold it already: `just tasks role SLUG reviewer --as HANDLE`. Refused the role, stop and say why on
+   the thread `--to @orchestrator`; never pass `--beside` yourself.
 3. Read `just tasks show SLUG --as HANDLE`, its thread, and the diff of the tip it names.
 4. Rerun the focused tests its evidence names yourself, never the full suite; never take the
    executor's word that they are green. A log or scratch file you write in your scratchpad is

@@ -72,17 +72,9 @@ fn ModuleRoot() -> Element {
     return rsx! { if shown() { crate::frame::PanelApp {} } };
     #[cfg(all(feature = "page-overlay", not(feature = "page-panel")))]
     return rsx! { if shown() { crate::components::deferred::OverlayApp {} } };
-    #[cfg(all(
-        feature = "page-timeline",
-        not(any(feature = "page-panel", feature = "page-overlay"))
-    ))]
-    return rsx! { if shown() { crate::task_timeline::TimelineApp {} } };
-    #[cfg(not(any(
-        feature = "page-panel",
-        feature = "page-overlay",
-        feature = "page-timeline"
-    )))]
-    rsx! { if shown() { crate::live::App {} } }
+    // No page kind is left without the chat or the menus: every page is the web client's.
+    #[cfg(not(any(feature = "page-panel", feature = "page-overlay")))]
+    rsx! {}
 }
 
 /// The shell caches imports for the document's lifetime. Each module's callbacks and empty
@@ -95,10 +87,6 @@ pub(crate) fn kind() -> &'static str {
         "panel"
     } else if cfg!(feature = "page-overlay") {
         "overlay"
-    } else if cfg!(feature = "page-timeline") {
-        "timeline"
-    } else if cfg!(feature = "page-tasks") {
-        "tasks"
     } else {
         "review"
     }
@@ -106,6 +94,7 @@ pub(crate) fn kind() -> &'static str {
 
 #[cfg(not(feature = "page-program"))]
 pub fn install() {
+    crate::frame::keep_styles();
     let kind = kind();
     let start = Closure::<dyn FnMut() -> js_sys::Promise>::new(|| change(true));
     let stop = Closure::<dyn FnMut() -> js_sys::Promise>::new(|| change(false));
@@ -117,12 +106,10 @@ pub fn install() {
     }
     start.forget();
     stop.forget();
-    // The shell's PERSISTENT roots: the chat panel's, the overlay host's and the task timeline's
-    // (which the shell moves into the task page's box).
+    // The shell's PERSISTENT roots: the chat panel's and the overlay host's.
     let root = match kind {
         "panel" => "quick-root".into(),
         "overlay" => "overlay-root".into(),
-        "timeline" => "timeline-root".into(),
         _ => format!("review-root-{kind}"),
     };
     dioxus::web::launch::launch_cfg(ModuleRoot, dioxus::web::Config::default().rootname(root));
@@ -236,14 +223,13 @@ mod program {
             return rsx! {};
         }
         match chunk {
-            Chunk::Tasks => rsx! { crate::live::App {} },
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
             Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
-            Chunk::Timeline => rsx! { crate::split::TimelinePart {} },
         }
     }
 
     pub fn install() {
+        crate::frame::keep_styles();
         for chunk in Chunk::ALL {
             let start = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || run(chunk));
             let stop = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || change(chunk, false));

@@ -23,6 +23,11 @@ export function publish(event: string): void {
   dispatchEvent(new Event(event));
 }
 
+/** A live update about to be drawn keeps what the reader looks at in place (shell.js). */
+export function holdPlace(rows: string): void {
+  (snapshot("reviewHoldPlace") as ((rows: string) => void) | undefined)?.(rows);
+}
+
 /** The array `value` is, else an empty one. */
 export function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];

@@ -89,7 +89,7 @@ pub struct SuiteDay {
     pub name: String,
     /// The runs that reported it.
     pub runs: u32,
-    /// Those in which a test of it failed.
+    /// Those in which a test of it failed, or it ended with no result line ([`crate::Suite::error`]).
     pub failed: u32,
     /// The runs in which none failed, over all.
     pub pass_rate: f64,

@@ -37,6 +37,36 @@ impl Hc for NoHc {
     }
 }
 
+/// A machine whose only live terminal, `t9`, runs `handle` (none for `None`): what a launch asks
+/// to tell whether a recorded reviewer still runs.
+struct Running(Option<&'static str>);
+
+impl Hc for Running {
+    fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
+        assert_eq!(args.first(), Some(&"ls"), "only listed: {args:?}");
+        let terminals = self.0.map_or_else(Vec::new, |handle| {
+            vec![serde_json::json!({"address": "t9", "state": "live", "name": handle})]
+        });
+        Ok(serde_json::json!({ "terminals": terminals }).to_string())
+    }
+
+    fn feed(&self, args: &[&str], _input: &str) -> Result<String, LaunchError> {
+        panic!("a job's choice feeds nothing: {args:?}")
+    }
+
+    fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
+        panic!("a job's choice changes no window: {args:?}")
+    }
+
+    fn caller(&self) -> Option<String> {
+        None
+    }
+
+    fn board(&self) -> String {
+        "fixture/tasks".into()
+    }
+}
+
 /// The idle agent's terminal `t1`: `outcome` says how it answers once the job is sent.
 struct ReusedTerminal<'a> {
     outcome: &'a str,
@@ -120,6 +150,7 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: worktree.into(),
         branch: String::new(),
         agent: Some("codex".into()),
@@ -150,9 +181,11 @@ const ORCHESTRATED: &str = "ochre-owl";
 const ORCHESTRATES: &str = "amber-heron";
 const EXECUTED: &str = "slate-wren";
 const FRESH: &str = "fleet-vole";
+/// Another fresh one.
+const SECOND: &str = "dune-lark";
 
 fn reviewing() -> Fixture {
-    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH];
+    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH, SECOND];
     Fixture::new(seed.into_iter().fold(Seed::default(), Seed::session))
 }
 
@@ -209,6 +242,70 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
     );
     // The orchestrator it has now orchestrates work, which no idle pick takes, fast fix or not.
     assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
+}
+
+#[test]
+fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let idle = [idle_reviewer(SECOND)];
+    let job_in = |hc: &dyn Hc| {
+        let board = f.store.board().unwrap();
+        let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
+        let held = f.store.ever_held("sim/jump").unwrap();
+        let (resumed, picked) = job_for(
+            &f.store,
+            hc,
+            &idle,
+            &board,
+            task,
+            "reviewer",
+            &HashSet::new(),
+            &held,
+        )?;
+        Ok::<_, Error>((resumed, picked.map(|a| a.handle.clone())))
+    };
+    let job = || job_in(&Running(None)).unwrap();
+    let record = |conversation: &str| {
+        f.store
+            .record_launch(&NewLaunch {
+                claude_session: conversation.into(),
+                worktree: env!("CARGO_MANIFEST_DIR").into(),
+                ..NewLaunch::new("sim/jump", FRESH, "reviewer")
+            })
+            .unwrap();
+    };
+    // No reviewer recorded: the idle fresh one.
+    let another = (None, Some(SECOND.to_string()));
+    assert_eq!(job(), another);
+    // One recorded with no conversation, or a Codex thread that never arrived: none to go back to.
+    for none in ["", "codex:"] {
+        record(none);
+        assert_eq!(job(), another, "{none:?}");
+    }
+    // One recorded with a conversation: back to it, and the idle one is passed over.
+    record("codex:0abc-def");
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // While it still runs, the job fails as its launch would, the idle one passed over all the same.
+    let still = job_in(&Running(Some(FRESH))).unwrap_err().to_string();
+    assert!(
+        still.starts_with(&format!(
+            "{FRESH} reviews sim/jump and still runs in terminal t9"
+        )),
+        "{still}"
+    );
+    // An executor's record is no reviewer's.
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "work".into(),
+            worktree: env!("CARGO_MANIFEST_DIR").into(),
+            ..NewLaunch::new("sim/jump", EXECUTED, "executor")
+        })
+        .unwrap();
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // Once it left, another takes the review.
+    f.store.leave(FRESH).unwrap();
+    assert_eq!(job(), another);
 }
 
 /// A machine a reuse whose turn hc saw start runs on: it launches, looks and inspects nothing.

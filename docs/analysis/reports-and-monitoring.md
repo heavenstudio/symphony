@@ -346,7 +346,7 @@ tokens stay with it.
 - Its times are invented.
 
 The pictures are SVG written by hand. They use the client's tokens
-(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` draws it, and they
+(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` drew it, and they
 follow the reader's light or dark setting.
 
 The A pictures and the timeline pictures are the look the filed tasks build to; the B pictures

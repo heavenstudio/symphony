@@ -141,6 +141,7 @@ export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
     task: null,
     role: null,
     tasks: [],
+    following: 0,
     worktree: "",
     branch: "",
     agent: null,

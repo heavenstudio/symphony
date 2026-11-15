@@ -1,8 +1,8 @@
-//! A task's timeline on its page (src/timeline_slot.rs, the page's box; src/task_timeline.rs, the
-//! module the shell loads into it), the release client against the stand-in server answering
-//! `/api/task-timeline` with the approved pictures' task: a list that fits a phone's width, lanes
-//! over the same hours on a wide screen, a box that moves nothing when the timeline arrives, and a
-//! read each minute only while the page is shown and the task open.
+//! A task's timeline on its page (apps/symphony-web: src/timeline-slot.tsx, the page's box;
+//! src/timeline.tsx, the chunk the box imports into it), the release client against the stand-in
+//! server answering `/api/task-timeline` with the approved pictures' task: a list that fits a
+//! phone's width, lanes over the same hours on a wide screen, a box that moves nothing when the
+//! timeline arrives, and a read each minute only while the page is shown and the task open.
 use super::{SHOWN, binaries, chrome, components, look_parity, site, site::Site};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -407,7 +407,7 @@ fn placeholder_drawn(chrome: &mut super::chrome::Chrome, site: &Site) -> Value {
     chrome.open(&site.url(TASK));
     assert!(
         chrome.wait_for(
-            "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && window.reviewTimelineReady === true",
+            "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && document.getElementById('timeline-root') !== null",
             SHOWN
         ),
         "the box's placeholder was not drawn: {:?}",
@@ -526,8 +526,9 @@ fn the_box_is_at_most_240_px_on_a_phone_and_show_all_opens_the_rest_in_place() {
 }
 
 /// What each module's root heard (`heard`, by the root's id, and `document`): the kind of each
-/// event and the module whose part of the page it came from.
-const SPIES: &str = "(() => { const from = node => node.closest('#timeline-root') ? 'timeline' : node.closest('#quick-root') ? 'panel' : 'page'; window.heard = {}; for (const id of ['review-root-tasks', 'timeline-root', 'quick-root', 'document']) { const at = id === 'document' ? document : document.getElementById(id); heard[id] = []; for (const type of ['click', 'keydown']) at.addEventListener(type, event => heard[id].push(`${type} ${from(event.target)}`)); } return true; })()";
+/// event and the part of the page it came from. The task page's module draws its timeline in the
+/// root it has inside its box (`timeline-root`).
+const SPIES: &str = "(() => { const from = node => node.closest('#timeline-root') ? 'timeline' : node.closest('#quick-root') ? 'panel' : 'page'; window.heard = {}; for (const id of ['review-root-task', 'timeline-root', 'quick-root', 'document']) { const at = id === 'document' ? document : document.getElementById(id); heard[id] = []; for (const type of ['click', 'keydown']) at.addEventListener(type, event => heard[id].push(`${type} ${from(event.target)}`)); } return true; })()";
 
 #[test]
 fn a_modules_root_hears_only_its_own_parts_events_and_the_document_hears_them_all() {
@@ -540,9 +541,9 @@ fn a_modules_root_hears_only_its_own_parts_events_and_the_document_hears_them_al
         "window.reviewPanelReady === true && document.querySelector('#quick-root #quick-text') !== null",
         SHOWN
     ));
-    // Listeners on the roots, as each module's Dioxus listens, and one on the document. A click
-    // and a key in the timeline, whose root is inside the page's, a click on the page's own
-    // heading and one in the chat's sheet.
+    // Listeners on the roots, as each module's framework listens, and one on the document. A
+    // click and a key in the timeline, the task page module's own part inside its root, a click on
+    // the page's own heading and one in the chat's sheet, the program's module beside it.
     assert_eq!(chrome.eval(SPIES), json!(true));
     chrome.eval(
         "(() => { const click = selector => document.querySelector(selector).dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); click('article.task h1'); click('#timeline-root .tl-totals'); document.getElementById('tl-stop-0').dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true, cancelable: true})); click('#quick-root #quick-text'); })()",
@@ -550,14 +551,14 @@ fn a_modules_root_hears_only_its_own_parts_events_and_the_document_hears_them_al
     assert_eq!(
         chrome.eval("heard"),
         json!({
-            "review-root-tasks": ["click page"],
+            "review-root-task": ["click page", "click timeline", "keydown timeline"],
             "timeline-root": ["click timeline", "keydown timeline"],
             "quick-root": ["click panel"],
             "document": ["click page", "click timeline", "keydown timeline", "click panel"],
         })
     );
     // Taken off, a listener on a root hears nothing more.
-    chrome.eval("(() => { window.off = () => heard.off.push('click'); heard.off = []; const root = document.getElementById('review-root-tasks'); root.addEventListener('click', off); root.removeEventListener('click', off); document.querySelector('article.task h1').click(); })()");
+    chrome.eval("(() => { window.off = () => heard.off.push('click'); heard.off = []; const root = document.getElementById('review-root-task'); root.addEventListener('click', off); root.removeEventListener('click', off); document.querySelector('article.task h1').click(); })()");
     assert_eq!(chrome.eval("heard.off"), json!([]));
 }
 
@@ -780,7 +781,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     // Left for the board, the timeline is gone and reads no more.
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
     assert!(chrome.wait_for(
-        "document.querySelector('[data-ready=board]') !== null && !window.reviewTimelineRequest",
+        "document.querySelector('[data-ready=board]') !== null && document.getElementById('timeline-root') === null",
         SHOWN
     ));
     chrome.eval("window.minute && window.minute()");
@@ -885,11 +886,6 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     );
 }
 
-/// Boxes the test puts in the page as a task page's would (`box`, the box it replaces kept as
-/// `lastBox`), and their asks and closes to the shell (`ask`, `gone`); `place` says which box the
-/// timeline's root is in and whether hidden.
-const BOXES: &str = "window.box = slug => { window.lastBox = document.getElementById('timeline-slot'); lastBox?.remove(); document.body.insertAdjacentHTML('beforeend', `<div id=\"timeline-slot\" data-slug=\"${slug}\"></div>`); }; window.ask = (owner, slug, revision) => reviewTimeline({owner, slug, revision, narrow: 240, wide: 240}); window.gone = owner => reviewTimeline({kind: 'close', owner}); window.place = () => { const root = document.getElementById('timeline-root'); return [root?.parentElement?.dataset.slug ?? null, root?.hidden ?? null]; }; true";
-
 /// How many times the page read the timeline of the task `slug` (as its address writes it).
 fn reads_of(site: &Site, slug: &str) -> usize {
     let asked = format!("{}?slug={slug}", symphony_api::TASK_TIMELINE_PATH);
@@ -918,14 +914,46 @@ fn wait_reads(chrome: &mut super::chrome::Chrome, site: &Site, slug: &str, count
     assert_eq!(reads_of(site, slug), count, "{slug}: {:?}", site.targets());
 }
 
-/// The shell draws the timeline only in the box of the task it was asked for, by the newest box
-/// that asked (assets/shell.js `reviewTimeline`): an answer that lands after the page moved to
-/// another task, and an ask or a close from a box the page took down, however late, draw nothing
-/// in the next box.
+/// A link on the page to `path`, followed as a click follows it: the shell moves the page.
+fn follow(chrome: &mut super::chrome::Chrome, path: &str) {
+    chrome.eval(&format!(
+        "(() => {{ const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove(); }})()",
+        json!(path)
+    ));
+}
+
+/// Wait until Chrome says the page gave up its read of `slug`'s timeline (as its address writes
+/// it): the box that asked for it went.
+#[track_caller]
+fn given_up(chrome: &mut super::chrome::Chrome, slug: &str) {
+    let asked = format!("{}?slug={slug}", symphony_api::TASK_TIMELINE_PATH);
+    if let Err(stall) = test_time::until_true(
+        format!("{slug}'s timeline read given up"),
+        super::STALL,
+        || {
+            chrome
+                .requests()
+                .iter()
+                .any(|request| request.url.ends_with(&asked) && request.canceled)
+        },
+    ) {
+        panic!("{stall}: {:#?}", chrome.requests());
+    }
+}
+
+/// Where the timeline is drawn: each box on the page with the task its page is of, and how many
+/// steps are drawn in it.
+const BOXES: &str = "[...document.querySelectorAll('#timeline-slot')].map(box => [box.closest('article.task')?.dataset.slug ?? null, box.dataset.slug, box.querySelectorAll('.tl-drawn .tl-list .tl-row').length])";
+
+/// A task's timeline is drawn only in the box of the task it was read for
+/// (apps/symphony-web/src/timeline.tsx): the box the page takes down as it moves to another task
+/// gives its read up, and its answer, however late, draws nothing in the next task's box, which
+/// reads and draws its own; a page that leaves the task pages while a read is out draws nothing
+/// anywhere.
 #[test]
-fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_anothers_box() {
+fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers_box() {
     const PATH: &str = symphony_api::TASK_TIMELINE_PATH;
-    // A's first answer is a one-step timeline; every answer after it the pictures' thirteen steps.
+    // A's timeline is one step; B's the pictures' thirteen.
     let mut one = fixture();
     one["stages"] = json!([one["stages"][0].clone()]);
     one["stages"][0]["to"] = Value::Null;
@@ -933,81 +961,84 @@ fn asks_closes_and_answers_out_of_order_never_draw_one_tasks_timeline_in_another
         one[empty] = json!([]);
     }
     let site = served(&fixture());
-    site.answer_in_turn(PATH, &[one, fixture()]);
+    for slug in ["a/one", "b/two"] {
+        let mut page = look_parity::responses()["/api/task-page"].clone();
+        page["task"]["slug"] = json!(slug);
+        page["task"]["title"] = json!(format!("Task {slug}"));
+        site.set_json(
+            &format!("/api/task-page?slug={}", slug.replace('/', "%2F")),
+            &page,
+        );
+    }
+    let a = format!("{PATH}?slug=a%2Fone");
+    site.set_json(&a, &one);
+    site.set_json(&format!("{PATH}?slug=b%2Ftwo"), &fixture());
     let Some(mut chrome) = chrome() else { return };
     view(&mut chrome, 1280, false);
-    chrome.open(&site.url("/tasks"));
-    assert!(chrome.wait_for(
-        "document.querySelector(\"[data-slug='tools/example']\") !== null",
-        SHOWN
-    ));
-    chrome.eval(BOXES);
-    let slot_rows = "document.querySelectorAll('#timeline-slot .tl-row').length";
 
-    // A reads: the root sits in A's box while A's read is held.
-    site.hold_route(PATH, true);
-    chrome.eval("box('a/one'); ask(1001, 'a/one', 1)");
-    assert!(chrome.wait_for("window.reviewTimelineReady === true", SHOWN));
+    // A reads, its answer held: A's box shows its placeholder.
+    site.hold_route(&a, true);
+    chrome.open(&site.url("/task/a/one"));
     wait_reads(&mut chrome, &site, "a%2Fone", 1);
-    assert_eq!(chrome.eval("place()"), json!(["a/one", false]));
-
-    // The page goes to B's task before A's box says it is gone, and A's answer lands late: drawn
-    // in A's box, which the page took down, and nowhere in B's.
-    chrome.eval("box('b/two')");
-    site.hold_route(PATH, false);
     assert!(chrome.wait_for(
-        "window.lastBox?.querySelector('.tl-drawn .tl-row') != null",
+        "document.querySelector('article.task[data-slug=\"a/one\"] #timeline-slot .tl-sk-row') !== null",
         SHOWN
     ));
-    // A asks again from its old box (its effect running late): the timeline is put in no box.
-    chrome.eval("ask(1001, 'a/one', 1)");
-    assert_eq!(
-        chrome.eval(&format!("[place(), {slot_rows}]")),
-        json!([[null, true], 0])
-    );
-    // A's box closes, then asks once more, later still: dropped.
-    chrome.eval("gone(1001); ask(1001, 'a/one', 1)");
-    assert_eq!(
-        chrome.eval("[window.reviewTimelineRequest, place()]"),
-        json!([null, [null, true]])
-    );
-    // B's box asks, and an ask from A's older box after it changes nothing: B's box draws B's
-    // thirteen steps.
-    chrome.eval("ask(1002, 'b/two', 1); ask(1001, 'a/one', 2)");
-    assert_eq!(
-        chrome.eval("window.reviewTimelineRequest.slug"),
-        json!("b/two")
-    );
+    // The page goes to B's task before A's answer: A's box goes, giving its read up, and B's box
+    // reads and draws B's thirteen steps.
+    follow(&mut chrome, "/task/b/two");
+    given_up(&mut chrome, "a%2Fone");
     assert!(
-        chrome.wait_for(&format!("{slot_rows} === 13"), SHOWN),
+        chrome.wait_for(
+            "document.querySelectorAll('article.task[data-slug=\"b/two\"] #timeline-slot .tl-drawn .tl-list .tl-row').length === 13",
+            SHOWN
+        ),
         "{:?}",
-        chrome.eval("document.getElementById('timeline-slot').innerText")
+        chrome.eval(BOXES)
     );
-    assert_eq!(chrome.eval("place()"), json!(["b/two", false]));
+    // A's answer is sent, late: B's box still draws B's alone.
+    site.hold_route(&a, false);
+    if let Err(stall) = test_time::until_true("A's late answer sent", super::STALL, || {
+        site.answers(PATH)
+            .iter()
+            .any(|answer| answer.target.ends_with("slug=a%2Fone"))
+    }) {
+        panic!("{stall}: {:?}", site.targets());
+    }
+    frames(&mut chrome);
+    assert_eq!(chrome.eval(BOXES), json!([["b/two", "b/two", 13]]));
     assert_eq!(
         (reads_of(&site, "a%2Fone"), reads_of(&site, "b%2Ftwo")),
         (1, 1)
     );
 
-    // A reads again; the page goes to B, whose box asks and closes (the page left) before either
-    // answer; then A's close and an ask of A's arrive late. Every answer lands: nothing is drawn,
-    // in any box.
-    site.hold_route(PATH, true);
-    chrome.eval("box('a/one'); gone(1002); ask(1003, 'a/one', 1)");
+    // Back on A, its read held again, the page leaves for the board before it answers: the read is
+    // given up, and its answer draws no timeline anywhere.
+    site.hold_route(&a, true);
+    follow(&mut chrome, "/task/a/one");
     wait_reads(&mut chrome, &site, "a%2Fone", 2);
-    assert_eq!(chrome.eval("place()"), json!(["a/one", false]));
-    chrome.eval("box('b/two'); ask(1004, 'b/two', 1)");
-    wait_reads(&mut chrome, &site, "b%2Ftwo", 2);
-    chrome.eval("gone(1004); gone(1003); ask(1003, 'a/one', 1)");
-    site.hold_route(PATH, false);
-    frames(&mut chrome);
-    chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
+    follow(&mut chrome, "/tasks");
+    assert!(chrome.wait_for(
+        "document.querySelector(\"[data-slug='tools/example']\") !== null && document.getElementById('timeline-root') === null",
+        SHOWN
+    ));
+    if let Err(stall) = test_time::until_true("A's second read given up", super::STALL, || {
+        chrome
+            .requests()
+            .iter()
+            .filter(|request| request.url.ends_with(&a) && request.canceled)
+            .count()
+            == 2
+    }) {
+        panic!("{stall}: {:#?}", chrome.requests());
+    }
+    site.hold_route(&a, false);
     frames(&mut chrome);
     assert_eq!(
-        chrome.eval(&format!(
-            "[window.reviewTimelineRequest, document.querySelector('.tl-drawn'), place(), {slot_rows}]"
-        )),
-        json!([null, null, [null, true], 0])
+        chrome.eval(
+            "[document.querySelector('.tl-drawn'), document.getElementById('timeline-root')]"
+        ),
+        json!([null, null])
     );
 }
 
