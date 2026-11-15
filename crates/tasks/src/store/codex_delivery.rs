@@ -107,9 +107,10 @@ fn steering(key: impl FnOnce(&'static str) -> Option<bool>) -> bool {
     key(STEER).unwrap_or(false)
 }
 
-/// One git setting as `git config --bool --get` answers it in this process's repository.
+/// One git setting as `git config --bool --get` answers it in the repository of this process's
+/// folder.
 fn git_bool(key: &str) -> Option<bool> {
-    sys::output(sys::command("git").args(["config", "--bool", "--get", key]))
+    sys::output(sys::git().args(["config", "--bool", "--get", key]))
         .ok()
         .filter(|output| output.status.success())
         .map(|output| output.stdout == b"true\n")

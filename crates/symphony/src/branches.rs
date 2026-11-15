@@ -25,7 +25,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::children::command;
 use crate::plugins::Plugins;
 use crate::project::Project;
 use crate::register::{Decision, REGION_START, parse_decisions};
@@ -177,7 +176,7 @@ fn git_grep(at: &Path, args: &[&str]) -> Option<String> {
 
 fn git_run(at: &Path, args: &[&str]) -> Option<std::process::Output> {
     symphony_board::sys::output(
-        command("git")
+        crate::children::git()
             .args(["-c", "diff.autoRefreshIndex=false"])
             .args(args)
             // A live scan can inspect a verdict worktree while its worker stages/commits it.
@@ -266,7 +265,9 @@ pub(crate) fn blobs(at: &Path, specs: &[String]) -> Option<Vec<String>> {
         return Some(Vec::new());
     }
     let mut child = symphony_board::sys::spawn_piped(
-        command("git").args(["cat-file", "--batch"]).current_dir(at),
+        crate::children::git()
+            .args(["cat-file", "--batch"])
+            .current_dir(at),
     )
     .ok()?;
     let input: String = specs.iter().map(|s| format!("{s}\n")).collect();

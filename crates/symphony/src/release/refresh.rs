@@ -77,15 +77,11 @@ const RELOAD: Duration = Duration::from_secs(20 * 60);
 const RELOAD_SECONDS: &str = "SYMPHONY_RELEASE_RELOAD_SECONDS";
 /// How often that wait asks the server what it is.
 const RELOAD_LOOK: Duration = Duration::from_millis(500);
-/// The variables no command run in a project keeps: a repository git was pointed at (each command
-/// names its own folder), the board, session and task a run of the Symphony's names (a project's
-/// command reaches its own), the landing's marker, and the build folder and toolchain, which are
-/// the project's own.
-const UNSET: [&str; 13] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
+/// The variables no command run in a project keeps, beside the repository git was pointed at
+/// (`symphony_board::sys::GIT_VARS`: each command names its own folder): the board, session and
+/// task a run of the Symphony's names (a project's command reaches its own), the landing's marker,
+/// and the build folder and toolchain, which are the project's own.
+const UNSET: [&str; 9] = [
     "TASKS_SERVER",
     "TASKS_DATABASE",
     "TASKS_SESSION",
@@ -1584,8 +1580,9 @@ impl Log {
         }
     }
 
-    /// `words` run in `dir` within `until`, without the variables [`UNSET`] names: what it
-    /// printed, or why it failed, its output logged either way.
+    /// `words` run in `dir` within `until`, without the variables [`UNSET`] and
+    /// [`symphony_board::sys::GIT_VARS`] name: what it printed, or why it failed, its output logged
+    /// either way.
     fn run(&mut self, dir: &Path, words: &[&str], until: Bound<'_>) -> Result<String, String> {
         self.exec(dir, words, until).map_err(|failed| failed.why)
     }
@@ -1598,7 +1595,7 @@ impl Log {
         run.args(&words[1..])
             .current_dir(dir)
             .env("GIT_TERMINAL_PROMPT", "0");
-        for name in UNSET {
+        for name in UNSET.iter().chain(&symphony_board::sys::GIT_VARS) {
             run.env_remove(name);
         }
         let done = output_until(&mut run, until).map_err(|failed| match failed {

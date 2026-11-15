@@ -41,14 +41,15 @@ never the whole target, which the release run runs.
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
   client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents, the task board, the agents page and a task's page, [its
+  documents, the task board, the agents page, a task's page and the menus, [its
   guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
-  `dx bundle --wasm-split` of the chat and the menus every page mounts, no page kind: one
-  script and main module, and a chunk for each and one for the media
+  `dx bundle --wasm-split` of the chat every page mounts, no page kind (the menus, a select's
+  popup and the picture viewer, are the React client's kind `overlay`): one
+  script and main module, and a chunk for it and one for the media
   layer (no kind: the chat loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
@@ -65,8 +66,8 @@ never the whole target, which the release run runs.
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the styles the program's page links in its head (dx's static head: the frame's, the board's,
   the pictures' and the controls every page draws; no other Dioxus kind is left to load them too)
-  and its own by name (for the chat and the menus the CSS modules, `style-`, that their code puts
-  in the page as it draws), and refuses a style no kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
+  and its own by name (for the chat the CSS modules, `style-`, that its code puts in the page as
+  it draws), and refuses a style no kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
   never fills, and no kind loads), and refuses one that holds more than custom sections.
   Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
@@ -269,27 +270,28 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,577 bytes, `/tasks` 120,489, `/agents`
-  115,526, `/queue` 108,096, `/reports` 108,512, `/docs/` 138,845, a document 140,506 and a task's
-  page 142,260, and a return that finds what it kept unchanged 2,031, 2,442, 2,307, 2,272, 765,
-  574, 1,677 and 2,285. A first visit to a kind of the web client is its entry and its sheets, the
+  each page's requests) a first visit to `/` takes 112,403 bytes, `/tasks` 120,504, `/agents`
+  115,528, `/queue` 108,087, `/reports` 108,501, `/docs/` 138,657, a document 140,447 and a task's
+  page 142,095, and a return that finds what it kept unchanged 2,030, 2,441, 2,306, 2,271, 765,
+  574, 1,677 and 2,284. A first visit to a kind of the web client is its entry and its sheets, the
   chunk every kind shares (React and the frame) and the pieces it shares with some of the others
   (the board's feed and keep; the card and the task readers of the board and the agents page; the
   media layer's chunk and sheet, home's, the documents' and a task's page's), beside the HTML, the
   shell and the page's reads; a move to another kind takes its entry and the pieces no kind
   before it took (`tests/browser/preload.rs`). A task's page's timeline, a chunk of its own, comes
-  once the page has drawn and is idle: 12,431 bytes after its first visit. The reads ahead start
+  once the page has drawn and is idle: 12,437 bytes after its first visit. The reads ahead start
   only once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so
   the budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`).
-  Once a page has its data and is idle, the shell warms the chat's and the menus' files, the
-  program's script and main module and their chunks: about 584 KB outside home's first visit,
-  and the chat's first open transfers nothing more. The program's main module keeps the
+  Once a page has its data and is idle, the shell warms the chat's files (the program's script,
+  main module and chunk) and then the menus' (their entry, the chunks it imports and their
+  sheet): about 470 KB outside home's first visit, and neither the chat's first open nor the
+  menus' transfers anything more. The program's main module keeps the
   keyboard's key names, `document::eval` with serde_json, and float formatting: dioxus-web makes
   at launch the event converter and the document that reach them, and the splitter keeps there
   every function of a table the main module reaches
   ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)).
-  Each module pays for its own compiled framework, the program once for all its kinds;
-  later visits reuse cached imports. The home budget test
+  Each module pays for its own compiled framework, the program once for the chat and its media
+  layer; later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
   Measure loaded resources, including API data, rather than summing every
@@ -321,7 +323,8 @@ never the whole target, which the release run runs.
 - **Controls and themes.** The controls under `src/components/` are copied from
   DioxusLabs/dioxus-components at the pinned primitive revision; their README
   records the local adaptations and stylesheet hashes. Buttons, text fields,
-  selects, picture dialogs and the conversation tabs use them. The header's
+  the selects' closed fields and the conversation tabs use them (a select's popup and the picture
+  dialog are the React client's menus, `apps/symphony-web/src/overlay.tsx`). The header's
   Appearance button opens a panel of the deferred module (`#appearance-panel`,
   as the bell opens activity's) whose theme menu imports a shadcn/tweakcn registry JSON file's
   `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and radius.
@@ -348,7 +351,7 @@ never the whole target, which the release run runs.
   timeline `src/timeline.tsx` in its box `src/timeline-slot.tsx` ([its
   guide](../symphony-web/AGENTS.md#a-tasks-page); the gates' and the timeline's contract,
   [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). In
-  the program (the chat and the menus, which share its runtime), a read dropped before its answer
+  the program (the chat), a read dropped before its answer
   aborts its fetch (`request.rs`, `page-program`); a post never does. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
@@ -485,8 +488,8 @@ never the whole target, which the release run runs.
 - **Home.** Home (`/`, the kind `review`) is the React client's, the third page kind it took
   over ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Its media layer
   (frames scaled, a viewer's script loaded, its view buttons, the picture viewer's opener) is
-  the web client's own (`media-layer.ts`); the picture viewer it opens is still the overlay
-  module's here.
+  the web client's own (`media-layer.ts`), and so is the picture viewer it opens, the menus'
+  (`apps/symphony-web/src/picture-viewer.tsx`).
 - **Documents.** The documents (`/docs/`, each document, folder and HTML document an
   entrypoint serves, the kind `docs`) are the React client's, the fourth page kind it took over
   ([its guide](../symphony-web/AGENTS.md#the-documents)): this client builds none of them, and
@@ -583,11 +586,12 @@ never the whole target, which the release run runs.
   focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
   its opener; its status is filled a frame after the sheet is in the page, so a
   screen reader announces it. The panel's own sheet takes the focus over. A
-  select's popup and the picture viewer are drawn by the overlay kind
-  (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. The chat and the menus are kinds of the program, each a
-  chunk the shell names in the manifest (`chunk`) and mounts in its root; a page of the
-  program that has them already fetches the chunk alone. A task's timeline, once a cold
+  select's popup and the picture viewer are drawn by the menus, the React client's persistent
+  kind `overlay` (`apps/symphony-web/src/overlay.tsx`, mounted in `#overlay-root`), never the
+  chat's: the chat's select field (`components::select::SelectField`) and its media layer ask
+  for them by data through the shell's `reviewOverlay` (`components::deferred`), as the web
+  client's pages do. The chat is the program's kind, a chunk the shell names in the manifest
+  (`chunk`) and mounts in its root. A task's timeline, once a cold
   persistent kind of the program moved into its page's box, is the React client's, a chunk its
   box imports ([its guide](../symphony-web/AGENTS.md#a-tasks-page)). What listens on a module's
   root, as each module's Dioxus does, hears only the events of that module's own part of the
@@ -598,9 +602,9 @@ never the whole target, which the release run runs.
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
   a second, and after a read that got no answer until one does) and the browser is
-  idle, it prefetches the persistent kinds' script,
-  wasm, chunk and styles at the lowest priority, nothing evaluated: the chat's first, the
-  menus' once the chat's chunk (or the chat's own load, when a click came first) is
+  idle, it prefetches the persistent kinds' files at the lowest priority, nothing evaluated:
+  the chat's script, wasm, chunk and styles first, the menus' entry, the chunks it imports
+  and its styles once the chat's chunk (or the chat's own load, when a click came first) is
   in, so no two share a slow link. A browser asking to save data, or reporting a
   2g link, warms nothing; the browser tests count those prefetches apart from a
   first visit. `index.html` in the crate is dx's build template (`{app_title}`), and
@@ -626,7 +630,7 @@ never the whole target, which the release run runs.
   protocol against the release build, served as the server serves it.
 - **Development.** The web client's pages are Vite's dev server's (`just symphony-ui-dev SERVER
   [PORT]`, [its guide](../symphony-web/AGENTS.md#the-dev-server)), over a server of the
-  developer's own whose build serves the program's kinds. This client's dx front door
+  developer's own whose build serves the program's kind. This client's dx front door
   (`apps/symphony-server/src/development.rs`) stays for the consuming project, whose host's own
   `symphony-ui-dev` calls `development::main` (`apps/symphony-server/tests/consumer_api.rs`) and
   whose recipe runs `cargo symphony-ui dev` from a Symphony checkout: it leaves with this client,
@@ -645,8 +649,7 @@ never the whole target, which the release run runs.
   for releases.
   Only DX gets `CARGO_INCREMENTAL=1` (the workspace's normal dev profile disables
   it), opt-level 1, no debug info and panic=abort on its `wasm-dev` profile.
-  The `devtools` feature is opt-in and enables the chat's and the menus' kinds in the dev
-  binary. `src/dev.rs` mounts the client library directly. RSX and CSS update in place;
+  The `devtools` feature is opt-in and enables the chat's kind in the dev binary. `src/dev.rs` mounts the client library directly. RSX and CSS update in place;
   Rust logic edits incrementally rebuild the module. The API's release hash does not reload
   this dev page. Changes to dependencies, feature sets or static initializers need a
   restart. The release shell, hashed page-kind builds and shared server never
@@ -656,7 +659,8 @@ never the whole target, which the release run runs.
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
   `/reports`, `/tasks`, `/agents`, `/docs/` and the documents, a task's page) are no part of it:
-  it draws the chat and the menus alone. The web client's dev server serves those pages with hot
+  it draws the chat alone, where a select opens no popup and a picture no viewer (the menus are
+  the web client's). The web client's dev server serves those pages and the menus with hot
   reload ([its guide](../symphony-web/AGENTS.md), `just symphony-ui-dev`).
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
