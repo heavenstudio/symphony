@@ -61,11 +61,13 @@ export interface NearViewportProps {
   onEnter?: () => void;
   /** Whether the box is a list's item (`li`) rather than a `div`. */
   listItem?: boolean;
+  /** Mount the content now, near the screen or not (a part the focus is given to), and keep it. */
+  eager?: boolean;
 }
 
 /**
- * `children` mounted once they come near the screen; until then `ghost`, in a box of `height` px.
- * A part the address's fragment names mounts at once, and is scrolled to.
+ * `children` mounted once they come near the screen, or once `eager`; until then `ghost`, in a box
+ * of `height` px. A part the address's fragment names mounts at once, and is scrolled to.
  */
 export function NearViewport({
   children,
@@ -76,16 +78,23 @@ export function NearViewport({
   className = "",
   onEnter,
   listItem = false,
+  eager = false,
 }: NearViewportProps) {
   const [addressed] = useState(() => {
     const target = anchor();
     return target !== "" && (anchors.includes(target) || target === id);
   });
-  const [shown, setShown] = useState(addressed);
+  const [latched, setShown] = useState(addressed);
+  // An eager part draws its content in the very draw that made it eager, and stays drawn after.
+  const shown = latched || eager;
   const sentinel = useRef<HTMLDivElement>(null);
   const entered = useRef(onEnter);
   entered.current = onEnter;
   useEffect(() => {
+    if (shown && !latched) {
+      setShown(true);
+      return;
+    }
     if (shown) {
       if (addressed) scrollAnchor();
       entered.current?.();
@@ -106,7 +115,7 @@ export function NearViewport({
       observer.disconnect();
       observer.takeRecords();
     };
-  }, [shown, addressed]);
+  }, [shown, latched, addressed]);
   const style: CSSProperties = {
     containIntrinsicSize: `auto ${height}px`,
     minHeight: `${shown ? 0 : height}px`,

@@ -1,0 +1,681 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  anchorOf,
+  focusedLink,
+  focusedSlug,
+  keptPlace,
+  type Place,
+  PlaceKeeper,
+  RESTS_MS,
+  RETURN_FRAMES,
+  ROWS,
+  readerColumn,
+  readerRows,
+  rowOf,
+  type Scroller,
+  samePlace,
+  takeFocus,
+  withPlace,
+} from "./boardplace";
+
+// The tests run without a DOM: an element here answers only the selectors the module asks it for,
+// each as its test sets it up.
+
+interface Box {
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
+}
+
+interface Made {
+  id?: string;
+  attributes?: Record<string, string>;
+  box?: Box;
+  /** What `closest` finds, by selector. */
+  closest?: Record<string, Element>;
+  /** What `querySelectorAll` finds, by selector; `querySelector` finds the first. */
+  all?: Record<string, Element[]>;
+}
+
+function element({ id = "", attributes = {}, box = {}, closest = {}, all = {} }: Made = {}) {
+  const focus = vi.fn();
+  const made = {
+    id,
+    focus,
+    getAttribute: (name: string) => attributes[name] ?? null,
+    getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0, ...box }),
+    closest: (selector: string) => closest[selector] ?? null,
+    querySelectorAll: (selector: string) => all[selector] ?? [],
+    querySelector: (selector: string) => all[selector]?.[0] ?? null,
+  };
+  return made as unknown as Element & { focus: typeof focus };
+}
+
+const COLUMN = ".board-scroll .column[data-status]";
+const CARD = `.kanban ${ROWS}`;
+const FOCUSABLE = "a[href], button, summary, [tabindex]";
+const ROW_IDS = '[id^="row-"]';
+const rows = (status: string) => `.board-scroll .column[data-status="${status}"] ${ROWS}`;
+const rowsOf = (status: string) => `.column[data-status="${status}"] ${ROW_IDS}`;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("the reader's column", () => {
+  const shown: [string, number, number][] = [
+    ["concept", 0, 288],
+    ["ready", 300, 588],
+    ["in_progress", 600, 888],
+  ];
+
+  it("is the one holding the focus, before the pointer's and the middle's", () => {
+    expect(readerColumn("concept", "ready", shown, 744)).toBe("concept");
+  });
+
+  it("is the pointer's when the focus is in none shown, or in no column", () => {
+    expect(readerColumn("review", "ready", shown, 744)).toBe("ready");
+    expect(readerColumn(null, "ready", shown, 744)).toBe("ready");
+  });
+
+  it("is the one nearest the middle when the pointer is over none shown", () => {
+    expect(readerColumn(null, "review", shown, 744)).toBe("in_progress");
+    expect(readerColumn(null, null, shown, 440)).toBe("ready");
+    // In the gap between two, the one whose middle is nearer.
+    expect(readerColumn(null, null, shown, 293)).toBe("concept");
+    expect(readerColumn(null, null, shown, 296)).toBe("ready");
+    expect(readerColumn(null, null, shown, -500)).toBe("concept");
+  });
+
+  it("is none when the scroller shows no column", () => {
+    expect(readerColumn("ready", "ready", [], 400)).toBeNull();
+  });
+});
+
+/**
+ * A board scrolled to show 0 to 900 sideways and 200 to 700 down, its columns at `columns`
+ * (status, left, the tops of its cards, each card its row `row-STATUS-N`), the focus on `active`,
+ * the pointer over `hovered`.
+ */
+function board(
+  columns: [string, number, number[]][],
+  hovered: string | null = null,
+  active: Element | null = null,
+) {
+  const made = columns.map(([status, left, tops]) => {
+    // A column is the closest column to itself.
+    const closest: Record<string, Element> = {};
+    const attributes = { "data-status": status };
+    const column = element({ attributes, box: { left, right: left + 288 }, closest });
+    closest[COLUMN] = column;
+    const cards = tops.map((top, n) =>
+      element({ id: `row-${status}-${n}`, box: { top, left, right: left + 288 } }),
+    );
+    return { status, column, cards };
+  });
+  const all: Record<string, Element[]> = {
+    ".column[data-status]": made.map(({ column }) => column),
+    ".column[data-status]:hover": made
+      .filter(({ status }) => status === hovered)
+      .map(({ column }) => column),
+    [ROW_IDS]: made.flatMap(({ cards }) => cards),
+  };
+  for (const { status, cards } of made) {
+    all[rows(status)] = cards;
+    all[rowsOf(status)] = cards;
+  }
+  const scroller = element({ box: { top: 200, bottom: 700, left: 0, right: 900 }, all });
+  vi.stubGlobal("document", {
+    activeElement: active,
+    querySelector: (selector: string) => (selector === ".board-scroll" ? scroller : null),
+  });
+  return scroller;
+}
+
+describe("the rows a live update holds", () => {
+  it("are every card without a page or a board's scroller", () => {
+    expect(readerRows()).toBe(ROWS);
+    vi.stubGlobal("document", { activeElement: null, querySelector: () => null });
+    expect(readerRows()).toBe(ROWS);
+  });
+
+  it("are the cards of the column nearest the scroller's middle", () => {
+    board([
+      ["concept", 0, [250]],
+      ["ready", 300, [180, 260]],
+      ["in_progress", 600, [300]],
+    ]);
+    expect(readerRows()).toBe(rows("ready"));
+  });
+
+  it("are the cards of the column under the pointer, or holding the focus", () => {
+    board(
+      [
+        ["concept", 0, [250]],
+        ["ready", 300, [260]],
+      ],
+      "concept",
+    );
+    expect(readerRows()).toBe(rows("concept"));
+    const column = element({ attributes: { "data-status": "in_progress" } });
+    board(
+      [
+        ["concept", 0, [250]],
+        ["ready", 300, [260]],
+        ["in_progress", 600, [300]],
+      ],
+      "concept",
+      element({ closest: { [COLUMN]: column } }),
+    );
+    expect(readerRows()).toBe(rows("in_progress"));
+  });
+
+  it("leave out a column scrolled away sideways", () => {
+    // Only the first shows: the one past the scroller's right, nearer its middle, is not the reader's.
+    board([
+      ["concept", -200, [250]],
+      ["ready", 950, [260]],
+    ]);
+    expect(readerRows()).toBe(rows("concept"));
+  });
+
+  it("are every card when no card of the reader's column has its top on the scroller", () => {
+    board([
+      ["concept", 0, [250]],
+      ["ready", 300, [100, 700, 900]],
+    ]);
+    expect(readerRows()).toBe(ROWS);
+    board([["ready", 300, []]]);
+    expect(readerRows()).toBe(ROWS);
+  });
+});
+
+describe("the row the reader's place is kept by", () => {
+  it("is the reader's column's first row on the screen, and how far below its top", () => {
+    const scroller = board([
+      ["concept", 0, [250]],
+      ["ready", 300, [150, 260.4, 400]],
+      ["in_progress", 600, [300]],
+    ]);
+    expect(anchorOf(scroller)).toEqual({ row: "ready-1", at: 60 });
+  });
+
+  it("is any column's first row on the screen when the reader's has none there", () => {
+    const scroller = board([
+      ["concept", 0, [100, 230]],
+      ["ready", 300, [100, 800]],
+      ["in_progress", 600, [300]],
+    ]);
+    expect(anchorOf(scroller)).toEqual({ row: "concept-1", at: 30 });
+  });
+
+  it("is none on a board with no row on the screen", () => {
+    expect(anchorOf(board([["ready", 300, [100, 800]]]))).toBeNull();
+    expect(anchorOf(board([]))).toBeNull();
+  });
+
+  it("is named for the shell's hold by its id, quoted", () => {
+    expect(rowOf("w/a")).toBe('[id="row-w/a"]');
+    expect(rowOf('w/"a\\')).toBe('[id="row-w/\\"a\\\\"]');
+  });
+});
+
+describe("a moved card's focus", () => {
+  /** The board's card of `slug`, its links `links`, the focus on its link `at` (none: outside). */
+  function focused(slug: string, links: number, at: number | null) {
+    const all: Record<string, Element[]> = {};
+    const card = element({ attributes: { "data-slug": slug }, all });
+    const inCard = () => element({ closest: { [CARD]: card } });
+    all[FOCUSABLE] = Array.from({ length: links }, inCard);
+    const active = at === null ? element() : (all[FOCUSABLE][at] ?? inCard());
+    vi.stubGlobal("document", { activeElement: active });
+  }
+
+  it("is no card's without a page", () => {
+    expect(focusedSlug()).toBeNull();
+    expect(focusedLink("w/a")).toBeNull();
+  });
+
+  it("names the card holding it and which of its links does", () => {
+    focused("w/a", 3, 2);
+    expect(focusedSlug()).toBe("w/a");
+    expect(focusedLink("w/a")).toBe(2);
+    expect(focusedLink("w/b")).toBeNull();
+  });
+
+  it("is in no card when the focus is outside every card", () => {
+    focused("w/a", 3, null);
+    expect(focusedSlug()).toBeNull();
+    expect(focusedLink("w/a")).toBeNull();
+  });
+
+  it("names the card's first link when the card holds it in none of them", () => {
+    focused("w/a", 2, 5);
+    expect(focusedLink("w/a")).toBe(0);
+  });
+
+  /** The task `slug`'s row on the page, its card's links `links`, the focus on `active`. */
+  function moved(slug: string, links: number, active: "body" | "field" | null) {
+    const focusable = Array.from({ length: links }, () => element());
+    const card = element({ all: { [FOCUSABLE]: focusable, "a[href]": focusable.slice(0, 1) } });
+    const row = element({ all: { ".taskcard": [card] } });
+    const body = element();
+    vi.stubGlobal("document", {
+      body,
+      activeElement: active === "body" ? body : active === "field" ? element() : null,
+      getElementById: (id: string) => (id === `row-${slug}` ? row : null),
+    });
+    return focusable;
+  }
+
+  it("is given back to the same link of the card in its new row, where it stands", () => {
+    const links = moved("w/a", 3, "body");
+    takeFocus("w/a", 1);
+    expect(links[1]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(links[0]?.focus).not.toHaveBeenCalled();
+    const again = moved("w/a", 3, null);
+    takeFocus("w/a", 2);
+    expect(again[2]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("is given to the card's title when it has fewer links than it had", () => {
+    const links = moved("w/a", 1, "body");
+    takeFocus("w/a", 3);
+    expect(links[0]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("stays where the reader put it since, and on no row the page lacks", () => {
+    const links = moved("w/a", 2, "field");
+    takeFocus("w/a", 0);
+    expect(links[0]?.focus).not.toHaveBeenCalled();
+    const none = moved("w/a", 2, "body");
+    takeFocus("w/b", 0);
+    expect(none[0]?.focus).not.toHaveBeenCalled();
+  });
+});
+
+describe("the board's place in its history entry", () => {
+  const place: Place = { left: 300, top: 1200, page: 150 };
+
+  it("is read from the entry's state when it holds one whole", () => {
+    expect(keptPlace({ board: place, other: 1 })).toEqual(place);
+    expect(keptPlace({ board: { left: 0, top: 0, page: 0 } })).toEqual({
+      left: 0,
+      top: 0,
+      page: 0,
+    });
+    const kept = { ...place, row: "w/a", at: 40 };
+    expect(keptPlace({ board: kept })).toEqual(kept);
+  });
+
+  it("is read without its row when the row or its height on the screen is not whole", () => {
+    for (const row of [
+      { row: "", at: 40 },
+      { row: 3, at: 40 },
+      { row: "w/a" },
+      { row: "w/a", at: -1 },
+      { row: "w/a", at: "40" },
+    ]) {
+      expect(keptPlace({ board: { ...place, ...row } })).toEqual(place);
+    }
+  });
+
+  it("is none for an entry with none, or one it cannot read", () => {
+    for (const state of [
+      null,
+      undefined,
+      3,
+      "board",
+      {},
+      { board: null },
+      { board: "here" },
+      { board: { left: 1, top: 2 } },
+      { board: { left: -1, top: 2, page: 0 } },
+      { board: { left: 1, top: Number.NaN, page: 0 } },
+      { board: { left: 1, top: Number.POSITIVE_INFINITY, page: 0 } },
+      { board: { left: "1", top: 2, page: 0 } },
+    ]) {
+      expect(keptPlace(state)).toBeNull();
+    }
+  });
+
+  it("is written into the entry's state beside what else it holds", () => {
+    expect(withPlace(null, place)).toEqual({ board: place });
+    expect(withPlace("text", place)).toEqual({ board: place });
+    expect(withPlace({ other: 1, board: { left: 0, top: 0, page: 0 } }, place)).toEqual({
+      other: 1,
+      board: place,
+    });
+  });
+
+  it("is the same only as one at the very same place", () => {
+    expect(samePlace(place, { ...place })).toBe(true);
+    const kept = { ...place, row: "w/a", at: 40 };
+    expect(samePlace(kept, { ...kept })).toBe(true);
+    for (const other of [{ left: 301 }, { top: 1199 }, { page: 0 }, { row: "w/b" }, { at: 41 }]) {
+      expect(samePlace(kept, { ...kept, ...other })).toBe(false);
+    }
+    expect(samePlace(place, kept)).toBe(false);
+    expect(samePlace(null, place)).toBe(false);
+    expect(samePlace(place, null)).toBe(false);
+  });
+});
+
+describe("the board's place kept", () => {
+  /** The window's listeners, by kind, each with the signal that ends it. */
+  let listeners: [string, () => void, AbortSignal | undefined][];
+  let frames: (() => void)[];
+  let entry: { state: unknown };
+  let navigation: string;
+  /** The board's rows on the page. */
+  let onPage: Element[];
+  const replaced = vi.fn();
+
+  beforeEach(() => {
+    listeners = [];
+    frames = [];
+    entry = { state: null };
+    navigation = "ready";
+    replaced.mockClear();
+    vi.useFakeTimers();
+    vi.stubGlobal("location", { pathname: "/tasks", href: "http://here/tasks" });
+    vi.stubGlobal("history", {
+      get state() {
+        return entry.state;
+      },
+      replaceState: (state: unknown) => {
+        replaced(state);
+        entry.state = state;
+      },
+    });
+    vi.stubGlobal("scrollX", 0);
+    vi.stubGlobal("scrollY", 0);
+    vi.stubGlobal("scrollTo", (_x: number, y: number) => vi.stubGlobal("scrollY", y));
+    onPage = [];
+    vi.stubGlobal("document", {
+      activeElement: null,
+      documentElement: {
+        dataset: {
+          get navigation() {
+            return navigation;
+          },
+        },
+      },
+      getElementById: (id: string) => onPage.find((row) => row.id === id) ?? null,
+    });
+    vi.stubGlobal("requestAnimationFrame", (step: () => void) => frames.push(step));
+    vi.stubGlobal(
+      "addEventListener",
+      (kind: string, listener: () => void, options?: AddEventListenerOptions) =>
+        listeners.push([kind, listener, options?.signal]),
+    );
+  });
+
+  /** Run the frames asked for so far; how many there were. */
+  function frame(): number {
+    const now = frames;
+    frames = [];
+    for (const step of now) step();
+    return now.length;
+  }
+
+  /** What the reader does: each listener of `kind` still listening hears it. */
+  function gesture(kind: string) {
+    for (const [one, listener, signal] of listeners) {
+      if (one === kind && signal?.aborted !== true) listener();
+    }
+  }
+
+  /**
+   * The board's scroller, its box 100 to 600 down and 0 to 900 sideways, showing one column,
+   * Ready's, whose rows are `rows` (each its slug and how far down the column it stands), on the
+   * screen where the scroller's top puts them, and on the page (`getElementById`).
+   */
+  function surface(rows: [slug: string, offset: number][] = []): Scroller {
+    const box = { top: 100, bottom: 600, left: 0, right: 900 };
+    const scroller = { scrollLeft: 0, scrollTop: 0 } as Scroller;
+    const made = rows.map(([slug, offset]) => {
+      const top = box.top + offset;
+      const edges = () => ({ top: top - scroller.scrollTop, left: 0, right: 288 });
+      return { id: `row-${slug}`, getBoundingClientRect: edges } as unknown as Element;
+    });
+    onPage = made;
+    const column = element({
+      attributes: { "data-status": "ready" },
+      box: { left: 0, right: 288 },
+    });
+    const all: Record<string, Element[]> = {
+      ".column[data-status]": [column],
+      [ROW_IDS]: made,
+      [rowsOf("ready")]: made,
+    };
+    return Object.assign(scroller, {
+      getBoundingClientRect: () => box,
+      querySelectorAll: (selector: string) => all[selector] ?? [],
+      querySelector: (selector: string) => all[selector]?.[0] ?? null,
+    });
+  }
+
+  function keeper(scroller = surface()) {
+    const controller = new AbortController();
+    return { keeper: new PlaceKeeper(scroller, controller.signal), scroller, controller };
+  }
+
+  it("is written once the reader's scrolling rests, and only when it moved", () => {
+    const { keeper: kept, scroller } = keeper();
+    entry.state = { other: true };
+    scroller.scrollTop = 400.4;
+    kept.later();
+    vi.advanceTimersByTime(RESTS_MS - 1);
+    scroller.scrollTop = 800.6;
+    kept.later();
+    vi.advanceTimersByTime(RESTS_MS - 1);
+    expect(replaced).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(replaced).toHaveBeenCalledExactlyOnceWith({
+      other: true,
+      board: { left: 0, top: 801, page: 0 },
+    });
+    kept.keep();
+    expect(replaced).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the row on the screen the place is kept by, and how far down the screen it stands", () => {
+    const { keeper: kept, scroller } = keeper(
+      surface([
+        ["w/a", 0],
+        ["w/b", 300],
+        ["w/c", 600],
+      ]),
+    );
+    scroller.scrollTop = 250;
+    kept.keep();
+    expect(entry.state).toEqual({ board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } });
+  });
+
+  it("returns to its row where it stood when the rows above it are drawn at another height", () => {
+    const held = vi.fn();
+    vi.stubGlobal("reviewHoldPlace", held);
+    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    // The row above is 40 px taller drawn again (its card, where a ghost stood).
+    const { keeper: kept, scroller } = keeper(
+      surface([
+        ["w/a", 0],
+        ["w/b", 340],
+      ]),
+    );
+    kept.back();
+    expect(scroller.scrollTop).toBe(290);
+    // There at once; the shell's hold keeps the row there while the rows near it draw.
+    expect(frames).toEqual([]);
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
+  });
+
+  it("returns to the scroller's top, holding nothing, while its row is not on the page", () => {
+    const held = vi.fn();
+    vi.stubGlobal("reviewHoldPlace", held);
+    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    const { keeper: kept, scroller } = keeper(surface([["w/a", 0]]));
+    kept.back();
+    expect(scroller.scrollTop).toBe(250);
+    expect(frames).toEqual([]);
+    expect(held).not.toHaveBeenCalled();
+  });
+
+  it("goes on returning while its row cannot reach its place yet", () => {
+    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    const scroller = surface([["w/b", 340]]);
+    // The scroller holds only 200 px of its rows yet, then all of them.
+    let most = 200;
+    let top = 0;
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => top,
+      set: (to: number) => {
+        top = Math.min(to, most);
+      },
+    });
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    expect(top).toBe(200);
+    expect(frame()).toBe(1);
+    expect(frames).toHaveLength(1);
+    most = 1000;
+    frame();
+    expect(top).toBe(290);
+    expect(frames).toEqual([]);
+  });
+
+  it("is written at once before a link is followed, the rest's wait dropped", () => {
+    const { keeper: kept, scroller } = keeper();
+    scroller.scrollLeft = 300;
+    vi.stubGlobal("scrollY", 150);
+    kept.later();
+    kept.keep();
+    expect(entry.state).toEqual({ board: { left: 300, top: 0, page: 150 } });
+    vi.advanceTimersByTime(RESTS_MS);
+    expect(replaced).toHaveBeenCalledOnce();
+  });
+
+  it("is never written into another page's entry, nor once the board is gone", () => {
+    const { keeper: kept, scroller, controller } = keeper();
+    scroller.scrollTop = 10;
+    vi.stubGlobal("location", { pathname: "/task/w/a", href: "http://here/task/w/a" });
+    kept.keep();
+    expect(replaced).not.toHaveBeenCalled();
+    vi.stubGlobal("location", { pathname: "/tasks", href: "http://here/tasks" });
+    controller.abort();
+    kept.keep();
+    kept.later();
+    vi.advanceTimersByTime(RESTS_MS);
+    expect(replaced).not.toHaveBeenCalled();
+  });
+
+  it("is returned to from the entry: the scroller at once, the window once navigation is ready", () => {
+    entry.state = { board: { left: 300, top: 1200, page: 150 } };
+    navigation = "loading";
+    const { keeper: kept, scroller } = keeper();
+    kept.back();
+    expect([scroller.scrollLeft, scroller.scrollTop]).toEqual([300, 1200]);
+    expect(scrollY).toBe(0);
+    // The shell puts the window at its top as its navigation ends.
+    scroller.scrollTop = 0;
+    expect(frame()).toBe(1);
+    expect(scroller.scrollTop).toBe(1200);
+    expect(scrollY).toBe(0);
+    navigation = "ready";
+    frame();
+    expect(scrollY).toBe(150);
+    // There: no frame more, and nothing written meanwhile.
+    expect(frame()).toBe(0);
+    expect(replaced).not.toHaveBeenCalled();
+  });
+
+  it("keeps nothing while it returns, and keeps what the reader took over at", () => {
+    entry.state = { board: { left: 0, top: 1200, page: 0 } };
+    const scroller = surface();
+    // The scroller holds only 500 px of its rows yet.
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => 500,
+      set: () => {},
+    });
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    kept.keep();
+    expect(replaced).not.toHaveBeenCalled();
+    frame();
+    gesture("wheel");
+    frame();
+    expect(frames).toEqual([]);
+    kept.keep();
+    expect(entry.state).toEqual({ board: { left: 0, top: 500, page: 0 } });
+  });
+
+  it("gives up after its frames when the board cannot reach the place", () => {
+    entry.state = { board: { left: 0, top: 0, page: 4000 } };
+    vi.stubGlobal("scrollTo", () => {});
+    const { keeper: kept } = keeper();
+    kept.back();
+    let ran = 1;
+    while (frame() > 0) ran += 1;
+    expect(ran).toBe(RETURN_FRAMES);
+  });
+
+  it("returns nowhere for an entry that keeps no place, or once the board is gone", () => {
+    const { keeper: kept } = keeper();
+    kept.back();
+    expect(frames).toEqual([]);
+    expect(listeners).toEqual([]);
+    entry.state = { board: { left: 5, top: 5, page: 0 } };
+    const { keeper: gone, scroller, controller } = keeper();
+    controller.abort();
+    gone.back();
+    expect(scroller.scrollTop).toBe(0);
+    expect(frames).toEqual([]);
+  });
+
+  it("stops returning once the board is gone", () => {
+    entry.state = { board: { left: 5, top: 5, page: 0 } };
+    navigation = "loading";
+    const { keeper: kept, scroller, controller } = keeper();
+    kept.back();
+    controller.abort();
+    scroller.scrollTop = 0;
+    frame();
+    expect(scroller.scrollTop).toBe(0);
+    expect(frames).toEqual([]);
+  });
+
+  it("drops the scrolling not yet kept on Back, and returns to the board entry's own place", () => {
+    const { keeper: kept, scroller } = keeper();
+    scroller.scrollTop = 600;
+    kept.later();
+    // Back to another entry of the board, which kept its own place.
+    entry.state = { board: { left: 0, top: 90, page: 0 } };
+    kept.moved();
+    expect(scroller.scrollTop).toBe(90);
+    vi.advanceTimersByTime(RESTS_MS);
+    expect(replaced).not.toHaveBeenCalled();
+    // Back to another page's entry: nothing to return to there.
+    vi.stubGlobal("location", { pathname: "/task/w/a", href: "http://here/task/w/a" });
+    entry.state = { board: { left: 0, top: 30, page: 0 } };
+    kept.moved();
+    expect(scroller.scrollTop).toBe(90);
+  });
+
+  it("starts a new return in place of one under way", () => {
+    entry.state = { board: { left: 0, top: 100, page: 0 } };
+    navigation = "loading";
+    const { keeper: kept, scroller } = keeper();
+    kept.back();
+    entry.state = { board: { left: 0, top: 200, page: 0 } };
+    kept.back();
+    navigation = "ready";
+    scroller.scrollTop = 0;
+    // The first's frame does nothing; the second's goes to its place.
+    frame();
+    expect(scroller.scrollTop).toBe(200);
+    expect(frame()).toBe(0);
+  });
+});

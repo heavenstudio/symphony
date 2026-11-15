@@ -183,6 +183,18 @@ describe("content near the screen", () => {
       expect(markup).toContain("min-height:0px");
     }
   });
+
+  it("is mounted at once when eager, near the screen or not", () => {
+    const markup = renderToStaticMarkup(
+      <NearViewport height={64} ghost={<i>ghost</i>} eager>
+        <b>content</b>
+      </NearViewport>,
+    );
+    expect(markup).toContain("<b>content</b>");
+    expect(markup).toContain("min-height:0px");
+    expect(markup).not.toContain("ghost");
+    expect(markup).not.toContain("viewport-sentinel");
+  });
 });
 
 /** An IntersectionObserver whose callback a test calls, and what each was asked to do. */

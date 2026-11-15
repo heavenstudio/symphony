@@ -42,10 +42,11 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
 /* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock while the
-   dock shows (frame.css), so its own horizontal scrollbar, at its foot, is never under the
-   prev/next bar. Its ghost is as tall. */
-:root:has(.frame-pending) { --board-dock:var(--dock); }
+   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock's band
+   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
+   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
+   tall. */
+:root { --board-dock:var(--dock); }
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
@@ -145,6 +146,10 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
    nested in it (a column's rows), nor a list item's marker when the slot is the item; inside
    one, layout containment puts the marker on a line of its own. */
 .viewport-slot:not(li, li > *, :has(.viewport-sentinel)) { content-visibility:auto; }
+/* A board row still waiting for its card skips its ghost's style and paint while off screen: a
+   column loaded to its end holds a thousand ghosts, each bar's shimmer restyled every frame. The
+   ghost is as tall as its min-height either way, and the sentinel beside it is not in it. */
+.board-row > .viewport-placeholder { content-visibility:auto; }
 /* A list item's paragraphs are lines of the list, tight or loose. */
 li > .viewport-slot > p { margin:0; }
 li > .viewport-slot > p + p { margin-top:1em; }
