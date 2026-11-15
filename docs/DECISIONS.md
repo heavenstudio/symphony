@@ -5,6 +5,24 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Product specs
+
+- [ ] **product-spec-form** — Each page of the Symphony would get a short document of its own, written for whoever uses the page: what it is for, what you do there, what it shows, its states, and how it looks on a phone, with pictures taken by one command from a made-up project. Today no document does this for any page, and no document outside this register shows a picture. One spec is written so you can judge the form: [the review queue](product/QUEUE.md). Is this the form the other thirteen should take? Approve, or comment with what to change. [[analysis/product-docs-review-2026-11#Proposed specs]]
+  [2026-11-15 02:40] agent — Posted for the board task `docs/product-docs-review`. The example's pictures, as the command took them, wide and on a phone:
+
+    ![The queue, wide](product/pictures/queue-wide.png) ![The queue on a phone](product/pictures/queue-phone.png)
+
+    **What approving sets:**
+
+    - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
+    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page on a phone and wide from a small fixture project, on a server of its own. Taken twice, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
+    - **The task that changes a page retakes its pictures**, as its after pictures.
+    - **Cost:** about 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are: about 16 MB for the whole set.
+
+    **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
+
 ## Auto-approved: spot-check
 
 ### Releases

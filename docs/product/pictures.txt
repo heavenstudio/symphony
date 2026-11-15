@@ -1,0 +1,8 @@
+# The product specs' pictures, one page a line: NAME PATH [STEPS]. tools/product-pictures.sh takes
+# each on a phone and wide, as pictures/NAME-phone.png and pictures/NAME-wide.png, from the fixture
+# project (tools/product-pictures/fixture). STEPS are options of `symphony shot`, with no spaces
+# inside one.
+
+queue /queue
+queue-topic /queue --click [data-category=design]
+register /docs/DECISIONS.md
