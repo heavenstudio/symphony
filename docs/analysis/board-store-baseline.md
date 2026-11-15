@@ -1,7 +1,7 @@
 # The board's store, measured before it moves
 
-What the task board costs on SurrealDB today, written down so that the same measurement on
-PostgreSQL can be read beside it once the store has moved. "Measured 2026-11-15" marks this
+What the task board costs on SurrealDB today, written down before the store moves to PostgreSQL,
+with the meter the two stores are compared by. "Measured 2026-11-15" marks this
 machine that day: an Apple M3 Max (Mac15,8), 16 cores, 64 GB, macOS 26.6.2, its disk 89% full,
 shared with other agents' builds and tests at a one-minute load of 111 to 149 while the first
 five runs were made and 213 to 256 for the rest.
