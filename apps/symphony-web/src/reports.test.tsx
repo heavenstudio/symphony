@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../crates/symphony-api/fixtures/reports-page.json";
 import { type ChartData, gap, seriesKey } from "./chart";
 import {
-  AskedChart,
   axis,
   Bucket,
   charts,
@@ -561,18 +560,6 @@ describe("the figures", () => {
 });
 
 describe("a figure's link", () => {
-  /** A page whose fragment is `hash`, its elements those `ids` name, each counting its scrolls. */
-  function addressed(hash: string, ids: string[]) {
-    const scrolled: string[] = [];
-    vi.stubGlobal("HTMLDetailsElement", class {});
-    vi.stubGlobal("location", { hash });
-    vi.stubGlobal("document", {
-      getElementById: (id: string) =>
-        ids.includes(id) ? { parentElement: null, scrollIntoView: () => scrolled.push(id) } : null,
-    });
-    return scrolled;
-  }
-
   it("opens the chart it sums up, and none while no chart is drawn", () => {
     const html = view(page());
     expect(html.match(/<dt><a href="#chart-[a-z]+">/g)).toEqual([
@@ -590,56 +577,6 @@ describe("a figure's link", () => {
     expect(nothing).toContain("<dt>Done</dt>");
     expect(nothing).not.toContain("href=");
     expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
-  });
-
-  it("brings its chart into view again once it mounts, and only then", () => {
-    const scrolled = addressed("#chart-decisions", ["chart-decisions", "chart-done"]);
-    const asked = new AskedChart();
-    // Charts mounting before the address moved, or after a move to another, are not scrolled to.
-    asked.entered("decisions");
-    asked.moved();
-    asked.entered("done");
-    expect(scrolled).toEqual([]);
-    asked.entered("decisions");
-    expect(scrolled).toEqual(["chart-decisions"]);
-    // Once: it is not pulled back into view after that.
-    asked.entered("decisions");
-    expect(scrolled).toEqual(["chart-decisions"]);
-    vi.stubGlobal("location", { hash: "#top" });
-    asked.moved();
-    asked.entered("done");
-    asked.entered("decisions");
-    expect(scrolled).toEqual(["chart-decisions"]);
-    // A new window mounts every chart again, the address unchanged: none is scrolled to.
-    vi.stubGlobal("location", { hash: "#chart-done" });
-    const next = new AskedChart();
-    next.entered("done");
-    expect(scrolled).toEqual(["chart-decisions"]);
-    next.moved();
-    next.entered("done");
-    expect(scrolled).toEqual(["chart-decisions", "chart-done"]);
-  });
-
-  it("is heard on each move of the address, the shell's or the fragment's, until let go", () => {
-    const scrolled = addressed("#chart-lead", ["chart-lead"]);
-    const heard = new Map<string, () => void>();
-    vi.stubGlobal("addEventListener", (name: string, listener: () => void) =>
-      heard.set(name, listener),
-    );
-    vi.stubGlobal("removeEventListener", (name: string, listener: () => void) => {
-      if (heard.get(name) === listener) heard.delete(name);
-    });
-    const asked = new AskedChart();
-    const stop = asked.follow();
-    expect([...heard.keys()]).toEqual(["hashchange", "review:navigate"]);
-    heard.get("review:navigate")?.();
-    asked.entered("lead");
-    expect(scrolled).toEqual(["chart-lead"]);
-    heard.get("hashchange")?.();
-    asked.entered("lead");
-    expect(scrolled).toEqual(["chart-lead", "chart-lead"]);
-    stop();
-    expect(heard.size).toBe(0);
   });
 });
 

@@ -21,7 +21,6 @@ import {
 } from "./chart";
 import { sleep } from "./feed";
 import { getIf, said } from "./request";
-import { anchor, scrollAnchor } from "./route";
 import { field } from "./shared";
 import { load, save } from "./storage";
 import { ready } from "./trouble";
@@ -728,43 +727,6 @@ export function linkedFigures(page: Page): [Figure, string][] {
   ];
 }
 
-/** The events that say the address moved. */
-const MOVES = ["hashchange", "review:navigate"];
-
-/**
- * The chart the address last moved to, kept until that chart mounts. The shell scrolls to the
- * chart's place, where its ghost holds its id. Once the chart is drawn there it is scrolled to
- * again, since the charts that mount around it may have moved it. A Report keeps its own, so a
- * new window, which mounts every chart again, scrolls to none of them.
- */
-export class AskedChart {
-  private asked = "";
-
-  /** The address moved: the chart its fragment names, if any, is the one asked for. */
-  moved(): void {
-    this.asked = anchor();
-  }
-
-  /**
-   * Follow the address: each move of its fragment (`hashchange`) and each move the shell makes
-   * (`review:navigate`, a link it followed in place) until what it returns is called.
-   */
-  follow(): () => void {
-    const moved = () => this.moved();
-    for (const name of MOVES) addEventListener(name, moved);
-    return () => {
-      for (const name of MOVES) removeEventListener(name, moved);
-    };
-  }
-
-  /** The chart `id` mounted: scrolled to when it is the one asked for, which it is then no more. */
-  entered(id: string): void {
-    if (this.asked !== `chart-${id}`) return;
-    this.asked = "";
-    scrollAnchor();
-  }
-}
-
 /**
  * `page` without its leading periods from before the project's roll-up began (`first`): the
  * periods no source recorded that end by its first file's first hour, all hatching on every chart
@@ -917,8 +879,6 @@ interface ReportProps {
  */
 function Report({ page: whole, hidden, onToggle }: ReportProps) {
   const [tapped, setTapped] = useState<number | null>(null);
-  const [asked] = useState(() => new AskedChart());
-  useEffect(() => asked.follow(), [asked]);
   const page = fromFirstRecord(whole);
   const shownAxis = axis(page);
   const drawn = page.buckets.some((bucket) => bucket.recorded());
@@ -974,7 +934,6 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
                       <GhostChart />
                     </>
                   }
-                  onEnter={() => asked.entered(chart.id)}
                 >
                   <ChartCard
                     chart={chart}

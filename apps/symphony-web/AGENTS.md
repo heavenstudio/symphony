@@ -223,8 +223,7 @@ own signal). The periods are read by path as the server writes them (`Bucket`): 
 record of a period is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart not mounted yet
-holds that id in its ghost, and once it mounts after a move of the address it is scrolled to again
-(`AskedChart`); a new window, which mounts every chart again, scrolls to none.
+holds that id in its ghost.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
