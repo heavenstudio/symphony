@@ -296,9 +296,13 @@ has ended, the browser's own scroll anchoring holds the reader's place while the
 it draw, and a change to a margin of the part being read (or to any box around what Chrome
 anchors on, a focused field first) stops it for that frame, so everything drawn above lands on the
 reader. The spacing that stands in for the margins one card's sections collapsed therefore reads a
-neighbour not drawn yet as what it draws as: a card by its part's class from the outline
-(`partForm`, `document.ts`), prose as ending in a listed block and starting with a paragraph
-(`tests/browser/document_landing.rs`).
+neighbour not drawn yet as what it will draw as, by its part's classes (`partForm`, `document.ts`):
+an open card by the outline's cards, and how its prose opens and closes by the kinds of its first
+and last blocks, which the outline carries for each section (`ends`,
+`symphony_api::Section::ends_of`). A section in an outline kept from before it carried them counts
+as neither, so its neighbour moves once as it draws until the next read replaces that copy
+(`tests/browser/document_landing.rs`, each form beside a card and a paragraph, on a desk and a
+phone).
 
 ## A task's page
 

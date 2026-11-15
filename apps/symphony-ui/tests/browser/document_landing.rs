@@ -11,7 +11,9 @@
 //! nothing keeps the card held; and once the landing has gone quiet, nothing lands it again, not a
 //! change to the document above the card after a script's scroll. Once the reader's own scroll
 //! ended the landing, the browser's scroll anchoring keeps what they read in place while the
-//! sections above still draw, a field typed in on a phone among it.
+//! sections above still draw, a field typed in on a phone among it, whatever they read and
+//! whatever draws beside it: a paragraph, a list or a table under code, a quote, a mockup or a
+//! picture, a card beside those or over an h3 or a table, the intro under the title.
 
 use serde_json::{Map, Value, json};
 
@@ -495,13 +497,18 @@ const OBSERVE_LATER: &str = "(() => { const Observer = window.IntersectionObserv
     window.IntersectionObserver = class extends Observer { constructor(callback, options) {
         super((entries, observer) => open ? callback(entries, observer) : queued.push(() => callback(entries, observer)), options); } }; })();";
 
-/// The landing document with the fifth card's thread taller than a phone's screen (two pictures),
-/// so the card's field, under its thread, is below the screen when the card lands.
+/// A card's thread taller than a phone's screen (two pictures), so the card's field, under it, is
+/// below the screen when the card lands.
+fn tall_history() -> Value {
+    json!({"blocks": [{"type": "thread", "entries": [{"who": "agent",
+        "timestamp": "2026-11-14 10:00", "verdict": null, "blocks": [
+            paragraph(vec![text("Posted, with its evidence.")]), paragraph(vec![picture()]), paragraph(vec![picture()])]}]}]})
+}
+
+/// The landing document with the fifth card's thread taller than a phone's screen.
 fn tall_thread() -> Value {
     let mut document = landing();
-    document["threads"]["five"] = json!({"blocks": [{"type": "thread", "entries": [{"who": "agent",
-        "timestamp": "2026-11-14 10:00", "verdict": null, "blocks": [
-            paragraph(vec![text("Posted, with its evidence.")]), paragraph(vec![picture()]), paragraph(vec![picture()])]}]}]});
+    document["threads"]["five"] = tall_history();
     document
 }
 
@@ -557,13 +564,234 @@ fn held(drawn: bool) -> String {
     )
 }
 
-/// What the reader does once the card has landed that ends the landing: scrolls on down the card
-/// by a wheel on a desk, or, on a phone, taps the card's words and types in the field that opens,
-/// the page's scroll to the field ending the landing.
-#[derive(Clone, Copy, Debug)]
+/// What the reader does once the page has landed that ends the landing: scrolls on down by a
+/// wheel on a desk or a swipe on a phone, or, on a phone, taps a card's words and types in the
+/// field that opens, the page's scroll to the field ending the landing.
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Reading {
     Wheeled,
+    Swiped,
     Typing,
+}
+
+impl Reading {
+    /// The window it reads in: a desk's, or a phone's.
+    fn window(self) -> (u32, u32) {
+        match self {
+            Reading::Wheeled => (1280, 900),
+            Reading::Swiped | Reading::Typing => (390, 844),
+        }
+    }
+}
+
+/// A browser of its own for `reading` (a phone's takes touches), whose sections near the screen
+/// are read only once the test lets them come ([`OBSERVE_LATER`]).
+fn reader(reading: Reading) -> Option<Chrome> {
+    let (width, height) = reading.window();
+    let mut page = browser(width, height)?;
+    if reading != Reading::Wheeled {
+        page.call(
+            "Emulation.setTouchEmulationEnabled",
+            json!({"enabled": true, "maxTouchPoints": 1}),
+        );
+    }
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": OBSERVE_LATER }),
+    );
+    Some(page)
+}
+
+/// True once the page has moved to `path` and scrolled the element `id` names (its ghost's, while
+/// its section is read) to the page's scroll padding.
+fn landed_on(path: &str, id: &str) -> String {
+    format!(
+        "(() => {{ const line = document.getElementById({id});
+        return location.pathname === {path} && document.documentElement.dataset.navigation === 'ready'
+            && line !== null && Math.abs(line.getBoundingClientRect().top - parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)) < 1; }})()",
+        id = json!(id),
+        path = json!(format!("/{path}")),
+    )
+}
+
+/// What a reader read: where what the page landed on was ([`READ`]), the keys the page read near
+/// it, and where what they read was before and after the sections near them drew, with the page's
+/// own scrolls meanwhile.
+struct Read {
+    landed: Value,
+    near: Vec<String>,
+    before: Value,
+    after: Value,
+    scrolls: Value,
+}
+
+impl Read {
+    /// Asserts that the reader's own act moved the page from the landing (to a field typed in, on
+    /// the screen), and that what they read stayed within a few px, by the browser's anchoring and
+    /// no scroll of the page's, while the sections near them drew more than `drew` px from where
+    /// their ghosts put it in the document.
+    #[track_caller]
+    fn held(&self, what: &str, reading: Reading, drew: f64) {
+        let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+        let on_screen = |place: &Value| {
+            number(place, "top") >= 0.0 && number(place, "bottom") <= number(place, "height")
+        };
+        let typing = reading == Reading::Typing;
+        let (landed, before, after) = (&self.landed, &self.before, &self.after);
+        assert!(
+            number(before, "y") - number(landed, "y") > 100.0 && (!typing || on_screen(before)),
+            "{what} {reading:?}: the reader's own act moved the page from the landing (to the field, on the screen): landed {landed}, then {before}"
+        );
+        assert!(
+            (number(after, "down") - number(before, "down")).abs() > drew,
+            "{what} {reading:?}: the sections near the reader draw after their act, other than their ghosts: before {before}, after {after}"
+        );
+        assert_eq!(
+            self.scrolls,
+            json!(0),
+            "{what} {reading:?}: the browser holds the reader's place, not a scroll of the page's: before {before}, after {after}"
+        );
+        assert!(
+            (number(after, "top") - number(before, "top")).abs() <= 3.0,
+            "{what} {reading:?}: what the reader reads stays where it was, within a few px: before {before}, after {after}"
+        );
+        assert!(
+            !typing || on_screen(after),
+            "{what} {reading:?}: the field typed in stays on the screen: before {before}, after {after}"
+        );
+    }
+}
+
+/// Opens `path` at the element `id`, which the section `key` holds, with every section's read
+/// held: the page's first read is that section's alone and is let go; the sections near it come
+/// near, and their read is held while the reader ends the landing by `reading`, then let go.
+#[track_caller]
+fn read_while_drawn(
+    page: &mut Chrome,
+    site: &Site,
+    path: &str,
+    id: &str,
+    key: &str,
+    reading: Reading,
+) -> Read {
+    let element = format!("document.getElementById({})", json!(id));
+    let landed = landed_on(path, id);
+    let asked = section_reads(site).len();
+    site.hold_route("/api/section", true);
+    page.open(&site.url(&format!("/{path}#{id}")));
+    assert!(
+        page.wait_for(&landed, SHOWN),
+        "{id} {reading:?}: the page scrolls to its ghost first: {}",
+        page.eval(&format!("{element}?.getBoundingClientRect().top ?? null"))
+    );
+    let first = reads_asked(page, site, asked + 1);
+    assert_eq!(
+        first[asked..],
+        [vec![key.to_owned()]],
+        "{id} {reading:?}: its section's read comes first, alone"
+    );
+    site.hold_route("/api/section", false);
+    assert!(
+        page.wait_for(
+            &format!("{element}?.closest('[data-pending]') === null && {landed}"),
+            SHOWN
+        ),
+        "{id} {reading:?}: it draws at the scroll padding: {}",
+        page.eval(&format!("{element}?.getBoundingClientRect().top ?? null"))
+    );
+    // The sections near it come near, and their read is held.
+    site.hold_route("/api/section", true);
+    page.eval("window.observe()");
+    let near = reads_asked(page, site, asked + 2)[asked + 1].clone();
+    assert!(
+        page.wait_for(
+            &format!("{element}?.closest('.settle')?.dataset.settled === 'true' && {landed}"),
+            SHOWN
+        ),
+        "{id} {reading:?}: the page's ghost lifts with it at the scroll padding: {}",
+        page.eval(&format!("{element}?.getBoundingClientRect().top ?? null"))
+    );
+    page.eval(TWO_FRAMES);
+    page.eval(&format!("window.reading = {element}; true"));
+    let landed = page.eval(READ);
+    let y = landed["y"].as_f64().unwrap_or(f64::NAN);
+    let (width, height) = reading.window();
+    match reading {
+        Reading::Wheeled => {
+            page.call(
+                "Input.dispatchMouseEvent",
+                json!({"type": "mouseWheel", "x": width / 2, "y": height / 2, "deltaX": 0, "deltaY": 500}),
+            );
+        }
+        Reading::Swiped => {
+            page.call(
+                "Input.synthesizeScrollGesture",
+                json!({"x": width / 2, "y": height * 3 / 4, "yDistance": -500, "gestureSourceType": "touch", "speed": 1200}),
+            );
+        }
+        Reading::Typing => {
+            let at = page.eval(&format!(
+                "(() => {{ const words = {element}.closest('.doc-card').querySelector('.section-prose p').getBoundingClientRect();
+                    return [words.left + 20, words.top + words.height / 2]; }})()"
+            ));
+            let point = json!({"x": at[0], "y": at[1]});
+            page.call(
+                "Input.dispatchTouchEvent",
+                json!({"type": "touchStart", "touchPoints": [point]}),
+            );
+            page.call(
+                "Input.dispatchTouchEvent",
+                json!({"type": "touchEnd", "touchPoints": []}),
+            );
+            assert!(
+                page.wait_for(
+                    "document.activeElement?.matches('textarea') === true",
+                    SHOWN
+                ),
+                "{id} {reading:?}: the tap opens the card's editor, its field taking the focus: {}",
+                page.eval("document.activeElement?.outerHTML.slice(0, 200)")
+            );
+            page.call("Input.insertText", json!({"text": "Keep every lamp"}));
+            assert!(
+                page.wait_for("document.activeElement.value === 'Keep every lamp'", SHOWN),
+                "{id} {reading:?}: the reader types in the field"
+            );
+        }
+    }
+    if reading == Reading::Typing {
+        page.eval("window.reading = document.activeElement; true");
+    } else {
+        assert!(
+            page.wait_for(&format!("scrollY > {y} + 250"), SHOWN),
+            "{id} {reading:?}: the reader scrolls on down: landed {landed}, now {}",
+            page.eval("scrollY")
+        );
+        page.eval(
+            "window.reading = document.elementFromPoint(innerWidth / 2, innerHeight * 0.4); true",
+        );
+    }
+    assert!(
+        page.wait_for(&held(false), SHOWN),
+        "{id} {reading:?}: what the reader reads holds still while the reads are held: {}",
+        page.eval(READ)
+    );
+    let before = page.eval(READ);
+    page.eval(COUNT_SCROLLS);
+    site.hold_route("/api/section", false);
+    assert!(
+        page.wait_for(&held(true), SHOWN),
+        "{id} {reading:?}: the sections near the screen draw and the page holds still: {}",
+        page.eval(READ)
+    );
+    let after = page.eval(READ);
+    eprintln!("READING {id} {reading:?}: landed {landed}, before {before}, after {after}");
+    Read {
+        landed,
+        near,
+        before,
+        after,
+        scrolls: page.eval("window.pageScrolls"),
+    }
 }
 
 /// The browser's own scroll anchoring keeps the reader's place while the sections above draw: the
@@ -577,148 +805,293 @@ fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above
     let site = site();
     site.set_document(&tall_thread());
     for reading in [Reading::Wheeled, Reading::Typing] {
-        let typing = matches!(reading, Reading::Typing);
-        let (width, height) = if typing { (390, 844) } else { (1280, 900) };
-        let Some(mut page) = browser(width, height) else {
+        let Some(mut page) = reader(reading) else {
             return;
         };
-        if typing {
-            page.call(
-                "Emulation.setTouchEmulationEnabled",
-                json!({"enabled": true, "maxTouchPoints": 1}),
-            );
-        }
-        page.call(
-            "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": OBSERVE_LATER }),
-        );
-        let asked = section_reads(&site).len();
-        site.hold_route("/api/section", true);
-        page.open(&site.url(&format!("/{LANDING}#five")));
+        let read = read_while_drawn(&mut page, &site, LANDING, "five", "card:five", reading);
         assert!(
-            page.wait_for(LANDED, SHOWN),
-            "{reading:?}: the page scrolls to the card's ghost first: {}",
-            page.eval(PLACE)
+            read.near.iter().any(|key| key == "card:four"),
+            "{reading:?}: the cards above the card are read after it: {:?}",
+            read.near
         );
-        let first = reads_asked(&mut page, &site, asked + 1);
-        assert_eq!(
-            first[asked..],
-            [vec!["card:five".to_owned()]],
-            "{reading:?}: the card's own read comes first, alone"
-        );
-        site.hold_route("/api/section", false);
-        assert!(
-            page.wait_for(
-                &format!(
-                    "document.getElementById('five')?.closest('.doc-card') != null && {LANDED}"
-                ),
-                SHOWN
-            ),
-            "{reading:?}: the card draws at the scroll padding: {}",
-            page.eval(PLACE)
-        );
-        // The sections near the card come near, and their read is held.
-        site.hold_route("/api/section", true);
-        page.eval("window.observe()");
-        let near = reads_asked(&mut page, &site, asked + 2);
-        assert!(
-            near[asked + 1].iter().any(|key| key == "card:four"),
-            "{reading:?}: the cards above the card are read after it: {near:?}"
-        );
-        assert!(
-            page.wait_for(&lifted(), SHOWN),
-            "{reading:?}: the page's ghost lifts with the card at the scroll padding: {}",
-            page.eval(PLACE)
-        );
-        page.eval(TWO_FRAMES);
-        let landed = page.eval(PLACE);
-        let y = landed["y"].as_f64().unwrap_or(f64::NAN);
-        match reading {
-            Reading::Wheeled => {
-                page.call(
-                    "Input.dispatchMouseEvent",
-                    json!({"type": "mouseWheel", "x": width / 2, "y": height / 2, "deltaX": 0, "deltaY": 500}),
-                );
-                assert!(
-                    page.wait_for(&format!("scrollY > {y} + 250"), SHOWN),
-                    "{reading:?}: the reader scrolls down the card: {}",
-                    page.eval(PLACE)
-                );
-                page.eval(
-                    "window.reading = document.elementFromPoint(innerWidth / 2, innerHeight * 0.4); true",
-                );
-            }
-            Reading::Typing => {
-                let at = page.eval(
-                    "(() => { const words = document.getElementById('five').closest('.doc-card').querySelector('.section-prose p').getBoundingClientRect();
-                        return [words.left + 20, words.top + words.height / 2]; })()",
-                );
-                let point = json!({"x": at[0], "y": at[1]});
-                page.call(
-                    "Input.dispatchTouchEvent",
-                    json!({"type": "touchStart", "touchPoints": [point]}),
-                );
-                page.call(
-                    "Input.dispatchTouchEvent",
-                    json!({"type": "touchEnd", "touchPoints": []}),
-                );
-                assert!(
-                    page.wait_for(
-                        "document.activeElement?.matches('textarea') === true",
-                        SHOWN
-                    ),
-                    "{reading:?}: the tap opens the card's editor, its field taking the focus: {}",
-                    page.eval("document.activeElement?.outerHTML.slice(0, 200)")
-                );
-                page.call("Input.insertText", json!({"text": "Keep every lamp"}));
-                assert!(
-                    page.wait_for("document.activeElement.value === 'Keep every lamp'", SHOWN),
-                    "{reading:?}: the reader types in the field"
-                );
-                page.eval("window.reading = document.activeElement; true");
-            }
-        }
-        assert!(
-            page.wait_for(&held(false), SHOWN),
-            "{reading:?}: what the reader reads holds still while the reads are held: {}",
-            page.eval(READ)
-        );
-        let before = page.eval(READ);
-        let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
-        let on_screen = |place: &Value| {
-            number(place, "top") >= 0.0 && number(place, "bottom") <= number(place, "height")
-        };
-        assert!(
-            number(&before, "y") - y > 100.0 && (!typing || on_screen(&before)),
-            "{reading:?}: the reader's own scroll moved the page from the landing (to the field, on the screen): landed {landed}, then {before}"
-        );
-        page.eval(COUNT_SCROLLS);
-        site.hold_route("/api/section", false);
-        assert!(
-            page.wait_for(&held(true), SHOWN),
-            "{reading:?}: the sections near the screen draw and the page holds still: {}",
-            page.eval(READ)
-        );
-        let after = page.eval(READ);
-        eprintln!("READING {reading:?}: landed {landed}, before {before}, after {after}");
         // What drew above the reader after they left the landing: a page that did not hold them
         // would show what they read that much lower.
-        assert!(
-            number(&after, "down") - number(&before, "down") > 300.0,
-            "{reading:?}: the sections above draw after the reader's scroll, taller than their ghosts: before {before}, after {after}"
-        );
-        assert_eq!(
-            page.eval("window.pageScrolls"),
-            json!(0),
-            "{reading:?}: the browser holds the reader's place, not a scroll of the page's: before {before}, after {after}"
-        );
-        assert!(
-            (number(&after, "top") - number(&before, "top")).abs() <= 3.0,
-            "{reading:?}: what the reader reads stays where it was, within a few px: before {before}, after {after}"
-        );
-        assert!(
-            !typing || on_screen(&after),
-            "{reading:?}: the field typed in stays on the screen: before {before}, after {after}"
-        );
+        read.held("five", reading, 300.0);
     }
+}
+
+const FORMS: &str = "docs/forms.md";
+const MOCKUP: &str = "/docs/forms/mock.html";
+
+/// A paragraph long enough to wrap over a few lines on a phone and on a desk.
+fn words(what: &str) -> Value {
+    paragraph(vec![text(&format!(
+        "{what}. Words of a paragraph that a reader reads, long enough to wrap over a few lines on a \
+         phone and on a desk, so the section is taller than one line and holds the reader's eye \
+         while the page draws around it."
+    ))])
+}
+
+fn heading(level: u8, anchor: &str, words: &str) -> Value {
+    json!({"type": "heading", "level": level, "anchor": anchor, "spans": [text(words)]})
+}
+
+fn code() -> Value {
+    json!({"type": "code", "language": "", "text": "let lamps = \"a code block\";"})
+}
+
+fn quote() -> Value {
+    json!({"type": "quote", "blocks": [words("A quote")]})
+}
+
+/// A project's HTML mockup, framed.
+fn mockup() -> Value {
+    json!({"type": "media", "media": {"kind": "mockup", "src": MOCKUP, "label": "A mockup"}})
+}
+
+fn list() -> Value {
+    json!({"type": "list", "ordered": false, "start": 1, "items": [[words("An item")], [words("Another item")]]})
+}
+
+fn table() -> Value {
+    let cell = |words: &str, header: bool| json!({"header": header, "spans": [text(words)], "presentation": {}});
+    json!({"type": "table", "head": [cell("Lamp", true), cell("Colour", true)],
+        "rows": [[cell("Desk", false), cell("Warm white", false)], [cell("Hall", false), cell("Amber", false)]]})
+}
+
+/// What a form's reader reads: a section of prose (its one block), or a card.
+enum Target {
+    Prose(Value),
+    Card,
+}
+
+/// A form of the forms document: the blocks above what the reader reads, and below it.
+struct Form {
+    case: &'static str,
+    above: Vec<Value>,
+    target: Target,
+    below: Vec<Value>,
+}
+
+/// The forms beside what a reader reads that a guess of a section not drawn yet got wrong, or that
+/// main's page did not hold either: code, a quote, a mockup and a picture alone (a block of its
+/// own, as the server makes a paragraph of one picture) above a paragraph, a list or a table, and
+/// above or below a card.
+fn forms() -> Vec<Form> {
+    let below = || vec![words("A paragraph below")];
+    let prose = |case: &'static str, above: Value, target: Value| Form {
+        case,
+        above: vec![above],
+        target: Target::Prose(target),
+        below: below(),
+    };
+    let card = |case: &'static str, above: Value, below: Vec<Value>| Form {
+        case,
+        above: vec![above],
+        target: Target::Card,
+        below,
+    };
+    vec![
+        prose("p-after-code", code(), words("Read")),
+        prose("p-after-quote", quote(), words("Read")),
+        prose("p-after-mockup", mockup(), words("Read")),
+        prose("p-after-picture", picture(), words("Read")),
+        prose("list-after-code", code(), list()),
+        prose("table-after-quote", quote(), table()),
+        card("card-after-code", code(), below()),
+        card("card-after-quote", quote(), below()),
+        card("card-after-mockup", mockup(), below()),
+        card("card-after-picture", picture(), below()),
+        card(
+            "card-then-h3",
+            words("A paragraph above"),
+            vec![
+                heading(3, "card-then-h3-sub", "A subsection"),
+                words("Under it"),
+            ],
+        ),
+        card(
+            "card-then-table",
+            words("A paragraph above"),
+            vec![table(), words("Under it")],
+        ),
+        // The last section of its part.
+        card("last-card", picture(), Vec::new()),
+    ]
+}
+
+/// The sections of a document being written, as the server splits them: each block a section of
+/// its own, each card one, each in the part of the heading it follows.
+#[derive(Default)]
+struct Written {
+    sections: Vec<Value>,
+    anchors: Map<String, Value>,
+    threads: Map<String, Value>,
+    cards: Vec<Value>,
+    headings: Vec<Value>,
+}
+
+impl Written {
+    /// The section of `block`, the next of those under `anchor`, in `part`: the id it holds (`L`
+    /// and its start line) and its key.
+    fn section(&mut self, anchor: &str, part: usize, block: Value) -> (String, String) {
+        let start = 4 * self.sections.len() + 1;
+        let under = format!("section:{anchor}:");
+        let n = self
+            .sections
+            .iter()
+            .filter(|section| {
+                section["key"]
+                    .as_str()
+                    .is_some_and(|key| key.starts_with(&under))
+            })
+            .count();
+        let key = format!("{under}{n}");
+        let mut ids = Vec::new();
+        if block["type"] == "heading" {
+            ids.push(block["anchor"].clone());
+            self.headings
+                .push(json!({"level": block["level"], "anchor": block["anchor"],
+                "text": block["spans"][0]["text"]}));
+        }
+        self.anchors.insert(key.clone(), json!(ids));
+        self.sections.push(
+            json!({"start": start, "end": start + 2, "key": key, "hash": key,
+            "part": part, "blocks": [block]}),
+        );
+        (format!("L{start}"), key)
+    }
+
+    /// The card `slug` waiting on the owner, in `part`, its thread taller than a phone's screen:
+    /// the id it holds (its slug) and its key.
+    fn card(&mut self, slug: &str, part: usize) -> (String, String) {
+        let mut section = card(slug, 4 * self.sections.len() + 1);
+        section["part"] = json!(part);
+        let key = format!("card:{slug}");
+        self.anchors.insert(key.clone(), json!([slug]));
+        self.threads.insert(slug.into(), tall_history());
+        self.cards.push(
+            json!({"slug": slug, "state": "pending", "text": slug, "group": "decide", "open": true}),
+        );
+        self.sections.push(section);
+        (slug.into(), key)
+    }
+}
+
+/// What a reader of the forms document reads: the form's name, the id the page lands on, the key
+/// of its section, and whether it is a card.
+struct Reads {
+    case: String,
+    id: String,
+    key: String,
+    card: bool,
+}
+
+/// The forms document: its title over its intro, a part for each form (its heading, a paragraph
+/// over a tall picture, what is above what is read, what is read, what is below and three
+/// paragraphs), and a part of paragraphs after the last. Says it, and what each form reads, the
+/// intro under the title first.
+fn forms_document() -> (Value, Vec<Reads>) {
+    let mut written = Written::default();
+    written.section("forms", 0, heading(1, "forms", "Forms"));
+    let (id, key) = written.section("forms", 0, words("The intro under the title"));
+    let mut reads = vec![Reads {
+        case: "intro-under-title".into(),
+        id,
+        key,
+        card: false,
+    }];
+    for (part, form) in (1..).zip(forms()) {
+        let anchor = format!("case-{}", form.case);
+        written.section(
+            &anchor,
+            part,
+            heading(2, &anchor, &format!("Case {}", form.case)),
+        );
+        written.section(&anchor, part, words("A paragraph opening the case"));
+        written.section(&anchor, part, picture());
+        for block in form.above {
+            written.section(&anchor, part, block);
+        }
+        let card = matches!(form.target, Target::Card);
+        let (id, key) = match form.target {
+            Target::Prose(block) => written.section(&anchor, part, block),
+            Target::Card => written.card(&format!("t-{}", form.case), part),
+        };
+        reads.push(Reads {
+            case: form.case.into(),
+            id,
+            key,
+            card,
+        });
+        let last = form.below.is_empty();
+        for block in form.below {
+            written.section(&anchor, part, block);
+        }
+        for n in (0..3).filter(|_| !last) {
+            written.section(&anchor, part, words(&format!("Filler {n} after the case")));
+        }
+    }
+    let part = reads.len();
+    written.section("after", part, heading(2, "after", "After"));
+    for n in 0..6 {
+        written.section("after", part, words(&format!("Filler {n} after the cases")));
+    }
+    let Written {
+        sections,
+        anchors,
+        threads,
+        cards,
+        headings,
+    } = written;
+    let document = json!({"version": 7, "path": FORMS, "title": "Forms", "waiting": [],
+        "crumbs": [], "headings": headings, "tasks": [], "sections": sections, "cards": cards,
+        "threads": threads, "anchors": anchors});
+    (document, reads)
+}
+
+/// Reads each form of the forms document that is a card (`cards`) or prose, on a desk by a wheel
+/// and on a phone by a swipe, or for a card by typing in its field, and asserts the reader stays
+/// on what they read while the sections near them draw.
+fn each_form_holds(cards: bool) {
+    let site = site();
+    let (document, reads) = forms_document();
+    site.set_document(&document);
+    site.set_html_page(
+        MOCKUP,
+        "<!doctype html><title>A mockup</title><p>A mockup's page.</p>",
+    );
+    let phone = if cards {
+        Reading::Typing
+    } else {
+        Reading::Swiped
+    };
+    for reading in [Reading::Wheeled, phone] {
+        let Some(mut page) = reader(reading) else {
+            return;
+        };
+        for read in reads.iter().filter(|read| read.card == cards) {
+            page.open("about:blank");
+            let held = read_while_drawn(&mut page, &site, FORMS, &read.id, &read.key, reading);
+            held.held(&read.case, reading, 100.0);
+        }
+    }
+}
+
+/// The spacing between parts reads a neighbour not drawn yet by the kinds of its first and last
+/// blocks, which the outline carries (`ends`), so it is exact for prose as for cards: a paragraph,
+/// a list or a table being read keeps its margins as the code, quote, mockup or picture above it
+/// draws, and the intro its own as the title draws. A guess (prose ends in a paragraph and starts
+/// with one) moved these readers by what drew above them, 838 to 1225 px on a desk.
+#[test]
+fn a_reader_of_prose_stays_on_it_whatever_draws_beside_it() {
+    each_form_holds(false);
+}
+
+/// A card being read keeps its margins as the code, quote, mockup or picture above it draws, and
+/// the h3 or the table below it, and so does the last card of its part: main's page moved its
+/// reader by everything drawn above, 823 to 2158 px on a desk, and its field off a phone's screen.
+#[test]
+fn a_reader_of_a_card_stays_on_it_whatever_draws_beside_it() {
+    each_form_holds(true);
 }

@@ -760,16 +760,48 @@ describe("a register's parts", () => {
       expect(partForm(outline, grouped(group))).toBe("");
     }
     expect(isSettled(null)).toBe(false);
-    expect(partForm(section("p", ""), null)).toBe(" doc-part-prose");
-    // A card whose slug the document's cards do not name is drawn as prose.
-    expect(partForm(outline, null)).toBe(" doc-part-prose");
+    // Prose kept from before the outline named its ends, or a card the cards do not name, is
+    // known by nothing.
+    expect(partForm(section("p", ""), null)).toBe("");
+    expect(partForm(outline, null)).toBe("");
+    expect(partForm({ ...outline, ends: null }, null)).toBe("");
     // A section drawn with its difference from main sits in a frame of its own.
+    const ended = { ...outline, ends: ["paragraph", "table"] as [string, string] };
     for (const kind of ["added", "changed", "removed"] as const) {
-      const differs = { ...outline, comparison: { kind } };
+      const differs = { ...ended, comparison: { kind } };
       expect(partForm(differs, null)).toBe("");
       expect(partForm(differs, grouped("decide"))).toBe("");
     }
     expect(partForm({ ...outline, comparison: null }, grouped("decide"))).toBe(" doc-part-card");
+    expect(partForm(ended, grouped("resolved"))).toBe("");
+  });
+
+  it("are known by their first and last blocks before their bodies are read", () => {
+    const form = (first: string, last: string, open = false) =>
+      partForm(
+        { ...section("lamps", ""), blocks: [], ends: [first, last] },
+        open ? { ...card("lamps", "proposed", "L"), group: "decide" } : null,
+      );
+    for (const text of ["paragraph", "list", "thread"]) {
+      expect(form(text, "code")).toBe(" doc-part-opens-text");
+      expect(form("code", text)).toBe(" doc-part-closes");
+    }
+    for (const box of ["table", "callout"]) {
+      expect(form(box, "quote")).toBe(" doc-part-opens-box");
+      expect(form("quote", box)).toBe(" doc-part-closes");
+    }
+    for (const heading of ["heading-2", "heading-3", "heading-4"]) {
+      expect(form(heading, heading)).toBe(" doc-part-closes");
+    }
+    // The title, a lesser heading and what is not text close nothing and open nothing.
+    for (const other of ["heading-1", "heading-5", "code", "quote", "image", "media", "figure"]) {
+      expect(form(other, other)).toBe("");
+    }
+    expect(form("card", "card", true)).toBe(" doc-part-card");
+    expect(form("paragraph", "table", true)).toBe(
+      " doc-part-card doc-part-opens-text doc-part-closes",
+    );
+    expect(form("callout", "paragraph")).toBe(" doc-part-opens-box doc-part-closes");
   });
 });
 

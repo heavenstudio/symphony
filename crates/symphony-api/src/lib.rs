@@ -775,6 +775,66 @@ pub struct Section {
     pub media: Vec<Media>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<SectionComparison>,
+    /// The kinds of the first and last blocks the section draws ([`Section::ends_of`]), so the
+    /// outline tells a page how a section it has not read yet will meet its neighbours. Left out
+    /// for a section that draws nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends: Option<[String; 2]>,
+}
+
+impl Section {
+    /// The kinds of the first and last blocks `blocks` draw: a block's `type`, a heading's with its
+    /// level (`heading-3`), and a container drawn with the `callout` class as a `callout`. A group
+    /// draws its blocks, so its edges are theirs; a comment draws nothing and is passed over.
+    pub fn ends_of(blocks: &[Block]) -> Option<[String; 2]> {
+        Some([edges(blocks, false)?, edges(blocks, true)?])
+    }
+}
+
+/// The kind of the first block `blocks` draw, or of the last when `last`.
+fn edges(blocks: &[Block], last: bool) -> Option<String> {
+    if last {
+        blocks.iter().rev().find_map(|block| edge(block, true))
+    } else {
+        blocks.iter().find_map(|block| edge(block, false))
+    }
+}
+
+/// The kind `block` draws as at a section's first edge, or its last when `last`.
+fn edge(block: &Block, last: bool) -> Option<String> {
+    let kind = match block {
+        Block::Group { blocks } => return edges(blocks, last),
+        Block::Comment { .. } => return None,
+        Block::Heading { level, .. } => return Some(format!("heading-{level}")),
+        Block::Container { presentation, .. }
+            if presentation
+                .class
+                .split_whitespace()
+                .any(|word| word == "callout") =>
+        {
+            "callout"
+        }
+        Block::Paragraph { .. } => "paragraph",
+        Block::List { .. } => "list",
+        Block::Table { .. } => "table",
+        Block::Code { .. } => "code",
+        Block::Quote { .. } => "quote",
+        Block::Rule => "rule",
+        Block::Callout { .. } => "callout",
+        Block::Card { .. } => "card",
+        Block::Component { .. } => "component",
+        Block::Media { .. } => "media",
+        Block::Image { .. } => "image",
+        Block::Figure { .. } => "figure",
+        Block::Caption { .. } => "caption",
+        Block::Comparison { .. } => "comparison",
+        Block::Container { .. } => "container",
+        Block::Details { .. } => "details",
+        Block::SettledCard { .. } => "settled-card",
+        Block::Thread { .. } => "thread",
+        Block::Unknown { .. } => "unknown",
+    };
+    Some(kind.into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

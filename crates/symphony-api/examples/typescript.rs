@@ -1546,6 +1546,7 @@ mod document_sample {
             html: String::new(),
             media: Vec::new(),
             comparison,
+            ends: Some(["paragraph".into(), "paragraph".into()]),
         }
     }
 

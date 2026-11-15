@@ -462,14 +462,15 @@ impl Site {
     /// at its path as the server does: its outline, the sections a read's `keys` name, each
     /// tagged without the feed's cursor and naming it in a header ([`document_read`]). Its
     /// `anchors`, when it has them, are its outline's ([`outline_of`]). A reply
-    /// [`Site::set_json`] gave a read's route or target wins over it.
+    /// [`Site::set_json`] gave a read's route or target wins over it. Each section carries the
+    /// kinds of its first and last blocks as the server's do ([`with_ends`]).
     pub fn set_document(&self, document: &serde_json::Value) {
         let path = document["path"].as_str().expect("a document's path");
         self.shared
             .lock()
             .unwrap()
             .documents
-            .insert(path.to_string(), document.clone());
+            .insert(path.to_string(), with_ends(document));
     }
 
     /// Serve `html` as the HTML document at the route `path`, as the server does: the route is the
@@ -1007,7 +1008,7 @@ pub fn asked_keys(target: &str) -> Vec<String> {
 /// named by a hash of it, and the ids each section holds as the fixture names them (its
 /// `anchors`, by section key; none where it names none).
 pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
-    let mut outline = document.clone();
+    let mut outline = with_ends(document);
     let anchors = outline
         .as_object_mut()
         .and_then(|whole| whole.remove("anchors"))
@@ -1027,6 +1028,27 @@ pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({"document": outline, "anchors": anchors, "thread_hashes": hashes})
+}
+
+/// `document` with each section's `ends` as the server gives it (`symphony_api::Section::ends_of`)
+/// where the fixture names none: a fixture's `"ends": null` stands for an outline kept from before
+/// the outline carried them.
+fn with_ends(document: &serde_json::Value) -> serde_json::Value {
+    let mut document = document.clone();
+    for section in document["sections"].as_array_mut().into_iter().flatten() {
+        if section.get("ends").is_some() {
+            continue;
+        }
+        // A fixture's blocks the wire cannot read (a page's own test of them) draw no edges.
+        let blocks = serde_json::from_value::<Vec<symphony_api::Block>>(section["blocks"].clone());
+        if let Some(ends) = blocks
+            .ok()
+            .and_then(|blocks| symphony_api::Section::ends_of(&blocks))
+        {
+            section["ends"] = serde_json::json!(ends);
+        }
+    }
+    document
 }
 
 /// What a page reads ahead of `document` (`/api/document?view=first`), as the server cuts it
