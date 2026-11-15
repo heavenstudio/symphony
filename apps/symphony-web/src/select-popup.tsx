@@ -1,10 +1,11 @@
 // A select's popup, as the overlay module draws it for a field of any page (select.tsx asks for it
-// through the shell's `reviewOverlay`): the Dioxus overlay's `SelectPopup` over the primitives'
-// listbox (dioxus-primitives `select`), mounted afresh on each opening. The list takes the focus;
-// the arrows, Home and End move it among the options, round the list, and typing moves it to the
+// through the shell's `reviewOverlay`): a listbox that behaves as the pinned primitive's does
+// (dioxus-primitives `select`), mounted afresh on each opening. The list takes the focus; the
+// arrows, Home and End move it among the options, round the list, and typing moves it to the
 // option nearest what was typed (`typeahead.ts`); Enter or Space chooses the focused option, as a
-// click on one does; Escape, or the focus leaving the list, closes it. It is drawn beside its
-// field's trigger (`popup-position.ts`), whose page gives the trigger its focus back.
+// press released on the option it went down on does; Escape, or the focus leaving the list,
+// closes it. It is drawn beside its field's trigger (`popup-position.ts`), whose page gives the
+// trigger its focus back.
 
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { anchor } from "./popup-position";
@@ -29,10 +30,9 @@ export function typesLetter(key: string): boolean {
   return [...key].length === 1;
 }
 
-/** Whether a pointer that went down at `down` and up at `up` chose the option: a touch that moved
- * further than 5 pixels scrolled rather than tapped. */
-export function tapped(down: [number, number] | null, up: [number, number], touch: boolean) {
-  if (down === null) return false;
+/** Whether a pointer that went down at `down` and up at `up` on the same option chose it: a touch
+ * that moved further than 5 pixels scrolled rather than tapped. */
+export function tapped(down: [number, number], up: [number, number], touch: boolean) {
   if (!touch) return true;
   const [dx, dy] = [up[0] - down[0], up[1] - down[1]];
   return dx * dx + dy * dy <= 25;
@@ -60,7 +60,8 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
   const [focused, setFocused] = useState<number | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const search = useRef({ typed: "", timer: 0, keyboard: new Keyboard() });
-  const down = useRef<[number, number] | null>(null);
+  // The option a pointer went down on, and where: only a release on that same option chooses.
+  const down = useRef<{ key: string; at: [number, number] } | null>(null);
 
   // Placed beside the trigger now and as the page or the viewport moves, until it closes.
   useEffect(() => anchor(id, popup), [id, popup]);
@@ -120,16 +121,19 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
       event.stopPropagation();
     }
   };
-  const press = (event: PointerEvent<HTMLDivElement>) => {
+  const press = (event: PointerEvent<HTMLDivElement>, pressed: string) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    down.current = [event.clientX, event.clientY];
+    down.current = { key: pressed, at: [event.clientX, event.clientY] };
   };
   const release = (event: PointerEvent<HTMLDivElement>, chosen: string) => {
     if (event.button !== 0) return;
     const from = down.current;
     down.current = null;
-    if (tapped(from, [event.clientX, event.clientY], event.pointerType === "touch")) choose(chosen);
+    if (from?.key !== chosen) return;
+    if (tapped(from.at, [event.clientX, event.clientY], event.pointerType === "touch")) {
+      choose(chosen);
+    }
   };
 
   return (
@@ -160,7 +164,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
             aria-disabled="false"
             data-disabled="false"
             className="dx-select-option"
-            onPointerDown={press}
+            onPointerDown={(event) => press(event, key)}
             onPointerUp={(event) => release(event, key)}
             onPointerCancel={() => {
               down.current = null;

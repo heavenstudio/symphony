@@ -1,10 +1,10 @@
 // The picture viewer, as the overlay module draws it for the media layer of any page
-// (media-layer.ts asks for it through the shell's `reviewOverlay`): the Dioxus overlay's
-// `PictureOverlay` in the primitives' modal dialog (dioxus-primitives `dialog`, with its focus trap,
-// `focus-trap.js`). Its buttons, and Escape, a press outside the picture's box or the focus leaving
-// it, answer the page with a direction: -1 and 1 move through the pictures, 0 closes. Opened, it
-// takes the focus to its first button and keeps Tab within itself; closed, it gives the focus back
-// to what held it.
+// (media-layer.ts asks for it through the shell's `reviewOverlay`): a modal dialog that behaves as
+// the pinned primitive's does (dioxus-primitives `dialog`, with its focus trap, `focus-trap.js`),
+// holding the picture. Its buttons, and Escape, a press outside the picture's box or the focus
+// leaving it, answer the page with a direction: -1 and 1 move through the pictures, 0 closes.
+// Opened, it takes the focus to its first button and keeps Tab within itself; closed, it gives the
+// focus back to what held it.
 
 import { useEffect, useRef } from "react";
 import { Button } from "./button";

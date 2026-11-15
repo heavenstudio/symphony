@@ -167,7 +167,6 @@ describe("what a key or a pointer means", () => {
     expect(tapped([10, 10], [200, 200], false)).toBe(true);
     expect(tapped([10, 10], [13, 14], true)).toBe(true);
     expect(tapped([10, 10], [14, 14], true)).toBe(false);
-    expect(tapped(null, [10, 10], false)).toBe(false);
   });
 });
 
@@ -326,6 +325,26 @@ describe("a select's popup used", () => {
     // Released again with no press: nothing.
     handler(element, option(0), "onPointerUp")(pointer(40, 12));
     expect(given.onChange).toHaveBeenCalledOnce();
+  });
+
+  it("chooses nothing for a press on one option released on another, as the primitive", () => {
+    const given = props();
+    const { element } = draw(given, [true, null]);
+    handler(element, option(0), "onPointerDown")(pointer(10, 10));
+    handler(element, option(1), "onPointerUp")(pointer(10, 40));
+    expect(given.onChange).not.toHaveBeenCalled();
+    // The press is spent: a release back on the option it went down on chooses nothing either.
+    handler(element, option(0), "onPointerUp")(pointer(10, 10));
+    expect(given.onChange).not.toHaveBeenCalled();
+    expect(given.onClose).not.toHaveBeenCalled();
+    // A touch moved onto another option is no tap of either.
+    handler(element, option(2), "onPointerDown")(pointer(10, 70, 0, "touch"));
+    handler(element, option(1), "onPointerUp")(pointer(10, 70, 0, "touch"));
+    expect(given.onChange).not.toHaveBeenCalled();
+    // A press and its release on one option choose it.
+    handler(element, option(1), "onPointerDown")(pointer(10, 40));
+    handler(element, option(1), "onPointerUp")(pointer(30, 42));
+    expect(given.onChange).toHaveBeenCalledExactlyOnceWith("1");
   });
 
   it("takes no other button, a touch that scrolled, or a press the browser cancelled", () => {

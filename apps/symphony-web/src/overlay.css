@@ -1,7 +1,7 @@
-/* The overlay module's own rules: a select's popup (the components' select sheet from its list on;
- * the closed field's rules before it are the shared sheet's, apps/symphony-ui's select/trigger.css),
- * the modal dialog the picture viewer is drawn in (the components' dialog sheet) and the viewer's
- * own, last (the media sheet's until the overlay drew the viewer alone). */
+/* The overlay module's own rules: a select's popup (the pinned dioxus-components select sheet from
+ * its list on; the closed field's rules before it are the shared sheet's, apps/symphony-ui's
+ * select/trigger.css), the modal dialog the picture viewer is drawn in (the same components' dialog
+ * sheet) and the viewer's own, last. */
 
 .dx-select-list {
   position: absolute;

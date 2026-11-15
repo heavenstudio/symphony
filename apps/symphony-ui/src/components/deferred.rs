@@ -1,5 +1,6 @@
 //! The overlay module (the web client's persistent kind `overlay`, apps/symphony-web/src/overlay.tsx,
-//! loaded by the shell on a first select or picture, apart from the chat's panel) owns overlays.
+//! loaded by the shell on a first select or picture, or ahead once the page is idle) draws a
+//! select's popup and the picture viewer.
 //! The chat sends it data and one owned callback through the shell's `reviewOverlay`; no VDOM nodes
 //! or Rust values cross into it.
 use wasm_bindgen::{JsCast, JsValue};
