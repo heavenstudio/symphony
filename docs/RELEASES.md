@@ -691,9 +691,14 @@ A step moves what it can and nothing more:
   symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
   ```
 
-  in the commit that moves its pin, landed through its own landing as any move its gate refuses,
-  and nothing else changes: the key stays `symphony`, and so does the library's name, so no
-  member's manifest and no `use` moves. It names no Chrome driver, the other package renamed.
+  in the commit that moves its pin, and nothing else changes: the key stays `symphony`, and so
+  does the library's name, so no member's manifest and no `use` moves. It names no Chrome driver,
+  the other package renamed. For this rename an orchestrator makes that commit once, by hand, in
+  the consuming project's checkout ([its card](DECISIONS.md#consumer-manifest-line)): the line,
+  the release's tag on each of that project's Symphony lines and its lock, committed on its
+  default branch through its own commit gate. `just release --refresh` then finds the pin at the
+  release and goes on to the project's board and the server. Pushing that project's branch stays
+  a separate act that needs its own word.
 - **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
   full hash and never by a name a moved branch or a tag of the same name could answer, in its main
   checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all

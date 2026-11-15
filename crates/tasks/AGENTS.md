@@ -143,6 +143,11 @@ network. `examples/search_bench.rs` (`--database NAME --out DIR`, run through
 catch-up and the queries; `examples/embedding_cpu.rs` measures inference CPU on a frozen snapshot
 with no database. Neither estimates the database's CPU from the client's.
 
+Search by meaning is to be deleted, and the board searches by words alone
+([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the board task
+`tools/board-search-by-words-alone` removes the model, the three modes, `tasks embed` and the
+server's pass. Until it lands, build nothing on any of them.
+
 ### Children
 
 `sys.rs` and `sys/` are what the board asks of the machine and how it starts a child: `sys::command`
@@ -380,5 +385,12 @@ here, so a change to the board's queries, its indexes or the api runs it by hand
 `just test-rs -p symphony-board --test perf`; `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build
 on the same board. `tests/child_guard` is a nested build, the release run's alone.
 `examples/dispatch_load.rs` measures concurrent writes against a scratch database seeded from a
-dump. Which tests a change runs, and the evidence its kind asks for:
+dump. `examples/board_load.rs` is the store's meter: a fixed amount of the agents' work (beats and
+the board commands they run, as the `tasks` binary) on a scratch board whose server `server::Home`
+starts, reporting each command's cost and the server's CPU, memory and bytes; a change of the
+store, its settings or its engine runs it on both sides the same day, from one export and one
+build of `tasks`, and what the store cost before any such change is
+[the store's baseline](../../docs/analysis/board-store-baseline.md). An example's tests run only
+when named: `just test-rs -p symphony-board --example board_load`. Which tests a change runs, and
+the evidence its kind asks for:
 [CHECKS](../../docs/CHECKS.md#picking-the-focused-set).
