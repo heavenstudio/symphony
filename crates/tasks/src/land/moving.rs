@@ -5,8 +5,7 @@
 //! outright meanwhile, by the next land ([`Landing::recover`]).
 
 use super::{
-    Ended, GIT_VARS, Landing, MOVING, Record, and, at, git_z, on_paths, run_git, short,
-    signal_name, watched,
+    Ended, Landing, MOVING, Record, and, at, git_z, on_paths, run_git, short, signal_name, watched,
 };
 use crate::sweep::git::ancestor;
 use crate::sys::{self, Stdio};
@@ -402,10 +401,7 @@ impl Landing<'_> {
         // Its stat data spares reading the files that did not change; without it, all are read.
         let _ = fs::copy(&real, &index);
         let indexed = |args: &[&str]| {
-            let mut command = sys::command("git");
-            for name in GIT_VARS {
-                command.env_remove(name);
-            }
+            let mut command = sys::git();
             command
                 .args(args)
                 .current_dir(&self.main)

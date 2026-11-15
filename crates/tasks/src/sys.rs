@@ -15,7 +15,8 @@
 //! --skill`), and an hc call would answer for that core and scope alone. Nor does a child keep the
 //! marks of how its starter was asked for ([`MARKS`]): it is the project's command or the board's
 //! own work, never the one command an agent handed a path to, or the land the `land` recipe asked
-//! for. Clippy refuses a child made anywhere else in the crate, however its path is spelled,
+//! for. A git is [`git`], which keeps no repository its starter's environment names ([`GIT_VARS`]):
+//! it acts on the folder it is run in. Clippy refuses a child made anywhere else in the crate, however its path is spelled,
 //! imported or gated (the crate's clippy.toml, `disallowed-methods`; tried by the release run's
 //! `tests/child_guard`).
 
@@ -63,6 +64,33 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     unmarked(sessionless(&mut command));
     command
+}
+
+/// What names a repository, its index or its tree to git in place of the folder it runs in. A git
+/// hook inherits some from the git that runs it (every commit hook `GIT_INDEX_FILE`, one in a
+/// linked worktree `GIT_DIR` as well), and so does whatever the hook runs: a project's commit gate
+/// runs the recorder and board commands, and the land's merge commit and a release's refresh run
+/// those gates. A git that kept them would read and write the hook's repository and index.
+pub const GIT_VARS: [&str; 8] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+];
+
+/// `git` by [`command`], on the repository of the folder it runs in (`-C`, `--git-dir` or its
+/// current directory) alone: without [`GIT_VARS`]. A call that names an index of its own sets
+/// `GIT_INDEX_FILE` on it after.
+pub fn git() -> Command {
+    let mut git = command("git");
+    for name in GIT_VARS {
+        git.env_remove(name);
+    }
+    git
 }
 
 /// A command for `program` whose whole environment is `vars` but [`SESSION_VARS`] and [`MARKS`]: a
@@ -391,6 +419,112 @@ mod tests {
             "{said}{}",
             String::from_utf8_lossy(&done.stderr)
         );
+    }
+
+    /// A git hook hands what it runs the repository and index of the commit it is in (every commit
+    /// hook `GIT_INDEX_FILE`, one in a linked worktree `GIT_DIR` too, its reference-transaction
+    /// `GIT_WORK_TREE`): the board's git acts on the folder it is run in all the same, and leaves
+    /// that repository's index and tree as they were.
+    #[test]
+    fn a_git_acts_on_the_repository_of_its_folder_whatever_repository_its_starter_names() {
+        // Set in this process, the variables would move every other test's git: a re-run of this
+        // test alone is started in them, with the scratch folder and what it holds in these.
+        const CASE: &str = "SYMPHONY_BOARD_GIT_CASE";
+        const TREE: &str = "SYMPHONY_BOARD_GIT_TREE";
+        let said = |command: &mut Command| {
+            let done = output(command).unwrap();
+            assert!(done.status.success(), "{done:?}");
+            String::from_utf8(done.stdout).unwrap().trim().to_string()
+        };
+        let real = |path: &str| Path::new(path).canonicalize().unwrap();
+        if let Some(root) = std::env::var_os(CASE) {
+            let root = Path::new(&root).canonicalize().unwrap();
+            let (ours, theirs) = (root.join("ours"), root.join("theirs"));
+            let index = std::fs::read(theirs.join(".git/index")).unwrap();
+            let common = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+            let kept = said(command("git").arg("-C").arg(&ours).args(common));
+            assert_eq!(real(&kept), theirs.join(".git"), "a git that keeps them");
+            let own = said(git().arg("-C").arg(&ours).args(common));
+            assert_eq!(real(&own), ours.join(".git"));
+            // The recorder's tree and dirtiness, asked from a subfolder as a gate that went there.
+            let read = crate::runs::tree_and_dirty(
+                &ours.join("sub"),
+                "HEAD",
+                false,
+                std::time::Duration::from_secs(60),
+            );
+            assert_eq!(read, (std::env::var(TREE).ok(), Some(false)));
+            // A session's branch, and the worktrees a launch looks for its branch among.
+            let branch = crate::cli::probes::branch_of(&ours.to_string_lossy());
+            assert_eq!(branch.as_deref(), Ok("ours-branch"));
+            let listed = crate::sweep::git::worktrees(&ours).unwrap();
+            assert_eq!(listed.len(), 1, "{listed:?}");
+            assert_eq!(listed[0].path.canonicalize().unwrap(), ours);
+            // A folder in no repository is in none, not in theirs.
+            assert!(crate::git::common_dir(&root.join("nowhere")).is_err());
+            // A worktree made as a launch makes one: registered, then checked out by itself.
+            let added = root.join("added");
+            let add = ["worktree", "add", "--no-checkout", "-b", "added"];
+            said(git().arg("-C").arg(&ours).args(add).arg(&added).arg("HEAD"));
+            said(git().arg("-C").arg(&added).args(["checkout", "--force"]));
+            assert_eq!(
+                std::fs::read_to_string(added.join("sub/f")).unwrap(),
+                "ours\n"
+            );
+            let status = said(git().arg("-C").arg(&added).args(["status", "--porcelain"]));
+            assert_eq!(status, "", "its own index holds its files");
+            assert_eq!(std::fs::read(theirs.join(".git/index")).unwrap(), index);
+            assert_eq!(
+                std::fs::read_to_string(theirs.join("f")).unwrap(),
+                "changed\n"
+            );
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("symphony-sys-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (ours, theirs) = (root.join("ours"), root.join("theirs"));
+        std::fs::create_dir_all(root.join("nowhere")).unwrap();
+        for (repo, file, branch) in [(&ours, "sub/f", "ours-branch"), (&theirs, "f", "main")] {
+            std::fs::create_dir_all(repo.join("sub")).unwrap();
+            std::fs::write(
+                repo.join(file),
+                format!("{}\n", repo.file_name().unwrap().display()),
+            )
+            .unwrap();
+            let words = ["-c", "user.email=t@t", "-c", "user.name=t", "-C"];
+            let run = |args: &[&str]| said(git().args(words).arg(repo).args(args));
+            run(&["init", "-q", "-b", branch]);
+            run(&["add", "."]);
+            run(&["commit", "-q", "-m", "first"]);
+        }
+        // Theirs has a change of its own that no git of ours may check out over.
+        std::fs::write(theirs.join("f"), "changed\n").unwrap();
+        let tree = said(
+            git()
+                .arg("-C")
+                .arg(&ours)
+                .args(["rev-parse", "HEAD^{tree}"]),
+        );
+        let done = output(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sys::tests::a_git_acts_on_the_repository_of_its_folder_whatever_repository_its_starter_names",
+                ])
+                .env(CASE, &root)
+                .env(TREE, &tree)
+                .env("GIT_DIR", theirs.join(".git"))
+                .env("GIT_WORK_TREE", &theirs)
+                .env("GIT_INDEX_FILE", theirs.join(".git/index")),
+        )
+        .unwrap();
+        let out = String::from_utf8_lossy(&done.stdout);
+        assert!(
+            done.status.success() && out.contains("1 passed"),
+            "{out}{}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// Clippy reads the nearest clippy.toml alone: the crate's, which refuses a child made past

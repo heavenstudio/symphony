@@ -701,7 +701,7 @@ fn claude_args(
 // -- git -------------------------------------------------------------------------------------
 
 fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
-    let done = sys::output(sys::command("git").arg("-C").arg(root).args(args))
+    let done = sys::output(sys::git().arg("-C").arg(root).args(args))
         .map_err(|e| LaunchError(format!("git {}: {e}", args[..2.min(args.len())].join(" "))))?;
     if !done.status.success() {
         return Err(LaunchError(format!(
@@ -714,7 +714,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
 }
 
 fn branch_exists(root: &Path, branch: &str) -> bool {
-    sys::output(sys::command("git").arg("-C").arg(root).args([
+    sys::output(sys::git().arg("-C").arg(root).args([
         "rev-parse",
         "--verify",
         "-q",
@@ -725,15 +725,10 @@ fn branch_exists(root: &Path, branch: &str) -> bool {
 
 /// The worktree that has `branch` checked out, if any.
 fn checked_out_in(root: &Path, branch: &str) -> Result<Option<String>, LaunchError> {
-    let mut at = "";
-    let listed = git(root, &["worktree", "list", "--porcelain"])?;
-    let wanted = format!("branch refs/heads/{branch}");
-    for line in listed.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            at = path;
-        } else if line == wanted {
-            return Ok(Some(at.to_string()));
-        }
-    }
-    Ok(None)
+    let wanted = format!("refs/heads/{branch}");
+    let listed = crate::sweep::git::worktrees(root).map_err(LaunchError)?;
+    let held = listed
+        .into_iter()
+        .find(|tree| tree.branch.as_ref() == Some(&wanted));
+    Ok(held.map(|tree| tree.path.to_string_lossy().into_owned()))
 }

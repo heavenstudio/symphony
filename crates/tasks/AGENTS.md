@@ -758,6 +758,16 @@ their removers (`sessionless`, `unmarked`) live in the leaf's
 `process_cwd::session`, which `sys` re-exports, so a plugin's process starts its
 own children without them and without linking the board; a `sys` test holds
 `MARKS` equal to `confine::MARKER` and `land::RECIPE`.
+A git is `sys::git()`, that command less `sys::GIT_VARS`, the eight names by which
+an environment points git at a repository, index or tree other than the folder
+it runs in: every commit hook git runs gets `GIT_INDEX_FILE`, one in a linked
+worktree `GIT_DIR` too, and so does whatever the hook runs (a project's commit
+gate runs the recorder and board commands; the land's merge commit and a
+release's refresh run those gates). A git that kept them would read the hook's
+repository and write its index (`git worktree add` checks the new worktree out
+into it). The land's own git from the caller's `Env` (`main_git`), its checks,
+generators and `[board] on_land` drop the same list; the library's
+`commit.rs` alone keeps them, on purpose.
 A test of a command that reads a mark runs it in an environment of its own
 (`symphony::cli::main_in`, the board's `Env`), never this process's, so a test
 run under a recipe or a land is not red or green by the marks it inherits.
@@ -776,7 +786,7 @@ library's test build and each integration test target allow it at their root.
 `tests/child_guard`, which only the release run runs (a nested build, so never in the fast plan),
 runs the toolchain's clippy over a probe crate that reads the same file. `port.rs` starts nothing: std's `lsof` for its `Lsof` is
 `apps/symphony-ui`'s browser test's own. The Symphony's
-`children` re-exports the list, `command` and `sessionless`.
+`children` re-exports the list, `command`, `git` and `sessionless`.
 
 `staff` makes one staffing pass (`src/launch/staff.rs`), also called before `reap`.
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
