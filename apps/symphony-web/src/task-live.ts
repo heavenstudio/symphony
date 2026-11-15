@@ -325,6 +325,10 @@ export class LiveTask {
   /** A refresh a feed event asked for is under way, and whether another was asked for meanwhile. */
   private refreshing = false;
   private again = false;
+  /** Counts the page's reads as they are asked, and the last of them the server answered: an
+   * answer to one asked before it is dropped (`refresh`). */
+  private pageAsked = 0;
+  private pageAnswered = 0;
 
   constructor(
     readonly scope: string,
@@ -542,6 +546,9 @@ export class LiveTask {
     const { d } = this;
     const same = d.page?.task.slug === selected;
     const catchUp = d.threadLoaded && same;
+    // The newest message shown before any read: the feed, open beside the reads, brings newer
+    // ones meanwhile, and those between are the catch-up's to read.
+    const newestShown = d.entries.reduce((most, entry) => Math.max(most, entry.message.id), 0);
     // What a page drawn from this device was asked to read waits for its page's answer (`refresh`).
     const waiting = waits(this.fresh, PAGE);
     const requested = d.threadRequested && same && !waiting;
@@ -556,7 +563,7 @@ export class LiveTask {
     } else {
       await this.answer(PAGE, round, () => this.refresh());
       if (!this.current(selected)) return;
-      if (catchUp) await this.catchUp();
+      if (catchUp) await this.catchUp(newestShown);
       else if (requested) await this.history(false);
     }
     if (!this.current(selected)) return;
@@ -774,25 +781,31 @@ export class LiveTask {
 
   /**
    * Read the route's page again, naming the copy the page holds, so that a `304` shows it again and
-   * a `200` replaces it, on the page and on this device.
+   * a `200` replaces it, on the page and on this device. Two reads may be out together (a feed lost
+   * while one is out starts the next round's): an answer, or a failure, that comes after the answer
+   * to a read asked later changes nothing.
    */
   async refresh(): Promise<void> {
     const selected = this.slug;
     const { d } = this;
     const since = d.generation;
     const copy = d.pageCopy !== null && d.pageCopy[1].task.slug === selected ? d.pageCopy : null;
+    this.pageAsked += 1;
+    const asked = this.pageAsked;
+    const superseded = () => asked < this.pageAnswered;
     let read: [TaskPage, Fresh | null] | null;
     try {
       read = await this.readPage(selected, copy);
     } catch (error) {
-      if (!this.current(selected)) return;
+      if (!this.current(selected) || superseded()) return;
       this.freshen((f) => failed(f, PAGE));
       // A page drawn from this device says the server is not reachable instead.
       if (shown(this.fresh) === null) d.error = said(error);
       this.host.redraw();
       return;
     }
-    if (!this.current(selected)) return;
+    if (!this.current(selected) || superseded()) return;
+    this.pageAnswered = asked;
     if (read === null) {
       d.missing = selected;
       d.error = "";
@@ -933,11 +946,10 @@ export class LiveTask {
     this.host.redraw();
   }
 
-  /** The messages after the newest shown, a page at a time, until the server has no more. */
-  private async catchUp(): Promise<void> {
+  /** The messages after message `after`, a page at a time, until the server has no more. */
+  private async catchUp(after: number): Promise<void> {
     const selected = this.slug;
     const { d } = this;
-    let after = d.entries.reduce((most, entry) => Math.max(most, entry.message.id), 0);
     for (;;) {
       let page: TaskHistory | null;
       try {
