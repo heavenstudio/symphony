@@ -22,7 +22,7 @@
 //! days of the window alone.
 
 use axum::http::StatusCode;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::hash::{DefaultHasher, Hasher as _};
 use std::io::{Read as _, Seek as _, SeekFrom};
@@ -59,10 +59,10 @@ type Seen = (u64, i64, i64, u64, u64);
 /// A day file's runs, each once as [`symphony_api::fold`] takes them, by id; the pipelines they
 /// name; the names their keys share, each held once; and where the last line read starts, with a
 /// hash of its bytes, its newline among them: none when the bytes read did not end a line.
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct Day {
-    runs: BTreeMap<Arc<str>, Key>,
-    pipelines: BTreeSet<Arc<str>>,
+    runs: HashMap<Arc<str>, Key>,
+    pipelines: BTreeSet<String>,
     names: HashSet<Arc<str>>,
     last: Option<(u64, u64)>,
 }
@@ -115,6 +115,10 @@ impl Day {
     /// Folds in the lines of `bytes`, the file's from `from` on, after the lines folded before, as
     /// [`symphony_api::fold`] takes them: a run's first end line, else its newest start line. A line
     /// that does not parse as a whole [`RunLine`] is passed over.
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "the pipelines are a set, the same in any order"
+    )]
     fn fold_in(&mut self, bytes: &[u8], from: u64) {
         let mut at = from;
         let mut last = None;
@@ -145,7 +149,12 @@ impl Day {
         self.last = last
             .filter(|(_, piece)| piece.ends_with(b"\n"))
             .map(|(at, piece)| (at, hash(piece)));
-        self.pipelines = self.runs.values().map(|key| key.pipeline.clone()).collect();
+        self.pipelines.clear();
+        for key in self.runs.values() {
+            if !self.pipelines.contains(&*key.pipeline) {
+                self.pipelines.insert(key.pipeline.to_string());
+            }
+        }
     }
 }
 
@@ -386,7 +395,8 @@ fn day_file(
 
 /// The runs kept `before` of the file `file`, whose status is now `seen`, to be read on from where
 /// they were read to: when the file only grew since, on the same inode and device, and still holds
-/// the last line read where it was. None when it is to be parsed whole.
+/// the last line read where it was. None when it is to be parsed whole, as it is too while another
+/// answer still holds them.
 fn grown(before: Kept, file: &File, seen: Seen) -> Option<(Day, u64)> {
     let (size, .., inode, device) = seen;
     let (read, .., was_inode, was_device) = before.seen;
@@ -396,7 +406,10 @@ fn grown(before: Kept, file: &File, seen: Seen) -> Option<(Day, u64)> {
     }
     let mut last = vec![0; usize::try_from(read - at).ok()?];
     file.read_exact_at(&mut last, at).ok()?;
-    (hash(&last) == kept).then(|| (Arc::unwrap_or_clone(before.day), read))
+    if hash(&last) != kept {
+        return None;
+    }
+    Some((Arc::try_unwrap(before.day).ok()?, read))
 }
 
 /// A run as one answer found it: its id, its key, and the day it was read from, by its place among
@@ -411,6 +424,10 @@ struct Found {
 /// The runs of an older day, the one at `day` among the answer's, that `keep` takes, taken into
 /// `newer`'s, as a fold of every line in order would take them: a run's first end line, else its
 /// newest start line, so an older day's line stands only where it ended the run.
+#[expect(
+    clippy::iter_over_hash_type,
+    reason = "each run of a day is taken or not by itself, so in any order the same"
+)]
 fn merge(
     newer: &mut HashMap<Arc<str>, Found>,
     day: usize,
@@ -446,13 +463,10 @@ fn line_of(days: &[Opened], found: &Found) -> Option<RunLine> {
 
 /// The lines `found` name, read again ([`line_of`]), and the paths of the days that no longer hold
 /// one, whose line is left out.
-fn lines_of<'a>(
-    days: &[Opened],
-    found: impl IntoIterator<Item = &'a Found>,
-) -> (Vec<RunLine>, Vec<PathBuf>) {
+fn lines_of(days: &[Opened], found: &[Found]) -> (Vec<RunLine>, Vec<PathBuf>) {
     let mut changed = Vec::new();
     let lines = found
-        .into_iter()
+        .iter()
         .filter_map(|found| {
             let line = line_of(days, found);
             if line.is_none() {
@@ -518,7 +532,7 @@ fn page_once(index: &Index, runs: &Path, filters: &Filters, now: f64) -> (RunsPa
     }
     index.window(runs, today);
     if let Some(pipeline) = &filters.pipeline {
-        pipelines.insert(pipeline.as_str().into());
+        pipelines.insert(pipeline.clone());
     }
     let mut taken: Vec<Found> = seen
         .into_values()
@@ -531,11 +545,12 @@ fn page_once(index: &Index, runs: &Path, filters: &Filters, now: f64) -> (RunsPa
             .then_with(|| a.run.cmp(&b.run))
     });
     let more = taken.len() > RUNS_PAGE;
-    let (runs, changed) = lines_of(&days, taken.iter().take(RUNS_PAGE));
+    taken.truncate(RUNS_PAGE);
+    let (runs, changed) = lines_of(&days, &taken);
     let page = RunsPage {
         runs,
         more,
-        pipelines: pipelines.iter().map(|name| name.to_string()).collect(),
+        pipelines: pipelines.into_iter().collect(),
         unread,
     };
     (page, changed)
