@@ -214,6 +214,7 @@ both kinds, to copy after `--`:
 | a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `a_move_between` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
+| the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |

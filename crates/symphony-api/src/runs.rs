@@ -32,6 +32,7 @@ pub const TRIGGERS: [&str; 4] = ["on_review", "release", "land", "owner"];
 
 /// How a run ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum End {
     /// Exit 0.
@@ -83,6 +84,7 @@ impl End {
 
 /// One test binary's results, as `tools/run-suites` reads them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Suite {
     pub name: String,
     pub passed: u32,
@@ -94,6 +96,7 @@ pub struct Suite {
 
 /// A test that failed, as `tools/run-suites` reads it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct FailedTest {
     /// The binary it is in, when known.
     #[serde(default)]
@@ -105,6 +108,7 @@ pub struct FailedTest {
 
 /// One line of a day file: a run, or a step of one, as it started or as it ended.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct RunLine {
     /// [`RUN_SCHEMA`].
     pub schema: u32,
@@ -193,6 +197,7 @@ pub const RUN_LOG_MOST: u64 = 1024 * 1024;
 /// Part of one run's log, as [`RUN_LOG_PATH`] answers it: the bytes `from..to` of the `size` its
 /// file held when read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct RunLog {
     /// The run's id.
     pub run: String,
@@ -206,6 +211,50 @@ pub struct RunLog {
     pub to: u64,
     /// Those bytes as text; a character a range cuts through reads as U+FFFD.
     pub text: String,
+}
+
+/// The Runs page's list: `GET` [`RUNS_PATH`] answers a [`RunsPage`], the project's runs (never
+/// their steps) newest first by when each was asked for, [`RUNS_PAGE`] at a time, read from its
+/// newest day files back [`RUNS_DAYS`] days (docs/RUNS.md, *The Runs page*). It takes `pipeline`,
+/// `end` (an [`End`], or `started` for a run with no end line yet), `task` and `branch`, each
+/// matched whole, and `before`, a time: the runs asked for before it, for the page after one whose
+/// last run was asked for then.
+pub const RUNS_PATH: &str = "/api/runs";
+/// One run and its steps: `GET` [`RUN_PATH`]`?run=ID` answers a [`RunPage`].
+pub const RUN_PATH: &str = "/api/run";
+/// How many runs a page of the list holds.
+pub const RUNS_PAGE: usize = 50;
+/// How many days back, today among them, the list and a run's read reach.
+pub const RUNS_DAYS: u32 = 14;
+/// The most bytes of one day file read; a larger file is not read, and named.
+pub const RUNS_FILE_BYTES: u64 = 16 << 20;
+/// The most bytes read for one answer, newest days first; the files past it are not read, and named.
+pub const RUNS_READ_BYTES: u64 = 64 << 20;
+
+/// A page of the project's runs, as [`RUNS_PATH`] answers it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct RunsPage {
+    /// The runs that match, newest first by [`RunLine::queued`], each once ([`fold`]): its end
+    /// line, else its start line.
+    pub runs: Vec<RunLine>,
+    /// Whether more runs match, asked for before the last of these.
+    pub more: bool,
+    /// The pipelines the runs read name, by name: what the page offers to filter by.
+    pub pipelines: Vec<String>,
+    /// The day files that were not read, each a sentence naming it: their runs are missing.
+    pub unread: Vec<String>,
+}
+
+/// One run, or one step, and the steps it ran, as [`RUN_PATH`] answers it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct RunPage {
+    pub run: RunLine,
+    /// Its steps and theirs, each after the one it ran inside, in the order they were asked for.
+    pub steps: Vec<RunLine>,
+    /// The day files that were not read, each a sentence naming it.
+    pub unread: Vec<String>,
 }
 
 /// A pipeline's or a step's name: 1 to 64 ASCII letters, digits, `-`, `_` or `.`.

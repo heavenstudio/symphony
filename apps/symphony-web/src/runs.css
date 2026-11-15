@@ -1,0 +1,402 @@
+/* The Runs page (runs.tsx): its header, what runs now, the filters and the list, a line a run;
+   a run's page with its facts, its steps as bars on its span, the tests it failed and its log.
+   A result wears its colour on its mark and its bar, never on its text alone: each says its word. */
+.runs {
+  display: grid;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.runs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3) var(--sp-5);
+}
+.runs-head h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.runs-sub {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.runs-count {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.runs h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-lg);
+}
+.runs-error {
+  margin: 0;
+  color: var(--dislike);
+  overflow-wrap: anywhere;
+}
+.runs-quiet {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+.runs-unread {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+/* A result: its mark in its colour, its word beside it. */
+.run-result {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  --c: var(--pending);
+}
+.run-mark {
+  color: var(--c);
+  font-weight: 700;
+}
+[data-result="green"] {
+  --c: var(--like);
+}
+[data-result="red"] {
+  --c: var(--dislike);
+}
+[data-result="timed_out"],
+[data-result="interrupted"],
+[data-result="incomplete"] {
+  --c: var(--question);
+}
+[data-result="running"] {
+  --c: var(--auto);
+}
+[data-result="started"],
+[data-result="queued"] {
+  --c: var(--pending);
+}
+
+/* Now: each machine's word, then each operation a line. */
+.runs-now,
+.runs-list,
+.run-steps,
+.run-failed,
+.run-suites,
+.run-log {
+  min-width: 0;
+}
+.runs-machines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0 0 var(--sp-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.runs-ops,
+.runs-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  overflow: hidden;
+}
+.runs-ops > li + li,
+.runs-rows > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/* A line of the list, or of Now: its result, what ran, where, who and how long, in columns on a
+   wide screen and wrapped under each other on a phone. */
+.runs-op,
+.run-row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  grid-template-areas:
+    "result label time"
+    "result where who";
+  gap: 2px var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-2) var(--sp-3);
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.run-row:hover,
+.run-row:focus-visible {
+  background: var(--muted);
+}
+.run-row:focus-visible {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: -2px;
+}
+.run-row .run-result,
+.runs-op .run-result {
+  grid-area: result;
+}
+.run-pipeline {
+  display: none;
+}
+.run-label {
+  grid-area: label;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.run-where {
+  grid-area: where;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.run-who {
+  grid-area: who;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.run-time {
+  grid-area: time;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.run-note {
+  grid-column: 2 / -1;
+  font-size: var(--fs-sm);
+  color: var(--dislike);
+}
+@media (max-width: 599px) {
+  .runs-op,
+  .run-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "result time"
+      "label label"
+      "where who";
+  }
+}
+
+/* The filters: two choices and two words, wrapping on a phone. */
+.runs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2) var(--sp-3);
+  margin: 0 0 var(--sp-3);
+}
+.runs-filters label {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+.runs-filters select,
+.runs-filters input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 4px var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input, var(--border));
+  border-radius: var(--r-md, var(--r-sm));
+}
+.runs-filter-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+.runs-more {
+  margin-top: var(--sp-3);
+}
+
+/* A run's page. */
+.run-back {
+  justify-self: start;
+  font-size: var(--fs-sm);
+}
+.run-head h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.run-head .run-label {
+  font-weight: 400;
+}
+.run-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.run-facts dt {
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+}
+.run-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.run-rerun {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+/* The steps: each its name, a bar on the run's span and its time, indented by its depth. */
+.run-steps ol {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: var(--sp-3);
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.run-step {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) 5.5rem;
+  gap: var(--sp-3);
+  align-items: center;
+  padding-left: calc(var(--depth, 0) * var(--sp-4));
+}
+.run-step > a {
+  display: inline-flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  min-width: 0;
+  color: inherit;
+}
+.run-step .run-word {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.run-step-name {
+  overflow-wrap: anywhere;
+}
+.run-step-track {
+  position: relative;
+  height: 0.75rem;
+  border-radius: var(--r-sm);
+  background: var(--muted);
+}
+.run-step-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--c);
+}
+@media (max-width: 599px) {
+  .run-step {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name time"
+      "track track";
+    gap: 2px var(--sp-2);
+  }
+  .run-step > a {
+    grid-area: name;
+  }
+  .run-step-track {
+    grid-area: track;
+  }
+  .run-step .run-time {
+    grid-area: time;
+  }
+}
+
+/* The tests it failed, each its name and the line it failed on. */
+.run-failed ul {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-failed-test {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--dislike);
+  border-radius: var(--r-sm);
+  min-width: 0;
+}
+.run-failed code {
+  overflow-wrap: anywhere;
+}
+.run-failed p {
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.run-suite {
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+}
+/* The suites: the shared table (its card, its scroll across), the counts right-aligned. */
+.run-suites table {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.run-suites td {
+  text-align: right;
+  white-space: nowrap;
+}
+.run-suites th[scope="row"] {
+  overflow-wrap: anywhere;
+}
+
+/* The log: what part of it shows, then its text, wrapped, the page scrolling past it. */
+.run-log {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+}
+.run-log-part {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.run-log-text {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}

@@ -247,6 +247,43 @@ An end line of the workspace tests of a verify, a step, recorded on macOS:
 {"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…","log":"logs/2026-11-11/8a21….log","log_bytes":48211}
 ```
 
+## The Runs page
+
+`/runs` (the web client's `runs` kind, `apps/symphony-web/src/runs.tsx`) shows a
+project's runs on the server that serves it:
+
+- **Now:** each machine's word (its freshness and how long ago it came), then each
+  operation running or queued, with its recipe, task, who started it and since when.
+  This is the machine work the board reads (`/api/machine-work`), read every 5 s.
+- **Every run,** newest first, a line each: its result, label, task or branch and
+  commit, who started it, how long it took and how many tests it failed. It can be
+  filtered by pipeline, result (an end, or `started` for none), task and branch, each
+  matched whole, and this browser keeps the filters chosen. Its first page is read
+  every 15 s, naming the last answer's tag, and Load more reads the page before the
+  last run shown. A line with no end reads as running while an operation of the
+  machine's work has its id, else as started ([Start and end](#start-and-end)).
+- **A run** (`/runs?run=ID`, a step's too): its facts, its steps (and theirs) in
+  order, each with its time as a bar on the run's span, the tests its lines failed
+  with the line each failed on, its suites' counts, and its log. The log shows its last
+  64 KiB, with the output before it 1 MiB at a time on demand. While the run or a step
+  of it has not ended, the run is read again every 5 s and its log is read on from
+  where it stopped.
+
+`GET /api/runs` (`symphony_api::RUNS_PATH`) answers a `symphony_api::RunsPage`: up to
+50 runs (`RUNS_PAGE`), steps left out, each run once as `fold` keeps it, newest asked
+for first; `more` when more match; the pipelines read, for the filter; and `unread`,
+each day file not read and why. Its query names `pipeline`, `end` (an end or
+`started`), `task`, `branch` and `before` (seconds: only runs asked for before it).
+It reads the day files newest first, back 14 days (`RUNS_DAYS`), and stops after the
+day that filled the page. A day file over 16 MiB (`RUNS_FILE_BYTES`) is not read, nor
+is any once 64 MiB were read for the one answer (`RUNS_READ_BYTES`); each is named in
+`unread`. `GET /api/run?run=ID` (`symphony_api::RUN_PATH`) answers a
+`symphony_api::RunPage`: the run, and every step under it, depth first, each after
+the one it ran inside, read from the newest day back to the one the run was asked for.
+A `run` that is not 32 hex digits is refused (400), and one in none of those days is
+none (404). Both read only regular files, never through a link, and never the board; a
+project that keeps no runs where its server reads has none (404).
+
 ## The roll-up
 
 Once an hour the machine's one server rolls each project's runs up into

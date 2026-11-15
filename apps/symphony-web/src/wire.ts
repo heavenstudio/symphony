@@ -12,6 +12,11 @@ export const CACHE_FORMAT = 2;
 export const BOARD_CARDS = 5;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
+export const RUNS_PATH = "/api/runs";
+export const RUN_PATH = "/api/run";
+export const RUN_LOG_PATH = "/api/run-log";
+export const RUN_LOG_TAIL = 65536;
+export const RUN_LOG_MOST = 1048576;
 export const VERSION_HEADER = "symphony-version";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";
@@ -26,6 +31,7 @@ export const SYMPHONY_ROUTES = [
   "agents",
   "queue",
   "reports",
+  "runs",
   "api",
   "assets",
   "static",
@@ -46,6 +52,7 @@ export const PAGE_NAMES = {
   DOCS: "Docs",
   BOARD: "Board",
   REPORTS: "Reports",
+  RUNS: "Runs",
   AGENTS: "Agents",
   PROJECTS: "Projects",
 } as const;
@@ -326,6 +333,193 @@ export type ReportMark = {
    */
   commit: string;
   subject: string;
+};
+
+export type RunsPage = {
+  /**
+   * The runs that match, newest first by [`RunLine::queued`], each once ([`fold`]): its end
+   * line, else its start line.
+   */
+  runs: Array<RunLine>;
+  /**
+   * Whether more runs match, asked for before the last of these.
+   */
+  more: boolean;
+  /**
+   * The pipelines the runs read name, by name: what the page offers to filter by.
+   */
+  pipelines: Array<string>;
+  /**
+   * The day files that were not read, each a sentence naming it: their runs are missing.
+   */
+  unread: Array<string>;
+};
+
+export type RunPage = {
+  run: RunLine;
+  /**
+   * Its steps and theirs, each after the one it ran inside, in the order they were asked for.
+   */
+  steps: Array<RunLine>;
+  /**
+   * The day files that were not read, each a sentence naming it.
+   */
+  unread: Array<string>;
+};
+
+export type RunLine = {
+  /**
+   * [`RUN_SCHEMA`].
+   */
+  schema: number;
+  /**
+   * 32 hex digits: the id of the operation that recorded it, which its live record in the work
+   * folder carries too.
+   */
+  run: string;
+  /**
+   * The run or step this is a step of; none for a run.
+   */
+  parent: string | null;
+  /**
+   * The project's id.
+   */
+  project: string | null;
+  /**
+   * The machine's installation id, when it has one.
+   */
+  machine: string | null;
+  /**
+   * Its run's pipeline ([`PIPELINES`]), a step's too.
+   */
+  pipeline: string;
+  /**
+   * The step's name; none for a run.
+   */
+  step: string | null;
+  /**
+   * The recipe or the command line.
+   */
+  label: string;
+  task: string | null;
+  /**
+   * The session it ran for.
+   */
+  handle: string | null;
+  /**
+   * Who or what started it: a session's handle, or one of [`TRIGGERS`].
+   */
+  trigger: string;
+  branch: string | null;
+  /**
+   * The commit it checked.
+   */
+  commit: string | null;
+  /**
+   * That commit's tree.
+   */
+  tree: string | null;
+  /**
+   * Whether the checkout differed from its commit (tracked changes, or files git does not
+   * ignore) when it began: its tree then says only what it started from.
+   */
+  dirty: boolean | null;
+  /**
+   * When it was asked for, started and ended, in seconds since the epoch on the recording
+   * machine's clock.
+   */
+  queued: number;
+  started: number | null;
+  ended: number | null;
+  /**
+   * None on a start line.
+   */
+  end: End | null;
+  exit: number | null;
+  signal: number | null;
+  /**
+   * The CPU seconds, user and system, of its command and every child it reaped; a run's
+   * include its steps'.
+   */
+  cpu_s: number | null;
+  /**
+   * Beside `cpu_s`, whether its recorder knows it leaves out CPU the command's processes took
+   * (`true`), saw no such loss (`false`), or could not watch for one (absent): docs/RUNS.md.
+   */
+  cpu_partial?: boolean | null;
+  /**
+   * The newest earlier run of the same pipeline, step and label on the same tree, both clean.
+   */
+  rerun_of: string | null;
+  /**
+   * Its log, relative to the day files' folder: `logs/YYYY-MM-DD/RUN.log`, the day it was asked
+   * for. Named on its start line too, so a run that still runs can be read.
+   */
+  log?: string | null;
+  /**
+   * The bytes its log held as its end line was written.
+   */
+  log_bytes?: number | null;
+  /**
+   * Per test binary (`tools/run-suites`).
+   */
+  suites?: Array<Suite> | null;
+  /**
+   * The tests that failed (`tools/run-suites`).
+   */
+  failed?: Array<FailedTest> | null;
+};
+
+export type End = "green" | "red" | "timed_out" | "interrupted" | "incomplete";
+
+export type Suite = {
+  name: string;
+  passed: number;
+  failed: number;
+  ignored: number;
+  /**
+   * Its time, in seconds.
+   */
+  s: number;
+};
+
+export type FailedTest = {
+  /**
+   * The binary it is in, when known.
+   */
+  suite: string | null;
+  name: string;
+  /**
+   * Its failure's first line.
+   */
+  line: string;
+};
+
+export type RunLog = {
+  /**
+   * The run's id.
+   */
+  run: string;
+  /**
+   * The log, relative to the day files' folder, as [`RunLine::log`] names it.
+   */
+  log: string;
+  /**
+   * Its whole length when read, in bytes: a run that still runs adds to it.
+   */
+  size: number;
+  /**
+   * Where the bytes answered start in it.
+   */
+  from: number;
+  /**
+   * Where they end, never past `size`.
+   */
+  to: number;
+  /**
+   * Those bytes as text; a character a range cuts through reads as U+FFFD.
+   */
+  text: string;
 };
 
 export type TaskListing = {

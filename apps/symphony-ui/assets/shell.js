@@ -440,7 +440,7 @@ function ahead(generation, tries = 60) {
 
 // The routes the Symphony answers itself, symphony_api::SYMPHONY_ROUTES word for word (a test
 // keeps them equal): they win over every entrypoint.
-const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
+const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "runs", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
 
 function within(route, path) {
     return route === "" || path === route || path.startsWith(`${route}/`);
@@ -484,7 +484,7 @@ function route(path) {
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
     if (path.startsWith("task/")) return "tasks";
-    if (clean === "queue" || clean === "reports" || clean === "agents") return clean;
+    if (clean === "queue" || clean === "reports" || clean === "runs" || clean === "agents") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";

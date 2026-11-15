@@ -4,14 +4,15 @@
 use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
-/// The Symphony's six pages, then the stand-in project's own page under its plugin's label: seven,
-/// one more than the consuming project's header holds.
-const PAGES: [&str; 7] = [
+/// The Symphony's seven pages, then the stand-in project's own page under its plugin's label:
+/// eight, which a phone 390 wide holds in view.
+const PAGES: [&str; 8] = [
     "Home",
     "Queue",
     "Docs",
     "Board",
     "Reports",
+    "Runs",
     "Agents",
     "⬡ lamps",
 ];
@@ -65,6 +66,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
         ("/docs/", "[data-ready=folder]", "Docs", &[]),
         ("/tasks", "[data-slug='tools/example']", "Board", &[]),
         ("/reports", "[data-ready=reports]", "Reports", &[]),
+        ("/runs", "[data-ready=runs]", "Runs", &[]),
         ("/agents", ".agents", "Agents", &[]),
         (
             "/docs/look-parity.md",
@@ -109,6 +111,7 @@ fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
         ("/", ".hero-title"),
         ("/tasks", "[data-slug='tools/example']"),
         ("/reports", "[data-ready=reports]"),
+        ("/runs", "[data-ready=runs]"),
         ("/docs/look-parity.md", ".doc-card"),
     ] {
         open(&mut page, &site, path, ready);

@@ -13,13 +13,14 @@ use super::{
 };
 
 /// Each kind of the web client, the page that shows it and what the page draws once it is in.
-const KINDS: [(&str, &str, &str); 6] = [
+const KINDS: [(&str, &str, &str); 7] = [
     ("review", "/", ".hero-title"),
     ("board", "/tasks", "[data-slug='tools/example']"),
     ("agents", "/agents", "[data-ready=agents]"),
     ("docs", "/docs/", "[data-ready=folder]"),
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
+    ("runs", "/runs", "[data-ready=runs]"),
 ];
 
 #[test]

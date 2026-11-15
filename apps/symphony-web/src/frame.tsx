@@ -243,7 +243,7 @@ function BellIcon() {
 }
 
 /** The Symphony's own pages, which stay the global view's on a branch's document. */
-const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/agents"];
+const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/runs", "/agents"];
 
 export interface FrameProps {
   route: Route;

@@ -31,13 +31,14 @@ const KINDS: [&str; 1] = ["program"];
 /// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
 /// media sheet, for the two kinds that show media), then its entry's own. The task board and the
 /// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
-const WEB: [(&str, &[&str]); 6] = [
+const WEB: [(&str, &[&str]); 7] = [
     ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
+    ("runs", &["runs"]),
 ];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).

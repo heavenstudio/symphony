@@ -245,6 +245,10 @@ impl Site {
                     "to": 1_800_003_600.0, "buckets": [], "first": null
                 }),
             ),
+            (
+                symphony_api::RUNS_PATH,
+                serde_json::json!({"runs": [], "more": false, "pipelines": [], "unread": []}),
+            ),
         ] {
             files.insert(
                 path.into(),

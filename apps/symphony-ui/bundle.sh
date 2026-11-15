@@ -123,7 +123,7 @@ cd "$here"
 # dx's splitter cuts into a main module and a chunk for each (src/split.rs), and `symphony-build
 # split-repair` makes that output safe and repeatable, from the program dx linked, before anything
 # is packaged; a failed repair fails the build. The web client's kinds (home, the queue, Reports,
-# the task board, the agents page, the documents) are one Vite build, `web`. All assets are content
+# Runs, the task board, the agents page, the documents) are one Vite build, `web`. All assets are content
 # hashed; identical files from separate kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"

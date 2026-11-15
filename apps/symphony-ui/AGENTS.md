@@ -358,7 +358,12 @@ never the whole target, which the release run runs.
   were. `/tasks` takes 117,463 (from 116,357), its entry 9,066 (from 12,794) with that chunk
   apart, which costs it the compression of one file and the names the two pass; a task page
   takes 512,598 (from 546,351), the task pages' chunk without the agents' code; every other page
-  stays within 120 bytes of main's. Each
+  stays within 120 bytes of main's. The Runs page (`tools/runs-page`, against main's build at
+  d582bfb) takes `/runs` to 105,966 bytes: its entry (6,890 on the wire), its styles (1,601), the
+  chunk the seven web kinds share (76,519) and the shared styles. It imports the shared ghost and
+  words (`viewport.tsx`, `words.ts`) as every other kind does, so no chunk splits. Every other
+  page takes 108 to 125 bytes more (`/` 111,968, `/tasks` 117,641): the shell's manifest names
+  the kind, and the shared chunk carries its route and header link. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -585,6 +590,9 @@ never the whole target, which the release run runs.
 - **Reports.** `/reports` is the React client's, the second page kind it took over
   ([its guide](../symphony-web/AGENTS.md#reports)): this client builds none of it, and the
   program has no chunk of it.
+- **Runs.** `/runs` is the React client's, built there from the start
+  ([its guide](../symphony-web/AGENTS.md#runs)): this client builds none of it and the program
+  has no chunk of it; its header names the page and lights it (`project::header_links`).
 - **Home.** Home (`/`, the kind `review`) is the React client's, the third page kind it took
   over ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Its media layer
   (frames scaled, a viewer's script loaded, its view buttons, the picture viewer's opener) is
@@ -752,7 +760,7 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/tasks`, `/agents`, `/docs/` and the documents) are no part of it, and at their
+  `/reports`, `/runs`, `/tasks`, `/agents`, `/docs/` and the documents) are no part of it, and at their
   routes it draws its frame over "Page unavailable".
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
