@@ -126,16 +126,8 @@ fn pathspecs(excluded: &[String]) -> Vec<String> {
 /// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them,
 /// every argument handed over as one list.
 fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<String, String> {
-    let mut git = crate::children::command("git");
     // The repository is the one at `root`, whatever the server was started from.
-    for name in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-    ] {
-        git.env_remove(name);
-    }
+    let mut git = crate::children::git();
     let mut argv = vec![
         "-c",
         "core.quotePath=false",

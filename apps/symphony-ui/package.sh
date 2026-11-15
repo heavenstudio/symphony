@@ -32,10 +32,11 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
     echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
     exit 2
 fi
-# The program's kinds (src/split.rs), the chat and the menus every page mounts, which no page kind
-# is: one script and main module for both, and a chunk each.
-program_kinds=(panel overlay)
-# Its chunks: the kinds' and the media layer's, which no kind is (the shell's manifest never names
+# The program's kind (src/split.rs), the chat every page mounts, which no page kind is: one script
+# and main module, and a chunk. The menus every page mounts too (a select's popup, the picture
+# viewer) are the web client's persistent kind `overlay`, placed with its other kinds below.
+program_kinds=(panel)
+# Its chunks: the kind's and the media layer's, which no kind is (the shell's manifest never names
 # it) and the chat loads once it shows media.
 program_chunks=("${program_kinds[@]}" media)
 # Whether the wasm module $1 holds custom sections alone (a name and its bytes, never code, data or
@@ -126,16 +127,16 @@ for module_kind in program; do
         manifest="$(jq --arg kind "$module_kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
         continue
     fi
-    # Each program kind's styles, of the program's: those its page links in its head (dx's static
+    # The program kind's styles, of the program's: those its page links in its head (dx's static
     # head: the frame's, the board's and the controls every page draws, as no other Dioxus kind is
-    # left to load them too); the pictures' (`media-`), which each of them shows; then its own: the
-    # shared controls' (`style-`, components/: the CSS modules the chat and the menus put in the page
-    # as they draw) for the chat and the menus. A style none of these places is refused.
+    # left to load them too); the pictures' (`media-`), which it shows; then its own: the shared
+    # controls' (`style-`, components/: the CSS modules the chat puts in the page as it draws). A
+    # style none of these places is refused.
     others="$({ grep -o '<link rel="stylesheet" href="[^"]*"' "$module/public/index.html" || true; } \
         | sed 's#.*/##; s#"$##' | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s -c .)"
     for kind in "${program_kinds[@]}"; do
         own="$(jq -c --arg kind "$kind" --argjson others "$others" '
-            ((({panel: ["style-"], overlay: ["style-"]})[$kind] // []) + ["media-"]) as $names
+            ((({panel: ["style-"]})[$kind] // []) + ["media-"]) as $names
             | map(select(. as $style | ($others | index($style)) != null
                 or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
         manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
@@ -150,11 +151,11 @@ done
 # a first visit asks for it once instead of once per file, and every kind still caches the same
 # one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
 # It is the stylesheets the program's page links in its head, in the order the program's list names
-# them: the chat's and the menus' own (`style-`) stay out of it, as no page kind draws them before
-# the chat or a menu opens, and so do the pictures' (`media-`), though both program kinds load
-# them: the web client's kinds take the shared file and their own, home, the documents and a task's
-# page with their own copy of them (their media layer's), and the queue, Reports, the task board
-# and the agents page, which show no picture, with none.
+# them: the chat's own (`style-`) stay out of it, as no page kind draws them before the chat
+# opens, and so do the pictures' (`media-`), though the chat loads them: the web client's kinds
+# take the shared file and their own, home, the documents and a task's page with their own copy of
+# them (their media layer's), the queue, Reports, the task board and the agents page, which show
+# no picture, with none, and the overlay with its own (the popup's, the viewer's).
 shared="$(jq -c --argjson others "$others" 'map(select(. as $style | ($others | index($style)) != null) | select(contains("/media-") | not))' <<< "$styles")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
@@ -231,4 +232,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents, a task's page) as its own build, the program of the chat and the menus as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents, a task's page, the menus) as its own build, the program of the chat as a main module and a chunk, with the media layer's, one SPA shell: $out/public" >&2

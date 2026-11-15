@@ -18,7 +18,7 @@ const STYLE: Asset = asset!(
     AssetOptions::css().with_static_head(true)
 );
 
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize)]
 pub(crate) struct Photo {
     src: String,
     caption: String,
@@ -116,7 +116,8 @@ pub fn MediaRuntime() -> Element {
             *controller.borrow_mut() = Controller::new(sender.clone());
         }
     });
-    // The overlay module's host draws the viewer, for every module (components/deferred.rs).
+    // The overlay module's host draws the viewer, for every module (the web client's,
+    // apps/symphony-web/src/overlay.tsx).
     use crate::components::deferred::{close, property, show};
     let owner = format!("{}-pictures", crate::module::kind());
     let callback = use_hook(move || {
@@ -147,37 +148,6 @@ pub fn MediaRuntime() -> Element {
         show(&request);
     });
     rsx! {}
-}
-
-#[cfg(feature = "overlays")]
-#[component]
-pub(crate) fn PictureOverlay(photos: Vec<Photo>, at: usize, command: Callback<isize>) -> Element {
-    let shown = photos.get(at).cloned();
-    let multiple = photos.len() > 1;
-    let opened = use_memo(use_reactive!(|photos| Some(!photos.is_empty())));
-    rsx! {
-        crate::components::dialog::Dialog {
-            id: "media-lightbox", "aria-label": "Picture viewer",
-            open: opened,
-            on_open_change: move |open: bool| if !open { command.call(0); },
-            if let Some(photo) = shown {
-                div { class: "lightbox-controls",
-                    if multiple {
-                        crate::components::button::Button { r#type: "button", "aria-label": "Previous picture", actions: crate::entry_events::click(move || command.call(-1)), "←" }
-                    }
-                    crate::components::button::Button { r#type: "button", actions: crate::entry_events::click(move || command.call(0)), "Close" }
-                    if multiple {
-                        crate::components::button::Button { r#type: "button", "aria-label": "Next picture", actions: crate::entry_events::click(move || command.call(1)), "→" }
-                    }
-                }
-                img { src: photo.src, alt: photo.caption.clone() }
-                div { class: "lightbox-caption",
-                    "{photo.caption}"
-                    if multiple { " · {at + 1} / {photos.len()}" }
-                }
-            }
-        }
-    }
 }
 
 fn document() -> Option<web_sys::Document> {

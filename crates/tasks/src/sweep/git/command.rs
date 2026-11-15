@@ -10,22 +10,10 @@ pub fn git(dir: &Path, args: &[&str]) -> Option<Output> {
 }
 
 fn command(dir: &Path) -> Command {
-    let mut command = crate::sys::command("git");
-    command.current_dir(dir).stdin(Stdio::null());
     // A hook or launcher can inherit the caller's repository and index. Each sweep operation
     // must instead discover the repository belonging to its explicit working directory.
-    for name in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_NAMESPACE",
-        "GIT_PREFIX",
-    ] {
-        command.env_remove(name);
-    }
+    let mut command = crate::sys::git();
+    command.current_dir(dir).stdin(Stdio::null());
     command
 }
 

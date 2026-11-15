@@ -87,7 +87,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        sys::output(sys::command("git").args(args).current_dir(&self.env.cwd))
+        sys::output(sys::git().args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())

@@ -99,7 +99,9 @@ A native Mac app whose windows show the pages each server already serves, one we
 - **What the server adds.** One read, `GET /api/projects`: each project's id, name, cards waiting,
   first waiting card (title and link), its agents' questions waiting on each recipient and its
   newest reviewer verdict ([What notifies](#what-notifies)), and whether it is refused or its board
-  unwell, with the server's installation id and release. It answers the tailnet's names like every route but one.
+  unwell, with the server's installation id and its pin, the Symphony version it was built at
+  (`symphony::machine::PIN`, raised with each change to the wire contract; no release tag, which
+  no build embeds yet). It answers the tailnet's names like every route but one.
   `/api/front` answers loopback's name alone (`apps/symphony-server/src/projects.rs`, `front`), and
   the project list at `/` answers the tailnet but is an HTML page (`home`), so another machine has
   no list it can read as data today.
