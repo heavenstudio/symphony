@@ -592,6 +592,15 @@ describe("a figure's link", () => {
     vi.stubGlobal("location", { hash: "#flow" });
     expect(view(page())).not.toContain('<figure class="chart"');
   });
+
+  it("lands no chart once the reader chose a window, its id still held in its ghost", () => {
+    vi.stubGlobal("location", { hash: "#chart-decisions" });
+    const html = renderToStaticMarkup(
+      <ReportsView grain="day" days={3} page={page()} onAsk={() => {}} lands={false} />,
+    );
+    expect(html).not.toContain('<figure class="chart"');
+    expect(html).toContain('<span id="chart-decisions"></span><div class="ghost-chart"');
+  });
 });
 
 describe("the page's view", () => {
