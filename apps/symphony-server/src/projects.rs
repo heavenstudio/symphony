@@ -345,9 +345,13 @@ impl Projects {
     }
 }
 
-/// The one server's routes: every request, before any project's.
+/// The one server's routes: every request, before any project's. Its own JSON answers say
+/// `nosniff` as a project's do ([`crate::front::nosniff`]).
 pub(crate) fn router(projects: Arc<Projects>) -> Router {
-    Router::new().fallback(dispatch).with_state(projects)
+    Router::new()
+        .fallback(dispatch)
+        .layer(axum::middleware::map_response(crate::front::nosniff))
+        .with_state(projects)
 }
 
 async fn dispatch(

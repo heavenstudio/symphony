@@ -97,6 +97,38 @@ export async function press(
   shown.pending(false);
 }
 
+/**
+ * The button of Later, or of its Undo on a `postponed` card. One on its way says so and takes no
+ * press (`press` drops it) but stays focusable, so a reader who pressed it from the keyboard keeps
+ * it: disabled, Chrome would drop the focus to the page. The same button then says what replaced
+ * it, Undo Later after Later and Later after Undo. While the page may show what is out of date
+ * (`checking`) it is disabled, as every owner action is.
+ */
+export function LaterButton({
+  pending,
+  checking,
+  postponed,
+  onPress,
+}: {
+  pending: boolean;
+  checking: boolean;
+  postponed: boolean;
+  onPress: () => void;
+}) {
+  const label = pending ? "Saving…" : checking ? CHECKING : postponed ? "Undo Later" : "Later";
+  return (
+    <Button
+      type="button"
+      disabled={checking && !pending}
+      aria-disabled={pending || undefined}
+      title="Return after the rest of this group, or in 3 days"
+      onClick={onPress}
+    >
+      {label}
+    </Button>
+  );
+}
+
 export interface PostponeProps extends Postponed {
   /**
    * What the reader is doing with the card on its document's page (the address's anchor and
@@ -127,7 +159,6 @@ export function PostponeControls({
   }, [seenAs, path, slug, scope, frame, mount]);
   // While the page may show what is out of date, the card may have moved since: wait for it.
   const checking = useStore(STALE);
-  const label = pending ? "Saving…" : checking ? CHECKING : postponed ? "Undo Later" : "Later";
   const act = () =>
     press(
       { path, slug, postponed, scope },
@@ -142,14 +173,12 @@ export function PostponeControls({
   return (
     <span className="postpone-controls">
       {postponed && <small className="postponed">postponed</small>}
-      <Button
-        type="button"
-        disabled={pending || checking}
-        title="Return after the rest of this group, or in 3 days"
-        onClick={() => void act()}
-      >
-        {label}
-      </Button>
+      <LaterButton
+        pending={pending}
+        checking={checking}
+        postponed={postponed}
+        onPress={() => void act()}
+      />
       {error !== null && <span role="alert">{error}</span>}
     </span>
   );
