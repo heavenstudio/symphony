@@ -14,12 +14,11 @@ use dioxus::prelude::{GlobalSignal, Signal};
 /// the owner never saw. Drafts stay editable.
 pub static STALE: GlobalSignal<bool> = Signal::global(|| false);
 
-/// Which caps an item counts against: each project keeps the 30 tasks opened last (`CAPS` in
-/// cache.js, which caps the web client's documents too); the board's reads are outside it.
+/// Which caps an item counts against: the board's reads are outside every cap (`CAPS` in cache.js,
+/// which caps the web client's tasks and documents).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Board,
-    Task,
 }
 
 impl Kind {
@@ -27,7 +26,6 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Kind::Board => "board",
-            Kind::Task => "task",
         }
     }
 }
@@ -46,11 +44,6 @@ impl Item {
     /// The board, the queue and home of the checkout `scope` names (`""`: the main checkout).
     pub fn board(scope: &str) -> Item {
         Item::new(Kind::Board, scoped(scope, ""), false)
-    }
-
-    /// The task `slug`'s page, as the checkout `scope` names shows it.
-    pub fn task(scope: &str, slug: &str) -> Item {
-        Item::new(Kind::Task, scoped(scope, slug), false)
     }
 
     fn new(kind: Kind, name: String, pinned: bool) -> Item {
@@ -86,34 +79,6 @@ pub mod board {
     /// A task board column's first page.
     pub fn column(status: &str) -> String {
         format!("column:{status}")
-    }
-}
-
-/// The parts of [`Item::task`]: what a task page keeps of a visit. Never its thread's earlier
-/// pages, its landing offer, its subtasks or the rest of a long brief.
-pub mod task {
-    use symphony_api::TaskEntry;
-
-    /// `/api/task-page`.
-    pub const PAGE: &str = "page";
-    /// The thread's newest page (`/api/task-history` without `before`).
-    pub const THREAD: &str = "thread";
-
-    /// The thread once the server answered its newest page with `page`: the entries this device
-    /// drew (`drawn`, by id) give way to the page's, and every other one shown stays (one the feed
-    /// brought meanwhile), each message once, in id order.
-    pub fn newest(entries: &mut Vec<TaskEntry>, drawn: &[i64], page: Vec<TaskEntry>) {
-        entries.retain(|entry| !drawn.contains(&entry.message.id));
-        for entry in page {
-            match entries
-                .iter_mut()
-                .find(|shown| shown.message.id == entry.message.id)
-            {
-                Some(shown) => *shown = entry,
-                None => entries.push(entry),
-            }
-        }
-        entries.sort_by_key(|entry| entry.message.id);
     }
 }
 
@@ -197,19 +162,6 @@ impl Freshness {
     /// The feed was lost.
     pub fn lost(&mut self) {
         self.open = false;
-    }
-
-    /// The page opened another of its routes (a task page, another task): of `parts`, which it
-    /// drew for the route it left, none is shown or asked for any more. With nothing else drawn
-    /// left unanswered, nothing it shows came from the device.
-    pub fn left(&mut self, parts: &[&str]) {
-        self.unanswered
-            .retain(|drawn| !parts.contains(&drawn.as_str()));
-        self.failing
-            .retain(|failed| !parts.contains(&failed.as_str()));
-        if self.unanswered.is_empty() {
-            self.saved = None;
-        }
     }
 
     /// Whether `part` was drawn from the cache and the server has not answered it yet.

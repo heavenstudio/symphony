@@ -8,13 +8,6 @@ fn an_item_is_named_by_its_kind_and_scope() {
     for (item, kind, id, pinned) in [
         (Item::board(""), Kind::Board, "board:", false),
         (Item::board("work~x"), Kind::Board, "board:@work~x/", false),
-        (Item::task("", "perf/x"), Kind::Task, "task:perf/x", false),
-        (
-            Item::task("work~x", "perf/x"),
-            Kind::Task,
-            "task:@work~x/perf/x",
-            false,
-        ),
     ] {
         assert_eq!(
             item,
@@ -28,13 +21,12 @@ fn an_item_is_named_by_its_kind_and_scope() {
 }
 
 #[test]
-fn items_of_other_kinds_or_scopes_never_share_a_name() {
+fn items_of_other_scopes_never_share_a_name() {
     let items = [
         Item::board(""),
         Item::board("board"),
-        Item::task("", "board:"),
-        Item::task("", "x"),
-        Item::task("x", "x"),
+        Item::board("x"),
+        Item::board("x/y"),
     ];
     for (at, item) in items.iter().enumerate() {
         for other in &items[at + 1..] {
@@ -43,17 +35,13 @@ fn items_of_other_kinds_or_scopes_never_share_a_name() {
     }
 }
 
-/// The store's caps by kind are the approved ones, under the names this side gives its kinds and
-/// the web client gives its documents (`cache.ts`): the tasks opened last, the documents weighed by
-/// their visits.
+/// The store's caps by kind are the approved ones, under the names the web client gives its tasks
+/// and its documents (`cache.ts`): the tasks opened last, the documents weighed by their visits.
 #[test]
-fn the_stores_caps_are_the_approved_ones_by_this_sides_kind_names() {
-    let caps = format!(
-        "const CAPS = {{ {}: [30, 2 * MB, false], document: [20, 6 * MB, true] }};",
-        Kind::Task.name(),
-    );
+fn the_stores_caps_are_the_approved_ones_by_the_web_clients_kind_names() {
+    let caps = "const CAPS = { task: [30, 2 * MB, false], document: [20, 6 * MB, true] };";
     for line in [
-        caps.as_str(),
+        caps,
         "const ORIGIN = 32 * MB, AGE = 14 * DAY;",
         "const MB = 1e6, DAY = 864e5;",
     ] {
@@ -324,116 +312,4 @@ fn the_boards_parts_are_each_one_part() {
     for (at, part) in parts.iter().enumerate() {
         assert!(!parts[at + 1..].contains(part), "{part} is one part");
     }
-}
-
-/// A message of the thread, `id`, saying `text`.
-fn said(id: i64, text: &str) -> symphony_api::TaskEntry {
-    symphony_api::TaskEntry {
-        message: symphony_api::Message {
-            id,
-            slug: "perf/x".into(),
-            sender: "calm".into(),
-            recipient: None,
-            kind: "message".into(),
-            text: text.into(),
-            ts: id as f64,
-        },
-        stamp: format!("{id}"),
-        blocks: Vec::new(),
-    }
-}
-
-fn texts(entries: &[symphony_api::TaskEntry]) -> Vec<(i64, &str)> {
-    entries
-        .iter()
-        .map(|entry| (entry.message.id, entry.message.text.as_str()))
-        .collect()
-}
-
-#[test]
-fn a_task_keeps_its_page_and_its_threads_newest_page_apart_from_the_boards_parts() {
-    assert_ne!(task::PAGE, task::THREAD);
-    for part in [task::PAGE, task::THREAD] {
-        assert!(
-            ![board::BOARD, board::QUEUE, board::COUNTS, board::WORK].contains(&part),
-            "{part}"
-        );
-    }
-}
-
-#[test]
-fn the_threads_newest_page_replaces_what_this_device_drew_and_keeps_what_the_feed_brought() {
-    // Drawn from the device: 3, 4, 5; the feed brought 7 meanwhile.
-    let mut entries = vec![
-        said(3, "three"),
-        said(4, "four"),
-        said(5, "five"),
-        said(7, "seven"),
-    ];
-    task::newest(
-        &mut entries,
-        &[3, 4, 5],
-        vec![
-            said(4, "four, drawn anew"),
-            said(6, "six"),
-            said(7, "seven"),
-        ],
-    );
-    assert_eq!(
-        texts(&entries),
-        [(4, "four, drawn anew"), (6, "six"), (7, "seven")],
-        "3 fell off the newest page, read again as an earlier one; 5 is not there; 7 once"
-    );
-
-    let mut entries = vec![said(9, "nine"), said(2, "two")];
-    task::newest(&mut entries, &[], vec![said(5, "five")]);
-    assert_eq!(
-        texts(&entries),
-        [(2, "two"), (5, "five"), (9, "nine")],
-        "nothing drawn from the device: every shown message stays, in id order"
-    );
-
-    let mut entries = vec![said(1, "one")];
-    task::newest(&mut entries, &[1], Vec::new());
-    assert!(entries.is_empty(), "a thread now empty shows nothing drawn");
-}
-
-#[test]
-fn a_page_that_opens_another_route_no_longer_shows_what_it_drew_for_the_one_it_left() {
-    let mut fresh = Freshness::default();
-    fresh.drawn(task::PAGE, 3.0);
-    fresh.drawn(task::THREAD, 2.0);
-    fresh.failed(task::PAGE);
-    fresh.failed(board::BOARD);
-    assert!(fresh.waits(task::PAGE) && fresh.waits(task::THREAD));
-    assert!(!fresh.waits(board::BOARD), "failed, never drawn");
-    fresh.left(&[task::PAGE, task::THREAD]);
-    assert!(!fresh.waits(task::PAGE) && !fresh.waits(task::THREAD));
-    assert_eq!(
-        fresh.shown(),
-        None,
-        "nothing drawn left, though the feed is not open"
-    );
-    fresh.drawn(task::PAGE, 8.0);
-    assert_eq!(
-        fresh.shown(),
-        Some((8.0, true)),
-        "the next task's copy, kept later than the one left; the board's read still fails"
-    );
-
-    let mut fresh = Freshness::default();
-    fresh.drawn(board::COUNTS, 1.0);
-    fresh.drawn(task::PAGE, 2.0);
-    fresh.left(&[task::PAGE]);
-    assert_eq!(
-        fresh.shown(),
-        Some((1.0, false)),
-        "what is still drawn stays, saved when it was"
-    );
-    fresh.answered(task::PAGE);
-    fresh.answered(board::COUNTS);
-    fresh.opened();
-    assert_eq!(fresh.shown(), None);
-    fresh.left(&[task::PAGE]);
-    assert_eq!(fresh.shown(), None, "nothing to leave");
 }

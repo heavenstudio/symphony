@@ -72,16 +72,7 @@ fn ModuleRoot() -> Element {
     return rsx! { if shown() { crate::frame::PanelApp {} } };
     #[cfg(all(feature = "page-overlay", not(feature = "page-panel")))]
     return rsx! { if shown() { crate::components::deferred::OverlayApp {} } };
-    #[cfg(all(
-        feature = "page-timeline",
-        not(any(feature = "page-panel", feature = "page-overlay"))
-    ))]
-    return rsx! { if shown() { crate::task_timeline::TimelineApp {} } };
-    #[cfg(not(any(
-        feature = "page-panel",
-        feature = "page-overlay",
-        feature = "page-timeline"
-    )))]
+    #[cfg(not(any(feature = "page-panel", feature = "page-overlay")))]
     rsx! { if shown() { crate::live::App {} } }
 }
 
@@ -95,8 +86,6 @@ pub(crate) fn kind() -> &'static str {
         "panel"
     } else if cfg!(feature = "page-overlay") {
         "overlay"
-    } else if cfg!(feature = "page-timeline") {
-        "timeline"
     } else if cfg!(feature = "page-tasks") {
         "tasks"
     } else {
@@ -117,12 +106,10 @@ pub fn install() {
     }
     start.forget();
     stop.forget();
-    // The shell's PERSISTENT roots: the chat panel's, the overlay host's and the task timeline's
-    // (which the shell moves into the task page's box).
+    // The shell's PERSISTENT roots: the chat panel's and the overlay host's.
     let root = match kind {
         "panel" => "quick-root".into(),
         "overlay" => "overlay-root".into(),
-        "timeline" => "timeline-root".into(),
         _ => format!("review-root-{kind}"),
     };
     dioxus::web::launch::launch_cfg(ModuleRoot, dioxus::web::Config::default().rootname(root));
@@ -239,7 +226,6 @@ mod program {
             Chunk::Tasks => rsx! { crate::live::App {} },
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
             Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
-            Chunk::Timeline => rsx! { crate::split::TimelinePart {} },
         }
     }
 

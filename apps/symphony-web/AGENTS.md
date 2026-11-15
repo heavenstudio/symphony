@@ -5,10 +5,11 @@ the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time:
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
 review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
 (`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
-document an entrypoint serves, the kind `docs`) the fourth and the task board (`/tasks`, `/task/`
-being the Dioxus program's) the fifth; every other page is still the Dioxus client's, the program's.
-The board's task card is a component of its own (`src/taskcard.tsx`), which the agents page and the
-task page draw once they move. Like that
+document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, the kind
+`board`) the fifth and a task's page with its timeline (`/task/SLUG`, the kind `task`) the sixth;
+every other page (`/agents`) is still the Dioxus client's, the program's. The board's task card is
+a component of its own (`src/taskcard.tsx`), which the agents page draws once it moves, and whose
+status words and machine work a task's page draws too. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -159,9 +160,9 @@ Styles are the existing sheets, used as they are: the project's `theme.css`, inl
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
-`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's task
-pages load as well, is the media layer's, imported by `media-layer.ts`, so home and the documents
-take it as one file under the layer's name. The task board has no sheet of its own: its rules are
+`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's pages
+load as well, is the media layer's, imported by `media-layer.ts`, so home, the documents and a
+task's page take it as one file under the layer's name. The task board has no sheet of its own: its rules are
 the shared sheet's (`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's
 cards use too. A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
@@ -214,6 +215,27 @@ follow-ups (`asks.tsx`), each draft saved on this device on every input with its
 (`attach.tsx`, the same rows the Dioxus composers keep). A card's Later is the queue's
 (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s. Its own
 styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
+
+## A task's page
+
+The kind `task` (`src/kinds/task.tsx`) draws `/task/SLUG`: one live task per checkout, which
+follows the route from task to task within the kind (`review:navigate`) and keeps one feed, as the
+Dioxus program's page did. `src/task-live.ts` holds what it reads and follows (`LiveTask`, on
+`live.tsx`'s `keepBoard`): the page and the thread's newest page kept on this device
+(`taskItem`) and drawn at once on a return, each checked with its copy's tag once the board's
+version is read and asked again until it answers; the rest of the thread, the subtasks and the
+landing the task offers read when the page asks; each feed event applied as one change, the page
+read again only when its brief, status or subtasks moved, those reads one after another
+(`refreshAfter`), and the events heard while a read was out replayed onto its answer. Its guards
+are `src/task-read.ts`. `src/task-page.tsx` draws the head (the owner's priority and cancel, the
+roles with each holder's Go to session, `src/session.tsx`), the gates (`src/gates.tsx`, their
+logic `src/gates-model.ts`, the links they may draw `src/links.ts`), the subtasks, the timeline's
+box, the brief, the thread and its composer, and before its read the page's ghost, each part at
+the height this browser last drew it. The timeline (`src/timeline.tsx`, its layout
+`src/timeline-layout.ts`) is a chunk of its own, which its box (`src/timeline-slot.tsx`) imports
+once it nears the screen and the page has settled (the shell's `reviewSettled`), so a first visit
+carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
+`src/timeline-slot.css`) are the kind's own.
 
 ## Moving a page kind
 

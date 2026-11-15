@@ -375,6 +375,7 @@ fn cases() -> Result<Value, String> {
     cases["elementHtml"] = elements();
     cases["encoded"] = encodings();
     cases["decode"] = decodings();
+    cases["sessions"] = sessions();
     cases["samples"] = samples();
     cases["carried"] = carried()?;
     Ok(cases)
@@ -468,6 +469,58 @@ fn decodings() -> Value {
     .collect()
 }
 
+/// What [`api::SessionGo::control`] gives a session's ways in, on a page asked from the server's
+/// machine and from another: a pane focused, an address linked (one that is a web address alone)
+/// or a screen shown, by its kind and its pane or address; and whether
+/// [`api::SessionGo::via_parent`] goes to another session than the agent's own.
+fn sessions() -> Value {
+    let go = |handle: &str, url: Option<&str>, pane: Option<&str>| api::SessionGo {
+        handle: handle.into(),
+        url: url.map(str::to_string),
+        pane: pane.map(str::to_string),
+    };
+    let ways = [
+        go("cobalt-otter", Some("https://claude.ai/code/s1"), None),
+        go("cobalt-otter", None, Some("t7")),
+        go("cobalt-otter", Some("https://h/x"), Some("t7")),
+        go("cobalt-otter", None, None),
+        go("cobalt-otter", Some("javascript:alert(1)"), None),
+        go("cobalt-otter", Some("JAVASCRIPT:alert(1)"), Some("t7")),
+        go("cobalt-otter", Some(" https://h/x"), Some("t7")),
+        go("cobalt-otter", Some("HTTP://H"), None),
+        go("cobalt-otter", Some("https://"), None),
+        go("cobalt-otter", Some("https://h/\u{2028}x"), None),
+        go("cobalt-otter", Some("https://h/\u{a0}x"), None),
+        go("cobalt-otter", Some(""), Some("")),
+    ];
+    let control: Vec<Value> = ways
+        .iter()
+        .flat_map(|way| {
+            [true, false].map(|local| {
+                let said = way.control(local).map(|control| match control {
+                    api::SessionControl::Focus(pane) => json!(["focus", pane]),
+                    api::SessionControl::Link(url) => json!(["link", url]),
+                    api::SessionControl::Screen(pane) => json!(["screen", pane]),
+                });
+                json!([way, local, said])
+            })
+        })
+        .collect();
+    let via: Vec<Value> = [
+        ("cobalt-otter", "cobalt-otter"),
+        ("orch", "cobalt-otter"),
+        ("a", "A"),
+        ("", ""),
+    ]
+    .iter()
+    .map(|(going, handle)| {
+        let way = go(going, None, Some("t1"));
+        json!([way, handle, way.via_parent(handle)])
+    })
+    .collect();
+    json!({"control": control, "via": via})
+}
+
 /// The Rust the web client carries in TypeScript, each function by its file, its name and the
 /// TypeScript that carries it. Their source goes into the cases whole ([`carried`]), so a change to
 /// one, which the cases' inputs may not show, fails `just client-lint` until the cases are written
@@ -531,6 +584,49 @@ const CARRIED: &[(&str, &str, &str)] = &[
         "default_days",
         "defaultDays, src/reports.tsx",
     ),
+    (API_AGENTS, "web_address", "webAddress, src/links.ts"),
+    (API_AGENTS, "control", "sessionControl, src/session.tsx"),
+    (API_AGENTS, "via_parent", "viaParent, src/session.tsx"),
+    (API_LINKS, "app_path", "appPath, src/links.ts"),
+    (API_LINKS, "linkable", "linkable, src/links.ts"),
+    (API_GATES, "count", "countOf, src/gates-model.ts"),
+    (API_GATES, "waiting", "waitingGates, src/gates-model.ts"),
+    (API_GATES, "seen", "seenOf, src/gates-model.ts"),
+    (
+        BLOCKS_GATES,
+        "unsaid_commit",
+        "unsaidCommit, src/gates-model.ts",
+    ),
+    (BLOCKS_GATES, "signed", "signed, src/gates-model.ts"),
+    (BLOCKS_GATES, "waits", "waits, src/gates-model.ts"),
+    (
+        API_TIMELINE,
+        "offset_at",
+        "offsetAt, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "every_seconds",
+        "everySeconds, src/timeline-layout.ts",
+    ),
+    (API_TIMELINE, "end", "timelineEnd, src/timeline-layout.ts"),
+    (
+        API_TIMELINE,
+        "machine_seconds",
+        "machineSeconds, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "queued_seconds",
+        "queuedSeconds, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "seconds",
+        "stageSeconds, src/timeline-layout.ts",
+    ),
+    (API_TIMELINE, "waited", "waited, src/timeline-layout.ts"),
+    (API_TIMELINE, "ran", "ran, src/timeline-layout.ts"),
 ];
 
 /// The files [`CARRIED`] names, by their path in the repository.
@@ -541,6 +637,11 @@ const API_MACHINE_WORK: &str = "crates/symphony-api/src/machine_work.rs";
 const API_TASK_STAGE: &str = "crates/symphony-api/src/task_stage.rs";
 const API_REPORT_PAGE: &str = "crates/symphony-api/src/report_page.rs";
 const BLOCKS_MEDIA: &str = "crates/symphony-blocks/src/media.rs";
+const API_AGENTS: &str = "crates/symphony-api/src/agents.rs";
+const API_LINKS: &str = "crates/symphony-api/src/links.rs";
+const API_GATES: &str = "crates/symphony-api/src/gates.rs";
+const BLOCKS_GATES: &str = "crates/symphony-blocks/src/gates.rs";
+const API_TIMELINE: &str = "crates/symphony-api/src/timeline.rs";
 
 /// Each of [`CARRIED`]: its name, the TypeScript that carries it, and its source, line by line.
 fn carried() -> Result<Value, String> {
@@ -554,6 +655,11 @@ fn carried() -> Result<Value, String> {
                 API_TASK_STAGE => include_str!("../src/task_stage.rs"),
                 API_REPORT_PAGE => include_str!("../src/report_page.rs"),
                 BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
+                API_AGENTS => include_str!("../src/agents.rs"),
+                API_LINKS => include_str!("../src/links.rs"),
+                API_GATES => include_str!("../src/gates.rs"),
+                BLOCKS_GATES => include_str!("../../symphony-blocks/src/gates.rs"),
+                API_TIMELINE => include_str!("../src/timeline.rs"),
                 _ => include_str!("../src/lib.rs"),
             };
             Ok(json!({

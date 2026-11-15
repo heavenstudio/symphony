@@ -1,6 +1,6 @@
-//! The program (`page-program`): the task pages with `/agents`, the chat, the menus and the task
-//! timeline as one program, which `dx bundle --wasm-split` cuts into a main module and a chunk
-//! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
+//! The program (`page-program`): `/agents`, the chat and the menus as one program, which
+//! `dx bundle --wasm-split` cuts into a main module and a chunk for each of those kinds (bundle.sh,
+//! then `symphony-build split-repair`). The main module holds
 //! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
 //! part. The kinds share the one runtime, so a move between them loads a chunk, never another copy
 //! of the framework. The media layer (`media_live::MediaRuntime`) is a chunk of its own too, though
@@ -28,13 +28,12 @@ use wasm_bindgen_futures::JsFuture;
 /// A kind of the program, named by the chunk that holds its own part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Chunk {
-    /// The task pages and `/agents`.
+    /// `/agents`.
     Tasks,
     /// The chat, the activity list and the Appearance panel.
     Panel,
     /// A select's popup and the picture viewer, for every module.
     Overlay,
-    Timeline,
 }
 
 thread_local! {
@@ -68,8 +67,7 @@ async fn fetch(name: &str, bit: u8) -> Result<(), JsValue> {
 }
 
 impl Chunk {
-    pub(crate) const ALL: [Chunk; 4] =
-        [Chunk::Tasks, Chunk::Panel, Chunk::Overlay, Chunk::Timeline];
+    pub(crate) const ALL: [Chunk; 3] = [Chunk::Tasks, Chunk::Panel, Chunk::Overlay];
 
     /// Its page kind, as the shell's manifest and `reviewChunk` name it.
     pub(crate) fn kind(self) -> &'static str {
@@ -77,7 +75,6 @@ impl Chunk {
             Chunk::Tasks => "tasks",
             Chunk::Panel => "panel",
             Chunk::Overlay => "overlay",
-            Chunk::Timeline => "timeline",
         }
     }
 
@@ -87,7 +84,6 @@ impl Chunk {
         match self {
             Chunk::Panel => "quick-root".into(),
             Chunk::Overlay => "overlay-root".into(),
-            Chunk::Timeline => "timeline-root".into(),
             Chunk::Tasks => format!("review-root-{}", self.kind()),
         }
     }
@@ -168,8 +164,6 @@ unsafe extern "C" {
     #[allow(improper_ctypes)]
     fn __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() -> Element;
     #[allow(improper_ctypes)]
-    fn __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() -> Element;
-    #[allow(improper_ctypes)]
     fn __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() -> Element;
 }
 
@@ -198,19 +192,12 @@ pub extern "C" fn __wasm_split_00___overlay___00_export_5b5e7a5c0000000000000000
 
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
-pub extern "C" fn __wasm_split_00___timeline___00_export_5b5e7a5c000000000000000000000005_timeline()
--> Element {
-    rsx! { crate::task_timeline::TimelineApp {} }
-}
-
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "C" fn __wasm_split_00___media___00_export_5b5e7a5c000000000000000000000006_media()
 -> Element {
     rsx! { crate::media_live::MediaRuntime {} }
 }
 
-/// A task page or `/agents`, from the task pages' chunk.
+/// `/agents`, from its chunk.
 #[component]
 pub(crate) fn TasksPart(scope: String, route: Memo<String>) -> Element {
     if !use_chunk(Chunk::Tasks) {
@@ -240,16 +227,6 @@ pub(crate) fn OverlayPart() -> Element {
     }
     // SAFETY: as in `TasksPart`.
     unsafe { __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() }
-}
-
-/// A task's timeline, from its chunk.
-#[component]
-pub(crate) fn TimelinePart() -> Element {
-    if !use_chunk(Chunk::Timeline) {
-        return rsx! {};
-    }
-    // SAFETY: as in `TasksPart`.
-    unsafe { __wasm_split_00___timeline___00_import_5b5e7a5c000000000000000000000005_timeline() }
 }
 
 /// The media layer (`media_live::MediaRuntime`), from its chunk, drawn once a page shows media

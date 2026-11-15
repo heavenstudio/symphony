@@ -2071,7 +2071,7 @@ on first. The task's page draws them in one section under its head, with what
 the task waits on and how many gates are in each state; on a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
-(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+(`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
 app or an `http(s)` address (`symphony_api::linkable`): the server drops any
 other where it puts the answer together, and the page draws any other as words,
 so a plugin cannot hand a page a `javascript:` link in the origin every project
@@ -2745,7 +2745,7 @@ so each time reads on the server's local clock as it then stood, the thread's.
   list it, waived. A gates answer that cannot be read leaves the lanes out, never the
   timeline.
 
-The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
+The page keeps a box for it (`apps/symphony-web/src/timeline-slot.tsx`) as tall as
 this browser last drew the task's timeline, with placeholder rows in it, so nothing on
 the page moves when the timeline comes. On a phone the box is at most 240 px (the
 owner's choice, so the brief and the thread start near the page's top), and a read that
@@ -2757,9 +2757,9 @@ the box grows to hold every lane and keeps that height for the next visit, a tas
 drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
 focus is on (a click focuses one too) is said in the legend's place while one has it, so
 the box does not grow for it.
-The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
-the page kind `timeline`), which the shell loads once the page has drawn and is idle,
-so the page's first visit does not wait for it. On a phone it is a list: a row per
+The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
+which its box loads once it nears the screen and the page has settled, so the page's
+first visit does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its recipe, the machine's by

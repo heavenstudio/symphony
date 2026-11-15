@@ -1,5 +1,5 @@
-//! The board's words: a register's moment, when a kept copy was saved and what a task page says
-//! of the board. Home's greeting, ages and lead are the web client's
+//! The board's words: a register's moment, when a kept copy was saved and what the agents page
+//! says of the board. Home's greeting, ages and lead are the web client's
 //! (apps/symphony-web/src/home.tsx).
 
 use symphony_ui::words::{BoardStatus, Moment, device_notice, saved_at};

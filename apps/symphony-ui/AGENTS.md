@@ -41,13 +41,13 @@ never the whole target, which the release run runs.
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
   client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents and the task board, [its guide](../symphony-web/AGENTS.md)),
+  documents, the task board and a task's page, [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
-  `dx bundle --wasm-split` of the task pages with `/agents`, the chat, the menus and
-  the task timeline: one script and main module, and a chunk for each and one for the media
+  `dx bundle --wasm-split` of `/agents` (the kind `tasks`), the chat and the menus: one
+  script and main module, and a chunk for each and one for the media
   layer (no kind: a page of the program loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
@@ -59,9 +59,8 @@ never the whole target, which the release run runs.
   shell's manifest names each program kind's script, wasm, `chunk` and styles; package.sh gives
   each the styles the program's page links in its head (dx's static head: the frame's, the board's,
   the pictures' and the controls every page draws; no other Dioxus kind is left to load them too)
-  but the timeline's, and its own by name (the timeline's, and for the chat and the menus the CSS
-  modules, `style-`, that their code puts in the page as it draws), and refuses a style no kind
-  takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
+  and its own by name (for the chat and the menus the CSS modules, `style-`, that their code puts
+  in the page as it draws), and refuses a style no kind takes. It publishes no shared chunk (`chunk_0_split`, which dx's splitter writes and
   never fills, and no kind loads), and refuses one that holds more than custom sections.
   Without `--debug-symbols false` dx 0.7 emits 260 KB of
   DWARF. dx and wasm-bindgen (the lockfile's version) are built once per
@@ -123,7 +122,8 @@ never the whole target, which the release run runs.
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
   kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,433 bytes to each
-  kind's first visit and none to a return. `src/cache.rs` reaches it: an
+  kind's first visit and none to a return. `src/cache.rs` reaches it (the React client's
+  `src/cache.ts` and `src/cache-document.ts` the same store): an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
   server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
@@ -173,13 +173,14 @@ never the whole target, which the release run runs.
   a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
   "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
   reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
-  answered and the feed is open. A task page keeps `Item::task(scope, slug)`: its page (`page`,
-  `/api/task-page`) and its thread's newest page (`thread`, `/api/task-history` without
-  `before`). Opened, it counts a visit and draws them at once unless it shows that task already
-  (`task_live::opened`). Both are checked together, each asked again until it answers
-  (`task_live::load`, `answer`): once `/api/board` is read on the page's first open, at once
-  for a task opened in place from another. A thread answered `200` replaces the messages the
-  device drew and keeps those the feed brought meanwhile (`cache::task::newest`). Until the
+  answered and the feed is open. A task's page, the React client's since it moved ([its
+  guide](../symphony-web/AGENTS.md#a-tasks-page)), keeps `taskItem(scope, slug)` (`src/cache.ts`
+  there): its page (`page`, `/api/task-page`) and its thread's newest page (`thread`,
+  `/api/task-history` without `before`). Opened, it counts a visit and draws them at once unless
+  it shows that task already. Both are checked together, each asked again until it answers
+  (`LiveTask`, `src/task-live.ts` there): once `/api/board` is read on the page's first open, at
+  once for a task opened in place from another. A thread answered `200` replaces the messages the
+  device drew and keeps those the feed brought meanwhile (`newest` there). Until the
   page's check answers, a page drawn from the device reads no other part of the task: the
   newest messages when no thread was kept, the subtasks and earlier messages wait for it, and
   the feed replays what changed after the board's version. The landing offer, the gates and the
@@ -207,8 +208,10 @@ never the whole target, which the release run runs.
   server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
   so it outlives the documents visited once. No other folder page is kept. A document the server no
   longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
-  `cache::STALE`, which `PageNotices` sets while that notice or the reconnecting one shows, holds
-  the owner's actions (verdicts, messages, comments, questions, priority, cancel, landing, Later):
+  `STALE` (the React client's `src/shared.ts`; this client's `cache::STALE` is read by no page
+  since a task's page moved), which `PageNotices` sets while that notice or the reconnecting one
+  shows, holds the owner's actions (verdicts, messages, comments, questions, priority, cancel,
+  landing, Later):
   disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs`,
   `cache_tasks.rs` and `cache_documents.rs` hold the reads back on the stand-in
   (`Site::hold_route`, which answers `If-None-Match` as the server does and logs each answer;
@@ -394,25 +397,20 @@ never the whole target, which the release run runs.
   listener) never writes a signal: it sends on a `futures_channel` that a
   spawned task drains. `use_effect` runs after the frame's edits are in the
   page and again whenever a signal it read changes.
-- **Task views.** The task board (`/tasks`) is the React client's, the fifth page kind it took
-  over: `src/board.tsx` draws its
+- **Task views.** The task board (`/tasks`) and a task's page (`/task/SLUG`, with its gates and
+  its timeline) are the React client's, the fifth and sixth page kinds it took over: this client
+  builds none of them. `src/board.tsx` draws the board's
   columns and groups, `src/boardlive.tsx` owns its summary-only counts, columns and deltas, and
-  its card is `src/taskcard.tsx`, as the agents page's will be ([its
-  guide](../symphony-web/AGENTS.md)). `tasks.rs` draws the agents page's cards (`TaskRow`) and
-  keeps the task state the program shares. `task_detail.rs` and `task_live.rs`
-  own task pages and agents, compiled only into their page kind. A task page's
-  gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
-  read from `/api/task-gates` when it nears the screen and again when the one
-  counter `task_live` keeps of the events that concern the shown task grows
-  (`Data::gates_nudged`: a verdict, its gates' branch moved, a linked card) or
-  the task or its runs change, a newer read aborting the one before. Until then
-  it is its own outline, the shape the server or this browser last saw (`Room`);
-  a task nothing gates shows none, and a failed read says so in its place. In the
-  program alone (the task pages, the chat, the menus and the timeline, which
-  share its runtime), a read dropped before its answer aborts its fetch (`request.rs`,
-  `page-tasks`, which `page-program` turns on), so the board's and the documents'
-  transport is unchanged; a post never does. As attach.rs does, it puts its own style
-  (`assets/task-gates.css`) in the page, so the shell names no sheet of it. The board fetches counts
+  its card is `src/taskcard.tsx`, as the agents page's will be; a task's page is
+  `src/task-page.tsx` over `src/task-live.ts`, its gates `src/gates.tsx`, its timeline
+  `src/timeline.tsx` in its box `src/timeline-slot.tsx` ([its
+  guide](../symphony-web/AGENTS.md#a-tasks-page); the gates' and the timeline's contract,
+  [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)).
+  `tasks.rs` draws the agents page's cards (`TaskRow`) and keeps the task state the program
+  shares. `task_detail.rs` and `task_live.rs` own the agents page (`/agents`, the program's kind
+  `tasks`), compiled only into the program. In the program alone (`/agents`, the chat and the
+  menus, which share its runtime), a read dropped before its answer aborts its fetch
+  (`request.rs`, `page-tasks`, which `page-program` turns on); a post never does. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
@@ -421,55 +419,24 @@ never the whole target, which the release run runs.
   version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
   that came while it was read: the events since are replayed onto it, and the refresh reads again
   (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
-  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history, subtasks, hierarchy groups
-  and agents page separately. A reconnect catches up a loaded thread by
-  message id before following the feed again. Composer drafts are local to
+  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). The agents page
+  reads its agents a page at a time (`task_live::more_agents`). Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
-  snapshot. The optional owner offer is pinned to the payload the server showed,
-  labelled and posted to `/api/task-action` by the action the offer names.
-  It is fetched only near the controls, using the task's recorded branch;
-  preparing the landing tool must not hold up the brief or the message box.
-  The task page compiles only the timeline's box (`timeline_slot.rs`, its small
-  `assets/timeline-slot.css` put in the page as `attach.rs` puts its own): as tall
-  as this browser last drew the task's timeline (`project::stored`), with placeholder
-  rows, so nothing outside it moves when the timeline comes. On a phone it is at most
-  240 px (the owner's), so the brief starts near the page's top, and "Show all N steps"
-  grows it; from 900 px, the lanes' width, it grows to the whole timeline once drawn, with
-  no "Show all" (the owner's), keeping that height, uncapped, for the next visit
-  (`timeline_slot::WIDE`, a typical whole timeline, for a task never drawn there). Near
-  the screen it
-  asks the shell (`reviewTimeline`) for the timeline, the page kind `timeline`
-  (`task_timeline.rs`, `page-timeline`), whose root the shell moves into the box,
-  and only a box whose `data-slug` is the task asked for. Boxes are numbered as
-  they mount, so the shell drops an ask from a box older than the one it holds or
-  from one that closed.
-  It reads `/api/task-timeline` with the last answer's tag, again at once when the
-  task changes (the box's `revision`) or Try again is pressed, and each `every`
-  seconds while the task is open and the page shown; a failed read keeps the
-  answer shown, or with none says why in a sentence from the error's message
-  (`failed`), never its stack, grows the box to show Try again, and reads again
-  a minute on. Dioxus compares keys only in a list and ignores a `key` anywhere
-  else, so each read, box and task that must start afresh is the one item of a
-  keyed list (`for read in std::iter::once(…)`). The module's pure `rows` and `lanes` lay out the phone's list and the wide
-  lanes, both drawn, the lanes' words shown by container queries only at the track
-  widths that hold them; `assets/task-timeline.css`, the module's own, shows one
-  view by width and keeps the list for assistive technology
-  ([TASKS](../../docs/TASKS.md#the-timeline)).
-  Briefs and agent messages use the shared `block_view::BlocksView`; owner and
-  system messages remain literal text, but for an owner message naming an
-  upload, whose blocks the server sends with the words kept literal and the
-  files drawn. Task routes use `navigation.rs`, and
+  snapshot. Dioxus compares keys only in a list and ignores a `key` anywhere
+  else, so a read or a view that must start afresh is the one item of a
+  keyed list (`for read in std::iter::once(…)`). Routes use `navigation.rs`, and
   requests use `request.rs` so a stalled save times out with its draft kept.
-- **Attach.** Every owner composer (the `+` sheet, asks, a card's editor, a
-  task's message box) takes files through `attach.rs`: `use_attach(key)`, the
+- **Attach.** This client's owner composers, the `+` sheet's chat and new task, take files
+  through `attach.rs` (the React client's, asks, a card's editor and a task's message box, through
+  its `src/attach.tsx`, keeping the same rows): `use_attach(key)`, the
   form marked `data-attach` with `Attach::zone()`, `AttachControls` inside it,
   and `Attach::compose(text)` for the posted text, which adds the line
   `POST /api/upload` answered for each file (docs/workflow/REVIEW.md,
   "Attaching files"). One document listener per module takes paste, drop and
   the picker's change for the zone holding the event's target, and sends the
   files on that composer's channel; uploads run one at a time, and the chips
-  are saved with the draft. The module compiles into the task, document and
-  panel kinds only, and brings `assets/attach.css` inside it (the first
+  are saved with the draft. The module compiles into the panel kind only (`page-panel`),
+  and brings `assets/attach.css` inside it (the first
   composer to mount puts it in the page): a stylesheet asset would be named in
   the shell's manifest, which every first visit loads, so `/` and `/tasks`
   carry no byte of either.
@@ -500,7 +467,8 @@ never the whole target, which the release run runs.
   its ghost shows, as a column reading its first page and a `Settle` not yet settled are.
   A ghost uses its own classes, never the real ones, so a test's selector never finds it;
   the one placeholder it shares is a task's gates' outline, the section's own until its
-  answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
+  answer, which `GhostTask` draws for the room this browser kept (`GhostGates`, the React
+  client's `src/gates.tsx`).
   The board, the queue and a task page draw a return visit from this device's cache (`cache`,
   `main[data-cache=device]`) with no ghost once its store answers; theirs shows on a visit the
   device has no copy for (a first one, a store that opened late or let the page go), and the
@@ -515,21 +483,24 @@ never the whole target, which the release run runs.
   title lines its pitch has room for); the queue's rows
   per group (`ROWS` in the React client's `queue.tsx`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide
-  (`viewport::drawn_height`, `remember_drawn`), and its gates' room (`task_gates::KEPT`). A
-  task never opened at that width takes the last task's (`recall_height` falls back to the
-  newest part of the same kind, `task_gates::latest`); with none, a head with a facts line and
+  (`drawnHeight`, `rememberDrawn` in the React client's `src/viewport.tsx`), and its gates' room
+  (`kept`, `remember` in its `src/gates.tsx`). A
+  task never opened at that width takes the last task's (`recallHeight` falls back to the
+  newest part of the same kind); with none, a head with a facts line and
   a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
-  shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`). The
-  timeline's box takes the height `timeline_slot::reserved` gives it. What is kept is measured
-  as it draws, every 100 ms, and kept again when it changed (the board's `keepRows`,
-  `viewport::remember_drawn`), until no region in it still waits within the sentinel's reach of
-  the screen (`within_reach`; for a column, of the board's own scroller: the React client's
-  `waitsNear`) or every row of a column has drawn (the board's `keepsWatching`), for
-  `viewport::KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
+  shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`,
+  `src/task-page.tsx`). The timeline's box takes the height `reserved` gives it
+  (`src/timeline-slot.tsx`). What is kept is measured
+  as it draws, every 100 ms, and kept again when it changed (the board's `keepRows`, the task
+  page's `rememberDrawn`), until no region in it still waits within the sentinel's reach of
+  the screen (the React client's `waitsNear`, for a column of the board's own scroller) or
+  every row of a column has drawn (the board's `keepsWatching`), for
+  `KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
   phone rows draw many seconds after their data. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
   section, a column's first page, a task's thread. What a page already knows shows at once
-  (a task's head and brief, a document's head and outline); `viewport::Settle` keeps only
+  (a task's head and brief, a document's head and outline); `Settle` (the React client's
+  `src/viewport.tsx`) keeps only
   the part still reading (a task's thread and composer, a document's body) hidden under its
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
@@ -656,16 +627,15 @@ never the whole target, which the release run runs.
   screen reader announces it. The panel's own sheet takes the focus over. A
   select's popup and the picture viewer are drawn by the overlay kind
   (`page-overlay`, `components::deferred::OverlayApp`, mounted in `#overlay-root`),
-  never the chat's. The chat, the menus and the timeline are kinds of the program, each a
+  never the chat's. The chat and the menus are kinds of the program, each a
   chunk the shell names in the manifest (`chunk`) and mounts in its root; a page of the
-  program that has them already fetches the chunk alone. A task page's timeline is a
-  persistent kind too (`page-timeline`, `task_timeline::TimelineApp`, in `#timeline-root`), but cold:
-  never warmed, loaded only once a task page's box asks for it and the page has its
-  data and is idle, its root moved into that box and parked hidden at the body's
-  end when the box goes. What listens on a module's root, as each module's Dioxus
-  does, hears only the events of that module's own part of the page (`assets/shell.js`
-  `scope`): Dioxus finds an event's element by a number each module counts on its
-  own, so without it, a click in the timeline would run the page's control of the same number.
+  program that has them already fetches the chunk alone. A task's timeline, once a cold
+  persistent kind of the program moved into its page's box, is the React client's, a chunk its
+  box imports ([its guide](../symphony-web/AGENTS.md#a-tasks-page)). What listens on a module's
+  root, as each module's Dioxus does, hears only the events of that module's own part of the
+  page (`assets/shell.js` `scope`): Dioxus finds an event's element by a number each module
+  counts on its own, so without it, a click in a root placed inside another's would run the
+  outer page's control of the same number.
   The shell requests a module's script, its wasm and a program kind's chunk (each a `fetch`
   preload) and its styles together. Once the first page has its data (the shell
   counts the page's `fetch` reads in flight, and waits until none has been for half
@@ -682,11 +652,10 @@ never the whole target, which the release run runs.
   constant (`std::hint::black_box(&STYLE)`). The style sheets every kind loads
   are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
   kind's own follow it: a first visit asks for them once, and every kind caches
-  the same file. The task timeline's few styles do not narrow it: it is drawn only
-  in a task page, which has the shared file already. The pictures' styles (`media-`), which
+  the same file. The pictures' styles (`media-`), which
   every kind of this client loads, stay out of it: the React client's kinds take the shared file
-  and their own, home and the documents the media layer's copy of them, and the queue, Reports and
-  the task board, which show no picture, none. The server's own pages inline
+  and their own, home, the documents and a task's page the media layer's copy of them, and the
+  queue, Reports and the task board, which show no picture, none. The server's own pages inline
   `board.css`'s tokens and `frame.css` from copies in its package
   (`apps/symphony-server/src/`), which it carries to crates.io: a change to either
   is copied there too, and `crates/symphony/tests/packages.rs` fails until it is.
@@ -723,7 +692,8 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/docs/` and the documents) are no part of it, and at their routes it draws its frame over "Page unavailable".
+  `/reports`, `/docs/` and the documents, `/tasks` and a task's page) are no part of it, and at
+  their routes it draws its frame over "Page unavailable".
   Such a page is tried on the built distribution, with no hot reload: once a whole
   `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
   web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
@@ -745,8 +715,8 @@ never the whole target, which the release run runs.
   adapter sizes mounted frames and its component dialog opens
   pictures at `data-full`. A page draws it once it shows media (`media_live::use_activation`),
   and the program's from a chunk of its own (`split::MediaPart`, `media` in the program's map of
-  chunks and in no manifest), so the program's main module holds none of it: the task pages and the
-  chat on the board fetch it only when media first shows. A chunk that does not load
+  chunks and in no manifest), so the program's main module holds none of it: `/agents` and the
+  chat fetch it only when media first shows. A chunk that does not load
   leaves the page as it is and is asked for again by the next media shown: the shell loads the
   page again when its build is gone, and otherwise puts up `#media-error` with a retry that
   shows the media again, taken down once the chunk is in or the page moves on

@@ -64,7 +64,7 @@ the page draws comes before its first API answer.
   change.
 - **A task page** reads `/api/board`, then, only once it has answered, `/api/task-page`, then the
   thread's newest page (`/api/task-history`) and the subtasks when they near the screen
-  (`live.rs`, `keep_live`; `apps/symphony-ui/src/task_live.rs`, `load`).
+  (`apps/symphony-web/src/task-live.ts`, `LiveTask.load`).
 - **A document or the register** reads `/api/document?view=outline`, then the bodies of the
   sections near the screen (`/api/section?keys=…`), then opens the feed for those sections and
   reopens it when the set of sections changes (`apps/symphony-ui/src/docs_live.rs`,

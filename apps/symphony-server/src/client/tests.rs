@@ -103,7 +103,7 @@ fn shipped_shell_references_its_real_modules_and_valid_wasm() {
         .collect();
     keys.sort_unstable();
     for kind in [
-        "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline",
+        "board", "docs", "overlay", "panel", "queue", "review", "tasks",
     ] {
         assert!(keys.contains(&kind), "no {kind} in {keys:?}");
     }

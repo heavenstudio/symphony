@@ -33,7 +33,7 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
     exit 2
 fi
 # The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
-program_kinds=(tasks panel overlay timeline)
+program_kinds=(tasks panel overlay)
 # Its chunks: the kinds' and the media layer's, which no kind is (the shell's manifest never names
 # it) and a kind's page loads once it shows media.
 program_chunks=("${program_kinds[@]}" media)
@@ -127,16 +127,14 @@ for module_kind in program; do
     fi
     # Each program kind's styles, of the program's: those its page links in its head (dx's static
     # head: the frame's, the board's and the controls every page draws, as no other Dioxus kind is
-    # left to load them too), but the timeline's, which only a task page's box draws; the pictures'
-    # (`media-`), which each of them shows; then its own: the timeline's by its name, the shared
-    # controls' (`style-`, components/: the CSS modules the chat and the menus put in the page as
-    # they draw) for the chat and the menus. A style none of these places is refused.
+    # left to load them too); the pictures' (`media-`), which each of them shows; then its own: the
+    # shared controls' (`style-`, components/: the CSS modules the chat and the menus put in the page
+    # as they draw) for the chat and the menus. A style none of these places is refused.
     others="$({ grep -o '<link rel="stylesheet" href="[^"]*"' "$module/public/index.html" || true; } \
-        | sed 's#.*/##; s#"$##' | jq -R --arg prefix "$prefix/assets/" '$prefix + .' \
-        | jq -s -c 'map(select(contains("/task-timeline-") | not))')"
+        | sed 's#.*/##; s#"$##' | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s -c .)"
     for kind in "${program_kinds[@]}"; do
         own="$(jq -c --arg kind "$kind" --argjson others "$others" '
-            ((({timeline: ["task-timeline-"], panel: ["style-"], overlay: ["style-"]})[$kind] // []) + ["media-"]) as $names
+            ((({panel: ["style-"], overlay: ["style-"]})[$kind] // []) + ["media-"]) as $names
             | map(select(. as $style | ($others | index($style)) != null
                 or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
         manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
@@ -150,13 +148,11 @@ done
 # The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
 # a first visit asks for it once instead of once per file, and every kind still caches the same
 # one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
-# The task timeline's module only ever draws inside a task page, whose styles are in already: the
-# shared file is the pages' (its own few styles do not narrow it), and it names that file too, so
-# it loads only what the page has not. The pictures' styles (`media-`) stay out of it, though every
-# program kind loads them: the web client's kinds take the shared file and their own, home and the
-# documents with their own copy of them (their media layer's), and the queue, Reports and the task
-# board, which show no picture, with none.
-shared="$(jq -c '[to_entries[] | select(.key != "timeline") | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
+# The pictures' styles (`media-`) stay out of it, though every program kind loads them: the web
+# client's kinds take the shared file and their own, home, the documents and a task's page with
+# their own copy of them (their media layer's), and the queue, Reports and the task board, which
+# show no picture, with none.
+shared="$(jq -c '[to_entries[] | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
         cat "$stage/assets/$name"
@@ -228,4 +224,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the documents) as its own build, the program of the task pages, the chat, the menus and the task timeline as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the documents, a task's page) as its own build, the program of the agents page, the chat and the menus as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

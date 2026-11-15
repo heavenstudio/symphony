@@ -1,0 +1,999 @@
+// A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
+// cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
+// its timeline, its brief, its thread and the composer under it. Before its read it is its ghost:
+// each part at the height this browser last drew it, so nothing moves as the page comes in its
+// place. Live, it is task-live.ts's `LiveTask`, under the board's notices.
+
+import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { AttachControls, useAttach } from "./attach";
+import { BlocksView } from "./blocks";
+import { Button } from "./button";
+import { FRESH, type Freshness, shown } from "./cache";
+import { useFrame } from "./frame";
+import { GhostGates, TaskGatesPanel } from "./gates";
+import { workOf } from "./gates-model";
+import { flushReload, PageNotices } from "./live";
+import { useMount } from "./mount";
+import { href, scoped } from "./project";
+import { getJson, post, said } from "./request";
+import { currentRoute } from "./route";
+import { SelectField } from "./select";
+import { GoToSession } from "./session";
+import { field, STALE, useStore } from "./shared";
+import { load, save } from "./storage";
+import { LiveTask } from "./task-live";
+import { readBrief } from "./task-read";
+import { statusWords, WorkPhases } from "./taskcard";
+import { Textarea } from "./textarea";
+import { placeholders, reserved, TimelineSlot } from "./timeline-slot";
+import { failed as failedRead, ready, Trouble } from "./trouble";
+import { drawnHeight, drawnStyle, NearViewport, rememberDrawn, Settle, Skeleton } from "./viewport";
+import type {
+  Block,
+  MachineWork,
+  TaskPage as Page,
+  Role,
+  SessionGo,
+  Task,
+  TaskBrief,
+  TaskEntry,
+  TaskOffer,
+} from "./wire";
+import { TASK_ACTION_ROUTE } from "./wire";
+import { CHECKING } from "./words";
+
+/** The performance mark set once the board is first drawn (the phone test times it). */
+const READY_MARK = "board-ready";
+
+/** `path` under the route's checkout, as the page's posts and reads address it. */
+function url(path: string): string {
+  return scoped(currentRoute().scope, path);
+}
+
+/** A bone's width, `--w`, as the ghosts' style sheet reads it. */
+function bone(width: string): CSSProperties {
+  return { "--w": width } as CSSProperties;
+}
+
+/** A task's priorities, as its field offers them. */
+const PRIORITIES: [string, string][] = [0, 1, 2, 3, 4].map((value) => [`${value}`, `p${value}`]);
+
+/** A message of a task's thread: its time, who sent it to whom, and its text or blocks. */
+export const TaskMessage = memo(function TaskMessage({ entry }: { entry: TaskEntry }) {
+  const { message } = entry;
+  const who = message.sender === "owner" ? "owner" : message.kind === "system" ? "system" : "agent";
+  return (
+    <div className={`entry ${who}`}>
+      <time>{entry.stamp}</time>{" "}
+      <span className="from">
+        {message.sender}
+        {message.recipient !== null && ` → ${message.recipient}`}
+      </span>
+      {message.kind === "verdict" && <b>verdict </b>}
+      {/* An owner message is literal text, unless it names an upload: the server then sends its
+          blocks, the text kept as typed and the files drawn. */}
+      {who === "agent" || (who === "owner" && entry.blocks.length > 0) ? (
+        <div className="entry-text">
+          <BlocksView blocks={entry.blocks} />
+        </div>
+      ) : (
+        <div className="entry-text literal">{message.text}</div>
+      )}
+    </div>
+  );
+});
+
+/** A message of a task's thread while it loads: a bar for its time and sender, and two lines. */
+function GhostEntry() {
+  return (
+    <div className="ghost-entry">
+      <span className="bone" />
+      <Skeleton lines={2} />
+    </div>
+  );
+}
+
+/**
+ * A task's thread and composer while the thread loads: messages, then the composer's field, its
+ * Attach button and its recipient and Send controls; it says it loads unless the page around it
+ * says so (`announce`).
+ */
+export function GhostThread({ announce = true }: { announce?: boolean }) {
+  return (
+    <>
+      {announce && (
+        <span className="status-text" role="status">
+          Loading the thread…
+        </span>
+      )}
+      <div className="ghost-history">
+        <GhostEntry />
+        <GhostEntry />
+        <GhostEntry />
+      </div>
+      <div className="ghost-composer">
+        <div>
+          <span className="bone" style={bone("7ch")} />
+        </div>
+        <div className="ghost-field ghost-textarea" />
+        <div>
+          <span className="ghost-field" style={{ width: "6rem" }} />
+          <span className="bone" style={bone("22ch")} />
+        </div>
+        <div>
+          <span className="bone" style={bone("2ch")} />
+          <span className="ghost-field" style={{ width: "9rem" }} />
+          <span className="ghost-field" style={{ width: "4.5rem" }} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** A kept title's and facts' lines, as many as either is likely to take: each part is as tall as
+ * kept and shows the lines its height holds. */
+const TITLE_LINES = ["72%", "88%", "64%", "80%", "56%", "76%"];
+const FACT_LINES = ["30%", "42%", "36%", "46%", "34%", "40%"];
+
+/** A part's height as kept, for its ghost's box. */
+function keptLines(height: number): CSSProperties {
+  return { height: `${height}px` };
+}
+
+export interface GhostHeadProps {
+  height: number | null;
+  title: number | null;
+  facts: number | null;
+}
+
+/**
+ * A task's head card before its read, `height` px tall and its title and facts as tall as kept: a
+ * bar for its slug, one for each line of title, its state and priority pills, who filed it and the
+ * priority and cancel controls, a bar for each fact, and its role chip. A title not kept is one line
+ * wide and two on a phone, facts not kept one line.
+ */
+export function GhostHead({ height, title, facts }: GhostHeadProps) {
+  return (
+    <div className="card ghost-head" style={drawnStyle(height)}>
+      <div>
+        <span className="bone" style={bone("18ch")} />
+      </div>
+      {title !== null ? (
+        <div className="ghost-title kept" style={keptLines(title)}>
+          {TITLE_LINES.map((width) => (
+            <span key={width} className="bone" style={bone(width)} />
+          ))}
+        </div>
+      ) : (
+        <div className="ghost-title">
+          <span className="bone" style={bone("72%")} />
+          <span className="bone" style={bone("45%")} />
+        </div>
+      )}
+      {/* As the real row: the state's pill, who filed it, then the owner's controls apart. */}
+      <div className="row ghost-meta">
+        <span className="ghost-pill">
+          <span className="bone" style={bone("7ch")} />
+        </span>
+        <span className="bone" style={bone("13ch")} />
+        <div className="row ghost-controls">
+          <span className="bone" style={bone("6ch")} />
+          <span className="ghost-field" style={{ width: "4rem" }} />
+          <span className="ghost-field" style={{ width: "7rem" }} />
+        </div>
+      </div>
+      {facts !== null ? (
+        <div className="ghost-meta ghost-facts" style={keptLines(facts)}>
+          {FACT_LINES.map((width) => (
+            <div key={width}>
+              <span className="bone" style={bone(width)} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="ghost-meta">
+          <span className="bone" style={bone("40%")} />
+        </div>
+      )}
+      <span className="ghost-pill">
+        <span className="bone" style={bone("14ch")} />
+      </span>
+    </div>
+  );
+}
+
+/** A brief's ghost's paragraphs, of four and three bars. */
+const BRIEF_LINES: [number, number] = [4, 3];
+/** In tenths of a px as board.css draws them in a `.card`: a bar `.8em` tall, a line's leading
+ * above each bar of a paragraph (its margins collapse to `.5lh - .4em`), a paragraph's gap of `1em`
+ * above the next, and the card's border and padding (1 px and 16 px each side). */
+const BAR = 128;
+const LEADING = 60;
+const GAP = 160;
+const FRAME = 340;
+
+/**
+ * The bars of each of a brief's ghost's two paragraphs in a box `height` px tall (border and padding
+ * in), when one was kept: only the bars it shows whole, those whose bottom stays inside its content,
+ * so none is cut off at its edge; all of them with no height kept.
+ */
+export function briefBars(height: number | null): [number, number] {
+  if (height === null) return BRIEF_LINES;
+  const room = Math.max(height * 10 - FRAME, 0);
+  const bars: [number, number] = [0, 0];
+  let bottom = 0;
+  for (const [paragraph, lines] of BRIEF_LINES.entries()) {
+    for (let line = 0; line < lines; line += 1) {
+      const above = line === 0 && paragraph > 0 ? GAP : LEADING;
+      if (bottom + above + BAR > room) return bars;
+      bottom += above + BAR;
+      bars[paragraph] = (bars[paragraph] ?? 0) + 1;
+    }
+  }
+  return bars;
+}
+
+/** A brief's card before its read: two paragraphs of bars, in a box `height` px tall when kept. */
+export function GhostBrief({ height }: { height: number | null }) {
+  const [first, second] = briefBars(height);
+  return (
+    <div className="card ghost-brief" style={drawnStyle(height)}>
+      {first > 0 && <Skeleton lines={first} />}
+      {second > 0 && <Skeleton lines={second} />}
+    </div>
+  );
+}
+
+/**
+ * A task's page before its read: its head card, its gates' outline, its timeline's box, its brief's
+ * card, and its thread. The head, its title, its facts and the brief take the heights this browser
+ * last drew them at for the task in a window as wide, else those of the last task it drew there,
+ * the title and the facts a bar for each line their height holds; the timeline's box the height its
+ * own box will hold (`reserved`).
+ */
+export function GhostTask({ slug }: { slug: string }) {
+  const [heights] = useState(() => ({
+    head: drawnHeight(`head ${slug}`),
+    title: drawnHeight(`title ${slug}`),
+    facts: drawnHeight(`facts ${slug}`),
+    brief: drawnHeight(`brief ${slug}`),
+    timeline: reserved(slug),
+  }));
+  const [narrow, wide] = heights.timeline;
+  const rows = placeholders(Math.max(narrow, wide));
+  return (
+    <div aria-busy="true">
+      <span className="status-text" role="status">
+        Loading task…
+      </span>
+      <GhostHead height={heights.head} title={heights.title} facts={heights.facts} />
+      {/* Said once, by the page: the outline's own status is not read out. */}
+      <div aria-hidden="true">
+        <GhostGates slug={slug} />
+      </div>
+      <div
+        className="ghost-tl"
+        style={{ "--tl-narrow": `${narrow}px`, "--tl-wide": `${wide}px` } as CSSProperties}
+      >
+        <div className="ghost-heading">
+          <span className="bone" style={bone("8ch")} />
+        </div>
+        <div className="card ghost-tl-box">
+          <span className="bone" style={bone("60%")} />
+          {Array.from({ length: rows }, (_, row) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the rows are alike, and only their count changes
+            <div key={row}>
+              <span className="bone" style={bone("2.4rem")} />
+              <span className="bone" style={bone(`${30 + ((row * 17) % 40)}%`)} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <GhostBrief height={heights.brief} />
+      <div className="ghost-heading">
+        <span className="bone" style={bone("5ch")} />
+      </div>
+      <GhostThread announce={false} />
+    </div>
+  );
+}
+
+/** The task's role chips, each with its holder's Go to session control. */
+export function RoleChips({
+  roles,
+  sessions,
+  local,
+}: {
+  roles: Role[];
+  sessions: Record<string, SessionGo>;
+  local: boolean;
+}) {
+  return (
+    <span className="chips">
+      {roles.map((role) => (
+        <span
+          key={`${role.role}:${role.handle}`}
+          className={`chip health-${role.health}`}
+          title={`${role.role} is ${role.health}`}
+        >
+          {`${role.role} ${role.handle}`}
+          <GoToSession handle={role.handle} go={sessions[role.handle]} local={local} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export interface OwnerControlsProps {
+  slug: string;
+  priority: number;
+  status: string;
+}
+
+/**
+ * The owner's controls of a task: its priority, and its cancel behind a confirmation while it is
+ * open. While the page may show what is out of date, the task may have moved since: each waits,
+ * saying so.
+ */
+export function OwnerControls({ slug, priority, status }: OwnerControlsProps) {
+  const mount = useMount();
+  const [selected, setSelected] = useState(`${priority}`);
+  const [confirming, setConfirming] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+  const working = useRef(false);
+  const current = useRef(priority);
+  current.current = priority;
+  useEffect(() => setSelected(`${priority}`), [priority]);
+  const terminal = cancelled || status === "done" || status === "cancelled";
+  useEffect(() => {
+    if (terminal) setConfirming(false);
+  }, [terminal]);
+  const stale = useStore(STALE);
+  const begin = (): boolean => {
+    if (working.current || STALE.get()) return false;
+    working.current = true;
+    setBusy(true);
+    setResult("");
+    return true;
+  };
+  const end = (said: string) => {
+    working.current = false;
+    setBusy(false);
+    setResult(said);
+  };
+  const choose = async (value: string) => {
+    if (working.current || STALE.get()) return;
+    setSelected(value);
+    begin();
+    try {
+      await post(url("/api/task-priority"), { slug, priority: value });
+      if (mount.aborted) return;
+      end("Priority saved");
+    } catch (error) {
+      if (mount.aborted) return;
+      setSelected(`${current.current}`);
+      end(said(error));
+    }
+  };
+  const cancel = async () => {
+    if (!begin()) return;
+    try {
+      await post(url("/api/task-cancel"), { slug });
+      if (mount.aborted) return;
+      setCancelled(true);
+      setConfirming(false);
+      end("Task cancelled");
+    } catch (error) {
+      if (mount.aborted) return;
+      end(said(error));
+    }
+  };
+  return (
+    <div className="task-controls row">
+      <label className="inline-control" htmlFor="task-priority">
+        {"Priority "}
+        <SelectField
+          id="task-priority"
+          label="Priority"
+          value={selected}
+          disabled={busy || stale}
+          onChange={(value) => void choose(value)}
+          options={PRIORITIES}
+        />
+      </label>
+      {!terminal && !confirming && (
+        <Button type="button" disabled={busy || stale} onClick={() => setConfirming(true)}>
+          {stale ? CHECKING : "Cancel task"}
+        </Button>
+      )}
+      {!terminal && confirming && (
+        // biome-ignore lint/a11y/useSemanticElements: a row of the head's controls, as the Dioxus page drew it, not a form's fieldset
+        <div className="row" role="group" aria-label="Cancel task confirmation">
+          <span>Cancel this task?</span>
+          <Button type="button" disabled={busy || stale} onClick={() => void cancel()}>
+            {stale ? CHECKING : "Confirm cancellation"}
+          </Button>
+          <Button type="button" disabled={busy} onClick={() => setConfirming(false)}>
+            Keep task
+          </Button>
+        </div>
+      )}
+      {result !== "" && <p role="status">{result}</p>}
+    </div>
+  );
+}
+
+export interface ComposerProps {
+  slug: string;
+  roles: Role[];
+  approval: TaskOffer | null;
+}
+
+/** Whom a message may go to: everyone on the task, a role, or a holder of one. */
+export function recipients(roles: readonly Role[]): [string, string][] {
+  return [
+    ["", "everyone on it"],
+    ...["@executor", "@reviewer", "@orchestrator"].map((role): [string, string] => [role, role]),
+    ...roles.map((role): [string, string] => [role.handle, role.handle]),
+  ];
+}
+
+/**
+ * The thread's composer: a draft kept on this device as it is typed, its files, whom it goes to,
+ * and the landing the task offers. A sent draft is cleared only on success, and only if the owner
+ * has not edited it while the post ran. The message and the landing wait while the page may show
+ * what is out of date; the draft stays editable.
+ */
+export function Composer({ slug, roles, approval }: ComposerProps) {
+  const mount = useMount();
+  const draftKey = `task-draft:${slug}`;
+  const toKey = `task-to:${slug}`;
+  const [draft, setDraft] = useState(() => load(draftKey) ?? "");
+  const typedNow = useRef(draft);
+  typedNow.current = draft;
+  useEffect(() => save(draftKey, draft), [draftKey, draft]);
+  const [recipient, setRecipient] = useState(() => load(toKey) ?? "");
+  const [busy, setBusy] = useState(false);
+  const working = useRef(false);
+  const [result, setResult] = useState("");
+  const attach = useAttach(`task-draft:${slug}`);
+  const stale = useStore(STALE);
+  const send = async () => {
+    if (
+      working.current ||
+      STALE.get() ||
+      attach.busy ||
+      (typedNow.current.trim() === "" && attach.empty)
+    ) {
+      return;
+    }
+    working.current = true;
+    setBusy(true);
+    const typed = typedNow.current;
+    const text = attach.compose(typed);
+    let told: string;
+    try {
+      await post(url("/api/task-message"), { slug, text, to: recipient });
+      if (mount.aborted) return;
+      // The files went with it; no new one can arrive while it is sent.
+      attach.clear();
+      if (typedNow.current === typed) {
+        save(draftKey, "");
+        setDraft("");
+        told = "Sent";
+      } else told = "";
+    } catch (error) {
+      if (mount.aborted) return;
+      told = said(error);
+    }
+    setResult(told);
+    working.current = false;
+    setBusy(false);
+  };
+  const land = async (offer: TaskOffer, payload: string) => {
+    if (working.current || STALE.get()) return;
+    working.current = true;
+    setBusy(true);
+    let told: string;
+    try {
+      const done = await post(url(TASK_ACTION_ROUTE), {
+        slug,
+        action: offer.action,
+        payload,
+      });
+      if (mount.aborted) return;
+      const words = field(done, "said");
+      told = typeof words === "string" ? words : "";
+    } catch (error) {
+      if (mount.aborted) return;
+      told = said(error);
+    }
+    setResult(told);
+    working.current = false;
+    setBusy(false);
+  };
+  const payload = approval?.payload ?? null;
+  return (
+    <form
+      id="task-send"
+      className="verdict"
+      data-posting={busy}
+      data-attach={attach.zone}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void send();
+      }}
+    >
+      <label htmlFor="task-message">Message</label>
+      <Textarea
+        id="task-message"
+        value={draft}
+        placeholder="Message (⌘/Ctrl+Enter sends). Agents on this task hear it wherever they run."
+        onChange={(event) => {
+          const text = event.target.value;
+          save(draftKey, text);
+          setDraft(text);
+          if (result === "Sent") setResult("");
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <AttachControls attach={attach} disabled={busy} />
+      <div className="row">
+        <label className="inline-control" htmlFor="task-recipient">
+          {"to "}
+          <SelectField
+            id="task-recipient"
+            label="Message recipient"
+            value={recipient}
+            onChange={(value) => {
+              save(toKey, value);
+              setRecipient(value);
+            }}
+            options={recipients(roles)}
+          />
+        </label>
+        <Button type="submit" disabled={busy || attach.busy || stale}>
+          {stale ? CHECKING : "Send"}
+        </Button>
+        {approval !== null && payload !== null && (
+          <>
+            <code className="approval-branch">{approval.branch}</code>
+            <Button
+              type="button"
+              disabled={busy || stale}
+              onClick={() => void land(approval, payload)}
+            >
+              {stale ? CHECKING : `✓ ${approval.label}`}
+            </Button>
+          </>
+        )}
+      </div>
+      <p role="status">{result}</p>
+    </form>
+  );
+}
+
+/** What the owner has read of a long brief past the part its page sent, for one revision of the
+ * brief: the chunks, the byte to read from next, the bytes still left and the last failure. */
+export interface BriefRead {
+  revision: string;
+  blocks: Block[];
+  next: number;
+  omitted: number;
+  failed: string;
+}
+
+export const NOTHING_READ: BriefRead = {
+  revision: "",
+  blocks: [],
+  next: 0,
+  omitted: 0,
+  failed: "",
+};
+
+/** What was read of the brief at `revision`; none when what is held was read of another revision,
+ * which the brief's page no longer shows. */
+export function briefOf(read: BriefRead, revision: string): BriefRead | null {
+  return read.revision === revision ? read : null;
+}
+
+/**
+ * `answer` (a chunk, or why it failed), asked of the brief at `revision` (whose page stopped at
+ * `next` with `omitted` left), added after what was read of it. A chunk cut from another revision is
+ * not added: the brief changed after its page was sent, and the page reloads with the new one.
+ */
+export function briefAdd(
+  read: BriefRead,
+  revision: string,
+  next: number,
+  omitted: number,
+  answer: TaskBrief | string,
+): BriefRead {
+  const held = briefOf(read, revision) ?? { ...NOTHING_READ, revision, next, omitted };
+  if (typeof answer === "string") return { ...held, failed: answer };
+  if (answer.revision !== revision) {
+    return {
+      ...held,
+      failed:
+        "The brief changed since this page was sent; the page shows the new one when it reloads.",
+    };
+  }
+  return {
+    revision,
+    blocks: [...held.blocks, ...answer.blocks],
+    next: answer.next,
+    omitted: answer.omitted,
+    failed: "",
+  };
+}
+
+export interface BriefProps {
+  slug: string;
+  revision: string;
+  blocks: Block[];
+  omitted: number;
+  next: number;
+}
+
+/**
+ * The brief, which the page sends cut when it is very long; a button reads the rest, a chunk at a
+ * time, after the part already shown. What was read belongs to one revision of the brief: an edit
+ * starts again from the part the new page sent.
+ */
+export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
+  const mount = useMount();
+  const [read, setRead] = useState(NOTHING_READ);
+  const [busy, setBusy] = useState(false);
+  const held = briefOf(read, revision);
+  const more = held?.blocks ?? null;
+  const from = held?.next ?? next;
+  const remaining = held?.omitted ?? omitted;
+  const failedSaid = held?.failed ?? "";
+  const drawn = useMemo(() => (more === null ? blocks : [...blocks, ...more]), [blocks, more]);
+  const loadMore = async () => {
+    if (busy) return;
+    setBusy(true);
+    let answer: TaskBrief | string;
+    try {
+      const path = `/api/task-brief?slug=${encodeURIComponent(slug)}&from=${from}`;
+      answer = readBrief(await getJson(url(path), mount)) ?? "The brief's part is not readable";
+    } catch (error) {
+      answer = said(error);
+    }
+    if (mount.aborted) return;
+    setRead((before) => briefAdd(before, revision, next, omitted, answer));
+    setBusy(false);
+  };
+  return (
+    <div className="task-body card">
+      <BlocksView blocks={drawn} />
+      {remaining > 0 && (
+        <>
+          <p className="brief-cut">
+            {`This brief is long; ${remaining} bytes of it are not shown yet. `}
+            <Button id="brief-more" disabled={busy} onClick={() => void loadMore()}>
+              Show more of the brief
+            </Button>
+          </p>
+          {failedSaid !== "" && <p role="alert">{failedSaid}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Asks for the landing the task offers once, as it mounts: its key names the task's revision. */
+function OfferLoader({ onOffer }: { onOffer: () => void }) {
+  const asked = useRef(onOffer);
+  useEffect(() => asked.current(), []);
+  return null;
+}
+
+export interface TaskDetailProps {
+  page: Page;
+  work: MachineWork;
+  /** Whether the feed is open and nothing shown came from this device: the machines' own work is
+   * read as disconnected otherwise. */
+  connected: boolean;
+  tasks: Task[];
+  entries: TaskEntry[];
+  older: boolean;
+  loaded: boolean;
+  offer: [TaskOffer, number] | null;
+  failed: boolean;
+  /** How many board events have changed the task's gates (`TaskData.gatesNudged`). */
+  nudged: number;
+  /** Told the task and the branch its gates were answered for (`LiveTask.gatesAnswered`). */
+  onBranch?: (slug: string, branch: string) => void;
+  onHistory: (older: boolean) => void;
+  onChildren: (more: boolean) => void;
+  onOffer: () => void;
+}
+
+/** A task's page as its read stands. */
+export function TaskDetail({
+  page,
+  work,
+  connected,
+  tasks,
+  entries,
+  older,
+  loaded,
+  offer,
+  failed,
+  nudged,
+  onBranch,
+  onHistory,
+  onChildren,
+  onOffer,
+}: TaskDetailProps) {
+  const { task } = page;
+  const { slug } = task;
+  const approval = offer !== null && offer[1] === task.updated ? offer[0] : null;
+  // The head's and the brief's heights, for the ghost of the next visit (`GhostTask`).
+  useEffect(() => {
+    const controller = new AbortController();
+    const at = `article.task[data-slug="${slug}"] > `;
+    void rememberDrawn(
+      [
+        [`head ${slug}`, `${at}.task-head`],
+        [`title ${slug}`, `${at}.task-head h1`],
+        [`facts ${slug}`, `${at}.task-head .facts`],
+        [`brief ${slug}`, `${at}.task-body`],
+      ],
+      100,
+      controller.signal,
+    );
+    return () => controller.abort();
+  }, [slug]);
+  return (
+    <article className="task" data-slug={slug}>
+      <div className="task-head card">
+        <p className="eyebrow">
+          <code>{slug}</code>
+        </p>
+        <h1>{task.title}</h1>
+        {/* The state, who filed it, then the owner's controls apart from them: the priority is said
+            once, by its own control. */}
+        <div className="task-state row">
+          <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
+          <span className="by">{`filed by ${task.created_by}`}</span>
+          <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+        </div>
+        <ul className="facts">
+          {task.parent !== null && (
+            <li>
+              {"part of "}
+              <a href={href(`/task/${task.parent}`)}>{task.parent}</a>
+            </li>
+          )}
+          {task.depends.map((dependency) => (
+            <li key={`after ${dependency}`}>
+              {"after "}
+              <a href={href(`/task/${dependency}`)}>{dependency}</a>
+            </li>
+          ))}
+          {task.links.map((link) => (
+            <li key={`implements ${link}`}>
+              {"implements "}
+              <a href={href(`/${link}`)}>{link}</a>
+            </li>
+          ))}
+        </ul>
+        <RoleChips roles={task.roles} sessions={page.sessions} local={page.local} />
+        <WorkPhases work={work} slug={slug} connected={connected} />
+      </div>
+      <TaskGatesPanel
+        slug={slug}
+        revision={task.updated}
+        seen={page.gates ?? null}
+        work={workOf(work, slug)}
+        nudged={nudged}
+        {...(onBranch === undefined ? {} : { onBranch })}
+      />
+      {page.children_count > 0 && (
+        <NearViewport id={`subtasks-${slug}`} height={60} onEnter={() => onChildren(false)}>
+          <h2>
+            {"Subtasks "}
+            <span className="count">{page.children_count}</span>
+          </h2>
+          <ul>
+            {tasks.map((child) => (
+              <NearViewport key={child.slug} listItem id={`child-${child.slug}`} height={32}>
+                <a href={href(`/task/${child.slug}`)}>{child.title}</a>
+                {` · ${statusWords(child.status)}`}
+              </NearViewport>
+            ))}
+          </ul>
+          {tasks.length === 0 ? (
+            <Button onClick={() => onChildren(false)}>Load subtasks</Button>
+          ) : tasks.length < page.children_count ? (
+            <Button onClick={() => onChildren(true)}>Load more subtasks</Button>
+          ) : null}
+        </NearViewport>
+      )}
+      <TimelineSlot key={slug} slug={slug} revision={task.updated} />
+      <Brief
+        slug={slug}
+        revision={page.brief_revision}
+        blocks={page.blocks}
+        omitted={page.brief_omitted}
+        next={page.brief_next}
+      />
+      <h2>Thread</h2>
+      {/* The head and the brief are in with the page; the thread and the composer under it wait
+          under their ghost until the thread on the first screen is in. */}
+      <Settle failed={failed} cover={<GhostThread />}>
+        <NearViewport id={`thread-region-${slug}`} height={200} onEnter={() => onHistory(false)}>
+          <div id="task-thread" data-pending={`${!loaded}`}>
+            {older && <Button onClick={() => onHistory(true)}>Load earlier messages</Button>}
+            {!loaded && <Button onClick={() => onHistory(false)}>Load messages</Button>}
+            {/* One timeline: every message is an item of the one list its line runs down. */}
+            <ul className="history">
+              {entries.map((entry) => (
+                <NearViewport
+                  key={entry.message.id}
+                  listItem
+                  id={`message-${entry.message.id}`}
+                  height={100}
+                  ghost={<GhostEntry />}
+                >
+                  <TaskMessage entry={entry} />
+                </NearViewport>
+              ))}
+            </ul>
+            {!loaded && (
+              <div className="ghost-history">
+                <GhostEntry />
+                <GhostEntry />
+              </div>
+            )}
+          </div>
+        </NearViewport>
+        <NearViewport id={`composer-${slug}`} height={200}>
+          <OfferLoader key={`offer-${slug}-${task.updated}`} onOffer={onOffer} />
+          <Composer slug={slug} roles={task.roles} approval={approval} />
+        </NearViewport>
+      </Settle>
+    </article>
+  );
+}
+
+/** The route's task as `live` stands: its page, why it could not be read, or its ghost. */
+export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: boolean }) {
+  const { d, slug } = live;
+  const page = d.page !== null && d.page.task.slug === slug ? d.page : null;
+  return (
+    <div
+      className="task-page"
+      data-ready={page !== null ? "task" : ready(d.missing === slug, d.error !== "")}
+    >
+      {page !== null ? (
+        <TaskDetail
+          key={slug}
+          page={page}
+          work={page.machine_work}
+          connected={connected}
+          tasks={page.children}
+          entries={d.entries}
+          older={d.before !== null}
+          loaded={d.threadLoaded}
+          offer={d.approval}
+          failed={d.error !== ""}
+          nudged={d.gatesNudged}
+          onBranch={(task, branch) => live.gatesAnswered(task, branch)}
+          onHistory={(more) => void live.history(more)}
+          onChildren={(more) => void live.children(more)}
+          onOffer={() => void live.offer()}
+        />
+      ) : d.missing === slug ? (
+        <Trouble
+          title={`No task ${slug}`}
+          text="The board has no task by this name: it may have been removed, or the link names it wrongly."
+          back={["/tasks", "All tasks"]}
+          retry={() => void live.refresh()}
+        />
+      ) : d.error !== "" ? (
+        <Trouble
+          title="The task could not be loaded"
+          text={failedRead(d.error)}
+          retry={() => void live.refresh()}
+        />
+      ) : (
+        <GhostTask key={slug} slug={slug} />
+      )}
+    </div>
+  );
+}
+
+export interface TaskPageViewProps {
+  /** The task kept live, once the page started it. */
+  live: LiveTask | null;
+  stale: boolean;
+  freshness: Freshness;
+}
+
+/**
+ * A task's page under the board's notices: the task once the board is read or a copy of the task
+ * from this device is drawn; before, the board's skeleton, or why the board could not be read.
+ */
+export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
+  const device = shown(freshness);
+  const drawn = live?.drawn() ?? false;
+  const onPage = drawn || (live?.boardShown ?? false);
+  const trouble = live?.trouble ?? null;
+  useEffect(() => {
+    if (live?.boardShown) performance.mark(READY_MARK);
+  }, [live?.boardShown]);
+  // A task with nothing yet to show says in its own trouble block what is missing or failed; once
+  // drawn, the page's error is drawn in its notice stack, out of the page's flow.
+  const error = drawn && live !== null ? live.d.error : "";
+  return (
+    <main
+      data-ready={onPage ? "board" : ready(false, trouble !== null)}
+      data-feed={stale || device !== null ? "stale" : "live"}
+      data-cache={device !== null ? "device" : undefined}
+    >
+      {live !== null && onPage ? (
+        // What the device drew is not the machines' work now: shown as out of touch until read.
+        <LiveTaskPage live={live} connected={!stale && device === null} />
+      ) : live !== null && trouble !== null ? (
+        <Trouble
+          title="The board could not be loaded"
+          text={`${failedRead(trouble)} It is also tried again on its own.`}
+          retry={() => {
+            live.retry.current += 1;
+          }}
+        />
+      ) : (
+        <Skeleton lines={8} label="Loading the board…" />
+      )}
+      <PageNotices
+        reconnecting={stale && (live?.boardShown ?? false)}
+        error={error}
+        device={device}
+      />
+    </main>
+  );
+}
+
+/** The route's task, kept live: one live task for the page's checkout, which follows the route
+ * from task to task within it. */
+export function TaskPage({ scope, slug }: { scope: string; slug: string }) {
+  const frame = useFrame();
+  const [, redraw] = useReducer((count: number) => count + 1, 0);
+  const [stale, setStale] = useState(false);
+  const [freshness, setFreshness] = useState<Freshness>(FRESH);
+  const live = useRef<LiveTask | null>(null);
+  const route = useRef(slug);
+  route.current = slug;
+  useEffect(() => {
+    const controller = new AbortController();
+    const task = new LiveTask(
+      scope,
+      route.current,
+      { redraw, freshness: setFreshness, stale: setStale },
+      controller.signal,
+    );
+    live.current = task;
+    setFreshness(FRESH);
+    redraw();
+    void task.start(frame);
+    const minutes = setInterval(flushReload, 60_000);
+    return () => {
+      controller.abort();
+      clearInterval(minutes);
+    };
+  }, [scope, frame]);
+  useEffect(() => {
+    void live.current?.moved(slug);
+  }, [slug]);
+  return <TaskPageView live={live.current} stale={stale} freshness={freshness} />;
+}

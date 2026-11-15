@@ -11,6 +11,7 @@ import type {
   MachineWork,
   ProjectView,
   Role,
+  SessionGo,
   Task,
   View,
   Viewer,
@@ -71,6 +72,15 @@ export const CASES = cases as unknown as {
   encoded: [View, string][];
   /** A view's attribute value, and the pairs it holds. */
   decode: [string, [string, string][]][];
+  /**
+   * A session's way in, whether the page was asked on the server's machine, and the control it
+   * gives (its kind, then its pane or address; null for none); a way in, the handle of the agent it
+   * is shown for, and whether it goes to another agent's session.
+   */
+  sessions: {
+    control: [SessionGo, boolean, [string, string] | null][];
+    via: [SessionGo, string, boolean][];
+  };
   /** `blocks` holds every kind of block, span and media, and every word they name. */
   samples: {
     queue: unknown;

@@ -120,15 +120,12 @@ page-tasks = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
 page-overlay = ["overlays"]
-# A task's timeline, loaded into the task page's box once the page is idle (task_timeline.rs).
-page-timeline = []
-# The program: the task pages with /agents, the chat, the menus and the timeline as one program that
-# `dx bundle --wasm-split` cuts into a main module and a chunk for each (src/split.rs, bundle.sh).
-# Its kinds share one runtime.
-page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]
+# The program: /agents, the chat and the menus as one program that `dx bundle --wasm-split` cuts into
+# a main module and a chunk for each (src/split.rs, bundle.sh). Its kinds share one runtime.
+page-program = ["page-tasks", "page-panel", "page-overlay"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-tasks", "page-panel", "page-overlay", "page-timeline"]
+devtools = ["dioxus/devtools", "page-tasks", "page-panel", "page-overlay"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

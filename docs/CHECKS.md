@@ -211,7 +211,7 @@ both kinds, to copy after `--`:
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
 | the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
-| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
+| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` |
 | the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |

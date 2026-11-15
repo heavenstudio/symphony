@@ -1,6 +1,6 @@
 //! The board, live: fetched from the server's JSON API, then followed by its feed, one event at a
-//! time, for the task pages, which apply each to what they show (`task_live::apply`). The browser
-//! half of the app; home is the web client's (apps/symphony-web).
+//! time, for the agents page, which applies each to what it shows (`task_live::apply`). The browser
+//! half of the app; home and a task's page are the web client's (apps/symphony-web).
 //!
 //! A lost feed (it errs, falls silent, or sends what the client cannot read) is never trusted to
 //! resume (symphony-api's contract): the client closes it, shows the board as stale, and starts
@@ -24,7 +24,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::Event;
 
-// The kind that follows the feed: the program's (its task pages).
+// The kind that follows the feed: the program's (`/agents`).
 #[cfg(feature = "page-tasks")]
 mod feed;
 #[cfg(feature = "page-tasks")]
@@ -300,7 +300,7 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let stale = use_signal(|| false);
     let trouble = use_signal(|| None::<String>);
     let mut retry = use_signal(|| 0_u64);
-    // Each scope's board is a page of its own (its key); a task page's slice is its own.
+    // Each scope's board is a page of its own (its key).
     let _ = scope;
     let data = use_signal(Data::default);
     use_hook(|| {
@@ -322,25 +322,22 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
             }
         });
     });
-    // Another route of the kind: drawn from this device, when it kept it, then read.
+    // Another route of the kind: read.
     {
         let first_route = use_hook(|| Rc::new(Cell::new(true)));
         use_effect(move || {
             let _ = route();
             if !first_route.replace(false) {
-                spawn(async move {
-                    task_live::opened(route, data).await;
-                    task_live::load(route, data).await;
-                });
+                spawn(task_live::load(route, data));
             }
         });
     }
-    // A task or agents view's failed fetch is a page notice, as the board's is: an alert in the
-    // page's flow would shrink the page when a reconnect clears it, clamping a reader at its end.
-    // A view with nothing yet to show says it in its own trouble block instead, once.
+    // The agents view's failed fetch is a page notice, as the board's is: an alert in the page's
+    // flow would shrink the page when a reconnect clears it, clamping a reader at its end. A view
+    // with nothing yet to show says it in its own trouble block instead, once.
     let error = use_memo(move || {
         let data = data.read();
-        if data.drawn(&route()) {
+        if data.drawn() {
             data.error.clone()
         } else {
             String::new()
@@ -352,11 +349,11 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
             mark(READY_MARK);
         }
     });
-    // A task page this device kept is drawn before the board is read.
-    let (device, drawn) = (data.read().freshness.shown(), data.read().drawn(&route()));
+    // A page drawn stays drawn while the board is read again.
+    let (device, drawn) = (data.read().freshness.shown(), data.read().drawn());
     let content = if board.read().is_some() || drawn {
         // What the device drew is not the machine's work now: shown as out of touch until read.
-        if route().starts_with("/task/") || route() == "/agents" {
+        if route() == "/agents" {
             rsx! { crate::tasks::LiveTaskPage { route, data, connected: !stale() && device.is_none() } }
         } else {
             rsx! { p { "Page unavailable" } }
@@ -366,7 +363,7 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     } else {
         rsx! { crate::viewport::Skeleton { lines: 8, label: "Loading the board…" } }
     };
-    // Ready once a board is drawn, or a task page this device kept.
+    // Ready once a board is drawn, or a page is.
     let ready = if board.read().is_some() || drawn {
         "board"
     } else {
@@ -403,20 +400,10 @@ async fn keep_live(
     views: PageViews,
 ) {
     let mut backoff = Backoff::default();
-    // A task page draws what this device kept of its task while the board is read, and checks it
-    // once the board's version is: the feed then replays every change made after the check.
-    let mut opening = Some(task_live::opened(views.route, views.data));
     loop {
         back().await;
         let mut ended = Ended::Lost(0.0);
-        let fetched = fetch_board();
-        let fetched = async {
-            match opening.take() {
-                Some(opening) => futures_util::future::join(fetched, opening).await.0,
-                None => fetched.await,
-            }
-        };
-        match fetched.await {
+        match fetch_board().await {
             Ok(fetched) => {
                 let since = fetched.version;
                 let quiet =
@@ -439,7 +426,7 @@ async fn keep_live(
 }
 
 /// Tell what the page shows from this device ([`Freshness`]) what its board's read and feed did,
-/// in the task page's data, which draws the whole page: written only when this changes it.
+/// in the page's data, which draws the whole page: written only when this changes it.
 #[cfg(feature = "page-tasks")]
 fn freshen(views: PageViews, change: impl Fn(&mut Freshness)) {
     let mut data = views.data;

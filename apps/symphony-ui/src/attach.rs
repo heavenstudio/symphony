@@ -1,5 +1,6 @@
-//! One attach control for every place the owner writes: the + panel's chat and new task, a
-//! document's asks and follow-ups, a card's message, verdict note or comment, and a task's thread.
+//! One attach control for every place the owner writes in this client: the + panel's chat and new
+//! task. The web client's composers have their own (apps/symphony-web/src/attach.tsx), which keeps
+//! the same draft rows.
 //!
 //! A composer takes [`use_attach`] with a key of its own, marks its form `data-attach` with
 //! [`Attach::zone`] and draws [`AttachControls`] inside it. A file reaches it three ways: the
@@ -8,8 +9,8 @@
 //! ([`compose`]), which is how the posted item keeps showing it. The chips are saved with the
 //! draft, so a reload keeps them.
 //!
-//! Only the panel, document and task page kinds compile this module: the `/` and `/tasks`
-//! modules never carry it, so the first visit's bytes do not move. Its style comes with it, put
+//! Only the panel kind compiles this module: no page kind carries it, so a first visit's bytes do
+//! not move. Its style comes with it, put
 //! in the page by the first composer to mount ([`STYLE`]). One document listener per module
 //! routes paste, drop and the picker's change to the composer whose zone holds the event's
 //! target; a browser callback never writes a signal, it sends on the composer's channel.

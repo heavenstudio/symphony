@@ -138,7 +138,7 @@ pub struct BoardStatus {
 }
 
 impl BoardStatus {
-    /// What a task page says of the board: nothing unless it is unavailable; that it is slow when
+    /// What the agents page says of the board: nothing unless it is unavailable; that it is slow when
     /// it is, else that it is unavailable.
     pub fn notice(self) -> &'static str {
         match self {

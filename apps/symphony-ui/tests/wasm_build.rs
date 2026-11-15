@@ -26,18 +26,19 @@ const KINDS: [&str; 1] = ["program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
 /// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
 /// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
-/// media sheet, for the two kinds that show media), then its entry's own. The task board has none:
-/// its styles (assets/board.css) are the program's, in the shared file.
-const WEB: [(&str, &[&str]); 5] = [
+/// media sheet, for the three kinds that show media), then its entry's own. The task board has
+/// none: its styles (assets/board.css) are the program's, in the shared file.
+const WEB: [(&str, &[&str]); 6] = [
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
+    ("task", &["media-layer", "task"]),
 ];
 /// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
 /// the media layer's ([`MEDIA`]).
-const PROGRAM: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
+const PROGRAM: [&str; 4] = ["media", "overlay", "panel", "tasks"];
 /// The program's chunk that is no kind, which the shell's manifest never names.
 const MEDIA: &str = "media";
 
@@ -222,26 +223,25 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_tasks module_4_timeline; do
+        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_tasks; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
     } > "$assets/symphony-ui-dxh2.js"
     printf '\0\12\11producers' >> "$assets/chunk_0_split-dxh1.wasm"
     if [ -n "${PROGRAM_SHARED:-}" ]; then printf '\1\1\0' >> "$assets/chunk_0_split-dxh1.wasm"; fi
-    # The page links its static-head styles, as dx's does: the two every kind takes and the
-    # timeline's, never a CSS module's (`style-`) or PROGRAM_STYLE, one no kind takes, when a case
-    # asks for it.
+    # The page links its static-head styles, as dx's does: the two every kind takes, never a CSS
+    # module's (`style-`) or PROGRAM_STYLE, one no kind takes, when a case asks for it.
     {
         printf '<head>'
-        for style in a-shared z-shared task-timeline-program; do
+        for style in a-shared z-shared; do
             printf '<link rel="stylesheet" href="/./assets/%s.css" type="text/css">' "$style"
         done
         printf '</head>\n<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n'
     } > "$out/public/index.html"
     printf '.a{}' > "$assets/a-shared.css"
     printf '.z{}\n' > "$assets/z-shared.css"
-    for own in task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
+    for own in style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
     exit 0
 fi
 printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind" > "$out/public/index.html"
@@ -425,8 +425,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     assert!(
         program.contains(
             "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_panel=\
-             globalThis.reviewModuleReady_overlay=globalThis.reviewModuleReady_timeline=\
-             init({module_or_path:"
+             globalThis.reviewModuleReady_overlay=init({module_or_path:"
         ),
         "every program kind is ready when its one initializer is: {program}"
     );
@@ -457,10 +456,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         }
         assert_eq!(manifest[kind]["script"], script, "{kind}");
         assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
-        // Every program kind takes the styles its page links in its head but the timeline's, then
-        // its own.
+        // Every program kind takes the styles its page links in its head, then its own.
         let own = match *kind {
-            "timeline" => vec!["/assets/task-timeline-program.css"],
             "panel" | "overlay" => vec!["/assets/style-program.css"],
             _ => vec![],
         };
