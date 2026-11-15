@@ -1,8 +1,10 @@
 //! The Runs page's reads over fixture day files: the asks read from the query; the list newest
 //! first, each run once across the days its lines are in, its steps left out, its filters and its
-//! pages, reading no further back than a full page needs; what is not read named; each file's fold
-//! kept between reads until the file changes, for the window's days alone; a run opened on its
-//! steps in order; and the routes refusing a bad ask before any hub and answering through one.
+//! pages, reading no further back than a full page needs; what is not read named; each file's keys
+//! kept between reads until the file changes, for the window's days alone, a file that grew read
+//! on from its last line, one that shrank, was replaced or changed under a kept offset parsed
+//! whole, each answer as a whole parse would give it; a run opened on its steps in order; and the
+//! routes refusing a bad ask before any hub and answering through one.
 
 use super::*;
 use crate::testing::Tree;
@@ -371,12 +373,13 @@ fn a_day_file_is_parsed_again_only_once_its_length_or_modification_time_changed(
     let written = std::fs::metadata(&path).unwrap().modified().unwrap();
     let all = Filters::default();
     assert_eq!(names(&page(&index, &runs, &all, NOW)), ["1"]);
-    // Bytes of the same length under the same modification time are not parsed again: the fold
-    // kept answers, where an index of its own parses them.
+    // Bytes of the same length under the same modification time are not parsed again for their
+    // status, but the line answered is read again from them, and holds another run now: the day is
+    // parsed again, and answers what it holds.
     write_day(&runs, TODAY, &[start("2", "test", TODAY + 5.0)], "");
     let file = std::fs::File::options().write(true).open(&path).unwrap();
     file.set_modified(written).unwrap();
-    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["1"]);
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["2"]);
     assert_eq!(names(&page(&Index::default(), &runs, &all, NOW)), ["2"]);
     // A line appended is read, by the list and by a run's page alike.
     write_day(
@@ -435,6 +438,220 @@ fn the_index_keeps_the_window_s_days_alone_and_nothing_of_a_file_gone_or_refused
     let read = page(&index, &runs, &none, later);
     assert_eq!(read.unread.len(), 1, "{:?}", read.unread);
     assert_eq!(index.len(), 0);
+}
+
+/// `lines` and then `tail` appended to the day file of the UTC day starting at `day` in `runs`.
+fn append(runs: &Path, day: f64, lines: &[RunLine], tail: &str) {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(day_path(runs, day))
+        .unwrap();
+    for line in lines {
+        writeln!(file, "{}", serde_json::to_string(line).unwrap()).unwrap();
+    }
+    file.write_all(tail.as_bytes()).unwrap();
+}
+
+/// The length of the day file of the UTC day starting at `day` in `runs`.
+fn length(runs: &Path, day: f64) -> u64 {
+    std::fs::metadata(day_path(runs, day)).unwrap().len()
+}
+
+/// Asserts that `index` answers the list, as filtered by `filters`, and the run `id` as an index of
+/// its own does, which parses every file whole.
+fn answers_as_parsed_whole(index: &Index, runs: &Path, filters: &Filters, id: &str) {
+    assert_eq!(
+        page(index, runs, filters, NOW),
+        page(&Index::default(), runs, filters, NOW)
+    );
+    assert_eq!(
+        run(index, runs, id, NOW),
+        run(&Index::default(), runs, id, NOW)
+    );
+}
+
+#[test]
+fn a_file_that_grew_is_read_on_from_its_last_line_and_never_parsed_whole_again() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    let verify = start("a", "verify", TODAY + 10.0);
+    let lint = start("b", "lint", TODAY + 20.0);
+    write_day(&runs, TODAY, &[verify.clone(), lint.clone()], "");
+    answers_as_parsed_whole(&index, &runs, &all, &id("a"));
+    assert_eq!(index.parsed(), length(&runs, TODAY));
+    // Each line the recorder appends is parsed alone and folded in as a fold of the whole file
+    // takes it: a step, a newer start line, an end line, a second end line, a new run.
+    let step = step_of(start("c", "verify", TODAY + 30.0), "a", "tests");
+    let appended = [
+        step.clone(),
+        RunLine {
+            label: "just verify again".into(),
+            ..verify.clone()
+        },
+        ended(&step, End::Green, 5.0),
+        ended(&verify, End::Red, 60.0),
+        ended(&verify, End::Incomplete, 90.0),
+        ended(&lint, End::Green, 3.0),
+        start("d", "test", TODAY + 40.0),
+    ];
+    for line in &appended {
+        let before = length(&runs, TODAY);
+        let parsed = index.parsed();
+        append(&runs, TODAY, std::slice::from_ref(line), "");
+        answers_as_parsed_whole(&index, &runs, &all, &id("a"));
+        assert_eq!(
+            index.parsed() - parsed,
+            length(&runs, TODAY) - before,
+            "only the line appended is parsed"
+        );
+    }
+    let opened = run(&index, &runs, &id("a"), NOW).unwrap();
+    assert_eq!(opened.run, ended(&verify, End::Red, 60.0));
+    assert_eq!(opened.steps, [ended(&step, End::Green, 5.0)]);
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["d", "b", "a"]);
+    assert_eq!(
+        index.parsed(),
+        length(&runs, TODAY),
+        "each byte parsed once"
+    );
+}
+
+#[test]
+fn a_line_cut_short_is_parsed_again_once_it_is_whole() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    write_day(&runs, TODAY, &[start("a", "verify", TODAY + 10.0)], "");
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["a"]);
+    // A line the recorder has written only part of when it is read: the rest comes after.
+    let line = serde_json::to_string(&start("b", "test", TODAY + 20.0)).unwrap() + "\n";
+    let (head, rest) = line.split_at(line.len() / 2);
+    append(&runs, TODAY, &[], head);
+    answers_as_parsed_whole(&index, &runs, &all, &id("b"));
+    append(&runs, TODAY, &[], rest);
+    answers_as_parsed_whole(&index, &runs, &all, &id("b"));
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["b", "a"]);
+    // Once the file ends a line again, the next is read on from there.
+    let parsed = index.parsed();
+    let before = length(&runs, TODAY);
+    append(&runs, TODAY, &[start("c", "test", TODAY + 30.0)], "");
+    answers_as_parsed_whole(&index, &runs, &all, &id("c"));
+    assert_eq!(index.parsed() - parsed, length(&runs, TODAY) - before);
+}
+
+#[test]
+fn a_file_that_shrank_was_replaced_or_no_longer_holds_its_last_line_is_parsed_whole() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    let lines: Vec<RunLine> = ["1", "2", "3"]
+        .iter()
+        .zip(1..)
+        .map(|(name, n)| start(name, "test", TODAY + f64::from(n)))
+        .collect();
+    write_day(&runs, TODAY, &lines, "");
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["3", "2", "1"]);
+    let whole = |index: &Index, parsed: u64| {
+        assert_eq!(
+            index.parsed() - parsed,
+            length(&runs, TODAY),
+            "parsed whole"
+        );
+    };
+    // Shorter, in place.
+    let parsed = index.parsed();
+    write_day(&runs, TODAY, &lines[..2], "");
+    answers_as_parsed_whole(&index, &runs, &all, &id("1"));
+    whole(&index, parsed);
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["2", "1"]);
+    // Another file renamed over it: another inode, though longer.
+    let parsed = index.parsed();
+    let other = tree.path("other.jsonl");
+    let replaced = [
+        ended(&lines[0], End::Red, 5.0),
+        lines[1].clone(),
+        lines[2].clone(),
+    ];
+    let text: String = replaced
+        .iter()
+        .map(|line| serde_json::to_string(line).unwrap() + "\n")
+        .collect();
+    std::fs::write(&other, text).unwrap();
+    std::fs::rename(&other, day_path(&runs, TODAY)).unwrap();
+    answers_as_parsed_whole(&index, &runs, &all, &id("1"));
+    whole(&index, parsed);
+    assert_eq!(
+        run(&index, &runs, &id("1"), NOW).unwrap().run.end,
+        Some(End::Red)
+    );
+    // Longer on the same inode, but no longer holding its last line read where it was.
+    let parsed = index.parsed();
+    let rewritten = [
+        lines[0].clone(),
+        lines[1].clone(),
+        ended(&lines[2], End::Green, 7.0),
+        start("4", "test", TODAY + 4.0),
+    ];
+    write_day(&runs, TODAY, &rewritten, "");
+    answers_as_parsed_whole(&index, &runs, &all, &id("3"));
+    whole(&index, parsed);
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["4", "3", "2", "1"]);
+    assert_eq!(
+        run(&index, &runs, &id("1"), NOW).unwrap().run,
+        lines[0],
+        "the end line it no longer holds is not answered"
+    );
+}
+
+#[test]
+fn a_line_changed_under_a_kept_offset_is_answered_as_the_file_holds_it_now() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    let path = day_path(&runs, TODAY);
+    let one = start("1", "test", TODAY + 5.0);
+    let two = start("2", "lint", TODAY + 6.0);
+    write_day(&runs, TODAY, &[one.clone(), two.clone()], "");
+    let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["2", "1"]);
+    assert!(run(&index, &runs, &id("1"), NOW).is_ok());
+    let parsed = index.parsed();
+    // The same length and modification time, so the same status, over other lines: run 1's line
+    // is now run 3's, and run 2's was asked for a second later.
+    write_day(
+        &runs,
+        TODAY,
+        &[
+            start("3", "test", TODAY + 5.0),
+            RunLine {
+                queued: TODAY + 7.0,
+                ..two.clone()
+            },
+        ],
+        "",
+    );
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(written).unwrap();
+    assert_eq!(
+        run(&index, &runs, &id("1"), NOW).unwrap_err(),
+        format!("no run {} in the last 14 days' files", id("1")),
+        "a run whose line is gone from under its offset is none"
+    );
+    assert_eq!(
+        index.parsed() - parsed,
+        length(&runs, TODAY),
+        "the day is parsed again"
+    );
+    answers_as_parsed_whole(&index, &runs, &all, &id("3"));
+    let listed = page(&index, &runs, &all, NOW);
+    assert_eq!(names(&listed), ["2", "3"]);
+    assert_eq!(listed.runs[0].queued, TODAY + 7.0);
 }
 
 #[test]
