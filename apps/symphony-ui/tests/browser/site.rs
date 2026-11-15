@@ -381,7 +381,8 @@ impl Site {
 
     /// Serve `document` (as `/api/document` without a view sends it, its bodies and threads in it)
     /// at its path as the server does: its outline, the sections a read's `keys` name, each
-    /// tagged without the feed's cursor and naming it in a header ([`document_read`]). A reply
+    /// tagged without the feed's cursor and naming it in a header ([`document_read`]). Its
+    /// `anchors`, when it has them, are its outline's ([`outline_of`]). A reply
     /// [`Site::set_json`] gave a read's route or target wins over it.
     pub fn set_document(&self, document: &serde_json::Value) {
         let path = document["path"].as_str().expect("a document's path");
@@ -880,9 +881,14 @@ pub fn asked_keys(target: &str) -> Vec<String> {
 }
 
 /// `document`'s outline (`/api/document?view=outline`): no bodies or threads, each card's thread
-/// named by a hash of it.
+/// named by a hash of it, and the ids each section holds as the fixture names them (its
+/// `anchors`, by section key; none where it names none).
 pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
     let mut outline = document.clone();
+    let anchors = outline
+        .as_object_mut()
+        .and_then(|whole| whole.remove("anchors"))
+        .unwrap_or_else(|| serde_json::json!({}));
     for section in outline["sections"].as_array_mut().into_iter().flatten() {
         section["blocks"] = serde_json::json!([]);
     }
@@ -897,7 +903,7 @@ pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
             (slug.clone(), hash.into())
         })
         .collect();
-    serde_json::json!({"document": outline, "anchors": {}, "thread_hashes": hashes})
+    serde_json::json!({"document": outline, "anchors": anchors, "thread_hashes": hashes})
 }
 
 /// What a page reads ahead of `document` (`/api/document?view=first`), as the server cuts it
