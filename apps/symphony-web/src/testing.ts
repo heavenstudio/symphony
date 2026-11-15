@@ -248,12 +248,13 @@ export function memoryStorage(refuse = false): Storage {
 }
 
 /**
- * One request the stubbed server holds: its address, its body as JSON, how to answer it, and the
- * signal that gives it up.
+ * One request the stubbed server holds: its address, its body as JSON, the tag it names
+ * (`If-None-Match`) when it names one, how to answer it, and the signal that gives it up.
  */
 export interface Asked {
   url: string;
   body: unknown;
+  named: string | null;
   answer: (response: Response) => void;
   signal: AbortSignal | null;
 }
@@ -270,7 +271,9 @@ export function server(): Asked[] {
     (url: string, init?: RequestInit) =>
       new Promise<Response>((answer) => {
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        asked.push({ url, body, answer, signal: init?.signal ?? null });
+        const headers = init?.headers as Record<string, string> | undefined;
+        const named = headers?.["If-None-Match"] ?? null;
+        asked.push({ url, body, named, answer, signal: init?.signal ?? null });
       }),
   );
   return asked;

@@ -5,8 +5,9 @@
 // project's day files: four figures over the window, then the charts on one time axis, two columns
 // on a wide screen. A period a source has no record of is a gap, hatched, never a zero.
 
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import { Button } from "./button";
+import { type Item, keepLater, readKept, visitLater } from "./cache";
 import {
   type Axis,
   ChartCard,
@@ -27,6 +28,7 @@ import { load, save } from "./storage";
 import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
 import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";
+import { deviceNotice, savedAt } from "./words";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -774,11 +776,22 @@ export interface ReportsViewProps {
   onToggle?: (key: string) => void;
   /** Whether the chart the address names lands as its window draws: until the reader chooses one. */
   lands?: boolean;
+  /**
+   * While the page shown is the copy this device kept and no read has answered since: when it was
+   * kept, in ms.
+   */
+  device?: number | null;
+  /** The clock the kept copy's time is said against. */
+  now?: Date;
 }
 
 /**
  * The page under its header: the window's controls, its four figures, the settings changes and
- * the charts, or the ghost of them while the first answer is on its way.
+ * the charts, or the ghost of them while the first answer is on its way. A page drawn from what
+ * this device kept is marked so (`data-cache`) and says it, in the other pages' words and in their
+ * place (the shared sheet's notice stack, out of the page's flow, so its going moves nothing),
+ * until a read answers: that it is checking, or, while the read fails, that the server is not
+ * reachable.
  */
 export function ReportsView({
   grain,
@@ -789,12 +802,16 @@ export function ReportsView({
   onAsk,
   onToggle,
   lands = true,
+  device = null,
+  now = new Date(),
 }: ReportsViewProps) {
   const busy = page === null || page.grain !== grain || page.days !== days;
+  const kept = page !== null ? device : null;
   return (
     <div
       className="reports"
       data-ready={page !== null ? "reports" : ready(false, error !== null)}
+      data-cache={kept !== null ? "device" : undefined}
       aria-busy={busy}
     >
       <header className="reports-head">
@@ -822,6 +839,13 @@ export function ReportsView({
           onToggle={onToggle}
           lands={lands}
         />
+      )}
+      {kept !== null && (
+        <div className="stale page-notices notice-stack">
+          <p className="pill wait device-notice" role="status">
+            {deviceNotice(savedAt(new Date(kept), now), error !== null)}
+          </p>
+        </div>
       )}
     </div>
   );
@@ -1088,36 +1112,108 @@ export async function followReports(
 }
 
 /**
+ * The Reports page of the checkout `scope` names: each window it drew a part, the answer as the
+ * server sent it (a few KB by the day or the week, some 140 KB for a week by the hour, nine windows
+ * in all), so it is kept whole. It is named here, not in cache.ts, so the chunk the pages that follow
+ * the board load carries nothing of this page's.
+ */
+export function reportsItem(scope: string): Item {
+  return { kind: "reports", id: `reports:${scope === "" ? "" : `@${scope}/`}`, pinned: false };
+}
+
+/** The part of a reports item that holds one window's answer: `hour:1`, `day:14`. */
+export function reportsWindow(grain: string, days: number): string {
+  return `${grain}:${days}`;
+}
+
+/** The answer `page` was read from, as this device keeps it: each period as the server sent it. */
+function asKept(page: Page): unknown {
+  return { ...page, buckets: page.buckets.map((bucket) => bucket.raw) };
+}
+
+/** What a window's kept copy and its reads tell the page. */
+export interface ReportsShow {
+  /** The copy this device kept, to draw at once: when it was kept, in ms. */
+  kept(page: Page, saved: number): void;
+  /** The server answered: the window as it is now, none where the copy shown still is. */
+  answered(page: Page | null): void;
+  /** A read failed: what is shown stays. */
+  failed(said: string): void;
+}
+
+/**
+ * A window of the reports opened: the copy of it this device kept (`item`, a part a window) drawn
+ * at once, then `followReports` naming that copy's tag, so a window no roll-up changed since costs
+ * no body, and each new answer kept in its place. A window never kept, or kept in a form this
+ * client cannot read, is read whole.
+ */
+export async function openReports(
+  item: Item,
+  grain: Grain,
+  days: number,
+  signal: AbortSignal,
+  show: ReportsShow,
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  const part = reportsWindow(grain, days);
+  const kept = await readKept(item, part, readReports);
+  if (signal.aborted) return;
+  let etag = kept?.etag ?? "";
+  if (kept !== null) show.kept(kept.value, kept.saved);
+  await followReports(
+    grain,
+    days,
+    () => etag,
+    signal,
+    {
+      answered(read, tag) {
+        if (read !== null) {
+          etag = tag;
+          keepLater(item, part, tag, asKept(read));
+        }
+        show.answered(read);
+      },
+      failed: show.failed,
+    },
+    wait,
+  );
+}
+
+/**
  * The page, its read and its window: the window this browser last chose, read at once, again
  * whenever another is chosen, and every five minutes while the page is open, naming the copy shown
  * so an hour no file changed in answers `304`. A read that fails keeps what is shown and says why.
- * The series this browser hid stay hidden in every window, and each hidden or shown again is kept
- * at once.
+ * Each window's last answer is kept on this device (`openReports`) and drawn at once on a return,
+ * or when its window is chosen again, marked as this device's until a read answers. The series
+ * this browser hid stay hidden in every window, and each hidden or shown again is kept at once.
  */
-export function ReportsPage() {
+export function ReportsPage({ scope = "" }: { scope?: string }) {
   const [[grain, days], setWindow] = useState(() => chosen(load));
   const [hidden, setHidden] = useState(() => hiddenSeries(load));
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const etag = useRef("");
+  const [device, setDevice] = useState<number | null>(null);
+  useEffect(() => visitLater(reportsItem(scope)), [scope]);
   // Each choice reads again, the same window too, as a choice of it does. Once the reader has made
   // one, the address lands no chart.
   const [asked, setAsked] = useState(0);
   useEffect(() => {
     void asked;
     const controller = new AbortController();
-    void followReports(grain, days, () => etag.current, controller.signal, {
-      answered(read, tag) {
-        if (read !== null) {
-          etag.current = tag;
-          setPage(read);
-        }
+    void openReports(reportsItem(scope), grain, days, controller.signal, {
+      kept(read, saved) {
+        setPage(read);
+        setDevice(saved);
+      },
+      answered(read) {
+        if (read !== null) setPage(read);
+        setDevice(null);
         setError(null);
       },
       failed: setError,
     });
     return () => controller.abort();
-  }, [grain, days, asked]);
+  }, [scope, grain, days, asked]);
   return (
     <main className="reports-page">
       <ReportsView
@@ -1127,10 +1223,10 @@ export function ReportsPage() {
         error={error}
         hidden={hidden}
         lands={asked === 0}
+        device={device}
         onAsk={(nextGrain, nextDays) => {
           save("reports-grain", nextGrain);
           save("reports-days", String(nextDays));
-          etag.current = "";
           setWindow([nextGrain, nextDays]);
           setAsked((count) => count + 1);
         }}
