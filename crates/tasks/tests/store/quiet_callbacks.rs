@@ -327,7 +327,7 @@ fn addressed_messages_verdicts_owner_messages_and_plain_bytes() {
     f.store.move_to("tools/quiet", "review", &exe).unwrap();
     let launched = f.session("reviewer");
     f.store
-        .take_role("tools/quiet", &launched, "reviewer")
+        .take_role_beside("tools/quiet", &launched, "reviewer", Some("a second stamp"))
         .unwrap();
     f.store
         .record_launch(&NewLaunch::new("tools/quiet", &launched, "reviewer"))
@@ -529,15 +529,21 @@ fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates() {
         // Filed by its executor: the owner reviews only work it did not file.
         f.task_with(NewTask::new("tools/two-reviewers", "Two reviewers", &exe));
         f.store.claim("tools/two-reviewers", &exe).unwrap();
-        f.store
-            .take_role("tools/two-reviewers", &first, "reviewer")
-            .unwrap();
-        f.store
-            .take_role("tools/two-reviewers", &second, "reviewer")
-            .unwrap();
+        // The owner first, whose words reach every participant; each other beside those before it,
+        // saying why.
         if by_owner {
             f.store
                 .take_role("tools/two-reviewers", "owner", "reviewer")
+                .unwrap();
+        }
+        for who in [&first, &second] {
+            f.store
+                .take_role_beside(
+                    "tools/two-reviewers",
+                    who,
+                    "reviewer",
+                    Some("another stamp"),
+                )
                 .unwrap();
         }
         f.store
