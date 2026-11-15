@@ -71,6 +71,24 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** Once the page is shown: at once if it is, else at the first change of visibility that shows
+ * it, or once `signal` ends. */
+export function whenShown(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined" || !document.hidden || signal.aborted) return resolve();
+    const heard = () => {
+      if (!document.hidden) done();
+    };
+    const done = () => {
+      document.removeEventListener("visibilitychange", heard);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", heard);
+    signal.addEventListener("abort", done);
+  });
+}
+
 /** Wait until the page is back, if it is away: a stream opened while it is away would be held. */
 export async function back(signal?: AbortSignal): Promise<void> {
   while (isAway() && !signal?.aborted) await sleep(100, signal);

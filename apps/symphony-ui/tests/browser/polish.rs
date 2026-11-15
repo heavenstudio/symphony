@@ -795,6 +795,12 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
             "no task 'product/nope'",
             json!(["board", "missing"]),
         ),
+        (
+            "/runs",
+            symphony_api::RUNS_PATH,
+            "this project keeps no runs where this server reads",
+            json!(["missing"]),
+        ),
     ] {
         bare.miss_route(read, Some(error));
         page.open(&bare.url(route));
@@ -814,6 +820,7 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
         ("/", symphony_api::BOARD_PATH, json!(["failed"])),
         ("/queue", "/api/queue", json!(["board", "failed"])),
         ("/reports", symphony_api::REPORTS_PATH, json!(["failed"])),
+        ("/runs", symphony_api::RUNS_PATH, json!(["failed"])),
     ] {
         site.fail_route(read, true);
         page.open(&site.url(route));
