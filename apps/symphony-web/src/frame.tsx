@@ -13,7 +13,6 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { useMount } from "./mount";
 import { crumbs, headerLinks, href, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
@@ -119,16 +118,17 @@ const FRAME_EVENTS = [
 
 /**
  * Reads the activity and the pending, and leaves them on the window for the panel, saying
- * `review:frame`, unless `current` says, once they answer, that a newer read or the page's end
- * replaced this one: then nothing is written. Whether to read again (`MetadataReads`).
+ * `review:frame`, unless `signal` ended before they answered, as a newer read or the page's end
+ * ends it: then their requests are given up and nothing is written. Whether to read again
+ * (`MetadataReads`).
  */
-export async function readMetadata(reads: MetadataReads, current: () => boolean): Promise<boolean> {
+export async function readMetadata(reads: MetadataReads, signal: AbortSignal): Promise<boolean> {
   const started = reads.start();
   const [activity, pending] = await Promise.allSettled([
-    getJson("/api/activity"),
-    getJson("/api/pending"),
+    getJson("/api/activity", signal),
+    getJson("/api/pending", signal),
   ]);
-  if (!current()) return false;
+  if (signal.aborted) return false;
   const retry = reads.finished(
     started,
     activity.status === "fulfilled" && pending.status === "fulfilled",
@@ -169,8 +169,6 @@ export async function readMetadata(reads: MetadataReads, current: () => boolean)
 function useMetadata(): [FrameRefresh, number] {
   const [asked, setAsked] = useState(0);
   const reads = useRef(new MetadataReads());
-  const generation = useRef(0);
-  const mount = useMount();
   const [frame] = useState<FrameRefresh>(() => {
     const refresh = () => setAsked((count) => count + 1);
     return {
@@ -195,13 +193,13 @@ function useMetadata(): [FrameRefresh, number] {
   });
   useEffect(() => {
     void asked;
-    generation.current += 1;
-    const ticket = generation.current;
-    const current = () => ticket === generation.current && !mount.aborted;
-    void readMetadata(reads.current, current).then((retry) => {
+    // A newer read replaces this one, and the kind's stop, which unmounts the page, ends it too.
+    const controller = new AbortController();
+    void readMetadata(reads.current, controller.signal).then((retry) => {
       if (retry) frame.refresh();
     });
-  }, [asked, frame, mount]);
+    return () => controller.abort();
+  }, [asked, frame]);
   return [frame, asked];
 }
 

@@ -208,11 +208,15 @@ export function memoryStorage(refuse = false): Storage {
   };
 }
 
-/** One request the stubbed server holds: its address, its body as JSON, and how to answer it. */
+/**
+ * One request the stubbed server holds: its address, its body as JSON, how to answer it, and the
+ * signal that gives it up.
+ */
 export interface Asked {
   url: string;
   body: unknown;
   answer: (response: Response) => void;
+  signal: AbortSignal | null;
 }
 
 /**
@@ -227,7 +231,7 @@ export function server(): Asked[] {
     (url: string, init?: RequestInit) =>
       new Promise<Response>((answer) => {
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        asked.push({ url, body, answer });
+        asked.push({ url, body, answer, signal: init?.signal ?? null });
       }),
   );
   return asked;

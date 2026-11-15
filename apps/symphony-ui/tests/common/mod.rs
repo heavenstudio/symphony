@@ -39,3 +39,22 @@ pub fn served_shell(shell: &str) -> String {
         .expect("a shell with a body");
     format!("{}{element}{}", &shell[..at], &shell[at..])
 }
+
+/// The modules `module`, the published script at `path` (`/assets/NAME.js`), imports by name, as
+/// published paths, sorted: each `import` or `from` of a module beside it, as Vite writes them.
+pub fn imported(path: &str, module: &str) -> Vec<String> {
+    let folder = &path[..=path.rfind('/').expect("a published path")];
+    let mut names: Vec<String> = ["from\"./", "import\"./"]
+        .iter()
+        .flat_map(|keyword| {
+            module.match_indices(keyword).map(|(at, _)| {
+                let rest = &module[at + keyword.len()..];
+                let name = &rest[..rest.find('"').expect("a closed name")];
+                format!("{folder}{name}")
+            })
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}

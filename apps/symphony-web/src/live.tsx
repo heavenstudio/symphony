@@ -421,7 +421,7 @@ async function readBoard<B extends PageBoard>(
   signal: AbortSignal,
   reader: (value: unknown) => B | null,
 ): Promise<B> {
-  const answer = await getIf(scoped(scope, BOARD_PATH), "");
+  const answer = await getIf(scoped(scope, BOARD_PATH), "", signal);
   if (answer.same) throw new Error("The server answered 304 to a plain read");
   const read = reader(answer.value);
   if (!read) throw new Error("The board's answer has no version, ping or build");

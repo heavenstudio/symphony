@@ -6,6 +6,9 @@
 //! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
 //! and wasm-bindgen. Real seven-module compilation and browser acceptance are separate checks.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -385,6 +388,28 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         );
         assert!(manifest[kind].get("wasm").is_none(), "{kind}");
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+        // The chunks the script imports, each once, which the shell preloads beside it: published
+        // files that import none outside them.
+        let imports: Vec<_> = manifest[kind]["imports"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{kind} names its imports"))
+            .iter()
+            .map(|chunk| chunk.as_str().unwrap())
+            .collect();
+        let mut named = imports.clone();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), imports.len(), "{kind}: {imports:?}");
+        assert_eq!(named, common::imported(script, &module), "{kind}");
+        for chunk in &imports {
+            let chunk_module = String::from_utf8(file(chunk)).unwrap();
+            for inner in common::imported(chunk, &chunk_module) {
+                assert!(
+                    imports.contains(&inner.as_str()),
+                    "{kind}: {chunk} imports {inner}"
+                );
+            }
+        }
         let styles = manifest[kind]["styles"].as_array().unwrap();
         assert_eq!(styles[0], shared, "{kind}");
         let own: Vec<_> = styles[1..]

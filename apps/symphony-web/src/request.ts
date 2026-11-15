@@ -187,10 +187,10 @@ export async function getJson(url: string, signal?: AbortSignal): Promise<unknow
 
 /**
  * A read of something this device kept: it names the kept copy's tag (`If-None-Match`, when there
- * is one) and goes past the browser's cache.
+ * is one) and goes past the browser's cache. Given up, its request with it, once `signal` ends.
  */
-export async function getIf(url: string, etag: string): Promise<Answer> {
-  return (await exchange(url, undefined, etag))[0];
+export async function getIf(url: string, etag: string, signal?: AbortSignal): Promise<Answer> {
+  return (await exchange(url, undefined, etag, signal))[0];
 }
 
 /** What a document read answered, and the feed's cursor it was read at. */
@@ -213,11 +213,15 @@ export function cursorOf(header: string | null): number | null {
 /**
  * A document read naming the copy this device kept (`getIf`), with the feed's cursor it was read
  * at, so a page that draws its kept copy on a `304`, which has no body, opens the feed from it;
- * null when the server has no such document (a `404`).
+ * null when the server has no such document (a `404`). Given up, as `getIf`, once `signal` ends.
  */
-export async function getDocument(url: string, etag: string): Promise<DocumentAnswer | null> {
+export async function getDocument(
+  url: string,
+  etag: string,
+  signal?: AbortSignal,
+): Promise<DocumentAnswer | null> {
   try {
-    const [answer, headers] = await exchange(url, undefined, etag);
+    const [answer, headers] = await exchange(url, undefined, etag, signal);
     return { answer, cursor: cursorOf(headers.get(VERSION_HEADER)) };
   } catch (failure) {
     if (failure instanceof Failure && failure.kind === "missing") return null;

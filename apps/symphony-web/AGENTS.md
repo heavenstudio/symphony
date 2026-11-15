@@ -41,7 +41,7 @@ lockfile written again, in a task of their own.
   which name Node's types this package does not take.
 - **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
   `KINDS`; JSX by Vite's own transform, so no React plugin; no dev server, no public folder and
-  no module preload, as the Symphony's server and shell serve and load the files.
+  no module preload of Vite's, as the Symphony's server and shell serve and load the files.
 - **Biome** lints and formats (`biome.json`: its recommended rules with the React and test
   domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
@@ -125,12 +125,15 @@ entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it b
 and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it. What the
 kinds share (React, the frame) Vite puts in a chunk their entries import, named after one of its
 modules, so a first visit takes the kind's entry and that chunk, and a move between two kinds of
-this client the target's entry alone.
+this client the target's entry alone. The shell asks for the chunks an entry imports beside it, a
+module preload each (`imports` in its manifest, which `package.sh` reads from Vite's), so a first
+visit fetches them with the entry rather than once the entry has come and been read: a round trip
+fewer, which a phone over the tailnet pays.
 
 **Work that outlives its start.** Async work a page starts checks, after each wait and before it
 touches the page, the window, the storage or the address, a signal that ends with what started
 it: an effect's own (its cleanup aborts it), or, for a handler or a read with no cleanup of its own
-(a click's post, the frame's activity read), the kind's mount (`useMount()`, `src/mount.ts`, which
+(a click's post, a document's versions read), the kind's mount (`useMount()`, `src/mount.ts`, which
 `stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
 moves no one, and a late read writes nothing over the next kind's. A Dioxus page had this from
 its framework, a spawned task dying with its component; here each such wait says it. The device
@@ -149,10 +152,11 @@ contents watch (`contents.ts`: the outline folded on its own while a drawn table
 box, unless the reader chose) is no part of it: it runs from the mount of a body that has the
 outline to its unmount, under the signal of that body's own effect (`DocumentBody`).
 
-A read the page gives up is given up on the wire too: `getJson(url, signal)` and `exchange` take
-the signal of what asked, so a read the feed's news replaces, or one a page left behind, is
-aborted rather than answered into nothing (`getDocument`, the data layer's, takes none, so its
-callers check their signal after each of its waits). A text box (`textarea.tsx`) hears each
+A read the page gives up is given up on the wire too: every read in `src/` is passed the signal of
+what asked (`getJson(url, signal)`, `getIf(url, etag, signal)` and `getDocument`, all through
+`exchange`), so a read the feed's news replaces, or one a page left behind, is aborted rather than
+answered into nothing, and its caller still checks that signal after each wait, as an answer may
+come first. A post takes none: the server may have acted on it. A text box (`textarea.tsx`) hears each
 `input` event as its change, as the Dioxus box's `oninput` did: React's `onChange` compares the
 box with the value it last saw, and so misses a value a script set before firing `input`.
 

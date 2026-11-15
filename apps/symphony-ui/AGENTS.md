@@ -346,7 +346,13 @@ never the whole target, which the release run runs.
   (`select.tsx`, 1,249), where the board's WASM and glue were. Home takes 111,528 (from 111,400),
   `/queue` 106,971 (from 106,825) and `/reports` 107,258 (from 107,235); `/docs/` and a document
   take 136,580 and 138,197 (from 135,756 and 137,373), their entry 558 less with the select field
-  a chunk of its own; every other page stays within 150 bytes of main's. Each
+  a chunk of its own; every other page stays within 150 bytes of main's. The shell preloading the
+  chunks each web kind's entry imports beside it (`app/client-moves-to-react/shared-chunk-preload-and-read-signal`,
+  against main's build at ed6868a) costs every page the 17 names it adds to the manifest, 153
+  bytes of the shell on the wire, for the same requests, a kind's chunks asked for with its entry
+  rather than once it has come: `/` takes 111,667 (from 111,515), `/tasks` 116,371 (from
+  116,202), `/queue` 107,113 (from 106,958), `/reports` 107,396 (from 107,244), `/docs/` and a
+  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -593,8 +599,9 @@ never the whole target, which the release run runs.
 - **The page.** `package.sh` writes the shell, whose single history adapter is
   `assets/shell.js`: the page kinds' manifest on its first line (`const modules =
   …;`), then that script minified by the esbuild dx fetched. A kind of the React client's
-  names its script and styles and no wasm: the shell imports that script, a module exporting
-  `run` and `stop`, in place of the glue's init, and a move between it and a Dioxus kind stops
+  names its script, the chunks that script imports (`imports`) and its styles, and no wasm: the
+  shell imports that script, a module exporting `run` and `stop`, in place of the glue's init,
+  with a module preload of each chunk it has not asked for yet beside it, and a move between it and a Dioxus kind stops
   one and starts the other as between two Dioxus kinds. Its
   `html[data-navigation]` is `loading` until the shell's navigation finishes,
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made

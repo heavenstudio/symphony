@@ -219,7 +219,7 @@ both kinds, to copy after `--`:
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
-| what an entry page loads (its bytes) | `budget` `phone::` |
+| what an entry page loads (its bytes, its order) | `budget` `phone::` `preload::` |
 
 ## Worked examples
 
