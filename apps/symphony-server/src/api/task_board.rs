@@ -98,17 +98,23 @@ fn project(
     let open_only = query(request, "open").as_deref() == Some("1");
     let roots = query(request, "roots").as_deref() == Some("1");
     let top_level = parent.is_none() && holder.is_none();
+    // A task's subtasks and the task groups list a subtask only while it is a row of its own: a
+    // finished instruction that staffed its parent's work or review is the parent's row.
+    let listed = |task: &symphony_api::Task| {
+        symphony::taskview::listed_under_parent(&task.slug, task.instruction, &task.status)
+    };
     let ids: std::collections::BTreeSet<_> = tasks.tasks.iter().map(|t| t.slug.clone()).collect();
     let parents: std::collections::BTreeSet<_> = tasks
         .tasks
         .iter()
+        .filter(|t| listed(t))
         .filter_map(|t| t.parent.clone())
         .collect();
     tasks.tasks.retain(|task| {
         (!top_level || task.is_task())
             && (parent
                 .as_ref()
-                .is_none_or(|p| task.parent.as_ref() == Some(p)))
+                .is_none_or(|p| task.parent.as_ref() == Some(p) && listed(task)))
             && (!open_only || !task.is_finished())
             && holder.as_ref().is_none_or(|handle| {
                 task.roles.iter().any(|r| {

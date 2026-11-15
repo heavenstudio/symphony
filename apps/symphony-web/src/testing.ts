@@ -276,6 +276,42 @@ export function server(): Asked[] {
   return asked;
 }
 
+/** One stream of the feed a page opened: where, how often it was closed, and its socket. */
+export interface Stream {
+  url: string;
+  closed: number;
+  source: EventTarget;
+}
+
+/**
+ * The page's WebSocket, on a page at `href`: each stream the feed opens, kept in order, a socket
+ * the test makes speak (`say`, and its `open` and `error` events).
+ */
+export function feeds(href: string): Stream[] {
+  const opened: Stream[] = [];
+  vi.stubGlobal("location", { href });
+  vi.stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      private readonly stream: Stream;
+      constructor(url: string) {
+        super();
+        this.stream = { url, closed: 0, source: this };
+        opened.push(this.stream);
+      }
+      close() {
+        this.stream.closed += 1;
+      }
+    },
+  );
+  return opened;
+}
+
+/** The feed's `source` says the event `name` with `data`, as the server's socket does: one message. */
+export function say(source: EventTarget | undefined, name: string, data: string): void {
+  source?.dispatchEvent(new MessageEvent("message", { data: `${name}\n${data}` }));
+}
+
 /** A JSON reply of `status`, tagged `etag` when one is given. */
 export const reply = (status: number, body: unknown, etag?: string) =>
   new Response(JSON.stringify(body), {

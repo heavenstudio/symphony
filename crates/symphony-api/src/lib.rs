@@ -12,6 +12,15 @@
 //!   (its data empty: the line `data:`) at least every [`Board::ping_ms`], never more than
 //!   [`PING_MAX_MS`] apart: an SSE comment never reaches a page's code, so a stream whose server
 //!   went quiet with its socket open would otherwise look live for ever.
+//! - The same `GET`, asking to upgrade (`Upgrade: websocket`), is the same stream on a WebSocket:
+//!   each event one text message, its name, a line feed, then its data (a [`FEED_EVENT`]'s
+//!   [`Delta`] or a [`SERVER_EVENT`]'s string, as JSON; nothing for a [`PING_EVENT`]), closed by
+//!   the server where the stream would end.
+//!   A browser keeps six HTTP/1.1 connections to a host and an event stream holds one while it is
+//!   open, so six tabs following the board would leave a seventh none for its reads; it counts
+//!   each WebSocket apart. The web client follows the feed so (`apps/symphony-web/src/feed.ts`). A
+//!   WebSocket has no same-origin rule for what it reads, so an upgrade whose `Origin` is not
+//!   `http://` and its own `Host` is refused (`403`), as such a write is.
 //!
 //! On one stream, versions only go up. A server that restarts counts again from its own start,
 //! so a version is never compared across streams, and nothing resumes by `Last-Event-ID`. A
@@ -118,7 +127,7 @@ pub struct Front {
 
 /// The route that answers a [`Board`].
 pub const BOARD_PATH: &str = "/api/board";
-/// The route of the feed: Server-Sent Events, `?since=VERSION`.
+/// The route of the feed: Server-Sent Events, or the same events on a WebSocket, `?since=VERSION`.
 pub const FEED_PATH: &str = "/api/feed";
 /// The response header a document read (`/api/document`, `/api/section`) names the feed's cursor
 /// at the read in, on its `200` and its `304` alike: a page that draws the copy it kept on a

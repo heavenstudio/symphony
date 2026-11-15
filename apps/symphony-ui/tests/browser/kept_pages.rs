@@ -1,8 +1,7 @@
 //! A full page load in one tab, the page before it left kept by the browser for back and forward
-//! (its back/forward cache). A kept page holds no feed stream: with one, a sixth full load's reads
-//! would wait behind five streams that never end, the browser's six connections to a server
-//! (HTTP/1.1) all taken. A page shown again from the cache reads what changed while it was kept and
-//! follows the feed again.
+//! (its back/forward cache). A kept page holds no feed stream: it would keep its socket, and the
+//! server its subscription, for as long as it is kept. A page shown again from the cache reads what
+//! changed while it was kept and follows the feed again.
 
 use std::time::Duration;
 
