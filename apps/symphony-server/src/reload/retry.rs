@@ -1,5 +1,6 @@
-//! When the reload worker tries again a source version whose update failed: its build failed, or
-//! the replacement it built did not take over. Not at its next check, since what failed it (the
+//! When the reload worker tries again a source version whose update failed: its build failed, its
+//! build was dropped for sources that changed or could not be read while it ran, or the
+//! replacement it built did not take over. Not at its next check, since what failed it (the
 //! machine's load, a full disk, a board slow to read) may still hold, but once a wait is over that
 //! starts at [`FIRST`] and doubles with each failure of that version in a row, up to [`MOST`]
 //! ([`backoff`]), so a version that cannot start costs at most one build per [`MOST`]. Any other
@@ -82,6 +83,15 @@ impl Retry {
             tried: false,
         });
         when(at.1, wait)
+    }
+
+    /// When the version whose update failed last is tried again, as [`Retry::failed`] said it,
+    /// while that try is still to come: what a notice written meanwhile keeps saying.
+    pub fn waiting(&self) -> Option<String> {
+        self.failed
+            .as_ref()
+            .filter(|failed| !failed.tried)
+            .map(|failed| when(failed.at.1, failed.wait))
     }
 }
 
@@ -167,6 +177,23 @@ mod tests {
             retry.failed("one"),
             stamp(start + waited + MOST + 5 * MINUTE)
         );
+    }
+
+    #[test]
+    fn a_waiting_retry_says_its_time_until_it_is_tried() {
+        let (mut retry, now) = retry();
+        assert_eq!(retry.waiting(), None, "nothing failed");
+        let said = retry.failed("one");
+        // The failure's own time, whatever the clock reads since.
+        pass(&now, 3 * MINUTE);
+        assert_eq!(retry.waiting(), Some(said.clone()));
+        pass(&now, 2 * MINUTE);
+        assert_eq!(retry.waiting(), Some(said), "due, and not tried yet");
+        assert!(retry.again("one"));
+        assert_eq!(retry.waiting(), None, "its try has begun");
+        let later = retry.failed("one");
+        assert_eq!(later, stamp(now.lock().unwrap().1 + 10 * MINUTE));
+        assert_eq!(retry.waiting(), Some(later));
     }
 
     #[test]

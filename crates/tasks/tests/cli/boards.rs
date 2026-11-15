@@ -13,7 +13,7 @@ use symphony_board::cli::{Env, connect};
 use symphony_board::launch::reap::state_path;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{NewTask, Opening, Program, Schema, Store};
 
 /// Two fixture projects, `alpha` and `beta`, each a repository of its own outside this one: their
 /// boards' servers are stopped when the case ends, however it ends.
@@ -139,15 +139,18 @@ fn an_older_command_line_is_refused_a_board_a_newer_build_migrated_before_any_wr
     let b = Two::ok(&two.beta, &["register", "--kind", "worker"]);
     let addr = Two::home(&two.alpha).recorded().unwrap().addr;
     let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
-    // As the newer build's `tasks migrate` in alpha's main checkout moves alpha's live board, which
-    // its server names whoever opens it: where the main checkout holds no board source, nothing else
-    // does.
+    // As the newer build's `tasks migrate --leave-behind` in alpha's main checkout moves alpha's
+    // live board, which its server names whoever opens it: where the main checkout holds no board
+    // source, nothing else does. This build's `tasks`, which wrote it, is left behind.
     let migrated = Store::opening(
         Client::new(&addr, "sf", "tasks"),
         Box::new(|| NOW),
         Box::new(|_| false),
         "this-host",
-        &Opening::write().at(newer.clone()).migrating(),
+        &Opening::write()
+            .at(newer.clone())
+            .migrating()
+            .leave_behind(),
     )
     .unwrap();
 
@@ -159,13 +162,16 @@ fn an_older_command_line_is_refused_a_board_a_newer_build_migrated_before_any_wr
     let this = Schema::this_build().version();
     // A board this build cannot open is a run that cannot start, as an unreachable one is.
     assert_eq!(ran.code, 2, "{}", ran.err);
+    let program = Program::this();
     assert_eq!(
         ran.err,
         format!(
             "✖ the alpha board is at schema {}, and this build writes only a board at its own \
-             schema, {this}: nothing was written; `just symphony` in alpha brings its Symphony \
-             to the board's schema\n",
-            newer.version()
+             schema, {this}: nothing was written; rebuild {} ({}) at the board's schema, and \
+             `just symphony` in alpha brings its Symphony to it\n",
+            newer.version(),
+            program.name,
+            program.path
         )
     );
     assert!(migrated.get("alpha/late").is_err());

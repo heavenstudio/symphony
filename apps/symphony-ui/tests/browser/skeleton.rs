@@ -493,6 +493,84 @@ fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
     );
 }
 
+/// A column whose first page fails on a quiet board (no feed event, no refresh) is read again by
+/// the page itself until the server answers: refused with a 500, then held past the limit a read
+/// waits for (`symphonyAnswerMs`, a page global that shortens the 15 s for this test), it keeps
+/// its ghost and says why and that it is trying again; once the server answers, its cards draw
+/// with no click and the notice goes.
+#[test]
+fn a_column_whose_first_page_fails_is_read_again_by_itself_until_it_answers() {
+    let site = site();
+    let task = |slug: &str| {
+        json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": "ready",
+            "priority": 2, "parent": null, "created_by": "owner", "created": 0.0, "updated": 0.0,
+            "links": [], "depends": [], "roles": [], "instruction": false})
+    };
+    site.set_json(
+        "/api/task-board",
+        &json!({"tasks": [task("probe/one"), task("probe/two")], "statuses": ["ready"],
+            "counts": [["ready", 2]], "signoff": [], "next": null}),
+    );
+    let read = column_read("ready");
+    site.fail_route(&read, true);
+    let Some(mut browser) = watching(1280, 900, &["window.symphonyAnswerMs = 5000;"]) else {
+        return;
+    };
+    browser.open(&site.url("/tasks"));
+    let shows = "(() => { const c = document.querySelector('.column[data-status=ready]');
+        return {busy: c?.getAttribute('aria-busy') ?? null, ghosts: c?.querySelectorAll('.ghost-card').length ?? null,
+            cards: [...(c?.querySelectorAll('.taskcard') ?? [])].map(card => card.dataset.slug),
+            said: [...document.querySelectorAll('.page-notices:not([hidden]) > p[role=alert]')].map(p => p.textContent)}; })()";
+    let says = |browser: &mut Chrome, said: &str, why: &str| {
+        assert!(
+            browser.wait_for(&format!("(s => s.said[0] === '{said}')({shows})"), SHOWN),
+            "{why}: {} asked {:?}",
+            browser.eval(shows),
+            site.targets()
+        );
+        assert_eq!(
+            browser.eval(shows),
+            json!({"busy": "true", "ghosts": 2, "cards": [], "said": [said]}),
+            "{why}: the column keeps its ghost, and the page says why once"
+        );
+    };
+    says(
+        &mut browser,
+        "Board snapshot unavailable (the server answered 500). Trying again…",
+        "a first page the server refused",
+    );
+    // Held before the refusal ends, so no read of the column is answered meanwhile.
+    site.hold_route(&read, true);
+    site.fail_route(&read, false);
+    // Only a read of the page's own, asked after the refused one and given up at the limit, says
+    // this: nothing else on a quiet board reads the column again.
+    says(
+        &mut browser,
+        "The server did not answer in time. Trying again…",
+        "a first page asked again by itself, and held",
+    );
+    site.hold_route(&read, false);
+    let drawn = format!(
+        "(s => s.busy === 'false' && s.cards.length === 2 && s.said.length === 0)({shows})"
+    );
+    assert!(
+        browser.wait_for(&drawn, SHOWN),
+        "the column was not drawn by itself once the server answered: {} asked {:?}",
+        browser.eval(shows),
+        site.targets()
+    );
+    assert_eq!(
+        browser.eval(shows),
+        json!({"busy": "false", "ghosts": 0, "cards": ["probe/one", "probe/two"], "said": []}),
+        "its cards, no ghost, and nothing more said of the failure"
+    );
+    let asked = site.targets().iter().filter(|one| **one == read).count();
+    assert!(
+        asked >= 3,
+        "refused, held and answered are three reads at least: {asked}"
+    );
+}
+
 /// The default view's read of the first page of the column `status`, as the board asks for it.
 fn column_read(status: &str) -> String {
     format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")

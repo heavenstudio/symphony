@@ -133,7 +133,8 @@ fn a_board_failing_every_other_tick_is_warned_of_throughout_until_a_minute_of_go
 fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failure_is_not() {
     use crate::schema::{Access, Opened, VERSION, decide};
     use crate::server::ServerError;
-    let refused = |found| match decide(found, VERSION, Access::Read, Some("demo")) {
+    let program = crate::Program::named("tasks", "/repo/.target/bin/tasks");
+    let refused = |found| match decide(found, VERSION, Access::Read, Some("demo"), &program) {
         Opened::Refused(why) => why,
         other => panic!("{other:?}"),
     };
