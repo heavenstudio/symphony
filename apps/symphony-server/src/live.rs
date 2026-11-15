@@ -863,7 +863,8 @@ impl Hub {
         Ok(())
     }
 
-    fn refresh_page(&self, scope: &str, root: &Path) -> Result<(), String> {
+    /// Read `scope`'s page again from its checkout at `root`, its documents among it.
+    pub(crate) fn refresh_page(&self, scope: &str, root: &Path) -> Result<(), String> {
         self.refresh_page_read(scope, root, true)
     }
 

@@ -838,8 +838,8 @@ says what it holds. `sweep/holder.rs` reads a
 lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
 so a live one lets the tree go only once the board shows its agent finished
 (`Index::agent_finished`); a land's goes once the process it names (and its start) is gone;
-the release run's (`RELEASE_LOCK`, which `crates/symphony`'s release tests compare with its own,
-or `LEGACY_LOCK`, its reason before the rename) and any other keep it. Foreground `--task`
+the release run's (`RELEASE_LOCK`, which `crates/symphony`'s release tests compare with its own)
+and any other keep it. Foreground `--task`
 visits only that task's finished worktrees (its closed launches', its executors' and
 reviewers' sessions' once none is live or stale, and those on its branch) and asks for a
 detached full pass. A removed tree's merged branch is deleted with it, unless a land's record of its merge names it, under its name or the dashed one an earlier
