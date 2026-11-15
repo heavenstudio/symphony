@@ -1,7 +1,8 @@
 # Symphony's mark
 
-Four options for the mark and the wordmark Symphony's default look carries, put to the owner on
-the card in [DECISIONS](../DECISIONS.md). Each option is two files here: `X-icon.svg`, the tab's
+Four options for the mark and the wordmark Symphony's default look carries. The mark is C, the
+fermata, with its serif wordmark ([its card](../DECISIONS.md#symphony-mark)); the board task
+`app/symphony-mark-is-the-fermata` builds it. Each option is two files here: `X-icon.svg`, the tab's
 and the home screen's icon, a tile in the default theme's primary colour with the mark on it, its
 light and dark colours chosen inside the file; and `X-mark.svg`, the bare mark, which the header
 draws in the page's own `--primary` token, so it follows light and dark and a project's colours.
@@ -62,9 +63,9 @@ px, the header 97 px tall, as it is today).
 
 ## What applying the choice touches
 
-The follow-up, once the owner has chosen:
+What the board task `app/symphony-mark-is-the-fermata` builds, with `c-icon.svg` and `c-mark.svg`:
 
-- **The default icon.** The chosen icon file is the Symphony's own, embedded in the server: the
+- **The default icon.** The icon file is the Symphony's own, embedded in the server: the
   icon of a project with no icon of its own, on its pages (in place of the shell's empty link) and
   on the server's own pages (in place of the beamed notes), and the answer to `/favicon.ico`
   outside any project. Its place in that answer's order is the follow-up's to set in

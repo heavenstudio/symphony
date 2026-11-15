@@ -1,9 +1,9 @@
 # `symphony-build`: the commands only this repository's own build and release run use
-# (`publish-client`, `release-inputs`, `size-budget`, `crates-check`, `split-repair` and `release`,
-# docs/RELEASES.md and docs/CHECKS.md), run as `tools/rs-bin.sh symphony-build COMMAND`. A package
-# of its own, never published (the workspace's `publish = false`) and never shipped: no project is
-# given it (`init::BUILDS` does not name it), and neither the library every project links nor its
-# `symphony` binary compiles any of it. It lints as the library does.
+# (`publish-client`, `release-inputs`, `size-budget`, `crates-check`, `split-repair`, `synced` and
+# `release`, docs/RELEASES.md and docs/CHECKS.md), run as `tools/rs-bin.sh symphony-build COMMAND`.
+# A package of its own, never published (the workspace's `publish = false`) and never shipped: no
+# project is given it (`init::BUILDS` does not name it), and neither the library every project
+# links nor its `symphony` binary compiles any of it. It lints as the library does.
 [package]
 name = "symphony-build"
 version = "0.1.0"
@@ -22,6 +22,8 @@ symphony-board = { path = "../tasks" }
 symphony-api = { path = "../symphony-api" }
 # A mistyped command's nearest names, as the shipped `symphony` ranks its own.
 symphony-args = { path = "../symphony-args" }
+# The private headless Chrome `synced` times the pages in, the shot's driver.
+symphony-chrome = { path = "../chrome-devtools" }
 symphony-env = { path = "../symphony-env" }
 serde = { version = "1", features = ["derive"] }
 # The features the library's serde_json takes, which the release run's JSON is read and written

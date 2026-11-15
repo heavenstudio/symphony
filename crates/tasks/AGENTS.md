@@ -143,6 +143,11 @@ network. `examples/search_bench.rs` (`--database NAME --out DIR`, run through
 catch-up and the queries; `examples/embedding_cpu.rs` measures inference CPU on a frozen snapshot
 with no database. Neither estimates the database's CPU from the client's.
 
+Search by meaning is to be deleted, and the board searches by words alone
+([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the board task
+`tools/board-search-by-words-alone` removes the model, the three modes, `tasks embed` and the
+server's pass. Until it lands, build nothing on any of them.
+
 ### Children
 
 `sys.rs` and `sys/` are what the board asks of the machine and how it starts a child: `sys::command`
