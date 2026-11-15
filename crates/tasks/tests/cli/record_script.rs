@@ -681,6 +681,11 @@ if [ "$2" = crates-check ] && [ -n "${FAIL_CRATES:-}" ]; then echo 'crates stand
 exit 0
 "#;
 
+/// The web client's checks' stand-in (`apps/symphony-web/check.sh`, which the `client-lint` recipe
+/// runs last in `lint-rs`): green, as what these tests hold the recipes to is how they record, not
+/// the client's own checks on its Node.
+const CLIENT_LINT: &str = "#!/bin/sh\nexit 0\n";
+
 /// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
 /// and binaries' own tests and the doc tests; `test` (the tests' build and each lane) saying the
@@ -699,8 +704,8 @@ exit 0
 
 /// A repository of the test's own holding this workspace's justfile and the scripts its recipes
 /// run, ignoring `build/` as this one does, with stand-ins for Cargo ([`RECIPES_CARGO`]), the client
-/// check ([`CLIENT_CHECK`]) and `tools/rs-bin.sh` ([`RS_BIN`]): the recipes recorded by
-/// [`RECORDER`].
+/// check ([`CLIENT_CHECK`]), the web client's checks ([`CLIENT_LINT`]) and `tools/rs-bin.sh`
+/// ([`RS_BIN`]): the recipes recorded by [`RECORDER`].
 struct Recipes {
     tree: PathBuf,
     cargo: PathBuf,
@@ -720,6 +725,7 @@ impl Recipes {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
         executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
+        executable(&tree.join("apps/symphony-web/check.sh"), CLIENT_LINT);
         executable(&tree.join("tools/rs-bin.sh"), RS_BIN);
         fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
         fs::write(tree.join(".gitignore"), "/build/\n").unwrap();
@@ -787,8 +793,16 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
         let done = recipes.just(recipe, &[]);
         assert!(done.status.success(), "{recipe}: {done:?}");
     }
-    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 5));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 6));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
+    // Each line's parent by its label.
+    let label = |run: &str| {
+        (lines.iter())
+            .find(|line| line.run == run)
+            .unwrap()
+            .label
+            .as_str()
+    };
     let said: Vec<_> = lines
         .iter()
         .map(|line| {
@@ -796,7 +810,7 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
                 line.label.as_str(),
                 line.pipeline.as_str(),
                 line.step.as_deref(),
-                line.parent.as_deref(),
+                line.parent.as_deref().map(label),
                 line.end,
             )
         })
@@ -807,6 +821,14 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
             ("just client-update", "client", None, None, Some(End::Red)),
             ("just client-check", "client", None, None, Some(End::Green)),
             ("just lint-rs", "lint", None, None, Some(End::Green)),
+            // The web client's checks, which lint-rs runs last: a step of its run.
+            (
+                "just client-lint",
+                "lint",
+                Some("client-lint"),
+                Some("just lint-rs"),
+                Some(End::Green)
+            ),
             ("just client-check", "client", None, None, Some(End::Green)),
             ("just size-check", "size", None, None, Some(End::Green)),
         ]
@@ -814,10 +836,14 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
     // A client check on the tree a client update failed on repeats no update; the next client
     // check repeats the one before.
     assert_eq!(
-        (lines[1].rerun_of.as_deref(), lines[2].rerun_of.as_deref()),
-        (None, None)
+        (
+            lines[1].rerun_of.as_deref(),
+            lines[2].rerun_of.as_deref(),
+            lines[3].rerun_of.as_deref()
+        ),
+        (None, None, None)
     );
-    assert_eq!(lines[3].rerun_of.as_deref(), Some(lines[1].run.as_str()));
+    assert_eq!(lines[4].rerun_of.as_deref(), Some(lines[1].run.as_str()));
 }
 
 /// The steps of a verify, in the order it runs them, each with the label its record keeps.
@@ -845,12 +871,12 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(&recipes.work, runs, 7));
+    let first = symphony_api::fold(day_lines(&recipes.work, runs, 8));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(&recipes.work, runs, 14);
+    let lines = day_lines(&recipes.work, runs, 16);
     // A start line and an end line for each run and step, and none for the commands inside them.
-    assert_eq!(lines.len(), 28, "{lines:#?}");
+    assert_eq!(lines.len(), 32, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
         .into_iter()
         .filter(|line| first.iter().all(|earlier| earlier.run != line.run))
@@ -864,7 +890,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
     let commit = git_says(tree, &["rev-parse", "HEAD"]);
     let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
-        assert_eq!(runs.len(), 7, "{runs:#?}");
+        assert_eq!(runs.len(), 8, "{runs:#?}");
         let verify = named(runs, None);
         assert_eq!(
             (
@@ -885,6 +911,22 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
             let ended = if step == "tests" { end } else { End::Green };
             assert_eq!(line.end, Some(ended), "{step}");
         }
+        // The web client's checks, which lint-rs runs last: a step of the lint step.
+        let client_lint = named(runs, Some("client-lint"));
+        assert_eq!(
+            (
+                client_lint.pipeline.as_str(),
+                client_lint.label.as_str(),
+                client_lint.parent.as_deref(),
+                client_lint.end
+            ),
+            (
+                "verify",
+                "just client-lint",
+                Some(named(runs, Some("lint")).run.as_str()),
+                Some(End::Green)
+            )
+        );
         for line in runs {
             assert_eq!(line.commit.as_deref(), Some(commit.as_str()), "{line:#?}");
             // The tree and the checkout's cleanliness are git's answers, which the recorder asks
@@ -917,7 +959,9 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
     assert_eq!(red_tests.exit, Some(9));
     assert_eq!(named(&first, None).exit, red.status.code());
     // The second verify, on the same tree after a red, repeats the first, and each step its own.
-    for step in std::iter::once(None).chain(STEPS.map(|(step, _)| Some(step))) {
+    let mut steps = vec![None, Some("client-lint")];
+    steps.extend(STEPS.map(|(step, _)| Some(step)));
+    for step in steps {
         assert_eq!(
             named(&second, step).rerun_of,
             Some(named(&first, step).run),
@@ -925,7 +969,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
         );
     }
     // Each step's operation is a child of its run's; the commands inside them are none.
-    let history = setup.history(14);
+    let history = setup.history(16);
     for record in &history {
         let line = second
             .iter()
@@ -1164,7 +1208,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         tests.contains("\nverify: the client check did not run in this verify, so "),
         "{tests}"
     );
-    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 10));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 11));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let labels: Vec<&str> = (lines.iter())
         .filter(|line| line.step.is_none())
