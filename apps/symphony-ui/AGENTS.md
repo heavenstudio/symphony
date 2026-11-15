@@ -270,16 +270,16 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,641 bytes, `/tasks` 120,806, `/agents`
-  115,751, `/queue` 108,310, `/reports` 108,726, `/runs` 106,982, `/docs/` 138,893, a document
-  140,683 and a task's page 142,327, and a return that finds what it kept unchanged 2,031, 2,442,
+  each page's requests) a first visit to `/` takes 112,745 bytes, `/tasks` 121,052, `/agents`
+  115,867, `/queue` 108,441, `/reports` 108,933, `/runs` 107,134, `/docs/` 138,991, a document
+  140,652 and a task's page 142,342, and a return that finds what it kept unchanged 2,031, 2,442,
   2,307, 2,113, 765, 984, 574, 1,806 and 2,285. A first visit to a kind of the web client is its entry and its sheets, the
   chunk every kind shares (React and the frame) and the pieces it shares with some of the others
   (the board's feed and keep; the card and the task readers of the board and the agents page; the
   media layer's chunk and sheet, home's, the documents' and a task's page's), beside the HTML, the
   shell and the page's reads; a move to another kind takes its entry and the pieces no kind
   before it took (`tests/browser/preload.rs`). A task's page's timeline, a chunk of its own, comes
-  once the page has drawn and is idle: 12,351 bytes after its first visit. The reads ahead start
+  once the page has drawn and is idle: 12,352 bytes after its first visit. The reads ahead start
   only once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so
   the budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`).
   Once a page has its data and is idle, the shell warms the chat's files (the program's script,
@@ -500,7 +500,8 @@ never the whole target, which the release run runs.
   `postpone_live.rs`, the `page-docs` feature) left with them. What follows is the page's
   contract, which the React page keeps, its code named there.
   `document-live.ts` reads `/api/document?view=outline`: section keys,
-  source positions and anchors, with short card summaries. `NearViewport`
+  source positions and anchors, the kinds of each section's first and last blocks (`ends`), with
+  short card summaries. `NearViewport`
   mounts each block once near the screen; a collapsed
   card requests its body only when opened. Mounted blocks request their bodies
   and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts

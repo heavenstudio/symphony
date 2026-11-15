@@ -96,6 +96,16 @@ event of a region or kind the page does not know is not its own, and is left alo
 fields among them, costs it nothing to receive: its types say what the server sends, and its
 guards read what it draws.
 
+A failed read is said in one sentence (`failed`, `src/trouble.tsx`), in a read's words: one that
+got no answer in time fails with `NOT_IN_TIME`, never a post's `NO_ANSWER`, which asks the reader
+to check before sending again, as a post the server may have acted on does. A page that tries the
+read again by itself says "Trying again…" (`failed(why, true)`), and one with nothing drawn yet
+does try it again, on the feed's waits (`tryAgain`, `src/state.ts`: 1 s doubling to 30 s), until
+it is answered, the server has no such thing (a 404), a newer read starts or the page leaves; its
+Retry stays, to try at once. A 404 said as missing and a read a click asks for (Load more) say no
+"Trying again…". The limit a request waits for is `ANSWER_MS`, 15 s, which a page's
+`symphonyAnswerMs` shortens for a browser test of a read held past it.
+
 The feed is followed on a WebSocket (`feed.ts`): the events the server sends any other request of
 the feed's as Server-Sent Events, each one message, its name, a line feed and its data (the feed
 contract, `crates/symphony-api`). A browser keeps six HTTP/1.1 connections to a host, and an event
@@ -249,8 +259,9 @@ it (its files count in the regenerator's key, as every file of this package does
 feed of its own: it reads the window this device last chose (`reports-grain`, `reports-days`
 through `storage.ts`), else the last 24 hours by the hour (`FIRST_WINDOW`), at once, on each
 choice and every five minutes with the last answer's tag (`followReports`, under its effect's
-own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
-record of a period is none there, a count by status that leaves out its zeros a zero. Four
+own signal), a read that failed sooner, on the feed's waits. The periods are read by path as the
+server writes them (`Bucket`): a source with no record of a period is none there, a count by
+status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
 anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
@@ -330,7 +341,19 @@ blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of 
 near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
 look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
 is the queue's (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s.
-Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
+Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here. Once a landing
+has ended, the browser's own scroll anchoring holds the reader's place while the sections around
+it draw, and a change to a margin of the part being read (or to any box around what Chrome
+anchors on, a focused field first) stops it for that frame, so everything drawn above lands on the
+reader. The spacing that stands in for the margins one card's sections collapsed therefore reads a
+neighbour not drawn yet as what it will draw as, by its part's classes (`partForm`, `document.ts`):
+an open card by the outline's cards, and how its prose opens and closes by the kinds of its first
+and last blocks, which the outline carries for each section (`ends`,
+`symphony_api::Section::ends_of`). A section in an outline kept from before it carried them reads
+as opening and closing with no listed block, so its neighbour may move once as it draws, until
+the next read replaces that copy
+(`tests/browser/document_landing.rs` reads a paragraph, a list, a table, the intro and a card
+beside code, a quote, a mockup, a picture, a heading, a table and a title, on a desk and a phone).
 
 ## A task's page
 

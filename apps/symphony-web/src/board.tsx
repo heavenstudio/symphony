@@ -400,7 +400,7 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
   return (
     <section className="trouble card unread-board" role="status">
       <h2>The task board could not be read</h2>
-      <p>{failed(why)}</p>
+      <p>{failed(why, true)}</p>
       <p className="trouble-actions">
         <Button type="button" onClick={retry}>
           Retry

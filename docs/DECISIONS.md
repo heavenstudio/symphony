@@ -29,6 +29,29 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Delivery to projects
 
+- [x] **consumer-manifest-line** — The app you open on port 8765 still runs release-2026-11-13.2, and no release since has reached it. Every refresh since 2026-11-14 stops at its first command in the consuming project, whose manifest asks for a package named `symphony`; from release-2026-11-14 on that package is named `symphony-app`. One line of that project's manifest has to name it, and nobody here edits that project without your word. Who makes that change? A: the refresh: `just release --refresh`, which already moves that project's pin, also changes the package's name on that line when it finds the old one. B: an orchestrator, once, by hand in that project's checkout. C: you. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The refresh]]
+  [2026-11-15 10:20] agent — Posted for the board task `docs/consumer-manifest-line-card`. The red refresh has a task of its own on this board, blocked since 2026-11-14 on this question, which until now was asked only in chat and on that thread.
+
+    **The line**, in the consuming project's workspace manifest, the one place it names the library: `symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-2026-11-15" }`. Nothing else moves: the key stays `symphony`, so no code changes.
+
+    **It is not an edit on its own.** The release that project is pinned to holds no `symphony-app`, and the releases after it hold no package named `symphony`. So the new name goes in the same commit as the new tag: that line, the tag on all ten of the project's Symphony lines, and its lock. That commit is the pin's move, which the refresh makes at every release.
+
+    **What each costs.**
+    - **A:** a small change to the refresh, as a board task with its review, then a rerun: hours, not minutes. The move is made as today, in a worktree beside that project's checkout and through its own commit gate, and its main takes it only if the commit changes manifests and the lock alone and its hooks allow it. The refresh stays the only thing of Symphony's that edits that project, and a later rename is handled the same way.
+    - **B:** no code, and the soonest. The orchestrator makes the pin's whole move by hand (the line, the ten tags, the lock), commits it on that project's default branch through its commit gate, then reruns the refresh, which finds the pin moved and goes on to the board. It is one exception to the rule that Symphony's agents do not edit that project, made in the checkout the shared server is built from, without the refresh's checks. Pushing that project's branch stays a separate act that needs its own word.
+    - **C:** the same work by your hand, when you get to it. The orchestrator reruns the refresh when you say it is done.
+
+    **What a green refresh brings, and what it does not.** It brings the newest release, release-2026-11-15 (c944025a, 03:11 today), not main's tip.
+    - Your approval of **live-board-schema-moves** (A) waits on it: `tools/board-token-usage` lands only after the server is refreshed.
+    - The fix for pages that never load is not in that release. Measured today on the shared server: with five of its tabs open in one browser, a further page got no answer in 40 s. Main's client, with eight tabs open, returned the queue in 31 to 48 ms. That fix (22afbd67) landed after release-2026-11-15, so it reaches you only with the next release after a refresh works.
+    - The next release is held: a release candidate is open, red in two checks, and no run judges main's tip until it is released or dropped (2026-11-16 04:18 at the latest).
+
+    **What is unknown.** Whether more is red behind this one. `cargo update` is the refresh's first command in that project, so nothing after it has run since 2026-11-13: that project's build against a newer release, its commit gate, its hooks, its board's move, the server's reload. Under every option the first rerun shows the next red, if there is one.
+
+    **Why A.** The commit this needs is the pin's move, and the refresh already makes that move with checks a hand does not have; B and C make it by hand in the checkout your server is built from. A's cost is some hours after B, on a refresh red for two days, and those hours do not delay the tab fix, which waits for the next release either way.
+
+    **Earlier verdicts checked.** **consumer-api-break-release** (A) is about code a project uses staying in place for a release; it does not say who changes a manifest line. No other card speaks of who edits the consuming project.
+  [2026-11-15 10:38] owner · approved — B
 - [x] **live-board-schema-moves** — Two approved tasks each move Symphony's own board (this repository's, in its git common dir) from schema 17 to 18, and both are held unlanded on that: `tasks/board-writer-record` (approved at 6394e33a) and `tools/board-token-usage` (approved at 71f05a84). The shared server on port 8765 runs release-2026-11-13.2, schema 17, and from the first land until it is refreshed you cannot write this board from the app. When may the board move? A: now, `tasks/board-writer-record` to 18 at once and `tools/board-token-usage`, renumbered to 19, only after the server is refreshed. B: only once the refresh works again and no release candidate is open, then `tasks/board-writer-record` lands in a quiet moment and `just release` is run by hand at once, on main's tip, which is then its merge commit, so the app's writes are out until that commit is released; `tools/board-token-usage` follows the same way at 19. C: not yet, both stay held. Recommended: B. Approve and say A, B or C in the note, or comment.
   [2026-11-15 02:40] agent — Posted by the two orchestrators (quiet-plover, silver-sparrow) for those two tasks. One decision, not two: the second to land must renumber, so the order is part of it.
 
