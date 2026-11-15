@@ -13,7 +13,7 @@
 
 import { NO_ANSWER } from "./request";
 import { field } from "./shared";
-import type { Gate, GateState, GatesSeen, MachineWork, TaskGates, WorkState } from "./wire";
+import type { Gate, GateState, GatesSeen, MachineWork, Task, TaskGates, WorkState } from "./wire";
 
 /** The words the section says. */
 export const WORDS = {
@@ -251,14 +251,48 @@ export function seenOf(answer: TaskGates): GatesSeen {
   };
 }
 
+/** What of a task says what it waits on: its status, who holds it and the tasks it depends on. */
+export type Waiter = Pick<Task, "status" | "roles" | "depends">;
+
+/** What the pill says the task waits on: the class its colour takes, and the names it says. */
+export interface Waits {
+  tone: string;
+  names: string[];
+}
+
+/** The statuses a task's executor works it in. */
+const WORKED = ["concept", "design", "in_progress"];
+
 /**
- * The gates the task waits on, by name, and the state of the first; none when it waits on none.
- * The pill says `waits on certificate`, `waits on certificate and owner`, `waits on a, b and c`.
+ * What `task` waits on, by its status, as the pill says it (`waits on certificate`, `waits on
+ * executor quiet-wren and owner`, `waits on a, b and c`); none when it waits on nothing.
+ *
+ * In review, the gates of `answer` missing or held, in their order, coloured as the first. Else
+ * who its status waits on, coloured as that status: in concept, design or progress, its executor;
+ * blocked, every task it depends on (the page has no word of theirs); not started (backlog,
+ * ready), none. Then each gate held, a card waiting on the owner, coloured as held when it is all.
+ * A done or cancelled task waits on nothing, whatever its gates say.
  */
-export function waitsOn(answer: TaskGates): [GateState, string[]] | null {
-  const waiting = waitingGates(answer);
-  const first = waiting[0];
-  return first === undefined ? null : [first.state, waiting.map((gate) => gate.name)];
+export function waitsOn(answer: TaskGates, task: Waiter): Waits | null {
+  const { status } = task;
+  if (status === "done" || status === "cancelled") return null;
+  if (status === "review") {
+    const waiting = waitingGates(answer);
+    const first = waiting[0];
+    return first === undefined
+      ? null
+      : { tone: `gate-${first.state}`, names: waiting.map((gate) => gate.name) };
+  }
+  const own = WORKED.includes(status)
+    ? task.roles
+        .filter((role) => role.role === "executor")
+        .map(({ handle }) => `executor ${handle}`)
+    : status === "blocked"
+      ? task.depends
+      : [];
+  const held = answer.gates.filter((gate) => gate.state === "held").map((gate) => gate.name);
+  if (own.length + held.length === 0) return null;
+  return { tone: own.length > 0 ? `st-${status}` : "gate-held", names: [...own, ...held] };
 }
 
 /** The states the counts say, what no longer stands in the way first. */

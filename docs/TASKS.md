@@ -2083,7 +2083,11 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
-the task waits on and how many gates are in each state; on a phone a gate is
+the task waits on and how many gates are in each state. What it waits on follows
+its status: in review, the gates missing or held; in concept, design or progress,
+its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+nothing; and after those, while it is open, each gate held (a card waiting on the
+owner). A done or cancelled task waits on nothing. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
 (`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
@@ -2158,13 +2162,15 @@ stamps, so no task's history is judged again:
 - **owner**: held while a card the task posted waits on the owner, by the sign-off
   lane's rule above; absent otherwise.
 
-Every task has one more of the Symphony's:
+A task with work of its own to check has one more of the Symphony's:
 
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
-  was red or is still going, unknown when none ran at the tip or the repository has
-  no such branch. A project with no check has no check gate.
+  was red or is still going, unknown when none ran at the tip. There is none for a
+  task whose branch holds no commit of its own (no such branch, one made at the default
+  branch and not yet committed to, or one already landed there), for an instruction
+  subtask, whose work lands with its task, or for a project with no check.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the

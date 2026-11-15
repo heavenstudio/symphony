@@ -1283,3 +1283,41 @@ fn a_branchs_tip_is_its_commit_and_the_work_folder_is_in_the_common_dir() {
     let common = tree.root.join(".git").canonicalize().unwrap();
     assert_eq!(work_folder(&tree.root), Some(recorded::in_common(&common)));
 }
+
+#[test]
+fn a_branch_holds_work_of_its_own_only_past_the_default_branch() {
+    let tree = Tree::new();
+    git(&tree.root, &["init", "-q", "-b", "main"]);
+    let commit = |file: &str| {
+        tree.write(file, file);
+        git(&tree.root, &["add", file]);
+        git(&tree.root, &["commit", "-q", "-m", file]);
+        git(&tree.root, &["rev-parse", "HEAD"])
+    };
+    let made = commit("a.txt");
+    git(&tree.root, &["checkout", "-q", "-b", "tools/x"]);
+    let own = commit("x.txt");
+    git(&tree.root, &["checkout", "-q", "main"]);
+    let later = commit("b.txt");
+    let own_here = |tip: &str, default: &str| own_commits(&tree.root, tip, default);
+    assert!(
+        !own_here(&made, "main"),
+        "made at main and not committed to"
+    );
+    assert!(!own_here(&later, "main"), "main's own tip");
+    assert!(
+        own_here(&own, "main"),
+        "a commit main does not hold, though main moved on"
+    );
+    git(&tree.root, &["merge", "-q", "--no-edit", "tools/x"]);
+    assert!(!own_here(&own, "main"), "landed: main holds it");
+    assert!(
+        own_here(&made, "trunk"),
+        "with no default branch to compare, a tip holds its own"
+    );
+    assert!(own_here(TIP, "main"), "a commit the repository lacks");
+    assert!(
+        own_commits(&tree.path("nowhere"), &own, "main"),
+        "outside a repository, nothing says it is the default branch's"
+    );
+}
