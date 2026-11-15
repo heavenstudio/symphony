@@ -104,6 +104,13 @@ export interface BoardData {
   /** Each column checked once the board's version was read, by the generation it was checked at:
    * its own read at that generation would ask again. */
   checked: Map<string, number>;
+  /**
+   * Each column whose first page answered, by the view it answered in (`answeredColumns`). A
+   * column counted but holding no task waits under its ghost only until then; once answered it
+   * draws what the board places in it, even nothing: a stage's tasks waiting on the owner's
+   * sign-off are drawn in that lane, and the counts may be older than the answer.
+   */
+  answered: Map<string, number>;
   /** The board's version is not read yet: no column is read before it, as the feed replays only
    * what changed after it. */
   waiting: boolean;
@@ -143,12 +150,18 @@ export function emptyBoard(): BoardData {
     copies: new Map(),
     drawn: [],
     checked: new Map(),
+    answered: new Map(),
     waiting: true,
     fromDevice: [],
     round: 0,
     counted: 0,
     worked: 0,
   };
+}
+
+/** The columns whose first page answered in the view the page reads now. */
+export function answeredColumns(d: BoardData): Set<string> {
+  return new Set([...d.answered].flatMap(([status, view]) => (view === d.view ? [status] : [])));
 }
 
 /** One change of a feed event, as the board reads it. */
@@ -628,6 +641,7 @@ export class LiveBoard {
       this.replay(since);
       markTasksReady();
       if (!more) {
+        d.answered.set(status, view);
         d.drawn = d.drawn.filter((one) => one !== status);
         // Every column drawn from the device has answered: a task it drew that none listed is
         // gone from the board, whichever stage the machines' work places it in now.
@@ -1006,6 +1020,7 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           connected={!stale}
           statuses={d.statuses}
           signoff={d.signoff}
+          answered={answeredColumns(d)}
           refreshed={refreshed}
           onFilter={board.search}
           onLoad={board.load}

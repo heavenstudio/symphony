@@ -632,6 +632,8 @@ export interface ColumnProps {
   connected: boolean;
   tasks: Task[];
   count: number;
+  /** Its first page answered in the view the page reads: it waits for nothing more. */
+  answered: boolean;
   query: string;
   days: number;
   onLoad: OnLoad;
@@ -646,6 +648,7 @@ export const TaskColumn = memo(function TaskColumn({
   connected,
   tasks,
   count,
+  answered,
   query,
   days,
   onLoad,
@@ -673,7 +676,9 @@ export const TaskColumn = memo(function TaskColumn({
   // the page, each as tall as this browser last drew the row in its place, and the Load more
   // button a column of more than a page will show.
   const reserved = firstPageHeight(count, kept);
-  const reading = count > 0 && tasks.length === 0;
+  // Counted, holding none, and its first page not in yet: once it answers, the column draws what
+  // the board places in it, even nothing, as a stage whose tasks all wait on the owner's sign-off.
+  const reading = count > 0 && tasks.length === 0 && !answered;
   // Once its cards are drawn on the board as it opens, their heights for the next visit.
   const shown = tasks.length;
   const keeps = useRef({ query, days });
@@ -796,6 +801,8 @@ export interface TaskBoardProps {
   signoff: string[];
   counts: [string, number][];
   statuses: string[];
+  /** The columns whose first page answered in the view the page reads. */
+  answered: ReadonlySet<string>;
   refreshed: number;
   onFilter: Filter;
   onLoad: OnLoad;
@@ -810,6 +817,7 @@ export function TaskBoard({
   signoff,
   counts,
   statuses,
+  answered,
   refreshed,
   onFilter,
   onLoad,
@@ -851,6 +859,7 @@ export function TaskBoard({
       connected={connected}
       tasks={columns.get(status) ?? NONE}
       count={counts.find(([one]) => one === status)?.[1] ?? 0}
+      answered={answered.has(status)}
       query={search}
       days={days}
       onLoad={onLoad}
@@ -905,6 +914,7 @@ export function TaskBoard({
             connected={connected}
             tasks={columns.get("signoff") ?? NONE}
             count={signoff.length}
+            answered={answered.has("signoff")}
             query={search}
             days={days}
             onLoad={onLoad}

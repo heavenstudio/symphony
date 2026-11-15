@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { byColumn, SHAPE } from "./board";
 import {
+  answeredColumns,
   type BoardHost,
   emptyBoard,
   LiveBoard,
@@ -575,6 +576,33 @@ describe("a column of the live board", () => {
     held.settle(answer(200, listing(ready)));
     await pass();
     expect(d.tasks).toEqual([]);
+    expect(answeredColumns(d)).toEqual(new Set());
+  });
+
+  // A first page that brings none of the tasks counted (the counts read before it, its tasks
+  // drawn in the owner's sign-off lane) still ends the column's wait, in that view.
+  it("is answered by its first page, even one with none of the tasks counted, in its view alone", async () => {
+    const { board, d } = opened({
+      [column("review")]: listing([aTask("w/a", { status: "review" })], [["review", 1]], {
+        signoff: ["w/a"],
+      }),
+      [column("ready")]: listing([aTask("w/b")], [["ready", 2]], { next: "w/b" }),
+      [column("ready", "&cursor=w%2Fb")]: listing([aTask("w/c")], [["ready", 2]]),
+    });
+    expect(answeredColumns(d)).toEqual(new Set());
+    void board.column("review", false, "", 1);
+    // Failed: Done is not answered.
+    void board.column("done", false, "", 1);
+    await pass(250);
+    expect(answeredColumns(d)).toEqual(new Set(["review"]));
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    void board.column("ready", true, "", 1);
+    await pass(250);
+    expect(answeredColumns(d)).toEqual(new Set(["review", "ready"]));
+    // A new search or window is a new view: every column waits for its first page in it again.
+    void board.filter("lamp", 1);
+    expect(answeredColumns(d)).toEqual(new Set());
   });
 
   it("replaces only its own stage's tasks with its first page", async () => {
