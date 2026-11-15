@@ -380,6 +380,13 @@ mod tests {
         }
         // An Origin with no Host to match is another site's.
         assert!(!own_origin(&request(&[(header::ORIGIN, "http://")])));
+        // So is one that is not text: no page of this server names itself so.
+        let mut opaque = request(std::slice::from_ref(&host));
+        opaque.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_bytes(b"http://127.0.0.1:8765\xff").unwrap(),
+        );
+        assert!(!own_origin(&opaque));
     }
 
     #[tokio::test]
