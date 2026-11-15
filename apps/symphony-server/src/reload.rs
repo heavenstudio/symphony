@@ -17,7 +17,9 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{self, Stdio};
 
+mod retry;
 mod stamp;
+use retry::Retry;
 use stamp::{RunningImage, installed_source, stamp_install};
 
 /// What a serving server hands its successor; no person sets it.
@@ -422,16 +424,25 @@ pub(crate) fn watch(
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
 ) -> Option<std::thread::JoinHandle<()>> {
-    watch_with::<notify::RecommendedWatcher>(serve, setup, shared, sockets, backstop::PERIOD)
+    watch_with::<notify::RecommendedWatcher>(
+        serve,
+        setup,
+        shared,
+        sockets,
+        backstop::PERIOD,
+        Retry::new(),
+    )
 }
 
-/// [`watch`] with watcher `W`, checking the sources on its own every `period`.
+/// [`watch`] with watcher `W`, checking the sources on its own every `period`, and trying a version
+/// whose update failed again when `retry` says.
 fn watch_with<W: Watcher + Send + 'static>(
     serve: Serve,
     setup: Setup,
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
     period: Duration,
+    mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
     let reload = move || {
@@ -540,7 +551,9 @@ fn watch_with<W: Watcher + Send + 'static>(
                     continue;
                 }
             };
-            if attempted.as_deref() == Some(&fingerprint) {
+            // A version tried before is built again only once its update failed and the wait
+            // after that failure is over ([`retry`]); any other is built now.
+            if attempted.as_deref() == Some(&fingerprint) && !retry.again(&fingerprint) {
                 continue;
             }
             attempted = Some(fingerprint.clone());
@@ -566,17 +579,25 @@ fn watch_with<W: Watcher + Send + 'static>(
             {
                 continue;
             }
-            let result = result.and_then(|client| {
-                replace(
-                    &serve,
-                    &exe,
-                    &sockets,
-                    &lease,
-                    &fingerprint,
-                    &shared,
-                    client,
-                )
-            });
+            let result = result
+                .and_then(|client| {
+                    replace(
+                        &serve,
+                        &exe,
+                        &sockets,
+                        &lease,
+                        &fingerprint,
+                        &shared,
+                        client,
+                    )
+                })
+                .map_err(|why| {
+                    // A build that said nothing leaves its separator, and diagnostics may end a
+                    // sentence: the reason ends where the notice's next sentence starts.
+                    let why = why.trim_end_matches([' ', ':', '.']);
+                    let again = retry.failed(&fingerprint);
+                    format!("{why}. It tries this version again at about {again}.")
+                });
             if replaced(&shared, result) {
                 return;
             }

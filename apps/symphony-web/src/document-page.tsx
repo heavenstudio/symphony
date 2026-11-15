@@ -26,7 +26,7 @@ import { Button } from "./button";
 import { type Item, shown } from "./cache";
 import { documentItem } from "./cache-document";
 import { watchContents } from "./contents";
-import { folderPill, partEdges } from "./document";
+import { folderPill, isSettled, partEdges, partForm } from "./document";
 import { api, DocumentLive, documentLive, FolderLive, followFolder, named } from "./document-live";
 import { readDiff, readFragment, readVersions } from "./document-read";
 import { Editor, PageContext } from "./editor";
@@ -197,7 +197,11 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     }
   } else if (trouble !== null && !embedded) {
     body = (
-      <Trouble title="The document could not be loaded" text={failedRead(trouble)} retry={retry} />
+      <Trouble
+        title="The document could not be loaded"
+        text={failedRead(trouble, true)}
+        retry={retry}
+      />
     );
   } else if (trouble === null || (embedded && notice === null)) {
     body = (
@@ -367,10 +371,14 @@ export const DocumentBody = memo(function DocumentBody({
                 ? (anchors[section.key] ?? NONE)
                 : NONE;
               const slug = section.key.startsWith("card:") ? section.key.slice(5) : null;
+              const card =
+                slug === null
+                  ? null
+                  : (document.cards.find((listed) => listed.slug === slug) ?? null);
               return (
                 <NearViewport
                   key={section.key}
-                  className={`doc-part${first ? " doc-part-start" : ""}${last ? " doc-part-end" : ""}`}
+                  className={`doc-part${first ? " doc-part-start" : ""}${last ? " doc-part-end" : ""}${partForm(section, card)}`}
                   anchors={section.start > 0 ? [...ids, `L${section.start}`] : ids}
                   height={slug !== null ? 100 : 160}
                 >
@@ -380,11 +388,7 @@ export const DocumentBody = memo(function DocumentBody({
                     section={section}
                     path={path}
                     scope={scope}
-                    card={
-                      slug === null
-                        ? null
-                        : (document.cards.find((card) => card.slug === slug) ?? null)
-                    }
+                    card={card}
                     thread={
                       slug !== null && Object.hasOwn(document.threads, slug)
                         ? (document.threads[slug] ?? null)
@@ -417,10 +421,6 @@ interface SectionProps {
   /** The card is postponed in the review queue. */
   postponed: boolean;
 }
-
-/** Whether a card is settled: resolved or rejected, folded under its summary. */
-const isSettled = (card: DocumentCard | null): boolean =>
-  card !== null && (card.group === "resolved" || card.group === "rejected");
 
 /** The summary a settled card's section gives itself, if it has one. */
 function settledSummary(section: Section) {
@@ -886,7 +886,11 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
     );
   } else if (page.error !== null) {
     body = (
-      <Trouble title="The folder could not be loaded" text={failedRead(page.error)} retry={retry} />
+      <Trouble
+        title="The folder could not be loaded"
+        text={failedRead(page.error, true)}
+        retry={retry}
+      />
     );
   } else {
     body = <p role="status">Loading folder…</p>;

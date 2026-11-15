@@ -1668,12 +1668,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs",
-  "/crates/symphony/src/cli/commands/crates_check.rs", "/crates/symphony/src/release/crates.rs",
-  "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
-  "/crates/symphony/src/release/checks.rs",
-  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony-build/src/commands/size_budget.rs",
+  "/crates/symphony-build/src/commands/crates_check.rs",
+  "/crates/symphony-build/src/release/crates.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
+  "/crates/symphony-build/src/release/checks.rs",
+  "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
@@ -2748,6 +2748,32 @@ tasks done per day, which its header says:
 `waiting_before_first_claim_seconds` (beside `stage_seconds`, never in it),
 `bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
+
+**Arms.** A process experiment compares tasks filed on its sides. A task's
+arm is that side's label, one word of lowercase letters, digits and dashes
+(at most 32), given where the task is filed: `just tasks create SLUG TITLE
+--arm control`. It is written with the task, among the board's own fields
+(`fields._board.arm`, `crates/tasks/src/arm.rs`), so no table or schema
+field holds it; no command changes it after, and `tasks api`'s `create`
+takes none. `just tasks show SLUG` prints `arm: NAME` above the stages. The
+board assigns no arm, applies no rule for one and names no winner: whoever
+files the work says which side it is on.
+
+Where a task of the window was filed on an arm, `stats` ends with each arm
+by name: its tasks, how many are done, the median lead time and the median
+time in review of the done ones (`-` with none done, or none reviewed), and
+how often review sent the arm's tasks back, the open ones' too:
+
+```
+Arms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+```
+
+A task filed on no arm is in none of them and in every figure above them.
+`--json` carries them as `arms`, by name (`tasks`, `done`, `lead_seconds`
+and `review_seconds`, each a spread or null, and `bounces`), `{}` where the
+window has none. The arm is read in the window's one read.
 
 `stats` reads the window in one round trip (`Store::stage_records`): the
 top-level tasks made since the window's start and the done ones written since

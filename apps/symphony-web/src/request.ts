@@ -1,16 +1,28 @@
 // The browser's JSON transport, under the page's project's base: reads, reads of what this device
 // kept (naming its tag), and posts. A read's failure is what a page says in place of what it could
-// not show (trouble.tsx): the server's own error with its status, or that the server could not be
-// reached. A post's keeps the server's words alone, beside the draft it kept.
+// not show (trouble.tsx): the server's own error with its status, that the server could not be
+// reached, or that it did not answer in time. A post's keeps the server's words alone, beside the
+// draft it kept.
 
 import { here, project } from "./project";
-import { answered as refusedRead, UNREACHABLE } from "./trouble";
+import { NOT_IN_TIME, answered as refusedRead, UNREACHABLE } from "./trouble";
 import { VERSION_HEADER } from "./wire";
 
 /** How long a request waits for the server's response, and then again for its body. */
 export const ANSWER_MS = 15_000;
-/** What a request fails with when no answer came in time. */
+/** What a post fails with when no answer came in time: the server may have acted on it. A read
+ * fails with trouble.tsx's NOT_IN_TIME. */
 export const NO_ANSWER = "✖ no answer from the server; check before sending again";
+
+/**
+ * How long a request waits: ANSWER_MS, unless the page names another (`symphonyAnswerMs`, a
+ * positive number of ms a browser test's script sets, so a read held past the limit is tested
+ * without waiting 15 s).
+ */
+export function answerMs(): number {
+  const named = (globalThis as { symphonyAnswerMs?: unknown }).symphonyAnswerMs;
+  return typeof named === "number" && named > 0 ? named : ANSWER_MS;
+}
 
 /** How a request failed: refused for good, unknown (the server may have acted), or missing. */
 export type FailureKind = "known" | "uncertain" | "missing";
@@ -126,15 +138,16 @@ async function exchanged(
   );
   let response: { value: Response } | null;
   try {
-    response = await inTime(fetched, ANSWER_MS);
+    response = await inTime(fetched, answerMs());
   } catch (error) {
     mark("failed");
     throw new Failure("uncertain", reading ? UNREACHABLE : String(error), said(error));
   }
   if (response === null) {
-    controller.abort(new DOMException(NO_ANSWER, "TimeoutError"));
+    const late = reading ? NOT_IN_TIME : NO_ANSWER;
+    controller.abort(new DOMException(late, "TimeoutError"));
     mark("no-answer");
-    throw new Failure("uncertain", NO_ANSWER);
+    throw new Failure("uncertain", late);
   }
   mark("fetched");
   return [await answer(response.value, reading, mark), response.value.headers];
@@ -159,7 +172,7 @@ async function answer(
   let body: { value: unknown } | null;
   let unreadable: unknown;
   try {
-    body = await inTime(parsing, ANSWER_MS);
+    body = await inTime(parsing, answerMs());
   } catch (error) {
     body = null;
     unreadable = error ?? "unreadable";
@@ -180,7 +193,7 @@ async function answer(
   }
   if (body === null) {
     mark("no-answer");
-    throw new Failure("uncertain", NO_ANSWER);
+    throw new Failure("uncertain", reading ? NOT_IN_TIME : NO_ANSWER);
   }
   mark("ok");
   return { same: false, value: body.value, etag };

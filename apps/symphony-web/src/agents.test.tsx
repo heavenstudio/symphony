@@ -399,7 +399,9 @@ describe("the agents page", () => {
       /^<main data-ready="failed" data-feed="live"><section class="trouble card"/,
     );
     expect(html).toContain("<h1>The board could not be loaded</h1>");
-    expect(html).toContain("It is also tried again on its own.");
+    expect(html).toContain(
+      "<p>The server could not be reached; check the connection. Trying again…</p>",
+    );
   });
 
   it("loads the agents once the board is read", () => {
@@ -415,6 +417,8 @@ describe("the agents page", () => {
       '<div class="task-page" data-ready="failed"><section class="trouble card"',
     );
     expect(html).toContain("<h1>The agents could not be loaded</h1>");
+    // The page reads them again by itself, and says so.
+    expect(html).toContain("<p>Busy (the server answered 503). Trying again…</p>");
     expect(html).not.toContain('role="alert"');
   });
 

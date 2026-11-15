@@ -599,8 +599,12 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
             200,
             "{case}: its own board read while its folder holds it"
         );
-        inner.home().stop().unwrap();
-        empty(&inner.root).unwrap();
+        // Its hub kept from the board meanwhile: its next tick would start the stopped server
+        // again, which writes into the folder as it is emptied.
+        inner.unreached(|| {
+            inner.home().stop().unwrap();
+            empty(&inner.root).unwrap();
+        });
         assert_eq!(
             symphony_board::project::locate_quick(&inner.root).map(|place| place.common),
             Some(outer.canonicalize().unwrap().join(".git")),

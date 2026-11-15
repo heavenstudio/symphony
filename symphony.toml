@@ -9,7 +9,10 @@ id = "symphony"
 [agents]
 panes = "hc"
 worktrees = "../symphony-wt"
-launch = { default = "claude", model = "opus" }
+launch = { default = "claude", model = "fable" }
+
+[agents.models]
+assessor = "fable"
 
 # What a generated branch passes before it lands with no reviewer: the check closest to the
 # documents it changes. `just verify` is the release run's (docs/CHECKS.md).

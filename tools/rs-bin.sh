@@ -13,10 +13,12 @@ esac
 name="${1:-}"
 board=no
 case "$name" in
-    symphony|symphony-build) package=symphony-app; member=crates/symphony ;;
+    symphony) package=symphony-app; member=crates/symphony ;;
+    symphony-build) package=symphony-build; member=crates/symphony-build ;;
     tasks|agent-send|tasks-copy|tasks-reclaim) package=symphony-board; member=crates/tasks; board=yes ;;
     fake-hc) package=symphony-board; member=crates/tasks ;;
     symphony-server|symphony-shelf|symphony-ui-dev) package=symphony-server; member=apps/symphony-server ;;
+    symphony-desktop) package=symphony-desktop; member=apps/symphony-desktop ;;
     *) printf 'symphony rs-bin: no declared binary %s in %s\n' "$name" "$root" >&2; exit 2 ;;
 esac
 shift
