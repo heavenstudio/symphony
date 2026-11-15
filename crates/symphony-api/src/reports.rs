@@ -304,9 +304,9 @@ pub struct Waits {
     #[serde(default)]
     pub approved_to_landed: Vec<Wait>,
     /// From a move into review to the first reviewer on it: a session joining the task as its
-    /// reviewer, or claiming an instruction subtask of it, while it is in review, or the first
-    /// line since the move, up to the verdict that ends the stretch, of a session holding its
-    /// reviewer role then (a re-review whose reviewer kept the role).
+    /// reviewer, or claiming an instruction subtask of it, while it is in review; where one held
+    /// its reviewer role at the move (a re-review whose reviewer kept the role), the first line
+    /// since the move of a session holding that role, up to the verdict that ends the stretch.
     #[serde(default)]
     pub review_to_reviewer: Vec<Wait>,
     /// From a `changes` verdict to its executor's first line after it: a claim of the task, or a
